@@ -89,6 +89,17 @@ export component MainWindow inherits Window {
     in-out property <bool> enable-telegram: false;
     in-out property <string> provider-key: "";
     in-out property <string> telegram-token: "";
+    /// Reviewer-3 P1-B (2026-05-20): channel-screen disclosure toggle.
+    /// Disabled-channel sections ("SET UP LATER", "ON THE ROADMAP")
+    /// stay hidden behind this until the operator expands — DAUs
+    /// finish channels in 5 seconds, pros click once to see the road-
+    /// map.
+    in-out property <bool> show-future-channels: false;
+    /// Reviewer-3 P1-B (2026-05-20): identity-format guard. Rust
+    /// computes `^[a-z0-9-]{3,32}$` against `operator-id` and pushes
+    /// the verdict back here. Continue gate consults this instead of
+    /// the naive `!= ""` check so the copy + the gate finally agree.
+    in property <bool> operator-id-valid: false;
     in-out property <string> status-line: "";
     in property <string> hardware-summary: "";
 
@@ -139,6 +150,11 @@ export component MainWindow inherits Window {
     /// Operator picked CLI on the mode screen. Rust side prints
     /// `neoth init` instructions + exits the GUI.
     callback cli-mode-chosen;
+    /// Reviewer-3 P1-B (2026-05-20): operator typed in the Identity
+    /// LineEdit. Rust validates against `^[a-z0-9-]{3,32}$` and
+    /// pushes the verdict back via `operator-id-valid`. Slint has no
+    /// regex; the round-trip is the simplest accurate path.
+    callback operator-id-edited(string);
     /// G-2 fix — operator clicked "View full text →" on the License
     /// screen. Rust side opens the project licence URL in the system
     /// default browser via `start` (Windows) / `open` (macOS) /
@@ -476,18 +492,25 @@ export component MainWindow inherits Window {
                     // G-1 fix: placeholder must look obviously instructional
                     // so a noob does not mistake it for a pre-filled value.
                     // "your-handle" reads as a hint; "alex" reads as data.
-                    // G-15 fix: Enter advances when the handle is non-empty
-                    // so keyboard-only operators don't need to mouse over
-                    // to Continue.
+                    // G-15 + Reviewer-3 P1-B (2026-05-20): Enter advances
+                    // only on valid identity. Edited callback round-trips
+                    // to Rust for regex validation (Slint has no regex).
                     LineEdit {
                         placeholder-text: "your-handle";
                         text <=> root.operator-id;
+                        edited(t) => { root.operator-id-edited(t); }
                         accepted(t) => {
-                            if (t != "") { root.step = WizardStep.provider; }
+                            if (root.operator-id-valid) { root.step = WizardStep.provider; }
                         }
                     }
-                    if root.operator-id == "": Text {
+                    if !root.operator-id-valid && root.operator-id == "": Text {
                         text: "Required — pick a short name like 'alex' or 'jamie'.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.accent-pink;
+                    }
+                    if !root.operator-id-valid && root.operator-id != "": Text {
+                        text: "Use 3 to 32 characters: lowercase a-z, digits, dashes.";
                         font-family: Theme.font-display;
                         font-size: Theme.font-size-caption;
                         color: Theme.accent-pink;
@@ -503,7 +526,7 @@ export component MainWindow inherits Window {
                 }
                 NeothButton {
                     label: "Continue →";
-                    enabled: root.operator-id != "";
+                    enabled: root.operator-id-valid;
                     clicked => { root.step = WizardStep.provider; }
                 }
             }
@@ -703,64 +726,82 @@ export component MainWindow inherits Window {
                         checked <=> root.enable-telegram;
                     }
 
-                    // ── Set up later from Settings ───────────────────
-                    Text {
-                        text: "SET UP FROM SETTINGS → CHANNELS";
-                        font-family: Theme.font-display;
-                        font-size: Theme.font-size-caption;
-                        font-weight: Theme.weight-bold;
-                        letter-spacing: 1.5px;
-                        color: Theme.text-dim;
-                    }
-                    CheckBox {
-                        text: "WhatsApp — Meta Business Cloud webhook (needs public HTTPS)";
-                        checked: false;
-                        enabled: false;
-                    }
-                    CheckBox {
-                        text: "Slack — Socket Mode WebSocket (no public HTTPS needed)";
-                        checked: false;
-                        enabled: false;
-                    }
-                    CheckBox {
-                        text: "Discord — Gateway WebSocket (direct messages today, guilds soon)";
-                        checked: false;
-                        enabled: false;
-                    }
-                    CheckBox {
-                        text: "Keet — Hyperswarm / Pears mesh (preview)";
-                        checked: false;
-                        enabled: false;
+                    // Reviewer-3 P1-B disclosure (2026-05-20): the 8
+                    // disabled rows below DEFAULT hidden so DAUs see
+                    // a 2-row screen instead of "list of grey graves".
+                    // Pro operators click once to expand the roadmap.
+                    NeothButton {
+                        label: root.show-future-channels
+                            ? "Hide future channels ▴"
+                            : "Show future channels ▾";
+                        primary: false;
+                        clicked => {
+                            root.show-future-channels = !root.show-future-channels;
+                        }
                     }
 
-                    // ── On the roadmap ───────────────────────────────
-                    Text {
-                        text: "ON THE ROADMAP";
-                        font-family: Theme.font-display;
-                        font-size: Theme.font-size-caption;
-                        font-weight: Theme.weight-bold;
-                        letter-spacing: 1.5px;
-                        color: Theme.text-dim;
-                    }
-                    CheckBox {
-                        text: "Signal — needs Signal Desktop running on this machine";
-                        checked: false;
-                        enabled: false;
-                    }
-                    CheckBox {
-                        text: "Matrix — bring your own homeserver + access token";
-                        checked: false;
-                        enabled: false;
-                    }
-                    CheckBox {
-                        text: "LINE — LINE Messaging API (bot account required)";
-                        checked: false;
-                        enabled: false;
-                    }
-                    CheckBox {
-                        text: "iMessage — macOS only, Apple automation restrictions apply";
-                        checked: false;
-                        enabled: false;
+                    if root.show-future-channels: VerticalLayout {
+                        spacing: Theme.space-base;
+
+                        // ── Set up later from Settings ───────────────
+                        Text {
+                            text: "SET UP FROM SETTINGS → CHANNELS";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 1.5px;
+                            color: Theme.text-dim;
+                        }
+                        CheckBox {
+                            text: "WhatsApp — Meta Business Cloud webhook (needs public HTTPS)";
+                            checked: false;
+                            enabled: false;
+                        }
+                        CheckBox {
+                            text: "Slack — Socket Mode WebSocket (no public HTTPS needed)";
+                            checked: false;
+                            enabled: false;
+                        }
+                        CheckBox {
+                            text: "Discord — Gateway WebSocket (direct messages today, guilds soon)";
+                            checked: false;
+                            enabled: false;
+                        }
+                        CheckBox {
+                            text: "Keet — Hyperswarm / Pears mesh (preview)";
+                            checked: false;
+                            enabled: false;
+                        }
+
+                        // ── On the roadmap ──────────────────────────
+                        Text {
+                            text: "ON THE ROADMAP";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 1.5px;
+                            color: Theme.text-dim;
+                        }
+                        CheckBox {
+                            text: "Signal — needs Signal Desktop running on this machine";
+                            checked: false;
+                            enabled: false;
+                        }
+                        CheckBox {
+                            text: "Matrix — bring your own homeserver + access token";
+                            checked: false;
+                            enabled: false;
+                        }
+                        CheckBox {
+                            text: "LINE — LINE Messaging API (bot account required)";
+                            checked: false;
+                            enabled: false;
+                        }
+                        CheckBox {
+                            text: "iMessage — macOS only, Apple automation restrictions apply";
+                            checked: false;
+                            enabled: false;
+                        }
                     }
                 }
             }

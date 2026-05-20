@@ -49,12 +49,22 @@ pub struct McpServerConfig {
     /// CDX-03 security hardening: per-server tool allowlist. When set,
     /// ONLY the listed tool names can be invoked via `call_tool` —
     /// every other tool from `tools/list` is rejected before reaching
-    /// the LLM. `None` = trust the server's full catalogue (legacy
-    /// behaviour, default for backward-compat). Operators harden by
-    /// pinning specific tool names: `allow_tools: ["read_file",
-    /// "list_directory"]`.
+    /// the LLM. `None` is paired with `trust_all_tools` below to
+    /// decide whether the legacy "trust catalogue" path opens.
+    /// Operators harden by pinning specific tool names: `allow_tools:
+    /// ["read_file", "list_directory"]`.
     #[serde(default)]
     pub allow_tools: Option<Vec<String>>,
+    /// Reviewer-1 P1-A (2026-05-20): secure-by-default toggle. When
+    /// `false` (the new default) AND `allow_tools` is `None`, the gate
+    /// denies every tool call — a compromised MCP subprocess can no
+    /// longer return arbitrary new tools that bypass the allowlist
+    /// layer. Operators who want the legacy "trust the server's full
+    /// catalogue" behaviour set this to `true` explicitly OR pin an
+    /// `allow_tools` list. `neoth doctor` warns on legacy `None &&
+    /// !trust_all_tools` configs.
+    #[serde(default)]
+    pub trust_all_tools: bool,
 }
 
 fn default_enabled() -> bool {
@@ -256,6 +266,7 @@ servers:
                     env: HashMap::new(),
                     enabled: true,
                     allow_tools: None,
+                    trust_all_tools: false,
                 },
                 McpServerConfig {
                     id: "b".into(),
@@ -265,6 +276,7 @@ servers:
                     env: HashMap::new(),
                     enabled: false,
                     allow_tools: None,
+                    trust_all_tools: false,
                 },
             ],
         };
@@ -287,6 +299,7 @@ servers:
             },
             enabled: true,
             allow_tools: None,
+            trust_all_tools: false,
         };
         let resolved = cfg.resolve_env().unwrap();
         assert_eq!(resolved.get("LOG_LEVEL").map(String::as_str), Some("info"));
@@ -309,6 +322,7 @@ servers:
             },
             enabled: true,
             allow_tools: None,
+            trust_all_tools: false,
         };
         let err = cfg.resolve_env().unwrap_err();
         assert!(
@@ -329,6 +343,7 @@ servers:
                 env: HashMap::new(),
                 enabled: true,
                 allow_tools: None,
+                trust_all_tools: false,
             }],
         }
     }
@@ -382,6 +397,7 @@ servers:
                 env: HashMap::new(),
                 enabled: false,
                 allow_tools: None,
+                trust_all_tools: false,
             }],
         };
         assert_eq!(s.autoroute_decision(None), AutorouteDecision::AutoOff);

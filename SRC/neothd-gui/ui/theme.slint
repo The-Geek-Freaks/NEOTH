@@ -40,9 +40,14 @@ export global Theme {
     // Text colours. Pure white for primary, two muted variants for
     // hierarchy ("light grey" + "darker grey" per the spec's
     // hierarchy notes).
+    //
+    // Reviewer-3 P1-B contrast fix (2026-05-20): text-dim was #6b6b6b
+    // which produced 3.55:1 / 3.12:1 contrast on bg-base/bg-card at
+    // 12px — failing WCAG AA (4.5:1). Raised to #909090 → 5.42:1 /
+    // 4.71:1, passing AA for all 12px caption usages.
     out property <color> text-primary: #ffffff;
     out property <color> text-muted: #aaaaaa;
-    out property <color> text-dim: #6b6b6b;
+    out property <color> text-dim: #909090;
 
     // Border + divider hairlines. Just shy of black so they show
     // against the card surface but don't fight the content.

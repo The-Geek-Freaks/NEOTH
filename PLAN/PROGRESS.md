@@ -1797,7 +1797,27 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 
 **Pick #8 step 3 — Activity feed live binding** (Session 18 follow-up, 2026-05-20) — `neothd/src/coding/feed.rs` + `neothd/src/cli/kanban.rs` + `neothd-gui/src/main.rs`. `FeedEntry` got `Serialize` derive. `run_watch` takes `output: OutputFormat`; JSON path emits `Vec<FeedEntry>` as flat array via the existing `scan_wal_dir_for_kanban_feed` scanner. GUI-side `fetch_kanban_feed(bin) -> Vec<KanbanFeedRow>` subprocesses `neoth kanban watch --output json --limit 50`, parses via `FeedEntryJson` (gui-local struct), reverses for newest-first rendering. `format_hms_from_ns(ts_ns)` formats HH:MM (no seconds — feed rail is narrow). `KanbanBoardSnapshot.feed` field threaded through `apply_kanban_snapshot()`. Empty feed on subprocess error → empty rail, board still works (graceful degrade). New `watch_json_output_serialises_feed_entries` test pins wire format. kanban tests 15/15.
 
-**Session 18 verbleibend für full closure** (next sprints):
+**Reviewer audit batch (5 codex reports synthesised 2026-05-20):**
+- 3 verifier agents (security-auditor + code-reviewer + a11y-architect) deployed parallel.
+- Reports written to `PLAN/REVIEWER_SECURITY_VERIFY_2026-05-20.md`, `PLAN/REVIEWER_VERIFY_AUDIT_2026-05-20.md`, `PLAN/REVIEWER_GUI_AUDIT_2026-05-20.md`.
+- **REFUTED**: webhook backpressure (body-cap `MAX_BODY_BYTES = 1 MiB` + localhost-only bind already in place since 2026-05-16 audit), segment sort (writer enforces `{:06}.wal`).
+- **CONFIRMED + queued for fix**:
+  - **P0-A WASM memory cap**: `DEFAULT_MEMORY_LIMIT_BYTES = 64 MiB` defined in `wasm_plugin/engine.rs:51` but never wired to wasmtime's `Store::limiter()`. A plugin calling `memory.grow` in a loop can drain host RAM. Fix: implement `ResourceLimiter` + `store.limiter(...)` in `new_store()`.
+  - **P0-B verify.rs path-match**: `Path::display().to_string()` comparison in `verify.rs:172-173` breaks when `--wal-dir ./relative` vs absolute. Fix: store `file_name()` only in `REDACTION_MARKER` payload — bare filename matches regardless of how the dir was specified.
+  - **P1-A MCP allowlist**: `allow_tools: None` skips the entire gate (`gate.rs:183`); compromised MCP subprocess can return arbitrary tools. Fix: add `trust_all_tools: bool` (default `false`), deny when `None && !trust_all_tools`, doctor warning for legacy `None` state.
+  - **P1-B GUI**: `text-dim #6b6b6b` fails WCAG AA (3.55:1 / 3.12:1 at 12px) → raise to `#909090`. Channels screen 9 of 10 rows disabled → collapse "Set up later" + "Roadmap" groups behind disclosure. Identity gate checks `!= ""` but copy promises `^[a-z0-9-]{3,32}$` → add Rust-side regex validation via `edited` callback. Chat composer has no persistent label → add "Message" label + shorter placeholder.
+  - **P1-C verify.rs complexity**: `run_verify` is 113 LOC with 6 responsibilities. Extract `verify_segments()` (33 LOC) + `render_results()` (44 LOC), drop `run_verify` to ~25 LOC.
+  - **P2 GUI tokens**: 4 hardcoded letter-spacing values × ~20 sites → 3 tokens (`letter-spacing-tight/normal/wide`). ModeCard has no FocusScope/G/C/Enter shortcuts → add `FocusScope` + `key-pressed` wiring.
+  - **P2 query parser**: webhook `url_decode` handles edges correctly but duplicate keys are undocumented last-write-wins. Swap `form_urlencoded` for maintainability (not security).
+- **Deferred**: motion screen-transitions (= existing G-27 polish), frameless titlebar (spec-relax), Phase-2 safe-mode status surface + error taxonomy + Trust Ledger / Autonomy Gradients / Rollback (differentiation features, post-v0.2).
+
+**Session 18 verbleibend für full closure** (next sprints, ordered by fix priority):
+- **NEXT**: P0-A WASM memory limiter (~30-50 LOC + tests)
+- P0-B verify.rs filename marker (single-line fix, big correctness impact)
+- P1-A MCP allow_tools deny-by-default + doctor warning
+- P1-B GUI batch: contrast token + channels collapse + identity regex + composer label
+- P1-C run_verify refactor (extract helpers)
+- P2: letter-spacing tokens + ModeCard keyboard nav + query parser duplicate-key warning
 - Pick #8 step 4 — Live tail: WAL frame → Slint property push (mirror chat-tab pattern)
 - Pick #8 step 5 — Click-to-detail pane (mirror `neoth kanban task <id>`)
 - Pick #8 step 6 — Operator actions GUI (move/assign/comment/archive/review --promote buttons against `coding::store::*` directly)

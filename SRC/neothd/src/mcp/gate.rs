@@ -50,6 +50,19 @@ pub enum GateError {
     #[error("MCP `{server}::{tool}` blocked by allowlist (tool not listed)")]
     NotInAllowlist { server: String, tool: String },
 
+    /// Reviewer-1 P1-A (2026-05-20): server config has neither an
+    /// `allow_tools` list nor `trust_all_tools: true`. Secure-by-
+    /// default denies every tool call until the operator opts in. The
+    /// previous behaviour passed `None` through as "trust the server",
+    /// which let a compromised MCP subprocess expose arbitrary new
+    /// tools to the LLM without operator review.
+    #[error(
+        "MCP `{server}::{tool}` denied: server has no `allow_tools` list and \
+         `trust_all_tools: true` is not set. Pin tools or set `trust_all_tools: true` \
+         in mcp_servers.yaml to restore the legacy behaviour."
+    )]
+    MissingAllowlistSecureDefault { server: String, tool: String },
+
     /// Autonomy gate returned [`Decision::Deny`].
     #[error("MCP `{server}::{tool}` denied by autonomy policy: {reason}")]
     PermissionDenied {
@@ -180,7 +193,12 @@ pub async fn invoke_with_audit(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     now_unix: i64,
 ) -> Result<ToolCallResult, GateError> {
-    // Layer 1 — allowlist. None = trust catalogue (legacy). Some = pin.
+    // Layer 1 — allowlist. Reviewer-1 P1-A secure-by-default (2026-05-20):
+    //   Some(list) → tool must appear in list.
+    //   None + trust_all_tools=true → trust the server's full catalogue.
+    //   None + trust_all_tools=false → DENY (was the silent-pass-through
+    //                                  path that let compromised servers
+    //                                  expose arbitrary new tools).
     if let Some(list) = cfg.allow_tools.as_ref() {
         if !list.iter().any(|t| t == tool) {
             if let Some(w) = writer {
@@ -199,6 +217,22 @@ pub async fn invoke_with_audit(
                 tool: tool.to_string(),
             });
         }
+    } else if !cfg.trust_all_tools {
+        if let Some(w) = writer {
+            emit_reject(
+                w,
+                &cfg.id,
+                tool,
+                "no allow_tools list AND trust_all_tools=false (secure-by-default)",
+                now_unix,
+            )
+            .await
+            .map_err(GateError::Wal)?;
+        }
+        return Err(GateError::MissingAllowlistSecureDefault {
+            server: cfg.id.clone(),
+            tool: tool.to_string(),
+        });
     }
 
     // Layer 2 — autonomy gate.
@@ -382,6 +416,7 @@ mod tests {
             env: HashMap::new(),
             enabled: true,
             allow_tools: allow.map(|v| v.into_iter().map(String::from).collect()),
+            trust_all_tools: false,
         }
     }
 
@@ -505,6 +540,40 @@ mod tests {
         // config carries the allowlist.
         assert_eq!(cfg.allow_tools.as_ref().unwrap().len(), 1);
         assert_eq!(cfg.allow_tools.as_ref().unwrap()[0], "read_file");
+    }
+
+    #[test]
+    fn secure_default_blocks_none_without_trust() {
+        // Reviewer-1 P1-A regression guard (2026-05-20): a server with
+        // `allow_tools: None` AND `trust_all_tools: false` MUST be
+        // refused by the gate. Previously the `None` branch was a
+        // silent pass-through that let a compromised MCP subprocess
+        // expose arbitrary new tools.
+        let mut cfg = base_cfg(None);
+        assert!(!cfg.trust_all_tools, "default must be secure (false)");
+        // The gate predicate the invoke path uses:
+        let blocked = cfg.allow_tools.is_none() && !cfg.trust_all_tools;
+        assert!(blocked, "None + trust=false must be denied");
+        // Flip trust_all_tools — operator opted into the legacy
+        // catalogue-trust mode; the gate now passes through.
+        cfg.trust_all_tools = true;
+        let blocked = cfg.allow_tools.is_none() && !cfg.trust_all_tools;
+        assert!(!blocked, "None + trust=true must pass through");
+    }
+
+    #[test]
+    fn missing_allowlist_secure_default_error_carries_server_and_tool() {
+        // The error message must name both the server and the tool so
+        // the operator can surgical-fix mcp_servers.yaml.
+        let e = GateError::MissingAllowlistSecureDefault {
+            server: "filesystem".into(),
+            tool: "read_file".into(),
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("filesystem"));
+        assert!(msg.contains("read_file"));
+        assert!(msg.contains("allow_tools"));
+        assert!(msg.contains("trust_all_tools"));
     }
 
     #[test]

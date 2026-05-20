@@ -74,7 +74,12 @@ pub struct WriteRequest {
 
 /// Handle returned to producers. Cheap to clone; producers send WriteRequest
 /// through it and await the oneshot reply for durable confirmation.
-#[derive(Clone)]
+///
+/// `Debug` needed by downstream `PluginStoreState` (wasm-plugin-host
+/// feature) that holds an `Option<WalWriterHandle>` and derives Debug
+/// for tracing. The default `mpsc::Sender`/`Arc<QuotaGuard>` Debug
+/// surfaces are non-secret-bearing.
+#[derive(Clone, Debug)]
 pub struct WalWriterHandle {
     tx: mpsc::Sender<WriteRequest>,
     /// Phase 33c BS-4 pre-write quota guard. `None` keeps the writer free
@@ -91,6 +96,7 @@ pub struct WalWriterHandle {
 /// Once breached, the guard stays breached until `reset()` is called —
 /// operator who frees disk space must restart the daemon or call the
 /// reset path from `neoth doctor`.
+#[derive(Debug)]
 pub struct QuotaGuard {
     home: PathBuf,
     ceiling: u64,

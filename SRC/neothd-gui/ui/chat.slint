@@ -173,7 +173,10 @@ component Composer inherits Rectangle {
     in property <bool> slash-active: false;
     callback send-clicked(string);
 
-    height: 72px;
+    // Reviewer-3 P1-B (2026-05-20): persistent label + helper line so
+    // the operator always sees what the input is for, even after the
+    // placeholder vanishes on first keystroke.
+    height: 116px;
     background: Theme.bg-base;
 
     Rectangle {
@@ -184,12 +187,26 @@ component Composer inherits Rectangle {
         background: Theme.border-subtle;
     }
 
-    HorizontalLayout {
+    VerticalLayout {
         padding-left: Theme.space-screen;
         padding-right: Theme.space-screen;
-        padding-top: Theme.space-base;
-        padding-bottom: Theme.space-base;
-        spacing: Theme.space-base;
+        padding-top: Theme.space-tight;
+        padding-bottom: Theme.space-tight;
+        spacing: 4px;
+
+        // Persistent label above the input — accessible name for
+        // assistive tech, visual anchor for noobs.
+        Text {
+            text: "Message";
+            font-family: Theme.font-display;
+            font-size: Theme.font-size-caption;
+            font-weight: Theme.weight-medium;
+            letter-spacing: 1px;
+            color: Theme.accent-green;
+        }
+
+        HorizontalLayout {
+            spacing: Theme.space-base;
 
         // Slash hint — visible only when the draft starts with `/`,
         // gives the operator a discoverable cue that they can run a
@@ -212,13 +229,11 @@ component Composer inherits Rectangle {
             }
         }
 
-        // G-9 fix: clearer placeholder so a noob sees the affordance
-        // without staring at a dim "Send →" button and assuming the
-        // chat is broken. Enter + click both send.
+        // Reviewer-3 P1-B: shorter placeholder — the persistent label
+        // above already explains the field; this is now just hint copy.
         input := LineEdit {
-            placeholder-text: "Type a message — press Enter or click Send →. Hit `/` for commands.";
+            placeholder-text: "Type message or /command…";
             text <=> root.draft;
-            // Enter sends — the Rust side calls root.send-clicked().
             accepted(t) => {
                 if (t != "") {
                     root.send-clicked(t);
@@ -236,6 +251,15 @@ component Composer inherits Rectangle {
                     root.draft = "";
                 }
             }
+        }
+        }
+
+        // Constant helper line below — visible at all times.
+        Text {
+            text: "Enter sends · Shift+Enter for newline (coming soon)";
+            font-family: Theme.font-display;
+            font-size: Theme.font-size-caption;
+            color: Theme.text-dim;
         }
     }
 }

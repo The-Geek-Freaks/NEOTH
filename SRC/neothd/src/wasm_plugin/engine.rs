@@ -33,7 +33,7 @@
 //! gate at every site.
 
 use anyhow::{Context, Result};
-use wasmtime::{Config, Engine, Module, Store};
+use wasmtime::{Config, Engine, Module, ResourceLimiter, Store};
 
 use crate::wal::writer::WalWriterHandle;
 
@@ -88,6 +88,54 @@ pub struct PluginStoreState {
     /// `Arc<Mutex>` lets multiple plugin stores share one connection
     /// without re-opening the file per plugin.
     pub recall_db: Option<RecallDbHandle>,
+    /// Reviewer-1 P0-A (2026-05-20): per-instance memory ceiling in
+    /// bytes. The `ResourceLimiter` impl below checks every
+    /// `memory.grow` call against this cap. Before this field landed
+    /// `DEFAULT_MEMORY_LIMIT_BYTES` was defined as a constant but
+    /// never wired to wasmtime — a plugin could grow until the host
+    /// OOM-killed the daemon.
+    pub memory_limit_bytes: usize,
+}
+
+/// Reviewer-1 P0-A enforcement (2026-05-20): wasmtime calls this
+/// callback on every `memory.grow` (and `table.grow`). Returning
+/// `Ok(false)` traps the plugin with "memory growth failed" — the
+/// daemon stays alive, the misbehaving plugin dies.
+impl ResourceLimiter for PluginStoreState {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> Result<bool> {
+        // Honour wasmtime's own cap when the module declared one
+        // smaller than ours — defense in depth.
+        let cap = match maximum {
+            Some(m) => m.min(self.memory_limit_bytes),
+            None => self.memory_limit_bytes,
+        };
+        if desired > cap {
+            tracing::warn!(
+                plugin_id = %self.plugin_id,
+                desired_bytes = desired,
+                cap_bytes = cap,
+                "wasm memory grow denied — plugin exceeded per-instance cap",
+            );
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        _desired: usize,
+        _maximum: Option<usize>,
+    ) -> Result<bool> {
+        // Tables are small (function references); we let wasmtime's own
+        // limit handle them. Override here if a CVE pattern emerges.
+        Ok(true)
+    }
 }
 
 impl PluginStoreState {
@@ -97,11 +145,22 @@ impl PluginStoreState {
             fuel_budget: DEFAULT_FUEL_BUDGET,
             wal_writer: None,
             recall_db: None,
+            memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
         }
     }
 
     pub fn with_fuel(mut self, fuel: u64) -> Self {
         self.fuel_budget = fuel;
+        self
+    }
+
+    /// Reviewer-1 P0-A (2026-05-20): override the default 64 MiB cap.
+    /// `freedom.yaml::plugins.<id>.memory_limit_bytes` flows through
+    /// here. Cap of 0 is rejected by the caller (manifest parser);
+    /// this builder trusts its input.
+    #[must_use]
+    pub fn with_memory_limit(mut self, bytes: usize) -> Self {
+        self.memory_limit_bytes = bytes;
         self
     }
 
@@ -183,6 +242,10 @@ impl NeothEngine {
         store
             .set_fuel(budget)
             .context("seed fuel budget on plugin store")?;
+        // Reviewer-1 P0-A (2026-05-20): wire the ResourceLimiter so
+        // `PluginStoreState::memory_growing` is consulted on every
+        // `memory.grow`. Without this call the cap is dead config.
+        store.limiter(|state| state as &mut dyn ResourceLimiter);
         Ok(store)
     }
 
@@ -224,6 +287,49 @@ mod tests {
     #[test]
     fn default_memory_limit_is_64_mib() {
         assert_eq!(DEFAULT_MEMORY_LIMIT_BYTES, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn new_state_carries_default_memory_limit() {
+        // Reviewer-1 P0-A regression guard: a freshly constructed
+        // PluginStoreState MUST carry the default cap so plugins
+        // built without `with_memory_limit` still hit the limiter.
+        let s = PluginStoreState::new("default-mem");
+        assert_eq!(s.memory_limit_bytes, DEFAULT_MEMORY_LIMIT_BYTES);
+    }
+
+    #[test]
+    fn with_memory_limit_overrides_default() {
+        let s = PluginStoreState::new("small-mem").with_memory_limit(8 * 1024 * 1024);
+        assert_eq!(s.memory_limit_bytes, 8 * 1024 * 1024);
+    }
+
+    #[test]
+    fn resource_limiter_blocks_growth_beyond_cap() {
+        // Reviewer-1 P0-A enforcement test: the ResourceLimiter must
+        // return Ok(false) when desired > cap. The host's response to
+        // that is a `memory.grow` trap, which is the OS-RAM-safety
+        // contract — without this assertion the cap is purely cosmetic.
+        let mut s = PluginStoreState::new("cap-test").with_memory_limit(1024 * 1024);
+        // 2 MiB desired against 1 MiB cap → denied.
+        let denied = s.memory_growing(0, 2 * 1024 * 1024, None).unwrap();
+        assert!(!denied, "growth beyond cap must be denied");
+        // 512 KiB desired against 1 MiB cap → allowed.
+        let allowed = s.memory_growing(0, 512 * 1024, None).unwrap();
+        assert!(allowed, "growth within cap must be allowed");
+    }
+
+    #[test]
+    fn resource_limiter_honours_module_declared_max() {
+        // Defense in depth: when the wasm module declares its own
+        // memory maximum, the limiter takes the min of (host cap,
+        // module max). A 100 MiB module against a 64 MiB host cap
+        // still cannot exceed 64 MiB.
+        let mut s = PluginStoreState::new("dual-cap").with_memory_limit(64 * 1024 * 1024);
+        // module max 8 MiB, desired 16 MiB → denied (module's own cap).
+        let denied =
+            s.memory_growing(0, 16 * 1024 * 1024, Some(8 * 1024 * 1024)).unwrap();
+        assert!(!denied);
     }
 
     #[test]

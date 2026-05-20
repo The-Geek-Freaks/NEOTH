@@ -242,8 +242,20 @@ pub async fn emit_redaction_marker(
     now_unix: i64,
 ) -> anyhow::Result<u64> {
     use anyhow::Context as _;
+    // Reviewer-2 P0-B fix (2026-05-20): store only the segment's
+    // file_name(), not its full display() path. The verifier and the
+    // writer can reach the same segment via different path forms
+    // (`--wal-dir ./relative` vs absolute, symlinked dirs, OS-specific
+    // separator normalisation). Comparing full paths leads to false
+    // FAILs on authorised redactions that the verifier cannot recognise.
+    // file_name() is stable across all those forms because the
+    // filename is the identity inside a WAL directory.
+    let segment_name = segment_path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| segment_path.display().to_string());
     let payload = serde_json::to_vec(&serde_json::json!({
-        "segment": segment_path.display().to_string(),
+        "segment": segment_name,
         "redacted_offsets": redacted_offsets,
         "bytes_redacted": bytes_redacted,
         "topic": topic,

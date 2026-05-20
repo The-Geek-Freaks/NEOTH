@@ -178,6 +178,17 @@ async fn run_call(
                  Edit ~/.neoth/mcp_servers.yaml to allow it, or pick a listed tool."
                 );
             }
+            Err(GateError::MissingAllowlistSecureDefault { .. }) => {
+                // Reviewer-1 P1-A secure-by-default (2026-05-20): server
+                // has neither an allow_tools list nor `trust_all_tools:
+                // true`. Operator must opt in explicitly — silent
+                // catalogue-trust is the very behaviour we removed.
+                anyhow::bail!(
+                    "MCP `{server_id}::{tool}` denied: secure-by-default requires either \
+                     an `allow_tools` pin or `trust_all_tools: true` for this server. \
+                     Edit ~/.neoth/mcp_servers.yaml."
+                );
+            }
             Err(GateError::PermissionDenied { reason, .. }) => {
                 anyhow::bail!(
                     "MCP `{server_id}::{tool}` denied by autonomy policy ({}): {reason}",
@@ -236,6 +247,7 @@ mod tests {
                 env: HashMap::new(),
                 enabled: true,
                 allow_tools: None,
+                trust_all_tools: false,
             }],
         };
         run_list(&s, &OutputFormat::Json).unwrap();
@@ -262,6 +274,7 @@ mod tests {
                 env: HashMap::new(),
                 enabled: true,
                 allow_tools: None,
+                trust_all_tools: false,
             }],
         };
         let err = run_call(&s, "test", "echo", "this is not json", &OutputFormat::Json)

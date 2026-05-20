@@ -312,6 +312,7 @@ mod tests {
             env: std::collections::HashMap::new(),
             enabled: true,
             allow_tools: None,
+            trust_all_tools: false,
         };
         let result = McpClient::spawn_with_timeout(&cfg, Duration::from_millis(200)).await;
         let err = match result {

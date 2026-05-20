@@ -232,9 +232,23 @@ fn window_overlaps_authorised(
     to_offset: u64,
     authorised: &[AuthorisedRange],
 ) -> bool {
-    let seg_display = seg.display().to_string();
+    // Reviewer-2 P0-B fix (2026-05-20): compare segments by file_name()
+    // not full display(). Both writer and reader can reach a segment
+    // via different path forms (relative vs absolute, symlinks, OS
+    // separator drift) — using filename as identity makes the match
+    // path-invariant. Backward-compatibility: legacy markers may carry
+    // a full path string; normalise both sides through file_name() so
+    // old + new payloads converge on the same identity.
+    let seg_name = match seg.file_name().map(|n| n.to_string_lossy().into_owned()) {
+        Some(n) => n,
+        None => return false,
+    };
     for r in authorised {
-        if r.segment != seg_display {
+        let range_name = Path::new(&r.segment)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| r.segment.clone());
+        if range_name != seg_name {
             continue;
         }
         if r.offsets
@@ -393,6 +407,37 @@ mod tests {
         };
         let p = std::path::Path::new("/wal/seg.wal");
         assert!(!window_overlaps_authorised(p, 100, 300, &[r]));
+    }
+
+    #[test]
+    fn window_overlaps_authorised_relative_vs_absolute_path_match() {
+        // Reviewer-2 P0-B regression guard (2026-05-20): the marker
+        // payload contains a bare filename ("000001.wal"); the verifier
+        // walks segments via `--wal-dir` that may resolve to a relative
+        // OR absolute path. Both must match the same authorised entry,
+        // otherwise authorised redactions surface as bogus FAILs.
+        let absolute = AuthorisedRange {
+            segment: "/var/lib/neoth/wal/000001.wal".into(),
+            offsets: vec![200],
+        };
+        // Verifier passes a relative-style path.
+        let relative = std::path::Path::new("./wal/000001.wal");
+        assert!(
+            window_overlaps_authorised(relative, 100, 300, &[absolute]),
+            "absolute-in-marker + relative-in-verifier MUST match via filename"
+        );
+
+        // Also: marker carrying only the bare filename (new format)
+        // matches any path that ends with that filename.
+        let bare = AuthorisedRange {
+            segment: "000001.wal".into(),
+            offsets: vec![200],
+        };
+        let any_full = std::path::Path::new("/some/other/dir/000001.wal");
+        assert!(
+            window_overlaps_authorised(any_full, 100, 300, &[bare]),
+            "bare-filename-in-marker MUST match any path ending with that filename"
+        );
     }
 
     #[test]

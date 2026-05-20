@@ -258,6 +258,26 @@ fn main() -> Result<()> {
         }
     });
 
+    // Reviewer-3 P1-B (2026-05-20): Identity validation. The copy
+    // promises `^[a-z0-9-]{3,32}$`; the gate used to accept any
+    // non-empty string. Now we round-trip through Rust on every
+    // keystroke + push the verdict back as `operator-id-valid`.
+    // No regex crate dep — the pattern is tiny + character-class only.
+    fn validate_operator_id(s: &str) -> bool {
+        let len = s.chars().count();
+        if !(3..=32).contains(&len) {
+            return false;
+        }
+        s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    }
+    let weak_id = window.as_weak();
+    window.on_operator_id_edited(move |text| {
+        if let Some(w) = weak_id.upgrade() {
+            w.set_operator_id_valid(validate_operator_id(&text));
+        }
+    });
+
     // Pick #8 step 2 — Code Sessions tab data binding.
     //   - At startup: fetch once so the tab shows real data the first
     //     time the operator opens it.
