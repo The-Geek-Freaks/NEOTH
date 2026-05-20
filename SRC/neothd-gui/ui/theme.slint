@@ -95,8 +95,17 @@ export global Theme {
     // and +2% on body. Slint expresses this in absolute px at the
     // current font size; we keep these as the most common shipped
     // values rather than computing per-glyph.
+    //
+    // Reviewer-3 P2 (2026-05-20): `letter-spacing-tight` + `wide`
+    // tokenise the hardcoded `1px` / `1.5px` / `2px` literals that
+    // were spreading across components.slint, main.slint and chat
+    // .slint. New per-screen styling MUST use a token; the old
+    // hardcoded values are migrated screen-by-screen.
     out property <length> letter-spacing-hero: 14px;     // ≈ +20% on 72px
     out property <length> letter-spacing-body: 0.3px;    // ≈ +2% on 15px
+    out property <length> letter-spacing-tight: 1px;     // section headers, button labels
+    out property <length> letter-spacing-wide: 1.5px;    // group labels, EMPHASIS captions
+    out property <length> letter-spacing-extra-wide: 2px; // SETTINGS sidebar header
 
     // ── Animation ────────────────────────────────────────────────────
     // The "Sovereign Curve" — fast start, long majestic settle.

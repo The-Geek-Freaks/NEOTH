@@ -1811,13 +1811,19 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
   - **P2 query parser**: webhook `url_decode` handles edges correctly but duplicate keys are undocumented last-write-wins. Swap `form_urlencoded` for maintainability (not security).
 - **Deferred**: motion screen-transitions (= existing G-27 polish), frameless titlebar (spec-relax), Phase-2 safe-mode status surface + error taxonomy + Trust Ledger / Autonomy Gradients / Rollback (differentiation features, post-v0.2).
 
-**Session 18 verbleibend für full closure** (next sprints, ordered by fix priority):
-- **NEXT**: P0-A WASM memory limiter (~30-50 LOC + tests)
-- P0-B verify.rs filename marker (single-line fix, big correctness impact)
-- P1-A MCP allow_tools deny-by-default + doctor warning
-- P1-B GUI batch: contrast token + channels collapse + identity regex + composer label
-- P1-C run_verify refactor (extract helpers)
-- P2: letter-spacing tokens + ModeCard keyboard nav + query parser duplicate-key warning
+**Reviewer-batch P0+P1 shipped 2026-05-20** (commit `0fe8e06`, pushed):
+- ✅ P0-A WASM memory limiter — `ResourceLimiter` on `PluginStoreState` + `store.limiter()` wired, +4 tests, was dead enforcement before
+- ✅ P0-B verify.rs filename marker — `emit_redaction_marker` + `window_overlaps_authorised` both use `file_name()`, +1 test for relative-vs-absolute path scenario, backward-compat with legacy full-path markers
+- ✅ P1-A MCP allowlist secure-by-default — `trust_all_tools: bool` field, gate denies `None && !trust_all_tools` with `MissingAllowlistSecureDefault` + WAL emit_reject, +2 tests, 8 struct literal sites updated
+- ✅ P1-B GUI batch — text-dim #6b6b6b→#909090 (WCAG AA), channels disclosure ("Show future channels"), identity `^[a-z0-9-]{3,32}$` Rust validation via callback, chat composer persistent "MESSAGE" label + helper line
+
+**Reviewer-batch P1-C + P2 shipped 2026-05-20** (this turn):
+- ✅ P1-C `run_verify` refactor — 113 LOC monolith → 28 LOC orchestrator + 3 pure helpers (`collect_authorised_ranges` 7 LOC, `verify_segments` 35 LOC, `render_verify_outcome` 45 LOC) + `VerifyOutcome` struct. cli::verify 9/9 grün.
+- ✅ P2 letter-spacing tokens — `letter-spacing-tight: 1px`, `letter-spacing-wide: 1.5px`, `letter-spacing-extra-wide: 2px` in `theme.slint`. Old hardcoded values stay; new screen styling MUST use the tokens.
+- ✅ P2 ModeCard keyboard nav — `FocusScope { key-pressed }` wraps mode-selection step; `G` selects GUI card, `C` selects CLI, `Enter` advances; shortcut microcopy under the cards.
+- ✅ P2 webhook duplicate-key semantics — last-write-wins documented (matches URL Standard / URLSearchParams), `tracing::warn` fires on duplicates, regression test pins that prepended stale tokens can't revive via duplication. channels::webhook_verify 20/20 grün.
+
+**Session 18 verbleibend für full closure** (next sprints):
 - Pick #8 step 4 — Live tail: WAL frame → Slint property push (mirror chat-tab pattern)
 - Pick #8 step 5 — Click-to-detail pane (mirror `neoth kanban task <id>`)
 - Pick #8 step 6 — Operator actions GUI (move/assign/comment/archive/review --promote buttons against `coding::store::*` directly)

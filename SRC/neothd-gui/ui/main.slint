@@ -244,7 +244,34 @@ export component MainWindow inherits Window {
         // Operator's first decision — GUI flow or CLI flow. Two big
         // SVG-glyph cards side by side. GUI marked "recommended" for
         // noobs; CLI surface available without leaving the keyboard.
-        if root.step == WizardStep.mode-selection: VerticalLayout {
+        //
+        // Reviewer-3 P2 (2026-05-20): keyboard-first navigation. The
+        // FocusScope catches G/C/Enter so pro operators never touch
+        // the mouse. Microcopy below the cards exposes the shortcuts.
+        if root.step == WizardStep.mode-selection: FocusScope {
+            key-pressed(e) => {
+                if (e.text == "g" || e.text == "G") {
+                    root.mode-gui-chosen = true;
+                    root.mode-cli-chosen = false;
+                    return accept;
+                }
+                if (e.text == "c" || e.text == "C") {
+                    root.mode-cli-chosen = true;
+                    root.mode-gui-chosen = false;
+                    return accept;
+                }
+                if (e.text == "\n") {
+                    if (root.mode-cli-chosen) {
+                        root.cli-mode-chosen();
+                    } else if (root.mode-gui-chosen) {
+                        root.step = WizardStep.welcome;
+                    }
+                    return accept;
+                }
+                return reject;
+            }
+
+            VerticalLayout {
             spacing: Theme.space-screen;
             alignment: center;
             VerticalLayout {
@@ -307,6 +334,16 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
+
+            // Reviewer-3 P2 keyboard-shortcut microcopy (2026-05-20)
+            Text {
+                text: "Shortcuts: G — graphical · C — command-line · Enter — continue";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-dim;
+                horizontal-alignment: center;
+            }
             }
         }
 

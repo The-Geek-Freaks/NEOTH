@@ -31,15 +31,26 @@ pub struct VerifyArgs {
     pub output: OutputFormat,
 }
 
+/// Reviewer-1 + Reviewer-2 P1-C refactor (2026-05-20): aggregate result
+/// of verifying one or more WAL segments. The previous 113-line
+/// `run_verify` did key handling + segment selection + marker extract
+/// + authorisation extract + verification + reclassification + render
+/// in one block; now each phase has its own helper and this struct
+/// carries the result between them.
+struct VerifyOutcome {
+    total_markers: usize,
+    total_verified: usize,
+    failures: Vec<String>,
+    reclassified: usize,
+    authorised_count: usize,
+}
+
 pub async fn run_verify(args: VerifyArgs) -> Result<()> {
     let wal_dir = args
         .wal_dir
         .clone()
         .unwrap_or_else(FreedomConfig::default_wal_dir);
-    let key_path = args
-        .key
-        .clone()
-        .unwrap_or_else(compaction::default_key_path);
+    let key_path = args.key.clone().unwrap_or_else(compaction::default_key_path);
     let key = compaction::load_or_init_key(&key_path)
         .with_context(|| format!("load HMAC key from {}", key_path.display()))?;
 
@@ -49,41 +60,65 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
         list_segments(&wal_dir)?
     };
 
-    let mut total_markers = 0usize;
-    let mut total_verified = 0usize;
-    let mut failures = Vec::new();
-    // C-15 follow-up: collect every authorised-redaction range from
-    // 0xF3 markers across the WAL. A COMPACTION_MARKER failure whose
-    // window overlaps one of these ranges gets reclassified as
-    // "operator-authorised" instead of FAIL.
-    let mut authorised_ranges: Vec<AuthorisedRange> = Vec::new();
-    for seg in &segments {
-        let ranges = extract_redaction_authorisations(seg)?;
-        authorised_ranges.extend(ranges);
-    }
-    let mut reclassified = 0usize;
+    let authorised = collect_authorised_ranges(&segments)?;
+    let outcome = verify_segments(&segments, &key, &authorised)?;
+    render_verify_outcome(&segments, &outcome, args.output);
 
-    for seg in &segments {
+    if !outcome.failures.is_empty() {
+        anyhow::bail!(
+            "{} marker(s) failed verification",
+            outcome.failures.len()
+        );
+    }
+    Ok(())
+}
+
+/// Collect every authorised-redaction range from `REDACTION_MARKER`
+/// (0xF3) frames across the supplied segments. Used by
+/// [`verify_segments`] to reclassify HMAC mismatches that fall inside
+/// an operator-authorised window as PASS-with-note.
+fn collect_authorised_ranges(segments: &[PathBuf]) -> Result<Vec<AuthorisedRange>> {
+    let mut out = Vec::new();
+    for seg in segments {
+        let ranges = extract_redaction_authorisations(seg)?;
+        out.extend(ranges);
+    }
+    Ok(out)
+}
+
+/// Walk every segment, extract `COMPACTION_MARKER` frames, verify each
+/// against the HMAC key, and reclassify mismatches that overlap an
+/// authorised redaction window. Returns aggregated counts + failure
+/// strings for the renderer. Pure — no IO except the segment reads
+/// already performed by `extract_markers`.
+fn verify_segments(
+    segments: &[PathBuf],
+    key: &[u8],
+    authorised: &[AuthorisedRange],
+) -> Result<VerifyOutcome> {
+    let mut outcome = VerifyOutcome {
+        total_markers: 0,
+        total_verified: 0,
+        failures: Vec::new(),
+        reclassified: 0,
+        authorised_count: authorised.len(),
+    };
+    for seg in segments {
         let markers = extract_markers(seg)?;
         for m in &markers {
-            total_markers += 1;
-            match compaction::verify_marker(seg, &key, m) {
-                Ok(()) => total_verified += 1,
+            outcome.total_markers += 1;
+            match compaction::verify_marker(seg, key, m) {
+                Ok(()) => outcome.total_verified += 1,
                 Err(e) => {
-                    if window_overlaps_authorised(
-                        seg,
-                        m.from_offset,
-                        m.to_offset,
-                        &authorised_ranges,
-                    ) {
+                    if window_overlaps_authorised(seg, m.from_offset, m.to_offset, authorised) {
                         // HMAC mismatch is expected — the operator
                         // authorised the byte change via 0xF3. Count
-                        // as verified but flag in the per-segment
-                        // detail so audit consumers see what happened.
-                        total_verified += 1;
-                        reclassified += 1;
+                        // as verified but record the reclassification
+                        // for the operator-facing summary.
+                        outcome.total_verified += 1;
+                        outcome.reclassified += 1;
                     } else {
-                        failures.push(format!(
+                        outcome.failures.push(format!(
                             "{} window {}-{}: {e}",
                             seg.display(),
                             m.from_offset,
@@ -94,44 +129,54 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
             }
         }
     }
+    Ok(outcome)
+}
 
-    match args.output {
+/// Render the verify outcome to stdout in either JSON envelope or the
+/// operator-friendly table form. Side-effect only — no return value.
+fn render_verify_outcome(
+    segments: &[PathBuf],
+    outcome: &VerifyOutcome,
+    output: OutputFormat,
+) {
+    match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
                 "{}",
                 serde_json::json!({
                     "segments": segments.iter().map(|p| p.display().to_string()).collect::<Vec<_>>(),
-                    "markers_total": total_markers,
-                    "markers_ok": total_verified,
-                    "operator_authorised_redactions": reclassified,
-                    "authorised_redaction_count": authorised_ranges.len(),
-                    "failures": failures,
+                    "markers_total": outcome.total_markers,
+                    "markers_ok": outcome.total_verified,
+                    "operator_authorised_redactions": outcome.reclassified,
+                    "authorised_redaction_count": outcome.authorised_count,
+                    "failures": outcome.failures,
                 })
             );
         }
         OutputFormat::Table => {
             println!(
                 "# verified {}/{} marker(s) across {} segment(s)",
-                total_verified,
-                total_markers,
+                outcome.total_verified,
+                outcome.total_markers,
                 segments.len()
             );
-            if reclassified > 0 {
+            if outcome.reclassified > 0 {
                 println!(
-                    "  + {reclassified} HMAC mismatch(es) reclassified as \
-                     operator-authorised via REDACTION_MARKER (0xF3)"
+                    "  + {} HMAC mismatch(es) reclassified as \
+                     operator-authorised via REDACTION_MARKER (0xF3)",
+                    outcome.reclassified
                 );
             }
-            if !authorised_ranges.is_empty() {
+            if outcome.authorised_count > 0 {
                 println!(
                     "  {} authorised redaction range(s) recorded in WAL audit log",
-                    authorised_ranges.len()
+                    outcome.authorised_count
                 );
             }
-            for f in &failures {
+            for f in &outcome.failures {
                 println!("  FAIL  {f}");
             }
-            if total_markers == 0 {
+            if outcome.total_markers == 0 {
                 println!(
                     "(no compaction markers yet — daemon emits them every {} frames or {} MiB)",
                     compaction::MAX_FRAMES_BETWEEN_MARKERS,
@@ -140,11 +185,6 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
             }
         }
     }
-
-    if !failures.is_empty() {
-        anyhow::bail!("{} marker(s) failed verification", failures.len());
-    }
-    Ok(())
 }
 
 /// Enumerate `*.wal` segments under `dir`, sorted by sequence number.

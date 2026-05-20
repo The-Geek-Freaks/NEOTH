@@ -96,17 +96,46 @@ pub fn meta_challenge_response(query: &str, operator_verify_token: &str) -> Meta
     let mut mode = None;
     let mut token = None;
     let mut challenge = None;
+    // Reviewer-2 P2 (2026-05-20): duplicate-key semantics pinned.
+    // Last-write-wins matches URL Standard / URLSearchParams + the
+    // Meta verify handshake spec, but is explicit-documented here so
+    // future maintainers don't accidentally swap it for first-wins.
+    // A duplicate key in a real handshake is anomalous — log a warn
+    // so the operator notices misbehaving proxies / Meta config drift.
+    let mut duplicate_seen: Vec<&str> = Vec::new();
     for pair in query.split('&') {
         let Some((k, v)) = pair.split_once('=') else {
             continue;
         };
         let v = url_decode(v);
         match k {
-            "hub.mode" => mode = Some(v),
-            "hub.verify_token" => token = Some(v),
-            "hub.challenge" => challenge = Some(v),
+            "hub.mode" => {
+                if mode.is_some() && !duplicate_seen.contains(&"hub.mode") {
+                    duplicate_seen.push("hub.mode");
+                }
+                mode = Some(v);
+            }
+            "hub.verify_token" => {
+                if token.is_some() && !duplicate_seen.contains(&"hub.verify_token") {
+                    duplicate_seen.push("hub.verify_token");
+                }
+                token = Some(v);
+            }
+            "hub.challenge" => {
+                if challenge.is_some() && !duplicate_seen.contains(&"hub.challenge") {
+                    duplicate_seen.push("hub.challenge");
+                }
+                challenge = Some(v);
+            }
             _ => {}
         }
+    }
+    if !duplicate_seen.is_empty() {
+        tracing::warn!(
+            duplicate_keys = ?duplicate_seen,
+            "Meta verify handshake had duplicate query keys — last value wins. \
+             Investigate proxy / Meta config if this recurs."
+        );
     }
     let mode = match mode {
         Some(m) => m,
@@ -345,6 +374,31 @@ mod tests {
         let q = "hub.mode=subscribe&hub.verify_token=mytoken&hub.challenge=NONCE123";
         let outcome = meta_challenge_response(q, "mytoken");
         assert_eq!(outcome, MetaChallengeOutcome::Echo("NONCE123".to_string()));
+    }
+
+    #[test]
+    fn meta_challenge_duplicate_keys_last_write_wins() {
+        // Reviewer-2 P2 regression guard (2026-05-20): duplicate query
+        // keys MUST follow last-write-wins semantics to match the
+        // URL Standard / URLSearchParams contract. A proxy that
+        // accidentally doubles a key must not subtly invert the
+        // verifier's view of the request.
+        let q = "hub.mode=subscribe&hub.verify_token=oldtoken\
+                 &hub.verify_token=newtoken&hub.challenge=NONCE";
+        let outcome = meta_challenge_response(q, "newtoken");
+        assert_eq!(
+            outcome,
+            MetaChallengeOutcome::Echo("NONCE".to_string()),
+            "duplicate hub.verify_token: last value (`newtoken`) must win"
+        );
+
+        // Inverse: the first value loses, so the gate rejects it.
+        let outcome = meta_challenge_response(q, "oldtoken");
+        assert!(
+            matches!(outcome, MetaChallengeOutcome::TokenMismatch),
+            "an attacker prepending a key with a stale value CANNOT \
+             revive it via duplication"
+        );
     }
 
     #[test]
