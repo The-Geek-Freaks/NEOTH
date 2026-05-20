@@ -208,9 +208,21 @@ export component MainWindow inherits Window {
     in property <[KanbanTaskRow]> kanban-done: [];
     in property <[KanbanFeedRow]> kanban-feed: [];
     in property <string> kanban-session-summary: "";
+    /// Step 5 (2026-05-20): selected task + detail-pane bindings.
+    in-out property <string> kanban-selected-task-id: "";
+    in property <string> kanban-selected-title: "";
+    in property <string> kanban-selected-status: "";
+    in property <string> kanban-selected-hemisphere: "";
+    in property <string> kanban-selected-description: "";
     /// Operator clicked Refresh on the Code Sessions tab. Rust
     /// re-fetches via subprocess + updates the seven properties above.
     callback kanban-refresh-clicked;
+    /// Step 5 (2026-05-20): operator clicked a task card.
+    callback kanban-task-selected(string);
+    /// Step 6 (2026-05-20): operator clicked an action button in the
+    /// detail pane.
+    callback kanban-task-move(string, string);
+    callback kanban-task-promote(string);
 
     // True when the currently-picked provider needs an API key. Mirrors
     // the require_provider_key() logic in `providers/mod.rs`: claude_cli
@@ -1103,6 +1115,15 @@ export component MainWindow inherits Window {
             kanban-refresh-clicked => {
                 root.kanban-refresh-clicked();
             }
+            // Step 5 (2026-05-20): selected-task + detail-pane wiring.
+            kanban-selected-task-id <=> root.kanban-selected-task-id;
+            kanban-selected-title: root.kanban-selected-title;
+            kanban-selected-status: root.kanban-selected-status;
+            kanban-selected-hemisphere: root.kanban-selected-hemisphere;
+            kanban-selected-description: root.kanban-selected-description;
+            kanban-task-selected(id) => { root.kanban-task-selected(id); }
+            kanban-task-move(id, status) => { root.kanban-task-move(id, status); }
+            kanban-task-promote(id) => { root.kanban-task-promote(id); }
             // G-12 fix: provider change in Settings → Config flows
             // up to MainWindow where Rust persists it.
             provider-changed(name) => {

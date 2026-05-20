@@ -1823,8 +1823,12 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - ✅ P2 ModeCard keyboard nav — `FocusScope { key-pressed }` wraps mode-selection step; `G` selects GUI card, `C` selects CLI, `Enter` advances; shortcut microcopy under the cards.
 - ✅ P2 webhook duplicate-key semantics — last-write-wins documented (matches URL Standard / URLSearchParams), `tracing::warn` fires on duplicates, regression test pins that prepended stale tokens can't revive via duplication. channels::webhook_verify 20/20 grün.
 
+**Pick #8 COMPLETE 2026-05-20 — all 6 steps shipped:**
+- ✅ Step 4 Live tail: `slint::Timer` 2s repeated poll, skips subprocess when `step != Settings`, worker-thread fetch + `invoke_from_event_loop` UI push (race-free). Real WAL-file-watcher lands when Pick #6 dispatcher mutates the board mid-flight.
+- ✅ Step 5 Click-to-detail: `KanbanTaskCard` got `selected: bool` + `clicked` callback; selected card lights accent-green border. Detail-pane Card under the board shows task-id + title + status + hemisphere + close button. `Arc<Mutex<KanbanBoardSnapshot>>` shared state holds the last-applied snapshot so the click handler resolves `task-id → KanbanTaskRow` without re-walking the Slint models. `KanbanBoardSnapshot::find_task()` iterates the 5 status buckets.
+- ✅ Step 6 Operator actions: 5 move buttons (→ Backlog/Todo/In Progress/Review/Done) + conditional "✓ Promote REVIEW → DONE" button (visible only when `kanban-selected-status == "review"`). Two callbacks (`kanban-task-move`, `kanban-task-promote`) chain through SettingsView + MainWindow to Rust handlers that subprocess `neoth kanban move <id> <status>` / `neoth kanban review <id> --promote`. The 2s live-tail picks up the resulting state change without a manual refresh hop. Comment + Assign defer to v0.2 because they need modal text input UIs.
+
 **Session 18 verbleibend für full closure** (next sprints):
-- Pick #8 step 4 — Live tail: WAL frame → Slint property push (mirror chat-tab pattern)
 - Pick #8 step 5 — Click-to-detail pane (mirror `neoth kanban task <id>`)
 - Pick #8 step 6 — Operator actions GUI (move/assign/comment/archive/review --promote buttons against `coding::store::*` directly)
 - Pick #6 dispatcher — Chorus-gated, draft `PLAN/CHORUS_dispatcher_design.md` first

@@ -104,12 +104,25 @@ component KanbanTaskCard inherits Rectangle {
     in property <string> title: "";
     in property <string> hemisphere: "";       // "left" | "right" | "cerebellum" | "unassigned"
     in property <string> task-id: "";
+    /// Step 5 (2026-05-20): selected state lights the card border in
+    /// accent-green when the operator picked it for the detail pane.
+    in property <bool> selected: false;
+    callback clicked();
 
     min-height: 90px;
     background: Theme.bg-card;
     border-radius: Theme.radius-button;
     border-width: 1px;
-    border-color: Theme.border-subtle;
+    border-color: root.selected ? Theme.accent-green : Theme.border-subtle;
+
+    animate border-color {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
 
     VerticalLayout {
         padding: Theme.space-base;
@@ -171,6 +184,8 @@ component KanbanColumn inherits Rectangle {
     in property <string> label: "";
     in property <color> accent: Theme.text-muted;
     in property <[KanbanTaskRow]> tasks: [];
+    in property <string> selected-task-id: "";
+    callback task-clicked(string);
 
     background: Theme.bg-base;
     border-radius: Theme.radius-button;
@@ -211,6 +226,8 @@ component KanbanColumn inherits Rectangle {
                 task-id: entry.task-id;
                 title: entry.title;
                 hemisphere: entry.hemisphere;
+                selected: entry.task-id == root.selected-task-id;
+                clicked => { root.task-clicked(entry.task-id); }
             }
         }
     }
@@ -343,6 +360,17 @@ export component SettingsView inherits Rectangle {
     /// string means "no sessions yet — operator has not run `neoth
     /// code` on this machine".
     in property <string> kanban-session-summary: "";
+    /// Step 5 (2026-05-20): currently-focused task. Operator clicks a
+    /// card → property updates → detail pane below the board renders
+    /// title / hemisphere / status. Empty string hides the pane.
+    in-out property <string> kanban-selected-task-id: "";
+    /// Step 5 — details for the focused task. Populated by Rust on the
+    /// `kanban-task-selected` callback so the detail pane can render
+    /// without re-walking the board snapshot.
+    in property <string> kanban-selected-title: "";
+    in property <string> kanban-selected-status: "";
+    in property <string> kanban-selected-hemisphere: "";
+    in property <string> kanban-selected-description: "";
 
     callback wizard-rerun-clicked;
     callback reload-config-clicked;
@@ -355,6 +383,21 @@ export component SettingsView inherits Rectangle {
     /// properties. Live-tail (Pick #8 step 4) will replace this with
     /// a WAL-driven push.
     callback kanban-refresh-clicked;
+    /// Step 5 (2026-05-20): operator clicked a KanbanTaskCard. Rust
+    /// looks up the full task detail (title/status/hemisphere/desc)
+    /// + sets the 4 `kanban-selected-*` properties so the detail pane
+    /// renders. Passing the id string is enough — Rust already holds
+    /// the snapshot.
+    callback kanban-task-selected(string);
+    /// Step 6 (2026-05-20): move a task to a target status column.
+    /// Rust subprocesses `neoth kanban move <task-id> <status>`; the
+    /// 2s live-tail picks up the change. `task-id` is the bare numeric
+    /// id (no "#" prefix); status is the wire-form
+    /// (backlog/todo/in_progress/review/done/blocked/archived).
+    callback kanban-task-move(string, string);
+    /// Step 6: REVIEW → DONE promote when the auto-promote check
+    /// passes. Subprocess `neoth kanban review <task-id> --promote`.
+    callback kanban-task-promote(string);
     /// G-5 fix — operator clicked "← Chat" in the sidebar header so
     /// they can leave Settings. Without this they were trapped
     /// because the ⚙ icon lives in the Chat sidebar (not visible
@@ -572,30 +615,40 @@ export component SettingsView inherits Rectangle {
                                 accent: Theme.text-muted;
                                 horizontal-stretch: 1;
                                 tasks: root.kanban-backlog;
+                                selected-task-id: root.kanban-selected-task-id;
+                                task-clicked(id) => { root.kanban-task-selected(id); }
                             }
                             KanbanColumn {
                                 label: "TODO";
                                 accent: Theme.text-primary;
                                 horizontal-stretch: 1;
                                 tasks: root.kanban-todo;
+                                selected-task-id: root.kanban-selected-task-id;
+                                task-clicked(id) => { root.kanban-task-selected(id); }
                             }
                             KanbanColumn {
                                 label: "IN PROGRESS";
                                 accent: Theme.accent-green;
                                 horizontal-stretch: 1;
                                 tasks: root.kanban-in-progress;
+                                selected-task-id: root.kanban-selected-task-id;
+                                task-clicked(id) => { root.kanban-task-selected(id); }
                             }
                             KanbanColumn {
                                 label: "REVIEW";
                                 accent: Theme.accent-pink;
                                 horizontal-stretch: 1;
                                 tasks: root.kanban-review;
+                                selected-task-id: root.kanban-selected-task-id;
+                                task-clicked(id) => { root.kanban-task-selected(id); }
                             }
                             KanbanColumn {
                                 label: "DONE";
                                 accent: Theme.accent-green;
                                 horizontal-stretch: 1;
                                 tasks: root.kanban-done;
+                                selected-task-id: root.kanban-selected-task-id;
+                                task-clicked(id) => { root.kanban-task-selected(id); }
                             }
                         }
                     }
@@ -637,6 +690,126 @@ export component SettingsView inherits Rectangle {
                                 ts: entry.ts;
                                 actor: entry.actor;
                                 message: entry.message;
+                            }
+                        }
+                    }
+                }
+
+                // Step 5 (2026-05-20): detail pane appears under the
+                // board when a task card is clicked. Mirrors
+                // `neoth kanban task <id>` content: title + status +
+                // hemisphere + (optional) description. "Close detail"
+                // button clears the selection.
+                if root.kanban-selected-task-id != "": Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+
+                        HorizontalLayout {
+                            alignment: space-between;
+                            spacing: Theme.space-base;
+                            Text {
+                                text: root.kanban-selected-task-id + "  " + root.kanban-selected-title;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-h2;
+                                font-weight: Theme.weight-light;
+                                color: Theme.text-primary;
+                            }
+                            NeothButton {
+                                label: "Close detail";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-selected-task-id = "";
+                                }
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: Theme.space-loose;
+                            Text {
+                                text: "Status: " + root.kanban-selected-status;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.accent-green;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "Hemisphere: " + root.kanban-selected-hemisphere;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: root.kanban-selected-hemisphere == "right"
+                                    ? Theme.accent-pink
+                                    : (root.kanban-selected-hemisphere == "cerebellum"
+                                        ? Theme.accent-green
+                                        : Theme.text-muted);
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        if root.kanban-selected-description != "": Text {
+                            text: root.kanban-selected-description;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+
+                        // Step 6 (2026-05-20): operator action row.
+                        // Move + Promote subprocess into the daemon CLI;
+                        // the 2s live-tail picks up the resulting
+                        // status change automatically. Comment + Assign
+                        // need modal text input and land in v0.2.
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: start;
+                            NeothButton {
+                                label: "→ Backlog";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-move(root.kanban-selected-task-id, "backlog");
+                                }
+                            }
+                            NeothButton {
+                                label: "→ Todo";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-move(root.kanban-selected-task-id, "todo");
+                                }
+                            }
+                            NeothButton {
+                                label: "→ In Progress";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-move(root.kanban-selected-task-id, "in_progress");
+                                }
+                            }
+                            NeothButton {
+                                label: "→ Review";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-move(root.kanban-selected-task-id, "review");
+                                }
+                            }
+                            NeothButton {
+                                label: "→ Done";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-move(root.kanban-selected-task-id, "done");
+                                }
+                            }
+                        }
+                        if root.kanban-selected-status == "review": HorizontalLayout {
+                            alignment: end;
+                            NeothButton {
+                                label: "✓ Promote REVIEW → DONE";
+                                primary: true;
+                                clicked => {
+                                    root.kanban-task-promote(root.kanban-selected-task-id);
+                                }
                             }
                         }
                     }

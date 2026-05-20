@@ -62,7 +62,11 @@ struct FeedEntryJson {
 /// Plain snapshot the Rust side hands to Slint. Owning-Vecs keep the
 /// Slint Model construction simple — we build `ModelRc<VecModel<…>>`
 /// from each Vec at the property-set site.
-#[derive(Default)]
+///
+/// Step 5 (2026-05-20): `Clone` lets the click-handler clone the
+/// last-applied snapshot out of the shared Mutex so the detail-pane
+/// lookup runs lock-free.
+#[derive(Default, Clone)]
 struct KanbanBoardSnapshot {
     backlog: Vec<KanbanTaskRow>,
     todo: Vec<KanbanTaskRow>,
@@ -71,6 +75,28 @@ struct KanbanBoardSnapshot {
     done: Vec<KanbanTaskRow>,
     feed: Vec<KanbanFeedRow>,
     summary: String,
+}
+
+impl KanbanBoardSnapshot {
+    /// Step 5 (2026-05-20): find a task by its `task-id` string
+    /// ("#42") across the 5 status buckets. Returns the task row +
+    /// the wire-form status name so the detail-pane can render both.
+    fn find_task(&self, id: &str) -> Option<(KanbanTaskRow, &'static str)> {
+        for (col, status) in [
+            (&self.backlog, "backlog"),
+            (&self.todo, "todo"),
+            (&self.in_progress, "in_progress"),
+            (&self.review, "review"),
+            (&self.done, "done"),
+        ] {
+            for row in col {
+                if row.task_id.as_str() == id {
+                    return Some((row.clone(), status));
+                }
+            }
+        }
+        None
+    }
 }
 
 fn main() -> Result<()> {
@@ -278,6 +304,15 @@ fn main() -> Result<()> {
         }
     });
 
+    // Step 5 (2026-05-20): keep the last-applied snapshot alive in a
+    // mutex so the task-click handler can resolve `task-id` → full
+    // task detail (title/status/hemisphere) without re-walking the
+    // Slint Model. Multiple writers (initial fetch / Refresh / 2s
+    // tick) push through `store_kanban_snapshot`; the click handler
+    // reads via `latest_kanban_snapshot`.
+    use std::sync::{Arc, Mutex};
+    let kanban_snapshot: Arc<Mutex<KanbanBoardSnapshot>> = Arc::new(Mutex::new(KanbanBoardSnapshot::default()));
+
     // Pick #8 step 2 — Code Sessions tab data binding.
     //   - At startup: fetch once so the tab shows real data the first
     //     time the operator opens it.
@@ -289,10 +324,15 @@ fn main() -> Result<()> {
     // the UI thread. The snapshot lands back on the main thread via
     // `invoke_from_event_loop`.
     let weak_kanban_init = window.as_weak();
+    let mutex_init = kanban_snapshot.clone();
     std::thread::spawn(move || {
         let snap = fetch_kanban_board_snapshot();
+        let snap_for_state = snap.clone();
         let weak = weak_kanban_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
+            if let Ok(mut g) = mutex_init.lock() {
+                *g = snap_for_state;
+            }
             if let Some(w) = weak.upgrade() {
                 apply_kanban_snapshot(&w, snap);
             }
@@ -300,17 +340,156 @@ fn main() -> Result<()> {
     });
 
     let weak_kanban_refresh = window.as_weak();
+    let mutex_refresh = kanban_snapshot.clone();
     window.on_kanban_refresh_clicked(move || {
         let weak = weak_kanban_refresh.clone();
+        let mutex = mutex_refresh.clone();
         std::thread::spawn(move || {
             let snap = fetch_kanban_board_snapshot();
             info!(summary = %snap.summary, "kanban: refresh requested");
+            let snap_for_state = snap.clone();
             let _ = slint::invoke_from_event_loop(move || {
+                if let Ok(mut g) = mutex.lock() {
+                    *g = snap_for_state;
+                }
                 if let Some(w) = weak.upgrade() {
                     apply_kanban_snapshot(&w, snap);
                 }
             });
         });
+    });
+
+    // Pick #8 step 4 — pseudo-live-tail via 2-second poll (2026-05-20).
+    // A real WAL-file-watcher (notify crate + WAL frame parser) lands
+    // when the dispatcher (Pick #6) starts mutating the board mid-run.
+    // Until then the polling refresh is cheap (no work unless the
+    // operator is actually on Settings) + race-free (worker thread
+    // owns subprocess + invoke_from_event_loop owns the UI write).
+    //
+    // The Timer MUST stay in scope until window.run() returns; binding
+    // it to `_kanban_live_timer` keeps it alive for the program's life.
+    let weak_kanban_tick = window.as_weak();
+    let mutex_tick = kanban_snapshot.clone();
+    let _kanban_live_timer = {
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_secs(2),
+            move || {
+                if let Some(w) = weak_kanban_tick.upgrade() {
+                    // Skip the subprocess churn when the operator
+                    // isn't looking at the Code Sessions surface.
+                    if w.get_step() != WizardStep::Settings {
+                        return;
+                    }
+                    let weak = weak_kanban_tick.clone();
+                    let mutex = mutex_tick.clone();
+                    std::thread::spawn(move || {
+                        let snap = fetch_kanban_board_snapshot();
+                        let snap_for_state = snap.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Ok(mut g) = mutex.lock() {
+                                *g = snap_for_state;
+                            }
+                            if let Some(w) = weak.upgrade() {
+                                apply_kanban_snapshot(&w, snap);
+                            }
+                        });
+                    });
+                }
+            },
+        );
+        timer
+    };
+
+    // Step 6 (2026-05-20): operator action handlers. Each spawns a
+    // worker thread that subprocesses `neoth kanban move/review` and
+    // logs the outcome. The 2s live-tail timer picks up the resulting
+    // status change in the GUI without an explicit refresh hop.
+    fn strip_id_hash(s: &str) -> String {
+        s.strip_prefix('#').unwrap_or(s).to_string()
+    }
+    window.on_kanban_task_move(move |task_id, status| {
+        let id = strip_id_hash(&task_id);
+        let status_str = status.to_string();
+        std::thread::spawn(move || {
+            let Some(bin) = which_neothd() else {
+                tracing::warn!("kanban move: neothd binary not on PATH");
+                return;
+            };
+            let out = spawn_neothd_plain(&bin)
+                .arg("kanban")
+                .arg("move")
+                .arg(&id)
+                .arg(&status_str)
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    info!(task_id = %id, status = %status_str, "kanban: move applied");
+                }
+                Ok(o) => tracing::warn!(
+                    task_id = %id,
+                    status = %status_str,
+                    exit = ?o.status,
+                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                    "kanban move failed"
+                ),
+                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban move could not start"),
+            }
+        });
+    });
+    window.on_kanban_task_promote(move |task_id| {
+        let id = strip_id_hash(&task_id);
+        std::thread::spawn(move || {
+            let Some(bin) = which_neothd() else {
+                tracing::warn!("kanban promote: neothd binary not on PATH");
+                return;
+            };
+            let out = spawn_neothd_plain(&bin)
+                .arg("kanban")
+                .arg("review")
+                .arg(&id)
+                .arg("--promote")
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    info!(task_id = %id, "kanban: REVIEW promoted to DONE");
+                }
+                Ok(o) => tracing::warn!(
+                    task_id = %id,
+                    exit = ?o.status,
+                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                    "kanban promote failed"
+                ),
+                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban promote could not start"),
+            }
+        });
+    });
+
+    // Step 5 (2026-05-20): task-card click handler. Resolves the
+    // task-id from the last-applied snapshot and pushes the detail
+    // properties so the Code Sessions detail pane renders.
+    let weak_select = window.as_weak();
+    let mutex_select = kanban_snapshot.clone();
+    window.on_kanban_task_selected(move |task_id| {
+        let id = task_id.to_string();
+        let snapshot_clone = match mutex_select.lock() {
+            Ok(g) => g.clone(),
+            Err(_) => return,
+        };
+        let Some((row, status)) = snapshot_clone.find_task(&id) else {
+            return;
+        };
+        if let Some(w) = weak_select.upgrade() {
+            w.set_kanban_selected_task_id(row.task_id);
+            w.set_kanban_selected_title(row.title);
+            w.set_kanban_selected_hemisphere(row.hemisphere);
+            w.set_kanban_selected_status(status.into());
+            // Description not yet carried in the snapshot — populate
+            // when the board store starts surfacing it. Empty hides
+            // the description line in the detail pane.
+            w.set_kanban_selected_description("".into());
+        }
     });
 
     // G-12 fix — operator changed the active provider in Settings →
