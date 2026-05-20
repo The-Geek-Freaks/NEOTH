@@ -99,7 +99,7 @@ export component ScreenHeader inherits VerticalLayout {
         font-family: Theme.font-display;
         font-size: Theme.font-size-h1;
         font-weight: Theme.weight-light;
-        letter-spacing: 1px;
+        letter-spacing: Theme.letter-spacing-tight;
         color: Theme.text-primary;
     }
     if root.subtitle != "": Text {
@@ -140,7 +140,7 @@ export component ProgressIndicator inherits Rectangle {
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-body;
                 font-weight: Theme.weight-ultralight;
-                letter-spacing: 4px;
+                letter-spacing: Theme.letter-spacing-brand-bar;
                 color: Theme.text-muted;
                 vertical-alignment: center;
             }
@@ -239,7 +239,7 @@ export component ModeCard inherits Rectangle {
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-h2;
                 font-weight: Theme.weight-light;
-                letter-spacing: 1px;
+                letter-spacing: Theme.letter-spacing-tight;
                 color: Theme.text-primary;
                 horizontal-alignment: center;
             }
@@ -270,7 +270,7 @@ export component ModeCard inherits Rectangle {
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-caption;
                 font-weight: Theme.weight-bold;
-                letter-spacing: 1.5px;
+                letter-spacing: Theme.letter-spacing-wide;
                 color: Theme.accent-green;
                 horizontal-alignment: center;
                 vertical-alignment: center;

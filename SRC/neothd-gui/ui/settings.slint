@@ -153,7 +153,7 @@ component KanbanTaskCard inherits Rectangle {
                     font-family: Theme.font-display;
                     font-size: 9px;
                     font-weight: Theme.weight-bold;
-                    letter-spacing: 1px;
+                    letter-spacing: Theme.letter-spacing-tight;
                     color:
                         root.hemisphere == "cerebellum" ? Theme.accent-green :
                         root.hemisphere == "right"      ? Theme.accent-pink :
@@ -204,7 +204,7 @@ component KanbanColumn inherits Rectangle {
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-caption;
                 font-weight: Theme.weight-bold;
-                letter-spacing: 1.5px;
+                letter-spacing: Theme.letter-spacing-wide;
                 color: root.accent;
             }
             Text {
@@ -258,7 +258,7 @@ component ActivityFeedEntry inherits HorizontalLayout {
         font-family: Theme.font-display;
         font-size: Theme.font-size-caption;
         font-weight: Theme.weight-bold;
-        letter-spacing: 1px;
+        letter-spacing: Theme.letter-spacing-tight;
         color: root.actor == "cerebellum"
             ? Theme.accent-green
             : (root.actor == "right" ? Theme.accent-pink : Theme.text-muted);
@@ -325,7 +325,7 @@ component PendingPanel inherits VerticalBox {
                 font-family: Theme.font-display;
                 font-size: Theme.font-size-caption;
                 font-weight: Theme.weight-medium;
-                letter-spacing: 1px;
+                letter-spacing: Theme.letter-spacing-tight;
                 color: Theme.accent-green;
             }
             Text {
@@ -428,7 +428,7 @@ export component SettingsView inherits Rectangle {
                     font-family: Theme.font-display;
                     font-size: Theme.font-size-caption;
                     font-weight: Theme.weight-bold;
-                    letter-spacing: 2px;
+                    letter-spacing: Theme.letter-spacing-extra-wide;
                     color: Theme.text-dim;
                 }
 
@@ -548,7 +548,7 @@ export component SettingsView inherits Rectangle {
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             font-weight: Theme.weight-medium;
-                            letter-spacing: 1px;
+                            letter-spacing: Theme.letter-spacing-tight;
                             color: Theme.accent-green;
                         }
                         Text {
@@ -673,7 +673,7 @@ export component SettingsView inherits Rectangle {
                                 font-family: Theme.font-display;
                                 font-size: Theme.font-size-caption;
                                 font-weight: Theme.weight-bold;
-                                letter-spacing: 2px;
+                                letter-spacing: Theme.letter-spacing-extra-wide;
                                 color: Theme.accent-green;
                             }
                             Rectangle {
@@ -840,7 +840,7 @@ export component SettingsView inherits Rectangle {
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             font-weight: Theme.weight-bold;
-                            letter-spacing: 1.5px;
+                            letter-spacing: Theme.letter-spacing-wide;
                             color: Theme.accent-green;
                         }
                         NeothComboBox {
