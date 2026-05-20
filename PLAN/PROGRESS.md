@@ -1828,12 +1828,35 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - ✅ Step 5 Click-to-detail: `KanbanTaskCard` got `selected: bool` + `clicked` callback; selected card lights accent-green border. Detail-pane Card under the board shows task-id + title + status + hemisphere + close button. `Arc<Mutex<KanbanBoardSnapshot>>` shared state holds the last-applied snapshot so the click handler resolves `task-id → KanbanTaskRow` without re-walking the Slint models. `KanbanBoardSnapshot::find_task()` iterates the 5 status buckets.
 - ✅ Step 6 Operator actions: 5 move buttons (→ Backlog/Todo/In Progress/Review/Done) + conditional "✓ Promote REVIEW → DONE" button (visible only when `kanban-selected-status == "review"`). Two callbacks (`kanban-task-move`, `kanban-task-promote`) chain through SettingsView + MainWindow to Rust handlers that subprocess `neoth kanban move <id> <status>` / `neoth kanban review <id> --promote`. The 2s live-tail picks up the resulting state change without a manual refresh hop. Comment + Assign defer to v0.2 because they need modal text input UIs.
 
-**Session 18 verbleibend für full closure** (next sprints):
-- Pick #8 step 5 — Click-to-detail pane (mirror `neoth kanban task <id>`)
-- Pick #8 step 6 — Operator actions GUI (move/assign/comment/archive/review --promote buttons against `coding::store::*` directly)
-- Pick #6 dispatcher — Chorus-gated, draft `PLAN/CHORUS_dispatcher_design.md` first
-- Pick #9 LLM second-opinion classify — depends on Pick #6
-- G-27 sovereign-curve transitions (polish)
+**Session 18 follow-up sprint (2026-05-20, post-public-release):**
+
+After the v0.1 release force-push (commit `a879665`), a 24-commit
+sprint closed the dispatcher chain + the GUI surface gaps. All
+pushed to `origin/main`.
+
+- ✅ **Pick #6 Phase 1 + 2** — `coding::worker::{Worker, WorkerOutcome}` + `coding::dispatcher::{HemisphereWorkerSet, DispatchBudget, DispatchOutcome, dispatch_session}` orchestrator with reentrant Backlog-drain + Q1/Q2/Q3/Q4 placeholder defaults per `PLAN/CHORUS_dispatcher_design.md`. 12 unit tests via CannedWorker/FailingWorker harnesses.
+- ✅ **Pick #9** — `coding::second_opinion_classify(decomposer, task)` routes Ambiguous-bucket tasks to a focused FAST/DEEP Cerebellum prompt; defaults to Deep on garbage (safer escalation). 10 unit tests pin first-token-wins, case-insensitive, MAX_REPLY_LEN truncation, default-Deep on empty/garbage/unrecognised, build_prompt round-trips.
+- ✅ **Pick #34 follow-up** — `wasm_plugin::dispatch::compile_all_discovered` + `InvocationOutcome` wire shape + `invoke_plugin()` concrete dispatch (instantiate + lookup `neoth_run` export + call typed_func). 8 unit tests including ExportLookup branch against minimal-WASM. Live happy-path waits for `examples/wasm-plugin-hello/plugin.wasm`.
+- ✅ **Pick #35 follow-up** — pure-Rust inventory readers for LanceArrow + GitTree (replace the deferred ReaderNotImplemented). Lance counts `<name>.lance/_versions/` markers; Git counts `.git/HEAD` files. Real C-dep-backed row reads still wait for Phase-3. 5 new tests (22 reader-suite total).
+- ✅ **Pick #37 follow-up** — Discord session helpers: process-wide SESSION_ID tracker, `should_resume_after_close()` per Discord close-code table, `is_terminal_close()` for operator-actionable codes, `ReconnectTracker` with `next_delay()`/`record_success()`. 8 new tests (33 gateway-suite total). Live `connect_async` loop still Phase 4.
+- ✅ **V03-09 phase 1** — `updater::self_update::check_for_update(owner_repo)` calls GitHub Releases API + reports daemon-version delta. CLI `neoth update --self` (+ `--self-repo owner/fork` override). 10 unit tests (semver parse + comparison, all offline). Phase 2 (download+replace) waits on binary-distribution channel decision.
+- ✅ **WAL event code `0x77 KANBAN_TASK_PROGRESS`** reserved for dispatcher heartbeat frames per Q2 verdict.
+- ✅ **Pick #8 v0.2 surface closed** — comment composer (LineEdit + "Add" button) + assign-row (Left/Right/Cerebellum/Unassigned buttons) + `kanban task --output json` envelope + GUI detail-pane comment thread rendering with color-coded authors. Click handler clears stale comments before background fetch. Pick #8 now 100% surface, no "v0.2" gap.
+- ✅ **Doctor 3-bucket warning** — `cli/doctor.rs::check_mcp_servers` distinguishes hardened (allow_tools pinned) / trust_all (explicit opt-in) / broken (None + trust_all_tools=false). Broken bucket triggers Warn with actionable fix string.
+- ✅ **T-SEC-002 webhook fuzz tests** — 9 new edge tests in `channels::webhook_verify`: empty query, truncated `%XX`, bare key, `&&` separators, unknown future keys, mixed `+`/`%20`, far-past/future/non-numeric Slack timestamps. Parser never panics + timestamp errors precede signature errors (no side-channel leak). 29 webhook_verify total.
+- ✅ **Letter-spacing token migration** — 31 hardcoded values → 4 design tokens (`tight 1px` / `wide 1.5px` / `extra-wide 2px` / `brand-bar 4px`). Zero hardcoded letter-spacing remains across 5 Slint files.
+- ✅ **Frameless spec relax** — `docs/superpowers/specs/2026-05-15-neoth-uix-design-system.md` §4.1 documents OS-native chrome as v0.1 default + frameless as v0.2+ opt-in via `freedom.yaml::gui.frameless: true`.
+- ✅ **CHANGELOG v0.1.0** — operator-readable shipping summary for the initial public release, Keep-a-Changelog format.
+
+**Still open (not strictly v0.1 blockers):**
+- Pick #6 Phase 3 — concrete LeftWorker (against local_qwen) + RightWorker (against claude_cli/openai_compat) impls. Trait + dispatch shipped; provider-bindings + prompt engineering + response parsing still pending. ~500-700 LOC. Chorus verdict on Q1 patch-safety recommended before wire.
+- G-27 sovereign-curve screen transitions (polish, defer).
+- V03-09 phase 2 (download+replace) — needs binary-distribution channel decision.
+- Pick #34 happy-path test — needs `examples/wasm-plugin-hello/plugin.wasm` (real built fixture, not just minimal-WASM).
+- R-3 Hysteria transport, R-7 Cluster mode, R-8 Cloud connectors (each multi-day).
+- D14b Qwen Phase 2 (heavy ML forward-pass + sampling-loop).
+- LanceArrow + GitTree real row reads (waiting on Phase-3 C-dep block: `lance`, `git2`).
+- Live Discord WSS dial (`connect_async` + heartbeat task + reconnect loop using the now-shipped helpers).
 
 ### Session 17 — Follow-up batch (11 picks; v1.0 coding-workflow chain + review flow complete)
 
