@@ -153,9 +153,7 @@ fn main() -> Result<()> {
                 window.set_operator_id(cfg.operator_id.into());
                 window.set_provider_choice(cfg.provider_kind.into());
                 window.set_autonomy_choice(cfg.autonomy.into());
-                window.set_enable_telegram(
-                    cfg.channels.iter().any(|c| c == "telegram"),
-                );
+                window.set_enable_telegram(cfg.channels.iter().any(|c| c == "telegram"));
             }
             Err(e) => {
                 tracing::warn!(
@@ -217,10 +215,7 @@ fn main() -> Result<()> {
         info!(message_len = body.len(), "chat: send-clicked");
         if let Some(w) = weak_chat_send.upgrade() {
             use slint::{Model, ModelRc, VecModel};
-            let mut rows: Vec<ChatMessage> = w
-                .get_chat_messages()
-                .iter()
-                .collect();
+            let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
             rows.push(ChatMessage {
                 role: "operator".into(),
                 text: body.into(),
@@ -311,7 +306,8 @@ fn main() -> Result<()> {
     // tick) push through `store_kanban_snapshot`; the click handler
     // reads via `latest_kanban_snapshot`.
     use std::sync::{Arc, Mutex};
-    let kanban_snapshot: Arc<Mutex<KanbanBoardSnapshot>> = Arc::new(Mutex::new(KanbanBoardSnapshot::default()));
+    let kanban_snapshot: Arc<Mutex<KanbanBoardSnapshot>> =
+        Arc::new(Mutex::new(KanbanBoardSnapshot::default()));
 
     // Pick #8 step 2 — Code Sessions tab data binding.
     //   - At startup: fetch once so the tab shows real data the first
@@ -461,7 +457,75 @@ fn main() -> Result<()> {
                     stderr = %String::from_utf8_lossy(&o.stderr).trim(),
                     "kanban promote failed"
                 ),
-                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban promote could not start"),
+                Err(e) => {
+                    tracing::warn!(task_id = %id, error = %e, "kanban promote could not start")
+                }
+            }
+        });
+    });
+
+    // v0.2 complete (2026-05-20) — comment + assign handlers.
+    // Subprocess analog to move/promote; the 2s live-tail picks up
+    // the resulting board state without a manual refresh.
+    window.on_kanban_task_comment(move |task_id, body| {
+        let id = strip_id_hash(&task_id);
+        let body_str = body.to_string();
+        if body_str.trim().is_empty() {
+            return;
+        }
+        std::thread::spawn(move || {
+            let Some(bin) = which_neothd() else {
+                tracing::warn!("kanban comment: neothd binary not on PATH");
+                return;
+            };
+            let out = spawn_neothd_plain(&bin)
+                .arg("kanban")
+                .arg("comment")
+                .arg(&id)
+                .arg(&body_str)
+                .arg("--author")
+                .arg("operator")
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    info!(task_id = %id, body_len = body_str.len(), "kanban: comment appended");
+                }
+                Ok(o) => tracing::warn!(
+                    task_id = %id,
+                    exit = ?o.status,
+                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                    "kanban comment failed"
+                ),
+                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban comment could not start"),
+            }
+        });
+    });
+    window.on_kanban_task_assign(move |task_id, hemi| {
+        let id = strip_id_hash(&task_id);
+        let hemi_str = hemi.to_string();
+        std::thread::spawn(move || {
+            let Some(bin) = which_neothd() else {
+                tracing::warn!("kanban assign: neothd binary not on PATH");
+                return;
+            };
+            let out = spawn_neothd_plain(&bin)
+                .arg("kanban")
+                .arg("assign")
+                .arg(&id)
+                .arg(&hemi_str)
+                .output();
+            match out {
+                Ok(o) if o.status.success() => {
+                    info!(task_id = %id, hemisphere = %hemi_str, "kanban: assigned");
+                }
+                Ok(o) => tracing::warn!(
+                    task_id = %id,
+                    hemisphere = %hemi_str,
+                    exit = ?o.status,
+                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                    "kanban assign failed"
+                ),
+                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban assign could not start"),
             }
         });
     });
@@ -705,10 +769,9 @@ fn write_credentials_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<Op
 /// shape so the wizard's re-entry path can pre-populate properties
 /// from the operator's previous configuration.
 fn read_freedom_yaml(path: &Path) -> Result<MinimalFreedomYaml> {
-    let body = std::fs::read_to_string(path)
-        .with_context(|| format!("read {}", path.display()))?;
-    let cfg: MinimalFreedomYaml = serde_yaml::from_str(&body)
-        .with_context(|| format!("parse {}", path.display()))?;
+    let body = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let cfg: MinimalFreedomYaml =
+        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
     Ok(cfg)
 }
 
@@ -849,7 +912,11 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
                 summary: format!(
                     "kanban list failed (exit {}): {}",
                     out.status,
-                    if stderr.is_empty() { "(no stderr)" } else { &stderr }
+                    if stderr.is_empty() {
+                        "(no stderr)"
+                    } else {
+                        &stderr
+                    }
                 ),
                 ..Default::default()
             };
@@ -918,9 +985,7 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
     let mut snap = KanbanBoardSnapshot {
         summary: format!(
             "Session #{}  [{}]   {}",
-            envelope.session.session_id,
-            envelope.session.status,
-            envelope.session.prompt,
+            envelope.session.session_id, envelope.session.status, envelope.session.prompt,
         ),
         feed: fetch_kanban_feed(&bin),
         ..Default::default()

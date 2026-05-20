@@ -8,7 +8,7 @@
 // so the daemon picks up changes within 2s without an explicit
 // "Apply" button.
 
-import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, NeothComboBox } from "components.slint";
 
@@ -398,6 +398,15 @@ export component SettingsView inherits Rectangle {
     /// Step 6: REVIEW → DONE promote when the auto-promote check
     /// passes. Subprocess `neoth kanban review <task-id> --promote`.
     callback kanban-task-promote(string);
+    /// v0.2 complete (2026-05-20): append a comment to the selected
+    /// task. Subprocess `neoth kanban comment <id> <body> --author
+    /// operator`. Args: (task_id, body).
+    callback kanban-task-comment(string, string);
+    /// v0.2 complete (2026-05-20): re-assign the task to a different
+    /// hemisphere. Args: (task_id, hemisphere_wire_form). Wire form
+    /// is one of "left" / "right" / "cerebellum" / "unassigned" —
+    /// subprocess `neoth kanban assign <id> <hemisphere>`.
+    callback kanban-task-assign(string, string);
     /// G-5 fix — operator clicked "← Chat" in the sidebar header so
     /// they can leave Settings. Without this they were trapped
     /// because the ⚙ icon lives in the Chat sidebar (not visible
@@ -809,6 +818,93 @@ export component SettingsView inherits Rectangle {
                                 primary: true;
                                 clicked => {
                                     root.kanban-task-promote(root.kanban-selected-task-id);
+                                }
+                            }
+                        }
+
+                        // v0.2 complete (2026-05-20): assign-row.
+                        // Reroute a task to a different hemisphere when
+                        // the heuristic / second-opinion classifier
+                        // mis-routed it. Four buttons mirror the four
+                        // wire-form variants; pressing one fires the
+                        // subprocess + the 2s live-tail picks up the
+                        // hemisphere change.
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: start;
+                            Text {
+                                text: "Assign to:";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                                vertical-alignment: center;
+                            }
+                            NeothButton {
+                                label: "Left";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-assign(root.kanban-selected-task-id, "left");
+                                }
+                            }
+                            NeothButton {
+                                label: "Right";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-assign(root.kanban-selected-task-id, "right");
+                                }
+                            }
+                            NeothButton {
+                                label: "Cerebellum";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-assign(root.kanban-selected-task-id, "cerebellum");
+                                }
+                            }
+                            NeothButton {
+                                label: "Unassigned";
+                                primary: false;
+                                clicked => {
+                                    root.kanban-task-assign(root.kanban-selected-task-id, "unassigned");
+                                }
+                            }
+                        }
+
+                        // v0.2 complete: comment composer. Slint's
+                        // `LineEdit` carries the draft; pressing Enter
+                        // OR clicking "Add" fires the callback + clears
+                        // the input so the operator can append again.
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: stretch;
+                            comment_input := LineEdit {
+                                placeholder-text: "Add a comment to this task — press Enter or click Add";
+                                horizontal-stretch: 1;
+                                accepted(text) => {
+                                    if (text != "") {
+                                        root.kanban-task-comment(root.kanban-selected-task-id, text);
+                                        self.text = "";
+                                    }
+                                }
+                            }
+                            NeothButton {
+                                label: "Add";
+                                primary: false;
+                                clicked => {
+                                    if (comment_input.text != "") {
+                                        root.kanban-task-comment(
+                                            root.kanban-selected-task-id,
+                                            comment_input.text,
+                                        );
+                                        comment_input.text = "";
+                                    }
                                 }
                             }
                         }
