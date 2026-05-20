@@ -1743,6 +1743,68 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [ ] **V03-09** `neothd` self-update via `updater/` — U-3
 - [x] **V03-10** `docs/channels.md` brought current (Session 15 Pick #4, 2026-05-19). Header status-matrix added (Telegram v0.1+ / WhatsApp v0.2+ / Slack v0.3+ / Discord v0.3+ DM / Keet v0.3+ preview). WhatsApp + Slack "Phase 2 not yet active" boilerplate replaced with operational notes. New Discord + Keet sections (credential schema + setup steps + dialect notes). Future-channels table trimmed to channels NOT yet shipped (Signal / Matrix / iMessage / LINE).
 
+### Session 18 — GUI redo + Code Sessions data binding + public release (2026-05-20)
+
+**GUI massiv überarbeitet, 26 von 27 audit issues geschlossen, NEOTH v0.1 ist public auf GitHub.** neothd-gui cargo check clean, neothd suite 2298/0 unverändert.
+
+**Pick #8 step 1 — Code Sessions static layout** — `neothd-gui/ui/settings.slint` (~140 LOC). 9. SettingsTab `code-sessions` mit 5-Spalten-Board (BACKLOG / TODO / IN PROGRESS / REVIEW / DONE) + 320 px Activity-Feed-Rail. `KanbanTaskCard` (78 px tile, ID-mono + hemisphere-badge + title), `KanbanColumn` (header + count + accent-bar + tasks-Array property), `ActivityFeedEntry` (ts + actor + message).
+
+**Pick #8 step 2a — CLI JSON output** — `neothd/src/cli/kanban.rs`. `run_list` + `run_show` taking `output: OutputFormat`, emitting `Vec<KanbanSession>` JSON für list, `{"session": ..., "tasks": [...]}` envelope für show. 2 new tests (`list_json_output_emits_serializable_array`, `show_json_envelope_contains_session_and_tasks`) pinnen das wire format. 14/14 kanban tests grün.
+
+**Pick #8 step 2b — Slint-Model + Rust subprocess binding** — `neothd-gui/src/main.rs` + `ui/main.slint` + `ui/settings.slint`. `KanbanTaskRow` + `KanbanFeedRow` Slint-structs exported. 7 in-properties auf `MainWindow` + `SettingsView` (kanban-backlog/todo/in-progress/review/done/feed + session-summary), 1 callback (kanban-refresh-clicked). Rust: `fetch_kanban_board_snapshot()` subprocesst `neothd kanban list/show --output json`, parsed über `CodingSessionJson`/`CodingTaskJson`/`CodingShowEnvelope` (gui-local deserialise structs, no daemon-crate dep), groupiert tasks nach status in 5 Vec<KanbanTaskRow>. `apply_kanban_snapshot(&window, snap)` baut `ModelRc<VecModel<…>>` für jede Spalte. Initial-load am startup + on Refresh-button click.
+
+**GUI audit fix-batch — 26 von 27 issues geschlossen** (per `PLAN/GUI_AUDIT_2026-05-20.md`):
+- **G-1** ✅ Identity placeholder `"alex"` → `"your-handle"` + red caption "Required — pick a short name..."
+- **G-2** ✅ License-Karte mit plain-language bullet summary + clickable "View full text →" button (xdg-open / start subprocess)
+- **G-3** ✅ Custom `NeothComboBox` in `components.slint` (~95 LOC) ersetzt `std-widgets::ComboBox` light-mode default in Provider + Autonomy screens — full PopupWindow + radio-indicator + accent-green hover border
+- **G-4** ✅ Channels-screen ehrlich expanded: 11 rows in 4 status-groups (ALWAYS ON / READY NOW / SET UP LATER / ON THE ROADMAP). Slack/Keet "not shipping" lies entfernt, WhatsApp + Discord + Signal + Matrix + LINE + iMessage als disabled rows mit echten status-notes
+- **G-5** ✅ Settings panel `← Chat` Back-button oben in sidebar, `back-clicked` callback → `WizardStep.chat`
+- **G-6** ✅ `spawn_neothd_plain(bin) -> Command` helper extrahiert (NO_COLOR + RUST_LOG_STYLE=never + CLICOLOR=0) — alle subprocess calls (hardware probe + kanban list/show) garantieren ANSI-frei
+- **G-7** ✅ Autonomy "Picked:" Card → inline narrative HorizontalLayout mit autonomy-specific plain-language note
+- **G-8** ✅ Code Sessions columns — feed-rail auf max(260, parent*0.28), ScrollView wrap fürs Board, KanbanTaskCard padding base
+- **G-9** ✅ Chat send-button placeholder enhanced + draft binding verified
+- **G-10** ✅ Chat surface header — active-channel name + green-dot status indicator above scrollback
+- **G-11** ✅ Welcome `← Mode` Back-button (to mode-selection)
+- **G-12** ✅ Config tab — `NeothComboBox` provider-selector + provider-changed callback + provider-display
+- **G-13** ✅ ProgressIndicator `total-steps: 8` konstant — keine denominator-flips mehr
+- **G-14** ✅ Glyph SVG assets verified (glyph_cli.svg + glyph_gui.svg existieren)
+- **G-15** ✅ Identity LineEdit `accepted` handler — Enter advances when non-empty
+- **G-16** ✅ Custom `NeothCheckBox` + `NeothLineEdit` in components.slint ersetzen std-widgets light-mode in license/identity/keys screens
+- **G-17** ✅ PendingPanel "Coming in Pick #33" → "Coming in v0.2 — use the CLI mirror for now" (operator-readable)
+- **G-18** ✅ ⚙ icon button 32×28 → 44×44 + accessible-label
+- **G-19** ✅ Done-screen 3-button cramp — "Open Settings →" auf eigene row, "Back / Finish" bleibt unten
+- **G-20** ✅ Subtitle copy auf 12/10 — Provider/Autonomy/Keys descriptions in plain language (kein "LLM"/"mode 0600"/etc. jargon)
+- **G-21** ✅ KanbanTaskCard `unassigned` hemisphere branch + 68 px badge width
+- **G-22** ✅ Feed-rail responsive width
+- **G-23** ✅ ProgressIndicator `step-label` mode-selection dead-code entfernt
+- **G-24** ✅ ModeCard "RECOMMENDED" pill verwendet `Theme.font-size-caption` + token-based width
+- **G-25** ✅ TabButton hover state (50% bg-card overlay, text-primary on hover, micro-duration)
+- **G-26** ✅ MainWindow title reflects active step (Setup / Chat / Settings)
+- **G-27** ⏸️ Sovereign-curve screen transitions DEFERRED — Slint hat keine native exit-Animationen, invasive Implementierung für minimalen UX-Gewinn (LOW priority polish)
+
+**Side-fixes neben audit:**
+- ✅ `freedom.yaml` re-entry auto-set `license-accepted: true` — operator with existing config kann Finish klicken ohne Back-walk
+- ✅ "Open Settings →" shortcut button auf Done-screen — direkter Sprung zu `WizardStep.settings` ohne Chat-Umweg
+- ✅ `serde_json.workspace = true` in `neothd-gui/Cargo.toml` (subprocess JSON parsing)
+- ✅ L-3 unsafe `set_var` in `finish_rejects_unaccepted_license` test entfernt — license check ist erstes statement in `finish()`, env var swap war race-prone und unnötig
+
+**3 audit agent reports** (parallel deployed, written to PLAN/):
+- `GUI_AUDIT_2026-05-20.md` — a11y-architect — 27 issues (5 CRITICAL, 7 HIGH, 10 MEDIUM, 5 LOW)
+- `GUI_CODE_AUDIT_2026-05-20.md` — code-reviewer — logic + broken-callback findings
+- `CHANNELS_SPEC_2026-05-20.md` — Explore — authoritative shipping matrix (Telegram v0.1+ / WhatsApp v0.2+ / Slack+Discord+Keet v0.3+ / Signal+Matrix+LINE+iMessage planned)
+
+**Public release** — commit `a879665`, force-pushed to https://github.com/The-Geek-Freaks/NEOTH/tree/main. 445 files. QUELLEN/ (1.7 GB upstream forks) + RECON/ (private operator notes) + `SRC/target/` + stray `nul` excluded via `.gitignore` extension. README `owner/neoth` placeholder replaced with `The-Geek-Freaks/NEOTH` global.
+
+**Pick #8 step 3 — Activity feed live binding** (Session 18 follow-up, 2026-05-20) — `neothd/src/coding/feed.rs` + `neothd/src/cli/kanban.rs` + `neothd-gui/src/main.rs`. `FeedEntry` got `Serialize` derive. `run_watch` takes `output: OutputFormat`; JSON path emits `Vec<FeedEntry>` as flat array via the existing `scan_wal_dir_for_kanban_feed` scanner. GUI-side `fetch_kanban_feed(bin) -> Vec<KanbanFeedRow>` subprocesses `neoth kanban watch --output json --limit 50`, parses via `FeedEntryJson` (gui-local struct), reverses for newest-first rendering. `format_hms_from_ns(ts_ns)` formats HH:MM (no seconds — feed rail is narrow). `KanbanBoardSnapshot.feed` field threaded through `apply_kanban_snapshot()`. Empty feed on subprocess error → empty rail, board still works (graceful degrade). New `watch_json_output_serialises_feed_entries` test pins wire format. kanban tests 15/15.
+
+**Session 18 verbleibend für full closure** (next sprints):
+- Pick #8 step 4 — Live tail: WAL frame → Slint property push (mirror chat-tab pattern)
+- Pick #8 step 5 — Click-to-detail pane (mirror `neoth kanban task <id>`)
+- Pick #8 step 6 — Operator actions GUI (move/assign/comment/archive/review --promote buttons against `coding::store::*` directly)
+- Pick #6 dispatcher — Chorus-gated, draft `PLAN/CHORUS_dispatcher_design.md` first
+- Pick #9 LLM second-opinion classify — depends on Pick #6
+- G-27 sovereign-curve transitions (polish)
+
 ### Session 17 — Follow-up batch (11 picks; v1.0 coding-workflow chain + review flow complete)
 
 **11 incremental picks shipped. neothd test suite 2298 passed / 0 failed.** v1.0 ship-blocker chain (Picks #1-5 of the coding workflow per `PLAN/SPEC_coding_workflow.md` build order) is **CLOSED** — `neoth code "..."` works end-to-end. Pick #10 (review + auto-promote flow) shipped alongside so REVIEW → DONE transitions can fire without operator intervention when worker patches arrive green.

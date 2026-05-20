@@ -48,6 +48,17 @@ struct CodingShowEnvelope {
     tasks: Vec<CodingTaskJson>,
 }
 
+/// Mirror of `neothd::coding::feed::FeedEntry` — one row in the WAL-
+/// derived activity feed. Pick #8 step 3: GUI calls
+/// `neothd kanban watch --output json` and renders the result in the
+/// right-rail of the Code Sessions tab.
+#[derive(Debug, Deserialize)]
+struct FeedEntryJson {
+    ts_ns: u64,
+    actor: String,
+    message: String,
+}
+
 /// Plain snapshot the Rust side hands to Slint. Owning-Vecs keep the
 /// Slint Model construction simple — we build `ModelRc<VecModel<…>>`
 /// from each Vec at the property-set site.
@@ -58,6 +69,7 @@ struct KanbanBoardSnapshot {
     in_progress: Vec<KanbanTaskRow>,
     review: Vec<KanbanTaskRow>,
     done: Vec<KanbanTaskRow>,
+    feed: Vec<KanbanFeedRow>,
     summary: String,
 }
 
@@ -711,6 +723,7 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
             envelope.session.status,
             envelope.session.prompt,
         ),
+        feed: fetch_kanban_feed(&bin),
         ..Default::default()
     };
     for task in envelope.tasks {
@@ -733,7 +746,65 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
     snap
 }
 
-/// Push a `KanbanBoardSnapshot` into the seven Slint properties on the
+/// Pick #8 step 3 — Activity feed right rail. Subprocess
+/// `neothd kanban watch --output json` reads the latest kanban frames
+/// from `~/.neoth/wal/`, returns `Vec<FeedEntryJson>`. We collapse
+/// failures to an empty feed (degraded UI is fine — board still works).
+fn fetch_kanban_feed(bin: &Path) -> Vec<KanbanFeedRow> {
+    let out = spawn_neothd_plain(bin)
+        .arg("kanban")
+        .arg("watch")
+        .arg("--output")
+        .arg("json")
+        .arg("--limit")
+        .arg("50")
+        .output();
+    let stdout = match out {
+        Ok(o) if o.status.success() => o.stdout,
+        Ok(o) => {
+            tracing::warn!(
+                exit = ?o.status,
+                stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                "kanban watch failed; rendering empty feed",
+            );
+            return Vec::new();
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "kanban watch could not start; rendering empty feed");
+            return Vec::new();
+        }
+    };
+    let entries: Vec<FeedEntryJson> = match serde_json::from_slice(&stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "kanban watch JSON parse failed; rendering empty feed");
+            return Vec::new();
+        }
+    };
+    // Most-recent-first for the right rail — the WAL scan returns
+    // newest-last (append order), so reverse for the UI.
+    entries
+        .into_iter()
+        .rev()
+        .map(|e| KanbanFeedRow {
+            ts: format_hms_from_ns(e.ts_ns).into(),
+            actor: e.actor.into(),
+            message: e.message.into(),
+        })
+        .collect()
+}
+
+/// Format a unix-ns timestamp as `HH:MM` for the activity feed. Mirrors
+/// `neothd::cli::kanban::format_ts_short` but emits HH:MM (not HH:MM:SS)
+/// because the feed rail is narrow + the seconds add visual noise.
+fn format_hms_from_ns(ts_ns: u64) -> String {
+    let secs = ts_ns / 1_000_000_000;
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    format!("{h:02}:{m:02}")
+}
+
+/// Push a `KanbanBoardSnapshot` into the eight Slint properties on the
 /// MainWindow. Single call site means a future schema bump only needs
 /// one update — the property names stay 1:1 with the snapshot fields.
 fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
@@ -743,6 +814,7 @@ fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
     window.set_kanban_in_progress(ModelRc::new(VecModel::from(snap.in_progress)));
     window.set_kanban_review(ModelRc::new(VecModel::from(snap.review)));
     window.set_kanban_done(ModelRc::new(VecModel::from(snap.done)));
+    window.set_kanban_feed(ModelRc::new(VecModel::from(snap.feed)));
     window.set_kanban_session_summary(snap.summary.into());
 }
 

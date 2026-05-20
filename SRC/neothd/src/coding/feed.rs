@@ -19,7 +19,7 @@
 //! kanban payload's `hemisphere` or `author` field; the message is
 //! derived from the event type + payload context.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::wal::events::{
     EVENT_TYPE_KANBAN_SESSION_CLOSED, EVENT_TYPE_KANBAN_SESSION_OPENED,
@@ -32,7 +32,7 @@ use crate::wal::events::{
 /// watch` collects these from a segment walk + prints them in time
 /// order. The struct stays public so future GUI bindings (Pick #8)
 /// can read the same shape without re-parsing.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct FeedEntry {
     /// Nanoseconds since unix epoch, taken from the WAL header's HLC
     /// physical component. The formatter converts to HH:MM:SS at

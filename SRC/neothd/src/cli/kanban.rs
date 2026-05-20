@@ -174,7 +174,7 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
         }
         KanbanAction::Watch { wal_dir, limit } => {
             let dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
-            run_watch(&dir, limit)
+            run_watch(&dir, limit, args.output)
         }
         KanbanAction::Review {
             task_id,
@@ -490,8 +490,21 @@ fn run_review(
     Ok(())
 }
 
-fn run_watch(wal_dir: &PathBuf, limit: usize) -> Result<()> {
+fn run_watch(wal_dir: &PathBuf, limit: usize, output: OutputFormat) -> Result<()> {
     let entries = scan_wal_dir_for_kanban_feed(wal_dir, limit)?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            // Always emit a JSON array (possibly empty) so the GUI's
+            // subprocess binding can parse the same shape whether or
+            // not any kanban frame has landed yet.
+            println!(
+                "{}",
+                serde_json::to_string(&entries).context("serialise feed entries")?
+            );
+            return Ok(());
+        }
+        OutputFormat::Table => {}
+    }
     if entries.is_empty() {
         println!("(no kanban frames in {})", wal_dir.display());
         return Ok(());
@@ -912,6 +925,28 @@ mod tests {
         assert!(parsed["tasks"].is_array());
         assert_eq!(parsed["tasks"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["tasks"][0]["title"], "Task A");
+    }
+
+    #[test]
+    fn watch_json_output_serialises_feed_entries() {
+        // GUI's right-rail subprocess binding parses this — pin the
+        // wire format. FeedEntry must round-trip ts_ns + event_type
+        // + actor + message as a flat JSON object so a Slint Model
+        // can read the four fields without nested traversal.
+        let entry = FeedEntry {
+            ts_ns: 86_400_000_000_000, // 1970-01-02T00:00:00Z
+            event_type: 0x73,
+            actor: "left".to_string(),
+            message: "Patch generated for toggle component".to_string(),
+        };
+        let json = serde_json::to_string(&[entry]).expect("serialise");
+        let parsed: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert!(parsed.is_array(), "watch output must be a JSON array");
+        let row = &parsed.as_array().unwrap()[0];
+        assert_eq!(row["ts_ns"], 86_400_000_000_000u64);
+        assert_eq!(row["event_type"], 0x73);
+        assert_eq!(row["actor"], "left");
+        assert_eq!(row["message"], "Patch generated for toggle component");
     }
 
     #[test]
