@@ -153,21 +153,123 @@ fn scan_one(name: &'static str, path_tpl: &str, kind: StoreKind, home: &Path) ->
         StoreKind::JsonFile => scan_json_file(name, &resolved, kind),
         StoreKind::Sqlite => scan_sqlite(name, &resolved, kind),
         StoreKind::FaissFlat => scan_faiss_flat(name, &resolved, kind),
-        StoreKind::LanceArrow | StoreKind::GitTree => StoreScan {
-            name,
-            path: path_str,
-            kind: kind.as_str().to_string(),
-            status: ScanStatus::ReaderNotImplemented {
-                reason: format!(
-                    "{} reader needs `lance` (Arrow) / `git2` (libgit2) C-deps. \
-                     Deferred until Phase-3 dep block lands; the migrator stays \
-                     pure-Rust + bundled-sqlite-only today.",
-                    kind.as_str()
-                ),
-            },
-            row_count: 0,
-            sample: vec![],
-        },
+        StoreKind::LanceArrow => scan_lance_inventory(name, &resolved, kind),
+        StoreKind::GitTree => scan_git_inventory(name, &resolved, kind),
+    }
+}
+
+// ── LanceArrow pure-Rust inventory reader (Pick #35 follow-up) ──────
+//
+// Pick #35 (Session 16) deferred LanceArrow because real row-reads
+// need the `lance` C-dep. Pick #35 follow-up (2026-05-20) ships a
+// pure-Rust inventory pass instead: count Lance datasets present
+// (each is a directory ending `.lance/` with a `_versions/`
+// subdirectory). The operator gets a real `row_count` (= dataset
+// count) + sample = dataset names. Real row-reads land when the
+// Phase-3 dep block lets us pull `lance`.
+
+fn scan_lance_inventory(
+    name: &'static str,
+    path: &std::path::Path,
+    kind: StoreKind,
+) -> StoreScan {
+    let kind_str = kind.as_str().to_string();
+    let path_str = path.display().to_string();
+    let mut datasets: Vec<String> = Vec::new();
+    let walker = match std::fs::read_dir(path) {
+        Ok(w) => w,
+        Err(e) => {
+            return StoreScan {
+                name,
+                path: path_str,
+                kind: kind_str,
+                status: ScanStatus::Error {
+                    detail: format!("read_dir failed: {e}"),
+                },
+                row_count: 0,
+                sample: vec![],
+            };
+        }
+    };
+    for entry in walker.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        // A Lance dataset is conventionally `<name>.lance/` with a
+        // `_versions/` subdirectory inside. Use the latter as the
+        // tell so we don't false-positive on operator-named dirs.
+        if p.extension().and_then(|s| s.to_str()) == Some("lance")
+            && p.join("_versions").is_dir()
+        {
+            if let Some(n) = p.file_name().and_then(|s| s.to_str()) {
+                datasets.push(n.to_string());
+            }
+        }
+    }
+    datasets.sort();
+    let sample: Vec<String> = datasets.iter().take(5).cloned().collect();
+    StoreScan {
+        name,
+        path: path_str,
+        kind: kind_str,
+        status: ScanStatus::Ok,
+        row_count: datasets.len(),
+        sample,
+    }
+}
+
+// ── GitTree pure-Rust inventory reader (Pick #35 follow-up) ─────────
+//
+// Same approach as LanceArrow: pure-Rust inventory. A "git tree"
+// here is any subdirectory that contains a `.git/HEAD` file (or
+// `.git` itself as a file pointing at a worktree, but the simple
+// dir check is enough for the github-backup case `STORES` points
+// at). Real commit/blob walking lands with the `git2` Phase-3 dep.
+
+fn scan_git_inventory(
+    name: &'static str,
+    path: &std::path::Path,
+    kind: StoreKind,
+) -> StoreScan {
+    let kind_str = kind.as_str().to_string();
+    let path_str = path.display().to_string();
+    let mut repos: Vec<String> = Vec::new();
+    let walker = match std::fs::read_dir(path) {
+        Ok(w) => w,
+        Err(e) => {
+            return StoreScan {
+                name,
+                path: path_str,
+                kind: kind_str,
+                status: ScanStatus::Error {
+                    detail: format!("read_dir failed: {e}"),
+                },
+                row_count: 0,
+                sample: vec![],
+            };
+        }
+    };
+    for entry in walker.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        if p.join(".git").join("HEAD").is_file() {
+            if let Some(n) = p.file_name().and_then(|s| s.to_str()) {
+                repos.push(n.to_string());
+            }
+        }
+    }
+    repos.sort();
+    let sample: Vec<String> = repos.iter().take(5).cloned().collect();
+    StoreScan {
+        name,
+        path: path_str,
+        kind: kind_str,
+        status: ScanStatus::Ok,
+        row_count: repos.len(),
+        sample,
     }
 }
 
@@ -563,7 +665,13 @@ mod tests {
     }
 
     #[test]
-    fn lance_and_git_readers_remain_unimplemented() {
+    fn lance_and_git_readers_run_inventory_pass_after_pick35_followup() {
+        // Pick #35 follow-up (2026-05-20): LanceArrow + GitTree now run
+        // pure-Rust inventory scans instead of returning
+        // ReaderNotImplemented. Empty target dirs surface as
+        // ScanStatus::Ok + row_count=0, NOT as deferred. Real C-dep
+        // row reads still wait for the Phase-3 dep block; until then
+        // operators get dataset/repo counts.
         let tmp = tempdir().unwrap();
         for (sub, kind) in [
             ("lance", StoreKind::LanceArrow),
@@ -573,9 +681,10 @@ mod tests {
             std::fs::create_dir_all(&p).unwrap();
             let scan = scan_one("test", &p.to_string_lossy(), kind, tmp.path());
             assert!(
-                matches!(scan.status, ScanStatus::ReaderNotImplemented { .. }),
-                "{kind:?} reader must remain not-implemented in Pick #35 — needs C-deps"
+                matches!(scan.status, ScanStatus::Ok),
+                "{kind:?} reader must run an inventory pass post Pick #35 follow-up"
             );
+            assert_eq!(scan.row_count, 0, "empty {kind:?} dir → zero count");
         }
     }
 
@@ -680,6 +789,84 @@ mod tests {
     fn faiss_flat_reader_returns_zero_on_empty_dir() {
         let tmp = tempdir().unwrap();
         let scan = scan_faiss_flat("test", tmp.path(), StoreKind::FaissFlat);
+        assert!(matches!(scan.status, ScanStatus::Ok));
+        assert_eq!(scan.row_count, 0);
+    }
+
+    // ── LanceArrow inventory reader (Pick #35 follow-up) ──────────────
+
+    #[test]
+    fn lance_inventory_counts_datasets_with_versions_subdir() {
+        // A Lance dataset is `<name>.lance/_versions/`. Two valid
+        // datasets + one bare `.lance/` without _versions + one
+        // unrelated subdir → row_count=2.
+        let tmp = tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("episodes.lance/_versions")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("embeddings.lance/_versions")).unwrap();
+        std::fs::create_dir(tmp.path().join("bare.lance")).unwrap(); // no _versions
+        std::fs::create_dir(tmp.path().join("misc")).unwrap();
+        let scan = scan_lance_inventory("test", tmp.path(), StoreKind::LanceArrow);
+        assert!(matches!(scan.status, ScanStatus::Ok));
+        assert_eq!(scan.row_count, 2, "two valid datasets");
+        assert_eq!(scan.sample.len(), 2);
+        assert!(scan.sample.contains(&"episodes.lance".to_string()));
+        assert!(scan.sample.contains(&"embeddings.lance".to_string()));
+    }
+
+    #[test]
+    fn lance_inventory_returns_zero_on_empty_dir() {
+        let tmp = tempdir().unwrap();
+        let scan = scan_lance_inventory("test", tmp.path(), StoreKind::LanceArrow);
+        assert!(matches!(scan.status, ScanStatus::Ok));
+        assert_eq!(scan.row_count, 0);
+        assert!(scan.sample.is_empty());
+    }
+
+    #[test]
+    fn lance_inventory_sample_caps_at_five() {
+        // 7 datasets → sample carries first 5 (sorted) so the JSON
+        // report stays bounded.
+        let tmp = tempdir().unwrap();
+        for i in 0..7 {
+            std::fs::create_dir_all(
+                tmp.path().join(format!("dataset-{i}.lance/_versions")),
+            )
+            .unwrap();
+        }
+        let scan = scan_lance_inventory("test", tmp.path(), StoreKind::LanceArrow);
+        assert_eq!(scan.row_count, 7);
+        assert_eq!(scan.sample.len(), 5, "sample bounded at 5");
+    }
+
+    // ── GitTree inventory reader (Pick #35 follow-up) ─────────────────
+
+    #[test]
+    fn git_inventory_counts_subdirs_with_dot_git_head() {
+        // Each subdir containing `.git/HEAD` (file) counts as one
+        // repo. Plain subdirs + subdirs with `.git` but no HEAD file
+        // do NOT count (defense against false positives from
+        // unrelated dirs).
+        let tmp = tempdir().unwrap();
+        for repo in &["alpha", "bravo"] {
+            let head = tmp.path().join(repo).join(".git");
+            std::fs::create_dir_all(&head).unwrap();
+            std::fs::write(head.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
+        }
+        // Missing-HEAD repo + plain subdir → not counted.
+        std::fs::create_dir_all(tmp.path().join("incomplete/.git")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("not-a-repo")).unwrap();
+
+        let scan = scan_git_inventory("test", tmp.path(), StoreKind::GitTree);
+        assert!(matches!(scan.status, ScanStatus::Ok));
+        assert_eq!(scan.row_count, 2, "alpha + bravo only");
+        assert!(scan.sample.contains(&"alpha".to_string()));
+        assert!(scan.sample.contains(&"bravo".to_string()));
+    }
+
+    #[test]
+    fn git_inventory_returns_zero_on_empty_dir() {
+        let tmp = tempdir().unwrap();
+        let scan = scan_git_inventory("test", tmp.path(), StoreKind::GitTree);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 0);
     }
