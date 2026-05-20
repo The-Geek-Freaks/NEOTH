@@ -137,7 +137,7 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
         }
         KanbanAction::Task { task_id } => {
             let conn = open_views_db(&db_path)?;
-            run_task_detail(&conn, KanbanTaskId(task_id))
+            run_task_detail(&conn, KanbanTaskId(task_id), args.output)
         }
         KanbanAction::Move { task_id, status } => {
             let conn = open_views_db(&db_path)?;
@@ -236,11 +236,7 @@ fn run_list(conn: &Connection, all: bool, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_show(
-    conn: &Connection,
-    session_id: KanbanSessionId,
-    output: OutputFormat,
-) -> Result<()> {
+fn run_show(conn: &Connection, session_id: KanbanSessionId, output: OutputFormat) -> Result<()> {
     let session = store::get_session(conn, session_id)?
         .ok_or_else(|| anyhow!("session {} not found", session_id.raw()))?;
     let tasks = store::list_tasks_for_session(conn, session_id)?;
@@ -286,9 +282,28 @@ fn run_show(
     Ok(())
 }
 
-fn run_task_detail(conn: &Connection, task_id: KanbanTaskId) -> Result<()> {
+fn run_task_detail(
+    conn: &Connection,
+    task_id: KanbanTaskId,
+    output: OutputFormat,
+) -> Result<()> {
     let task = select_one_task(conn, task_id)?;
     let comments = store::list_comments_for_task(conn, task_id)?;
+
+    if matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+        // Combined envelope so the GUI detail-pane reads task + its
+        // comment thread in one subprocess hop. Schema:
+        //   { "task": KanbanTask, "comments": [KanbanComment] }
+        let body = serde_json::json!({
+            "task": task,
+            "comments": comments,
+        });
+        println!(
+            "{}",
+            serde_json::to_string(&body).context("serialise task+comments")?
+        );
+        return Ok(());
+    }
 
     println!(
         "Task #{}  [{}]  ({})",
@@ -925,6 +940,33 @@ mod tests {
         assert!(parsed["tasks"].is_array());
         assert_eq!(parsed["tasks"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["tasks"][0]["title"], "Task A");
+    }
+
+    #[test]
+    fn task_detail_json_envelope_contains_task_and_comments() {
+        // GUI detail-pane reads `{task, comments}` in one subprocess
+        // hop. Pin the wire form so a serde rename surfaces here,
+        // not in the operator's UI.
+        let (_dir, conn) = fresh_db();
+        let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let t =
+            store::insert_task(&conn, s, 10, "Sample", Some("desc"), "ui", None).unwrap();
+        store::insert_comment(&conn, t, 20, "operator", "looks good").unwrap();
+        store::insert_comment(&conn, t, 30, "left", "test added").unwrap();
+
+        let task = select_one_task(&conn, t).unwrap();
+        let comments = store::list_comments_for_task(&conn, t).unwrap();
+        let envelope = serde_json::json!({"task": task, "comments": comments});
+        let body = serde_json::to_string(&envelope).expect("serialise");
+        let parsed: serde_json::Value = serde_json::from_str(&body).expect("valid JSON");
+
+        assert!(parsed["task"].is_object());
+        assert_eq!(parsed["task"]["title"], "Sample");
+        assert_eq!(parsed["task"]["description"], "desc");
+        assert!(parsed["comments"].is_array());
+        assert_eq!(parsed["comments"].as_array().unwrap().len(), 2);
+        assert_eq!(parsed["comments"][0]["author"], "operator");
+        assert_eq!(parsed["comments"][1]["body"], "test added");
     }
 
     #[test]
