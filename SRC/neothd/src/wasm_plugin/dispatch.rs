@@ -130,6 +130,82 @@ pub fn invocation_outcome_from_compile_failure(o: &CompileOutcome) -> Option<Inv
     }
 }
 
+/// Phase 2 — instantiate the compiled module + look up the
+/// `neoth_run` export + call it.
+///
+/// Behaviour pinned for v0.1:
+///   - Plugin store gets `PluginStoreState::new(plugin_id)` with the
+///     manifest's memory_limit + fuel budget honoured.
+///   - The exported function must be `fn neoth_run() -> i32` for
+///     now. Future ABIs (struct returns, hostcall callbacks) extend
+///     this with new typed_func sigs.
+///   - Non-zero return is recorded but not treated as an error — the
+///     plugin's own convention defines what the integer means.
+///   - A missing `neoth_run` export surfaces as
+///     `InvocationOutcome::ExportLookup` with a clear error string
+///     so the operator knows the plugin doesn't follow the ABI.
+///
+/// The wasmtime `Linker` parameter is the one
+/// `hostcalls::build_linker(engine)` returns — it owns the four
+/// `neoth.*` hostcalls.
+pub fn invoke_plugin(
+    engine: &NeothEngine,
+    module: &wasmtime::Module,
+    linker: &wasmtime::Linker<crate::wasm_plugin::engine::PluginStoreState>,
+    plugin_id: impl Into<String>,
+) -> InvocationOutcome {
+    let plugin_id = plugin_id.into();
+    let state = crate::wasm_plugin::engine::PluginStoreState::new(&plugin_id);
+
+    let mut store = match engine.new_store(state) {
+        Ok(s) => s,
+        Err(e) => {
+            return InvocationOutcome {
+                plugin_id,
+                stage: InvocationStage::Instantiate,
+                error: Some(format!("new_store: {e}")),
+            };
+        }
+    };
+
+    let instance = match linker.instantiate(&mut store, module) {
+        Ok(i) => i,
+        Err(e) => {
+            return InvocationOutcome {
+                plugin_id,
+                stage: InvocationStage::Instantiate,
+                error: Some(format!("linker.instantiate: {e}")),
+            };
+        }
+    };
+
+    let func = match instance.get_typed_func::<(), i32>(&mut store, "neoth_run") {
+        Ok(f) => f,
+        Err(e) => {
+            return InvocationOutcome {
+                plugin_id,
+                stage: InvocationStage::ExportLookup,
+                error: Some(format!(
+                    "missing `fn neoth_run() -> i32` export: {e}"
+                )),
+            };
+        }
+    };
+
+    match func.call(&mut store, ()) {
+        Ok(_rc) => InvocationOutcome {
+            plugin_id,
+            stage: InvocationStage::Run,
+            error: None,
+        },
+        Err(e) => InvocationOutcome {
+            plugin_id,
+            stage: InvocationStage::Run,
+            error: Some(format!("neoth_run trapped: {e}")),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,6 +342,29 @@ mod tests {
             ),
         };
         assert!(invocation_outcome_from_compile_failure(&ok).is_none());
+    }
+
+    #[test]
+    fn invoke_plugin_reports_missing_neoth_run_export() {
+        // A minimal WASM module has no exports. invoke_plugin must
+        // surface the missing-export path as InvocationStage::ExportLookup
+        // with a non-empty error so the operator gets a clear "plugin
+        // doesn't follow the ABI" diagnostic.
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine
+            .compile_from_bytes(&minimal_wasm())
+            .expect("minimal wasm must compile");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+            .expect("hostcalls linker must build");
+        let outcome = invoke_plugin(&engine, &module, &linker, "test-no-export");
+
+        assert_eq!(outcome.plugin_id, "test-no-export");
+        assert_eq!(outcome.stage, InvocationStage::ExportLookup);
+        let err = outcome.error.expect("missing-export must carry error");
+        assert!(
+            err.contains("neoth_run"),
+            "error must name the missing export: {err}"
+        );
     }
 
     #[test]
