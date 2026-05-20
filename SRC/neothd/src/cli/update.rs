@@ -30,6 +30,17 @@ pub struct UpdateArgs {
     #[arg(long, conflicts_with_all = ["check", "apply"])]
     pub list: bool,
 
+    /// V03-09 (2026-05-20): check whether a newer NEOTH daemon
+    /// release is published on GitHub. Implies --check semantics
+    /// (probe only, no apply). Pass `--self-repo owner/name` to
+    /// point at a fork; default is `The-Geek-Freaks/NEOTH`.
+    #[arg(long = "self", conflicts_with_all = ["apply", "list"])]
+    pub self_check: bool,
+
+    /// Override the GitHub `owner/repo` slug for the self-check.
+    #[arg(long = "self-repo", value_name = "OWNER/REPO")]
+    pub self_repo: Option<String>,
+
     /// Output format. Inherited from the global `--output` flag if unset.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -38,6 +49,18 @@ pub struct UpdateArgs {
 pub async fn run_update(args: UpdateArgs) -> Result<()> {
     if args.list {
         return render_list(args.output);
+    }
+    if args.self_check {
+        // V03-09 daemon self-check path. Default repo is the
+        // published public release; operators on a fork override.
+        let repo = args
+            .self_repo
+            .as_deref()
+            .unwrap_or("The-Geek-Freaks/NEOTH");
+        info!(repo = repo, "neoth update --self: checking GitHub release");
+        let outcome = crate::updater::self_update::check_for_update(repo).await?;
+        render_self_check(&outcome, args.output);
+        return Ok(());
     }
     if args.apply {
         info!("neoth update --apply: probing + installing");
@@ -51,6 +74,39 @@ pub async fn run_update(args: UpdateArgs) -> Result<()> {
     let report = check_all().await;
     render_report(&report, args.output);
     Ok(())
+}
+
+fn render_self_check(check: &crate::updater::self_update::UpdateCheck, output: OutputFormat) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "current": check.current,
+                    "latest": check.latest,
+                    "needs_update": check.needs_update,
+                    "release_url": check.release_url,
+                    "published_at": check.published_at,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            println!("# NEOTH daemon self-update check");
+            println!("  current      : {}", check.current);
+            println!("  latest       : {}", check.latest);
+            println!("  needs update : {}", check.needs_update);
+            if check.needs_update {
+                println!();
+                println!(
+                    "  A newer release is available. Visit:\n  {}",
+                    check.release_url
+                );
+            }
+            if !check.published_at.is_empty() {
+                println!("  published    : {}", check.published_at);
+            }
+        }
+    }
 }
 
 fn render_list(output: OutputFormat) -> Result<()> {
