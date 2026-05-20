@@ -39,7 +39,24 @@ Software should not "pop" into existence; it should "emerge".
 ## 4. Platform Specific Implementation
 
 ### 4.1 Slint GUI (Desktop)
-- **Window:** Frameless, custom title bar. 
+- **Window:**
+  - **Default (v0.1):** OS-native title bar + standard chrome. The
+    noob-operator contract (`neoth_features_default_on_runtime_toggle`)
+    prioritises platform-familiar window controls over branded chrome —
+    `× minimize / □ maximize / × close` belong where the operator's OS
+    already puts them. Slint's `no-frame` requires re-implementing
+    drag, snap, double-click-to-maximize, accessibility-tree exposure
+    of window controls, and per-platform DPI compensation; each is a
+    paper cut that erodes trust before any feature has rendered.
+  - **Opt-in frameless (v0.2+):** `freedom.yaml::gui.frameless: true`
+    flips the MainWindow to `no-frame` with a custom drag-region +
+    accent-green underline + cross-platform window-control row. Pro
+    operators who explicitly accept the trade-off get the branded
+    chrome; everyone else stays in OS-native mode.
+  - **Spec evolution:** the original v1.0 spec mandated frameless
+    everywhere. Reviewer-3 P3 (2026-05-20) flagged that the
+    implementation didn't follow + the trade-off wasn't being
+    examined. Relaxed here intentionally.
 - **Shadows:** Use large, soft shadows: `box-shadow: 0 50px 100px rgba(0,0,0,0.8)`.
 
 ### 4.2 Mobile Clients (Sovereign Buddy App)

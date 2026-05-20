@@ -47,6 +47,7 @@ pub mod feed;
 pub mod review;
 pub mod store;
 pub mod types;
+pub mod worker;
 
 // Public re-exports for downstream consumers. Currently unused in main
 // because Pick #4+ wires the decomposer/dispatcher/CLI; the module
@@ -72,3 +73,8 @@ pub use types::{
     Hemisphere, KanbanComment, KanbanSession, KanbanSessionId, KanbanTask, KanbanTaskId,
     SessionStatus, TaskStatus, TestSummary,
 };
+// Pick #6 Phase 1 (2026-05-20): Worker trait + outcome surface.
+// Concrete LeftWorker/RightWorker impls land in Phase 2 once Chorus
+// settles the Q1 (patch safety) verdict.
+#[allow(unused_imports)]
+pub use worker::{Worker, WorkerOutcome};
