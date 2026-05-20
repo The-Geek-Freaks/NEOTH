@@ -376,6 +376,131 @@ mod tests {
         assert_eq!(outcome, MetaChallengeOutcome::Echo("NONCE123".to_string()));
     }
 
+    // ── T-SEC-002 anti-fragility fuzz/edge tests (2026-05-20) ──
+    //   Reviewer-Phase-2 P0-2 anti-fragility test pack. Covers the
+    //   query parser + signature verifier edges the auditor flagged
+    //   as "fragile when not stress-tested".
+
+    #[test]
+    fn meta_challenge_empty_query_is_bad_request() {
+        // Empty query string — should bail with BadRequest (missing
+        // hub.mode), NOT crash or default to subscribe.
+        assert!(matches!(
+            meta_challenge_response("", "token"),
+            MetaChallengeOutcome::BadRequest { .. }
+        ));
+    }
+
+    #[test]
+    fn meta_challenge_truncated_percent_escape_does_not_panic() {
+        // `%` at end of string + `%X` (one nibble) at end MUST NOT
+        // panic. Old buggy decoders that did unchecked +2 indexing
+        // would crash here.
+        let q1 = "hub.mode=subscribe&hub.verify_token=ok&hub.challenge=abc%";
+        let q2 = "hub.mode=subscribe&hub.verify_token=ok&hub.challenge=abc%2";
+        let _ = meta_challenge_response(q1, "ok");
+        let _ = meta_challenge_response(q2, "ok");
+        // No panic == success. Output shape is irrelevant — what
+        // matters is the parser survives.
+    }
+
+    #[test]
+    fn meta_challenge_pair_without_equals_is_skipped() {
+        // A bare key without `=` (e.g. proxy stripped the value) must
+        // be quietly skipped — the missing required keys then surface
+        // as BadRequest.
+        let q = "hub.mode&hub.verify_token=ok&hub.challenge=NONCE";
+        assert!(matches!(
+            meta_challenge_response(q, "ok"),
+            MetaChallengeOutcome::BadRequest { .. }
+        ));
+    }
+
+    #[test]
+    fn meta_challenge_consecutive_separators_no_panic() {
+        // `&&` produces an empty pair that must split cleanly to "".
+        // Old `split('&').filter_map` pipelines with eager unwrap
+        // panicked here.
+        let q = "&&hub.mode=subscribe&&hub.verify_token=ok&&hub.challenge=N&&";
+        let outcome = meta_challenge_response(q, "ok");
+        assert_eq!(outcome, MetaChallengeOutcome::Echo("N".to_string()));
+    }
+
+    #[test]
+    fn meta_challenge_unknown_keys_are_ignored() {
+        // Meta may add new optional query params in the future. The
+        // parser MUST ignore them rather than fail-closed — the three
+        // required keys are what gates the response.
+        let q = "hub.mode=subscribe&hub.future_field=x&hub.verify_token=ok\
+                 &hub.unknown=y&hub.challenge=NONCE";
+        assert_eq!(
+            meta_challenge_response(q, "ok"),
+            MetaChallengeOutcome::Echo("NONCE".to_string()),
+        );
+    }
+
+    #[test]
+    fn meta_challenge_mixed_plus_and_percent20_decode_to_space() {
+        // Form-encoded space variations both decode to ' '. The
+        // challenge MUST round-trip with the spaces preserved so the
+        // operator sees what they configured.
+        let q = "hub.mode=subscribe&hub.verify_token=ok\
+                 &hub.challenge=hello+world%20again";
+        if let MetaChallengeOutcome::Echo(challenge) = meta_challenge_response(q, "ok") {
+            assert_eq!(challenge, "hello world again");
+        } else {
+            panic!("expected Echo, got other variant");
+        }
+    }
+
+    #[test]
+    fn slack_verify_rejects_far_past_timestamp() {
+        // T-SEC-002 anti-fragility (2026-05-20): the ±5min skew
+        // window guards against replay attacks. A timestamp from
+        // hours ago MUST be rejected with TimestampOutOfWindow,
+        // not a generic SignatureMismatch.
+        let body = b"payload";
+        let now: i64 = 1_700_000_000;
+        let ancient: i64 = now - 3600; // 1 hour ago
+        let sig = sign_slack(body, &ancient.to_string(), b"secret");
+        let outcome = verify_slack_signature(body, &ancient.to_string(), &sig, b"secret", now);
+        assert!(
+            matches!(outcome, Err(SlackVerifyError::TimestampOutOfWindow { .. })),
+            "ancient timestamp must surface as TimestampOutOfWindow not SignatureMismatch"
+        );
+    }
+
+    #[test]
+    fn slack_verify_rejects_future_timestamp() {
+        // Symmetric: a timestamp far in the future is equally
+        // suspicious. The ±5min window catches both directions.
+        let body = b"x";
+        let now: i64 = 1_700_000_000;
+        let future: i64 = now + 3600;
+        let sig = sign_slack(body, &future.to_string(), b"secret");
+        let outcome = verify_slack_signature(body, &future.to_string(), &sig, b"secret", now);
+        assert!(matches!(
+            outcome,
+            Err(SlackVerifyError::TimestampOutOfWindow { .. })
+        ));
+    }
+
+    #[test]
+    fn slack_verify_rejects_non_numeric_timestamp() {
+        // Malformed timestamp (e.g. attacker sends "Invalid") MUST
+        // fail fast with MalformedTimestamp (the parser bailout
+        // path), not proceed to a constant-time compare that could
+        // leak side-channel information.
+        let outcome = verify_slack_signature(
+            b"x",
+            "not-a-number",
+            "v0=sig",
+            b"secret",
+            1_700_000_000,
+        );
+        assert!(matches!(outcome, Err(SlackVerifyError::MalformedTimestamp)));
+    }
+
     #[test]
     fn meta_challenge_duplicate_keys_last_write_wins() {
         // Reviewer-2 P2 regression guard (2026-05-20): duplicate query

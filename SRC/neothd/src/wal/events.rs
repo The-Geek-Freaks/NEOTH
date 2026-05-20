@@ -347,6 +347,14 @@ pub const EVENT_TYPE_KANBAN_TASK_COMPLETED: u8 = 0x75;
 /// tasks_done, tasks_archived, ts}`.
 pub const EVENT_TYPE_KANBAN_SESSION_CLOSED: u8 = 0x76;
 
+/// `0x77 KANBAN_TASK_PROGRESS` — Pick #6 dispatcher progress heartbeat
+/// (reserved 2026-05-20 per `PLAN/CHORUS_dispatcher_design.md` Q2).
+/// Emitted ~every 30s while a worker runs so `neoth kanban watch`
+/// shows "still working" without the audit chain bloating
+/// per-token. Payload: `{task_id, hemisphere, bytes_emitted,
+/// ts}`. Not yet wired — Pick #6 implementation lands this.
+pub const EVENT_TYPE_KANBAN_TASK_PROGRESS: u8 = 0x77;
+
 // ---- 0x80..=0x8F  Hook lifecycle (Phase 29 R-15) --------------------------
 
 /// A hook fired at a pipeline stage (matcher passed, action ran). Payload:
@@ -922,6 +930,7 @@ mod tests {
             ("KANBAN_TASK_COMMENT", EVENT_TYPE_KANBAN_TASK_COMMENT),
             ("KANBAN_TASK_COMPLETED", EVENT_TYPE_KANBAN_TASK_COMPLETED),
             ("KANBAN_SESSION_CLOSED", EVENT_TYPE_KANBAN_SESSION_CLOSED),
+            ("KANBAN_TASK_PROGRESS", EVENT_TYPE_KANBAN_TASK_PROGRESS),
             ("CONFIG_RELOADED", EVENT_TYPE_CONFIG_RELOADED),
             ("CONFIG_RELOAD_REJECTED", EVENT_TYPE_CONFIG_RELOAD_REJECTED),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),

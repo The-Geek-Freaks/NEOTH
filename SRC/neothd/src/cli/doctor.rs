@@ -1143,26 +1143,49 @@ fn check_mcp_servers(home: &Path) -> CheckOutcome {
             ),
         };
     }
+    // Reviewer-1 P1-A doctor warning (2026-05-20): three buckets now.
+    //   `hardened`   — allow_tools pinned (recommended)
+    //   `trust_all`  — operator explicitly opted into the legacy
+    //                  catalogue-trust path via `trust_all_tools: true`
+    //   `broken`     — allow_tools=None AND trust_all_tools=false →
+    //                  the gate will DENY every call (secure-default)
     let hardened: Vec<&str> = enabled
         .iter()
         .filter(|s| s.allow_tools.is_some())
         .map(|s| s.id.as_str())
         .collect();
-    let unhardened: Vec<&str> = enabled
+    let trust_all: Vec<&str> = enabled
         .iter()
-        .filter(|s| s.allow_tools.is_none())
+        .filter(|s| s.allow_tools.is_none() && s.trust_all_tools)
         .map(|s| s.id.as_str())
         .collect();
-    let detail = format!(
-        "{} enabled — hardened (allow_tools pinned): [{}]; legacy (full catalogue trusted): [{}]",
-        enabled.len(),
-        hardened.join(", "),
-        unhardened.join(", "),
-    );
-    // Pin the posture: Pass when every enabled server has an allowlist,
-    // Warn when any server trusts its full catalogue (CDX-03 says the
-    // hardened path is the recommended posture).
-    let status = if unhardened.is_empty() {
+    let broken: Vec<&str> = enabled
+        .iter()
+        .filter(|s| s.allow_tools.is_none() && !s.trust_all_tools)
+        .map(|s| s.id.as_str())
+        .collect();
+    let detail = if !broken.is_empty() {
+        format!(
+            "{} enabled — hardened: [{}]; trust_all_tools: [{}]; \
+             BROKEN (no allow_tools + trust_all_tools=false → all calls denied): [{}]. \
+             Pin allow_tools or set trust_all_tools: true on each broken server.",
+            enabled.len(),
+            hardened.join(", "),
+            trust_all.join(", "),
+            broken.join(", "),
+        )
+    } else {
+        format!(
+            "{} enabled — hardened (allow_tools pinned): [{}]; legacy (trust_all_tools=true): [{}]",
+            enabled.len(),
+            hardened.join(", "),
+            trust_all.join(", "),
+        )
+    };
+    // Posture: Pass when every enabled server is either hardened or
+    // explicit-trust. Warn when any server is in the broken state
+    // (operator's gate denies every call until they opt-in or pin).
+    let status = if broken.is_empty() {
         CheckStatus::Pass
     } else {
         CheckStatus::Warn
