@@ -20,6 +20,12 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
+// V03-09 daemon self-update check (2026-05-20). Lives next to the
+// CLI auto-update logic — same `updater` module, separate file so
+// the GitHub-Releases-API path doesn't entangle with the npm-aware
+// installer path.
+pub mod self_update;
+
 #[cfg_attr(not(test), allow(unused_imports))]
 use crate::installers::{ALL as ALL_INSTALLERS, build_cmd};
 
