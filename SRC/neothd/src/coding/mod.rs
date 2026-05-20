@@ -46,6 +46,7 @@ pub mod decomposer;
 pub mod dispatcher;
 pub mod feed;
 pub mod review;
+pub mod second_opinion;
 pub mod store;
 pub mod types;
 pub mod worker;
@@ -85,3 +86,10 @@ pub use worker::{Worker, WorkerOutcome};
 // on Q1 patch safety.
 #[allow(unused_imports)]
 pub use dispatcher::{DispatchBudget, DispatchOutcome, HemisphereWorkerSet, dispatch_session};
+// Pick #9 (2026-05-20): LLM second-opinion classifier for the
+// Ambiguous bucket — re-uses the Cerebellum DecomposerLlm trait.
+#[allow(unused_imports)]
+pub use second_opinion::{
+    build_classify_prompt, parse_classify_reply, second_opinion_classify,
+    second_opinion_classify_result,
+};
