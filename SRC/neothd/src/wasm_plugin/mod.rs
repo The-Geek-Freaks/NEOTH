@@ -64,6 +64,12 @@ pub mod engine;
 #[cfg(feature = "wasm-plugin-host")]
 pub mod hostcalls;
 
+// Pick #34 follow-up (2026-05-20): pre-flight compile + dispatch
+// outcome shape. Feature-gated because Module/Arc<Module> live on
+// the wasmtime side.
+#[cfg(feature = "wasm-plugin-host")]
+pub mod dispatch;
+
 // Plugin manifest parser. Compiled in BOTH feature configurations so
 // the slim daemon can still diagnose a malformed `plugin.toml` (`neoth
 // doctor --explain plugin-<id>`) even when wasmtime isn't linked.
