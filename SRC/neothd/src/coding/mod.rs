@@ -43,6 +43,7 @@
 pub mod cerebellum_provider;
 pub mod classifier;
 pub mod decomposer;
+pub mod dispatcher;
 pub mod feed;
 pub mod review;
 pub mod store;
@@ -78,3 +79,9 @@ pub use types::{
 // settles the Q1 (patch safety) verdict.
 #[allow(unused_imports)]
 pub use worker::{Worker, WorkerOutcome};
+// Pick #6 Phase 2 (2026-05-20): dispatch_session orchestrator.
+// Worker-set binding + budget caps + status transitions live here.
+// Concrete LeftWorker/RightWorker impls still pending Chorus verdict
+// on Q1 patch safety.
+#[allow(unused_imports)]
+pub use dispatcher::{DispatchBudget, DispatchOutcome, HemisphereWorkerSet, dispatch_session};
