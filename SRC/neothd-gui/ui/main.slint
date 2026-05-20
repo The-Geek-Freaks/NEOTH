@@ -21,9 +21,9 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow } from "settings.slint";
 import { ChatView, ChatMessage } from "chat.slint";
-export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow }
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
@@ -214,6 +214,7 @@ export component MainWindow inherits Window {
     in property <string> kanban-selected-status: "";
     in property <string> kanban-selected-hemisphere: "";
     in property <string> kanban-selected-description: "";
+    in property <[KanbanCommentRow]> kanban-selected-comments: [];
     /// Operator clicked Refresh on the Code Sessions tab. Rust
     /// re-fetches via subprocess + updates the seven properties above.
     callback kanban-refresh-clicked;
@@ -1123,6 +1124,7 @@ export component MainWindow inherits Window {
             kanban-selected-status: root.kanban-selected-status;
             kanban-selected-hemisphere: root.kanban-selected-hemisphere;
             kanban-selected-description: root.kanban-selected-description;
+            kanban-selected-comments: root.kanban-selected-comments;
             kanban-task-selected(id) => { root.kanban-task-selected(id); }
             kanban-task-move(id, status) => { root.kanban-task-move(id, status); }
             kanban-task-promote(id) => { root.kanban-task-promote(id); }

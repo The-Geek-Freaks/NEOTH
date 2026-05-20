@@ -42,6 +42,16 @@ export struct KanbanFeedRow {
     message: string,
 }
 
+/// One comment in the Code Sessions detail-pane comment thread.
+/// Rust side populates via `neoth kanban task <id> --output json`
+/// after the operator clicks a task card. v0.2-complete: shipping in
+/// v0.1 because `kanban task --output json` already exists.
+export struct KanbanCommentRow {
+    ts: string,       // pre-formatted HH:MM by Rust
+    author: string,   // "operator" | "left" | "right" | "cerebellum" | …
+    body: string,
+}
+
 component TabButton inherits Rectangle {
     in property <string> label: "";
     in property <bool> active: false;
@@ -371,6 +381,7 @@ export component SettingsView inherits Rectangle {
     in property <string> kanban-selected-status: "";
     in property <string> kanban-selected-hemisphere: "";
     in property <string> kanban-selected-description: "";
+    in property <[KanbanCommentRow]> kanban-selected-comments: [];
 
     callback wizard-rerun-clicked;
     callback reload-config-clicked;
@@ -763,11 +774,62 @@ export component SettingsView inherits Rectangle {
                             wrap: word-wrap;
                         }
 
+                        // Comments thread (2026-05-20): when the
+                        // operator clicks a task card the Rust side
+                        // fetches `kanban task <id> --output json`
+                        // and populates kanban-selected-comments.
+                        // Empty list renders nothing — the next
+                        // separator line gives the action row a clean
+                        // top edge regardless.
+                        if root.kanban-selected-comments.length > 0: Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+                        if root.kanban-selected-comments.length > 0: Text {
+                            text: "COMMENTS (" + root.kanban-selected-comments.length + ")";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            color: Theme.text-dim;
+                        }
+                        for c[i] in root.kanban-selected-comments: HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            padding-top: 2px;
+                            padding-bottom: 2px;
+                            Text {
+                                text: c.ts;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-dim;
+                                width: 48px;
+                            }
+                            Text {
+                                text: c.author;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: c.author == "operator"
+                                    ? Theme.accent-pink
+                                    : (c.author == "cerebellum"
+                                        ? Theme.accent-green
+                                        : Theme.text-muted);
+                                width: 84px;
+                            }
+                            Text {
+                                text: c.body;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                wrap: word-wrap;
+                            }
+                        }
+
                         // Step 6 (2026-05-20): operator action row.
                         // Move + Promote subprocess into the daemon CLI;
                         // the 2s live-tail picks up the resulting
-                        // status change automatically. Comment + Assign
-                        // need modal text input and land in v0.2.
+                        // status change automatically.
                         Rectangle {
                             height: 1px;
                             background: Theme.border-subtle;

@@ -59,6 +59,22 @@ struct FeedEntryJson {
     message: String,
 }
 
+/// Mirror of `neothd::coding::types::KanbanComment` for the detail
+/// pane subprocess parse. Fields match the serde wire form pinned by
+/// `cli::kanban::task_detail_json_envelope_contains_task_and_comments`.
+#[derive(Debug, Deserialize)]
+struct CommentJson {
+    author: String,
+    body: String,
+    created_ns: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct TaskDetailEnvelope {
+    #[serde(default)]
+    comments: Vec<CommentJson>,
+}
+
 /// Plain snapshot the Rust side hands to Slint. Owning-Vecs keep the
 /// Slint Model construction simple — we build `ModelRc<VecModel<…>>`
 /// from each Vec at the property-set site.
@@ -553,7 +569,26 @@ fn main() -> Result<()> {
             // when the board store starts surfacing it. Empty hides
             // the description line in the detail pane.
             w.set_kanban_selected_description("".into());
+            // Clear stale comments while the subprocess fetch runs so
+            // the operator never sees a previous task's thread.
+            w.set_kanban_selected_comments(slint::ModelRc::new(slint::VecModel::from(
+                Vec::<KanbanCommentRow>::new(),
+            )));
         }
+        // Background fetch of comments via `neoth kanban task <id>
+        // --output json`. Empty on subprocess error — operator still
+        // sees the task body, just no thread.
+        let weak_comments = weak_select.clone();
+        let id_str = task_id.to_string();
+        std::thread::spawn(move || {
+            let comments = fetch_task_comments(&id_str);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak_comments.upgrade() {
+                    use slint::{ModelRc, VecModel};
+                    w.set_kanban_selected_comments(ModelRc::new(VecModel::from(comments)));
+                }
+            });
+        });
     });
 
     // G-12 fix — operator changed the active provider in Settings →
@@ -1054,6 +1089,59 @@ fn fetch_kanban_feed(bin: &Path) -> Vec<KanbanFeedRow> {
             ts: format_hms_from_ns(e.ts_ns).into(),
             actor: e.actor.into(),
             message: e.message.into(),
+        })
+        .collect()
+}
+
+/// Detail-pane subprocess fetch. Strips the leading `#` from the
+/// Slint-formatted task id, calls `neoth kanban task <id> --output
+/// json`, parses the `{task, comments}` envelope, returns the
+/// formatted `KanbanCommentRow` vec. Empty vec on any failure — the
+/// detail pane just renders without a comment thread instead of
+/// surfacing a subprocess error in the UI.
+fn fetch_task_comments(task_id_with_hash: &str) -> Vec<KanbanCommentRow> {
+    let id = task_id_with_hash
+        .strip_prefix('#')
+        .unwrap_or(task_id_with_hash);
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    let out = spawn_neothd_plain(&bin)
+        .arg("kanban")
+        .arg("task")
+        .arg(id)
+        .arg("--output")
+        .arg("json")
+        .output();
+    let stdout = match out {
+        Ok(o) if o.status.success() => o.stdout,
+        Ok(o) => {
+            tracing::warn!(
+                task_id = id,
+                exit = ?o.status,
+                "kanban task fetch failed; rendering empty comments"
+            );
+            return Vec::new();
+        }
+        Err(e) => {
+            tracing::warn!(task_id = id, error = %e, "kanban task fetch could not start");
+            return Vec::new();
+        }
+    };
+    let envelope: TaskDetailEnvelope = match serde_json::from_slice(&stdout) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "kanban task JSON parse failed");
+            return Vec::new();
+        }
+    };
+    envelope
+        .comments
+        .into_iter()
+        .map(|c| KanbanCommentRow {
+            ts: format_hms_from_ns(c.created_ns).into(),
+            author: c.author.into(),
+            body: c.body.into(),
         })
         .collect()
 }
