@@ -188,6 +188,110 @@ pub fn classify_envelope(env: &GatewayEnvelope) -> GatewayAction {
     }
 }
 
+// Pick #37 follow-up (2026-05-20): session-state + close-code +
+// reconnect-tracker helpers needed by the live WSS loop. Adding them
+// here keeps the loop side (`run_gateway_session`) thin + delegates
+// all decision logic to pure functions for testability.
+
+/// Process-wide Discord session identifier from the READY dispatch.
+/// The reconnect path consults this when deciding between RESUME
+/// (existing session) vs IDENTIFY (fresh session) frames.
+static SESSION_ID: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
+    std::sync::OnceLock::new();
+
+fn session_id_handle() -> &'static std::sync::Mutex<Option<String>> {
+    SESSION_ID.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Record the session id from a READY dispatch. The live loop calls
+/// this on the first DispatchEvent whose event_type is "READY".
+pub fn record_session_id(id: impl Into<String>) {
+    if let Ok(mut g) = session_id_handle().lock() {
+        *g = Some(id.into());
+    }
+}
+
+/// Read the current session id. None means we never reached READY on
+/// this connection (e.g. WSS dropped before identify completed).
+pub fn current_session_id() -> Option<String> {
+    session_id_handle().lock().ok()?.clone()
+}
+
+/// Reset the session tracker. Called by the reconnect loop after an
+/// INVALID_SESSION or a non-resumable close code so the next loop
+/// runs IDENTIFY instead of RESUME.
+pub fn reset_session_id() {
+    if let Ok(mut g) = session_id_handle().lock() {
+        *g = None;
+    }
+}
+
+/// Decide whether the just-closed connection can be resumed via the
+/// RESUME op, or whether a fresh IDENTIFY is required. Per Discord's
+/// "Gateway Close Event Codes" reference table.
+///
+/// - Codes 4004/4010/4011/4012/4013/4014: terminal — operator config
+///   problem (bad token, invalid intents). Resume cannot fix; the
+///   reconnect loop bails after surfacing the close code to the
+///   operator via tracing::error.
+/// - Code 4007/4009: protocol error. Discard session, fresh IDENTIFY.
+/// - All other codes (incl. 1000/1001/1006 / network drops): resume
+///   eligible.
+pub fn should_resume_after_close(code: u16) -> bool {
+    !matches!(
+        code,
+        4004    // authentication failed
+        | 4007  // invalid sequence
+        | 4009  // session timed out
+        | 4010  // invalid shard
+        | 4011  // sharding required
+        | 4012  // invalid API version
+        | 4013  // invalid intents
+        | 4014  // disallowed intents
+    )
+}
+
+/// Returns true when the close code is operator-actionable + the
+/// reconnect loop should bail. Used by the live loop to log a clear
+/// error + stop rather than spinning on a config-broken session.
+pub fn is_terminal_close(code: u16) -> bool {
+    matches!(code, 4004 | 4010 | 4011 | 4012 | 4013 | 4014)
+}
+
+/// Reconnect attempt tracker. Each loop iteration increments
+/// `attempts` + computes a delay via [`reconnect_backoff_secs`].
+/// `record_success` is called by the live loop once IDENTIFY is
+/// acknowledged so a stable connection rolls the backoff back to 0.
+#[derive(Debug, Default, Clone)]
+pub struct ReconnectTracker {
+    attempts: u32,
+}
+
+impl ReconnectTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Number of attempts since the last [`Self::record_success`].
+    pub fn attempts(&self) -> u32 {
+        self.attempts
+    }
+
+    /// Compute + return the next delay then increment the attempt
+    /// counter. Caller sleeps the returned duration before reconnect.
+    pub fn next_delay(&mut self) -> std::time::Duration {
+        let secs = reconnect_backoff_secs(self.attempts);
+        self.attempts = self.attempts.saturating_add(1);
+        std::time::Duration::from_secs(secs)
+    }
+
+    /// Reset the tracker. Called after a successful IDENTIFY ACK so
+    /// the next disconnect starts fresh at 1 s.
+    pub fn record_success(&mut self) {
+        self.attempts = 0;
+    }
+}
+
 /// Gateway WebSocket endpoint pinned to v10 + JSON encoding. The
 /// `/gateway/bot` REST call returns a session URL but the v10 root is
 /// stable enough to default to. Discord's docs guarantee v9/v10 wire
@@ -451,6 +555,100 @@ mod tests {
     #[test]
     fn max_reconnect_backoff_is_capped() {
         assert_eq!(MAX_RECONNECT_BACKOFF_SECS, 60);
+    }
+
+    // ── Pick #37 follow-up: session + close-code + tracker tests ──
+
+    static SESSION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn session_id_round_trips_record_read_reset() {
+        let _guard = SESSION_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        reset_session_id();
+        assert!(current_session_id().is_none());
+        record_session_id("abc-123");
+        assert_eq!(current_session_id().as_deref(), Some("abc-123"));
+        reset_session_id();
+        assert!(current_session_id().is_none());
+    }
+
+    #[test]
+    fn should_resume_after_close_handles_normal_codes() {
+        // Network drops / typical closes are resumable.
+        assert!(should_resume_after_close(1000));
+        assert!(should_resume_after_close(1001));
+        assert!(should_resume_after_close(1006));
+        // Unknown numeric is treated as resumable (forward-compat).
+        assert!(should_resume_after_close(4999));
+    }
+
+    #[test]
+    fn should_resume_after_close_blocks_terminal_codes() {
+        // Auth failure + intent issues require fresh IDENTIFY (or
+        // operator action). Resume is invalid for these.
+        assert!(!should_resume_after_close(4004));
+        assert!(!should_resume_after_close(4010));
+        assert!(!should_resume_after_close(4011));
+        assert!(!should_resume_after_close(4012));
+        assert!(!should_resume_after_close(4013));
+        assert!(!should_resume_after_close(4014));
+        // 4007 + 4009 are protocol/timeout — fresh identify, not
+        // operator-terminal.
+        assert!(!should_resume_after_close(4007));
+        assert!(!should_resume_after_close(4009));
+    }
+
+    #[test]
+    fn is_terminal_close_only_for_operator_actionable() {
+        // The four codes the live loop must bail on (operator config).
+        for c in [4004, 4010, 4011, 4012, 4013, 4014] {
+            assert!(is_terminal_close(c), "code {c} must be terminal");
+        }
+        // Network / protocol / sequence-loss are NOT terminal — the
+        // loop reconnects.
+        for c in [1000, 1006, 4007, 4009, 4999] {
+            assert!(!is_terminal_close(c), "code {c} must not be terminal");
+        }
+    }
+
+    #[test]
+    fn reconnect_tracker_default_starts_at_zero() {
+        let t = ReconnectTracker::new();
+        assert_eq!(t.attempts(), 0);
+    }
+
+    #[test]
+    fn reconnect_tracker_next_delay_increments_attempts() {
+        let mut t = ReconnectTracker::new();
+        let d1 = t.next_delay();
+        let d2 = t.next_delay();
+        assert_eq!(d1.as_secs(), 1, "first attempt = 1s");
+        assert_eq!(d2.as_secs(), 2, "second attempt = 2s");
+        assert_eq!(t.attempts(), 2);
+    }
+
+    #[test]
+    fn reconnect_tracker_record_success_resets_counter() {
+        let mut t = ReconnectTracker::new();
+        t.next_delay();
+        t.next_delay();
+        t.next_delay();
+        assert_eq!(t.attempts(), 3);
+        t.record_success();
+        assert_eq!(t.attempts(), 0);
+        // Next delay back to 1s.
+        assert_eq!(t.next_delay().as_secs(), 1);
+    }
+
+    #[test]
+    fn reconnect_tracker_saturates_at_max_backoff() {
+        // After many attempts the backoff caps at
+        // MAX_RECONNECT_BACKOFF_SECS without overflow.
+        let mut t = ReconnectTracker::new();
+        for _ in 0..30 {
+            let _ = t.next_delay();
+        }
+        assert!(t.next_delay().as_secs() <= MAX_RECONNECT_BACKOFF_SECS);
     }
 
     #[test]
