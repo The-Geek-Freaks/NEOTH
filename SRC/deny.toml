@@ -1,0 +1,98 @@
+# cargo-deny — Phase 33c BS-10 (license compliance).
+#
+# Runs as `cargo deny check` in CI to fail builds on:
+#   1. Copyleft-tainted transitive deps (GPL / AGPL).
+#   2. Unmaintained / advisory-flagged crates.
+#   3. Multiple versions of the same crate when avoidable.
+#
+# Local invocation:
+#   cargo install --locked cargo-deny
+#   cargo deny check
+#
+# NEOTH ships under MIT OR Apache-2.0. Anything that forces a stronger
+# obligation on operators (GPL family) is rejected at the dependency
+# boundary so the public OSS license posture stays clean.
+
+[graph]
+# Same target NEOTH actually ships against. cargo-deny defaults to all
+# targets, which surfaces noise from optional-dep transitive trees.
+targets = [
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-apple-darwin" },
+]
+
+[licenses]
+# Confidence threshold for SPDX-license detection. 0.8 = strict enough to
+# catch ambiguities, loose enough to accept the long tail of OSS readmes.
+confidence-threshold = 0.8
+
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "0BSD",
+    "MPL-2.0",
+    "OpenSSL",
+]
+
+# Explicit deny list. cargo-deny would also reject by absence-from-allow,
+# but spelling these out makes the intent loud.
+deny = [
+    "GPL-1.0",
+    "GPL-2.0",
+    "GPL-3.0",
+    "AGPL-1.0",
+    "AGPL-3.0",
+    "LGPL-2.0",
+    "LGPL-2.1",
+    "LGPL-3.0",
+    "SSPL-1.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+# Crates we never want pulled in transitively. Phase 33d Q-9 DO-NOT-ADOPT
+# list — if any of these show up, fail the build loudly.
+deny = [
+    { name = "agentmemory" },        # 6 CVEs, no Cargo.toml (memo Q-9)
+    { name = "tailslayer-rs" },      # Linux-x86_64-only (memo Q-9, target portability)
+    { name = "openssl-sys" },        # we use rustls; openssl is build-toolchain pain
+]
+
+# Skip duplicate-version warnings for these — known cost of the ecosystem
+# (different transitive deps pin different majors and the cost of forcing
+# alignment isn't worth the security review of upstream patches).
+skip = []
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Yanked crates are an automatic deny. Unmaintained warns rather than
+# denies because some of our transitive deps are stable-but-low-activity.
+yanked = "deny"
+unmaintained = "warn"
+notice = "warn"
+# Advisories acknowledged and ruled out as non-exploitable in NEOTH's
+# threat model. Each ignore MUST carry a reason + plan-to-resolve so
+# the audit pipeline stays honest. Re-evaluate every release.
+#
+# 2026-05-16: previously ignored RUSTSEC-2026-0098 / -0099 / -0104
+# (rustls-webpki 0.101.7) dropped after the teloxide 0.13 → 0.17 bump
+# pulled reqwest 0.13 + rustls-webpki 0.103.13 into the tree. Tree
+# inspection confirms 0.101.7 no longer present.
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []

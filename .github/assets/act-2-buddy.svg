@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Act II — The Buddy">
+  <defs>
+    <radialGradient id="act2-bg" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#0d0d0d"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
+    </radialGradient>
+
+    <linearGradient id="act2-border" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff2a6d" stop-opacity="0.15"/>
+      <stop offset="50%" stop-color="#ff2a6d" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ff2a6d" stop-opacity="0.15"/>
+    </linearGradient>
+
+    <linearGradient id="act2-trace" x1="0%" x2="100%">
+      <stop offset="0%" stop-color="#ff2a6d" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#ff2a6d" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#ff2a6d" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="act2-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="320" rx="40" fill="url(#act2-bg)"/>
+  <rect x="0.5" y="0.5" width="1279" height="319" rx="40" 
+        fill="none" stroke="url(#act2-border)" stroke-width="1"/>
+
+  <line x1="80" y1="80" x2="80" y2="240" stroke="#ff2a6d" stroke-width="1" opacity="0.6"/>
+
+  <!-- Marker glyph: two intertwined circles (Eternal Bond per Brand Identity §3.3) -->
+  <g transform="translate(1140, 90)" opacity="0.75">
+    <circle cx="22" cy="22" r="20" fill="none" stroke="#ff2a6d" stroke-width="1"/>
+    <circle cx="42" cy="22" r="20" fill="none" stroke="#ff2a6d" stroke-width="1"/>
+    <circle cx="22" cy="22" r="3" fill="#ff2a6d" opacity="0.4" filter="url(#act2-glow)"/>
+    <circle cx="42" cy="22" r="3" fill="#ff2a6d" opacity="0.4" filter="url(#act2-glow)">
+      <animate attributeName="opacity" values="0.2;0.8;0.2" dur="3s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <text x="104" y="100" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace"
+        font-size="10" letter-spacing="6" fill="#ff2a6d">ACT · II · 002</text>
+
+  <text x="104" y="180" font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif"
+        font-weight="100" font-size="76" letter-spacing="14" fill="#ffffff"
+        filter="url(#act2-glow)">THE BUDDY</text>
+
+  <text x="104" y="220" font-family="-apple-system, 'SF Pro Display', system-ui, sans-serif"
+        font-weight="300" font-size="14" letter-spacing="6" fill="#aaaaaa">
+    RELATIONSHIP · DAILY USE · INSTALL · HELLO · RECALL
+  </text>
+
+  <line x1="104" y1="260" x2="1176" y2="260" 
+        stroke="url(#act2-trace)" stroke-width="1" opacity="0.5"/>
+
+  <text x="104" y="284" font-family="'JetBrains Mono', monospace" 
+        font-size="9" letter-spacing="2" fill="#ff2a6d" opacity="0.6">// neoth helps</text>
+  <text x="1176" y="284" font-family="'JetBrains Mono', monospace" 
+        font-size="9" letter-spacing="2" fill="#aaaaaa" opacity="0.5" text-anchor="end">v1.1 / buddy</text>
+
+  <circle cx="200" cy="281" r="2.5" fill="#ff2a6d" filter="url(#act2-glow)">
+    <animate attributeName="opacity" values="0.3;1;0.3" dur="2.4s" repeatCount="indefinite"/>
+  </circle>
+</svg>

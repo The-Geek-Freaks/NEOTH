@@ -1,0 +1,568 @@
+// NEOTH reusable components. Composed from `Theme` tokens so every
+// screen lands on the same visual rhythm. No screen reaches past these
+// for layout — if a new pattern emerges, lift it here first.
+//
+// Coherence rule: every interactive element MUST go through one of
+// these components. No inline `Button { ... }`, no ad-hoc `Rectangle`
+// for cards, no raw `Text` for screen titles. The 12/10 polish lives
+// in tokens + components, not in per-screen hex codes.
+
+import { Theme } from "theme.slint";
+
+// ── NeothButton ──────────────────────────────────────────────────────
+// Primary: dark fill, accent-green underline on hover (the "Neural
+// Pulse" the brand spec calls for, simplified to a 2px bar).
+// Secondary: ghost — transparent fill, accent-green border only.
+//
+// Both honour the disabled state with text-dim colour + no hover
+// reaction.
+
+export component NeothButton inherits Rectangle {
+    in property <string> label: "";
+    in property <bool> primary: true;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 44px;
+    width: max(120px, txt.preferred-width + Theme.space-loose * 2);
+    border-radius: Theme.radius-button;
+    background: root.primary ? Theme.bg-card : transparent;
+    border-width: root.primary ? 0px : 1px;
+    border-color: root.enabled ? Theme.accent-green : Theme.border-subtle;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    // Sovereign-Curve hover lift via a thin accent-green bar at the
+    // bottom. Subtle because the spec says "majestic, not flashy".
+    underline := Rectangle {
+        x: Theme.space-base;
+        y: parent.height - 2px;
+        height: 2px;
+        width: 0;
+        background: Theme.accent-green;
+        animate width {
+            duration: Theme.duration-micro;
+            easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+    }
+
+    txt := Text {
+        text: root.label;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-body;
+        font-weight: Theme.weight-medium;
+        letter-spacing: Theme.letter-spacing-body;
+        color: root.enabled
+            ? (root.primary ? Theme.text-primary : Theme.accent-green)
+            : Theme.text-dim;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => { root.clicked(); }
+    }
+
+    states [
+        hovered when touch.has-hover && root.enabled: {
+            underline.width: root.width - Theme.space-base * 2;
+            txt.color: root.primary ? Theme.accent-green : Theme.text-primary;
+        }
+    ]
+}
+
+// ── Card ─────────────────────────────────────────────────────────────
+// 16px Noble-Curve radius, card-surface background, subtle border
+// hairline. Every content block on every screen sits in one of these
+// (or in a vertical-stack of them).
+
+export component Card inherits Rectangle {
+    background: Theme.bg-card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+}
+
+// ── ScreenHeader ─────────────────────────────────────────────────────
+// Section title + one-line subtitle. Pinned typography per the brand
+// spec — title is light-weight + tight letter-spacing, subtitle is
+// muted body with the standard +2% spacing.
+
+export component ScreenHeader inherits VerticalLayout {
+    in property <string> title: "";
+    in property <string> subtitle: "";
+
+    spacing: Theme.space-tight;
+
+    Text {
+        text: root.title;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-h1;
+        font-weight: Theme.weight-light;
+        letter-spacing: 1px;
+        color: Theme.text-primary;
+    }
+    if root.subtitle != "": Text {
+        text: root.subtitle;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-body;
+        font-weight: Theme.weight-regular;
+        letter-spacing: Theme.letter-spacing-body;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+}
+
+// ── ProgressIndicator ────────────────────────────────────────────────
+// Top-of-window step counter + thin progress bar. Operator sees "where
+// am I + how much further". Sovereign-Curve animation on the fill bar
+// so step transitions feel intentional.
+
+export component ProgressIndicator inherits Rectangle {
+    in property <int> current-step: 1;
+    in property <int> total-steps: 8;
+    in property <string> step-label: "";
+
+    height: 56px;
+    background: Theme.bg-base;
+
+    VerticalLayout {
+        padding-left: Theme.space-screen;
+        padding-right: Theme.space-screen;
+        padding-top: Theme.space-base;
+        spacing: Theme.space-tight;
+
+        HorizontalLayout {
+            alignment: space-between;
+            spacing: Theme.space-base;
+            Text {
+                text: "NEOTH";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                font-weight: Theme.weight-ultralight;
+                letter-spacing: 4px;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+            }
+            HorizontalLayout {
+                alignment: end;
+                spacing: Theme.space-base;
+                Text {
+                    text: root.step-label;
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    font-weight: Theme.weight-regular;
+                    letter-spacing: Theme.letter-spacing-body;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "Step " + root.current-step + " of " + root.total-steps;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-caption;
+                    color: Theme.text-dim;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // Progress track — thin bar at the bottom, fills left-to-right.
+        Rectangle {
+            height: 2px;
+            background: Theme.border-subtle;
+            border-radius: 1px;
+            Rectangle {
+                x: 0;
+                y: 0;
+                height: parent.height;
+                width: parent.width * (root.current-step / root.total-steps);
+                background: Theme.accent-green;
+                border-radius: 1px;
+                animate width {
+                    duration: Theme.duration-screen-min;
+                    easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+                }
+            }
+        }
+    }
+}
+
+// ── ModeCard ─────────────────────────────────────────────────────────
+// Big-tile mode picker for the very first screen (CLI vs GUI flow).
+// Carries a hand-drawn SVG glyph + title + one-line subtitle + a
+// "recommended" pill when applicable. Card surface, 16px Noble curve,
+// accent-green border on hover.
+//
+// Each option is a full visual decision — the operator can pick at a
+// glance without reading paragraphs.
+
+export component ModeCard inherits Rectangle {
+    in property <string> title: "";
+    in property <string> subtitle: "";
+    in property <bool> recommended: false;
+    in property <bool> selected: false;
+    in property <image> glyph;
+    callback clicked();
+
+    width: 260px;
+    height: 320px;
+    background: root.selected ? Theme.bg-card : Theme.bg-base;
+    border-width: 2px;
+    border-color: root.selected ? Theme.accent-green : Theme.border-subtle;
+    border-radius: Theme.radius-card;
+
+    animate border-color {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+    animate background {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    VerticalLayout {
+        padding: Theme.space-loose;
+        spacing: Theme.space-base;
+
+        // SVG glyph — operator's first visual anchor.
+        Image {
+            source: root.glyph;
+            width: 100%;
+            height: 140px;
+            image-fit: contain;
+        }
+
+        VerticalLayout {
+            spacing: Theme.space-tight;
+            Text {
+                text: root.title;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-h2;
+                font-weight: Theme.weight-light;
+                letter-spacing: 1px;
+                color: Theme.text-primary;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: root.subtitle;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                font-weight: Theme.weight-regular;
+                letter-spacing: Theme.letter-spacing-body;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
+        }
+
+        // G-24 fix: token-driven sizes so high-DPI / font-scaling
+        // doesn't clip the pill. Width derived from text + padding,
+        // height tracks caption font size.
+        if root.recommended: Rectangle {
+            width: pill-text.preferred-width + Theme.space-loose;
+            height: max(22px, Theme.font-size-caption + 8px);
+            background: transparent;
+            border-color: Theme.accent-green;
+            border-width: 1px;
+            border-radius: Theme.radius-button;
+            pill-text := Text {
+                text: "RECOMMENDED";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                font-weight: Theme.weight-bold;
+                letter-spacing: 1.5px;
+                color: Theme.accent-green;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// ── NeothComboBox ────────────────────────────────────────────────────
+// G-3 fix: dark-mode-compliant dropdown. Replaces `std-widgets::ComboBox`
+// which renders a platform-native (light-mode on Windows) background
+// that breaks the brand-spec dark contract. Built from primitives so
+// every colour comes from `Theme` and the popup respects card surface +
+// border tokens.
+//
+// API mirrors `std-widgets::ComboBox`:
+//   in property <[string]> model    — list of items to show
+//   in-out property <int> current-index — selected row index
+//   callback selected(int)          — fires when operator picks a row
+
+export component NeothComboBox inherits Rectangle {
+    in property <[string]> model: [];
+    in-out property <int> current-index: 0;
+    callback selected(int);
+
+    height: 44px;
+    background: Theme.bg-card;
+    border-radius: Theme.radius-button;
+    border-width: 1px;
+    border-color: trigger.has-hover ? Theme.accent-green : Theme.border-subtle;
+
+    animate border-color {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-base;
+        padding-right: Theme.space-base;
+        spacing: Theme.space-tight;
+
+        Text {
+            text: root.model.length > 0 && root.current-index >= 0 && root.current-index < root.model.length
+                ? root.model[root.current-index]
+                : "—";
+            font-family: Theme.font-display;
+            font-size: Theme.font-size-body;
+            color: Theme.text-primary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+        Text {
+            text: "▾";
+            font-family: Theme.font-display;
+            font-size: Theme.font-size-body;
+            color: Theme.accent-green;
+            vertical-alignment: center;
+        }
+    }
+
+    trigger := TouchArea {
+        clicked => { popup.show(); }
+    }
+
+    popup := PopupWindow {
+        x: 0;
+        y: root.height;
+        width: root.width;
+
+        Rectangle {
+            background: Theme.bg-card;
+            border-radius: Theme.radius-card;
+            border-width: 1px;
+            border-color: Theme.border-subtle;
+
+            VerticalLayout {
+                padding: 4px;
+                spacing: 0px;
+
+                for entry[i] in root.model: Rectangle {
+                    height: 36px;
+                    background: row-touch.has-hover ? Theme.bg-base : transparent;
+                    border-radius: Theme.radius-button;
+                    animate background {
+                        duration: Theme.duration-micro;
+                        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+                    }
+
+                    HorizontalLayout {
+                        padding-left: Theme.space-base;
+                        padding-right: Theme.space-base;
+                        spacing: Theme.space-tight;
+
+                        Text {
+                            text: i == root.current-index ? "●" : "○";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: i == root.current-index ? Theme.accent-green : Theme.text-dim;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: entry;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+                    }
+
+                    row-touch := TouchArea {
+                        clicked => {
+                            root.current-index = i;
+                            root.selected(i);
+                            popup.close();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── NeothCheckBox ────────────────────────────────────────────────────
+// G-16 fix: dark-mode-compliant checkbox. Replaces `std-widgets::CheckBox`
+// which paints a platform-native white box on Windows. Built from
+// primitives so background, border, and check glyph all use Theme
+// tokens.
+
+export component NeothCheckBox inherits Rectangle {
+    in-out property <bool> checked: false;
+    in property <bool> enabled: true;
+    in property <string> text: "";
+    callback toggled(bool);
+
+    height: 32px;
+    background: transparent;
+
+    HorizontalLayout {
+        spacing: Theme.space-base;
+        alignment: start;
+
+        Rectangle {
+            width: 20px;
+            height: 20px;
+            y: (parent.height - 20px) / 2;
+            background: root.checked ? Theme.accent-green.with-alpha(0.18) : Theme.bg-card;
+            border-radius: 4px;
+            border-width: 1px;
+            border-color:
+                !root.enabled              ? Theme.border-subtle :
+                root.checked               ? Theme.accent-green :
+                touch.has-hover            ? Theme.accent-green.with-alpha(0.6) :
+                                              Theme.border-subtle;
+
+            animate border-color {
+                duration: Theme.duration-micro;
+                easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+            }
+            animate background {
+                duration: Theme.duration-micro;
+                easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+            }
+
+            if root.checked: Text {
+                text: "✓";
+                font-family: Theme.font-display;
+                font-size: 14px;
+                font-weight: Theme.weight-bold;
+                color: Theme.accent-green;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.text;
+            font-family: Theme.font-display;
+            font-size: Theme.font-size-body;
+            color: root.enabled ? Theme.text-primary : Theme.text-dim;
+            vertical-alignment: center;
+            wrap: word-wrap;
+        }
+    }
+
+    touch := TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled(root.checked);
+        }
+    }
+}
+
+// ── NeothLineEdit ────────────────────────────────────────────────────
+// G-16 fix: dark-mode-compliant single-line text input. Wraps Slint's
+// primitive `TextInput` with Theme-driven background + border + focus
+// ring. Replaces `std-widgets::LineEdit` which renders a white field on
+// Windows.
+
+export component NeothLineEdit inherits Rectangle {
+    in-out property <string> text: "";
+    in property <string> placeholder-text: "";
+    in property <bool> password: false;
+    in property <bool> enabled: true;
+    callback accepted(string);
+    callback edited(string);
+
+    height: 44px;
+    background: Theme.bg-card;
+    border-radius: Theme.radius-button;
+    border-width: 1px;
+    border-color:
+        !root.enabled        ? Theme.border-subtle :
+        input.has-focus      ? Theme.accent-green :
+        touch.has-hover      ? Theme.accent-green.with-alpha(0.6) :
+                                Theme.border-subtle;
+
+    animate border-color {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-base;
+        padding-right: Theme.space-base;
+
+        Rectangle {
+            // Stacked layer: placeholder shows behind the TextInput
+            // when text is empty + the field is not focused.
+            if root.text == "" && !input.has-focus: Text {
+                text: root.placeholder-text;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                color: Theme.text-dim;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+            }
+
+            input := TextInput {
+                text <=> root.text;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                color: root.enabled ? Theme.text-primary : Theme.text-dim;
+                selection-background-color: Theme.accent-green.with-alpha(0.4);
+                selection-foreground-color: Theme.text-primary;
+                input-type: root.password ? InputType.password : InputType.text;
+                single-line: true;
+                vertical-alignment: center;
+                horizontal-alignment: left;
+                enabled: root.enabled;
+                accepted => { root.accepted(self.text); }
+                edited => { root.edited(self.text); }
+            }
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { input.focus(); }
+    }
+}
+
+// ── FooterBar ────────────────────────────────────────────────────────
+// Bottom-of-window status line. Small + dim, never fights the content.
+// Carries one or two operator-readable strings: hardware probe summary,
+// daemon version, current home path.
+
+export component FooterBar inherits Rectangle {
+    in property <string> status: "";
+
+    height: 36px;
+    background: Theme.bg-base;
+
+    Rectangle {
+        x: Theme.space-screen;
+        y: 0;
+        width: parent.width - Theme.space-screen * 2;
+        height: 1px;
+        background: Theme.border-subtle;
+    }
+
+    Text {
+        x: Theme.space-screen;
+        text: root.status;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-caption;
+        color: Theme.text-dim;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+}

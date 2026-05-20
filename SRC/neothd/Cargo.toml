@@ -1,0 +1,284 @@
+[package]
+name = "neothd"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+description = "Neoth -- personal AI agent. Neoth knows."
+repository = "private"
+# `authors` deliberately omitted -- Neoth is multi-user.
+# Per-deployment operator identity lives in ~/.neoth/freedom.yaml, not crate metadata.
+
+[features]
+default = ["wizard"]
+# Interactive TTY wizard for `neoth init`. Disable for slim daemon-only builds
+# (containers, embedded targets). When off, `neoth init --non-interactive` still works.
+wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
+# V10-04 GA blocker — WASM plugin host via wasmtime. Adds ~80 MiB of
+# transitive deps + ~30s build time but unlocks operator-loadable
+# `.wasm` plugins with fuel + memory caps.
+#
+# Build-time default OFF here so contributor `cargo build` stays fast.
+# Shipped release binaries flip it ON via cargo-dist's release-args
+# (see `release.yml`) — operators downloading the tarball get the
+# feature. Per memory rule `neoth-features-default-on-runtime-toggle`,
+# the actual runtime behaviour is gated by
+# `freedom.yaml::plugins.wasm.enabled` (default `true` on builds that
+# include the feature). Operator toggles via the wizard / GUI, never
+# via cargo flags.
+#
+# The `wasm_plugin` Rust module's runtime code is
+# `#[cfg(feature = "wasm-plugin-host")]` gated; the stub Phase enum +
+# WAL band reservation stay compiled in both feature configurations.
+wasm-plugin-host = ["dep:wasmtime"]
+
+[dependencies]
+# Day-1 minimal
+tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
+serde              = { version = "1", features = ["derive"] }
+serde_json         = "1"
+serde_yaml         = "0.9"
+toml               = "0.8"
+thiserror          = "1"
+anyhow             = "1"
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+crc32c             = "0.6"
+xxhash-rust        = { version = "0.8", features = ["xxh3", "xxh64"] }
+uuid               = { version = "1", features = ["v4", "v7", "serde"] }
+
+# Day-3 (onboarding wizard) -- SPEC_onboarding.md section 9.1
+clap        = { version = "4.5", features = ["derive", "env"] }
+clap_complete = "4.5"
+chrono      = { version = "0.4", features = ["serde"] }
+# Wizard UX deps -- optional, gated behind `wizard` feature
+dialoguer   = { version = "0.11", optional = true }
+indicatif   = { version = "0.17", optional = true }
+console     = { version = "0.15", optional = true }
+
+# Day-2 (WAL writer) -- SPEC_wire_header_v2_slim.md + SPEC_wal_lifecycle.md + SPEC_multinode_clock.md
+bitflags    = "2.6"
+num_enum    = "0.7"
+
+# Secret handling (Security audit P0) -- Debug/Display redacted, zero-on-drop
+zeroize     = { version = "1", features = ["zeroize_derive"] }
+
+# Phase 11a (Ingress sanitizer) -- NFKC normalize, control-char strip,
+# prompt-injection-marker quarantine. Pure-Rust unicode-normalization crate.
+# Reference: memory/neoth-research-synthesis.md Phase 11a, Jarvis ingress-sanitizer.mjs v3.
+unicode-normalization = "0.1"
+
+# Phase 28c R-24 GT-6 (Bulk-text extractor) -- sentence boundary splitter
+# for atomic-claim extraction from operator-pasted markdown. Pure-Rust,
+# zero deps, segments by Unicode word boundaries. The `blingfire` crate
+# would give better quality but pulls a C++ build dep, so we ship with
+# the pure-Rust variant only for now (`memory/neoth_gt_onboarding_pins.md`).
+unicode-segmentation = "1.12"
+
+# Phase 29 R-15 H-3 (Hook dispatcher) -- regex matcher for the hook stage
+# filter. Pure-Rust, no PCRE — supports the subset most operators need
+# (groups, alternation, anchors).
+regex = "1.10"
+
+# Phase 33c BS-2 (Backup CLI) -- pure-Rust tar + gzip. `tar` writes/reads
+# archive members directly; `flate2` pipes the bytes through gzip. No
+# system tar binary needed. Backup is a tarball of ~/.neoth/views.db,
+# ~/.neoth/archive/, and freedom.yaml.
+tar    = "0.4"
+flate2 = "1.0"
+
+# Pick #36 (Session 14, Agent #4 design-consensus): async-aware
+# Connection wrapper for `views.db`. Eliminates `block_in_place` +
+# per-message `store::open` in `cli/serve.rs`. One `AsyncConnection`
+# runs on a dedicated background thread; `.call()` ships a `!Send`
+# closure that holds the `Transaction` on that thread. The outer
+# Future returned by `.call()` is `Send`, so we can pass an
+# `Arc<AsyncConnection>` into the channel pipeline handler.
+tokio-rusqlite = "0.5"
+
+# Pick #36 (Session 14, Agent #4 design-consensus): lock-free atomic
+# pointer swaps for hot-reloadable config. `FreedomConfig` lives
+# behind `Arc<ArcSwap<FreedomConfig>>`; every `.load()` is lock-free
+# under reader contention. Reload writers call `.store(Arc::new(new))`
+# atomically — no `RwLock` contention even when many channel-handler
+# tasks read the config concurrently.
+arc-swap = "1"
+
+# Phase 33b SP-2 (HMAC compaction) -- pure-Rust HMAC-SHA256 over the WAL
+# tail since the last compaction marker. Tamper detection without
+# external key infrastructure. RustCrypto family, no openssl.
+# C-3 Phase 2 (Session 14) — also used by `providers::aws_sigv4` for the
+# hand-rolled SigV4 signing chain (hmac_sha256 derivation chain +
+# sha256(canonical_request)). No `ring` C-dep, no aws-sdk-* heavy dep.
+hmac   = "0.12"
+sha2   = "0.10"
+# C-3 Phase 2 (Session 14) — hex encoding of SHA256/HMAC outputs for the
+# SigV4 canonical request + Authorization header. Single-purpose crate,
+# already transitive in the dep graph; explicit pin keeps the BEDROCK
+# adapter independent of upstream churn.
+hex    = "0.4"
+
+# K-Repo-Map Phase 1 (Session 14 Pick #13) — fast filesystem walker that
+# honours .gitignore / .ignore / .neothignore semantics, parallel by
+# default, used in NEOTH's first-pass code-map scan. Pure Rust, no
+# C-dependencies — Tree-sitter grammars land in K-Repo-Map Phase 2
+# when the symbol-extraction pipeline arrives. `ignore` is the engine
+# ripgrep uses, battle-tested at scale.
+ignore = "0.4"
+# OS-backed CSPRNG for HMAC key generation. Fail-closed: if the OS RNG is
+# unavailable (kernel without /dev/urandom, locked-down container, ...),
+# `load_or_init_key` errors instead of falling back to weak entropy.
+# Phase 33b SP-2 post-review fix per Codex audit item #3.
+getrandom = "0.2"
+
+# Phase 11b (Cron scheduler) -- cron-expression parser (5-field standard syntax).
+# `cron` crate is pure Rust, no system cron daemon needed. NEOTH runs the
+# scheduler inside its own tokio runtime per the self-contained hard rule.
+cron       = "0.12"
+chrono-tz  = "0.10"
+
+# Day-5 (LLM provider trait) -- async fn in trait + dyn dispatch.
+# Rust 2024 stabilises AFIT but `dyn Trait` with async fns still needs the
+# attribute macro (return-type-notation alternative is uglier).
+async-trait = "0.1"
+
+# Day-5b (REST provider adapters) -- OpenAI, Gemini, OpenAI-compat.
+# `rustls-tls` only (no openssl dep, no platform certs ambiguity).
+# `json` feature gives serde-backed request/response helpers.
+# `stream` feature enables byte-stream responses for SSE parsing in Phase 5C.
+reqwest      = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking", "socks"] }
+futures-util = "0.3"
+
+# A7 inbound webhook listener -- minimal HTTP/1.1 server on 127.0.0.1
+# routing GET/POST /webhook calls through `channels::webhook_router`
+# into the existing verify primitives + WhatsApp payload decoder.
+# `http1` only (no TLS, no HTTP/2) since the operator's reverse proxy
+# terminates TLS upstream. `server` feature gives Serve trait; the
+# rest of hyper is unused. hyper-util provides the tokio runtime
+# adapter we need to spawn connections.
+hyper       = { version = "1.5", features = ["http1", "server"] }
+hyper-util  = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+
+# CDX-06 Slack Socket-Mode WS client -- outbound WSS dialer + per-frame
+# read/write/ACK loop. rustls-only to keep the openssl-free posture
+# (no platform-cert ambiguity); connect feature handles the TLS handshake
+# + URL parse against the wss:// URL Slack hands back from
+# apps.connections.open. Used exclusively by channels/slack.rs.
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+
+# Day-7 (Telegram channel) -- official tokio-based bot framework.
+# `webhooks` feature deferred; long-polling is the default for v0.1 and
+# does not require operator to expose a public HTTPS endpoint.
+teloxide     = { version = "0.17", default-features = false, features = ["ctrlc_handler", "rustls"] }
+
+# Day-11 (SQLite recall views) -- bundled feature means rusqlite ships its own
+# libsqlite3, no system dep. NEOTH stays self-contained per the hard rule.
+# FTS5 deferred to Day-11b; the bundled build does include it when we want it.
+rusqlite     = { version = "0.31", features = ["bundled"] }
+
+# Day-14a (Local Qwen inference -- skeleton) -- model + tokenizer download
+# from Hugging Face. candle (the actual inference runtime) is added in D14b
+# so this phase doesn't bring in the heavy GPU build deps.
+hf-hub       = { version = "0.3", features = ["tokio"] }
+tokenizers   = { version = "0.20", default-features = false, features = ["onig"] }
+
+# Day-14b (Local Qwen forward pass) -- candle CPU build. CUDA / Metal are
+# opt-in features the operator can flip; defaults stay CPU-only so the
+# fresh-install path stays self-contained.
+candle-core         = { version = "0.8", default-features = false }
+candle-nn           = { version = "0.8", default-features = false }
+candle-transformers = { version = "0.8", default-features = false }
+
+# R-9 Multimodal Phase 2: pure-Rust PDF text extraction. pdf-extract is
+# more limited than pdfium (no form fields, no OCR) but ships without a
+# system-level binary, so v0.1.x operators get working text extraction
+# without a separate install. Pdfium-render lands when an operator hits
+# the form-field / OCR ceiling.
+pdf-extract         = "0.9"
+# R-9 audio: pure-Rust audio decode (wav, mp3, flac, ogg). Doesn't bring in
+# any system codec libraries — decoders are Rust-native.
+symphonia           = { version = "0.5", default-features = false, features = ["wav", "mp3", "flac", "isomp4", "aac", "pcm"] }
+# R-9 vision: pure-Rust image decode (PNG, JPEG, WebP, GIF). No system deps.
+image               = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+# Hardware probe — cross-platform CPU + RAM + (later) GPU info. Pure
+# Rust, supports Windows + Linux + macOS without system deps. Used by
+# the onboarding wizard so operators see what their hardware can do.
+sysinfo             = { version = "0.32", default-features = false, features = ["system", "disk"] }
+# D14b Phase 2b: top-p sampling needs WeightedIndex + a seedable RNG.
+# Pin to 0.9 so we share candle-core's transitive `rand` and don't pull a
+# duplicate version into the dep graph.
+rand                = { version = "0.9", default-features = false, features = ["std", "std_rng", "os_rng"] }
+# D14b Phase 2c streaming: wrap a tokio mpsc::Receiver as a Stream.
+tokio-stream        = { version = "0.1", default-features = false }
+# Phase 5C streaming -- async-stream macro builds Stream impls from async {}
+# blocks with yield. The hand-rolled Stream impl alternative is ~40 LOC of
+# poll boilerplate per adapter; the macro is the idiomatic choice.
+async-stream = "0.3"
+
+# Plugin SDK -- dev path-dep via workspace member.
+# Release builds will switch to `neoth-plugin-sdk = "0.1"` from crates.io.
+# `_host` feature flips on the host-only PermissionToken::mint() ctor.
+neoth-plugin-sdk = { path = "../neoth-plugin-sdk", version = "0.1.0-alpha.0", features = ["_host"] }
+
+# V10-04 GA blocker — wasmtime runtime for WASM plugin host. Optional
+# (feature `wasm-plugin-host`). Pinned to 26.x; the 2026 API is stable
+# enough for the Engine + Store + Linker surface we need. Compile-cost:
+# ~30s + ~80 MiB of transitive deps so a default `cargo build` skips it.
+wasmtime = { version = "26", default-features = false, features = ["cranelift", "runtime"], optional = true }
+
+# Unix-only: mlock for SecretString pages, umask at daemon startup.
+# Inline libc shim in main.rs covered umask; the libc crate is required for
+# mlock/munlock symbol resolution at link time. Day-2+ depends on the same
+# crate for any future syscall.
+[target.'cfg(unix)'.dependencies]
+libc        = "0.2"
+
+# Windows DACL restriction is implemented via icacls.exe subprocess in
+# src/wal/win_acl.rs. icacls ships with every Windows install since XP and
+# avoids 100+ LOC of unsafe Win32 wiring. See OPEN_DECISIONS.md D-008 +
+# Platform Engineer review. If a `windows` crate dep becomes worthwhile later
+# (e.g. for atomic SECURITY_ATTRIBUTES on file create), revisit.
+
+# Windows-only: VirtualLock for SecretString page-pinning, mirrors the
+# Linux libc::mlock path. Without this, secrets sit swappable to
+# pagefile.sys / hiberfil.sys on Windows — a real privacy gap because
+# Windows is Alex's primary dev platform (per CLAUDE.md). Minimal
+# feature footprint (Win32_System_Memory only) keeps the dep size
+# under control. K-Sec-2 / 2026-05-17.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation"] }
+
+[dev-dependencies]
+tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
+tempfile     = "3"
+# CDX-04: HTTP mock server for round-trip tests against tools/web_*,
+# tools/arxiv, tools/github. Hits a live 127.0.0.1 port so the
+# reqwest-backed code paths actually run rather than just the
+# parser. Matches the same allowlist category as webhook_listener's
+# self-tests (inbound-only — no_outbound_network gate excludes it).
+wiremock     = "0.6"
+# Audit 2026-05-19 (Session 15) — `check_credential_age` doctor diagnostic
+# tests need to age a fresh tempfile by 200/400 days. `std::fs` exposes no
+# mtime setter on stable Rust; `filetime` is the canonical pure-Rust shim
+# and already lives in the dep graph transitively, so this pin is zero-cost.
+filetime     = "0.2"
+
+# Day-2 followups will add:
+# memmap2 (mmap reader), hmac + sha2 (compaction HMAC), dateparser
+# Day-5 (Claude CLI adapter):
+# reqwest, eventsource-stream, tiktoken-rs
+# Day-7 (Telegram): teloxide
+# Day-8 (WhatsApp): hyper
+# Day-9 (Slack): slack-morphism
+# Day-11 (sqlite views): rusqlite or sqlx
+# Day-14 (embedding): candle-core, candle-transformers, hf-hub, tokenizers
+# Day-17 (Tailslayer): tailslayer (feature-gated)
+# Day-23 (WASM plugin host): wasmtime
+# Day-23 (Phase-3 migration -- separate `neoth-migrate` bin, feature = "migrate"):
+#   pulldown-cmark (Markdown stores), lance (LanceDB Arrow), rusqlite (FTS5+cq),
+#   git2 (github-backup). Pure-Rust toolchain -- NO Python dependency.
+#   See PLAN/RUNBOOK_phase3_cutover.md Day 63.
+# DO NOT add these before their day arrives.
+
+# Profiles + workspace declaration live at ../Cargo.toml (since O-3 split).

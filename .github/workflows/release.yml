@@ -1,0 +1,222 @@
+# =============================================================================
+# NEOTH — Release Workflow
+#
+# Triggered by tags matching vMAJOR.MINOR.PATCH (e.g., v0.1.0).
+# Builds release binaries for Linux (gnu + musl + aarch64) and macOS (x86_64 + arm64).
+# Windows: stretch goal, not included in Phase 1 (see ci.yml for rationale).
+# Signing: cosign keyless (Sigstore OIDC) — no key management required.
+# Release Engineer review (OPEN_DECISIONS.md D-001): cargo-dist rejected;
+# the matrix below already implements the chosen pipeline.
+# =============================================================================
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false    # never cancel an in-progress release
+
+# Job-level permissions — see release job for additional id-token: write.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build matrix
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 GNU — native runner
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            use_cross: false
+            archive_ext: tar.gz
+
+          # Linux x86_64 musl — static binary, no libc dependency
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+            use_cross: true
+            archive_ext: tar.gz
+
+          # Linux aarch64 GNU — cross-compiled (Raspberry Pi / ARM servers)
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04
+            use_cross: true
+            archive_ext: tar.gz
+
+          # macOS x86_64 (Intel)
+          - target: x86_64-apple-darwin
+            os: macos-13
+            use_cross: false
+            archive_ext: tar.gz
+
+          # macOS aarch64 (Apple Silicon)
+          - target: aarch64-apple-darwin
+            os: macos-14
+            use_cross: false
+            archive_ext: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: release-${{ matrix.target }}-cargo-${{ hashFiles('SRC/neothd/Cargo.lock') }}
+          restore-keys: |
+            release-${{ matrix.target }}-cargo-
+
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build (native)
+        if: "!matrix.use_cross"
+        working-directory: SRC/neothd
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        working-directory: SRC/neothd
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Package archive
+        id: archive
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE_NAME="neothd-${VERSION}-${TARGET}"
+          BINARY_PATH="SRC/target/${TARGET}/release/neothd"
+
+          mkdir -p "dist/${ARCHIVE_NAME}"
+          cp "${BINARY_PATH}" "dist/${ARCHIVE_NAME}/neothd"
+          cp README.md "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp LICENSE-MIT "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp LICENSE-APACHE "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
+
+          cd dist
+          tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}/"
+
+          SHA256=$(sha256sum "${ARCHIVE_NAME}.tar.gz" | cut -d' ' -f1)
+          echo "${SHA256}  ${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+
+          echo "archive=${ARCHIVE_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum=${ARCHIVE_NAME}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          echo "archive_name=${ARCHIVE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload archive artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.archive.outputs.archive_name }}
+          path: |
+            dist/${{ steps.archive.outputs.archive }}
+            dist/${{ steps.archive.outputs.checksum }}
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Create GitHub Release + upload all assets
+  # ---------------------------------------------------------------------------
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write       # create release + upload assets
+      id-token: write       # cosign keyless OIDC signing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        run: |
+          cd dist
+          cat *.sha256 > SHA256SUMS
+          echo "--- SHA256SUMS ---"
+          cat SHA256SUMS
+
+      # Keyless cosign signing via Sigstore OIDC — no secret keys required.
+      # Verification: `cosign verify-blob --bundle <file>.cosign.bundle <file>`
+      # Identity bound to the GitHub Actions workflow URL; transparency log entry
+      # on Rekor (https://rekor.sigstore.dev).
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign archives (keyless)
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: |
+          cd dist
+          for f in *.tar.gz; do
+            cosign sign-blob --yes "$f" --bundle "${f}.cosign.bundle"
+          done
+
+      - name: Create GitHub Release
+        # SHA-pinned to immutable release tag (mutable @v2 tag is hijack risk).
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.0.8
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/*.tar.gz
+            dist/*.sha256
+            dist/SHA256SUMS
+            dist/*.cosign.bundle
+          body: |
+            ## Installation
+
+            Download the binary for your platform, verify the SHA-256 checksum,
+            and place `neothd` on your PATH.
+
+            ```sh
+            # Verify checksum (Linux example)
+            sha256sum -c neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
+
+            # Verify cosign signature (recommended — proves the binary was
+            # built by this GitHub Actions workflow, not by an attacker):
+            cosign verify-blob \
+              --bundle neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.cosign.bundle \
+              --certificate-identity-regexp "https://github.com/.*/neoth/.github/workflows/release.yml@.*" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+            ```
+
+            See [PLAN/00_DESIGN_v1.1_FINAL.md](PLAN/00_DESIGN_v1.1_FINAL.md) for architecture notes.

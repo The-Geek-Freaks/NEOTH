@@ -1,0 +1,28 @@
+# =============================================================================
+# NEOTH — Funding configuration
+#
+# The upstream project is privately maintained.
+# If you maintain a NEOTH fork and want to add funding, edit this file in your fork.
+#
+# Uncomment and fill in the options you want to activate.
+# All fields are optional. Leave commented out until decided.
+# =============================================================================
+
+# GitHub Sponsors (username only, not full URL)
+# github: [your-github-username]
+
+# Open Collective (collective slug)
+# open_collective: neoth
+
+# Ko-fi (username)
+# ko_fi: neoth
+
+# Patreon (username)
+# patreon: neoth
+
+# Liberapay (username)
+# liberapay: neoth
+
+# Custom sponsorship URL (max 4 entries)
+# custom:
+#   - https://your-funding-page.example.com

@@ -1,0 +1,41 @@
+# =============================================================================
+# NEOTH — clippy configuration
+# Applied via: cargo clippy --all-targets --all-features -- -D warnings
+# Reference: https://rust-lang.github.io/rust-clippy/master/
+# =============================================================================
+
+# Minimum Supported Rust Version — clippy uses this to suppress lints for
+# features not available on the MSRV.
+msrv = "1.86"
+
+# Function argument count before clippy warns
+too-many-arguments-threshold = 8
+
+# Cognitive complexity score before clippy warns (cyclomatic-ish)
+cognitive-complexity-threshold = 25
+
+# Type complexity before clippy warns (nested generics count)
+type-complexity-threshold = 250
+
+# Allow up to 3 boolean function parameters before warning.
+# Note: clippy 1.95 only ships `too-many-arguments-threshold`; the bool-
+# parameter variant is unstable / nightly-only. Removed to keep stable
+# `cargo clippy -- -D warnings` from rejecting the config.
+
+# Suppress: tab characters in doc comments (used in ASCII art / tables)
+# Lint name: clippy::tabs_in_doc_comments — suppressed project-wide here.
+# Individual suppressions: #[allow(clippy::tabs_in_doc_comments)]
+# Note: rustfmt.toml uses spaces, but doc-comment tables sometimes use tabs.
+# This is a stylistic preference, not a correctness issue.
+# The suppress is done via .cargo/config.toml or RUSTFLAGS in CI; clippy.toml
+# does not directly support lint-level overrides — use allow attributes inline.
+
+# Vec<T> length before suggesting Box<[T]>
+vec-box-size-threshold = 4096
+
+# Minimum number of variants before suggesting non-exhaustive
+enum-variant-size-threshold = 200
+
+# `large-stack-arrays-threshold` is also nightly-only in clippy 1.95.
+# Remove until the stable channel ships it; the default behaviour is fine
+# for v0.1.x (the buffer in healthz.rs is 8 KiB, far below stack limits).

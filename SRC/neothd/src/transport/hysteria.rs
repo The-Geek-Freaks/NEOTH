@@ -1,0 +1,351 @@
+//! Hysteria transport manager — R-3 skeleton.
+//!
+//! Hysteria (https://github.com/apernet/hysteria) is a QUIC-based proxy
+//! that gives NEOTH encrypted egress for provider HTTP traffic. v0.1.x
+//! scope: detect the binary, spawn it as a subprocess, expose a local
+//! SOCKS5 listener that operators (or future reqwest clients) can point
+//! at. Wiring the providers through the SOCKS5 endpoint is Phase 3b.
+//!
+//! Design pins:
+//!   - **Operator supplies the server config.** NEOTH never hardcodes a
+//!     server address (self-contained rule: operator owns the upstream).
+//!   - **Binary lookup**: `$NEOTH_HYSTERIA_BIN` env override wins,
+//!     otherwise `hysteria` on `PATH`, otherwise `~/.neoth/bin/hysteria`.
+//!     Missing binary → loud error, never panic.
+//!   - **Health check** = TCP-connect to the operator's `local_socks_port`
+//!     within `HEALTH_TIMEOUT`. SOCKS5 handshake itself is the next slice.
+//!   - **Subprocess** management is owned by `HysteriaSupervisor`. Drop
+//!     kills the child cleanly via SIGTERM (unix) / `kill` (windows).
+
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{Context, Result};
+use serde::{Deserialize, Serialize};
+
+use crate::secret::SecretString;
+
+/// 2 seconds — the operator's local Hysteria responds in < 50ms typically,
+/// 2s is the "something is genuinely broken" threshold.
+pub const HEALTH_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Operator-supplied Hysteria server config — gets handed verbatim to the
+/// Hysteria binary as a YAML file. We keep this struct minimal; the full
+/// Hysteria schema has dozens of optional fields. Operator who needs
+/// auth/obfuscation/multipath edits the YAML directly after `neoth init`.
+///
+/// `PartialEq`/`Eq` deliberately not derived: the `auth` field is now a
+/// `SecretString` (Pick #32 security audit-fix). Comparing two
+/// `HysteriaConfig` values via `==` would have to expose the secret,
+/// which defeats the redact-by-default invariant. No production call
+/// site needed `==` — confirmed by the build.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HysteriaConfig {
+    /// Upstream Hysteria server endpoint, e.g. `vps.example.com:443`.
+    /// Empty string when the manager should not start the subprocess.
+    pub server: String,
+    /// Shared secret / password for the server.
+    ///
+    /// Pick #32 (Session 14, security audit-fix): previously typed
+    /// `String`. Promoted to `SecretString` so the field round-trips
+    /// through freedom.yaml under mlock + zeroize-on-drop, matching
+    /// every other credential on `FreedomConfig`. The `Debug` impl
+    /// for `SecretString` redacts the body, so log lines accidentally
+    /// printing `cfg.auth` now show `REDACTED` rather than the
+    /// plaintext shared secret.
+    pub auth: SecretString,
+    /// Local SOCKS5 listener port the manager binds to. Defaults to 1080.
+    #[serde(default = "default_socks_port")]
+    pub local_socks_port: u16,
+}
+
+impl Default for HysteriaConfig {
+    fn default() -> Self {
+        Self {
+            server: String::new(),
+            auth: SecretString::new(String::new()),
+            local_socks_port: default_socks_port(),
+        }
+    }
+}
+
+fn default_socks_port() -> u16 {
+    1080
+}
+
+/// Resolved path to the `hysteria` binary. Errors when no candidate
+/// resolves — operator sees the search order in the error body.
+pub fn locate_binary() -> Result<PathBuf> {
+    if let Ok(env) = std::env::var("NEOTH_HYSTERIA_BIN") {
+        let p = PathBuf::from(env);
+        if p.exists() {
+            return Ok(p);
+        }
+    }
+    if let Ok(found) = which_hysteria_on_path() {
+        return Ok(found);
+    }
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let candidate = home.join("bin").join(if cfg!(windows) {
+        "hysteria.exe"
+    } else {
+        "hysteria"
+    });
+    if candidate.exists() {
+        return Ok(candidate);
+    }
+    anyhow::bail!(
+        "hysteria binary not found. Searched: $NEOTH_HYSTERIA_BIN, $PATH, {}. \
+         Install via your package manager or download from \
+         https://github.com/apernet/hysteria/releases.",
+        candidate.display()
+    );
+}
+
+fn which_hysteria_on_path() -> Result<PathBuf> {
+    let exe = if cfg!(windows) {
+        "hysteria.exe"
+    } else {
+        "hysteria"
+    };
+    let path_env = std::env::var_os("PATH").context("PATH env unset")?;
+    for entry in std::env::split_paths(&path_env) {
+        let candidate = entry.join(exe);
+        if candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!("{} not on PATH", exe);
+}
+
+/// Render the operator's config as the YAML shape Hysteria expects on
+/// disk. Pure function — caller writes it to a temp file before spawning.
+/// Validates `server` and `auth` against newline / control-char
+/// injection so a tampered freedom.yaml cannot inject extra YAML keys
+/// (e.g. `socks5.listen: 0.0.0.0:1080` to expose the proxy).
+pub fn render_yaml_config(cfg: &HysteriaConfig) -> String {
+    // Treat newlines + colon-newlines as injection attempts. The
+    // YAML schema Hysteria reads has no field whose value contains
+    // newlines, so the rejection has no false-positive cost.
+    let sanitize = |s: &str| -> String {
+        if s.chars().any(|c| c == '\n' || c == '\r' || c.is_control()) {
+            // Rather than silently mangling, replace the value with a
+            // poison sentinel that Hysteria will reject. Logging
+            // happens at the supervisor layer.
+            "<<rejected: contains control characters>>".to_string()
+        } else {
+            s.to_string()
+        }
+    };
+    format!(
+        "server: {}\nauth: {}\nsocks5:\n  listen: 127.0.0.1:{}\n",
+        sanitize(&cfg.server),
+        sanitize(cfg.auth.expose()),
+        cfg.local_socks_port,
+    )
+}
+
+/// Probe the local SOCKS5 port — returns Ok when something accepts a
+/// TCP connection, Err otherwise. Used in tests + the daemon's
+/// post-spawn health check.
+pub async fn probe_socks_port(port: u16) -> Result<()> {
+    use tokio::net::TcpStream;
+    let addr = format!("127.0.0.1:{port}");
+    let stream = tokio::time::timeout(HEALTH_TIMEOUT, TcpStream::connect(&addr))
+        .await
+        .map_err(|_| anyhow::anyhow!("hysteria SOCKS5 port {port} timed out"))?
+        .map_err(|e| anyhow::anyhow!("hysteria SOCKS5 port {port} connect failed: {e}"))?;
+    drop(stream);
+    Ok(())
+}
+
+/// Supervisor wraps the Hysteria subprocess. Drop kills the child.
+/// Phase 3b will move this onto an async task that restarts the
+/// subprocess on crash; v0.1.x leaves restart to the operator.
+pub struct HysteriaSupervisor {
+    child: std::process::Child,
+    /// Local SOCKS5 port the supervisor told Hysteria to listen on.
+    pub socks_port: u16,
+    /// Path to the rendered config file. Deleted on drop so secrets
+    /// don't linger.
+    config_path: PathBuf,
+}
+
+impl HysteriaSupervisor {
+    /// Spawn the Hysteria subprocess against `config`. Returns once the
+    /// child has been launched (no health probe — caller invokes
+    /// `probe_socks_port` after a brief delay).
+    pub fn spawn(config: &HysteriaConfig) -> Result<Self> {
+        let binary = locate_binary()?;
+        // Write the YAML to a temp file inside ~/.neoth/.
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        std::fs::create_dir_all(home.join("hysteria"))
+            .with_context(|| format!("create {}/hysteria", home.display()))?;
+        let config_path = home.join("hysteria").join("config.yaml");
+        std::fs::write(&config_path, render_yaml_config(config))
+            .with_context(|| format!("write {}", config_path.display()))?;
+
+        let child = std::process::Command::new(&binary)
+            .arg("client")
+            .arg("--config")
+            .arg(&config_path)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .with_context(|| format!("spawn hysteria client via {}", binary.display()))?;
+
+        Ok(Self {
+            child,
+            socks_port: config.local_socks_port,
+            config_path,
+        })
+    }
+}
+
+impl Drop for HysteriaSupervisor {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = std::fs::remove_file(&self.config_path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_socks_port_is_1080() {
+        let cfg = HysteriaConfig::default();
+        assert_eq!(cfg.local_socks_port, 1080);
+    }
+
+    #[test]
+    fn render_yaml_includes_every_required_key() {
+        let cfg = HysteriaConfig {
+            server: "vps.example.com:443".into(),
+            auth: SecretString::new("secret".into()),
+            local_socks_port: 1080,
+        };
+        let s = render_yaml_config(&cfg);
+        assert!(s.contains("server: vps.example.com:443"));
+        assert!(s.contains("auth: secret"));
+        assert!(s.contains("listen: 127.0.0.1:1080"));
+    }
+
+    #[test]
+    fn render_yaml_uses_operator_port_override() {
+        let cfg = HysteriaConfig {
+            server: "x:1".into(),
+            auth: SecretString::new("y".into()),
+            local_socks_port: 31337,
+        };
+        let s = render_yaml_config(&cfg);
+        assert!(s.contains("listen: 127.0.0.1:31337"));
+    }
+
+    #[test]
+    fn render_yaml_rejects_newline_injection_in_server() {
+        // Attacker-controlled freedom.yaml tries to inject extra YAML
+        // keys to flip the SOCKS5 listener to all-interfaces.
+        let cfg = HysteriaConfig {
+            server: "vps:443\nsocks5:\n  listen: 0.0.0.0:1080".into(),
+            auth: SecretString::new("x".into()),
+            local_socks_port: 1080,
+        };
+        let s = render_yaml_config(&cfg);
+        assert!(
+            s.contains("<<rejected: contains control characters>>"),
+            "injection payload must be replaced with poison sentinel"
+        );
+        assert!(
+            !s.contains("0.0.0.0:1080"),
+            "injected listener must not leak into the rendered YAML"
+        );
+    }
+
+    #[test]
+    fn hysteria_config_tolerates_unknown_fields() {
+        // Operators who need obfuscation / multipath / bandwidth caps
+        // add Hysteria's full schema to their freedom.yaml; NEOTH only
+        // touches the three fields it owns and ignores the rest. The
+        // struct has NO `#[serde(deny_unknown_fields)]` so this stays
+        // permissive — the test pins that invariant so a future deny
+        // attribute doesn't silently break operator configs.
+        let yaml = r#"
+server: "vps.example.com:443"
+auth: "secret"
+local_socks_port: 1080
+bandwidth:
+  up: "100 mbps"
+  down: "100 mbps"
+obfs:
+  type: salamander
+  password: "obfuscation-token"
+tls:
+  insecure: false
+"#;
+        let cfg: HysteriaConfig =
+            serde_yaml::from_str(yaml).expect("permissive deserialize must tolerate unknown keys");
+        assert_eq!(cfg.server, "vps.example.com:443");
+        assert_eq!(cfg.auth.expose(), "secret");
+        assert_eq!(cfg.local_socks_port, 1080);
+    }
+
+    #[test]
+    fn render_yaml_rejects_newline_injection_in_auth() {
+        let cfg = HysteriaConfig {
+            server: "vps:443".into(),
+            auth: SecretString::new("tok\nextra-key: pwned".into()),
+            local_socks_port: 1080,
+        };
+        let s = render_yaml_config(&cfg);
+        assert!(s.contains("<<rejected: contains control characters>>"));
+        assert!(!s.contains("extra-key: pwned"));
+    }
+
+    #[test]
+    fn locate_binary_reports_search_order_in_error() {
+        // Force every search path to miss by setting NEOTH_HYSTERIA_BIN
+        // to a non-existent file. We don't unset PATH because that would
+        // break the rest of the test process.
+        let prev = std::env::var("NEOTH_HYSTERIA_BIN").ok();
+        // SAFETY: test-only env mutation. The test process is the sole
+        // toucher of this variable for the duration of this test; no
+        // other test reads it concurrently.
+        unsafe {
+            std::env::set_var(
+                "NEOTH_HYSTERIA_BIN",
+                "C:\\definitely-not-here\\hysteria.exe",
+            );
+        }
+        // PATH may or may not contain hysteria locally — this test
+        // tolerates either outcome but verifies the error body shape
+        // when it does fail.
+        let result = locate_binary();
+        if let Err(e) = result {
+            let msg = format!("{e}");
+            assert!(
+                msg.contains("NEOTH_HYSTERIA_BIN"),
+                "error should mention env override: {msg}",
+            );
+            assert!(msg.contains("PATH"), "error should mention PATH: {msg}");
+        }
+        // Restore env. SAFETY: same single-thread invariant as above.
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var("NEOTH_HYSTERIA_BIN", v),
+                None => std::env::remove_var("NEOTH_HYSTERIA_BIN"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_socks_port_errors_on_dead_port() {
+        // Port 1 is reserved tcpmux; no one's listening. The probe must
+        // error quickly, not hang.
+        let r = probe_socks_port(1).await;
+        assert!(r.is_err());
+    }
+}

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  NEOTH mode-card glyph — GUI flow.
+  Brand identity: dark surface, accent-green (#00ff80) for the active
+  element + chat bubble, muted greys for chrome. Three abstract chat
+  bubbles suggest the conversational + multi-channel nature of the
+  GUI surface (chat + settings + recall all in one window).
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Window frame -->
+  <rect x="10" y="14" width="180" height="112" rx="14" ry="14" fill="#0d0d0d" stroke="#2f2f2f" stroke-width="1.5"/>
+
+  <!-- Title bar -->
+  <rect x="10" y="14" width="180" height="22" rx="14" ry="14" fill="#1a1a1a"/>
+  <rect x="10" y="22" width="180" height="14" fill="#1a1a1a"/>
+  <text x="100" y="29" font-family="sans-serif" font-size="9" fill="#aaaaaa" text-anchor="middle" font-weight="300" letter-spacing="3">NEOTH</text>
+
+  <!-- Sidebar -->
+  <line x1="48" y1="36" x2="48" y2="126" stroke="#2f2f2f" stroke-width="1"/>
+  <circle cx="29" cy="50" r="4" fill="#00ff80"/>
+  <circle cx="29" cy="68" r="4" fill="#6b6b6b"/>
+  <circle cx="29" cy="86" r="4" fill="#6b6b6b"/>
+  <circle cx="29" cy="104" r="4" fill="#6b6b6b"/>
+
+  <!-- Operator message bubble (right-aligned) -->
+  <rect x="100" y="46" width="80" height="22" rx="11" ry="11" fill="#00ff80" fill-opacity="0.85"/>
+
+  <!-- NEOTH reply bubble (left-aligned) -->
+  <rect x="56" y="74" width="100" height="22" rx="11" ry="11" fill="#242424"/>
+  <rect x="56" y="102" width="60" height="14" rx="7" ry="7" fill="#242424"/>
+
+  <!-- Composer hint -->
+  <line x1="56" y1="120" x2="180" y2="120" stroke="#6b6b6b" stroke-width="1"/>
+</svg>

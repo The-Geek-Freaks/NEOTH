@@ -1,0 +1,734 @@
+// NEOTH Settings — Pick #32. Post-onboarding tab surface that mirrors
+// the 12 slash-action commands (memory rule
+// `neoth-slash-commands-and-settings-parity`).
+//
+// Layout: left sidebar with 8 tab buttons, right content panel that
+// swaps based on the active tab. Auto-save semantics — every edit
+// fires the `~/.neoth/.reload-requested` sentinel via the Rust side
+// so the daemon picks up changes within 2s without an explicit
+// "Apply" button.
+
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { NeothButton, Card, NeothComboBox } from "components.slint";
+
+export enum SettingsTab {
+    chat,
+    hemispheres,
+    channels,
+    skills,
+    plugins,
+    memory,
+    privacy,
+    config,
+    code-sessions,
+}
+
+/// One task entry in the Code Sessions board. Rust side populates via
+/// `neothd kanban show <id> --output json`; Slint groups by status into
+/// the 5 board columns. Pick #8 step 2 — subprocess data binding.
+export struct KanbanTaskRow {
+    task-id: string,          // pre-formatted `#42` so Slint avoids int-to-str
+    title: string,
+    hemisphere: string,       // "left" | "right" | "cerebellum" | "unassigned"
+}
+
+/// One row in the Code Sessions activity feed (right rail). Rust side
+/// populates via `neothd kanban watch --output json` (Pick #8 step 3
+/// will land that CLI path; today this carries fixture entries).
+export struct KanbanFeedRow {
+    ts: string,
+    actor: string,
+    message: string,
+}
+
+component TabButton inherits Rectangle {
+    in property <string> label: "";
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 44px;
+    background: root.active ? Theme.bg-card : transparent;
+    border-radius: Theme.radius-button;
+
+    animate background {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    Rectangle {
+        x: 0;
+        y: 8px;
+        width: 3px;
+        height: parent.height - 16px;
+        background: root.active ? Theme.accent-green : transparent;
+        border-radius: 2px;
+    }
+
+    txt := Text {
+        x: Theme.space-base;
+        text: root.label;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-body;
+        font-weight: root.active ? Theme.weight-medium : Theme.weight-regular;
+        letter-spacing: Theme.letter-spacing-body;
+        color: root.active ? Theme.text-primary : Theme.text-muted;
+        vertical-alignment: center;
+        height: parent.height;
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    // G-25 fix: subtle hover affordance for desktop mouse pointers.
+    // Inactive tabs lift to a 50% bg-card overlay + text moves to
+    // primary for a frame; never overrides the active-state styling.
+    states [
+        hovered when touch.has-hover && !root.active: {
+            background: Theme.bg-card.with-alpha(0.5);
+            txt.color: Theme.text-primary;
+        }
+    ]
+}
+
+// ── KanbanTaskCard ───────────────────────────────────────────────────
+// Single task tile in a board column. Title + 2-line description clip,
+// hemisphere badge (cerebellum / left / right), status colour bar.
+// Pick #8 step 1 — static fixture, no callbacks yet.
+
+// G-8/G-21 fix: larger padding for readability, 90 px min height,
+// hemisphere badge handles "unassigned" explicitly + widens to fit
+// "cerebellum" (10 chars).
+component KanbanTaskCard inherits Rectangle {
+    in property <string> title: "";
+    in property <string> hemisphere: "";       // "left" | "right" | "cerebellum" | "unassigned"
+    in property <string> task-id: "";
+
+    min-height: 90px;
+    background: Theme.bg-card;
+    border-radius: Theme.radius-button;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding: Theme.space-base;
+        spacing: Theme.space-tight;
+
+        HorizontalLayout {
+            alignment: space-between;
+            spacing: Theme.space-tight;
+            Text {
+                text: root.task-id;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-dim;
+            }
+            Rectangle {
+                width: 72px;
+                height: 18px;
+                background: transparent;
+                border-width: 1px;
+                border-radius: 4px;
+                border-color:
+                    root.hemisphere == "cerebellum" ? Theme.accent-green :
+                    root.hemisphere == "right"      ? Theme.accent-pink :
+                    root.hemisphere == "left"       ? Theme.text-muted :
+                                                       Theme.border-subtle;
+                Text {
+                    text: root.hemisphere == "unassigned" ? "—" : root.hemisphere;
+                    font-family: Theme.font-display;
+                    font-size: 9px;
+                    font-weight: Theme.weight-bold;
+                    letter-spacing: 1px;
+                    color:
+                        root.hemisphere == "cerebellum" ? Theme.accent-green :
+                        root.hemisphere == "right"      ? Theme.accent-pink :
+                        root.hemisphere == "left"       ? Theme.text-muted :
+                                                           Theme.text-dim;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        Text {
+            text: root.title;
+            font-family: Theme.font-display;
+            font-size: Theme.font-size-body;
+            font-weight: Theme.weight-regular;
+            color: Theme.text-primary;
+            wrap: word-wrap;
+        }
+    }
+}
+
+// ── KanbanColumn ─────────────────────────────────────────────────────
+// One of 5 board columns. Header with status label + task count, then a
+// vertical stack of KanbanTaskCard rendered from the `tasks` array.
+// Pick #8 step 2 — array-driven, no more @children fixture.
+
+component KanbanColumn inherits Rectangle {
+    in property <string> label: "";
+    in property <color> accent: Theme.text-muted;
+    in property <[KanbanTaskRow]> tasks: [];
+
+    background: Theme.bg-base;
+    border-radius: Theme.radius-button;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalLayout {
+        padding: Theme.space-tight;
+        spacing: Theme.space-tight;
+
+        HorizontalLayout {
+            alignment: space-between;
+            spacing: Theme.space-tight;
+            Text {
+                text: root.label;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                font-weight: Theme.weight-bold;
+                letter-spacing: 1.5px;
+                color: root.accent;
+            }
+            Text {
+                text: root.tasks.length;
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-dim;
+            }
+        }
+        Rectangle {
+            height: 2px;
+            background: root.accent;
+            opacity: 0.4;
+            border-radius: 1px;
+        }
+        VerticalLayout {
+            spacing: Theme.space-tight;
+            for entry[i] in root.tasks: KanbanTaskCard {
+                task-id: entry.task-id;
+                title: entry.title;
+                hemisphere: entry.hemisphere;
+            }
+        }
+    }
+}
+
+// ── ActivityFeedEntry ────────────────────────────────────────────────
+// One row in the right-rail activity feed. Mono timestamp, actor badge,
+// message body. Static fixture for Pick #8 step 1.
+
+component ActivityFeedEntry inherits HorizontalLayout {
+    in property <string> ts: "";
+    in property <string> actor: "";
+    in property <string> message: "";
+
+    spacing: Theme.space-tight;
+    padding-top: 4px;
+    padding-bottom: 4px;
+
+    Text {
+        text: root.ts;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-caption;
+        color: Theme.text-dim;
+        width: 48px;
+    }
+    Text {
+        text: root.actor;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-caption;
+        font-weight: Theme.weight-bold;
+        letter-spacing: 1px;
+        color: root.actor == "cerebellum"
+            ? Theme.accent-green
+            : (root.actor == "right" ? Theme.accent-pink : Theme.text-muted);
+        width: 72px;
+    }
+    Text {
+        text: root.message;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-caption;
+        color: Theme.text-primary;
+        wrap: word-wrap;
+    }
+}
+
+component PanelHeader inherits VerticalLayout {
+    in property <string> title: "";
+    in property <string> subtitle: "";
+    in property <string> mirrors-slash: "";
+
+    spacing: Theme.space-tight;
+
+    Text {
+        text: root.title;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-h2;
+        font-weight: Theme.weight-light;
+        color: Theme.text-primary;
+    }
+    if root.subtitle != "": Text {
+        text: root.subtitle;
+        font-family: Theme.font-display;
+        font-size: Theme.font-size-body;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+    if root.mirrors-slash != "": Text {
+        text: "CLI mirror: " + root.mirrors-slash;
+        font-family: Theme.font-mono;
+        font-size: Theme.font-size-caption;
+        color: Theme.accent-green;
+    }
+}
+
+component PendingPanel inherits VerticalBox {
+    in property <string> title: "";
+    in property <string> subtitle: "";
+    in property <string> mirrors-slash: "";
+    in property <string> pending-pick: "";
+
+    padding: Theme.space-loose;
+    spacing: Theme.space-loose;
+
+    PanelHeader {
+        title: root.title;
+        subtitle: root.subtitle;
+        mirrors-slash: root.mirrors-slash;
+    }
+    Card {
+        VerticalBox {
+            padding: Theme.space-base;
+            spacing: Theme.space-tight;
+            Text {
+                text: "Coming in " + root.pending-pick;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                font-weight: Theme.weight-medium;
+                letter-spacing: 1px;
+                color: Theme.accent-green;
+            }
+            Text {
+                text: "Use the CLI mirror above for now — the daemon writes the same freedom.yaml + credentials.yaml regardless of which surface you tweak.";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+export component SettingsView inherits Rectangle {
+    in-out property <SettingsTab> active: SettingsTab.chat;
+    in-out property <string> autonomy-current: "standard";
+    in-out property <string> provider-current: "claude_cli";
+
+    // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
+    // Rust side fetches `neothd kanban list/show --output json` on tab
+    // open + populates the five status-bucket arrays here. Empty
+    // arrays render an empty column with header + 0 count — that's
+    // the steady state when the operator hasn't run `neoth code` yet.
+    in property <[KanbanTaskRow]> kanban-backlog: [];
+    in property <[KanbanTaskRow]> kanban-todo: [];
+    in property <[KanbanTaskRow]> kanban-in-progress: [];
+    in property <[KanbanTaskRow]> kanban-review: [];
+    in property <[KanbanTaskRow]> kanban-done: [];
+    in property <[KanbanFeedRow]> kanban-feed: [];
+    /// One-line summary above the board: which session is showing,
+    /// when it was opened, what the operator's prompt was. Empty
+    /// string means "no sessions yet — operator has not run `neoth
+    /// code` on this machine".
+    in property <string> kanban-session-summary: "";
+
+    callback wizard-rerun-clicked;
+    callback reload-config-clicked;
+    /// G-12 fix — operator picked a different provider in the
+    /// Config tab. Rust persists the change to freedom.yaml + drops
+    /// the reload sentinel.
+    callback provider-changed(string);
+    /// Operator clicked "Refresh" on the Code Sessions tab. Rust side
+    /// re-runs `neothd kanban list/show` + re-populates the 5 board
+    /// properties. Live-tail (Pick #8 step 4) will replace this with
+    /// a WAL-driven push.
+    callback kanban-refresh-clicked;
+    /// G-5 fix — operator clicked "← Chat" in the sidebar header so
+    /// they can leave Settings. Without this they were trapped
+    /// because the ⚙ icon lives in the Chat sidebar (not visible
+    /// from Settings).
+    callback back-clicked;
+
+    background: Theme.bg-base;
+
+    HorizontalLayout {
+        Rectangle {
+            width: 220px;
+            background: Theme.bg-base;
+            VerticalLayout {
+                padding: Theme.space-base;
+                spacing: Theme.space-tight;
+
+                // G-5 fix: "← Chat" lives at the top of the sidebar so
+                // the operator always has an obvious exit. Mirrors the
+                // back-button pattern from every wizard step.
+                NeothButton {
+                    label: "← Chat";
+                    primary: false;
+                    clicked => { root.back-clicked(); }
+                }
+
+                Text {
+                    text: "SETTINGS";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    font-weight: Theme.weight-bold;
+                    letter-spacing: 2px;
+                    color: Theme.text-dim;
+                }
+
+                TabButton {
+                    label: "Chat";
+                    active: root.active == SettingsTab.chat;
+                    clicked => { root.active = SettingsTab.chat; }
+                }
+                TabButton {
+                    label: "Hemispheres";
+                    active: root.active == SettingsTab.hemispheres;
+                    clicked => { root.active = SettingsTab.hemispheres; }
+                }
+                TabButton {
+                    label: "Channels";
+                    active: root.active == SettingsTab.channels;
+                    clicked => { root.active = SettingsTab.channels; }
+                }
+                TabButton {
+                    label: "Skills";
+                    active: root.active == SettingsTab.skills;
+                    clicked => { root.active = SettingsTab.skills; }
+                }
+                TabButton {
+                    label: "Plugins";
+                    active: root.active == SettingsTab.plugins;
+                    clicked => { root.active = SettingsTab.plugins; }
+                }
+                TabButton {
+                    label: "Memory";
+                    active: root.active == SettingsTab.memory;
+                    clicked => { root.active = SettingsTab.memory; }
+                }
+                TabButton {
+                    label: "Privacy";
+                    active: root.active == SettingsTab.privacy;
+                    clicked => { root.active = SettingsTab.privacy; }
+                }
+                TabButton {
+                    label: "Config";
+                    active: root.active == SettingsTab.config;
+                    clicked => { root.active = SettingsTab.config; }
+                }
+                TabButton {
+                    label: "Code Sessions";
+                    active: root.active == SettingsTab.code-sessions;
+                    clicked => { root.active = SettingsTab.code-sessions; }
+                }
+            }
+        }
+
+        Rectangle {
+            background: Theme.bg-base;
+            border-color: Theme.border-subtle;
+            border-width: 1px;
+            border-radius: Theme.radius-card;
+
+            // G-17 fix: replace internal "Pick #N" sprint labels with
+            // operator-readable release identifiers. Internal tracking
+            // belongs in PROGRESS.md, not in the settings UI.
+            if root.active == SettingsTab.chat: PendingPanel {
+                title: "Chat";
+                subtitle: "Your day-to-day conversation surface — message composer, scrollback, sidebar showing the active channel. Type a message, hit Enter or click Send. Press `/` to discover slash commands.";
+                mirrors-slash: "(primary daily surface)";
+                pending-pick: "next release";
+            }
+
+            if root.active == SettingsTab.hemispheres: PendingPanel {
+                title: "Hemispheres";
+                subtitle: "NEOTH thinks across three roles: Left (fast, analytic — short replies, quick lookups), Right (deep, creative — long-form, complex reasoning), Cerebellum (the orchestrator that picks Left or Right). Bind a provider to each.";
+                mirrors-slash: "/provider [role] <kind>";
+                pending-pick: "next release";
+            }
+
+            if root.active == SettingsTab.channels: PendingPanel {
+                title: "Channels";
+                subtitle: "Connect or disconnect messaging surfaces — Telegram, WhatsApp, Slack, Discord, Keet. Credentials are stored encrypted in ~/.neoth/credentials.yaml, readable only by you.";
+                mirrors-slash: "/connect <channel>   |   /disconnect <channel>";
+                pending-pick: "v0.2";
+            }
+
+            if root.active == SettingsTab.skills: PendingPanel {
+                title: "Skills";
+                subtitle: "Install skill packs — small bundles of system-prompt text that teach NEOTH about a domain (writing style, code review preferences, your meeting cadence). Each skill loads automatically when its trigger words appear.";
+                mirrors-slash: "/skill list   |   /skill enable <name>";
+                pending-pick: "v0.2";
+            }
+
+            if root.active == SettingsTab.plugins: PendingPanel {
+                title: "Plugins";
+                subtitle: "Extend NEOTH with WebAssembly plugins — sandboxed code modules that add new tools and slash commands. Drop a .wasm file into ~/.neoth/plugins/ and enable it here.";
+                mirrors-slash: "/plugin list   |   /plugin enable <id>";
+                pending-pick: "v0.2";
+            }
+
+            if root.active == SettingsTab.memory: PendingPanel {
+                title: "Memory";
+                subtitle: "Inspect what NEOTH remembers about you. Four tiers — hot (last 7 days), warm (90 days), cold (long-term, decayed), and ground truth (never forgotten). Erase a topic to wipe it from every tier.";
+                mirrors-slash: "/memory view [topic]   |   /memory forget <topic>";
+                pending-pick: "v0.2";
+            }
+
+            if root.active == SettingsTab.privacy: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Privacy";
+                    subtitle: "Outbound-LLM consent state + autonomy level. Cloud providers only run after explicit consent (V03-08).";
+                    mirrors-slash: "/consent list   |   /autonomy <level>";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Current autonomy";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: root.autonomy-current;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                        }
+                        Text {
+                            text: "Five levels: strict / standard / elevated / full / custom. Switch via the CLI: /autonomy <level>. Slider UI lands in the autonomy-ui Pick.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            if root.active == SettingsTab.code-sessions: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Code Sessions";
+                    subtitle: "Hermes-style autonomous coding workflow. Decompose a prompt with Cerebellum, dispatch tasks to Left (fast) + Right (deep) hemispheres, watch the kanban board fill.";
+                    mirrors-slash: "/code <prompt>   |   neoth kanban {list,show,task,move,assign,comment,archive,watch,review}";
+                }
+
+                // Session summary + refresh button. Empty
+                // `kanban-session-summary` means no `neoth code` run yet.
+                HorizontalLayout {
+                    alignment: space-between;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: root.kanban-session-summary != ""
+                            ? root.kanban-session-summary
+                            : "No active session. Run `neoth code \"...\"` in your terminal, then refresh.";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: root.kanban-session-summary != "" ? Theme.text-primary : Theme.text-muted;
+                        vertical-alignment: center;
+                    }
+                    NeothButton {
+                        label: "Refresh";
+                        primary: false;
+                        clicked => { root.kanban-refresh-clicked(); }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.space-loose;
+
+                    // ── Board (5 columns) ────────────────────────────
+                    VerticalLayout {
+                        spacing: Theme.space-base;
+                        horizontal-stretch: 1;
+
+                        HorizontalLayout {
+                            spacing: Theme.space-tight;
+                            alignment: stretch;
+
+                            KanbanColumn {
+                                label: "BACKLOG";
+                                accent: Theme.text-muted;
+                                horizontal-stretch: 1;
+                                tasks: root.kanban-backlog;
+                            }
+                            KanbanColumn {
+                                label: "TODO";
+                                accent: Theme.text-primary;
+                                horizontal-stretch: 1;
+                                tasks: root.kanban-todo;
+                            }
+                            KanbanColumn {
+                                label: "IN PROGRESS";
+                                accent: Theme.accent-green;
+                                horizontal-stretch: 1;
+                                tasks: root.kanban-in-progress;
+                            }
+                            KanbanColumn {
+                                label: "REVIEW";
+                                accent: Theme.accent-pink;
+                                horizontal-stretch: 1;
+                                tasks: root.kanban-review;
+                            }
+                            KanbanColumn {
+                                label: "DONE";
+                                accent: Theme.accent-green;
+                                horizontal-stretch: 1;
+                                tasks: root.kanban-done;
+                            }
+                        }
+                    }
+
+                    // ── Activity feed (right rail) ───────────────────
+                    // G-22 fix: width shrinks proportionally on narrow
+                    // windows so the 5-column board keeps breathing
+                    // room instead of being eaten by a fixed-320 rail.
+                    Rectangle {
+                        width: min(320px, parent.width * 0.28);
+                        background: Theme.bg-card;
+                        border-radius: Theme.radius-card;
+                        border-width: 1px;
+                        border-color: Theme.border-subtle;
+
+                        VerticalLayout {
+                            padding: Theme.space-base;
+                            spacing: Theme.space-tight;
+
+                            Text {
+                                text: "ACTIVITY";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-bold;
+                                letter-spacing: 2px;
+                                color: Theme.accent-green;
+                            }
+                            Rectangle {
+                                height: 1px;
+                                background: Theme.border-subtle;
+                            }
+                            if root.kanban-feed.length == 0: Text {
+                                text: "No activity yet.";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-dim;
+                            }
+                            for entry[i] in root.kanban-feed: ActivityFeedEntry {
+                                ts: entry.ts;
+                                actor: entry.actor;
+                                message: entry.message;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // G-12 fix: Config tab now exposes an in-place provider
+            // selector instead of asking the operator to "edit
+            // freedom.yaml with your editor of choice" — that would
+            // break the noob-operator contract. Change fires the
+            // `provider-changed` callback; Rust mutates freedom.yaml
+            // + drops the reload sentinel automatically.
+            if root.active == SettingsTab.config: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Config";
+                    subtitle: "Change the LLM provider, force a config reload, or restart the setup wizard. Every choice writes back to ~/.neoth/freedom.yaml — no manual YAML editing required.";
+                    mirrors-slash: "/config   |   /wizard   |   /reload";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-base;
+
+                        Text {
+                            text: "ACTIVE PROVIDER";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: 1.5px;
+                            color: Theme.accent-green;
+                        }
+                        NeothComboBox {
+                            model: [
+                                "claude_cli",
+                                "openai_api",
+                                "openai_compat",
+                                "gemini_api",
+                                "local_qwen",
+                                "hermes",
+                                "openclaw",
+                            ];
+                            current-index:
+                                root.provider-current == "claude_cli"    ? 0 :
+                                root.provider-current == "openai_api"    ? 1 :
+                                root.provider-current == "openai_compat" ? 2 :
+                                root.provider-current == "gemini_api"    ? 3 :
+                                root.provider-current == "local_qwen"    ? 4 :
+                                root.provider-current == "hermes"        ? 5 :
+                                root.provider-current == "openclaw"      ? 6 :
+                                                                            0;
+                            selected(i) => {
+                                if (i == 0) { root.provider-current = "claude_cli"; }
+                                if (i == 1) { root.provider-current = "openai_api"; }
+                                if (i == 2) { root.provider-current = "openai_compat"; }
+                                if (i == 3) { root.provider-current = "gemini_api"; }
+                                if (i == 4) { root.provider-current = "local_qwen"; }
+                                if (i == 5) { root.provider-current = "hermes"; }
+                                if (i == 6) { root.provider-current = "openclaw"; }
+                                root.provider-changed(root.provider-current);
+                            }
+                        }
+
+                        Text {
+                            text: "Click Reload config below after any provider change so the daemon picks it up within ~2 seconds — the sentinel file at ~/.neoth/.reload-requested handles the dispatch.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+
+                        Rectangle {
+                            height: 1px;
+                            background: Theme.border-subtle;
+                        }
+
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            NeothButton {
+                                label: "Reload config";
+                                clicked => { root.reload-config-clicked(); }
+                            }
+                            NeothButton {
+                                label: "Re-run wizard";
+                                primary: false;
+                                clicked => { root.wizard-rerun-clicked(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,694 @@
+//! Activity feed — pure derived view over WAL 0x70..=0x76 frames.
+//!
+//! Pick #7 per `PLAN/SPEC_coding_workflow.md` build order. Pure
+//! functions only — no IO, no daemon. Pick #5 will wire `neoth kanban
+//! watch` to walk a segment + tail new frames + call into here for
+//! formatting.
+//!
+//! ## Output shape (matches the Twitter image)
+//!
+//! ```text
+//! 23:55  left        Patch generated for toggle component
+//! 23:56  left        Tests added (5 new)
+//! 23:57  right       Code review started
+//! 23:58  cerebellum  All checks passing
+//! ```
+//!
+//! The columns are: HH:MM (local time) | actor (left/right/cerebellum
+//! /operator/system) | one-line message. The actor comes from the
+//! kanban payload's `hemisphere` or `author` field; the message is
+//! derived from the event type + payload context.
+
+use serde::Deserialize;
+
+use crate::wal::events::{
+    EVENT_TYPE_KANBAN_SESSION_CLOSED, EVENT_TYPE_KANBAN_SESSION_OPENED,
+    EVENT_TYPE_KANBAN_STATUS_CHANGED, EVENT_TYPE_KANBAN_TASK_ASSIGNED,
+    EVENT_TYPE_KANBAN_TASK_COMMENT, EVENT_TYPE_KANBAN_TASK_COMPLETED,
+    EVENT_TYPE_KANBAN_TASK_CREATED,
+};
+
+/// One formatted line in the activity feed. Pick #5's `neoth kanban
+/// watch` collects these from a segment walk + prints them in time
+/// order. The struct stays public so future GUI bindings (Pick #8)
+/// can read the same shape without re-parsing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeedEntry {
+    /// Nanoseconds since unix epoch, taken from the WAL header's HLC
+    /// physical component. The formatter converts to HH:MM:SS at
+    /// render time so callers can re-render in any timezone.
+    pub ts_ns: u64,
+    /// Stable WAL event-type byte (0x70..=0x76). Operators reading
+    /// the raw feed can correlate with `neoth events --grep kanban`.
+    pub event_type: u8,
+    /// Who is doing the thing. `left` / `right` / `cerebellum` for
+    /// worker actions; `operator` for human input; `system` for
+    /// session-lifecycle frames (session opened/closed without a
+    /// specific actor).
+    pub actor: String,
+    /// One-line operator-readable description. Already includes
+    /// task title or test count where the payload carries it; the
+    /// formatter does NOT re-derive these on render.
+    pub message: String,
+}
+
+impl FeedEntry {
+    /// Render as a single feed line: `HH:MM:SS  actor       message`.
+    /// Actor is left-padded to 11 chars (matches the Twitter image's
+    /// column width) so a sequence of entries lines up cleanly.
+    pub fn format(&self) -> String {
+        format!(
+            "{}  {:<11} {}",
+            format_hms_utc(self.ts_ns),
+            self.actor,
+            self.message,
+        )
+    }
+}
+
+/// Returns `true` when the event-type byte belongs to the coding
+/// band (0x70..=0x7F). Pick #5's tail loop uses this to skip every
+/// frame that isn't kanban-related without parsing the payload.
+pub const fn is_kanban_event(event_type: u8) -> bool {
+    matches!(event_type, 0x70..=0x7F)
+}
+
+/// Parse the JSON payload of a kanban WAL frame into a `FeedEntry`.
+/// Returns `None` when the payload doesn't deserialise to a known
+/// shape — the caller surfaces the bad-frame count via `wal stats`
+/// rather than the feed view (a corrupt frame is an operator-level
+/// concern, not something the operator wants in their kanban tail).
+pub fn parse_kanban_payload(event_type: u8, ts_ns: u64, payload_bytes: &[u8]) -> Option<FeedEntry> {
+    match event_type {
+        EVENT_TYPE_KANBAN_SESSION_OPENED => parse_session_opened(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_TASK_CREATED => parse_task_created(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_TASK_ASSIGNED => parse_task_assigned(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_STATUS_CHANGED => parse_status_changed(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_TASK_COMMENT => parse_task_comment(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_TASK_COMPLETED => parse_task_completed(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_SESSION_CLOSED => parse_session_closed(ts_ns, payload_bytes),
+        _ => None,
+    }
+}
+
+// ── Payload schemas ────────────────────────────────────────────────────────
+//
+// One Deserialize struct per event type. Pick #4 (decomposer) +
+// Pick #6 (dispatcher) emit these — keep these in sync with the
+// JSON shapes they produce. `#[serde(default)]` on optional fields
+// so a future schema addition stays backwards-readable.
+
+#[derive(Deserialize)]
+struct SessionOpenedPayload {
+    #[allow(dead_code)]
+    session_id: i64,
+    #[serde(default)]
+    prompt_hash: String,
+    #[serde(default)]
+    source_channel: String,
+    #[serde(default)]
+    operator_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TaskCreatedPayload {
+    #[allow(dead_code)]
+    session_id: i64,
+    #[allow(dead_code)]
+    task_id: i64,
+    #[serde(default)]
+    task_type: String,
+    #[serde(default)]
+    title: String,
+}
+
+#[derive(Deserialize)]
+struct TaskAssignedPayload {
+    #[allow(dead_code)]
+    task_id: i64,
+    #[serde(default)]
+    hemisphere: String,
+    #[serde(default)]
+    worker: Option<String>,
+    #[serde(default)]
+    eta_ns: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct StatusChangedPayload {
+    #[allow(dead_code)]
+    task_id: i64,
+    #[serde(default)]
+    old_status: String,
+    #[serde(default)]
+    new_status: String,
+}
+
+#[derive(Deserialize)]
+struct TaskCommentPayload {
+    #[allow(dead_code)]
+    task_id: i64,
+    #[serde(default)]
+    author: String,
+    #[serde(default)]
+    body: String,
+}
+
+#[derive(Deserialize)]
+struct TaskCompletedPayload {
+    #[allow(dead_code)]
+    task_id: i64,
+    #[serde(default)]
+    tests_added: u32,
+    #[serde(default)]
+    tests_passing: u32,
+    #[serde(default)]
+    tests_failing: u32,
+}
+
+#[derive(Deserialize)]
+struct SessionClosedPayload {
+    #[allow(dead_code)]
+    session_id: i64,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    tasks_done: u32,
+    #[serde(default)]
+    tasks_archived: u32,
+}
+
+// ── Parsers ────────────────────────────────────────────────────────────────
+
+fn parse_session_opened(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: SessionOpenedPayload = serde_json::from_slice(payload).ok()?;
+    let via = if p.source_channel.is_empty() {
+        "cli".to_string()
+    } else {
+        p.source_channel
+    };
+    let by = match p.operator_id {
+        Some(id) if !id.is_empty() => format!(" by {id}"),
+        _ => String::new(),
+    };
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_SESSION_OPENED,
+        actor: "system".to_string(),
+        message: format!("Session opened via {via}{by}"),
+    })
+}
+
+fn parse_task_created(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: TaskCreatedPayload = serde_json::from_slice(payload).ok()?;
+    let kind = if p.task_type.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", p.task_type)
+    };
+    let title = if p.title.is_empty() {
+        "(untitled)".to_string()
+    } else {
+        p.title
+    };
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_TASK_CREATED,
+        actor: "cerebellum".to_string(),
+        message: format!("Task created: {title}{kind}"),
+    })
+}
+
+fn parse_task_assigned(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: TaskAssignedPayload = serde_json::from_slice(payload).ok()?;
+    let actor = if p.hemisphere.is_empty() {
+        "cerebellum".to_string()
+    } else {
+        p.hemisphere
+    };
+    let worker = match p.worker.as_deref() {
+        Some(w) if !w.is_empty() => format!(" → worker `{w}`"),
+        _ => String::new(),
+    };
+    let eta = match p.eta_ns {
+        Some(ns) if ns > 0 => format!(" (eta {})", format_eta(ns)),
+        _ => String::new(),
+    };
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_TASK_ASSIGNED,
+        actor,
+        message: format!("Task assigned{worker}{eta}"),
+    })
+}
+
+fn parse_status_changed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: StatusChangedPayload = serde_json::from_slice(payload).ok()?;
+    if p.new_status.is_empty() {
+        return None;
+    }
+    let from = if p.old_status.is_empty() {
+        "?".to_string()
+    } else {
+        p.old_status
+    };
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_STATUS_CHANGED,
+        actor: "system".to_string(),
+        message: format!("Status: {from} → {}", p.new_status),
+    })
+}
+
+fn parse_task_comment(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: TaskCommentPayload = serde_json::from_slice(payload).ok()?;
+    let actor = if p.author.is_empty() {
+        "operator".to_string()
+    } else {
+        p.author
+    };
+    let body = truncate_message(&p.body, 80);
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_TASK_COMMENT,
+        actor,
+        message: format!("\"{body}\""),
+    })
+}
+
+fn parse_task_completed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: TaskCompletedPayload = serde_json::from_slice(payload).ok()?;
+    let test_summary = if p.tests_added + p.tests_failing == 0 {
+        "no tests".to_string()
+    } else if p.tests_failing == 0 {
+        format!("{} tests added, all passing", p.tests_added)
+    } else {
+        format!(
+            "{} added, {} failing of {} total",
+            p.tests_added,
+            p.tests_failing,
+            p.tests_passing + p.tests_failing,
+        )
+    };
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_TASK_COMPLETED,
+        actor: "system".to_string(),
+        message: format!("Task completed — {test_summary}"),
+    })
+}
+
+fn parse_session_closed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: SessionClosedPayload = serde_json::from_slice(payload).ok()?;
+    let status = if p.status.is_empty() {
+        "done".to_string()
+    } else {
+        p.status
+    };
+    let counts = if p.tasks_done + p.tasks_archived == 0 {
+        String::new()
+    } else {
+        format!(" ({} done, {} archived)", p.tasks_done, p.tasks_archived)
+    };
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_SESSION_CLOSED,
+        actor: "cerebellum".to_string(),
+        message: format!("Session closed: {status}{counts}"),
+    })
+}
+
+// ── Tiny helpers ───────────────────────────────────────────────────────────
+
+/// Render a nanosecond unix timestamp as `HH:MM:SS` in UTC. Pure
+/// arithmetic — avoids pulling chrono just for the feed view. The
+/// operator can re-render in their preferred timezone via standard
+/// shell tooling (`date -d @TS`) if they care.
+fn format_hms_utc(ts_ns: u64) -> String {
+    let secs = ts_ns / 1_000_000_000;
+    let s = secs % 60;
+    let m = (secs / 60) % 60;
+    let h = (secs / 3600) % 24;
+    format!("{h:02}:{m:02}:{s:02}")
+}
+
+/// Render an eta in nanoseconds as "1m 42s" / "23s" / "1h 3m".
+/// Matches the format the Twitter image's image uses ("ETA: 1m 42s").
+fn format_eta(ns: u64) -> String {
+    let total_s = ns / 1_000_000_000;
+    if total_s < 60 {
+        format!("{total_s}s")
+    } else if total_s < 3600 {
+        let m = total_s / 60;
+        let s = total_s % 60;
+        if s == 0 {
+            format!("{m}m")
+        } else {
+            format!("{m}m {s}s")
+        }
+    } else {
+        let h = total_s / 3600;
+        let m = (total_s % 3600) / 60;
+        if m == 0 {
+            format!("{h}h")
+        } else {
+            format!("{h}h {m}m")
+        }
+    }
+}
+
+/// Clamp a comment body to `max` chars + append `…` when truncated.
+/// Pure char-boundary aware so we don't slice through a multi-byte
+/// codepoint (kanji, emoji).
+fn truncate_message(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max).collect();
+    out.push('…');
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wal::events::EVENT_TYPE_PLUGIN_HOSTCALL;
+
+    // ── Band membership ─────────────────────────────────────────────────────
+
+    #[test]
+    fn is_kanban_event_covers_full_coding_band() {
+        for code in 0x70u8..=0x7F {
+            assert!(
+                is_kanban_event(code),
+                "0x{code:02X} must be classified as a kanban event"
+            );
+        }
+    }
+
+    #[test]
+    fn is_kanban_event_rejects_neighbouring_bands() {
+        assert!(!is_kanban_event(0x6F), "council band must not bleed in");
+        assert!(!is_kanban_event(0x80), "hook band must not bleed in");
+        assert!(!is_kanban_event(EVENT_TYPE_PLUGIN_HOSTCALL));
+    }
+
+    // ── Parser happy path ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_session_opened_extracts_channel_and_operator() {
+        let json = serde_json::json!({
+            "session_id": 42,
+            "prompt_hash": "deadbeefcafebabe",
+            "source_channel": "cli",
+            "operator_id": "alex"
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_SESSION_OPENED,
+            1_700_000_023_000_000_000,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse session_opened");
+        assert_eq!(entry.event_type, EVENT_TYPE_KANBAN_SESSION_OPENED);
+        assert_eq!(entry.actor, "system");
+        assert!(entry.message.contains("cli"));
+        assert!(entry.message.contains("alex"));
+    }
+
+    #[test]
+    fn parse_task_created_uses_title_and_task_type() {
+        let json = serde_json::json!({
+            "session_id": 1,
+            "task_id": 7,
+            "task_type": "ui",
+            "title": "Add toggle UI in settings"
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_CREATED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse task_created");
+        assert_eq!(entry.actor, "cerebellum");
+        assert!(entry.message.contains("Add toggle UI in settings"));
+        assert!(entry.message.contains("[ui]"));
+    }
+
+    #[test]
+    fn parse_task_created_handles_missing_title() {
+        let json = serde_json::json!({
+            "session_id": 1,
+            "task_id": 7,
+            "task_type": "ui"
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_CREATED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse with missing title");
+        assert!(entry.message.contains("(untitled)"));
+    }
+
+    #[test]
+    fn parse_task_assigned_includes_worker_and_eta() {
+        let json = serde_json::json!({
+            "task_id": 7,
+            "hemisphere": "left",
+            "worker": "local_qwen",
+            "eta_ns": 102_000_000_000u64
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_ASSIGNED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse task_assigned");
+        assert_eq!(entry.actor, "left");
+        assert!(entry.message.contains("local_qwen"));
+        assert!(
+            entry.message.contains("1m 42s"),
+            "ETA 102s must render as `1m 42s`: {}",
+            entry.message
+        );
+    }
+
+    #[test]
+    fn parse_status_changed_renders_both_states() {
+        let json = serde_json::json!({
+            "task_id": 7,
+            "old_status": "backlog",
+            "new_status": "in_progress"
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_STATUS_CHANGED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse status_changed");
+        assert!(entry.message.contains("backlog"));
+        assert!(entry.message.contains("in_progress"));
+        assert!(entry.message.contains("→"));
+    }
+
+    #[test]
+    fn parse_status_changed_rejects_empty_new_status() {
+        // A frame with no `new_status` is malformed — the dispatcher
+        // emits one only after the transition succeeded. Skip it
+        // rather than print a confusing "Status: backlog → " line.
+        let json = serde_json::json!({
+            "task_id": 7,
+            "old_status": "backlog"
+        });
+        assert!(
+            parse_kanban_payload(
+                EVENT_TYPE_KANBAN_STATUS_CHANGED,
+                100,
+                json.to_string().as_bytes(),
+            )
+            .is_none(),
+            "malformed status_changed frame must surface as None"
+        );
+    }
+
+    #[test]
+    fn parse_task_comment_uses_author_and_truncates_body() {
+        let long_body = "x".repeat(200);
+        let json = serde_json::json!({
+            "task_id": 7,
+            "author": "right",
+            "body": long_body
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_COMMENT,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse task_comment");
+        assert_eq!(entry.actor, "right");
+        assert!(
+            entry.message.ends_with("…\""),
+            "long body must be truncated with ellipsis: {}",
+            entry.message
+        );
+    }
+
+    #[test]
+    fn parse_task_completed_summarises_test_outcome() {
+        let json = serde_json::json!({
+            "task_id": 7,
+            "tests_added": 5,
+            "tests_passing": 5,
+            "tests_failing": 0
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_COMPLETED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse task_completed");
+        assert!(entry.message.contains("5 tests added"));
+        assert!(entry.message.contains("all passing"));
+    }
+
+    #[test]
+    fn parse_task_completed_flags_failures() {
+        let json = serde_json::json!({
+            "task_id": 7,
+            "tests_added": 5,
+            "tests_passing": 3,
+            "tests_failing": 2
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_COMPLETED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse failing");
+        assert!(
+            entry.message.contains("2 failing"),
+            "failing count must surface: {}",
+            entry.message,
+        );
+    }
+
+    #[test]
+    fn parse_task_completed_handles_no_tests() {
+        let json = serde_json::json!({
+            "task_id": 7,
+            "tests_added": 0,
+            "tests_passing": 0,
+            "tests_failing": 0
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_COMPLETED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse zero-test");
+        assert!(
+            entry.message.contains("no tests"),
+            "zero-test summary must call out the gap: {}",
+            entry.message,
+        );
+    }
+
+    #[test]
+    fn parse_session_closed_includes_counts() {
+        let json = serde_json::json!({
+            "session_id": 1,
+            "status": "done",
+            "tasks_done": 4,
+            "tasks_archived": 1
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_SESSION_CLOSED,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse session_closed");
+        assert!(entry.message.contains("done"));
+        assert!(entry.message.contains("4 done"));
+        assert!(entry.message.contains("1 archived"));
+    }
+
+    // ── Parser sad path ─────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_returns_none_for_non_kanban_event() {
+        // A plugin frame happened to land in the same segment — the
+        // feed parser MUST decline rather than guess.
+        let json = serde_json::json!({"plugin": "x", "kind": "y", "payload_bytes": 1});
+        assert!(
+            parse_kanban_payload(EVENT_TYPE_PLUGIN_HOSTCALL, 100, json.to_string().as_bytes(),)
+                .is_none(),
+        );
+    }
+
+    #[test]
+    fn parse_returns_none_for_corrupt_json() {
+        // A truncated / corrupt payload surfaces as None — the
+        // operator sees the frame in `neoth wal show` raw but it
+        // skips the feed view.
+        assert!(
+            parse_kanban_payload(EVENT_TYPE_KANBAN_TASK_CREATED, 100, b"{not valid json",)
+                .is_none(),
+        );
+    }
+
+    // ── Formatter ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn format_renders_hms_actor_message_columns() {
+        let entry = FeedEntry {
+            ts_ns: 1_700_000_023_000_000_000,
+            event_type: EVENT_TYPE_KANBAN_TASK_COMPLETED,
+            actor: "left".to_string(),
+            message: "Tests added (5 new)".to_string(),
+        };
+        let rendered = entry.format();
+        // Time should look like HH:MM:SS — pin the format, not the
+        // exact value (it depends on what 1.7e18 ns is in UTC).
+        assert!(
+            rendered.chars().nth(2) == Some(':') && rendered.chars().nth(5) == Some(':'),
+            "expected HH:MM:SS prefix, got: {rendered:?}"
+        );
+        assert!(rendered.contains("left"));
+        assert!(rendered.contains("Tests added (5 new)"));
+    }
+
+    #[test]
+    fn format_hms_utc_handles_known_timestamps() {
+        // Unix epoch.
+        assert_eq!(format_hms_utc(0), "00:00:00");
+        // 12:34:56 UTC after some integer day.
+        let ts = 86400u64 * 1_000_000_000
+            + 12 * 3600 * 1_000_000_000
+            + 34 * 60 * 1_000_000_000
+            + 56 * 1_000_000_000;
+        assert_eq!(format_hms_utc(ts), "12:34:56");
+    }
+
+    #[test]
+    fn format_eta_handles_seconds_minutes_hours() {
+        assert_eq!(format_eta(23 * 1_000_000_000), "23s");
+        assert_eq!(format_eta(60 * 1_000_000_000), "1m");
+        assert_eq!(format_eta(102 * 1_000_000_000), "1m 42s");
+        assert_eq!(format_eta(3600 * 1_000_000_000), "1h");
+        assert_eq!(format_eta((3600 + 180) * 1_000_000_000), "1h 3m");
+    }
+
+    #[test]
+    fn truncate_message_is_char_boundary_safe() {
+        // ASCII — straightforward truncation.
+        assert_eq!(truncate_message("abc", 10), "abc");
+        assert_eq!(truncate_message("abcdefghijkl", 5), "abcde…");
+        // Multi-byte codepoints. A naive `&s[..max]` would panic at
+        // a non-boundary; `chars().take(max)` is safe.
+        let kanji = "日本語のテスト";
+        assert_eq!(kanji.chars().count(), 7);
+        let truncated = truncate_message(kanji, 3);
+        assert_eq!(truncated.chars().count(), 4); // 3 + ellipsis
+        assert!(truncated.ends_with('…'));
+    }
+}

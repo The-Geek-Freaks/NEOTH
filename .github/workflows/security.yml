@@ -1,0 +1,100 @@
+# =============================================================================
+# NEOTH — Security Scanning
+#
+# Runs cargo-audit, cargo-deny, and trivy on a weekly schedule and on push to main.
+# SARIF results are uploaded to GitHub Security tab (requires Advanced Security).
+# Fails on HIGH or CRITICAL severity findings.
+# =============================================================================
+
+name: Security
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'        # every Monday 06:00 UTC
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write        # required to upload SARIF
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  audit:
+    name: cargo-audit (RUSTSEC)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: security-audit-cargo-${{ hashFiles('SRC/neothd/Cargo.lock') }}
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: Run cargo-audit
+        working-directory: SRC/neothd
+        run: |
+          cargo audit --json 2>/dev/null \
+            | tee /tmp/audit-result.json \
+            || true
+          # Always show human-readable output too
+          cargo audit
+
+  deny:
+    name: cargo-deny (license + supply chain)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: SRC/neothd/Cargo.toml
+          command: check
+          arguments: --all-features
+          rust-version: '1.86'
+
+  trivy:
+    name: trivy (filesystem vuln scan)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          ignore-unfixed: false
+
+      - name: Upload Trivy SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()             # upload even if scan found issues
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy-fs'

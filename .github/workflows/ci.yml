@@ -1,0 +1,160 @@
+# =============================================================================
+# NEOTH — Continuous Integration
+#
+# Pick #30 (Session 14, Codex feedback 2026-05-19): Windows added to the
+# matrix. Local MSVC verification has been stable for the full Session-14
+# work (2000+ tests, Win32 DACL on WAL + views.db + code_map.db, no /proc
+# or AF_UNIX dependencies in the daemon's hot path). The Phase-1 rationale
+# (Unix-only IPC + signals) no longer holds — the daemon's signal handler
+# uses `tokio::signal::ctrl_c()` on Windows + SIGTERM/SIGHUP on Unix, both
+# gated behind `cfg(unix)/cfg(windows)`. Tests that genuinely require Unix
+# semantics (mlock, /proc, AF_UNIX) are individually `#[cfg(unix)]`-gated.
+#
+# Workspace-wide invariant (CDX-08):
+# Every cargo step below uses --workspace explicitly so cross-crate breakage
+# (e.g. a neothd refactor that breaks the plugin SDK's stable surface) fails
+# CI rather than slipping through under cargo's default-package selection.
+# The workspace has three members today: neothd, neoth-plugin-sdk, neothd-gui.
+# =============================================================================
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0          # cleaner cache hits in CI
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    name: ${{ matrix.os }} / ${{ matrix.toolchain }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+        toolchain: [stable, beta]
+        # Windows CI runs only on stable — beta on Windows would
+        # double the runtime budget for marginal value (beta-gated
+        # bugs are extremely rare on the MSVC target). Re-enable
+        # if a regression surfaces.
+        exclude:
+          - os: windows-2022
+            toolchain: beta
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (${{ matrix.toolchain }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      - name: Cache Cargo registry + target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            SRC/target/
+          key: ${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ hashFiles('SRC/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.toolchain }}-cargo-
+
+      - name: cargo fmt --check (workspace)
+        working-directory: SRC
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy --workspace (CDX-08 cross-crate guarantee)
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo build --workspace --release
+        working-directory: SRC
+        run: cargo build --workspace --release
+
+      # Unix runners: parallel test execution (default).
+      - name: cargo test --workspace --release (unix)
+        if: runner.os != 'Windows'
+        working-directory: SRC
+        run: cargo test --workspace --release
+
+      # Windows runner: serialise tests with --test-threads=1.
+      # Rationale: webhook_listener port-binding tests race on the
+      # localhost ephemeral-port pool under parallel execution on
+      # Windows. The race is harmless in production (the daemon binds
+      # one port total) but trips CI. Documented as a known flake in
+      # HANDOFF_2026-05-18 §8.
+      - name: cargo test --workspace --release (windows, single-threaded)
+        if: runner.os == 'Windows'
+        working-directory: SRC
+        run: cargo test --workspace --release -- --test-threads=1
+
+      # cargo-audit runs only on Linux to save 2-3 minutes per CI cycle
+      # — the advisory database is OS-independent so one run covers the
+      # whole matrix.
+      - name: Install cargo-audit
+        if: matrix.os == 'ubuntu-24.04'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+
+      - name: cargo audit (workspace lockfile)
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: SRC
+        # Bumped teloxide → 0.17 (2026-05-16) pulled reqwest 0.13 +
+        # rustls-webpki 0.103, dropping the 0.101 vulnerabilities. No
+        # ignore flags needed; deny.toml [advisories].ignore matches.
+        run: cargo audit
+
+      # Artifact upload: one binary per OS, restricted to non-PR pushes.
+      # Without the PR guard, fork-PR runs would publish untrusted binaries
+      # under the repo's artifact namespace (Release Engineer review).
+      - name: Upload binary artifact (linux)
+        if: |
+          matrix.os == 'ubuntu-24.04' &&
+          matrix.toolchain == 'stable' &&
+          github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: neothd-linux-x86_64-ci
+          path: SRC/target/release/neothd
+          retention-days: 3
+
+      - name: Upload binary artifact (macos)
+        if: |
+          matrix.os == 'macos-14' &&
+          matrix.toolchain == 'stable' &&
+          github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: neothd-macos-arm64-ci
+          path: SRC/target/release/neothd
+          retention-days: 3
+
+      - name: Upload binary artifact (windows)
+        if: |
+          matrix.os == 'windows-2022' &&
+          matrix.toolchain == 'stable' &&
+          github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: neothd-windows-x86_64-ci
+          path: SRC/target/release/neothd.exe
+          retention-days: 3

@@ -1,0 +1,111 @@
+name: Bug Report
+description: File a bug report for neothd
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before submitting:** Search existing issues to avoid duplicates.
+        **Security issue?** Do NOT use this form. See [SECURITY.md](../../SECURITY.md).
+
+  - type: input
+    id: neoth-version
+    attributes:
+      label: neothd version
+      description: Output of `neothd --version`
+      placeholder: "neothd 0.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Linux (x86_64)
+        - Linux (aarch64)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Windows (WSL2)
+        - Other (specify in description)
+    validations:
+      required: true
+
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust version
+      description: Output of `rustc --version` (if built from source)
+      placeholder: "rustc 1.86.0 (stable)"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: channel
+    attributes:
+      label: Channel where bug occurred
+      description: Which integration was active when the bug happened?
+      options:
+        - CLI / daemon direct
+        - Telegram
+        - WhatsApp
+        - Slack
+        - Claude CLI adapter
+        - Memory / WAL layer
+        - Plugin system
+        - Configuration / startup
+        - Unknown / not channel-specific
+      multiple: true
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps that trigger the bug
+      placeholder: |
+        1. Start neothd with config ...
+        2. Send message ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste truncated logs here. **IMPORTANT: remove all secrets, API keys,
+        OAuth tokens, and personal data before pasting. neothd logs may contain
+        message content from your channels.**
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues
+          required: true
+        - label: I have removed all secrets and personal data from the logs above
+          required: true
+        - label: This is not a security vulnerability (I would use SECURITY.md instead)
+          required: true

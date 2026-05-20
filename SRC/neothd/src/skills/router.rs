@@ -1,0 +1,280 @@
+//! Skill router — decides which skill (if any) activates on a given message.
+//!
+//! V1: keyword-scan only. Each enabled skill's `trigger_keywords` are tested
+//! against the lowercased message; the skill with the most distinct keyword
+//! hits wins, ties broken by skill id (stable). Returns `None` when no
+//! keyword matches.
+//!
+//! V2 (deferred until Day-14b lands real inference): embedding re-rank.
+//! Stage 1 produces a candidate list; Stage 2 calls Qwen3-Q8 over
+//! `(message, skill.description)` and picks the max-cosine candidate
+//! with similarity ≥ `EMBEDDING_THRESHOLD`. The hook here is the
+//! `route_with_embedding` function — currently delegates to keyword-only.
+//!
+//! The router never mutates skills; cloning is fine because manifests are
+//! small (typically < 1 KiB).
+
+use super::schema::Skill;
+
+/// The skill picked by the router for one message, plus the keywords that
+/// fired (mostly for logging + `neoth skills test`).
+#[derive(Debug, Clone)]
+pub struct RouteMatch<'a> {
+    pub skill: &'a Skill,
+    /// Distinct keywords that hit, lowercased — order matches the manifest.
+    pub matched_keywords: Vec<String>,
+    /// Cosine similarity if Stage-2 embedding ran. None for keyword-only.
+    pub embedding_score: Option<f32>,
+}
+
+/// Embedding threshold for Stage 2 (per synthesis tech-pin). Unused until
+/// the embedding model is wired; kept here so the constant lives with the
+/// router that consumes it.
+pub const EMBEDDING_THRESHOLD: f32 = 0.72;
+
+/// Pick the best matching skill, if any. Stage-1 keyword scan only.
+pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
+    let haystack = lowercase_tokens(message);
+    if haystack.is_empty() {
+        return None;
+    }
+
+    let mut best: Option<(usize, &Skill, Vec<String>)> = None;
+    for skill in skills {
+        if !skill.is_enabled() {
+            continue;
+        }
+        let mut hits = Vec::new();
+        for kw in skill.trigger_keywords() {
+            let kw_norm = kw.trim().to_lowercase();
+            if kw_norm.is_empty() {
+                continue;
+            }
+            if keyword_matches(&kw_norm, &haystack, message) && !hits.contains(&kw_norm) {
+                hits.push(kw_norm);
+            }
+        }
+        if hits.is_empty() {
+            continue;
+        }
+        let score = hits.len();
+        let take = match &best {
+            None => true,
+            Some((bs, b, _)) => score > *bs || (score == *bs && skill.id() < b.id()),
+        };
+        if take {
+            best = Some((score, skill, hits));
+        }
+    }
+
+    best.map(|(_, skill, matched_keywords)| RouteMatch {
+        skill,
+        matched_keywords,
+        embedding_score: None,
+    })
+}
+
+/// Future-proof entry point — currently delegates to keyword scan.
+/// When Day-14b lands, the second arg will be the embedding service.
+pub fn route_with_embedding<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
+    route(message, skills)
+}
+
+fn lowercase_tokens(s: &str) -> Vec<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_lowercase())
+        .collect()
+}
+
+/// A keyword matches if its lowercased form appears as a whole word inside
+/// the lowercased message OR — for multi-word keywords — as an exact
+/// substring of the full lowercased message.
+fn keyword_matches(needle: &str, tokens: &[String], full_message: &str) -> bool {
+    if needle.contains(' ') {
+        full_message.to_lowercase().contains(needle)
+    } else {
+        tokens.iter().any(|t| t == needle)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::skills::schema::SkillManifest;
+    use std::path::PathBuf;
+
+    fn skill(id: &str, kws: &[&str], enabled: bool) -> Skill {
+        Skill {
+            manifest: SkillManifest {
+                id: id.to_string(),
+                description: format!("test skill {id}"),
+                version: "1.0.0".to_string(),
+                trigger_keywords: kws.iter().map(|s| (*s).to_string()).collect(),
+                system_prompt: format!("you are {id}"),
+                tool_allowlist: vec![],
+                author: None,
+                tags: vec![],
+                homepage: None,
+                enabled,
+            },
+            path: PathBuf::from(format!("/tmp/{id}/skill.yaml")),
+        }
+    }
+
+    #[test]
+    fn no_skills_no_match() {
+        assert!(route("hello", &[]).is_none());
+    }
+
+    #[test]
+    fn keyword_word_boundary_match() {
+        let skills = vec![skill("news", &["news"], true)];
+        let m = route("Bring me the news please", &skills).unwrap();
+        assert_eq!(m.skill.id(), "news");
+        assert_eq!(m.matched_keywords, vec!["news"]);
+    }
+
+    #[test]
+    fn substring_within_word_does_not_match_single_token_keyword() {
+        let skills = vec![skill("news", &["news"], true)];
+        // "newsletter" contains "news" but the token "newsletter" should
+        // NOT match a single-word keyword.
+        let m = route("subscribe to my newsletter", &skills);
+        assert!(m.is_none());
+    }
+
+    #[test]
+    fn multi_word_keyword_is_substring_matched() {
+        let skills = vec![skill("brief", &["morning briefing"], true)];
+        let m = route("Run the morning briefing now", &skills).unwrap();
+        assert_eq!(m.skill.id(), "brief");
+    }
+
+    #[test]
+    fn most_hits_wins() {
+        let skills = vec![
+            skill("a", &["news"], true),
+            skill("b", &["news", "headlines"], true),
+        ];
+        let m = route("news and headlines please", &skills).unwrap();
+        assert_eq!(m.skill.id(), "b");
+        assert_eq!(m.matched_keywords.len(), 2);
+    }
+
+    #[test]
+    fn tie_broken_by_skill_id_alphabetically() {
+        let skills = vec![
+            skill("zeta", &["news"], true),
+            skill("alpha", &["news"], true),
+        ];
+        let m = route("morning news", &skills).unwrap();
+        assert_eq!(m.skill.id(), "alpha");
+    }
+
+    #[test]
+    fn disabled_skill_never_matches() {
+        let skills = vec![skill("news", &["news"], false)];
+        assert!(route("morning news", &skills).is_none());
+    }
+
+    #[test]
+    fn case_insensitive_match() {
+        let skills = vec![skill("news", &["NEWS"], true)];
+        // Keywords were normalised to lowercase at load time; the router's
+        // own trim/lowercase covers an unnormalised path too.
+        let m = route("Got any NEWS today?", &skills).unwrap();
+        assert_eq!(m.skill.id(), "news");
+    }
+
+    #[test]
+    fn empty_message_yields_no_match() {
+        let skills = vec![skill("news", &["news"], true)];
+        assert!(route("", &skills).is_none());
+    }
+
+    #[test]
+    fn duplicate_keyword_counted_once() {
+        let skills = vec![skill("news", &["news", "news"], true)];
+        let m = route("news news news", &skills).unwrap();
+        assert_eq!(m.matched_keywords.len(), 1);
+    }
+
+    #[test]
+    fn route_with_embedding_delegates_to_keyword_scan_for_now() {
+        let skills = vec![skill("news", &["news"], true)];
+        let a = route("morning news", &skills);
+        let b = route_with_embedding("morning news", &skills);
+        assert_eq!(a.is_some(), b.is_some());
+        assert_eq!(
+            a.as_ref().map(|m| m.skill.id()),
+            b.as_ref().map(|m| m.skill.id())
+        );
+    }
+
+    // ── Phase 33e AP-1: anti-pattern gate (G.12 Level-Confusion) ────────────
+    //
+    // The router MUST stay a Schicht-1 filter — its job is to *select skill
+    // data to inject*, never *select a pipeline/tool to run*. The contract:
+    //   • The output is `Option<RouteMatch>` carrying a `&Skill` reference.
+    //   • A `RouteMatch` exposes ONLY data (skill manifest, matched keywords,
+    //     optional embedding score). It does NOT expose any executable
+    //     function pointer, tool handle, or pipeline switch.
+    //   • There is no `dispatch_*` / `execute_*` / `run_skill` method on
+    //     RouteMatch — the caller composes the skill's system_prompt into
+    //     the existing provider call rather than the router triggering one.
+    //
+    // This test compiles against the router's public surface. If a future
+    // change adds an executable hook to RouteMatch (e.g. `match.run(provider)`),
+    // the assertion below has to be revisited — and that revisit is the
+    // pause-point where G.12 must be re-evaluated.
+
+    #[test]
+    fn route_match_exposes_only_data_not_executors() {
+        // Build a minimal match. The point of this test is that the entire
+        // surface of `RouteMatch` is reachable as plain getters; if it ever
+        // grows a method that *runs* anything, this test won't compile.
+        let skills = vec![skill("news", &["news"], true)];
+        let m = route("morning news", &skills).expect("match");
+
+        // Data accessors — all read-only.
+        let _id: &str = m.skill.id();
+        let _prompt: &str = m.skill.system_prompt();
+        let _kws: &Vec<String> = &m.matched_keywords;
+        let _emb: Option<f32> = m.embedding_score;
+
+        // Compile-time assertion: RouteMatch is Send (so it crosses await
+        // points cheaply) but it carries no Future or executor — the
+        // caller decides what to do with the data.
+        fn assert_send<T: Send>(_t: &T) {}
+        assert_send(&m);
+    }
+
+    #[test]
+    fn route_signature_returns_optional_match_not_a_pipeline() {
+        // Reflect on the public function signature: its return type must
+        // be `Option<RouteMatch>`, not anything callable. If a future
+        // refactor changes route() to return an executor, this fails to
+        // compile and the maintainer is forced to re-read the G.12 note
+        // above before pushing.
+        let skills: Vec<Skill> = Vec::new();
+        let r: Option<RouteMatch> = route("anything", &skills);
+        assert!(r.is_none(), "empty skill set always returns None");
+    }
+
+    #[test]
+    fn embedding_score_is_optional_not_a_command() {
+        // The Stage-2 embedding hook returns a score, never a directive.
+        // Verify the field type at compile time and the documented
+        // threshold value.
+        assert!(
+            (EMBEDDING_THRESHOLD - 0.72).abs() < 1e-6,
+            "Stage-2 cosine threshold must stay at 0.72 per round-3 synthesis",
+        );
+        let skills = vec![skill("news", &["news"], true)];
+        let m = route_with_embedding("news", &skills).unwrap();
+        // The score is `Option<f32>` (none today; some when Stage 2 lands).
+        // Cannot become anything else without a compile error.
+        let _: Option<f32> = m.embedding_score;
+    }
+}

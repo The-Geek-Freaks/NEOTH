@@ -1,0 +1,516 @@
+//! LLM provider abstraction.
+//!
+//! Every LLM backend NEOTH talks to implements the `Provider` trait. The
+//! daemon picks one based on `FreedomConfig::provider_kind` and routes user
+//! messages through it.
+//!
+//! **claude_cli is first-class.** Per the operator's existing setup (see
+//! `~/.claude/projects/.../memory/neoth-claude-cli-native.md`), NEOTH's
+//! primary path is Anthropic's `claude` CLI binary with OAuth — not a REST
+//! API key — because that's the auth model the operator already runs in
+//! tmux + Claude Code daily. OpenAI / Gemini adapters come second; they are
+//! NOT the default fallback.
+
+pub mod aws_bedrock;
+pub mod aws_credentials;
+pub mod aws_sigv4;
+pub mod azure_openai;
+pub mod claude_cli;
+pub mod claude_tmux;
+pub mod clip_engine;
+pub mod cost;
+pub mod gemini_api;
+pub mod http_client;
+pub mod known_endpoints;
+pub mod local_probe;
+pub mod local_qwen;
+pub mod meter;
+pub mod openai_api;
+pub mod quota;
+pub mod singleflight;
+pub mod tmux_session;
+pub mod tmux_sweeper;
+pub mod tmux_sweeper_task;
+pub mod whisper;
+
+use std::pin::Pin;
+use std::time::Duration;
+
+use anyhow::Result;
+use async_trait::async_trait;
+use futures_util::stream::{self, Stream};
+
+use crate::cli::init::ProviderKind;
+use crate::config::FreedomConfig;
+use crate::secret::SecretString;
+
+/// One completion result. `text` is the full final response; `latency` is
+/// wall-clock time from request to last token. Day-5b will add streaming.
+#[derive(Debug, Clone)]
+pub struct Completion {
+    pub text: String,
+    pub model: String,
+    pub latency: Duration,
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+}
+
+/// A request to send to a Provider. Plain text for Day-5 MVP; multimodal
+/// (image / tool-use) comes in later phases.
+///
+/// Sampling fields are advisory — adapters that don't honour them
+/// (claude_cli today, anthropic_api, gemini_api, openai_api) silently
+/// ignore. `local_qwen` reads them and overrides its cached
+/// `SamplingConfig` for the call. v0.1.x scope; a typed `SamplingPolicy`
+/// promoted across adapters is Phase 2c follow-up.
+#[derive(Debug, Clone, Default)]
+pub struct Request {
+    pub prompt: String,
+    pub system: Option<String>,
+    pub model: Option<String>,
+    /// Sampling temperature override for this single call. `None` =
+    /// adapter default. Range [0.0, 2.0].
+    pub temperature: Option<f32>,
+    /// Top-p nucleus cutoff. `None` = adapter default.
+    pub top_p: Option<f32>,
+    /// RNG seed for reproducible sampling.
+    pub sampling_seed: Option<u64>,
+}
+
+/// One delta during a streaming response. `delta` is incremental new text
+/// since the last chunk; `done` is set on the final chunk along with token
+/// totals when the provider reports them.
+#[derive(Debug, Clone, Default)]
+pub struct CompletionChunk {
+    pub delta: String,
+    pub done: bool,
+    pub input_tokens: Option<u32>,
+    pub output_tokens: Option<u32>,
+}
+
+/// Stream of completion chunks. Each `Result::Ok` carries one chunk; the
+/// stream MUST terminate after emitting one chunk with `done: true`. Errors
+/// during streaming come back as `Result::Err` items — once one is yielded,
+/// the consumer should stop reading.
+pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>;
+
+/// Every LLM backend implements this. Trait is object-safe by design so the
+/// daemon can hold `Box<dyn Provider>` in its registry.
+#[async_trait]
+pub trait Provider: Send + Sync {
+    /// Short identifier for logs + WAL events: "claude_cli", "openai_api", ...
+    fn name(&self) -> &'static str;
+
+    /// Synchronous (non-streaming) completion. Returns the full response once
+    /// the provider finishes generating.
+    async fn complete(&self, req: Request) -> Result<Completion>;
+
+    /// Streaming completion. Adapters that natively stream (claude_cli with
+    /// `--output-format stream-json`, OpenAI SSE, Gemini streamGenerateContent)
+    /// override this. Adapters that do not yet support streaming fall through
+    /// to the default impl: synchronously call `complete`, wrap the full text
+    /// in a single done-chunk. UX-wise that means `neoth chat --stream` on
+    /// such adapters still works but emits one chunk at the end, not
+    /// progressively.
+    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+        let completion = self.complete(req).await?;
+        let chunk = CompletionChunk {
+            delta: completion.text,
+            done: true,
+            input_tokens: completion.input_tokens,
+            output_tokens: completion.output_tokens,
+        };
+        Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
+    }
+}
+
+/// Construct a provider for a specific hemisphere role
+/// (Left / Right / Cerebellum). Reads `config.inference.slot_for(role)`
+/// and builds the matching adapter. Falls back to the single-mode
+/// provider when no per-hemisphere override is set.
+///
+/// Used by:
+///   - `cli::chat` (CH-04) routing as `HemisphereRole::Left` (analytic).
+///   - `cli::profile` extraction as `HemisphereRole::Left` (deductive).
+///   - `cli::hemispheres test --role <X>` for the sanity check.
+///   - Future council router + skill router stages.
+///
+/// In Single mode this is identical to [`from_config`] — `slot_for`
+/// returns `default_slot` for every role and `default_slot.provider`
+/// is empty, so the fallback short-circuits to the legacy path.
+pub async fn from_config_for_role(
+    config: &FreedomConfig,
+    role: crate::config::inference::HemisphereRole,
+) -> Result<Box<dyn Provider>> {
+    let slot = config.inference.slot_for(role);
+    let Some(provider_kind) = slot.provider else {
+        return from_config(config).await;
+    };
+    // Build a synthetic FreedomConfig view that pretends the slot's
+    // provider is the single-mode config. Reuses `from_config`'s full
+    // construction logic without duplicating adapter wiring.
+    let mut synthetic = config.clone();
+    synthetic.provider_kind = Some(provider_kind.to_provider_kind());
+    synthetic.provider_model = slot.model.clone();
+    synthetic.provider_key = slot.key.clone();
+    synthetic.provider_endpoint = slot.endpoint.clone();
+    // C-3 Phase 2 (Session 14) — per-slot region wins over the
+    // top-level FreedomConfig::provider_region. Only relevant for
+    // aws_bedrock today; other providers ignore the field.
+    if let Some(slot_region) = slot.region.clone() {
+        synthetic.provider_region = Some(slot_region);
+    }
+    // C-4 Phase 2 (Session 14) — per-slot api_version wins over the
+    // top-level FreedomConfig::provider_api_version. Only relevant
+    // for azure_openai; other providers ignore.
+    if let Some(slot_ver) = slot.api_version.clone() {
+        synthetic.provider_api_version = Some(slot_ver);
+    }
+    from_config(&synthetic).await
+}
+
+/// E-2 Phase 3 (Session 14) — construct an adapter for an INNER
+/// hemisphere within a recursive council, scoped to a specific
+/// OUTER role.
+///
+/// Resolves the slot via
+/// [`crate::config::inference::InferenceTopology::slot_for_sub`] —
+/// uses `hemisphere_sub_slots[outer_role][inner_role]` when set,
+/// otherwise falls back to the outer-level `slot_for(inner_role)`.
+/// Then builds the adapter via the same synthetic-config trick that
+/// [`from_config_for_role`] uses. Recursion mechanics in
+/// `cli::chat::ProviderHemisphere::ask_with_depth` call this when
+/// `depth > 1` AND the outer-wrapper carries an `outer_role`.
+pub async fn from_config_for_sub_role(
+    config: &FreedomConfig,
+    outer_role: crate::config::inference::HemisphereRole,
+    inner_role: crate::config::inference::HemisphereRole,
+) -> Result<Box<dyn Provider>> {
+    let slot = config.inference.slot_for_sub(outer_role, inner_role);
+    let Some(provider_kind) = slot.provider else {
+        // Slot has no provider override at the sub-level → defer
+        // to the outer-role path (which still consults sub-fall-
+        // back-to-outer in `slot_for_sub` but lands the same way).
+        return from_config_for_role(config, inner_role).await;
+    };
+    let mut synthetic = config.clone();
+    synthetic.provider_kind = Some(provider_kind.to_provider_kind());
+    synthetic.provider_model = slot.model.clone();
+    synthetic.provider_key = slot.key.clone();
+    synthetic.provider_endpoint = slot.endpoint.clone();
+    if let Some(slot_region) = slot.region.clone() {
+        synthetic.provider_region = Some(slot_region);
+    }
+    if let Some(slot_ver) = slot.api_version.clone() {
+        synthetic.provider_api_version = Some(slot_ver);
+    }
+    from_config(&synthetic).await
+}
+
+/// Construct the provider configured in `~/.neoth/freedom.yaml`.
+///
+/// Async because `LocalQwen` may need to download model artifacts from HF
+/// on first construction.
+///
+/// Returns `Err` if the operator has not configured a provider yet (provider
+/// kind is `Skip` or absent). The caller — typically `cli::chat::run` — is
+/// expected to print a helpful "run `neoth provider add`" message in that
+/// case.
+pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    let kind = config
+        .provider_kind
+        .ok_or_else(|| anyhow::anyhow!("no provider configured. Run `neoth provider add`."))?;
+
+    match kind {
+        ProviderKind::ClaudeCli => {
+            let binary = config
+                .provider_binary
+                .clone()
+                .unwrap_or_else(|| "claude".to_string());
+            let model = config
+                .provider_model
+                .clone()
+                .unwrap_or_else(|| "claude-opus-4-7".to_string());
+            // B-6 Item 2: thread freedom.yaml::claude_cli.* through.
+            // `to_provider()` lowers the config-layer backend tag into
+            // the adapter-layer enum. compaction_rotate_after is the
+            // one tmux-config field the adapter constructor currently
+            // accepts; idle/hard timeouts + session_scope hook in
+            // with Item 3 (retry classifier) + the per-conversation
+            // pool follow-up respectively.
+            let backend = config.claude_cli.backend.to_provider();
+            let cap = config.claude_cli.tmux.compaction_rotate_after;
+            // Pick #35 (Session 14, B-6 gap-fix): thread the operator-
+            // tunable idle + hard timeout from freedom.yaml all the way
+            // into the adapter. Prior code dropped these on the floor
+            // and the adapter fell back to the module-level constants —
+            // operator could not tune them via config without code edits.
+            let idle = config.claude_cli.tmux.idle_timeout_secs;
+            let hard = config.claude_cli.tmux.hard_timeout_secs;
+            if matches!(
+                config.claude_cli.tmux.session_scope,
+                crate::config::TmuxSessionScope::PerConversation
+            ) {
+                tracing::warn!(
+                    "claude_cli.tmux.session_scope=per_conversation is reserved for the v0.2 \
+                     pool — falling back to singleton scope for now."
+                );
+            }
+            Ok(Box::new(
+                claude_cli::ClaudeCliAdapter::new_with_backend_and_timeouts(
+                    binary, model, backend, cap, idle, hard,
+                ),
+            ))
+        }
+        ProviderKind::OpenaiApi => {
+            let key = require_provider_key(config, "openai_api")?;
+            let endpoint = config
+                .provider_endpoint
+                .clone()
+                .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+            let model = config
+                .provider_model
+                .clone()
+                .unwrap_or_else(|| "gpt-5.5".to_string());
+            Ok(Box::new(openai_api::OpenAiAdapter::new_openai(
+                endpoint, key, model,
+            )?))
+        }
+        ProviderKind::OpenaiCompat => {
+            let key = config
+                .provider_key
+                .clone()
+                .unwrap_or_else(|| SecretString::from(""));
+            let endpoint = config.provider_endpoint.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "openai_compat requires an endpoint URL in freedom.yaml. \
+                     Run `neoth init --force` to reconfigure."
+                )
+            })?;
+            let model = config.provider_model.clone().ok_or_else(|| {
+                anyhow::anyhow!("openai_compat requires a model name in freedom.yaml.")
+            })?;
+            Ok(Box::new(openai_api::OpenAiAdapter::new_compat(
+                endpoint, key, model,
+            )?))
+        }
+        ProviderKind::GeminiApi => {
+            let key = require_provider_key(config, "gemini_api")?;
+            let model = config
+                .provider_model
+                .clone()
+                .unwrap_or_else(|| "gemini-3.1-pro-preview".to_string());
+            Ok(Box::new(gemini_api::GeminiAdapter::new(key, model)?))
+        }
+        ProviderKind::LocalQwen => {
+            // First construction downloads model artifacts from Hugging Face
+            // (~3 GB); subsequent constructions are cache-fast. Operator-
+            // chosen accelerator + sampling defaults thread through from
+            // `freedom.yaml::inference`. Sampling stays greedy for v0.1.x;
+            // top-p comes online when `neoth chat --temperature/--top-p`
+            // CLI flags land in Phase 2c.
+            let repo = config.provider_model.clone();
+            let accelerator = config
+                .inference
+                .accelerator_override
+                .as_deref()
+                .and_then(crate::daemon::accelerator::Accelerator::from_str);
+            let adapter = local_qwen::LocalQwenAdapter::new_with_full_options(
+                repo,
+                accelerator,
+                local_qwen::SamplingConfig::default(),
+                config.inference.max_new_tokens,
+            )
+            .await?;
+            Ok(Box::new(adapter))
+        }
+        ProviderKind::AwsBedrock => {
+            // C-3 Phase 2 (Session 14) — hand-rolled SigV4 against
+            // `bedrock-runtime.<region>.amazonaws.com/model/<id>/converse`.
+            // Region resolves from FreedomConfig::provider_region with
+            // fallback to AWS_REGION/AWS_DEFAULT_REGION env, then to
+            // `us-east-1`. Credentials walk the closed chain (explicit
+            // → env vars → ~/.aws/credentials [default]).
+            let region = config
+                .provider_region
+                .clone()
+                .or_else(|| std::env::var("AWS_REGION").ok())
+                .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
+                .unwrap_or_else(|| "us-east-1".to_string());
+            let model = config.provider_model.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "aws_bedrock requires a model id in freedom.yaml \
+                     (e.g. anthropic.claude-3-5-sonnet-20241022-v2:0)."
+                )
+            })?;
+            let resolved =
+                aws_credentials::resolve_chain(None, &aws_credentials::env_var_getter, None)?;
+            tracing::info!(
+                source = ?resolved.source,
+                region = %region,
+                "aws_bedrock credentials resolved"
+            );
+            Ok(Box::new(aws_bedrock::AwsBedrockAdapter::new(
+                region,
+                resolved.credentials,
+                model,
+            )?))
+        }
+        ProviderKind::AzureOpenAi => {
+            // C-4 Phase 2 (Session 14) — Azure OpenAI Service classic
+            // deployment endpoint with `api-key` header + api-version
+            // query parameter. `provider_endpoint` carries the Azure
+            // resource URL; `provider_model` doubles as the
+            // deployment name (Azure routes by deployment, not by
+            // underlying model). `provider_api_version` overrides
+            // the default GA version.
+            let key = require_provider_key(config, "azure_openai")?;
+            let endpoint = config.provider_endpoint.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "azure_openai requires an endpoint URL in freedom.yaml \
+                     (e.g. `https://my-resource.openai.azure.com`). \
+                     Run `neoth init --force` to reconfigure."
+                )
+            })?;
+            let deployment = config.provider_model.clone().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "azure_openai requires a deployment name in freedom.yaml \
+                     (`provider_model: <your-deployment-name>`). Deployments are \
+                     created in the Azure portal under your OpenAI resource → \
+                     Deployments."
+                )
+            })?;
+            let api_version = config.provider_api_version.clone();
+            Ok(Box::new(azure_openai::AzureOpenAiAdapter::new(
+                endpoint,
+                key,
+                deployment,
+                api_version,
+            )?))
+        }
+        ProviderKind::Skip => {
+            anyhow::bail!("provider was set to `skip` during init. Run `neoth provider add`.")
+        }
+    }
+}
+
+fn require_provider_key(config: &FreedomConfig, name: &str) -> Result<SecretString> {
+    config.provider_key.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "{name} requires an API key. Set NEOTH_PROVIDER_KEY env var or re-run `neoth init --force`."
+        )
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::init::ProviderKind;
+    use crate::config::inference::{
+        HemisphereRole, HemisphereSlot, InferenceProvider, InferenceTopology, TopologyMode,
+    };
+
+    fn base_config() -> FreedomConfig {
+        FreedomConfig {
+            operator_id: Some("test".into()),
+            provider_kind: Some(ProviderKind::ClaudeCli),
+            ..Default::default()
+        }
+    }
+
+    /// CH-04 invariant: in Single mode, role-aware routing must produce
+    /// the same `synthetic.provider_kind` as the legacy single-mode
+    /// path — the role parameter is a no-op so existing operators see
+    /// zero behaviour change.
+    #[test]
+    fn single_mode_role_lookup_returns_default_slot_for_every_role() {
+        let cfg = base_config();
+        for role in [
+            HemisphereRole::Left,
+            HemisphereRole::Right,
+            HemisphereRole::Cerebellum,
+        ] {
+            let slot = cfg.inference.slot_for(role);
+            assert!(
+                slot.provider.is_none(),
+                "single mode default_slot must leave per-role provider unset for {:?}",
+                role
+            );
+        }
+    }
+
+    /// CH-04 invariant: in Custom mode, `slot_for` returns the per-role
+    /// override — the chat path will then build the matching adapter.
+    #[test]
+    fn custom_mode_role_lookup_returns_per_role_provider() {
+        let mut cfg = base_config();
+        cfg.inference = InferenceTopology {
+            mode: TopologyMode::Custom,
+            left: HemisphereSlot {
+                provider: Some(InferenceProvider::ClaudeCli),
+                model: Some("claude-opus-4-7".into()),
+                ..Default::default()
+            },
+            right: HemisphereSlot {
+                provider: Some(InferenceProvider::Gemini),
+                model: Some("gemini-2.5-pro".into()),
+                ..Default::default()
+            },
+            cerebellum: HemisphereSlot {
+                provider: Some(InferenceProvider::LocalQwen),
+                model: Some("Qwen/Qwen2.5-3B-Instruct".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.inference.slot_for(HemisphereRole::Left).provider,
+            Some(InferenceProvider::ClaudeCli)
+        );
+        assert_eq!(
+            cfg.inference.slot_for(HemisphereRole::Right).provider,
+            Some(InferenceProvider::Gemini)
+        );
+        assert_eq!(
+            cfg.inference.slot_for(HemisphereRole::Cerebellum).provider,
+            Some(InferenceProvider::LocalQwen)
+        );
+    }
+
+    /// `Provider` is dyn-trait without `Debug`, so unwrap_err can't be
+    /// used to extract anyhow errors. This helper does the
+    /// match-and-extract pattern in one place.
+    fn err_or_panic(result: Result<Box<dyn Provider>>) -> anyhow::Error {
+        match result {
+            Ok(_) => panic!("expected provider construction to fail"),
+            Err(e) => e,
+        }
+    }
+
+    /// Smoke test: with `provider_kind = Skip`, both paths return Err —
+    /// the chat path can render the same "run `neoth provider add`"
+    /// hint regardless of whether the role-aware variant was used.
+    #[tokio::test]
+    async fn skip_provider_kind_errors_consistently_across_both_entry_points() {
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::Skip);
+        let single_err = err_or_panic(from_config(&cfg).await);
+        let role_err = err_or_panic(from_config_for_role(&cfg, HemisphereRole::Left).await);
+        assert!(single_err.to_string().contains("skip"));
+        assert!(role_err.to_string().contains("skip"));
+    }
+
+    /// CH-04 invariant: when an operator hasn't picked any provider
+    /// (`provider_kind = None`), the role-aware path surfaces the same
+    /// "no provider configured" error — keeps the "run `neoth provider
+    /// add`" hint reachable from chat in both Single and Custom modes.
+    #[tokio::test]
+    async fn unset_provider_kind_errors_consistently() {
+        let mut cfg = base_config();
+        cfg.provider_kind = None;
+        let single_err = err_or_panic(from_config(&cfg).await);
+        let role_err = err_or_panic(from_config_for_role(&cfg, HemisphereRole::Left).await);
+        assert!(single_err.to_string().contains("no provider configured"));
+        assert!(role_err.to_string().contains("no provider configured"));
+    }
+}

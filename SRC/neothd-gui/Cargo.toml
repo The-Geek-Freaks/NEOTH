@@ -1,0 +1,36 @@
+[package]
+name = "neothd-gui"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Operator-facing GUI wizard for NEOTH (Slint frontend)."
+
+[[bin]]
+name = "neothd-gui"
+path = "src/main.rs"
+
+[dependencies]
+# Slint native — pure-Rust Femtovg backend on Windows + Linux, system
+# backend on macOS. No Qt, no GTK system deps.
+slint = { version = "1.8", default-features = false, features = [
+    "compat-1-2",
+    "renderer-femtovg",
+    "backend-winit",
+    "std",
+] }
+
+# Shared deps from the workspace.
+anyhow = "1"
+serde.workspace      = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+tracing.workspace    = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+slint-build = "1.8"
+
+[dev-dependencies]
+tempfile = "3"

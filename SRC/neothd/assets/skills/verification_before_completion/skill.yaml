@@ -1,0 +1,60 @@
+id: verification_before_completion
+description: |
+  Block "done / complete / passing / fixed" claims until evidence is on the
+  table. When the operator or a sub-agent says "it works", the system prompt
+  installed by this skill demands: which command was run, what output was
+  observed, which file:line confirms the change.
+version: "0.1.0"
+
+# Ported from obra/superpowers (2026-05-14). The upstream skill is the
+# operator-facing companion to the CLAUDE.md "Verify Before Claiming Done"
+# rule — promoting it from a directive to a router-invokable skill lets the
+# verification gate fire automatically when a model is about to ship a fix
+# without proof.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - quality
+  - verification
+  - ported
+
+trigger_keywords:
+  - done
+  - complete
+  - completed
+  - fixed
+  - works
+  - working
+  - shipped
+  - passing
+  - finished
+  - "looks good"
+
+system_prompt: |
+  Verification rule (auto-installed). Before you tell the operator a task is
+  done, complete, fixed, working, passing, or shipped, you must:
+
+  1. Name the exact command you ran (test, build, lint, exec).
+  2. Quote the relevant output line that proves the change took effect.
+  3. Reference the file:line where the fix lives.
+
+  If you do not have those three things, you are not finished — say so and
+  go run them. Never use the word "should" as a substitute for evidence. Never
+  predict success; report observed success.
+
+  Examples of acceptable closure:
+    "cargo test passed — `test result: ok. 519 passed; 0 failed`. Fix at
+     `src/cli/recall.rs:148`."
+
+  Examples of unacceptable closure:
+    "Should be working now."
+    "Tests are probably green."
+    "The fix looks correct."
+
+  When you discover the verification step would have caught a real bug, log
+  it: the rule earned its weight again. When you find yourself wanting to
+  skip the step because "it's obviously fine", that is the moment to slow
+  down and verify.
+
+tool_allowlist: []
+enabled: true

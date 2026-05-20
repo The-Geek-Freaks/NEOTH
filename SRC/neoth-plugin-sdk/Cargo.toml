@@ -1,0 +1,43 @@
+[package]
+name        = "neoth-plugin-sdk"
+version     = "0.1.0-alpha.0"
+description = "Public SDK for writing NEOTH skill plugins — sealed PermissionToken<T> typestate, Hook trait, FreedomGrant authorisation."
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+
+# Publish metadata — V10-03 GA blocker. Filled per the crates.io
+# recommended-field checklist. The crate is still pre-1.0
+# (`0.1.0-alpha.0`) so the surface is allowed to shift; once the WASM
+# plugin host (V10-04) ships and there's >1 external plugin author,
+# this graduates to `0.1.0` proper.
+readme        = "README.md"
+homepage      = "https://github.com/owner/neoth"
+documentation = "https://docs.rs/neoth-plugin-sdk"
+keywords      = ["neoth", "plugin", "sdk", "skill", "permission"]
+categories    = ["api-bindings", "development-tools"]
+# Trim the cargo-package tarball to source + license + readme. Tests +
+# benches stay local because consumers don't need them, and including
+# them inflates the published artifact for every plugin author.
+exclude = ["benches/*", "tests/*", ".gitignore"]
+
+# Notes for plugin authors:
+#   - This is the ONLY crate plugins should depend on.
+#   - The `_host` feature is private to the NEOTH daemon. Plugin authors
+#     MUST NOT enable it. Doing so exposes `PermissionToken::mint()`, which
+#     lets a plugin forge any permission level — defeating the whole point.
+
+[features]
+default = []
+# Internal feature, enabled only by `neothd`. Exposes PermissionToken::mint().
+# Do not enable from a plugin crate.
+_host = []
+
+[dependencies]
+serde      = { workspace = true }
+serde_json = { workspace = true }
+thiserror  = { workspace = true }
+
+[lints]
+workspace = true

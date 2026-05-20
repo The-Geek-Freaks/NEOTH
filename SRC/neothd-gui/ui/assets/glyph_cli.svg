@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  NEOTH mode-card glyph — CLI flow.
+  Brand identity: dark surface, accent-green (#00ff80) line work,
+  monospace cursor block. The terminal frame has the Noble-Curve
+  16px radius the spec calls for; the prompt line uses the synapse
+  green so the operator's eye lands there first.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 140" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <!-- Terminal window frame -->
+  <rect x="10" y="14" width="180" height="112" rx="14" ry="14" fill="#0d0d0d" stroke="#2f2f2f" stroke-width="1.5"/>
+
+  <!-- Window chrome dots -->
+  <circle cx="24" cy="28" r="3" fill="#6b6b6b"/>
+  <circle cx="34" cy="28" r="3" fill="#6b6b6b"/>
+  <circle cx="44" cy="28" r="3" fill="#6b6b6b"/>
+
+  <!-- Top divider -->
+  <line x1="10" y1="42" x2="190" y2="42" stroke="#2f2f2f" stroke-width="1"/>
+
+  <!-- Prompt arrow + cursor bar -->
+  <text x="22" y="68" font-family="monospace" font-size="14" fill="#00ff80" font-weight="600">&gt;</text>
+  <text x="38" y="68" font-family="monospace" font-size="12" fill="#aaaaaa">neoth</text>
+  <text x="76" y="68" font-family="monospace" font-size="12" fill="#ffffff">init</text>
+
+  <!-- Output lines -->
+  <line x1="22" y1="84" x2="120" y2="84" stroke="#aaaaaa" stroke-width="1"/>
+  <line x1="22" y1="96" x2="156" y2="96" stroke="#6b6b6b" stroke-width="1"/>
+  <line x1="22" y1="108" x2="92" y2="108" stroke="#6b6b6b" stroke-width="1"/>
+
+  <!-- Blinking cursor block -->
+  <rect x="120" y="100" width="8" height="12" fill="#00ff80"/>
+</svg>

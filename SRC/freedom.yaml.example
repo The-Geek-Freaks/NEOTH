@@ -1,0 +1,295 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# freedom.yaml — NEOTH operator configuration
+# ─────────────────────────────────────────────────────────────────────────────
+# This is an annotated example. Copy it to `~/.neoth/freedom.yaml`, edit the
+# fields you care about, and `neoth init --force` to apply (or run
+# `neoth init` for the interactive wizard which writes this file for you).
+#
+# Secrets (API keys, bot tokens) live in `~/.neoth/credentials.yaml` —
+# NEVER paste them into this file. Both files round-trip through serde
+# automatically.
+#
+# File permissions: 0600 on unix, ACL-restricted to the current user on
+# Windows. `neoth init` sets these correctly; if you create the file by
+# hand on unix run `chmod 600 ~/.neoth/freedom.yaml`.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+# ── 1. Operator identity ─────────────────────────────────────────────────────
+
+# Stable short identifier — 2-32 chars, [a-zA-Z0-9_-]. Used as the
+# author tag on every WAL event the daemon emits. Pick something
+# meaningful; you cannot easily change this without retagging history.
+operator_id: alex
+
+# BCP-47 primary language. Drives default replies + onboarding text.
+language_primary: de
+
+# BCP-47 code-context language. Defaults to language_primary.
+# Useful when you talk to NEOTH in German but want commit messages
+# in English: set language_primary=de and language_code=en.
+language_code: en
+
+# One of: developer, security-researcher, founder, data-scientist,
+# writer, none. Picks the system-prompt persona + default skill set.
+role: developer
+
+# Free-form override when the `role` enum is too narrow. [a-z0-9_-]{1,32}.
+# Validated against the regex at load time.
+# role_custom: red-team
+
+
+# ── 2. Provider (LLM backend) ────────────────────────────────────────────────
+
+# One of: claude_cli, openai_api, gemini_api, openai_compat, local_qwen,
+# hermes, openclaw, skip. `skip` means "configure later via the wizard".
+provider_kind: claude_cli
+
+# Path to the provider binary (for `claude_cli`). Auto-detected via $PATH
+# when the wizard runs; override here for non-standard installs.
+# provider_binary: /home/alex/.npm-global/bin/claude
+
+# API endpoint (for `openai_compat` only — e.g. LM Studio, vLLM, Ollama).
+# provider_endpoint: http://127.0.0.1:1234/v1
+
+# Model override. Defaults are sensible per provider:
+#   claude_cli   → claude-opus-4-7
+#   openai_api   → gpt-5
+#   gemini_api   → gemini-2.5-pro
+#   openai_compat → operator-supplied
+#   local_qwen   → Qwen/Qwen2.5-3B-Instruct
+# provider_model: claude-opus-4-7
+
+
+# ── 3. Telegram channel (optional) ───────────────────────────────────────────
+
+# Bot token lives in credentials.yaml, NEVER here. The numeric user id below
+# restricts who can talk to the bot — without it, anyone who finds the bot
+# username can issue commands.
+# telegram_user_id: 123456789
+
+
+# ── 4. Autonomy level ────────────────────────────────────────────────────────
+
+# One of:
+#   strict   — every shell exec + every channel send confirms. Maximum
+#              brakes; expect a confirmation per action.
+#   standard — confirms shell execs + cross-channel sends, allows writes
+#              inside ~/.neoth/. Default + recommended for most operators.
+#   elevated — allows shell execs without confirm; still confirms channel
+#              sends + destructive ops (rm -rf, force-push).
+#   full     — no confirms; trust everything. Use only on isolated VMs.
+#   custom   — per-action override table (see permissions/custom.yaml).
+autonomy: standard
+
+
+# ── 5. Inference topology ────────────────────────────────────────────────────
+
+# Per-hemisphere provider selection (R-22 Council). Three modes:
+#   single  — one provider for all roles. Default. Mirrors the legacy
+#             provider_kind path; existing configs work unchanged.
+#   triplet — same provider on all three slots, configured per-slot
+#             (e.g. one Claude account per hemisphere for rate-limit
+#             isolation).
+#   custom  — independent provider per role.
+#
+# Per-slot fields (left/right/cerebellum/default_slot):
+#   provider — claude_cli | anthropic_api | openai_api | openai_compat
+#              | gemini_api | local_qwen | hermes | openclaw
+#   model    — provider-native model id (e.g. claude-opus-4-7, gpt-4o)
+#   key      — API key (omit for claude_cli / local_qwen; keep secrets
+#              in `~/.neoth/credentials.yaml` instead of inlining here)
+#   endpoint — base URL for openai_compat (LM Studio, vLLM, Ollama,
+#              OpenRouter, Together, Groq, Fireworks, …)
+inference:
+  mode: single
+  # accelerator: cuda      # cuda | metal | openvino | cpu. Auto-detected.
+  # embedding_provider: local_qwen
+  # left:
+  #   provider: claude_cli
+  #   model: claude-opus-4-7
+  # right:
+  #   provider: gemini_api
+  #   model: gemini-2.5-pro
+  # cerebellum:
+  #   provider: local_qwen
+  #   model: Qwen/Qwen2.5-3B-Instruct
+
+# ── 5a. Recipe: cloud-Qwen via OpenRouter (no local GPU needed) ──────────────
+#
+# Operators without GPU for local Qwen3 inference can route any
+# hemisphere to a hosted Qwen / DeepSeek / Llama / etc via OpenRouter.
+# OpenRouter exposes an OpenAI-compatible endpoint, so the existing
+# `openai_compat` provider drives it without extra adapter code.
+#
+# Get an API key at https://openrouter.ai/keys, then paste it into
+# `~/.neoth/credentials.yaml` (NOT this file) or set the slot's `key:`
+# field below for a single-machine setup.
+#
+# Example: Right hemisphere on OpenRouter-hosted Qwen3-72B-Instruct.
+# inference:
+#   mode: custom
+#   right:
+#     provider: openai_compat
+#     endpoint: https://openrouter.ai/api/v1
+#     model: qwen/qwen3-72b-instruct
+#     # key: sk-or-v1-...  # prefer ~/.neoth/credentials.yaml
+#
+# Other OpenAI-compatible hosts that work identically:
+#   - Together AI  https://api.together.xyz/v1
+#   - Groq         https://api.groq.com/openai/v1
+#   - Fireworks    https://api.fireworks.ai/inference/v1
+#   - DeepInfra    https://api.deepinfra.com/v1/openai
+#   - LM Studio    http://127.0.0.1:1234/v1   (local, no key)
+#   - Ollama       http://127.0.0.1:11434/v1  (local, no key)
+#
+# CLI shortcut (after `neoth init` has run once):
+#   neoth hemispheres set --role right \
+#     --provider openai_compat \
+#     --endpoint https://openrouter.ai/api/v1 \
+#     --model qwen/qwen3-72b-instruct \
+#     --key sk-or-v1-...
+
+
+# ── 6. Observability listener (optional) ─────────────────────────────────────
+
+# When set, `neothd serve` exposes /healthz + /metrics on this address.
+# Bind to 127.0.0.1 unless you have a real reason — these endpoints
+# expose runtime state.
+# observability_listen: 127.0.0.1:43117
+
+
+# ── 7. Two-stage sub-agent review (off by default) ───────────────────────────
+
+# obra/superpowers port #2. When true, every `/agent <name> ...` call
+# chains two extra provider passes (spec compliance + code quality)
+# and emits 0x84 SUBAGENT_REVIEW_STAGE WAL frames per stage. Costs
+# ~3× the spend of an un-reviewed call.
+review_gate_enabled: false
+
+
+# ── 8. Obsidian vault sync (optional) ────────────────────────────────────────
+
+# When set, the daemon mirrors `~/.neoth/archive/sessions/<day>/<file>.md`
+# into the operator's Obsidian vault on a schedule.
+# obsidian_vault: /home/alex/vaults/main
+# obsidian_subdir: NEOTH       # default: "NEOTH"
+# obsidian_auto_sync_secs: 3600 # default: 1 hour
+
+
+# ── 9. Hysteria transport (optional, R-3) ────────────────────────────────────
+
+# Encrypted egress for provider HTTP traffic. When configured, `neothd serve`
+# spawns the Hysteria subprocess at startup + routes provider HTTP via the
+# resulting SOCKS5 proxy. Operator supplies server + auth; binary is
+# auto-found in $PATH or ~/.neoth/bin/hysteria.
+# hysteria:
+#   server: example.com:443
+#   auth: shared-secret
+#   socks_port: 1080
+
+
+# ── 10. Cloud archive mirror (optional, R-8) ─────────────────────────────────
+
+# Local folder that the operator's cloud client (Dropbox, GDrive, OneDrive,
+# iCloud, SMB mount, …) ALREADY syncs upstream. Daemon mirrors
+# `~/.neoth/archive/sessions/` into this folder on a schedule. Cloud
+# auth + transport are owned by the cloud vendor's desktop client —
+# NEOTH stays out of it.
+# cloud_archive_dest: /home/alex/Dropbox/NEOTH-archive
+# cloud_archive_subdir: NEOTH
+# cloud_archive_auto_sync_secs: 3600
+
+
+# ── 11. B-Rollback snapshot policy (CDX-02) ──────────────────────────────────
+
+# Which effect-adapter mutations should NEOTH snapshot before they
+# happen? Snapshots live in `~/.neoth/wal/*-snapshot-*.wal` and the
+# operator restores them via `neoth rollback apply --to <offset>`.
+#
+# Supported `capture_kinds` (snake_case):
+#   config_write    — freedom.yaml / credentials.yaml rewrites
+#   channel_send    — outbound text via send_text_with_snapshot()
+#   sql_mutation    — writes to ~/.neoth/views.db (opt-in, payload-heavy)
+#   mcp_tool_invoke — MCP tool calls (opt-in, see CDX-03)
+#   file_write      — generic file writes (opt-in)
+#   other           — operator-tagged manual snapshots
+#
+# Empty list = rollback fully off.
+# Per-frame ceiling: `before_state` over `max_snapshot_bytes` skips the
+# snapshot (WARN logged). Default 64 KiB.
+rollback:
+  capture_kinds:
+    - config_write
+    - channel_send
+  max_snapshot_bytes: 65536
+
+
+# ── 12. Claude CLI provider tuning (B-6) ─────────────────────────────────────
+
+# Only consumed when `provider_kind: claude_cli`. Switches the adapter
+# between the cold-start `claude --print` subprocess path and the warm
+# tmux-backed interactive session.
+#
+# Backend modes:
+#   auto       — probe tmux availability at startup; tmux wins when
+#                present, subprocess otherwise. Default + recommended.
+#   tmux       — force the warm session. Errors at startup if tmux is
+#                missing. Recommended for Alex's stack — subprocess
+#                mode is documented broken there.
+#   subprocess — force `claude --print`. Use only on Windows-without-WSL
+#                where tmux is not an option.
+#
+# Tmux sub-block (ignored when backend == subprocess):
+#   session_scope            — singleton (one warm session per adapter,
+#                              v0.1) or per_conversation (Agent-4 pool,
+#                              v0.2+; falls back to singleton today).
+#   compaction_rotate_after  — rotate to a fresh session after N
+#                              "Memory was condensed" responses.
+#                              Bridge.py default 10.
+#   idle_ttl_secs            — sweeper kills warm sessions idle longer
+#                              than this. Bridge.py default 1800 (30 min).
+#   idle_timeout_secs        — per-request idle-window cap (no pane
+#                              change = response done). Bridge.py 120.
+#                              Declared today; honored end-to-end when
+#                              B-6 Item 3 (retry classifier) lands.
+#   hard_timeout_secs        — per-request absolute cap before
+#                              claude_tmux gives up. Bridge.py 300.
+#                              Same wiring status as idle_timeout_secs.
+claude_cli:
+  backend: auto
+  tmux:
+    session_scope: singleton
+    compaction_rotate_after: 10
+    idle_ttl_secs: 1800
+    idle_timeout_secs: 120
+    hard_timeout_secs: 300
+
+
+# ── 13. Profile learning (off by default) ────────────────────────────────────
+
+# When `learn_enabled: true`, NEOTH runs the 6-stage profile pipeline
+# after every `neoth chat` reply. The pipeline reads the conversation
+# window, asks the LLM to extract operator-facts ("the operator lives
+# in Berlin", "prefers Rust over Go"), runs them through the H1/H2/H5
+# claim guards, and writes accepted claims into `~/.neoth/views.db ::
+# idx_profile`. Those claims are then injected into Corpus Callosum
+# synthesis on Council Split verdicts (CH-11), giving the council
+# real operator context to weight competing hemisphere outputs.
+#
+# OFF by default because the Stage-3 extract is a full LLM call —
+# operators on paid clouds (OpenAI / Anthropic / OpenRouter) would
+# see a 2× token bill per chat without opt-in. Operators on local
+# Qwen or prepaid plans flip `learn_enabled: true` and pay zero
+# incremental cost.
+#
+# `timeout_secs` caps how long the post-reply pipeline can block the
+# shell prompt. A hung extract call is abandoned past this budget
+# (logged at warn) so the operator's CLI always returns.
+#
+# Env overrides:
+#   NEOTH_PROFILE_LEARN_DISABLE=1 — per-call brake (skip even when on)
+#   NEOTH_PROFILE_LEARN_FORCE=1   — per-call lift  (run even when off)
+profile:
+  learn_enabled: false
+  timeout_secs: 15

@@ -1,0 +1,404 @@
+// NEOTH Chat surface — Pick #33. Post-onboarding daily view.
+//
+// Three-column layout:
+//   - Left: conversation sidebar (channels + active thread)
+//   - Center: scrollback + composer (input box + send button)
+//   - Bottom: composer textarea + send + slash autocomplete dropdown
+//
+// Inspiration: `QUELLEN/openhuman/app/src/pages/conversations/` —
+// AgentMessageBubble pattern + role-based right/left alignment.
+// Slint-native version, no React idioms ported verbatim.
+//
+// Streaming strategy (Session 16 Pick #33 design decision, flagged
+// in handoff §7 for future Chorus-gremium review):
+// - Property updates per chunk. Rust side appends to a `pending-text`
+//   string property; Slint's reactive layer re-renders the last
+//   bubble on every update. Simplest path, no buffer-flush logic.
+// - Operator sees the daemon's stream surface in real time.
+
+import { ScrollView, LineEdit, TextEdit } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { NeothButton, Card } from "components.slint";
+
+/// One message in the scrollback. Owned by the Rust side; Slint
+/// renders the list reactively.
+export struct ChatMessage {
+    role: string,        // "operator" | "neoth" | "system"
+    text: string,
+    /// Display timestamp, pre-formatted by the Rust side. Keeps
+    /// Slint's expression layer free of date logic.
+    timestamp: string,
+    /// `true` while the daemon is still streaming this bubble. Used
+    /// to render a pulsing cursor at the tail.
+    streaming: bool,
+}
+
+// ── ChatBubble ───────────────────────────────────────────────────────
+// One message. Operator messages right-align with accent-green tint;
+// NEOTH messages left-align with card surface; system messages
+// center-align with muted text.
+
+component ChatBubble inherits Rectangle {
+    in property <ChatMessage> message;
+    in property <length> bubble-max-width: 600px;
+
+    height: max(40px, body.preferred-height + Theme.space-base * 2);
+
+    HorizontalLayout {
+        alignment: root.message.role == "operator" ? end : (root.message.role == "system" ? center : start);
+        padding-left: Theme.space-base;
+        padding-right: Theme.space-base;
+
+        Rectangle {
+            background: root.message.role == "operator"
+                ? Theme.accent-green.with-alpha(0.18)
+                : (root.message.role == "system" ? transparent : Theme.bg-card);
+            border-color: root.message.role == "operator"
+                ? Theme.accent-green.with-alpha(0.4)
+                : (root.message.role == "system" ? transparent : Theme.border-subtle);
+            border-width: root.message.role == "system" ? 0px : 1px;
+            border-radius: Theme.radius-card;
+            max-width: root.bubble-max-width;
+
+            VerticalLayout {
+                padding: Theme.space-base;
+                spacing: Theme.space-tight;
+
+                body := Text {
+                    text: root.message.text + (root.message.streaming ? " ▋" : "");
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-body;
+                    font-weight: root.message.role == "system" ? Theme.weight-light : Theme.weight-regular;
+                    letter-spacing: Theme.letter-spacing-body;
+                    color: root.message.role == "system" ? Theme.text-muted : Theme.text-primary;
+                    wrap: word-wrap;
+                }
+
+                if root.message.timestamp != "": Text {
+                    text: root.message.timestamp;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-caption;
+                    color: Theme.text-dim;
+                }
+            }
+        }
+    }
+}
+
+// ── ConversationItem ─────────────────────────────────────────────────
+// One row in the left sidebar — channel name + last-message preview +
+// unread indicator.
+
+component ConversationItem inherits Rectangle {
+    in property <string> label: "";
+    in property <string> last-message: "";
+    in property <int> unread-count: 0;
+    in property <bool> active: false;
+    callback clicked();
+
+    height: 64px;
+    background: root.active ? Theme.bg-card : transparent;
+    border-radius: Theme.radius-button;
+
+    animate background {
+        duration: Theme.duration-micro;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    Rectangle {
+        x: 0;
+        y: 8px;
+        width: 3px;
+        height: parent.height - 16px;
+        background: root.active ? Theme.accent-green : transparent;
+        border-radius: 2px;
+    }
+
+    VerticalLayout {
+        x: Theme.space-base;
+        y: Theme.space-tight;
+        width: parent.width - Theme.space-base * 2;
+        spacing: 2px;
+
+        HorizontalLayout {
+            alignment: space-between;
+            spacing: Theme.space-tight;
+            Text {
+                text: root.label;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                font-weight: root.active ? Theme.weight-medium : Theme.weight-regular;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+            if root.unread-count > 0: Rectangle {
+                width: 22px;
+                height: 18px;
+                background: Theme.accent-green;
+                border-radius: 9px;
+                Text {
+                    text: root.unread-count > 9 ? "9+" : root.unread-count;
+                    font-family: Theme.font-display;
+                    font-size: 10px;
+                    font-weight: Theme.weight-bold;
+                    color: Theme.bg-base;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+        }
+        if root.last-message != "": Text {
+            text: root.last-message;
+            font-family: Theme.font-display;
+            font-size: Theme.font-size-caption;
+            color: Theme.text-muted;
+            overflow: elide;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+}
+
+// ── Composer ─────────────────────────────────────────────────────────
+// Input box + send button + slash-autocomplete dropdown. Single-line
+// for v0.1 (Enter sends). Multi-line lands when an operator complains.
+
+component Composer inherits Rectangle {
+    in-out property <string> draft: "";
+    in property <bool> send-enabled: true;
+    /// Whether the operator's draft starts with `/` — Rust side
+    /// surfaces the slash-autocomplete dropdown when this is true.
+    in property <bool> slash-active: false;
+    callback send-clicked(string);
+
+    height: 72px;
+    background: Theme.bg-base;
+
+    Rectangle {
+        x: Theme.space-screen;
+        y: 0;
+        width: parent.width - Theme.space-screen * 2;
+        height: 1px;
+        background: Theme.border-subtle;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.space-screen;
+        padding-right: Theme.space-screen;
+        padding-top: Theme.space-base;
+        padding-bottom: Theme.space-base;
+        spacing: Theme.space-base;
+
+        // Slash hint — visible only when the draft starts with `/`,
+        // gives the operator a discoverable cue that they can run a
+        // command without first reading docs.
+        if root.slash-active: Rectangle {
+            width: 32px;
+            height: 32px;
+            border-radius: Theme.radius-button;
+            background: Theme.accent-green.with-alpha(0.2);
+            border-color: Theme.accent-green;
+            border-width: 1px;
+            Text {
+                text: "/";
+                font-family: Theme.font-mono;
+                font-size: Theme.font-size-body;
+                font-weight: Theme.weight-bold;
+                color: Theme.accent-green;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        // G-9 fix: clearer placeholder so a noob sees the affordance
+        // without staring at a dim "Send →" button and assuming the
+        // chat is broken. Enter + click both send.
+        input := LineEdit {
+            placeholder-text: "Type a message — press Enter or click Send →. Hit `/` for commands.";
+            text <=> root.draft;
+            // Enter sends — the Rust side calls root.send-clicked().
+            accepted(t) => {
+                if (t != "") {
+                    root.send-clicked(t);
+                    root.draft = "";
+                }
+            }
+        }
+
+        NeothButton {
+            label: "Send →";
+            enabled: root.send-enabled && root.draft != "";
+            clicked => {
+                if (root.draft != "") {
+                    root.send-clicked(root.draft);
+                    root.draft = "";
+                }
+            }
+        }
+    }
+}
+
+// ── ChatView ─────────────────────────────────────────────────────────
+// Top-level chat layout — left sidebar + main scrollback + bottom composer.
+
+export component ChatView inherits Rectangle {
+    in property <[ChatMessage]> messages: [];
+    in-out property <string> composer-draft: "";
+    in property <bool> send-enabled: true;
+    /// Set by the Rust side when `composer-draft` starts with `/`.
+    /// Slint can't run `.starts-with()` in property expressions, so
+    /// the host owns the boolean.
+    in property <bool> slash-active: false;
+    /// Channel labels for the sidebar. Keep operator-readable
+    /// (Telegram / WhatsApp / CLI etc.).
+    in property <[string]> channels: ["CLI", "Telegram", "WhatsApp"];
+    in-out property <int> active-channel-index: 0;
+    /// Per-channel unread count, parallel-indexed with `channels`.
+    in property <[int]> unread-counts: [0, 0, 0];
+
+    callback send-clicked(string);
+    callback channel-switched(int);
+    callback open-settings();
+
+    background: Theme.bg-base;
+
+    HorizontalLayout {
+        // ── Conversation sidebar ─────────────────────────────────
+        Rectangle {
+            width: 240px;
+            background: Theme.bg-base;
+            border-color: Theme.border-subtle;
+            border-width: 0px;
+
+            VerticalLayout {
+                padding: Theme.space-base;
+                spacing: Theme.space-tight;
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text {
+                        text: "CHANNELS";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 2px;
+                        color: Theme.text-dim;
+                        vertical-alignment: center;
+                    }
+                    // G-18 fix: desktop hit target 44×44 minimum.
+                    // The cog stays as the visible glyph; the larger
+                    // hit box makes mouse acquisition reliable.
+                    NeothButton {
+                        label: "⚙";
+                        primary: false;
+                        width: 44px;
+                        height: 44px;
+                        clicked => { root.open-settings(); }
+                    }
+                }
+
+                // Render one ConversationItem per channel. Slint's
+                // `for ... in` iterates the model reactively.
+                for ch[idx] in root.channels: ConversationItem {
+                    label: ch;
+                    last-message: "";
+                    unread-count: idx < root.unread-counts.length ? root.unread-counts[idx] : 0;
+                    active: idx == root.active-channel-index;
+                    clicked => {
+                        root.active-channel-index = idx;
+                        root.channel-switched(idx);
+                    }
+                }
+            }
+        }
+
+        // ── Main pane: scrollback + composer ─────────────────────
+        VerticalLayout {
+            // G-10 fix: thin active-channel header so the operator
+            // always sees which channel they're viewing. Without this
+            // the scrollback area carries no breadcrumb — switching
+            // sidebar channels would only update the green accent bar
+            // (which is outside the reading area).
+            Rectangle {
+                height: 44px;
+                background: Theme.bg-base;
+                Rectangle {
+                    x: Theme.space-base;
+                    y: parent.height - 1px;
+                    width: parent.width - Theme.space-base * 2;
+                    height: 1px;
+                    background: Theme.border-subtle;
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-base;
+                    padding-right: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    alignment: start;
+                    Text {
+                        text: "●";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        color: Theme.accent-green;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.active-channel-index >= 0 && root.active-channel-index < root.channels.length
+                            ? root.channels[root.active-channel-index]
+                            : "—";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-primary;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+            ScrollView {
+                horizontal-stretch: 1;
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+
+                    if root.messages.length == 0: Rectangle {
+                        height: 200px;
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: Theme.space-tight;
+                            Text {
+                                text: "No messages yet.";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-h2;
+                                font-weight: Theme.weight-light;
+                                color: Theme.text-muted;
+                                horizontal-alignment: center;
+                            }
+                            Text {
+                                text: "Type a message below to start. `/help` lists every command.";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-body;
+                                color: Theme.text-dim;
+                                horizontal-alignment: center;
+                            }
+                        }
+                    }
+
+                    for msg in root.messages: ChatBubble {
+                        message: msg;
+                        bubble-max-width: 560px;
+                    }
+                }
+            }
+
+            Composer {
+                draft <=> root.composer-draft;
+                send-enabled: root.send-enabled;
+                slash-active: root.slash-active;
+                send-clicked(text) => { root.send-clicked(text); }
+            }
+        }
+    }
+}

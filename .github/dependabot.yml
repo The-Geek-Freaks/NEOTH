@@ -1,0 +1,67 @@
+# =============================================================================
+# NEOTH — Dependabot configuration
+#
+# Cargo: weekly updates. Max 5 open PRs to avoid noise.
+# GitHub Actions: weekly, separate PR group.
+# Major version bumps always require manual review — never auto-merge.
+# =============================================================================
+
+version: 2
+
+updates:
+  # ---------------------------------------------------------------------------
+  # Cargo dependencies
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "cargo"
+    # Workspace root — the post-O-3 split lives at SRC/Cargo.toml with
+    # `neothd` + `neothd-gui` + `neoth-plugin-sdk` as members. Pointing
+    # at SRC/neothd would miss the GUI + plugin SDK deps.
+    directory: "/SRC"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "rust"
+    commit-message:
+      prefix: "chore(deps)"
+    # Group patch + minor updates into a single PR to reduce noise
+    groups:
+      patch-updates:
+        update-types:
+          - "patch"
+      minor-updates:
+        update-types:
+          - "minor"
+    # Major version bumps open individual PRs (no group) — manual review required
+    ignore: []
+    # Auto-merge handled by branch protection rules + required status checks.
+    # Patch PRs with green CI can be auto-merged via repo setting "auto-merge".
+    # Major version PRs must be manually approved.
+
+  # ---------------------------------------------------------------------------
+  # GitHub Actions
+  # ---------------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Berlin"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(actions)"
+    groups:
+      actions-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+          - "minor"

@@ -1,0 +1,1066 @@
+// NEOTH GUI wizard — R-1 Phase 3.
+//
+// Multi-screen wizard. Each step writes into a single shared `WizardState`
+// that `main.rs` reads at the end to render `freedom.yaml` + the
+// secrets-split `credentials.yaml`. CLI parity: the screens mirror
+// `neothd init` step order so an operator who has done the CLI flow
+// recognises the layout.
+//
+// Phase 3 adds three steps between provider + done:
+//   - autonomy: 5-level radio (strict / standard / elevated / full / custom)
+//   - channels: which channels NEOTH should listen on (Telegram today;
+//                Slack / Keet / Discord land when their adapters ship)
+//   - keys:     provider API key + per-channel tokens. Skipped entirely
+//               when the chosen provider needs none AND no channels are
+//               enabled (e.g. claude_cli + CLI-only mode).
+//
+// Secrets are kept in their own structs and serialised to
+// `~/.neoth/credentials.yaml` rather than `freedom.yaml`, matching the
+// Codex audit split that landed earlier in this session.
+
+import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox } from "components.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow } from "settings.slint";
+import { ChatView, ChatMessage } from "chat.slint";
+export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow }
+
+export enum WizardStep {
+    /// Very first screen the operator sees — pick between the GUI
+    /// onboarding flow (this binary keeps running) or the CLI wizard
+    /// (operator drops to a terminal). Sets the tone before the
+    /// commitment screens kick in. Pick #29 (12/10 polish).
+    mode-selection,
+    welcome,
+    license,
+    identity,
+    provider,
+    autonomy,
+    channels,
+    keys,
+    done,
+    /// Post-onboarding settings surface — Pick #32. Renders the
+    /// `SettingsView` tab layout. Operators reach this screen by
+    /// (a) clicking the ⚙ icon in the Chat sidebar, or (b)
+    /// clicking through Finish on a fresh install (auto-jumps to
+    /// chat after wizard, but Settings is one tap away).
+    settings,
+    /// Chat surface — Pick #33. Primary post-onboarding view. The
+    /// operator lands here after Finish + the daemon's PROVIDER_*
+    /// + CHANNEL_* WAL frames stream into the scrollback.
+    chat,
+}
+
+export component MainWindow inherits Window {
+    // G-26 fix: window title reflects the active screen instead of
+    // staying "NEOTH — Setup" forever. Settings + Chat are
+    // post-onboarding surfaces, the title should follow.
+    title:
+        root.step == WizardStep.chat     ? "NEOTH — Chat" :
+        root.step == WizardStep.settings ? "NEOTH — Settings" :
+                                            "NEOTH — Setup";
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    min-width: 820px;
+    min-height: 600px;
+
+    // Style spec compliance (Session 15 Pick #11+#28): Window background
+    // sourced from Theme tokens. The radial-gradient hero look from
+    // the brand SVG ships as a Rectangle layer inside the welcome
+    // screen — Slint windows take a flat background, the gradient
+    // belongs to the screen-content layer.
+    background: Theme.bg-base;
+
+    in-out property <WizardStep> step: WizardStep.mode-selection;
+    /// `true` once operator picked the GUI mode. Used by main.rs to
+    /// know whether to skip the mode-selection on next launch (after
+    /// freedom.yaml exists) — the GUI is now the operator's chosen
+    /// surface.
+    in-out property <bool> mode-gui-chosen: false;
+    /// Operator picked CLI on the mode screen. main.rs handles this
+    /// via the `cli-mode-chosen` callback — typically: print the
+    /// `neoth init` command to stdout + exit so the operator runs
+    /// the CLI wizard manually. Pick #29 contract.
+    in-out property <bool> mode-cli-chosen: false;
+    in-out property <bool> license-accepted: false;
+    in-out property <string> operator-id: "";
+    in-out property <string> provider-choice: "claude_cli";
+    in-out property <string> autonomy-choice: "standard";
+    in-out property <bool> enable-telegram: false;
+    in-out property <string> provider-key: "";
+    in-out property <string> telegram-token: "";
+    in-out property <string> status-line: "";
+    in property <string> hardware-summary: "";
+
+    // Pick #28 (12/10 polish): derive the step counter + label from
+    // the active `WizardStep` so the top ProgressIndicator always
+    // matches the rendered screen. Keys-step is conditional — when
+    // `need-keys-step` is false the operator skips from channels
+    // straight to done, so we collapse the displayed count to 7.
+    /// G-13 fix: total-steps is constant 8, regardless of whether
+    /// the keys screen is shown. Previously the denominator would
+    /// flip from "Step 6 of 8" to "Step 7 of 7" mid-flow when the
+    /// operator picked claude_cli + no channels — visibly confusing.
+    /// When keys is skipped, current-step jumps from 6 (Channels) to
+    /// 8 (Summary), which the bar fills smoothly.
+    out property <int> total-steps: 8;
+    out property <int> current-step:
+        root.step == WizardStep.welcome  ? 1 :
+        root.step == WizardStep.license  ? 2 :
+        root.step == WizardStep.identity ? 3 :
+        root.step == WizardStep.provider ? 4 :
+        root.step == WizardStep.autonomy ? 5 :
+        root.step == WizardStep.channels ? 6 :
+        root.step == WizardStep.keys     ? 7 :
+        root.step == WizardStep.done     ? 8 :
+        0;
+    // G-23 fix: removed dead `mode-selection` branch — the progress
+    // indicator is hidden on that screen so the label is never read.
+    out property <string> step-label:
+        root.step == WizardStep.welcome  ? "Welcome" :
+        root.step == WizardStep.license  ? "License" :
+        root.step == WizardStep.identity ? "Identity" :
+        root.step == WizardStep.provider ? "Provider" :
+        root.step == WizardStep.autonomy ? "Autonomy" :
+        root.step == WizardStep.channels ? "Channels" :
+        root.step == WizardStep.keys     ? "API Keys" :
+                                            "Summary";
+    /// `true` only when the persistent ProgressIndicator should
+    /// render the step counter + bar. Mode-selection + Settings are
+    /// stand-alone screens — operator isn't in the numbered flow,
+    /// so showing "Step 0 of 8" reads broken.
+    out property <bool> show-progress:
+        root.step != WizardStep.mode-selection
+        && root.step != WizardStep.settings
+        && root.step != WizardStep.chat;
+
+    callback finish-clicked;
+    callback cancel-clicked;
+    /// Operator picked CLI on the mode screen. Rust side prints
+    /// `neoth init` instructions + exits the GUI.
+    callback cli-mode-chosen;
+    /// G-2 fix — operator clicked "View full text →" on the License
+    /// screen. Rust side opens the project licence URL in the system
+    /// default browser via `start` (Windows) / `open` (macOS) /
+    /// `xdg-open` (Linux).
+    callback open-license-url;
+    /// Settings panel triggered the hot-reload sentinel write
+    /// (`/reload` mirror). Rust drops the file under ~/.neoth/.
+    callback settings-reload-clicked;
+    /// Settings panel triggered "Re-run wizard". Rust resets the
+    /// state back to `mode-selection` so the operator walks the
+    /// flow fresh.
+    callback settings-wizard-rerun-clicked;
+    /// G-12 fix — operator picked a different provider in Settings
+    /// → Config. Rust persists the change.
+    callback provider-changed(string);
+
+    // ── Chat surface state (Pick #33) ─────────────────────────────────
+    /// Scrollback feed. Rust pushes ChatMessage rows as the daemon
+    /// emits PROVIDER_RESPONSE / CHANNEL_INGRESS frames. The
+    /// streaming-bubble pattern flips `streaming: true` on the
+    /// last entry while chunks arrive, then `false` when the
+    /// completion settles.
+    in property <[ChatMessage]> chat-messages: [];
+    in-out property <string> chat-composer-draft: "";
+    in property <bool> chat-send-enabled: true;
+    /// Channel labels for the chat sidebar. CLI is always first
+    /// + always available; the rest reflect the operator's
+    /// configured channels from freedom.yaml.
+    in property <[string]> chat-channels: ["CLI", "Telegram", "WhatsApp"];
+    in-out property <int> chat-active-channel: 0;
+    in property <[int]> chat-unread-counts: [0, 0, 0];
+    /// Rust sets this from the composer-draft via a text-edited
+    /// callback (Slint can't run `starts-with` in expressions). When
+    /// `true` the chat view renders the slash-discovery hint.
+    in property <bool> chat-slash-active: false;
+
+    /// Operator typed + sent a message. Rust dispatches through
+    /// `cli::chat::run_chat_with`.
+    callback chat-send-clicked(string);
+    /// Operator switched channels in the sidebar.
+    callback chat-channel-switched(int);
+
+    // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
+    // Rust populates these from `neothd kanban list/show --output json`
+    // subprocess calls. The five status buckets cover the board's
+    // five columns; the feed array drives the right-rail activity log.
+    in property <[KanbanTaskRow]> kanban-backlog: [];
+    in property <[KanbanTaskRow]> kanban-todo: [];
+    in property <[KanbanTaskRow]> kanban-in-progress: [];
+    in property <[KanbanTaskRow]> kanban-review: [];
+    in property <[KanbanTaskRow]> kanban-done: [];
+    in property <[KanbanFeedRow]> kanban-feed: [];
+    in property <string> kanban-session-summary: "";
+    /// Operator clicked Refresh on the Code Sessions tab. Rust
+    /// re-fetches via subprocess + updates the seven properties above.
+    callback kanban-refresh-clicked;
+
+    // True when the currently-picked provider needs an API key. Mirrors
+    // the require_provider_key() logic in `providers/mod.rs`: claude_cli
+    // uses OAuth, local_qwen is local, everything else is REST + bearer.
+    out property <bool> provider-needs-key:
+        root.provider-choice != "claude_cli" && root.provider-choice != "local_qwen";
+
+    // Skip the keys step entirely when no secrets are needed — saves the
+    // operator an empty screen when they've picked claude_cli + CLI-only.
+    out property <bool> need-keys-step:
+        root.provider-needs-key || root.enable-telegram;
+
+    // ── Three-stripe layout (Pick #28 12/10 polish) ──────────────────
+    // Top: persistent ProgressIndicator (brand bar + step counter + progress fill).
+    // Middle: per-screen content area inside a Card surface so every screen
+    //   looks coherent. Content scrolls if it overflows.
+    // Bottom: thin FooterBar with the operator-readable status string
+    //   (hardware summary on welcome, daemon version elsewhere).
+    VerticalLayout {
+        if root.show-progress: ProgressIndicator {
+            current-step: root.current-step;
+            total-steps: root.total-steps;
+            step-label: root.step-label;
+        }
+
+    VerticalBox {
+        padding: Theme.space-screen;
+        spacing: Theme.space-loose;
+
+        // ── Mode selection ─────────────────────────────────────────────
+        // Operator's first decision — GUI flow or CLI flow. Two big
+        // SVG-glyph cards side by side. GUI marked "recommended" for
+        // noobs; CLI surface available without leaving the keyboard.
+        if root.step == WizardStep.mode-selection: VerticalLayout {
+            spacing: Theme.space-screen;
+            alignment: center;
+            VerticalLayout {
+                spacing: Theme.space-tight;
+                Text {
+                    text: "NEOTH";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-h1 * 1.6;
+                    font-weight: Theme.weight-ultralight;
+                    letter-spacing: Theme.letter-spacing-hero;
+                    color: Theme.text-primary;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Choose how you want to set up.";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-body;
+                    font-weight: Theme.weight-light;
+                    letter-spacing: 1px;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-loose;
+                alignment: center;
+                ModeCard {
+                    title: "Graphical setup";
+                    subtitle: "Click through eight short screens. Recommended if you're new.";
+                    recommended: true;
+                    selected: root.mode-gui-chosen;
+                    glyph: @image-url("assets/glyph_gui.svg");
+                    clicked => {
+                        root.mode-gui-chosen = true;
+                        root.mode-cli-chosen = false;
+                    }
+                }
+                ModeCard {
+                    title: "Command-line setup";
+                    subtitle: "Drop to a terminal. Runs `neoth init`. Fast if you live in tmux.";
+                    recommended: false;
+                    selected: root.mode-cli-chosen;
+                    glyph: @image-url("assets/glyph_cli.svg");
+                    clicked => {
+                        root.mode-cli-chosen = true;
+                        root.mode-gui-chosen = false;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: center;
+                NeothButton {
+                    label: "Continue →";
+                    enabled: root.mode-gui-chosen || root.mode-cli-chosen;
+                    clicked => {
+                        if (root.mode-cli-chosen) {
+                            root.cli-mode-chosen();
+                        } else {
+                            root.step = WizardStep.welcome;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Welcome ────────────────────────────────────────────────────
+        if root.step == WizardStep.welcome: VerticalBox {
+            spacing: Theme.space-loose;
+            // Hero block — NEOTH logo at full hero scale, tagline below.
+            // Only screen where the logo runs at hero size; every other
+            // screen uses the small brand bar in the ProgressIndicator.
+            VerticalLayout {
+                spacing: Theme.space-tight;
+                Text {
+                    text: "NEOTH";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-h1 * 1.6;
+                    font-weight: Theme.weight-ultralight;
+                    letter-spacing: Theme.letter-spacing-hero;
+                    color: Theme.text-primary;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Your buddy. Your life.";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-body;
+                    font-weight: Theme.weight-light;
+                    letter-spacing: 2px;
+                    color: Theme.accent-green;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "First-launch setup — eight steps, about three minutes.";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-body;
+                    font-weight: Theme.weight-regular;
+                    letter-spacing: Theme.letter-spacing-body;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+            // Hardware probe card — Noble-Curve 16px radius, monospace
+            // body so detected hardware lines up visually.
+            Card {
+                preferred-height: 180px;
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "Detected hardware";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: 1px;
+                        color: Theme.accent-green;
+                    }
+                    Text {
+                        text: root.hardware-summary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            // G-11 fix: every wizard step from License onward has a
+            // Back-button; Welcome was the only exception. Operator
+            // who landed here from Mode Selection had no way back.
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Mode";
+                    primary: false;
+                    clicked => { root.step = WizardStep.mode-selection; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.license; }
+                }
+            }
+        }
+
+        // ── License ────────────────────────────────────────────────────
+        // G-2 fix: real plain-language summary instead of a single
+        // throw-away sentence + dead air. Three bullets cover the
+        // MIT/Apache-2.0 promise, the no-warranty disclaimer, and the
+        // operator's freedom to use/modify/share. "View full text →"
+        // opens the canonical licence text in the system browser.
+        if root.step == WizardStep.license: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "License";
+                subtitle: "NEOTH is yours to use, modify, and share — under the MIT or Apache 2.0 license, your choice. Tick the box below to confirm you understand the basics.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+
+                    Text {
+                        text: "✓  Free to use — commercial or personal, no fee, no telemetry.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "✓  Free to modify — fork it, patch it, build on it. Keep the copyright notice.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "✓  Free to share — redistribute under the same license.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "⚠  No warranty — NEOTH is provided as-is. You run it at your own risk.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        alignment: start;
+                        NeothButton {
+                            label: "View full text →";
+                            primary: false;
+                            clicked => { root.open-license-url(); }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Theme.border-subtle;
+                    }
+
+                    CheckBox {
+                        text: "I have read the points above and accept the licence terms.";
+                        checked <=> root.license-accepted;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.welcome; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    enabled: root.license-accepted;
+                    clicked => { root.step = WizardStep.identity; }
+                }
+            }
+        }
+
+        // ── Identity ───────────────────────────────────────────────────
+        if root.step == WizardStep.identity: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Identity";
+                subtitle: "Pick a short handle NEOTH uses to address you. Lowercase letters, digits, and dashes only — three to thirty-two characters. This name shows up in chat logs and on archived sessions.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "Operator id";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: 1px;
+                        color: Theme.accent-green;
+                    }
+                    // G-1 fix: placeholder must look obviously instructional
+                    // so a noob does not mistake it for a pre-filled value.
+                    // "your-handle" reads as a hint; "alex" reads as data.
+                    // G-15 fix: Enter advances when the handle is non-empty
+                    // so keyboard-only operators don't need to mouse over
+                    // to Continue.
+                    LineEdit {
+                        placeholder-text: "your-handle";
+                        text <=> root.operator-id;
+                        accepted(t) => {
+                            if (t != "") { root.step = WizardStep.provider; }
+                        }
+                    }
+                    if root.operator-id == "": Text {
+                        text: "Required — pick a short name like 'alex' or 'jamie'.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.accent-pink;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.license; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    enabled: root.operator-id != "";
+                    clicked => { root.step = WizardStep.provider; }
+                }
+            }
+        }
+
+        // ── Provider ───────────────────────────────────────────────────
+        if root.step == WizardStep.provider: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Provider";
+                subtitle: "Which LLM runs NEOTH's chat. Local Qwen runs offline on your hardware (~3 GB cached). Cloud providers need a key on the next-but-one screen.";
+            }
+            // List MUST stay in sync with `cli::init::ProviderKind` so a
+            // GUI-written `freedom.yaml` always loads cleanly in the
+            // daemon. `anthropic_api` was removed because the daemon
+            // enum has no matching variant — operators who want
+            // Anthropic-direct use `claude_cli` (OAuth) or
+            // `openai_compat` against the Anthropic-compatible endpoint.
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "Backend";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: 1px;
+                        color: Theme.accent-green;
+                    }
+                    // G-3 fix: NeothComboBox replaces std-widgets'
+                    // light-mode ComboBox. Maps current-index back to
+                    // the bare provider token expected by freedom.yaml.
+                    NeothComboBox {
+                        model: [
+                            "claude_cli",
+                            "openai_api",
+                            "openai_compat",
+                            "gemini_api",
+                            "local_qwen",
+                            "hermes",
+                            "openclaw",
+                        ];
+                        current-index: 0;
+                        selected(i) => {
+                            if (i == 0) { root.provider-choice = "claude_cli"; }
+                            if (i == 1) { root.provider-choice = "openai_api"; }
+                            if (i == 2) { root.provider-choice = "openai_compat"; }
+                            if (i == 3) { root.provider-choice = "gemini_api"; }
+                            if (i == 4) { root.provider-choice = "local_qwen"; }
+                            if (i == 5) { root.provider-choice = "hermes"; }
+                            if (i == 6) { root.provider-choice = "openclaw"; }
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.identity; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.autonomy; }
+                }
+            }
+        }
+
+        // ── Autonomy ───────────────────────────────────────────────────
+        // G-7 fix: replace the lonely "Picked: X" Card with an inline
+        // explanatory block. G-20 fix: subtitle uses plain language
+        // instead of dev jargon.
+        if root.step == WizardStep.autonomy: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Autonomy";
+                subtitle: "Choose how independently NEOTH acts. 'Strict' asks before every change. 'Full' trusts your policy file and never interrupts. You can change this any time from Settings → Privacy.";
+            }
+            // G-3 fix: NeothComboBox replaces std-widgets ComboBox.
+            // The verbose labels carry a one-line description so the
+            // operator picks with context. selected() maps back to the
+            // bare token freedom.yaml::autonomy expects.
+            NeothComboBox {
+                model: [
+                    "strict — confirm every write, no shell exec",
+                    "standard — writes inside ~/.neoth allowed, every exec confirms",
+                    "elevated — writes anywhere, exec inside ~/.neoth allowed",
+                    "full — trust policy.yaml; nothing prompts",
+                    "custom — defer to per-action rules in policy.yaml",
+                ];
+                current-index: 1;
+                selected(i) => {
+                    if (i == 0) { root.autonomy-choice = "strict"; }
+                    if (i == 1) { root.autonomy-choice = "standard"; }
+                    if (i == 2) { root.autonomy-choice = "elevated"; }
+                    if (i == 3) { root.autonomy-choice = "full"; }
+                    if (i == 4) { root.autonomy-choice = "custom"; }
+                }
+            }
+            // Inline summary — no more empty Card. Reads as a single
+            // narrative line ("Picked X — Y") rather than a chrome box.
+            HorizontalLayout {
+                spacing: Theme.space-tight;
+                alignment: start;
+                Text {
+                    text: "Picked:";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    font-weight: Theme.weight-medium;
+                    letter-spacing: 1px;
+                    color: Theme.text-dim;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.autonomy-choice;
+                    font-family: Theme.font-mono;
+                    font-size: Theme.font-size-body;
+                    color: Theme.accent-green;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text:
+                        root.autonomy-choice == "strict"   ? " — every write asks first; shell commands always confirm." :
+                        root.autonomy-choice == "standard" ? " — writes to ~/.neoth allowed; every shell command asks." :
+                        root.autonomy-choice == "elevated" ? " — writes anywhere; shell inside ~/.neoth allowed." :
+                        root.autonomy-choice == "full"     ? " — trusts your policy.yaml completely; never interrupts." :
+                                                              " — defers to per-action rules in policy.yaml.";
+                    font-family: Theme.font-display;
+                    font-size: Theme.font-size-caption;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.provider; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.channels; }
+                }
+            }
+        }
+
+        // ── Channels ───────────────────────────────────────────────────
+        // G-4 fix: surface every channel in the shipping matrix, group
+        // by status, and replace developer jargon ("adapter scaffold")
+        // with operator-friendly status notes ("Operational — v0.3+",
+        // "Coming next", "Research phase"). Only Telegram is tickable
+        // in the wizard for v0.1 — the others land via Settings →
+        // Channels once their credential flow is complete. The
+        // disabled rows still show so the operator understands the
+        // full roadmap.
+        if root.step == WizardStep.channels: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Channels";
+                subtitle: "Where NEOTH listens and replies. CLI is always on. Tick Telegram now to set it up immediately — the rest you can connect any time from Settings → Channels.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+
+                    // ── Always on ────────────────────────────────────
+                    Text {
+                        text: "ALWAYS ON";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 1.5px;
+                        color: Theme.text-dim;
+                    }
+                    CheckBox {
+                        text: "CLI — neoth chat / neoth serve REPL";
+                        checked: true;
+                        enabled: false;
+                    }
+
+                    // ── Ready to enable now ──────────────────────────
+                    Text {
+                        text: "READY NOW";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 1.5px;
+                        color: Theme.accent-green;
+                    }
+                    CheckBox {
+                        text: "Telegram bot — long-poll, no public HTTPS needed";
+                        checked <=> root.enable-telegram;
+                    }
+
+                    // ── Set up later from Settings ───────────────────
+                    Text {
+                        text: "SET UP FROM SETTINGS → CHANNELS";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 1.5px;
+                        color: Theme.text-dim;
+                    }
+                    CheckBox {
+                        text: "WhatsApp — Meta Business Cloud webhook (needs public HTTPS)";
+                        checked: false;
+                        enabled: false;
+                    }
+                    CheckBox {
+                        text: "Slack — Socket Mode WebSocket (no public HTTPS needed)";
+                        checked: false;
+                        enabled: false;
+                    }
+                    CheckBox {
+                        text: "Discord — Gateway WebSocket (direct messages today, guilds soon)";
+                        checked: false;
+                        enabled: false;
+                    }
+                    CheckBox {
+                        text: "Keet — Hyperswarm / Pears mesh (preview)";
+                        checked: false;
+                        enabled: false;
+                    }
+
+                    // ── On the roadmap ───────────────────────────────
+                    Text {
+                        text: "ON THE ROADMAP";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-bold;
+                        letter-spacing: 1.5px;
+                        color: Theme.text-dim;
+                    }
+                    CheckBox {
+                        text: "Signal — needs Signal Desktop running on this machine";
+                        checked: false;
+                        enabled: false;
+                    }
+                    CheckBox {
+                        text: "Matrix — bring your own homeserver + access token";
+                        checked: false;
+                        enabled: false;
+                    }
+                    CheckBox {
+                        text: "LINE — LINE Messaging API (bot account required)";
+                        checked: false;
+                        enabled: false;
+                    }
+                    CheckBox {
+                        text: "iMessage — macOS only, Apple automation restrictions apply";
+                        checked: false;
+                        enabled: false;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.autonomy; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => {
+                        // Skip the keys screen when nothing needs a
+                        // secret — operator goes straight to Summary.
+                        if (root.need-keys-step) {
+                            root.step = WizardStep.keys;
+                        } else {
+                            root.step = WizardStep.done;
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Keys ───────────────────────────────────────────────────────
+        if root.step == WizardStep.keys: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "API keys & tokens";
+                subtitle: "Stored in ~/.neoth/credentials.yaml at mode 0600. Leave blank to skip — add later via `neoth init --force`.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    if root.provider-needs-key: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Provider key — " + root.provider-choice;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                        }
+                        LineEdit {
+                            placeholder-text: "sk-... / API key";
+                            input-type: password;
+                            text <=> root.provider-key;
+                        }
+                    }
+                    if root.enable-telegram: VerticalLayout {
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "Telegram bot token — from @BotFather";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                        }
+                        LineEdit {
+                            placeholder-text: "123456789:ABC-…";
+                            input-type: password;
+                            text <=> root.telegram-token;
+                        }
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.channels; }
+                }
+                NeothButton {
+                    label: "Continue →";
+                    clicked => { root.step = WizardStep.done; }
+                }
+            }
+        }
+
+        // ── Done ───────────────────────────────────────────────────────
+        if root.step == WizardStep.done: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Ready to go";
+                subtitle: "Review your configuration. Finish writes ~/.neoth/freedom.yaml and (when set) ~/.neoth/credentials.yaml at mode 0600.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "Operator";
+                            width: 100px;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.operator-id;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "Provider";
+                            width: 100px;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.provider-choice;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "Autonomy";
+                            width: 100px;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.autonomy-choice;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "Channels";
+                            width: 100px;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: "cli" + (root.enable-telegram ? ", telegram" : "");
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-base;
+                        Text {
+                            text: "License";
+                            width: 100px;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: 1px;
+                            color: Theme.accent-green;
+                            vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.license-accepted ? "accepted" : "NOT accepted";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: root.license-accepted ? Theme.text-primary : Theme.accent-pink;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+            if root.status-line != "": Text {
+                text: root.status-line;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-caption;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            // G-19 fix: three-button row clipped on narrow windows.
+            // Primary actions (Back / Finish) stay in the bottom row;
+            // re-entry shortcut "Open Settings →" gets its own line
+            // above so its label cannot collide with Finish.
+            HorizontalLayout {
+                alignment: center;
+                NeothButton {
+                    label: "Open Settings →";
+                    primary: false;
+                    clicked => { root.step = WizardStep.settings; }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => {
+                        if (root.need-keys-step) {
+                            root.step = WizardStep.keys;
+                        } else {
+                            root.step = WizardStep.channels;
+                        }
+                    }
+                }
+                NeothButton {
+                    label: "Finish";
+                    enabled: root.license-accepted;
+                    clicked => {
+                        root.finish-clicked();
+                        // Pick #33 — after writing freedom.yaml the
+                        // operator lands in the Chat surface (primary
+                        // daily view). Settings is one tap away via
+                        // the ⚙ icon in the chat sidebar.
+                        root.step = WizardStep.chat;
+                    }
+                }
+            }
+        }
+
+        // ── Settings (Pick #32) ───────────────────────────────────────
+        if root.step == WizardStep.settings: SettingsView {
+            autonomy-current: root.autonomy-choice;
+            provider-current: root.provider-choice;
+            kanban-backlog: root.kanban-backlog;
+            kanban-todo: root.kanban-todo;
+            kanban-in-progress: root.kanban-in-progress;
+            kanban-review: root.kanban-review;
+            kanban-done: root.kanban-done;
+            kanban-feed: root.kanban-feed;
+            kanban-session-summary: root.kanban-session-summary;
+            wizard-rerun-clicked => {
+                root.settings-wizard-rerun-clicked();
+            }
+            reload-config-clicked => {
+                root.settings-reload-clicked();
+            }
+            kanban-refresh-clicked => {
+                root.kanban-refresh-clicked();
+            }
+            // G-12 fix: provider change in Settings → Config flows
+            // up to MainWindow where Rust persists it.
+            provider-changed(name) => {
+                root.provider-choice = name;
+                root.provider-changed(name);
+            }
+            // G-5 fix: route "← Chat" back to the Chat surface so the
+            // operator can leave Settings without hunting for an exit.
+            back-clicked => { root.step = WizardStep.chat; }
+        }
+
+        // ── Chat (Pick #33) ───────────────────────────────────────────
+        // Primary post-onboarding view. Operator types + sees the
+        // scrollback + slash autocomplete. ⚙ icon in sidebar opens
+        // Settings.
+        if root.step == WizardStep.chat: ChatView {
+            messages: root.chat-messages;
+            composer-draft <=> root.chat-composer-draft;
+            send-enabled: root.chat-send-enabled;
+            slash-active: root.chat-slash-active;
+            channels: root.chat-channels;
+            active-channel-index <=> root.chat-active-channel;
+            unread-counts: root.chat-unread-counts;
+            send-clicked(text) => { root.chat-send-clicked(text); }
+            channel-switched(idx) => { root.chat-channel-switched(idx); }
+            open-settings => { root.step = WizardStep.settings; }
+        }
+    }
+
+        FooterBar {
+            // Hardware probe stays visible on every screen so the
+            // operator can verify the daemon detected their box
+            // correctly without bouncing back to welcome.
+            status: root.hardware-summary != ""
+                ? root.hardware-summary
+                : "NEOTH — Your buddy. Your life.";
+        }
+    }
+}

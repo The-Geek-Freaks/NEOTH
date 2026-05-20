@@ -1,0 +1,52 @@
+# NEOTH workspace -- multi-crate setup.
+#
+# Members:
+#   - neothd            : the daemon + CLI binary
+#   - neoth-plugin-sdk  : public crate that plugin authors depend on
+#                         (separate so the API is stable across daemon versions)
+#
+# Rationale: see OPEN_DECISIONS.md D-004 + Rust Architect review.
+# The plugin SDK lives as a separate published crate because `PermissionToken<T>`
+# sealing only works with a real crate boundary. Workspace member is the dev-time
+# convenience; for release the SDK will be published independently to crates.io
+# and `neothd` will depend on it via the normal `neoth-plugin-sdk = "0.1"`
+# entry. Until then, the `[patch.crates-io]` block below keeps local dev
+# pointed at the workspace member.
+
+[workspace]
+resolver = "2"
+members = [
+    "neothd",
+    "neoth-plugin-sdk",
+    "neothd-gui",
+    "neoth-migrate",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.86"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/owner/neoth"
+
+[workspace.dependencies]
+# Shared deps pinned at the workspace level so member crates stay aligned.
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror  = "1"
+tracing    = "0.1"
+zeroize    = { version = "1", features = ["zeroize_derive"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+# Cargo profiles must live at workspace root, not in member Cargo.toml.
+[profile.dev]
+opt-level = 0
+debug = 2
+
+[profile.release]
+opt-level = 3
+debug = 1
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

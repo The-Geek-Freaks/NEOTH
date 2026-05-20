@@ -1,0 +1,158 @@
+//! Load operator-defined sub-agents from `~/.neoth/agents/*.toml` and
+//! merge with the built-in set.
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use anyhow::{Context, Result};
+use tracing::warn;
+
+use super::builtins::built_in_agents;
+use super::schema::SubAgent;
+
+/// Walk `dir` for `*.toml`, parse each, merge with built-ins. Operator
+/// entries win on name collision. Disabled entries are dropped. Output
+/// is alphabetical by name. Bad TOML logs + skips.
+pub async fn load_all(dir: &Path) -> Result<Vec<SubAgent>> {
+    let mut by_name: HashMap<String, SubAgent> = HashMap::new();
+    for a in built_in_agents() {
+        by_name.insert(a.name.clone(), a);
+    }
+
+    if dir.is_dir() {
+        let mut rd = tokio::fs::read_dir(dir)
+            .await
+            .with_context(|| format!("read agents dir {}", dir.display()))?;
+        while let Some(entry) = rd.next_entry().await? {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+                continue;
+            }
+            match parse_file(&path).await {
+                Ok(a) => {
+                    by_name.insert(a.name.clone(), a);
+                }
+                Err(e) => warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "skipping bad sub-agent file"
+                ),
+            }
+        }
+    }
+
+    let mut out: Vec<SubAgent> = by_name.into_values().filter(|a| a.enabled).collect();
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+async fn parse_file(path: &Path) -> Result<SubAgent> {
+    let body = tokio::fs::read_to_string(path)
+        .await
+        .with_context(|| format!("read sub-agent at {}", path.display()))?;
+    let a: SubAgent =
+        toml::from_str(&body).with_context(|| format!("parse TOML at {}", path.display()))?;
+    if a.name.trim().is_empty() {
+        anyhow::bail!("sub-agent at {} has empty name", path.display());
+    }
+    if a.system.trim().is_empty() {
+        anyhow::bail!(
+            "sub-agent {} at {} has empty system prompt",
+            a.name,
+            path.display()
+        );
+    }
+    Ok(a)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn missing_dir_returns_built_ins_only() {
+        let dir = tempdir().unwrap();
+        let agents = load_all(&dir.path().join("nope")).await.unwrap();
+        let names: Vec<&str> = agents.iter().map(|a| a.name.as_str()).collect();
+        assert!(names.contains(&"code-reviewer"));
+        assert!(names.contains(&"security-reviewer"));
+        assert!(names.contains(&"planner"));
+        assert!(names.contains(&"critic"));
+        assert_eq!(agents.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn operator_can_override_built_in() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("planner.toml"),
+            r#"
+name = "planner"
+description = "OPERATOR PLANNER"
+system = "do my style"
+"#,
+        )
+        .await
+        .unwrap();
+        let agents = load_all(dir.path()).await.unwrap();
+        let p = agents.iter().find(|a| a.name == "planner").unwrap();
+        assert_eq!(p.description, "OPERATOR PLANNER");
+    }
+
+    #[tokio::test]
+    async fn disabled_override_hides_built_in_too() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("code-reviewer.toml"),
+            r#"
+name = "code-reviewer"
+description = "off"
+system = "n/a"
+enabled = false
+"#,
+        )
+        .await
+        .unwrap();
+        let agents = load_all(dir.path()).await.unwrap();
+        assert!(!agents.iter().any(|a| a.name == "code-reviewer"));
+    }
+
+    #[tokio::test]
+    async fn operator_can_add_new_agent() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("docs.toml"),
+            r#"
+name = "doc-writer"
+description = "Write docs"
+system = "You write docs"
+"#,
+        )
+        .await
+        .unwrap();
+        let agents = load_all(dir.path()).await.unwrap();
+        // 4 built-ins (code-reviewer, security-reviewer, planner, critic) + 1 operator override = 5
+        assert_eq!(agents.len(), 5);
+        assert!(agents.iter().any(|a| a.name == "doc-writer"));
+    }
+
+    #[tokio::test]
+    async fn empty_system_prompt_fails_parse() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("bad.toml"),
+            r#"
+name = "bad"
+description = "Has no system prompt"
+system = ""
+"#,
+        )
+        .await
+        .unwrap();
+        let agents = load_all(dir.path()).await.unwrap();
+        // Validation drops the bad one but 4 built-ins still load.
+        assert!(!agents.iter().any(|a| a.name == "bad"));
+        assert_eq!(agents.len(), 4);
+    }
+}

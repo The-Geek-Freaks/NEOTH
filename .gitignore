@@ -1,0 +1,97 @@
+# =============================================================================
+# NEOTH — .gitignore
+# Binary crate: Cargo.lock is KEPT (reproducible builds, per Rust convention)
+# =============================================================================
+
+# --- Cargo build artifacts ---
+/target/
+# Cargo workspace lives under SRC/, so its target/ needs ignoring too.
+SRC/target/
+**/target/
+
+# --- Secrets & local config ---
+.env
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# --- NEOTH runtime data (never commit user data) ---
+~/.neoth/
+.neoth/
+freedom.yaml.local
+
+# --- Large binary assets (pulled from HuggingFace at runtime) ---
+models/*.gguf
+models/*.bin
+models/*.safetensors
+models/*.pt
+models/*.onnx
+
+# --- Regenerable test data ---
+tests/data/*.wal
+tests/data/*.bin
+tests/data/*.snap.bak
+
+# --- Logs & temp ---
+*.log
+*.tmp
+*.swp
+*.swo
+*~
+
+# --- OS ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# --- IDEs ---
+.vscode/
+.idea/
+*.iml
+*.iws
+*.ipr
+.fleet/
+.zed/
+
+# --- Coverage ---
+lcov.info
+tarpaulin-report.html
+coverage/
+
+# --- Profiling ---
+perf.data
+perf.data.old
+flamegraph.svg
+cachegrind.out.*
+callgrind.out.*
+
+# --- Benchmark artifacts ---
+criterion/
+
+# --- cargo-fuzz ---
+fuzz/corpus/
+fuzz/artifacts/
+
+# --- Upstream research clones + private operator notes ---
+# QUELLEN/ contains third-party forks (Hermes, OpenClaw, agentmemory, etc.)
+# with their own licenses + 1.7 GB of upstream code. Public push would
+# violate the upstream licenses AND blow up GitHub's repo size limits.
+QUELLEN/
+# RECON/ contains operator-private recon dumps (jarvis_live_recon_*.txt,
+# OpenClaw upstream audits). Not for public consumption.
+RECON/
+# Stray Windows artefact when commands accidentally redirect to `nul`
+# inside Git Bash. Never tracked.
+nul
+
+# NOTE: Cargo.lock is intentionally NOT ignored.
+# neothd is a binary crate → lock file ensures reproducible CI builds.

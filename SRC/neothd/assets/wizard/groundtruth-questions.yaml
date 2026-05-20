@@ -1,0 +1,219 @@
+# NEOTH ground-truth onboarding question bank.
+#
+# Phase 28c R-24 GT-5. 25 questions across 6 categories. Bilingual DE/EN —
+# the wizard picks the prompt matching `freedom.yaml::language_primary`.
+#
+# Operator can edit this file in-place after `neoth init` to add their own
+# questions; the wizard reads it from `~/.neoth/wizard/groundtruth-questions.yaml`
+# on every `neoth groundtruth ask` invocation.
+#
+# Field semantics:
+#   id          stable slug, used as the `scope` suffix and dedup key
+#   category    identity | hardware | routine | preferences | hard_rules | people
+#   prompt.en   English question text
+#   prompt.de   German question text
+#   placeholder optional one-line hint shown under the input field
+#   scope       which scope tag to attach to the resulting groundtruth row
+#                 (defaults to "global"; override for host-bound facts)
+#   skip_ok     true → operator can press Enter to skip; false → required
+
+version: 1
+
+questions:
+  # ── identity (4) ────────────────────────────────────────────────────────
+  - id: name-handle
+    category: identity
+    prompt:
+      en: "What name or handle should NEOTH use for you?"
+      de: "Welchen Namen oder Handle soll NEOTH für dich benutzen?"
+    placeholder: "e.g. Alex / alex / @alex"
+    scope: global
+    skip_ok: false
+
+  - id: role
+    category: identity
+    prompt:
+      en: "What's your primary role? (one word, e.g. developer / researcher / writer)"
+      de: "Was ist deine primäre Rolle? (ein Wort, z.B. entwickler / forscher / autor)"
+    scope: global
+    skip_ok: false
+
+  - id: age-range
+    category: identity
+    prompt:
+      en: "Your age range — used only to calibrate tone (e.g. 18-25 / 26-35 / 36-50 / 50+)?"
+      de: "Deine Altersgruppe — nur fürs Tone-Calibrating (z.B. 18-25 / 26-35 / 36-50 / 50+)?"
+    scope: global
+    skip_ok: true
+
+  - id: chat-language
+    category: identity
+    prompt:
+      en: "What language do you want NEOTH to chat in by default?"
+      de: "In welcher Sprache soll NEOTH standardmäßig mit dir reden?"
+    scope: global
+    skip_ok: false
+
+  # ── hardware (6) ────────────────────────────────────────────────────────
+  - id: machines
+    category: hardware
+    prompt:
+      en: "List the machines you actively use, one per line: hostname — role (server/laptop/desktop)."
+      de: "Liste deine aktiv genutzten Rechner, einer pro Zeile: hostname — rolle (server/laptop/desktop)."
+    placeholder: "e.g. cube — homeserver / shadow-pc — windows desktop"
+    scope: global
+    skip_ok: true
+
+  - id: primary-os
+    category: hardware
+    prompt:
+      en: "What's the OS of the machine you do most NEOTH work on?"
+      de: "Welches OS hat der Rechner, auf dem du am meisten mit NEOTH arbeitest?"
+    placeholder: "Windows 11 / macOS 14 / Ubuntu 24.04 / ..."
+    scope: global
+    skip_ok: true
+
+  - id: home-subnet
+    category: hardware
+    prompt:
+      en: "What's your home LAN subnet? (e.g. 192.168.178.0/24)"
+      de: "Was ist dein Home-LAN-Subnetz? (z.B. 192.168.178.0/24)"
+    scope: global
+    skip_ok: true
+
+  - id: no-reboot-hosts
+    category: hardware
+    prompt:
+      en: "Any hosts NEOTH must NEVER reboot or shut down? (comma-separated hostnames or IPs)"
+      de: "Welche Hosts darf NEOTH NIE neustarten oder herunterfahren? (Hostnames oder IPs, komma-getrennt)"
+    placeholder: "These land in policy.yaml::dangerous_targets"
+    scope: global
+    skip_ok: true
+
+  - id: external-storage
+    category: hardware
+    prompt:
+      en: "Any NAS / external-storage paths NEOTH should know about?"
+      de: "NAS- oder externe-Storage-Pfade, von denen NEOTH wissen soll?"
+    scope: global
+    skip_ok: true
+
+  - id: gpu-nodes
+    category: hardware
+    prompt:
+      en: "Which machines have GPUs? (hostname — GPU model)"
+      de: "Welche Rechner haben GPUs? (hostname — GPU-Modell)"
+    scope: global
+    skip_ok: true
+
+  # ── routine (3) ─────────────────────────────────────────────────────────
+  - id: working-hours
+    category: routine
+    prompt:
+      en: "What are your typical working hours? (timezone + window, e.g. CET 09:00-18:00)"
+      de: "Wann sind deine typischen Arbeitszeiten? (Zeitzone + Fenster, z.B. CET 09:00-18:00)"
+    scope: global
+    skip_ok: true
+
+  - id: quiet-hours
+    category: routine
+    prompt:
+      en: "Quiet hours — when should NEOTH NOT message you? (e.g. 22:00-08:00 local)"
+      de: "Ruhezeiten — wann soll NEOTH dich NICHT anschreiben? (z.B. 22:00-08:00 local)"
+    scope: global
+    skip_ok: true
+
+  - id: weekend-rules
+    category: routine
+    prompt:
+      en: "Different rules on weekends? (e.g. 'no work pings Sat/Sun')"
+      de: "Andere Regeln am Wochenende? (z.B. 'keine Arbeits-Pings Sa/So')"
+    scope: global
+    skip_ok: true
+
+  # ── preferences (3) ─────────────────────────────────────────────────────
+  - id: tone
+    category: preferences
+    prompt:
+      en: "How should NEOTH talk? (formal / casual / direct / verbose / blunt / …)"
+      de: "Wie soll NEOTH reden? (förmlich / locker / direkt / ausführlich / klartext / …)"
+    scope: global
+    skip_ok: false
+
+  - id: code-language
+    category: preferences
+    prompt:
+      en: "Should code + commit messages be in English regardless of chat language?"
+      de: "Sollen Code + Commit-Messages immer in Englisch sein, auch wenn der Chat in Deutsch ist?"
+    placeholder: "yes / no"
+    scope: global
+    skip_ok: false
+
+  - id: default-provider
+    category: preferences
+    prompt:
+      en: "Default LLM provider for new sessions? (claude / openai / gemini / local-qwen)"
+      de: "Standard-LLM-Provider für neue Sessions? (claude / openai / gemini / local-qwen)"
+    scope: global
+    skip_ok: true
+
+  # ── hard_rules (4) ──────────────────────────────────────────────────────
+  - id: max-spend
+    category: hard_rules
+    prompt:
+      en: "Maximum spend per turn before NEOTH must ask? (EUR, e.g. 0.50)"
+      de: "Maximale Ausgabe pro Turn bevor NEOTH fragen muss? (EUR, z.B. 0,50)"
+    placeholder: "Maps to AutonomyLevel paid-provider threshold"
+    scope: global
+    skip_ok: true
+
+  - id: always-confirm
+    category: hard_rules
+    prompt:
+      en: "Operations that must ALWAYS confirm, even at full autonomy? (comma list)"
+      de: "Operationen die IMMER bestätigt werden müssen, auch bei voller Autonomie? (Komma-Liste)"
+    placeholder: "e.g. rm -rf, sudo, ssh tgf@cube"
+    scope: global
+    skip_ok: true
+
+  - id: outbound-network
+    category: hard_rules
+    prompt:
+      en: "Outbound network policy: any domains NEOTH must NEVER contact?"
+      de: "Outbound-Network-Regel: Welche Domains darf NEOTH NIE kontaktieren?"
+    scope: global
+    skip_ok: true
+
+  - id: off-limits-paths
+    category: hard_rules
+    prompt:
+      en: "Filesystem paths NEOTH must never read or modify? (comma-separated)"
+      de: "Dateipfade die NEOTH nie lesen oder ändern darf? (Komma-getrennt)"
+    placeholder: "e.g. ~/.ssh, ~/.gnupg, /etc/shadow"
+    scope: global
+    skip_ok: true
+
+  # ── people (3) ──────────────────────────────────────────────────────────
+  - id: primary-channels
+    category: people
+    prompt:
+      en: "Primary channels NEOTH should talk on? (telegram / keet / signal / cli only)"
+      de: "Primäre Channels über die NEOTH reden soll? (telegram / keet / signal / nur cli)"
+    scope: global
+    skip_ok: true
+
+  - id: work-allowlist
+    category: people
+    prompt:
+      en: "Work-channel allowlist — who is allowed to message NEOTH for work topics?"
+      de: "Arbeits-Channel-Allowlist — wer darf NEOTH zu Arbeitsthemen anschreiben?"
+    scope: global
+    skip_ok: true
+
+  - id: do-not-contact
+    category: people
+    prompt:
+      en: "Anyone NEOTH should NEVER initiate contact with?"
+      de: "Personen die NEOTH NIE proaktiv kontaktieren soll?"
+    scope: global
+    skip_ok: true

@@ -1,0 +1,56 @@
+[package]
+name        = "neoth-migrate"
+version     = "0.1.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Phase-3 cutover binary — migrates 12 Jarvis memory stores into the NEOTH WAL + tier views."
+
+# V10-06 GA blocker. Ships as a SEPARATE binary from `neothd` so a
+# release of the daemon doesn't carry the migration-only deps
+# (pulldown-cmark, walkdir, future lance + git2) — operators run it
+# once at Day-65 cutover then never again.
+#
+# Build/run:
+#   cargo build -p neoth-migrate --release
+#   ./neoth-migrate dry-run                 # scan-only, no WAL writes
+#   ./neoth-migrate apply --confirm         # actually migrate
+#
+# Store registry shared with the daemon lives at
+# `neothd/src/migrate/mod.rs::JARVIS_STORES` so the dry-run reader +
+# the daemon's `neoth doctor --explain migrate` consult one source of
+# truth.
+
+[[bin]]
+name = "neoth-migrate"
+path = "src/main.rs"
+
+[dependencies]
+anyhow             = "1"
+clap               = { version = "4.5", features = ["derive"] }
+serde              = { workspace = true }
+serde_json         = { workspace = true }
+tracing            = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Markdown reader — pulldown-cmark is pure-Rust, no system deps.
+# Used by the Markdown StoreKind (Obsidian vault, Hippocampus core,
+# OpenClaw session-md).
+pulldown-cmark = { version = "0.12", default-features = false }
+
+# Recursive directory walk — honours ignore-files when configured.
+# Same crate `neothd` already uses for K-Repo-Map, so the dep graph
+# stays tight.
+ignore = "0.4"
+
+# V10-06 Pick #35 — Sqlite reader (cq_commons + context_mode_fts5).
+# Bundled feature so the migrator ships without a system sqlite dep,
+# matching `neothd`'s self-contained posture.
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

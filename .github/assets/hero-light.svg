@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400" width="1280" height="400" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH — Your Buddy, Your Life">
+  <defs>
+    <radialGradient id="alpine-bg" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#fbfbfd"/>
+    </radialGradient>
+
+    <linearGradient id="alpine-pulse" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#007aff" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#007aff" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#007aff" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="alpine-pulse-2" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#86868b" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#86868b" stop-opacity="0.25"/>
+      <stop offset="100%" stop-color="#86868b" stop-opacity="0"/>
+    </linearGradient>
+
+    <filter id="alpine-soft" x="-10%" y="-30%" width="120%" height="160%">
+      <feGaussianBlur stdDeviation="0.3" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <symbol id="cog-light" viewBox="0 0 100 100">
+      <g stroke="#86868b" stroke-width="1" fill="none" opacity="0.35">
+        <circle cx="50" cy="50" r="20"/>
+        <circle cx="50" cy="50" r="32"/>
+        <g>
+          <line x1="50" y1="12" x2="50" y2="20"/>
+          <line x1="50" y1="80" x2="50" y2="88"/>
+          <line x1="12" y1="50" x2="20" y2="50"/>
+          <line x1="80" y1="50" x2="88" y2="50"/>
+          <line x1="23" y1="23" x2="29" y2="29"/>
+          <line x1="71" y1="71" x2="77" y2="77"/>
+          <line x1="23" y1="77" x2="29" y2="71"/>
+          <line x1="71" y1="29" x2="77" y2="23"/>
+        </g>
+      </g>
+    </symbol>
+  </defs>
+
+  <rect width="1280" height="400" fill="url(#alpine-bg)" rx="40"/>
+
+  <!-- Apple-Day pulse traces -->
+  <path d="M40,200 Q260,100 640,200 T1240,200" fill="none" 
+        stroke="url(#alpine-pulse)" stroke-width="1.2" opacity="0.6">
+    <animate attributeName="d" dur="14s" repeatCount="indefinite"
+             values="M40,200 Q260,100 640,200 T1240,200;
+                     M40,200 Q260,300 640,200 T1240,200;
+                     M40,200 Q260,100 640,200 T1240,200"/>
+  </path>
+  <path d="M40,200 Q320,260 640,200 T1240,200" fill="none" 
+        stroke="url(#alpine-pulse-2)" stroke-width="0.8" opacity="0.4">
+    <animate attributeName="d" dur="18s" repeatCount="indefinite"
+             values="M40,200 Q320,260 640,200 T1240,200;
+                     M40,200 Q320,140 640,200 T1240,200;
+                     M40,200 Q320,260 640,200 T1240,200"/>
+  </path>
+
+  <use href="#cog-light" x="1180" y="320" width="60" height="60"/>
+
+  <line x1="80" y1="80" x2="80" y2="320" stroke="#86868b" stroke-width="0.5" opacity="0.2"/>
+  <line x1="1200" y1="80" x2="1200" y2="320" stroke="#86868b" stroke-width="0.5" opacity="0.2"/>
+
+  <text x="80" y="60" font-family="-apple-system, 'SF Pro Display', system-ui, sans-serif"
+        font-size="10" letter-spacing="6" fill="#007aff" opacity="0.7">N · 01</text>
+  <text x="1200" y="60" font-family="-apple-system, 'SF Pro Display', system-ui, sans-serif"
+        font-size="10" letter-spacing="6" fill="#86868b" opacity="0.6" text-anchor="end">v1.1 — SOVEREIGN</text>
+
+  <text x="640" y="220" font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif"
+        font-weight="200" font-size="84" letter-spacing="32" fill="#1d1d1f"
+        text-anchor="middle" filter="url(#alpine-soft)">NEOTH</text>
+
+  <text x="640" y="278" font-family="-apple-system, 'SF Pro Display', system-ui, sans-serif"
+        font-weight="400" font-size="11" letter-spacing="10" fill="#86868b"
+        text-anchor="middle">YOUR BUDDY · YOUR LIFE</text>
+
+  <text x="640" y="350" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace"
+        font-size="9" letter-spacing="4" fill="#007aff" opacity="0.6"
+        text-anchor="middle">// neural engine obligated to help</text>
+
+  <g transform="translate(80, 350)">
+    <circle r="3" fill="#007aff">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2.4s" repeatCount="indefinite"/>
+    </circle>
+    <text x="14" y="4" font-family="'JetBrains Mono', monospace" font-size="9" 
+          letter-spacing="2" fill="#007aff" opacity="0.7">LIVE</text>
+  </g>
+</svg>

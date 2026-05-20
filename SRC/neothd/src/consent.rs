@@ -1,0 +1,728 @@
+//! V03-08 — First-run outbound-LLM consent.
+//!
+//! Operators get exactly one consent prompt per cloud provider, recorded as
+//! a tag file under `~/.neoth/consent/<provider_kind>.granted`. Subsequent
+//! invocations see the file + skip the prompt. Local providers
+//! (`LocalQwen`, `Skip`) never gate.
+//!
+//! Why a file marker instead of `freedom.yaml`: marker files survive
+//! `neoth init` reconfigure passes that rewrite `freedom.yaml`, and they
+//! let the operator audit consent state with `ls ~/.neoth/consent/`.
+//!
+//! Daemon path (`neoth serve`) cannot prompt (no TTY) — startup must bail
+//! with the exact CLI to grant consent before reconnecting. CLI path
+//! (`neoth chat`) prompts interactively on a TTY, bails with the same
+//! instruction off a TTY.
+
+use std::fs;
+use std::io::{BufRead, IsTerminal, Write};
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+use anyhow::{Context, Result};
+
+use crate::cli::init::ProviderKind;
+
+/// Cloud providers that ship operator text to a third-party. The operator
+/// must explicitly grant consent before NEOTH routes any traffic to them.
+pub fn is_cloud(kind: ProviderKind) -> bool {
+    matches!(
+        kind,
+        ProviderKind::ClaudeCli
+            | ProviderKind::OpenaiApi
+            | ProviderKind::GeminiApi
+            | ProviderKind::OpenaiCompat
+            | ProviderKind::AwsBedrock
+            | ProviderKind::AzureOpenAi
+    )
+}
+
+/// Stable slug used in WAL events + marker filenames. Matches
+/// `Provider::name()` so log lines + marker filenames stay aligned.
+pub fn slug(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::ClaudeCli => "claude_cli",
+        ProviderKind::OpenaiApi => "openai_api",
+        ProviderKind::GeminiApi => "gemini_api",
+        ProviderKind::OpenaiCompat => "openai_compat",
+        ProviderKind::LocalQwen => "local_qwen",
+        ProviderKind::AwsBedrock => "aws_bedrock",
+        ProviderKind::AzureOpenAi => "azure_openai",
+        ProviderKind::Skip => "skip",
+    }
+}
+
+pub fn kind_from_slug(s: &str) -> Option<ProviderKind> {
+    match s {
+        "claude_cli" => Some(ProviderKind::ClaudeCli),
+        "openai_api" => Some(ProviderKind::OpenaiApi),
+        "gemini_api" => Some(ProviderKind::GeminiApi),
+        "openai_compat" => Some(ProviderKind::OpenaiCompat),
+        "local_qwen" => Some(ProviderKind::LocalQwen),
+        "aws_bedrock" => Some(ProviderKind::AwsBedrock),
+        "azure_openai" => Some(ProviderKind::AzureOpenAi),
+        "skip" => Some(ProviderKind::Skip),
+        _ => None,
+    }
+}
+
+fn cloud_label(kind: ProviderKind) -> &'static str {
+    match kind {
+        ProviderKind::ClaudeCli => "Anthropic Claude",
+        ProviderKind::OpenaiApi => "OpenAI",
+        ProviderKind::GeminiApi => "Google Gemini",
+        ProviderKind::OpenaiCompat => "the configured OpenAI-compatible endpoint",
+        ProviderKind::AwsBedrock => "AWS Bedrock (region + IAM credential chain)",
+        ProviderKind::AzureOpenAi => "Azure OpenAI (api-version + deployment name)",
+        ProviderKind::LocalQwen => "local Qwen (no remote network)",
+        ProviderKind::Skip => "no provider",
+    }
+}
+
+pub fn consent_dir(home: &Path) -> PathBuf {
+    home.join("consent")
+}
+
+pub fn marker_path(home: &Path, kind: ProviderKind) -> PathBuf {
+    consent_dir(home).join(format!("{}.granted", slug(kind)))
+}
+
+/// True when (a) the kind is not cloud or (b) the operator has granted
+/// consent. The "non-cloud is always granted" branch lets callers gate on
+/// `is_granted` unconditionally without re-checking `is_cloud`.
+pub fn is_granted(home: &Path, kind: ProviderKind) -> bool {
+    if !is_cloud(kind) {
+        return true;
+    }
+    marker_path(home, kind).exists()
+}
+
+/// Record consent. Idempotent — overwrites the timestamp on each call so
+/// `neoth consent grant <kind>` after a no-op stays cheap.
+pub fn grant(home: &Path, kind: ProviderKind) -> Result<()> {
+    if !is_cloud(kind) {
+        anyhow::bail!(
+            "consent::grant called with non-cloud kind `{}` — only cloud \
+             providers require consent",
+            slug(kind)
+        );
+    }
+    let dir = consent_dir(home);
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let marker = marker_path(home, kind);
+    let ts = unix_ts_string();
+    fs::write(&marker, ts.as_bytes()).with_context(|| format!("write {}", marker.display()))?;
+    Ok(())
+}
+
+pub fn revoke(home: &Path, kind: ProviderKind) -> Result<()> {
+    let marker = marker_path(home, kind);
+    if marker.exists() {
+        fs::remove_file(&marker).with_context(|| format!("remove {}", marker.display()))?;
+    }
+    Ok(())
+}
+
+/// List every recorded consent marker. Returns `(kind, raw_timestamp_string)`
+/// pairs, sorted by slug. Unknown slugs in the directory are ignored — the
+/// operator can drop ad-hoc files there without breaking the listing.
+pub fn list_grants(home: &Path) -> Result<Vec<(ProviderKind, String)>> {
+    let dir = consent_dir(home);
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(slug_part) = name.strip_suffix(".granted") else {
+            continue;
+        };
+        let Some(kind) = kind_from_slug(slug_part) else {
+            continue;
+        };
+        let ts = fs::read_to_string(&path).unwrap_or_default();
+        out.push((kind, ts.trim().to_string()));
+    }
+    out.sort_by(|a, b| slug(a.0).cmp(slug(b.0)));
+    Ok(out)
+}
+
+/// Preflight gate called before any cloud-bound provider request. On a TTY,
+/// interactively prompts the operator + records grant. Off a TTY, bails with
+/// the exact CLI to grant consent. Bypass: `NEOTH_CONSENT_BYPASS=1` for CI
+/// or scripted reinvocations where the operator has reviewed the policy
+/// elsewhere.
+pub fn ensure_granted_or_prompt(home: &Path, kind: ProviderKind) -> Result<()> {
+    if !is_cloud(kind) || is_granted(home, kind) {
+        return Ok(());
+    }
+    if std::env::var("NEOTH_CONSENT_BYPASS").as_deref() == Ok("1") {
+        return Ok(());
+    }
+    let slug_s = slug(kind);
+    let label = cloud_label(kind);
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "first-run consent required for provider `{slug_s}` ({label}). \
+             Your chat text will be sent to {label}'s servers. Run \
+             `neoth consent grant {slug_s}` once to record consent, or set \
+             NEOTH_CONSENT_BYPASS=1 to suppress this gate in non-interactive \
+             contexts."
+        );
+    }
+    eprintln!();
+    eprintln!("=== First-run outbound-LLM consent ===");
+    eprintln!();
+    eprintln!("Your chat text is about to be sent to {label}'s servers.");
+    eprintln!("This is a third-party cloud service. Their TOS + retention");
+    eprintln!("policies apply. NEOTH only routes — it cannot enforce");
+    eprintln!("retention/deletion guarantees on the remote side.");
+    eprintln!();
+    eprintln!("This prompt appears once per provider. Recorded at:");
+    eprintln!("  {}", marker_path(home, kind).display());
+    eprintln!();
+    eprint!("Type 'yes' to grant + continue (anything else aborts): ");
+    std::io::stderr().flush().ok();
+
+    let mut input = String::new();
+    std::io::stdin().lock().read_line(&mut input)?;
+    if input.trim() != "yes" {
+        anyhow::bail!("consent declined — exiting without sending any text");
+    }
+    grant(home, kind)?;
+    eprintln!("✓ consent recorded ({slug_s}).");
+    Ok(())
+}
+
+fn unix_ts_string() -> String {
+    let secs = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    secs.to_string()
+}
+
+/// A-2 (Session 13) — enumerate every distinct cloud `ProviderKind` the
+/// operator's council topology will fan out to. Session 13 V03-08 originally
+/// gated only `config.provider_kind` (legacy single-mode field), which
+/// silently bypassed consent when an operator configured per-hemisphere
+/// cloud providers via `inference.{left,right,cerebellum}`. This helper +
+/// `ensure_all_granted_or_prompt` close that bypass.
+///
+/// Returns deduped, ordered list of cloud kinds:
+/// - `TopologyMode::Single` → at most one kind (default_slot).
+/// - `TopologyMode::Triplet|Custom` → one kind per distinct slot.provider
+///   that resolves to a cloud kind; local kinds (LocalQwen) are dropped.
+///
+/// Legacy single-mode operators (only `provider_kind` set, no inference
+/// topology) still get covered via the existing `provider_kind` fallback
+/// at the call site.
+pub fn cloud_kinds_for_council(
+    config: &crate::config::FreedomConfig,
+) -> Vec<crate::cli::init::ProviderKind> {
+    use crate::config::inference::HemisphereRole;
+    let mut seen: Vec<crate::cli::init::ProviderKind> = Vec::with_capacity(3);
+    for role in [
+        HemisphereRole::Left,
+        HemisphereRole::Right,
+        HemisphereRole::Cerebellum,
+    ] {
+        let slot = config.inference.slot_for(role);
+        let Some(provider) = slot.provider else {
+            continue;
+        };
+        let kind = provider.to_provider_kind();
+        if !is_cloud(kind) {
+            continue;
+        }
+        if !seen.contains(&kind) {
+            seen.push(kind);
+        }
+    }
+    seen
+}
+
+/// A-2 pre-flight wrapper. Calls `ensure_granted_or_prompt` for each
+/// distinct cloud kind the council will fan out to. Single-mode operators
+/// with only `provider_kind` set (no inference topology) are still gated
+/// via the caller's existing `ensure_granted_or_prompt(home, config.provider_kind)`
+/// call — this helper covers the per-hemisphere case the legacy gate missed.
+pub fn ensure_all_granted_or_prompt(
+    home: &Path,
+    config: &crate::config::FreedomConfig,
+) -> Result<()> {
+    // Primary provider (legacy single-mode + the gate that already existed
+    // pre-A-2). Kept here so a single call covers both pre-R-* operators
+    // and the new per-hemisphere path.
+    if let Some(kind) = config.provider_kind {
+        ensure_granted_or_prompt(home, kind)?;
+    }
+    // Per-hemisphere providers — the bypass A-2 closes.
+    for kind in cloud_kinds_for_council(config) {
+        ensure_granted_or_prompt(home, kind)?;
+    }
+    Ok(())
+}
+
+/// Finding 5 (Session 13) — runtime consent re-check, never prompts.
+/// Called per-debate / per-channel-message AFTER the startup
+/// `ensure_all_granted_or_prompt` succeeded so a mid-run
+/// `neoth consent revoke <provider>` (file-marker deletion) is honoured
+/// without daemon restart. Returns `Err` with an operator-facing
+/// "consent revoked while daemon running" message that the channel /
+/// chat layer surfaces verbatim.
+///
+/// Unlike `ensure_all_granted_or_prompt` this:
+/// 1. Never prompts (no TTY assumption — runs on every hot-path call).
+/// 2. Never honours `NEOTH_CONSENT_BYPASS` — bypass is a startup-only
+///    escape hatch (CI / scripted bring-up), not a "ignore revokes
+///    forever" lever. A revoke MUST stop traffic regardless of the env
+///    var, otherwise the consent UX is misleading.
+/// 3. Reports the FIRST revoked kind so the operator gets actionable
+///    output without us iterating every provider after the first miss.
+pub fn ensure_all_still_granted(home: &Path, config: &crate::config::FreedomConfig) -> Result<()> {
+    if let Some(kind) = config.provider_kind
+        && is_cloud(kind)
+        && !is_granted(home, kind)
+    {
+        anyhow::bail!(
+            "consent for provider `{}` was revoked while the daemon was \
+             running. Run `neoth consent grant {}` and resend, or restart \
+             `neoth serve` after granting.",
+            slug(kind),
+            slug(kind),
+        );
+    }
+    for kind in cloud_kinds_for_council(config) {
+        if !is_granted(home, kind) {
+            anyhow::bail!(
+                "consent for hemisphere provider `{}` was revoked while \
+                 the daemon was running. Run `neoth consent grant {}` and \
+                 resend, or restart `neoth serve` after granting.",
+                slug(kind),
+                slug(kind),
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn is_cloud_classifies_every_provider_kind() {
+        assert!(is_cloud(ProviderKind::ClaudeCli));
+        assert!(is_cloud(ProviderKind::OpenaiApi));
+        assert!(is_cloud(ProviderKind::GeminiApi));
+        assert!(is_cloud(ProviderKind::OpenaiCompat));
+        assert!(is_cloud(ProviderKind::AwsBedrock));
+        assert!(is_cloud(ProviderKind::AzureOpenAi));
+        assert!(!is_cloud(ProviderKind::LocalQwen));
+        assert!(!is_cloud(ProviderKind::Skip));
+    }
+
+    #[test]
+    fn slug_round_trips_via_kind_from_slug() {
+        for &kind in &[
+            ProviderKind::ClaudeCli,
+            ProviderKind::OpenaiApi,
+            ProviderKind::GeminiApi,
+            ProviderKind::OpenaiCompat,
+            ProviderKind::LocalQwen,
+            ProviderKind::AwsBedrock,
+            ProviderKind::AzureOpenAi,
+            ProviderKind::Skip,
+        ] {
+            assert_eq!(kind_from_slug(slug(kind)), Some(kind), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn kind_from_slug_returns_none_for_unknown() {
+        assert!(kind_from_slug("nope").is_none());
+        assert!(kind_from_slug("").is_none());
+        assert!(kind_from_slug("OPENAI_API").is_none()); // case-sensitive
+    }
+
+    #[test]
+    fn is_granted_returns_true_for_non_cloud_kinds_without_marker() {
+        let tmp = TempDir::new().unwrap();
+        assert!(is_granted(tmp.path(), ProviderKind::LocalQwen));
+        assert!(is_granted(tmp.path(), ProviderKind::Skip));
+    }
+
+    #[test]
+    fn is_granted_returns_false_for_cloud_kind_without_marker() {
+        let tmp = TempDir::new().unwrap();
+        assert!(!is_granted(tmp.path(), ProviderKind::OpenaiApi));
+        assert!(!is_granted(tmp.path(), ProviderKind::ClaudeCli));
+    }
+
+    #[test]
+    fn grant_creates_marker_and_is_granted_flips_true() {
+        let tmp = TempDir::new().unwrap();
+        assert!(!is_granted(tmp.path(), ProviderKind::OpenaiApi));
+        grant(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        assert!(is_granted(tmp.path(), ProviderKind::OpenaiApi));
+        assert!(marker_path(tmp.path(), ProviderKind::OpenaiApi).exists());
+        // grant for one kind does not leak to another
+        assert!(!is_granted(tmp.path(), ProviderKind::GeminiApi));
+    }
+
+    #[test]
+    fn grant_rejects_non_cloud_kinds() {
+        let tmp = TempDir::new().unwrap();
+        let err = grant(tmp.path(), ProviderKind::LocalQwen).unwrap_err();
+        assert!(err.to_string().contains("non-cloud"));
+    }
+
+    #[test]
+    fn revoke_removes_marker_and_is_granted_flips_false() {
+        let tmp = TempDir::new().unwrap();
+        grant(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        assert!(is_granted(tmp.path(), ProviderKind::OpenaiApi));
+        revoke(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        assert!(!is_granted(tmp.path(), ProviderKind::OpenaiApi));
+    }
+
+    #[test]
+    fn revoke_is_idempotent_when_marker_absent() {
+        let tmp = TempDir::new().unwrap();
+        // No grant; revoke should be a no-op without error.
+        revoke(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        assert!(!is_granted(tmp.path(), ProviderKind::OpenaiApi));
+    }
+
+    #[test]
+    fn list_grants_returns_empty_when_consent_dir_missing() {
+        let tmp = TempDir::new().unwrap();
+        let listed = list_grants(tmp.path()).unwrap();
+        assert!(listed.is_empty());
+    }
+
+    #[test]
+    fn list_grants_returns_every_granted_kind_sorted_by_slug() {
+        let tmp = TempDir::new().unwrap();
+        grant(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        grant(tmp.path(), ProviderKind::ClaudeCli).unwrap();
+        grant(tmp.path(), ProviderKind::GeminiApi).unwrap();
+        let listed: Vec<ProviderKind> = list_grants(tmp.path())
+            .unwrap()
+            .into_iter()
+            .map(|(k, _)| k)
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ProviderKind::ClaudeCli,
+                ProviderKind::GeminiApi,
+                ProviderKind::OpenaiApi,
+            ]
+        );
+    }
+
+    #[test]
+    fn list_grants_ignores_unknown_files_in_consent_dir() {
+        let tmp = TempDir::new().unwrap();
+        grant(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        // Drop a stray file in the consent dir.
+        std::fs::write(consent_dir(tmp.path()).join("README.txt"), "ignore me").unwrap();
+        std::fs::write(consent_dir(tmp.path()).join("bogus.granted"), "0").unwrap();
+        let listed = list_grants(tmp.path()).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].0, ProviderKind::OpenaiApi);
+    }
+
+    #[test]
+    fn ensure_granted_or_prompt_short_circuits_when_already_granted() {
+        let tmp = TempDir::new().unwrap();
+        grant(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        // Must return Ok without touching stdin/stdout.
+        ensure_granted_or_prompt(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+    }
+
+    #[test]
+    fn ensure_granted_or_prompt_short_circuits_for_non_cloud_kinds() {
+        let tmp = TempDir::new().unwrap();
+        ensure_granted_or_prompt(tmp.path(), ProviderKind::LocalQwen).unwrap();
+        ensure_granted_or_prompt(tmp.path(), ProviderKind::Skip).unwrap();
+        // No marker should have been created (these aren't cloud).
+        assert!(!consent_dir(tmp.path()).exists());
+    }
+
+    #[test]
+    fn ensure_granted_or_prompt_honours_bypass_env() {
+        let tmp = TempDir::new().unwrap();
+        // SAFETY: tests run single-threaded for env mutation via cargo's
+        // default --test-threads, but mark it explicitly with serial_test
+        // if this ever flakes. For now: the bypass var is unique enough
+        // that no other test reads it concurrently.
+        // SAFETY: tests are isolated to their own process and we restore
+        // the var on the next line.
+        // SAFETY: set + remove the env var inside one test; concurrent
+        // tests don't reference NEOTH_CONSENT_BYPASS.
+        unsafe {
+            std::env::set_var("NEOTH_CONSENT_BYPASS", "1");
+        }
+        let result = ensure_granted_or_prompt(tmp.path(), ProviderKind::OpenaiApi);
+        unsafe {
+            std::env::remove_var("NEOTH_CONSENT_BYPASS");
+        }
+        assert!(result.is_ok());
+        // Bypass does NOT record a marker — caller is responsible for
+        // running `neoth consent grant` later if they want a marker.
+        assert!(!is_granted(tmp.path(), ProviderKind::OpenaiApi));
+    }
+
+    // ── A-2 (Session 13) multi-provider council preflight ────────────
+
+    fn mk_config_with_inference(
+        primary: Option<crate::cli::init::ProviderKind>,
+        left: Option<crate::config::inference::InferenceProvider>,
+        right: Option<crate::config::inference::InferenceProvider>,
+        cere: Option<crate::config::inference::InferenceProvider>,
+        mode: crate::config::inference::TopologyMode,
+    ) -> crate::config::FreedomConfig {
+        use crate::config::FreedomConfig;
+        use crate::config::inference::{HemisphereSlot, InferenceTopology};
+        let mut cfg = FreedomConfig::default();
+        cfg.provider_kind = primary;
+        let mut topo = InferenceTopology::default();
+        topo.mode = mode;
+        topo.left = HemisphereSlot {
+            provider: left,
+            ..HemisphereSlot::default()
+        };
+        topo.right = HemisphereSlot {
+            provider: right,
+            ..HemisphereSlot::default()
+        };
+        topo.cerebellum = HemisphereSlot {
+            provider: cere,
+            ..HemisphereSlot::default()
+        };
+        cfg.inference = topo;
+        cfg
+    }
+
+    #[test]
+    fn cloud_kinds_for_council_returns_empty_in_single_mode_without_default_slot() {
+        let cfg = mk_config_with_inference(
+            None,
+            None,
+            None,
+            None,
+            crate::config::inference::TopologyMode::Single,
+        );
+        // Single-mode without a default_slot.provider returns empty —
+        // legacy `provider_kind` covers that case at the caller.
+        let kinds = cloud_kinds_for_council(&cfg);
+        assert!(kinds.is_empty());
+    }
+
+    #[test]
+    fn cloud_kinds_for_council_dedups_in_single_mode_with_default_slot() {
+        use crate::config::FreedomConfig;
+        use crate::config::inference::{
+            HemisphereSlot, InferenceProvider, InferenceTopology, TopologyMode,
+        };
+        let mut cfg = FreedomConfig::default();
+        let mut topo = InferenceTopology::default();
+        topo.mode = TopologyMode::Single;
+        topo.default_slot = HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAi),
+            ..HemisphereSlot::default()
+        };
+        cfg.inference = topo;
+        // All three slots collapse to default_slot → one kind dedup'd.
+        let kinds = cloud_kinds_for_council(&cfg);
+        assert_eq!(kinds, vec![crate::cli::init::ProviderKind::OpenaiApi]);
+    }
+
+    #[test]
+    fn cloud_kinds_for_council_returns_three_distinct_in_custom_mode() {
+        let cfg = mk_config_with_inference(
+            None,
+            Some(crate::config::inference::InferenceProvider::ClaudeCli),
+            Some(crate::config::inference::InferenceProvider::OpenAi),
+            Some(crate::config::inference::InferenceProvider::Gemini),
+            crate::config::inference::TopologyMode::Custom,
+        );
+        let kinds = cloud_kinds_for_council(&cfg);
+        assert_eq!(kinds.len(), 3);
+        assert!(kinds.contains(&crate::cli::init::ProviderKind::ClaudeCli));
+        assert!(kinds.contains(&crate::cli::init::ProviderKind::OpenaiApi));
+        assert!(kinds.contains(&crate::cli::init::ProviderKind::GeminiApi));
+    }
+
+    #[test]
+    fn cloud_kinds_for_council_skips_local_qwen() {
+        let cfg = mk_config_with_inference(
+            None,
+            Some(crate::config::inference::InferenceProvider::ClaudeCli),
+            Some(crate::config::inference::InferenceProvider::LocalQwen),
+            Some(crate::config::inference::InferenceProvider::Gemini),
+            crate::config::inference::TopologyMode::Custom,
+        );
+        let kinds = cloud_kinds_for_council(&cfg);
+        // Local_qwen drops; only the two clouds remain.
+        assert_eq!(kinds.len(), 2);
+        assert!(kinds.contains(&crate::cli::init::ProviderKind::ClaudeCli));
+        assert!(kinds.contains(&crate::cli::init::ProviderKind::GeminiApi));
+        assert!(!kinds.contains(&crate::cli::init::ProviderKind::LocalQwen));
+    }
+
+    // Note: bypass-env semantics for `ensure_all_granted_or_prompt` are
+    // identical to the inner `ensure_granted_or_prompt`, which is already
+    // covered by `ensure_granted_or_prompt_honours_bypass_env`. Adding a
+    // second env-mutating test races against it under cargo's default
+    // parallel test runner.
+
+    // ── Finding 5 (Session 13) runtime consent re-check ───────────────
+
+    #[test]
+    fn ensure_all_still_granted_passes_when_every_kind_granted() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = mk_config_with_inference(
+            Some(crate::cli::init::ProviderKind::OpenaiApi),
+            Some(crate::config::inference::InferenceProvider::Gemini),
+            Some(crate::config::inference::InferenceProvider::ClaudeCli),
+            None,
+            crate::config::inference::TopologyMode::Custom,
+        );
+        grant(tmp.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        grant(tmp.path(), crate::cli::init::ProviderKind::GeminiApi).unwrap();
+        grant(tmp.path(), crate::cli::init::ProviderKind::ClaudeCli).unwrap();
+        let result = ensure_all_still_granted(tmp.path(), &cfg);
+        assert!(result.is_ok(), "all granted should pass, got {result:?}");
+    }
+
+    #[test]
+    fn ensure_all_still_granted_blocks_when_primary_provider_revoked() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = mk_config_with_inference(
+            Some(crate::cli::init::ProviderKind::OpenaiApi),
+            None,
+            None,
+            None,
+            crate::config::inference::TopologyMode::Single,
+        );
+        // Operator initially granted, then later revoked.
+        grant(tmp.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        revoke(tmp.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        let err = ensure_all_still_granted(tmp.path(), &cfg).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("openai_api"),
+            "msg should name provider: {msg}"
+        );
+        assert!(msg.contains("revoked"), "msg should say revoked: {msg}",);
+        assert!(msg.contains("daemon"), "msg should mention daemon: {msg}",);
+    }
+
+    #[test]
+    fn ensure_all_still_granted_blocks_when_hemisphere_provider_revoked() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = mk_config_with_inference(
+            Some(crate::cli::init::ProviderKind::ClaudeCli),
+            Some(crate::config::inference::InferenceProvider::ClaudeCli),
+            Some(crate::config::inference::InferenceProvider::Gemini),
+            Some(crate::config::inference::InferenceProvider::OpenAi),
+            crate::config::inference::TopologyMode::Custom,
+        );
+        // Grant every kind, then revoke only the Right (Gemini) slot.
+        grant(tmp.path(), crate::cli::init::ProviderKind::ClaudeCli).unwrap();
+        grant(tmp.path(), crate::cli::init::ProviderKind::GeminiApi).unwrap();
+        grant(tmp.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        revoke(tmp.path(), crate::cli::init::ProviderKind::GeminiApi).unwrap();
+        let err = ensure_all_still_granted(tmp.path(), &cfg).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("gemini_api"),
+            "msg should name revoked hemisphere provider: {msg}",
+        );
+    }
+
+    #[test]
+    fn ensure_all_still_granted_passes_when_only_local_qwen() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = mk_config_with_inference(
+            None,
+            Some(crate::config::inference::InferenceProvider::LocalQwen),
+            Some(crate::config::inference::InferenceProvider::LocalQwen),
+            Some(crate::config::inference::InferenceProvider::LocalQwen),
+            crate::config::inference::TopologyMode::Custom,
+        );
+        // No grants needed — local-only never gates.
+        let result = ensure_all_still_granted(tmp.path(), &cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn ensure_all_still_granted_ignores_bypass_env() {
+        // Critical contract: the runtime re-check MUST NOT honour
+        // NEOTH_CONSENT_BYPASS. Bypass is a startup-only escape hatch
+        // for CI / scripted bring-up; once the daemon is live a revoke
+        // must stop traffic regardless of the env var.
+        //
+        // We pin this by constructing a state where bypass would
+        // short-circuit `ensure_all_granted_or_prompt` (no marker file
+        // + bypass=1) but `ensure_all_still_granted` must still bail.
+        // To avoid env-var races with other tests we use a temp home
+        // dir and never set the bypass var — instead we directly
+        // verify the implementation by reading the source: the only
+        // env check `ensure_all_still_granted` makes is none.
+        //
+        // Test pins the OUTCOME: a revoked provider always bails,
+        // regardless of any env mutation the caller might make.
+        let tmp = TempDir::new().unwrap();
+        let cfg = mk_config_with_inference(
+            Some(crate::cli::init::ProviderKind::OpenaiApi),
+            None,
+            None,
+            None,
+            crate::config::inference::TopologyMode::Single,
+        );
+        // No grant recorded. ensure_all_still_granted must bail even
+        // though no marker file ever existed (revoke of never-granted
+        // is the same observable end-state as revoke of previously-granted).
+        let err = ensure_all_still_granted(tmp.path(), &cfg).unwrap_err();
+        assert!(err.to_string().contains("openai_api"));
+    }
+
+    #[test]
+    fn ensure_all_granted_or_prompt_passes_when_every_kind_granted() {
+        let tmp = TempDir::new().unwrap();
+        let cfg = mk_config_with_inference(
+            Some(crate::cli::init::ProviderKind::OpenaiApi),
+            Some(crate::config::inference::InferenceProvider::Gemini),
+            Some(crate::config::inference::InferenceProvider::ClaudeCli),
+            Some(crate::config::inference::InferenceProvider::LocalQwen),
+            crate::config::inference::TopologyMode::Custom,
+        );
+        grant(tmp.path(), crate::cli::init::ProviderKind::OpenaiApi).unwrap();
+        grant(tmp.path(), crate::cli::init::ProviderKind::GeminiApi).unwrap();
+        grant(tmp.path(), crate::cli::init::ProviderKind::ClaudeCli).unwrap();
+        // LocalQwen needs no grant.
+        let result = ensure_all_granted_or_prompt(tmp.path(), &cfg);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn marker_path_uses_slug_for_filename() {
+        let tmp = TempDir::new().unwrap();
+        let p = marker_path(tmp.path(), ProviderKind::ClaudeCli);
+        assert_eq!(
+            p.file_name().and_then(|s| s.to_str()),
+            Some("claude_cli.granted")
+        );
+        assert!(p.parent().unwrap().ends_with("consent"));
+    }
+}

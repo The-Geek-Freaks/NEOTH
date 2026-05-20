@@ -1,0 +1,321 @@
+//! GDPR retroactive forgetting — C-15.
+//!
+//! "Forget X" is structurally different from Hebbian decay:
+//!   - **Decay** is probabilistic + slow (years to drop below
+//!     FORGET_FLOOR without reinforcement); driven by
+//!     `consolidate.rs::run_consolidation_pass`.
+//!   - **Forget** is explicit, immediate, transactional,
+//!     operator-initiated when DSGVO / personal request demands it.
+//!
+//! ## What this module does today (v0.1.x)
+//!
+//! The shipped path is **SQLite-only**: cascade-delete across the
+//! four memory-tier views + the embedding store, revoke ground-truth
+//! rows. The operator's recall queries stop surfacing the topic
+//! immediately.
+//!
+//! ## What it does NOT do yet (Phase 2)
+//!
+//! WAL tombstone frames + HMAC recompaction is **deferred**. The
+//! original RAW_TEXT WAL events still contain the topic on disk; the
+//! SQLite indexes no longer point at them, but a low-level WAL reader
+//! can still see the original frames. Per the AD-4 decision logged in
+//! `PLAN/FEATURE_EVAL.md`, the intent is to replace those payload bytes
+//! with a TOMBSTONE frame and recompute the HMAC chain over the
+//! tombstone — that keeps the audit trail tamper-evident while making
+//! the content unrecoverable. Implementation lives in
+//! `wal::compaction::rewrite_with_tombstone` once it ships.
+//!
+//! Operators who need full WAL-layer wipe today should run
+//! `neoth backup` first, then `neoth memory --forget` for the SQLite
+//! wipe, then manually delete the WAL segments containing the topic
+//! (or wait for Phase 2). For most GDPR use cases the SQLite wipe is
+//! sufficient because all operator-visible paths (recall, chat,
+//! Obsidian sync) read from SQLite, not directly from WAL.
+
+use anyhow::{Context, Result};
+use rusqlite::Connection;
+
+use crate::memory::embeddings;
+
+/// What was deleted by a single `forget` call. Returned for the audit
+/// trail + the operator's confirm summary.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
+pub struct ForgetReport {
+    pub episode_rows: i64,
+    pub consolidated_rows: i64,
+    pub longterm_rows: i64,
+    pub groundtruth_revoked: i64,
+    pub embedding_rows: i64,
+    pub topic: String,
+}
+
+impl ForgetReport {
+    pub fn total(&self) -> i64 {
+        self.episode_rows
+            + self.consolidated_rows
+            + self.longterm_rows
+            + self.groundtruth_revoked
+            + self.embedding_rows
+    }
+}
+
+/// Cascade-delete every row matching `topic` (case-insensitive LIKE)
+/// across all 4 memory tiers + the embedding store. Ground-truth rows
+/// are REVOKED (not deleted) so the immutability invariant is honoured
+/// while still satisfying the operator's right-to-erasure: a revoked
+/// row stops surfacing in recall but the audit record persists.
+///
+/// `now_unix` is the timestamp stamped on the revocation marker;
+/// callers pass `unix_seconds_now()` from the daemon clock to keep
+/// time consistent with surrounding WAL events.
+///
+/// Pure-SQLite version — does NOT emit a WAL tombstone audit frame.
+/// Callers that want the audit anchor use [`forget_by_topic_with_audit`].
+pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<ForgetReport> {
+    if topic.trim().is_empty() {
+        anyhow::bail!(
+            "forget: topic must be non-empty (use `neoth memory purge` for a wholesale wipe)"
+        );
+    }
+    let pattern = format!("%{topic}%");
+
+    let episode_rows = conn
+        .execute(
+            "DELETE FROM idx_episode WHERE text LIKE ?1 COLLATE NOCASE",
+            rusqlite::params![pattern],
+        )
+        .context("delete from idx_episode")? as i64;
+
+    let consolidated_rows = conn
+        .execute(
+            "DELETE FROM idx_consolidated WHERE text LIKE ?1 COLLATE NOCASE",
+            rusqlite::params![pattern],
+        )
+        .context("delete from idx_consolidated")? as i64;
+
+    let longterm_rows = conn
+        .execute(
+            "DELETE FROM idx_longterm WHERE text LIKE ?1 COLLATE NOCASE",
+            rusqlite::params![pattern],
+        )
+        .context("delete from idx_longterm")? as i64;
+
+    // Ground-truth: revoke instead of delete. The row itself stays for
+    // audit (operator can prove they didn't assert X after revocation),
+    // but recall queries filter on `revoked_at IS NULL` so it stops
+    // surfacing.
+    let groundtruth_revoked = conn
+        .execute(
+            "UPDATE idx_groundtruth \
+             SET revoked_at = ?1 \
+             WHERE revoked_at IS NULL AND statement LIKE ?2 COLLATE NOCASE",
+            rusqlite::params![now_unix, pattern],
+        )
+        .context("revoke idx_groundtruth")? as i64;
+
+    // Embeddings: hard delete. Vectors carry no audit value — they're
+    // a derived index, not an assertion.
+    let embedding_rows =
+        embeddings::wipe_by_source_ref_pattern(conn, &pattern).context("wipe idx_embedding")?;
+
+    Ok(ForgetReport {
+        episode_rows,
+        consolidated_rows,
+        longterm_rows,
+        groundtruth_revoked,
+        embedding_rows,
+        topic: topic.to_string(),
+    })
+}
+
+/// Like [`forget_by_topic`] but additionally emits a
+/// `EVENT_TYPE_TOMBSTONE_REQUESTED` (0xF1) WAL frame recording the
+/// erasure intent + scope. This is the audit-anchor that survives
+/// even if Phase-2 physical recompaction replaces the original
+/// payload bytes — the tombstone frame proves "operator requested
+/// erasure of topic X at time T, affecting N rows" and remains in
+/// the WAL by design.
+///
+/// `source` is `"cli"` | `"gui"` | `"api"` — recorded in the payload
+/// so audit consumers can attribute the request.
+pub async fn forget_by_topic_with_audit(
+    conn: &Connection,
+    topic: &str,
+    now_unix: i64,
+    source: &str,
+    writer: &crate::wal::writer::WalWriterHandle,
+) -> Result<ForgetReport> {
+    let report = forget_by_topic(conn, topic, now_unix)?;
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "topic": report.topic,
+        "episode_rows": report.episode_rows,
+        "consolidated_rows": report.consolidated_rows,
+        "longterm_rows": report.longterm_rows,
+        "groundtruth_revoked": report.groundtruth_revoked,
+        "embedding_rows": report.embedding_rows,
+        "ts_unix": now_unix,
+        "source": source,
+    }))
+    .context("serialize TOMBSTONE_REQUESTED payload")?;
+    let header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_TOMBSTONE_REQUESTED,
+        &payload,
+    )
+    .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("append TOMBSTONE_REQUESTED WAL frame")?;
+    Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::store;
+
+    fn unit(v: Vec<f32>) -> Vec<f32> {
+        let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        v.into_iter().map(|x| x / n).collect()
+    }
+
+    fn seed_db() -> Connection {
+        // Use the canonical store opener against a temp file so we get
+        // the real v6 schema (idx_episode + idx_consolidated +
+        // idx_longterm + idx_groundtruth + idx_embedding). TempDir is
+        // leaked intentionally — tests share the live conn and don't
+        // need the file to outlive the test.
+        let temp = tempfile::tempdir().unwrap();
+        let temp_db = temp.path().join("seed.db");
+        let conn = store::open(&temp_db).unwrap();
+        std::mem::forget(temp); // keep the dir alive for the test's lifetime
+        // Hand-insert rows touching every tier so forget exercises
+        // each branch.
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (1, 1, 1, 'I worked at AcmeCorp', 'h1', 0.6, 0), \
+                    (2, 1, 2, 'unrelated note about lunch', 'h2', 0.5, 0)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO idx_consolidated (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('summary', '2026-05-01', NULL, 'summary mentions AcmeCorp', 'h3', 0.5, 1, 0)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO idx_longterm (event_id, text, text_hash, importance, promoted_ts, last_access_ts) \
+             VALUES (10, 'long-term about AcmeCorp', 'h4', 0.9, 0, 0)",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO idx_groundtruth (statement, source, scope, asserted_at) \
+             VALUES ('Operator worked at AcmeCorp', 'wizard', 'identity', 0), \
+                    ('Operator likes pizza', 'wizard', 'identity', 0)",
+            [],
+        )
+        .unwrap();
+        let v = unit(vec![1.0, 0.0, 0.0, 0.0]);
+        embeddings::upsert(&conn, "image", "AcmeCorp-logo.png", "clip", &v).unwrap();
+        embeddings::upsert(&conn, "image", "vacation.png", "clip", &v).unwrap();
+        conn
+    }
+
+    #[test]
+    fn forget_topic_wipes_all_tiers_plus_revokes_groundtruth() {
+        let conn = seed_db();
+        let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
+        assert_eq!(report.episode_rows, 1, "exactly the AcmeCorp episode");
+        assert_eq!(report.consolidated_rows, 1);
+        assert_eq!(report.longterm_rows, 1);
+        assert_eq!(report.groundtruth_revoked, 1);
+        assert_eq!(
+            report.embedding_rows, 1,
+            "logo embedding wiped, vacation kept"
+        );
+        assert_eq!(report.total(), 5);
+    }
+
+    #[test]
+    fn forget_leaves_unrelated_rows_intact() {
+        let conn = seed_db();
+        forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
+        let lunch: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode WHERE text LIKE '%lunch%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(lunch, 1, "unrelated episode must survive");
+        let pizza: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_groundtruth WHERE statement LIKE '%pizza%' AND revoked_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pizza, 1, "unrelated groundtruth must stay active");
+    }
+
+    #[test]
+    fn forget_empty_topic_errors() {
+        let conn = seed_db();
+        let err = forget_by_topic(&conn, "   ", 0).unwrap_err();
+        assert!(err.to_string().contains("non-empty"));
+    }
+
+    #[test]
+    fn forget_zero_matches_returns_zero_report() {
+        let conn = seed_db();
+        let report = forget_by_topic(&conn, "NoSuchThing", 0).unwrap();
+        assert_eq!(report.total(), 0);
+        assert_eq!(report.topic, "NoSuchThing");
+    }
+
+    #[tokio::test]
+    async fn forget_with_audit_emits_tombstone_wal_frame() {
+        use crate::wal::events::EVENT_TYPE_TOMBSTONE_REQUESTED;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+        use tokio::fs::read;
+
+        let conn = seed_db();
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("tombstone.wal");
+        let (writer, join) = spawn(seg.clone()).unwrap();
+
+        let report = forget_by_topic_with_audit(&conn, "AcmeCorp", 1700, "cli", &writer)
+            .await
+            .unwrap();
+        assert!(
+            report.episode_rows >= 1,
+            "expected at least one episode wipe"
+        );
+
+        drop(writer);
+        let _ = join.await;
+
+        // Walk the WAL — first frame after the SegmentHeader must be
+        // the TOMBSTONE_REQUESTED audit anchor.
+        let bytes = read(&seg).await.unwrap();
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut found = None;
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode frame");
+            if frame.header.event_type == EVENT_TYPE_TOMBSTONE_REQUESTED {
+                let p: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                found = Some(p);
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        let payload = found.expect("TOMBSTONE_REQUESTED frame must be present");
+        assert_eq!(payload["topic"], "AcmeCorp");
+        assert_eq!(payload["source"], "cli");
+        assert_eq!(payload["ts_unix"], 1700);
+        assert!(payload["episode_rows"].as_i64().unwrap() >= 1);
+    }
+}

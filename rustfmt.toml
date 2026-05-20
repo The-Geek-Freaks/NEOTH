@@ -1,0 +1,47 @@
+# =============================================================================
+# NEOTH — rustfmt configuration
+# Rust 2024 edition, stable rustfmt features only.
+# Run: cargo fmt --all
+# =============================================================================
+
+edition = "2024"
+
+# Line length
+max_width = 100
+# Hard limit — formatter will break lines even if heuristics prefer not to
+use_small_heuristics = "Default"
+
+# Indentation
+tab_spaces = 4
+hard_tabs = false
+
+# Imports
+imports_granularity = "Crate"    # merge imports within a crate into one use block
+group_imports = "StdExternalCrate"  # std → external crates → local, blank-line separated
+reorder_imports = true
+reorder_modules = true
+
+# Trailing commas
+trailing_comma = "Vertical"      # trailing comma only when item is on its own line
+match_arm_blocks = true
+
+# Blank lines
+blank_lines_upper_bound = 1
+blank_lines_lower_bound = 0
+
+# Misc
+wrap_comments = false            # don't reflow comments (preserves intentional formatting)
+format_code_in_doc_comments = true
+format_strings = false           # don't split string literals
+normalize_doc_attributes = true  # convert #[doc = "…"] to ///
+
+# Struct/enum formatting
+struct_field_align_threshold = 0 # don't align struct fields
+enum_discrim_align_threshold = 0
+
+# fn signatures
+fn_params_layout = "Tall"        # each param on its own line when wrapping
+brace_style = "SameLineWhere"
+
+# Newlines
+newline_style = "Unix"

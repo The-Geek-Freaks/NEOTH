@@ -1,0 +1,400 @@
+//! HMAC compaction — Phase 33b SP-2.
+//!
+//! Periodically the WAL writer emits a `0x15 COMPACTION_MARKER` event
+//! carrying an HMAC-SHA256 over every frame written since the previous
+//! marker. A downstream reader (or `neoth verify`) recomputes the HMAC
+//! from the bytes-on-disk and compares — a tampered tail fails.
+//!
+//! ## Why HMAC, not plain hash
+//!
+//! A plain hash is forgeable: an attacker who edits the WAL can also
+//! rewrite the trailing marker. HMAC requires a key the attacker
+//! doesn't have; the key lives in `~/.neoth/wal/hmac.key` with mode 0600.
+//! Compromised filesystem access defeats this — but at that point the
+//! adversary already has the operator's secrets. The marker is honest
+//! tamper-evidence, not crypto-grade evidence.
+//!
+//! ## Key lifecycle
+//!
+//! [`load_or_init_key`] reads `~/.neoth/wal/hmac.key` or generates a fresh
+//! 32-byte key on first boot and writes it mode 0600 (Windows: icacls
+//! grant-r-owner via the same path as WAL segments — see
+//! `wal::win_acl::restrict_to_owner`).
+//!
+//! ## Cadence
+//!
+//! [`CompactionState`] tracks bytes-since-marker + frames-since-marker.
+//! [`should_emit`] returns true when either threshold is exceeded. The
+//! writer calls this after each frame and emits a marker when due.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Default key path: `~/.neoth/wal/hmac.key`.
+pub fn default_key_path() -> PathBuf {
+    crate::config::FreedomConfig::default_wal_dir().join("hmac.key")
+}
+
+/// Emit a marker every 1024 frames OR every 16 MiB. Either threshold
+/// gives operators marker coverage within a few minutes of typical use
+/// without overwhelming the WAL with metadata events.
+pub const MAX_FRAMES_BETWEEN_MARKERS: u32 = 1024;
+pub const MAX_BYTES_BETWEEN_MARKERS: u64 = 16 * 1024 * 1024;
+
+/// Running tracker. Writer holds one of these and accumulates frame
+/// bytes into the HMAC engine. When [`should_emit`] returns true, the
+/// writer calls [`finalise_marker`] to extract the tag + reset.
+pub struct CompactionState {
+    mac: HmacSha256,
+    bytes_since_marker: u64,
+    frames_since_marker: u32,
+    /// File offset where the current marker window started. Reused as
+    /// `from_offset` in the marker payload.
+    from_offset: u64,
+}
+
+impl CompactionState {
+    /// Build a fresh state. `start_offset` is the file offset at which
+    /// the first frame in this window will land (usually right after
+    /// the segment header on a new segment).
+    pub fn new(key: &[u8], start_offset: u64) -> Self {
+        let mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
+        Self {
+            mac,
+            bytes_since_marker: 0,
+            frames_since_marker: 0,
+            from_offset: start_offset,
+        }
+    }
+
+    /// Feed one full frame's bytes (preamble + header + payload + CRC)
+    /// into the HMAC engine and update counters.
+    pub fn update(&mut self, frame_bytes: &[u8]) {
+        self.mac.update(frame_bytes);
+        self.bytes_since_marker = self
+            .bytes_since_marker
+            .saturating_add(frame_bytes.len() as u64);
+        self.frames_since_marker = self.frames_since_marker.saturating_add(1);
+    }
+
+    pub fn frames(&self) -> u32 {
+        self.frames_since_marker
+    }
+    pub fn bytes(&self) -> u64 {
+        self.bytes_since_marker
+    }
+    pub fn from_offset(&self) -> u64 {
+        self.from_offset
+    }
+
+    /// Should the writer emit a marker now?
+    pub fn should_emit(&self) -> bool {
+        self.frames_since_marker >= MAX_FRAMES_BETWEEN_MARKERS
+            || self.bytes_since_marker >= MAX_BYTES_BETWEEN_MARKERS
+    }
+
+    /// Finalise the current window: extract the HMAC tag (hex-encoded)
+    /// and reset the engine for the next window. Caller writes the
+    /// marker frame using the returned values + the current file offset
+    /// as `to_offset`.
+    pub fn finalise_marker(&mut self, key: &[u8], to_offset: u64) -> MarkerPayload {
+        // Steal the existing mac to extract the tag; replace with a
+        // fresh engine for the next window.
+        let mac = std::mem::replace(
+            &mut self.mac,
+            HmacSha256::new_from_slice(key).expect("HMAC-SHA256 init"),
+        );
+        let tag = mac.finalize().into_bytes();
+        let hmac_hex: String = tag.iter().map(|b| format!("{b:02x}")).collect();
+        let payload = MarkerPayload {
+            from_offset: self.from_offset,
+            to_offset,
+            frame_count: self.frames_since_marker,
+            hmac_hex,
+        };
+        self.from_offset = to_offset;
+        self.bytes_since_marker = 0;
+        self.frames_since_marker = 0;
+        payload
+    }
+}
+
+/// Payload of an `EVENT_TYPE_COMPACTION_MARKER` event. Serialised to
+/// JSON and written as the marker's payload bytes.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MarkerPayload {
+    pub from_offset: u64,
+    pub to_offset: u64,
+    pub frame_count: u32,
+    pub hmac_hex: String,
+}
+
+/// Read the operator's HMAC key from `path`. Generates a fresh 32-byte
+/// random key on first call and writes it mode 0600 (unix) / icacls
+/// grant:r owner (Windows).
+pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
+    if path.exists() {
+        let body =
+            std::fs::read(path).with_context(|| format!("read HMAC key {}", path.display()))?;
+        if body.len() < 16 {
+            anyhow::bail!(
+                "HMAC key at {} is shorter than 16 bytes; refuse to use weak key",
+                path.display()
+            );
+        }
+        return Ok(body);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create HMAC key parent {}", parent.display()))?;
+    }
+    // 32 bytes via the OS CSPRNG. **Fail closed** when the OS RNG is
+    // unavailable — a weak HMAC key undermines the whole tamper-evidence
+    // story, so we'd rather refuse to write than ship a predictable key.
+    // Per Codex audit item #3 (post-SP-2 review).
+    let mut key = vec![0u8; 32];
+    getrandom::getrandom(&mut key)
+        .context("OS RNG unavailable — refusing to generate weak HMAC key")?;
+
+    write_key_securely(path, &key)?;
+    Ok(key)
+}
+
+#[cfg(unix)]
+fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("create HMAC key at {} with mode 0600", path.display()))?;
+    use std::io::Write;
+    file.write_all(key)
+        .with_context(|| format!("write HMAC key bytes to {}", path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("fsync HMAC key {}", path.display()))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
+    std::fs::write(path, key).with_context(|| format!("write HMAC key at {}", path.display()))?;
+    if let Err(e) = crate::wal::win_acl::restrict_to_owner(path) {
+        tracing::warn!(
+            path = %path.display(),
+            error = %e,
+            "HMAC key DACL restriction failed; key file inherits parent DACL"
+        );
+    }
+    Ok(())
+}
+
+/// Verify a marker against the bytes between `from_offset` and `to_offset`
+/// in `segment_path`. Returns `Ok(())` on match, `Err` with a clear
+/// message on mismatch.
+pub fn verify_marker(segment_path: &Path, key: &[u8], marker: &MarkerPayload) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(segment_path)
+        .with_context(|| format!("open segment {}", segment_path.display()))?;
+    let len = (marker.to_offset - marker.from_offset) as usize;
+    if len == 0 {
+        anyhow::bail!("marker covers zero bytes — refuse to verify empty window");
+    }
+    let mut buf = vec![0u8; len];
+    file.seek(SeekFrom::Start(marker.from_offset))
+        .with_context(|| format!("seek to {}", marker.from_offset))?;
+    file.read_exact(&mut buf).with_context(|| {
+        format!(
+            "read {} bytes from offset {} in {}",
+            len,
+            marker.from_offset,
+            segment_path.display()
+        )
+    })?;
+
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
+    mac.update(&buf);
+    let tag = mac.finalize().into_bytes();
+    let computed_hex: String = tag.iter().map(|b| format!("{b:02x}")).collect();
+    if computed_hex != marker.hmac_hex {
+        anyhow::bail!(
+            "HMAC mismatch in {} ({}..{}): marker={}, computed={}. \
+             WAL window may have been tampered with.",
+            segment_path.display(),
+            marker.from_offset,
+            marker.to_offset,
+            marker.hmac_hex,
+            computed_hex,
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn should_emit_after_frame_threshold() {
+        let mut state = CompactionState::new(b"k", 0);
+        for _ in 0..MAX_FRAMES_BETWEEN_MARKERS - 1 {
+            state.update(&[0u8; 1]);
+            assert!(!state.should_emit());
+        }
+        state.update(&[0u8; 1]);
+        assert!(state.should_emit(), "expected emit after frame threshold");
+    }
+
+    #[test]
+    fn should_emit_after_byte_threshold() {
+        let mut state = CompactionState::new(b"k", 0);
+        let big = vec![0u8; (MAX_BYTES_BETWEEN_MARKERS + 1) as usize];
+        state.update(&big);
+        assert!(state.should_emit());
+    }
+
+    #[test]
+    fn finalise_resets_window() {
+        let key = b"secret";
+        let mut state = CompactionState::new(key, 100);
+        state.update(b"first frame");
+        state.update(b"second frame");
+        let marker = state.finalise_marker(key, 250);
+        assert_eq!(marker.from_offset, 100);
+        assert_eq!(marker.to_offset, 250);
+        assert_eq!(marker.frame_count, 2);
+        assert_eq!(marker.hmac_hex.len(), 64);
+
+        // After finalise, state is reset.
+        assert_eq!(state.frames(), 0);
+        assert_eq!(state.bytes(), 0);
+        assert_eq!(state.from_offset(), 250);
+    }
+
+    #[test]
+    fn finalise_produces_deterministic_tag_for_same_input() {
+        let key = b"shared-key";
+        let mut a = CompactionState::new(key, 0);
+        a.update(b"alpha");
+        let m_a = a.finalise_marker(key, 5);
+
+        let mut b = CompactionState::new(key, 0);
+        b.update(b"alpha");
+        let m_b = b.finalise_marker(key, 5);
+
+        assert_eq!(m_a.hmac_hex, m_b.hmac_hex);
+    }
+
+    #[test]
+    fn different_keys_produce_different_tags() {
+        let mut a = CompactionState::new(b"k1", 0);
+        a.update(b"x");
+        let mut b = CompactionState::new(b"k2", 0);
+        b.update(b"x");
+        assert_ne!(
+            a.finalise_marker(b"k1", 1).hmac_hex,
+            b.finalise_marker(b"k2", 1).hmac_hex,
+        );
+    }
+
+    #[test]
+    fn load_or_init_key_generates_on_first_call() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        assert!(!path.exists());
+        let key = load_or_init_key(&path).unwrap();
+        assert_eq!(key.len(), 32);
+        assert!(path.exists());
+        // Second call returns the same key.
+        let key2 = load_or_init_key(&path).unwrap();
+        assert_eq!(key, key2);
+    }
+
+    #[test]
+    fn load_or_init_rejects_too_short_existing_key() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        std::fs::write(&path, b"short").unwrap();
+        let r = load_or_init_key(&path);
+        assert!(r.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_key_is_mode_0600() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        load_or_init_key(&path).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn verify_marker_succeeds_on_matching_bytes() {
+        let dir = tempdir().unwrap();
+        let seg_path = dir.path().join("000001.wal");
+        let key = b"k";
+        let frames: &[&[u8]] = &[b"first", b"second", b"third"];
+
+        // Lay down some bytes on disk to emulate frames.
+        let mut bytes = Vec::new();
+        for f in frames {
+            bytes.extend_from_slice(f);
+        }
+        std::fs::write(&seg_path, &bytes).unwrap();
+
+        // Compute the marker the writer would have emitted.
+        let mut state = CompactionState::new(key, 0);
+        for f in frames {
+            state.update(f);
+        }
+        let marker = state.finalise_marker(key, bytes.len() as u64);
+        verify_marker(&seg_path, key, &marker).expect("matching window verifies");
+    }
+
+    #[test]
+    fn verify_marker_detects_tamper() {
+        let dir = tempdir().unwrap();
+        let seg_path = dir.path().join("000001.wal");
+        let key = b"k";
+        let original = b"alpha-beta-gamma".to_vec();
+        std::fs::write(&seg_path, &original).unwrap();
+
+        let mut state = CompactionState::new(key, 0);
+        state.update(&original);
+        let marker = state.finalise_marker(key, original.len() as u64);
+
+        // Tamper: flip one byte.
+        let mut tampered = original.clone();
+        tampered[5] ^= 0x01;
+        std::fs::write(&seg_path, &tampered).unwrap();
+
+        let r = verify_marker(&seg_path, key, &marker);
+        assert!(r.is_err(), "tampered bytes must fail HMAC check");
+        let msg = format!("{r:?}");
+        assert!(msg.contains("HMAC mismatch"), "error must explain: {msg}");
+    }
+
+    #[test]
+    fn verify_marker_rejects_zero_byte_window() {
+        let dir = tempdir().unwrap();
+        let seg_path = dir.path().join("000001.wal");
+        std::fs::write(&seg_path, b"").unwrap();
+        let marker = MarkerPayload {
+            from_offset: 0,
+            to_offset: 0,
+            frame_count: 0,
+            hmac_hex: "deadbeef".into(),
+        };
+        let r = verify_marker(&seg_path, b"k", &marker);
+        assert!(r.is_err());
+    }
+}

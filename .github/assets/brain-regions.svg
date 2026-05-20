@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" width="1280" height="560" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH Memory Architecture — 6 Brain Regions">
+  <defs>
+    <radialGradient id="brain-bg" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#0d0d0d"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
+    </radialGradient>
+
+    <linearGradient id="brain-border" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#05d5ff" stop-opacity="0.15"/>
+      <stop offset="50%" stop-color="#00ff80" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ff2a6d" stop-opacity="0.15"/>
+    </linearGradient>
+
+    <radialGradient id="wal-aura" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00ff80" stop-opacity="0.5"/>
+      <stop offset="60%" stop-color="#00ff80" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#00ff80" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="strong-glow" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="soft-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1280" height="560" rx="40" fill="url(#brain-bg)"/>
+  <rect x="0.5" y="0.5" width="1279" height="559" rx="40" 
+        fill="none" stroke="url(#brain-border)" stroke-width="1"/>
+
+  <text x="60" y="56" font-family="'JetBrains Mono', monospace" 
+        font-size="10" letter-spacing="6" fill="#00ff80">MEMORY · 6 REGIONS</text>
+  <text x="60" y="92" font-family="-apple-system, 'SF Pro Display', sans-serif"
+        font-weight="100" font-size="32" letter-spacing="6" fill="#ffffff">SIX BRAIN REGIONS, ONE WAL.</text>
+
+  <!-- Subtle synapse lines - under everything -->
+  <g stroke-width="0.5" fill="none">
+    <path d="M320,205 Q480,250 600,290" stroke="#00ff80" opacity="0.12"/>
+    <path d="M320,345 L600,290" stroke="#ff2a6d" opacity="0.12"/>
+    <path d="M320,485 Q480,400 600,310" stroke="#05d5ff" opacity="0.12"/>
+    <path d="M960,205 Q800,250 680,290" stroke="#05d5ff" opacity="0.12"/>
+    <path d="M960,345 L680,290" stroke="#00ff80" opacity="0.12"/>
+    <path d="M960,485 Q800,400 680,310" stroke="#ff2a6d" opacity="0.12"/>
+  </g>
+
+  <!-- Central WAL core -->
+  <g transform="translate(640, 300)">
+    <circle r="100" fill="url(#wal-aura)"/>
+    <circle r="44" fill="none" stroke="#00ff80" stroke-width="1" opacity="0.4">
+      <animate attributeName="r" values="44;78;44" dur="4s" repeatCount="indefinite"/>
+      <animate attributeName="opacity" values="0.6;0;0.6" dur="4s" repeatCount="indefinite"/>
+    </circle>
+    <circle r="44" fill="#0d0d0d" stroke="#00ff80" stroke-width="1.5" filter="url(#soft-glow)"/>
+    <circle r="34" fill="none" stroke="#00ff80" stroke-width="0.5" opacity="0.5"/>
+    <circle r="4" fill="#00ff80" filter="url(#strong-glow)">
+      <animate attributeName="opacity" values="0.6;1;0.6" dur="2s" repeatCount="indefinite"/>
+    </circle>
+    <text y="-4" font-family="'JetBrains Mono', monospace" font-size="11" letter-spacing="3" 
+          fill="#00ff80" text-anchor="middle" filter="url(#soft-glow)">WAL</text>
+    <text y="14" font-family="'JetBrains Mono', monospace" font-size="8" letter-spacing="2" 
+          fill="#aaaaaa" text-anchor="middle" opacity="0.7">96b · HLC</text>
+  </g>
+
+  <!-- 6 region cards -->
+  <g transform="translate(40, 150)">
+    <rect width="280" height="110" rx="16" fill="#1a1a1a" stroke="#00ff80" stroke-opacity="0.25" stroke-width="1"/>
+    <text x="20" y="32" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="3" fill="#00ff80">01 · EPISODIC</text>
+    <text x="20" y="62" font-family="-apple-system, 'SF Pro Display', sans-serif" font-weight="200" font-size="22" letter-spacing="2" fill="#ffffff">HIPPOCAMPUS</text>
+    <text x="20" y="86" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="1" fill="#aaaaaa">idx_episode</text>
+    <circle cx="258" cy="22" r="2.5" fill="#00ff80" filter="url(#soft-glow)">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2.2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g transform="translate(40, 290)">
+    <rect width="280" height="110" rx="16" fill="#1a1a1a" stroke="#ff2a6d" stroke-opacity="0.25" stroke-width="1"/>
+    <text x="20" y="32" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="3" fill="#ff2a6d">02 · SALIENCE</text>
+    <text x="20" y="62" font-family="-apple-system, 'SF Pro Display', sans-serif" font-weight="200" font-size="22" letter-spacing="2" fill="#ffffff">AMYGDALA</text>
+    <text x="20" y="86" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="1" fill="#aaaaaa">idx_importance</text>
+    <circle cx="258" cy="22" r="2.5" fill="#ff2a6d" filter="url(#soft-glow)">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2.8s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g transform="translate(40, 430)">
+    <rect width="280" height="110" rx="16" fill="#1a1a1a" stroke="#05d5ff" stroke-opacity="0.25" stroke-width="1"/>
+    <text x="20" y="32" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="3" fill="#05d5ff">03 · COUNCIL</text>
+    <text x="20" y="62" font-family="-apple-system, 'SF Pro Display', sans-serif" font-weight="200" font-size="22" letter-spacing="2" fill="#ffffff">INSULA</text>
+    <text x="20" y="86" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="1" fill="#aaaaaa">idx_council</text>
+    <circle cx="258" cy="22" r="2.5" fill="#05d5ff" filter="url(#soft-glow)">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="3.4s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g transform="translate(960, 150)">
+    <rect width="280" height="110" rx="16" fill="#1a1a1a" stroke="#05d5ff" stroke-opacity="0.25" stroke-width="1"/>
+    <text x="20" y="32" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="3" fill="#05d5ff">04 · QUOTA</text>
+    <text x="20" y="62" font-family="-apple-system, 'SF Pro Display', sans-serif" font-weight="200" font-size="22" letter-spacing="2" fill="#ffffff">CEREBELLUM</text>
+    <text x="20" y="86" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="1" fill="#aaaaaa">idx_motor</text>
+    <circle cx="258" cy="22" r="2.5" fill="#05d5ff" filter="url(#soft-glow)">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="2.6s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g transform="translate(960, 290)">
+    <rect width="280" height="110" rx="16" fill="#1a1a1a" stroke="#00ff80" stroke-opacity="0.25" stroke-width="1"/>
+    <text x="20" y="32" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="3" fill="#00ff80">05 · HABIT</text>
+    <text x="20" y="62" font-family="-apple-system, 'SF Pro Display', sans-serif" font-weight="200" font-size="22" letter-spacing="2" fill="#ffffff">BASAL GANGLIA</text>
+    <text x="20" y="86" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="1" fill="#aaaaaa">idx_habit</text>
+    <circle cx="258" cy="22" r="2.5" fill="#00ff80" filter="url(#soft-glow)">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="3s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <g transform="translate(960, 430)">
+    <rect width="280" height="110" rx="16" fill="#1a1a1a" stroke="#ff2a6d" stroke-opacity="0.25" stroke-width="1"/>
+    <text x="20" y="32" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="3" fill="#ff2a6d">06 · PROFILE</text>
+    <text x="20" y="62" font-family="-apple-system, 'SF Pro Display', sans-serif" font-weight="200" font-size="22" letter-spacing="2" fill="#ffffff">HYPOTHALAMUS</text>
+    <text x="20" y="86" font-family="'JetBrains Mono', monospace" font-size="9" letter-spacing="1" fill="#aaaaaa">idx_profile</text>
+    <circle cx="258" cy="22" r="2.5" fill="#ff2a6d" filter="url(#soft-glow)">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="3.2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- Traveling pulses -->
+  <circle r="3" fill="#00ff80" filter="url(#strong-glow)">
+    <animateMotion dur="5s" repeatCount="indefinite" path="M320,205 Q480,250 600,290"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="5s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="3" fill="#ff2a6d" filter="url(#strong-glow)">
+    <animateMotion dur="6s" repeatCount="indefinite" path="M960,485 Q800,400 680,310"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="6s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="3" fill="#05d5ff" filter="url(#strong-glow)">
+    <animateMotion dur="7s" repeatCount="indefinite" path="M320,485 Q480,400 600,310"/>
+    <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.1;0.9;1" dur="7s" repeatCount="indefinite"/>
+  </circle>
+
+  <text x="640" y="540" font-family="'JetBrains Mono', monospace" 
+        font-size="9" letter-spacing="3" fill="#aaaaaa" opacity="0.5" text-anchor="middle">
+    HOT 7d · WARM 90d · LONG-TERM HEBBIAN · IMMUTABLE GROUND-TRUTH
+  </text>
+</svg>

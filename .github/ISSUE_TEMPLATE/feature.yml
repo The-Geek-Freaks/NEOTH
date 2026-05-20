@@ -1,0 +1,61 @@
+name: Feature Request
+description: Propose a new feature for neothd
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Note:** neothd is a personal AI agent with a staged roadmap (Phase 1–4).
+        Features that fit an existing phase have a higher chance of acceptance.
+        Check [PLAN/00_DESIGN_v1.1_FINAL.md](../../PLAN/00_DESIGN_v1.1_FINAL.md) before filing.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem does this feature solve? Who is affected?
+      placeholder: "As a neothd operator, I want … so that …"
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: Describe the feature. Include API shapes, config keys, or CLI flags if relevant.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds or alternative approaches did you evaluate?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Roadmap phase (best guess)
+      description: Which phase does this most naturally fit?
+      options:
+        - "Phase 1 — Core daemon + WAL + memory"
+        - "Phase 2 — Channel integrations (Telegram, WhatsApp, Slack)"
+        - "Phase 3 — Plugin host + WASM"
+        - "Phase 4 — Distributed / multi-agent"
+        - "Cross-cutting / infrastructure"
+        - "Not sure"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues and discussions
+          required: true
+        - label: I have read the design doc (PLAN/00_DESIGN_v1.1_FINAL.md)
+          required: false
