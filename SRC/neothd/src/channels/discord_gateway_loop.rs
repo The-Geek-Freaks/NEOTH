@@ -80,8 +80,22 @@ use crate::channels::discord_gateway::{
     should_resume_after_close, GatewayAction, GatewayEnvelope, GatewayPhase, IdentifyProperties,
     ReconnectTracker, GATEWAY_WSS_URL,
 };
-use crate::channels::PipelineHandler;
+use crate::channels::{OutboundMessage, PipelineHandler};
 use crate::secret::SecretString;
+
+/// Type-erased outbound reply sender. The gateway loop accepts
+/// one when the caller wants pipeline handler replies routed
+/// back to Discord; passing `None` keeps the Phase-1 shape
+/// where replies are logged + dropped.
+///
+/// Matches the [`channels::slack_socket::OutboundSender`] shape
+/// so a future cross-channel reply orchestrator can hold both
+/// behind a common type if it grows.
+pub type OutboundSender = Arc<
+    dyn Fn(OutboundMessage) -> futures_util::future::BoxFuture<'static, anyhow::Result<()>>
+        + Send
+        + Sync,
+>;
 
 /// Default heartbeat interval when the HELLO payload is
 /// malformed. Per Discord docs, real intervals are typically
@@ -111,11 +125,19 @@ pub async fn run_gateway_loop(
     bot_token: SecretString,
     intents: u32,
     handler: PipelineHandler,
+    sender: Option<OutboundSender>,
 ) -> Result<()> {
     let handler = Arc::new(handler);
     let mut tracker = ReconnectTracker::new();
     loop {
-        match run_one_session(&bot_token, intents, Arc::clone(&handler)).await {
+        match run_one_session(
+            &bot_token,
+            intents,
+            Arc::clone(&handler),
+            sender.as_ref().map(Arc::clone),
+        )
+        .await
+        {
             Ok(SessionEnd::CleanClose) => {
                 info!("discord gateway session ended cleanly — reconnecting");
                 tracker.record_success();
@@ -157,6 +179,7 @@ async fn run_one_session(
     bot_token: &SecretString,
     intents: u32,
     handler: Arc<PipelineHandler>,
+    sender: Option<OutboundSender>,
 ) -> Result<SessionEnd> {
     info!(url = GATEWAY_WSS_URL, "discord gateway dialing");
     log_phase(GatewayPhase::Connecting);
@@ -262,7 +285,12 @@ async fn run_one_session(
                     }
                     "MESSAGE_CREATE" => {
                         if let Some(parsed_msg) = parse_message_create(&d) {
-                            forward_message(&parsed_msg, Arc::clone(&handler)).await;
+                            forward_message(
+                                &parsed_msg,
+                                Arc::clone(&handler),
+                                sender.as_ref().map(Arc::clone),
+                            )
+                            .await;
                         }
                     }
                     _ => {
@@ -356,7 +384,11 @@ fn parsed_d_from_frame(frame: &str) -> Value {
         .unwrap_or(Value::Null)
 }
 
-async fn forward_message(msg: &ParsedMessageCreate, handler: Arc<PipelineHandler>) {
+async fn forward_message(
+    msg: &ParsedMessageCreate,
+    handler: Arc<PipelineHandler>,
+    sender: Option<OutboundSender>,
+) {
     if msg.author_is_bot {
         // Don't echo bot messages back into the pipeline.
         return;
@@ -376,16 +408,31 @@ async fn forward_message(msg: &ParsedMessageCreate, handler: Arc<PipelineHandler
     };
     let _ = msg.message_id; // unused field in current InboundMessage shape
     match handler(inbound).await {
-        Ok(Some(out)) => {
-            // Posting the reply back requires the DiscordChannel
-            // REST handle which this loop does not hold; log so
-            // the operator sees the handler produced a reply.
-            info!(
-                reply_chars = out.text.len(),
-                channel_id = %msg.channel_id,
-                "discord handler produced reply (REST post wires in follow-up)"
-            );
-        }
+        Ok(Some(out)) => match sender {
+            Some(sender) => {
+                let chars = out.text.len();
+                if let Err(e) = sender(out).await {
+                    warn!(
+                        error = %e,
+                        channel_id = %msg.channel_id,
+                        "discord reply send failed"
+                    );
+                } else {
+                    debug!(
+                        reply_chars = chars,
+                        channel_id = %msg.channel_id,
+                        "discord reply sent"
+                    );
+                }
+            }
+            None => {
+                info!(
+                    reply_chars = out.text.len(),
+                    channel_id = %msg.channel_id,
+                    "discord handler produced reply (no sender wired — dropped)"
+                );
+            }
+        },
         Ok(None) => {}
         Err(e) => {
             warn!(error = %e, "discord pipeline handler failed");

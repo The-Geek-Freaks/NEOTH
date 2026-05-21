@@ -90,18 +90,40 @@ impl Channel for DiscordChannel {
         "discord"
     }
 
-    /// Phase 1: receive-path not implemented — **explicitly deferred
-    /// to v0.3+** per Codex 2026-05-19. Returns `Deferred` so the
-    /// daemon's channel-spawn loop logs once + skips the restart
-    /// loop, matching the existing Keet behaviour. The error string
-    /// names v0.3+ so operators reading `neoth doctor` / channel logs
-    /// know exactly where to look for the receive ETA.
-    async fn run(&self, _handler: PipelineHandler) -> Result<()> {
-        Err(anyhow::Error::from(ChannelError::Deferred {
-            reason: "Discord Gateway WebSocket receive path is deferred to v0.3+ — \
-                     Phase 1 (this build) is send-only. See channels/discord.rs module \
-                     doc for the receive-implementation plan + reference template.",
-        }))
+    /// Receive path: dial the Gateway via `discord_gateway_loop`,
+    /// forward `MESSAGE_CREATE` events through `handler`, post the
+    /// handler's reply back to the channel via the REST
+    /// `chat.create-message` path the send-only Phase-1 build
+    /// already shipped. `Deferred` flag from Phase 1 is gone —
+    /// the receive loop is live as of 2026-05-21.
+    async fn run(&self, handler: PipelineHandler) -> Result<()> {
+        use crate::channels::discord_gateway_loop::{
+            default_intents, run_gateway_loop, OutboundSender,
+        };
+
+        let http = self.http.clone();
+        let token = std::sync::Arc::new(self.bot_token.clone());
+        let sender: OutboundSender = {
+            let http = http.clone();
+            let token = std::sync::Arc::clone(&token);
+            std::sync::Arc::new(move |out: crate::channels::OutboundMessage| {
+                let http = http.clone();
+                let token = std::sync::Arc::clone(&token);
+                Box::pin(async move {
+                    post_to_discord(&http, &token, &out.recipient_id, &out.text)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| anyhow::anyhow!("discord reply send: {e}"))
+                })
+            })
+        };
+        run_gateway_loop(
+            self.bot_token.clone(),
+            default_intents(),
+            handler,
+            Some(sender),
+        )
+        .await
     }
 
     /// Send a text message. Chunked at `DISCORD_MAX_CONTENT_CHARS`.
@@ -128,23 +150,59 @@ impl DiscordChannel {
         channel_id: &str,
         content: &str,
     ) -> std::result::Result<MessageId, ChannelError> {
-        let url = format!("{DISCORD_API_BASE}/channels/{channel_id}/messages");
-        let body = MessageCreateRequest { content };
-        let response = self
-            .http
-            .post(&url)
-            .header(reqwest::header::AUTHORIZATION, self.auth_header_value())
-            .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .header(
-                reqwest::header::USER_AGENT,
-                "NEOTH/0.1 (+https://neoth.dev)",
-            )
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| ChannelError::Transport(format!("discord POST {url}: {e}")))?;
+        post_to_discord(&self.http, &self.bot_token, channel_id, content).await
+    }
+}
 
-        let status = response.status();
+/// Free-function counterpart to `DiscordChannel::post_one`. The
+/// receive loop (`channels::discord_gateway_loop`) builds its
+/// reply-sender closure against this, capturing only an
+/// `Arc<reqwest::Client>` + `Arc<SecretString>` instead of an
+/// `Arc<DiscordChannel>` (the adapter doesn't impl Clone +
+/// would need a layered Arc to share across the WSS read-loop
+/// + the heartbeat tick). The shape mirrors
+/// `slack_api::post_message` so cross-channel reviewers see the
+/// same pattern.
+pub async fn post_to_discord(
+    http: &reqwest::Client,
+    bot_token: &SecretString,
+    channel_id: &str,
+    content: &str,
+) -> std::result::Result<MessageId, ChannelError> {
+    let chunks = chunk_message(content, DISCORD_MAX_CONTENT_CHARS);
+    let mut last_id: Option<MessageId> = None;
+    for chunk in chunks {
+        let id = post_one_chunk(http, bot_token, channel_id, &chunk).await?;
+        last_id = Some(id);
+    }
+    last_id.ok_or_else(|| ChannelError::Transport("empty text after chunking".into()))
+}
+
+async fn post_one_chunk(
+    http: &reqwest::Client,
+    bot_token: &SecretString,
+    channel_id: &str,
+    content: &str,
+) -> std::result::Result<MessageId, ChannelError> {
+    let url = format!("{DISCORD_API_BASE}/channels/{channel_id}/messages");
+    let body = MessageCreateRequest { content };
+    let response = http
+        .post(&url)
+        .header(
+            reqwest::header::AUTHORIZATION,
+            format!("Bot {}", bot_token.expose()),
+        )
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .header(
+            reqwest::header::USER_AGENT,
+            "NEOTH/0.1 (+https://neoth.dev)",
+        )
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| ChannelError::Transport(format!("discord POST {url}: {e}")))?;
+
+    let status = response.status();
         if status.as_u16() == 429 {
             let retry_after_secs = response
                 .headers()
@@ -171,12 +229,11 @@ impl DiscordChannel {
                 body_text.trim()
             )));
         }
-        let parsed: MessageCreateResponse = response
-            .json()
-            .await
-            .map_err(|e| ChannelError::Transport(format!("discord response parse: {e}")))?;
-        Ok(MessageId(parsed.id))
-    }
+    let parsed: MessageCreateResponse = response
+        .json()
+        .await
+        .map_err(|e| ChannelError::Transport(format!("discord response parse: {e}")))?;
+    Ok(MessageId(parsed.id))
 }
 
 /// Split a text payload into ≤max-char chunks. Boundary preference:
@@ -304,26 +361,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn run_returns_deferred_v03_marker() {
-        // Pick #29 (Session 14, Codex feedback): the error string MUST
-        // surface "v0.3" so operators reading `neoth doctor` or channel
-        // status logs see the explicit deferral target. Without this
-        // pin a future refactor could quietly drop the version, leaving
-        // operators wondering "is receive coming or not?".
-        let a = DiscordChannel::new(SecretString::new("token".into())).unwrap();
-        let handler: PipelineHandler = Box::new(|_msg| Box::pin(async { Ok(None) }));
-        let err = a.run(handler).await.unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("v0.3"),
-            "Discord receive deferral must name v0.3 explicitly; got: {msg}"
-        );
-        assert!(
-            msg.contains("send-only"),
-            "deferral message must mention Phase-1 send-only capability; got: {msg}"
-        );
-    }
+    // Pick #29 deferral test removed 2026-05-21 — the receive path
+    // is no longer Deferred. `DiscordChannel::run` dials the
+    // Gateway via `discord_gateway_loop::run_gateway_loop`. A live
+    // receive integration test against a real bot token belongs in
+    // a `#[ignore]`d e2e suite, not the offline unit module.
 
     #[test]
     fn api_base_pinned_to_v10() {
