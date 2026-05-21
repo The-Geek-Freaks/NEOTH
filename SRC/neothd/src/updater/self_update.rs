@@ -559,6 +559,128 @@ fn hex_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Outcome of a successful `apply_update`. The caller surfaces
+/// the restart hint to the operator (chat output / WAL frame /
+/// neoth doctor banner).
+#[derive(Debug, Clone)]
+pub struct UpdateApplied {
+    pub from_version: String,
+    pub to_version: String,
+    pub backup_path: PathBuf,
+    pub restart_required: bool,
+}
+
+/// Pure-bytes-in orchestrator. Network-free so the unit suite
+/// can exercise the full apply path without HTTP mocking.
+///
+/// Steps:
+///   1. parse the SHA-256 companion text
+///   2. verify `asset_bytes` against it
+///   3. select the extractor by archive format
+///   4. extract the binary into a tmpdir living under
+///      `install_dir.parent()` so the rename is same-volume
+///   5. atomic-replace onto `install_dir.join(<binary>)`
+pub fn apply_downloaded(
+    asset_bytes: &[u8],
+    companion_text: &str,
+    format: ArchiveFormat,
+    binary: &str,
+    install_dir: &Path,
+) -> Result<PathBuf> {
+    let expected = parse_sha256_companion(companion_text)
+        .context("parse sha256 companion")?;
+    verify_sha256_bytes(asset_bytes, &expected).context("verify asset sha256")?;
+
+    // Stage the extracted binary in a tempdir that lives next to
+    // the install dir so the final rename is same-volume (atomic
+    // on POSIX, ReplaceFileW-semantics on Windows).
+    let stage_parent = install_dir.parent().unwrap_or(install_dir);
+    let stage = tempfile::tempdir_in(stage_parent)
+        .with_context(|| format!("stage tempdir under {}", stage_parent.display()))?;
+
+    let extracted = match format {
+        ArchiveFormat::Zip => extract_zip_binary(asset_bytes, stage.path(), binary)?,
+        ArchiveFormat::TarXz => extract_tar_xz_binary(asset_bytes, stage.path(), binary)?,
+        ArchiveFormat::TarGz => extract_tar_gz_binary(asset_bytes, stage.path(), binary)?,
+    };
+
+    let target = install_dir.join(binary_filename_for_host(binary));
+    let backup = atomic_replace_binary(&extracted, &target)?;
+    // tempdir drops here; the extracted file already moved out
+    // via atomic_replace_binary, so the directory is empty +
+    // safe to clean.
+    Ok(backup)
+}
+
+/// Network-driven update flow. Wraps `apply_downloaded` with
+/// HTTP fetches against the release's `browser_download_url`
+/// fields. Returns Ok with the [`UpdateApplied`] envelope on
+/// success, Err with a diagnostic when any step fails — the
+/// daemon's existing binary is left untouched on failure (the
+/// staging tempdir cleans up; `target` only mutates after the
+/// final atomic_replace succeeds).
+pub async fn apply_update(
+    release: &LatestRelease,
+    target_triple: &str,
+    binary: &str,
+    install_dir: &Path,
+) -> Result<UpdateApplied> {
+    let assets = resolve_update_assets(release, target_triple, binary)?;
+    let companion = assets.sha256.ok_or_else(|| {
+        anyhow::anyhow!(
+            "release {} published the binary asset but no \
+             `.sha256` companion — refusing to apply (no integrity \
+             guarantee). Install manually from {}",
+            release.tag_name,
+            release.html_url
+        )
+    })?;
+
+    let ua = format!("NEOTH/{} (self-update)", current_version());
+    let client = reqwest::Client::builder()
+        .user_agent(ua)
+        .build()
+        .context("build self-update reqwest client")?;
+
+    let companion_text = client
+        .get(&companion.browser_download_url)
+        .send()
+        .await
+        .with_context(|| format!("GET {}", companion.browser_download_url))?
+        .error_for_status()
+        .context("fetch sha256 companion")?
+        .text()
+        .await
+        .context("read sha256 companion body")?;
+
+    let asset_bytes = client
+        .get(&assets.binary.browser_download_url)
+        .send()
+        .await
+        .with_context(|| format!("GET {}", assets.binary.browser_download_url))?
+        .error_for_status()
+        .context("fetch binary asset")?
+        .bytes()
+        .await
+        .context("read binary asset body")?;
+
+    let format = archive_format_for_target(target_triple);
+    let backup = apply_downloaded(
+        &asset_bytes,
+        &companion_text,
+        format,
+        binary,
+        install_dir,
+    )?;
+
+    Ok(UpdateApplied {
+        from_version: current_version().to_string(),
+        to_version: release.tag_name.clone(),
+        backup_path: backup,
+        restart_required: true,
+    })
+}
+
 /// Resolve every asset Phase 2b needs to run `apply_update`.
 /// Returns `Err` with an operator-readable diagnostic when:
 ///
@@ -1143,6 +1265,102 @@ mod tests {
         assert!(bak.exists(), "backup must exist at {}", bak.display());
         assert_eq!(std::fs::read(&bak).unwrap(), b"old-daemon");
         assert!(!new_path.exists(), "new_path must be renamed away");
+    }
+
+    // ── Phase 2b apply_downloaded orchestrator coverage ────────────
+
+    #[test]
+    fn apply_downloaded_replaces_binary_when_archive_and_digest_match() {
+        // Build a zip containing the host's binary name, take its
+        // SHA-256, run the full apply_downloaded path, assert the
+        // target file ends up with the expected bytes.
+        let want = binary_filename_for_host("neoth");
+        let zip_bytes = make_zip_with_member(&want, b"shiny-new-daemon");
+        let mut hasher = Sha256::new();
+        hasher.update(&zip_bytes);
+        let digest = hex_encode(&hasher.finalize());
+        let companion_text = format!("{digest}  neoth.zip\n");
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(&want);
+        std::fs::write(&target, b"old-daemon").unwrap();
+
+        let backup = apply_downloaded(
+            &zip_bytes,
+            &companion_text,
+            ArchiveFormat::Zip,
+            "neoth",
+            dir.path(),
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"shiny-new-daemon");
+        assert!(backup.exists(), "old binary preserved at {}", backup.display());
+        assert_eq!(std::fs::read(&backup).unwrap(), b"old-daemon");
+    }
+
+    #[test]
+    fn apply_downloaded_refuses_when_sha256_mismatches() {
+        let want = binary_filename_for_host("neoth");
+        let zip_bytes = make_zip_with_member(&want, b"good-payload");
+        // Wrong digest — payload changed somewhere in transit.
+        let bogus_digest = "0".repeat(64);
+        let companion_text = format!("{bogus_digest}  neoth.zip\n");
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(&want);
+        std::fs::write(&target, b"unchanged-daemon").unwrap();
+
+        let err = apply_downloaded(
+            &zip_bytes,
+            &companion_text,
+            ArchiveFormat::Zip,
+            "neoth",
+            dir.path(),
+        )
+        .unwrap_err();
+        // anyhow Display shows only the top-level context; the
+        // full chain ({:#}) carries the underlying "sha256
+        // mismatch" diagnostic.
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("sha256 mismatch"),
+            "full error chain must label mismatch: {chain}"
+        );
+
+        // Target file MUST be untouched on verify failure — a
+        // sha256-failing update never gets close to the binary.
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged-daemon");
+    }
+
+    #[test]
+    fn apply_downloaded_works_for_tar_gz_format() {
+        // Pin the same end-to-end shape for the Linux/macOS path
+        // via tar.gz (tar.xz would also work but lzma-rs writers
+        // aren't part of the crate; xz round-trip is exercised
+        // implicitly via real release tarballs).
+        let want = binary_filename_for_host("neoth");
+        let tar_gz = make_tar_gz_with_member(&want, b"unix-daemon");
+        let mut hasher = Sha256::new();
+        hasher.update(&tar_gz);
+        let digest = hex_encode(&hasher.finalize());
+        let companion_text = digest.clone();
+
+        let dir = tempdir().unwrap();
+        let target = dir.path().join(&want);
+
+        let backup = apply_downloaded(
+            &tar_gz,
+            &companion_text,
+            ArchiveFormat::TarGz,
+            "neoth",
+            dir.path(),
+        )
+        .unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), b"unix-daemon");
+        // First install — no prior file to back up.
+        assert!(!backup.exists());
     }
 
     #[test]
