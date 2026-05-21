@@ -165,6 +165,13 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
 
     let outcome = apply_update(&release, target, "neoth", install_dir).await?;
+    // WAL audit frame (0xD2 SELF_UPDATE_APPLIED) deferred — the
+    // CLI runs without a live WalWriterHandle, so writing here
+    // means spinning a one-shot writer + rotating the segment.
+    // Future scheduled-update task that runs INSIDE `cli::serve`
+    // already has the handle and will emit the frame there.
+    let _ = repo;
+    let _ = target;
     render_self_apply(&outcome, output);
     Ok(())
 }

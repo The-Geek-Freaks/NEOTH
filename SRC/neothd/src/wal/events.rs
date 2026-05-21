@@ -575,6 +575,20 @@ pub const EVENT_TYPE_CONFIG_RELOADED: u8 = 0xD0;
 /// Payload (JSON): `{reason, source_path, ts_unix}`
 pub const EVENT_TYPE_CONFIG_RELOAD_REJECTED: u8 = 0xD1;
 
+/// `0xD2 SELF_UPDATE_APPLIED` — V03-09 Phase 2b. Emitted when
+/// `neoth update --self --apply` (or a future scheduled
+/// auto-update) successfully completed the download → SHA-256
+/// verify → extract → atomic-replace chain. The replacement
+/// landed on disk; the new binary takes effect on next daemon
+/// restart. Operators following the audit chain see a clear
+/// "version X → Y at time T" anchor.
+///
+/// Payload (JSON): `{from_version, to_version, backup_path,
+/// repo, target_triple, ts_unix}`. `backup_path` lets the
+/// operator revert with a single `mv` on Unix or via the
+/// rollback CLI later.
+pub const EVENT_TYPE_SELF_UPDATE_APPLIED: u8 = 0xD2;
+
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
 ///
@@ -810,6 +824,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0
         || EVENT_TYPE_CONFIG_RELOAD_REJECTED > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_SELF_UPDATE_APPLIED < 0xD0
+        || EVENT_TYPE_SELF_UPDATE_APPLIED > 0xDF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
@@ -933,6 +949,7 @@ mod tests {
             ("KANBAN_TASK_PROGRESS", EVENT_TYPE_KANBAN_TASK_PROGRESS),
             ("CONFIG_RELOADED", EVENT_TYPE_CONFIG_RELOADED),
             ("CONFIG_RELOAD_REJECTED", EVENT_TYPE_CONFIG_RELOAD_REJECTED),
+            ("SELF_UPDATE_APPLIED", EVENT_TYPE_SELF_UPDATE_APPLIED),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),
             ("PRE_MUTATION_SNAPSHOT", EVENT_TYPE_PRE_MUTATION_SNAPSHOT),
