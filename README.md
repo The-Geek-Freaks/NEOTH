@@ -82,9 +82,23 @@ The promise is not features. The promise is **continuity** — that the agent yo
 
 The daemon is feature-complete for solo-operator use. Multimodal stack landed 2026-05.
 
-Channels: Telegram. Providers: `claude-cli`, OpenAI, Gemini, OpenAI-compat. Memory: 4-tier Hebbian + `idx_embedding` vector store. Pipeline: full multimodal extraction (`neoth ingest`), cross-modal recall (`neoth recall --similar-to <image>` / `--similar-to-text "<prompt>"`). Model cache management (`neoth models pull clip|whisper`). Ground-truth fact store with Q&A wizard, bulk-text intake, ARP/nmap infra-scan, foreign-agent import (Hermes / OpenClaw / OpenHuman / Veronica). Slash commands: `/help`, `/recall`, `/status`, `/jobs`, `/agent`. Sub-agents: code-reviewer, security-reviewer, planner. Operator-overridable hooks (TOML, 8 stages). Architecture Decision Records auto-extraction. Autonomy levels: strict / standard / elevated / full / custom. HMAC-signed WAL compaction markers. Hardware autodetect (CPU / RAM / CUDA / Metal / OpenVINO). 5-screen GUI wizard. **660+ unit tests, `fmt` + `clippy -D warnings` clean, Windows MSVC + Linux + macOS green in CI.**
+**Channels:** Telegram (v0.1+ shipping), WhatsApp / Slack / Discord / Keet (v0.2+ adapter code, GUI wizard configures from Settings → Channels). Signal / Matrix / LINE / iMessage on the roadmap.
 
-**Open before v1.0:** Keet / WhatsApp / Slack channels (R-2). Hysteria transport (R-3). Cluster mode (R-7). Cloud connectors (R-8). See the [roadmap](#roadmap).
+**Providers:** `claude-cli`, OpenAI, Gemini, OpenAI-compat. **Per-hemisphere binding** — Left (fast) + Right (deep) + Cerebellum (orchestrator) each pick a provider independently via `freedom.yaml::inference`.
+
+**Coding workflow:** Hermes-adapted `neoth code "<prompt>" --dispatch` end-to-end. Cerebellum decomposes; heuristic + LLM-second-opinion classifier routes Fast→Left / Deep→Right / Ambiguous→escalate; `ProviderWorker` fires the bound provider; outcome stored in views.db kanban. **9-tab GUI Code Sessions board** (5-column kanban + click-to-detail pane + activity feed + live 2s tail + comment composer + assign-row + Promote-REVIEW button) covers the operator surface.
+
+**Memory:** 4-tier Hebbian + `idx_embedding` vector store. Full multimodal extraction (`neoth ingest`), cross-modal recall (`neoth recall --similar-to <image>` / `--similar-to-text "<prompt>"`). Model cache (`neoth models pull clip|whisper`). Ground-truth fact store with Q&A wizard, bulk-text intake, ARP/nmap infra-scan, foreign-agent import (Hermes / OpenClaw / OpenHuman / Veronica).
+
+**Plugins:** WASM plugin host with discovery (`~/.neoth/plugins/<id>/`), wasmtime compile pre-flight, ResourceLimiter-enforced 64 MiB memory cap, fuel-metered execution, hostcalls catalogue (4 functions). `HookAction::Plugin { plugin_id }` fires registered plugins from any of the 8 hook stages. Example plugin at `examples/wasm-plugin-hello/`.
+
+**Security:** HMAC-signed WAL compaction markers + REDACTION_MARKER audit trail; secure-by-default MCP allowlist (compromised MCP server can't expose arbitrary new tools); webhook signature verification with anti-fragility fuzz tests; YAML-defined hooks with regex matchers across 8 lifecycle stages; autonomy levels (strict / standard / elevated / full / custom) gate every tool + provider call.
+
+**Operator surface:** Slash commands `/help` `/recall` `/status` `/jobs` `/agent` `/code`. Sub-agents: code-reviewer, security-reviewer, planner. Architecture Decision Records auto-extraction. Hardware autodetect (CPU / RAM / CUDA / Metal / OpenVINO). 9-step GUI wizard (welcome → license → identity → provider → autonomy → channels → keys → done → settings) + post-onboarding chat surface. WCAG-AA contrast, keyboard-first mode selection (G/C/Enter shortcuts), sovereign-curve screen transitions. `neoth update --self` checks GitHub for newer releases.
+
+**Quality:** **2400+ unit tests, `fmt` + `clippy -D warnings` clean, Windows MSVC + Linux + macOS green in CI.** Comprehensive 27-issue GUI audit closed (26 fixed + 1 polish deferred as documented).
+
+**Open before v1.0:** Hysteria transport (R-3). Cluster mode (R-7). Cloud connectors (R-8). D14b Qwen Phase 2 forward-pass for fully-local inference. Pick #6 Phase 4 Q1 patch-safety actual apply (Chorus-gated). Live Discord WSS dial. See the [roadmap](#roadmap).
 
 <br/><br/>
 
