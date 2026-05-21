@@ -45,6 +45,7 @@ pub mod classifier;
 pub mod decomposer;
 pub mod dispatcher;
 pub mod feed;
+pub mod model_profile;
 pub mod provider_worker;
 pub mod retry;
 pub mod review;
@@ -100,6 +101,16 @@ pub use provider_worker::{ProviderWorker, ParsedCompletion, parse_completion_tex
 // before giving up. Per `PLAN/SMALLCODE_INTEGRATION_PLAN_2026-05-21.md`.
 #[allow(unused_imports)]
 pub use retry::{RetryStrategy, WorkerRetryPolicy, DEFAULT_MAX_ATTEMPTS};
+// Smallcode port #2 (2026-05-21): per-model capability profiles —
+// `ModelProfile` + `ToolFormat` table + fuzzy matcher. Drives
+// tool-call formatting (port #3's 2-stage router gates off
+// `needs_two_stage_router()`) and operator-readable model awareness
+// in `neoth code` debug output. Re-exported pending wire-in by
+// `provider_worker::ProviderWorker::execute`.
+#[allow(unused_imports)]
+pub use model_profile::{
+    get_profile, match_profile, ModelProfile, ToolFormat,
+};
 // Pick #9 (2026-05-20): LLM second-opinion classifier for the
 // Ambiguous bucket — re-uses the Cerebellum DecomposerLlm trait.
 #[allow(unused_imports)]
