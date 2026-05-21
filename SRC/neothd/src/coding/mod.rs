@@ -46,6 +46,7 @@ pub mod decomposer;
 pub mod dispatcher;
 pub mod feed;
 pub mod provider_worker;
+pub mod retry;
 pub mod review;
 pub mod second_opinion;
 pub mod store;
@@ -93,6 +94,12 @@ pub use dispatcher::{DispatchBudget, DispatchOutcome, HemisphereWorkerSet, dispa
 // pending; this commit only stores patches, doesn't apply them.
 #[allow(unused_imports)]
 pub use provider_worker::{ProviderWorker, ParsedCompletion, parse_completion_text, patch_path_for};
+// Pick #6 Phase 4-pre (2026-05-21): WorkerRetryPolicy ported from
+// smallcode's governor — per-task state machine between InProgress
+// and Blocked so stuck workers get re-queued with a strategy hint
+// before giving up. Per `PLAN/SMALLCODE_INTEGRATION_PLAN_2026-05-21.md`.
+#[allow(unused_imports)]
+pub use retry::{RetryStrategy, WorkerRetryPolicy, DEFAULT_MAX_ATTEMPTS};
 // Pick #9 (2026-05-20): LLM second-opinion classifier for the
 // Ambiguous bucket — re-uses the Cerebellum DecomposerLlm trait.
 #[allow(unused_imports)]

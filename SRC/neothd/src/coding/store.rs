@@ -283,6 +283,35 @@ pub fn patch_task_hemisphere(
     Ok(())
 }
 
+/// Pick #6 Phase 4-pre (2026-05-21): append a retry strategy hint to
+/// the task's description. Used by the dispatcher's retry path —
+/// the worker reads the appended hint on the next attempt.
+///
+/// `description` is stored verbatim (no JSON wrapping) so the next
+/// worker invocation sees the hint as part of the prompt. NULL
+/// previous description is replaced with the hint alone.
+pub fn append_task_description_hint(
+    conn: &Connection,
+    task_id: KanbanTaskId,
+    hint: &str,
+) -> Result<()> {
+    let n = conn
+        .execute(
+            "UPDATE idx_kanban_task \
+             SET description = COALESCE(description || char(10), '') || ?1 \
+             WHERE task_id = ?2",
+            params![hint, task_id.raw()],
+        )
+        .context("append retry hint to task description")?;
+    if n == 0 {
+        anyhow::bail!(
+            "append_task_description_hint: no row for task_id={}",
+            task_id.raw()
+        );
+    }
+    Ok(())
+}
+
 /// Attach the patch file + test outcome a worker reported. Test summary
 /// is serialised as JSON for forward-compat — adding fields stays
 /// non-breaking for existing rows.

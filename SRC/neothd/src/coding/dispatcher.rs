@@ -24,6 +24,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use tracing::{info, warn};
 
+use crate::coding::retry::WorkerRetryPolicy;
 use crate::coding::store;
 use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTask, TaskStatus};
 use crate::coding::worker::{Worker, WorkerOutcome};
@@ -119,6 +120,7 @@ pub fn dispatch_session(
 ) -> Result<DispatchOutcome> {
     let started = Instant::now();
     let mut outcome = DispatchOutcome::default();
+    let mut retry_policy = WorkerRetryPolicy::new();
 
     if !workers.has_any() {
         warn!(
@@ -174,26 +176,37 @@ pub fn dispatch_session(
 
         let exec_result = worker.execute(&task);
         match exec_result {
-            Ok(o) => {
+            Ok(o) if o.review_ready() => {
                 // Q2 streaming: batched — one TASK_COMPLETED frame at
                 // end. 30s heartbeat (WAL 0x77 KANBAN_TASK_PROGRESS)
                 // lands in a later sprint via a background task.
                 apply_outcome(conn, &task, &o)?;
-                if o.review_ready() {
-                    outcome.tasks_completed += 1;
-                } else {
-                    outcome.tasks_blocked += 1;
-                }
+                outcome.tasks_completed += 1;
+                // Worker succeeded — clear retry state so a future
+                // re-run of the same task starts fresh.
+                retry_policy.reset(task.task_id);
+            }
+            Ok(o) => {
+                // Outcome reached us but `failed()` (empty patch +
+                // zero tests) — treat as a retryable failure.
+                let _ = handle_retryable_failure(
+                    conn,
+                    &task,
+                    &mut retry_policy,
+                    &mut outcome,
+                    "worker returned empty outcome",
+                    Some(&o),
+                );
             }
             Err(e) => {
-                warn!(
-                    task_id = task.task_id.raw(),
-                    error = %e,
-                    "worker execute failed; moving task to Blocked"
+                let _ = handle_retryable_failure(
+                    conn,
+                    &task,
+                    &mut retry_policy,
+                    &mut outcome,
+                    &format!("worker execute failed: {e}"),
+                    None,
                 );
-                outcome.tasks_blocked += 1;
-                let now_ns = now_unix_ns();
-                let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
             }
         }
     }
@@ -251,6 +264,80 @@ fn apply_outcome(conn: &Connection, task: &KanbanTask, outcome: &WorkerOutcome) 
     let now_ns = now_unix_ns();
     store::patch_task_status(conn, task.task_id, target, now_ns)
         .context("transition InProgress → Review/Blocked")?;
+    Ok(())
+}
+
+/// Pick #6 Phase 4-pre (2026-05-21): one failed attempt — either
+/// the worker errored or returned an empty outcome. Decide whether
+/// to re-queue with a strategy hint (more retry budget) or
+/// transition to Blocked (ceiling hit).
+///
+/// Smallcode equivalent: `checkAndEnforceHardFail` +
+/// `pickDecomposeStrategy` from `bin/governor.js`. Per
+/// `PLAN/SMALLCODE_INTEGRATION_PLAN_2026-05-21.md`.
+fn handle_retryable_failure(
+    conn: &Connection,
+    task: &KanbanTask,
+    retry_policy: &mut WorkerRetryPolicy,
+    outcome: &mut DispatchOutcome,
+    diagnosis: &str,
+    partial_outcome: Option<&WorkerOutcome>,
+) -> anyhow::Result<()> {
+    let attempt = retry_policy.record_attempt(task.task_id);
+    let now_ns = now_unix_ns();
+
+    if retry_policy.should_retry(task.task_id) {
+        // Re-queue with a strategy hint appended to the description.
+        // The dispatcher's next loop pass will pick the task up
+        // again from Backlog with the hint visible to the worker.
+        let strategy = retry_policy.pick_strategy(task.task_id);
+        let hint = strategy.hint();
+        info!(
+            task_id = task.task_id.raw(),
+            attempt = attempt,
+            strategy = strategy.as_str(),
+            diagnosis = %diagnosis,
+            "worker attempt failed; retrying with strategy hint"
+        );
+        // Best-effort hint persistence — failure to append doesn't
+        // block the retry, just means the next attempt runs without
+        // the hint.
+        if let Err(e) = store::append_task_description_hint(conn, task.task_id, hint) {
+            tracing::warn!(
+                task_id = task.task_id.raw(),
+                error = %e,
+                "could not append retry hint to task description"
+            );
+        }
+        // Re-record any partial artefacts (patch path, tests) so
+        // the operator sees what the failed attempt produced even
+        // before the next try.
+        if let Some(o) = partial_outcome {
+            let _ = store::attach_task_artifact(
+                conn,
+                task.task_id,
+                Some(&o.patch_path),
+                Some(o.tests),
+            );
+        }
+        // Back to Backlog for the next dispatch loop iteration.
+        store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
+            .context("re-queue task to Backlog for retry")?;
+        // Don't count as blocked or completed yet — the dispatcher's
+        // budget cap will end the loop if we churn too long.
+    } else {
+        // Ceiling hit — give up + transition to Blocked.
+        let strategy = retry_policy.pick_strategy(task.task_id);
+        warn!(
+            task_id = task.task_id.raw(),
+            attempt = attempt,
+            final_strategy = strategy.as_str(),
+            diagnosis = %diagnosis,
+            "worker retry ceiling hit; task transitioned to Blocked"
+        );
+        outcome.tasks_blocked += 1;
+        let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+    }
     Ok(())
 }
 
