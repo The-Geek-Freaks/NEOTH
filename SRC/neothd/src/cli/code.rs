@@ -62,6 +62,16 @@ pub struct CodeArgs {
     /// placeholder applies — workers store patches, do not apply.
     #[arg(long)]
     pub dispatch: bool,
+    /// Pick #6 Phase 4 (2026-05-21): also APPLY each worker-
+    /// produced patch inside a task-scoped git worktree per the
+    /// Chorus verdict (Strategy B). Requires `--dispatch`. The
+    /// value is the operator's repo root; the worktree lands at
+    /// `<repo_parent>/.neoth-task-<task_id>/` and is left in
+    /// place on success so the operator can inspect /
+    /// cherry-pick. Without this flag the dispatcher only
+    /// stores patches (Phase-3 behaviour preserved).
+    #[arg(long, value_name = "REPO_ROOT", requires = "dispatch")]
+    pub apply: Option<PathBuf>,
     /// Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -151,7 +161,7 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
     print_decomposition_summary(&conn, &result)?;
 
     if args.dispatch {
-        run_dispatch_phase(&conn, &cfg, session_id).await?;
+        run_dispatch_phase(&conn, &cfg, session_id, args.apply.clone()).await?;
     }
 
     // Session moves out of Planning now that work exists. Pick #6
@@ -179,9 +189,13 @@ async fn run_dispatch_phase(
     conn: &Connection,
     cfg: &FreedomConfig,
     session_id: crate::coding::types::KanbanSessionId,
+    apply_repo: Option<PathBuf>,
 ) -> Result<()> {
     use std::sync::Arc;
-    use crate::coding::dispatcher::{DispatchBudget, HemisphereWorkerSet, dispatch_session};
+    use crate::coding::dispatcher::{
+        dispatch_session, dispatch_session_with_apply, DispatchApplyConfig, DispatchBudget,
+        HemisphereWorkerSet,
+    };
     use crate::coding::provider_worker::ProviderWorker;
     use crate::coding::types::Hemisphere;
 
@@ -232,8 +246,27 @@ async fn run_dispatch_phase(
         return Ok(());
     }
 
-    let outcome = dispatch_session(conn, session_id, &workers, DispatchBudget::default())
-        .context("dispatch_session run")?;
+    // Pick #6 Phase 4: route through the apply-aware variant
+    // when the operator passed `--apply <repo>`. Without the
+    // flag, legacy semantics (patch stored, never applied).
+    let outcome = if let Some(repo) = apply_repo.as_ref() {
+        let apply_cfg = DispatchApplyConfig::new(repo);
+        println!(
+            "dispatch: --apply set; patches will land in <{}>/.neoth-task-<id>/",
+            repo.parent().unwrap_or(repo).display()
+        );
+        dispatch_session_with_apply(
+            conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .context("dispatch_session_with_apply run")?
+    } else {
+        dispatch_session(conn, session_id, &workers, DispatchBudget::default())
+            .context("dispatch_session run")?
+    };
 
     println!(
         "dispatch: attempted={} completed={} blocked={} unassigned={}{}",
