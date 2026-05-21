@@ -15,12 +15,13 @@
 //!    outcome shape stays callable so hook-engine integration can
 //!    pre-allocate its result-handling path.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use wasmtime::Module;
 
 use crate::wasm_plugin::discovery::{DiscoveredPlugin, DiscoveryReport};
-use crate::wasm_plugin::engine::NeothEngine;
+use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState};
 
 /// Outcome of compiling one discovered plugin.
 #[derive(Debug, Clone)]
@@ -206,6 +207,82 @@ pub fn invoke_plugin(
     }
 }
 
+/// Daemon-side `hooks::PluginInvoker` impl. Holds the engine, the
+/// compiled-module registry, and the hostcalls linker — everything
+/// `invoke_plugin()` needs to fire a plugin by id. The daemon
+/// bootstrap discovers + compiles + builds an instance of this
+/// struct, then hands an `Arc<CompiledPluginInvoker>` to the hook
+/// engine.
+///
+/// `modules` is a snapshot — re-discovery (operator dropped a new
+/// `~/.neoth/plugins/<id>/`) requires a fresh CompiledPluginInvoker.
+/// The hook dispatcher only borrows the trait, so re-binding is
+/// safe at runtime when the bootstrap detects a change.
+pub struct CompiledPluginInvoker {
+    engine: Arc<NeothEngine>,
+    modules: HashMap<String, Arc<Module>>,
+    linker: Arc<wasmtime::Linker<PluginStoreState>>,
+}
+
+impl CompiledPluginInvoker {
+    /// Build an invoker from a compile-pass result + a pre-built
+    /// linker. Only `Compiled` outcomes are registered; `Failed`
+    /// entries are silently dropped (the operator already saw them
+    /// in `plugins list`). Empty input is legal: the invoker will
+    /// just fail every invoke with "unknown plugin id".
+    pub fn from_compile_outcomes(
+        engine: Arc<NeothEngine>,
+        outcomes: &[CompileOutcome],
+        linker: Arc<wasmtime::Linker<PluginStoreState>>,
+    ) -> Self {
+        let mut modules: HashMap<String, Arc<Module>> = HashMap::new();
+        for o in outcomes {
+            if let CompileOutcome::Compiled { plugin_id, module } = o {
+                modules.insert(plugin_id.clone(), module.clone());
+            }
+        }
+        Self {
+            engine,
+            modules,
+            linker,
+        }
+    }
+
+    /// True when no plugins are registered. Useful for the daemon's
+    /// bootstrap to decide whether to wire the invoker into the
+    /// hook engine at all — wiring an empty invoker is fine but the
+    /// log line `no PluginInvoker wired` is more honest.
+    pub fn is_empty(&self) -> bool {
+        self.modules.is_empty()
+    }
+
+    /// Number of registered plugins. Surfaces in the
+    /// `neoth doctor --explain plugins` output.
+    pub fn len(&self) -> usize {
+        self.modules.len()
+    }
+}
+
+impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
+    fn invoke(&self, plugin_id: &str) -> anyhow::Result<()> {
+        let module = self.modules.get(plugin_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "CompiledPluginInvoker: unknown plugin id {plugin_id:?} — \
+                 known: [{}]",
+                self.modules.keys().cloned().collect::<Vec<_>>().join(", ")
+            )
+        })?;
+        let outcome = invoke_plugin(&self.engine, module, &self.linker, plugin_id);
+        if let Some(err) = outcome.error {
+            anyhow::bail!(
+                "plugin {plugin_id:?} stage={stage:?}: {err}",
+                stage = outcome.stage,
+            );
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +442,94 @@ mod tests {
             err.contains("neoth_run"),
             "error must name the missing export: {err}"
         );
+    }
+
+    #[test]
+    fn compiled_invoker_is_empty_when_no_compiled_outcomes() {
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker = Arc::new(
+            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+                .expect("linker"),
+        );
+        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &[], linker);
+        assert!(inv.is_empty());
+        assert_eq!(inv.len(), 0);
+    }
+
+    #[test]
+    fn compiled_invoker_registers_compiled_outcomes() {
+        // Two compile passes, only one succeeds. The invoker holds
+        // exactly the Compiled module — Failed entries silently drop.
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker = Arc::new(
+            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+                .expect("linker"),
+        );
+        let module = engine
+            .compile_from_bytes(&minimal_wasm())
+            .expect("minimal must compile");
+        let outcomes = vec![
+            CompileOutcome::Compiled {
+                plugin_id: "alpha".into(),
+                module: Arc::new(module),
+            },
+            CompileOutcome::Failed {
+                plugin_id: "broken".into(),
+                error: "non-wasm bytes".into(),
+            },
+        ];
+        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        assert!(!inv.is_empty());
+        assert_eq!(inv.len(), 1);
+    }
+
+    #[test]
+    fn compiled_invoker_errors_on_unknown_plugin_id() {
+        // The hook engine's dispatcher catches this Err + logs a
+        // warn + continues. Pin that the error names both the
+        // unknown id and the registered set so the operator can
+        // diagnose a typo in `~/.neoth/hooks.toml`.
+        use crate::hooks::dispatcher::PluginInvoker;
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker = Arc::new(
+            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+                .expect("linker"),
+        );
+        let module = engine
+            .compile_from_bytes(&minimal_wasm())
+            .expect("minimal must compile");
+        let outcomes = vec![CompileOutcome::Compiled {
+            plugin_id: "alpha".into(),
+            module: Arc::new(module),
+        }];
+        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        let err = inv.invoke("ghost").unwrap_err().to_string();
+        assert!(err.contains("ghost"), "error must name unknown id: {err}");
+        assert!(err.contains("alpha"), "error must list registered ids: {err}");
+    }
+
+    #[test]
+    fn compiled_invoker_propagates_export_lookup_failure() {
+        // Minimal-WASM has no `neoth_run` export — invoke_plugin
+        // surfaces ExportLookup. The PluginInvoker trait impl
+        // promotes that to Err so the hook dispatcher records a
+        // warn (+ continues without blocking the operator turn).
+        use crate::hooks::dispatcher::PluginInvoker;
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let linker = Arc::new(
+            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
+                .expect("linker"),
+        );
+        let module = engine
+            .compile_from_bytes(&minimal_wasm())
+            .expect("minimal must compile");
+        let outcomes = vec![CompileOutcome::Compiled {
+            plugin_id: "alpha".into(),
+            module: Arc::new(module),
+        }];
+        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        let err = inv.invoke("alpha").unwrap_err().to_string();
+        assert!(err.contains("neoth_run"), "error names missing export: {err}");
     }
 
     #[test]
