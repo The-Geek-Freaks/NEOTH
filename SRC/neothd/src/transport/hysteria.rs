@@ -73,6 +73,39 @@ fn default_socks_port() -> u16 {
     1080
 }
 
+/// R-3 (2026-05-21): parse a `hysteria2://auth@host:port` operator
+/// URL into a HysteriaConfig. Tolerant: the scheme is optional
+/// (operators paste `auth@host:port` from shells without escaping);
+/// the port is optional and defaults to 443 (Hysteria's standard).
+///
+/// Errors only when the URL has no `@` separator (no auth supplied)
+/// or no `host` after it. Empty `auth` is legal (free relays use it).
+pub fn parse_hysteria_url(s: &str) -> Result<HysteriaConfig> {
+    use anyhow::Context as _;
+    let trimmed = s.trim();
+    let after_scheme = trimmed
+        .strip_prefix("hysteria2://")
+        .or_else(|| trimmed.strip_prefix("hysteria://"))
+        .unwrap_or(trimmed);
+    let (auth, host_port) = after_scheme
+        .split_once('@')
+        .with_context(|| format!("hysteria URL missing `@`: {s:?}"))?;
+    if host_port.trim().is_empty() {
+        anyhow::bail!("hysteria URL missing host: {s:?}");
+    }
+    // Default to port 443 when omitted.
+    let server = if host_port.contains(':') {
+        host_port.to_string()
+    } else {
+        format!("{host_port}:443")
+    };
+    Ok(HysteriaConfig {
+        server,
+        auth: SecretString::new(auth.to_string()),
+        local_socks_port: default_socks_port(),
+    })
+}
+
 /// Resolved path to the `hysteria` binary. Errors when no candidate
 /// resolves — operator sees the search order in the error body.
 pub fn locate_binary() -> Result<PathBuf> {
@@ -219,6 +252,55 @@ mod tests {
     fn default_socks_port_is_1080() {
         let cfg = HysteriaConfig::default();
         assert_eq!(cfg.local_socks_port, 1080);
+    }
+
+    #[test]
+    fn parse_url_with_explicit_port() {
+        let cfg = parse_hysteria_url("hysteria2://mysecret@relay.example.com:8443").unwrap();
+        assert_eq!(cfg.server, "relay.example.com:8443");
+        assert_eq!(cfg.auth.expose(), "mysecret");
+    }
+
+    #[test]
+    fn parse_url_defaults_port_to_443() {
+        let cfg = parse_hysteria_url("hysteria2://pw@host.example.com").unwrap();
+        assert_eq!(cfg.server, "host.example.com:443");
+    }
+
+    #[test]
+    fn parse_url_accepts_no_scheme() {
+        // Operator pastes the bare `auth@host` form from a shell
+        // session — be tolerant, the scheme is decorative.
+        let cfg = parse_hysteria_url("token@host:443").unwrap();
+        assert_eq!(cfg.server, "host:443");
+        assert_eq!(cfg.auth.expose(), "token");
+    }
+
+    #[test]
+    fn parse_url_accepts_hysteria1_scheme() {
+        let cfg = parse_hysteria_url("hysteria://x@y:1").unwrap();
+        assert_eq!(cfg.server, "y:1");
+    }
+
+    #[test]
+    fn parse_url_bails_without_at_separator() {
+        let err = parse_hysteria_url("just-a-host:443").unwrap_err().to_string();
+        assert!(err.contains("@"));
+    }
+
+    #[test]
+    fn parse_url_bails_on_empty_host() {
+        let err = parse_hysteria_url("auth@").unwrap_err().to_string();
+        assert!(err.contains("host"));
+    }
+
+    #[test]
+    fn parse_url_allows_empty_auth() {
+        // Free relays sometimes use empty auth — pin that we accept
+        // it rather than bailing.
+        let cfg = parse_hysteria_url("@open.relay.io:443").unwrap();
+        assert_eq!(cfg.server, "open.relay.io:443");
+        assert!(cfg.auth.expose().is_empty());
     }
 
     #[test]
