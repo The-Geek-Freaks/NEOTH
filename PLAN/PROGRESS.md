@@ -1853,12 +1853,16 @@ pushed to `origin/main`.
 - ✅ **`neoth code --dispatch`** — end-to-end coding workflow live. `cli/code.rs::run_dispatch_phase` resolves Left/Right/Cerebellum providers via `from_config_for_role` per role, wraps each Box<dyn Provider> in Arc + ProviderWorker (label `<hemisphere>/<provider>` via Box::leak), binds them into HemisphereWorkerSet, and calls `dispatch_session()` with the default budget. Per-role failure logs a warn + tasks on that hemisphere block. Aggregated outcome printed after run.
 - ✅ **Hook engine plugin variant** — `HookAction::Plugin { plugin_id }` 4th variant + new `PluginInvoker` trait + `run_stage_with_plugins(stage, body, hooks, invoker)` entry point. Concrete wasmtime-dep is decoupled: the hook module never imports wasmtime. With no invoker wired, Plugin actions degrade to Allow + warn log (slim daemon stays functional). With invoker, errors propagate as warns + the stage continues (a flaky plugin must not gate the operator pipeline). 3 new tests (30 hooks total).
 
+**Pick #34 closure (2026-05-21):**
+- ✅ Daemon-side `CompiledPluginInvoker` — `Arc<dyn hooks::PluginInvoker>` impl holding (engine, compiled-module-map, hostcalls linker). `invoke(plugin_id)` looks up the registered `Arc<Module>` + delegates to `invoke_plugin()`; promotes `InvocationOutcome.error` to `Result::Err` so the hook dispatcher's warn-on-error path records the failure. Unknown id names both the missing id and the registered set for operator debuggability. 4 new tests.
+- ✅ OnceLock `GLOBAL_INVOKER` plumbing in `hooks::dispatcher` — zero call-site changes; `run_stage()` reads the registered invoker automatically. Pre-bootstrap (slim daemon, tests) sees None → Plugin actions degrade to Allow + warn. `register_global_invoker` + `current_global_invoker` API.
+- ✅ Bootstrap registration site `cli/serve.rs::bootstrap_plugin_invoker(&home)` — runs after freedom.yaml load: discover → compile → register. Empty plugins dir is silent noop; per-plugin compile failures log a warn but the daemon stays up; engine/linker build failure logs warn + returns without registering (Plugin hooks degrade to Allow). Single info log when invoker registers: `plugin invoker registered; hook actions Plugin{..} are live`.
+
 **Still open (not strictly v0.1 blockers):**
 - Pick #6 Phase 4 — Q1 patch-safety actual apply (direct vs git worktree vs stash-revert, Chorus-gated).
 - G-27 sovereign-curve screen transitions (polish, defer).
 - V03-09 phase 2 (download+replace) — needs binary-distribution channel decision.
-- Pick #34 happy-path test — needs `examples/wasm-plugin-hello/plugin.wasm` (real built fixture, not just minimal-WASM).
-- Daemon-side `PluginInvoker` wiring — concrete impl in `wasm_plugin::dispatch` that holds (engine, compiled_modules, hostcalls_linker) + the bootstrap registration site (probably `cli::serve`).
+- Pick #34 happy-path integration test — needs `examples/wasm-plugin-hello/` scaffold producing a real .wasm that exports `fn neoth_run() -> i32`. Discovery + compile + invoke are all unit-tested; the missing piece is a built fixture.
 - R-3 Hysteria transport, R-7 Cluster mode, R-8 Cloud connectors (each multi-day).
 - D14b Qwen Phase 2 (heavy ML forward-pass + sampling-loop).
 - LanceArrow + GitTree real row reads (waiting on Phase-3 C-dep block: `lance`, `git2`).
