@@ -91,6 +91,16 @@ pub struct CloudConfig {
     /// multiple Dropbox accounts in the audit chain.
     #[serde(default)]
     pub label: Option<String>,
+    /// Free-form per-connector options. Recognised keys today:
+    ///   - `local_root` — absolute path to the operator's cloud-
+    ///     vendor-desktop-client synced folder. When set, the
+    ///     connector reads/writes that folder directly via
+    ///     OpenDAL services-fs (R-8 Session 19); the vendor's
+    ///     desktop client handles upstream sync.
+    /// Forward-compat: future per-provider tunables (chunk size,
+    ///   rate limit, etc.) land here without changing the trait.
+    #[serde(default)]
+    pub connector_options: Option<std::collections::HashMap<String, String>>,
 }
 
 fn default_root() -> String {
@@ -128,22 +138,126 @@ pub trait CloudConnector: Send + Sync {
     }
 }
 
-/// Build a connector for the given config. Today every variant
-/// returns a stub that bails on the first list/read call with a
-/// clear "deferred until OpenDAL" error. Operators see the wiring
-/// stub-up cleanly in `neoth doctor --explain cloud-<provider>`
-/// without a runtime panic.
+/// Build a connector for the given config. For providers with a
+/// real wire today (currently the cloud-vendor-desktop-app sync
+/// pattern via the local-fs OpenDAL backend), returns a live
+/// connector; the remaining providers fall back to the stub that
+/// bails with a clear deferred message.
+///
+/// The local-fs path lets an operator point NEOTH at the synced
+/// folder of their Dropbox / OneDrive / GDrive / iCloud desktop
+/// client. The desktop client owns OAuth + upstream sync; NEOTH
+/// just reads + writes the local mirror. This was the explicit
+/// arch-v2 stance ("cloud auth + transport are owned by the
+/// cloud vendor's desktop client, NEOTH stays out of it").
 pub fn connector_for(cfg: &CloudConfig) -> Result<Box<dyn CloudConnector>> {
+    if let Some(root) = local_mirror_root(cfg) {
+        return Ok(Box::new(LocalFsConnector::new(cfg.provider, root)?));
+    }
     Ok(Box::new(StubConnector {
         provider: cfg.provider,
     }))
 }
 
-/// Returns true when the provider has a real implementation wired
-/// (not just the stub). All `false` today — pin returns to flip
-/// per-provider as OpenDAL/IMAP wires land in Phase 2/3.
+/// Pull the local mirror root from a CloudConfig. Operators set
+/// `local_root: /home/alice/Dropbox` (or the platform equivalent)
+/// in `cloud_sources.yaml`; absent → the connector falls back to
+/// stub mode. CloudConfig's serde shape carries this in a
+/// `connector_options` map for forward-compat with per-provider
+/// extras.
+fn local_mirror_root(cfg: &CloudConfig) -> Option<std::path::PathBuf> {
+    cfg.connector_options
+        .as_ref()
+        .and_then(|m| m.get("local_root"))
+        .map(std::path::PathBuf::from)
+}
+
+/// Returns true when the provider has a real implementation
+/// reachable today. With OpenDAL services-fs live, every provider
+/// can run in local-mirror mode when the operator points NEOTH at
+/// the desktop client's synced folder.
 pub fn is_live(_provider: Provider) -> bool {
-    false
+    true
+}
+
+/// Live connector against a local filesystem root, powered by
+/// OpenDAL services-fs. The R-8 Phase-3 dep block lifted in
+/// Session 19 (2026-05-21) — opendal 0.56 ships pure-Rust without
+/// the prior C-dep entanglements.
+struct LocalFsConnector {
+    provider: Provider,
+    op: opendal::blocking::Operator,
+}
+
+impl LocalFsConnector {
+    fn new(provider: Provider, root: std::path::PathBuf) -> Result<Self> {
+        let root_str = root
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("non-UTF8 local_root path: {}", root.display()))?;
+        let builder = opendal::services::Fs::default().root(root_str);
+        let async_op = opendal::Operator::new(builder)
+            .with_context(|| format!("build OpenDAL fs operator at {}", root.display()))?
+            .finish();
+        let op = opendal::blocking::Operator::new(async_op)
+            .context("wrap async OpenDAL operator in blocking shim")?;
+        Ok(Self { provider, op })
+    }
+}
+
+impl CloudConnector for LocalFsConnector {
+    fn provider(&self) -> Provider {
+        self.provider
+    }
+
+    fn list(&self, prefix: &str) -> Result<Vec<CloudFile>> {
+        let entries = self
+            .op
+            .list(prefix)
+            .with_context(|| format!("opendal list prefix={prefix}"))?;
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let path = entry.path().to_string();
+            // OpenDAL emits a directory marker for the prefix
+            // itself; skip so the caller doesn't see "" as a file.
+            if path.is_empty() || path == prefix {
+                continue;
+            }
+            let stat = self
+                .op
+                .stat(&path)
+                .with_context(|| format!("opendal stat {path}"))?;
+            out.push(CloudFile {
+                path,
+                size_bytes: stat.content_length(),
+                // OpenDAL's `Timestamp` is its own wrapper without a
+                // direct `.timestamp()` method on every version; pull
+                // the unix-seconds via Display ("YYYY-MM-DDTHH:MM:SSZ")
+                // → chrono parse when needed. v0.1 wire skips the
+                // exact timestamp and reports 0 for first iteration —
+                // dedupe path falls back to size+path. Wired
+                // properly when the ingest path actually consumes
+                // modified_unix.
+                modified_unix: 0,
+                provider: self.provider,
+            });
+        }
+        Ok(out)
+    }
+
+    fn read(&self, path: &str) -> Result<Vec<u8>> {
+        let buf = self
+            .op
+            .read(path)
+            .with_context(|| format!("opendal read {path}"))?;
+        Ok(buf.to_vec())
+    }
+
+    fn write(&self, path: &str, bytes: &[u8]) -> Result<()> {
+        self.op
+            .write(path, bytes.to_vec())
+            .with_context(|| format!("opendal write {path}"))?;
+        Ok(())
+    }
 }
 
 /// Load a list of `CloudConfig` rows from a YAML file. Operator
@@ -283,6 +397,7 @@ sources:
             oauth_token: "x".into(),
             root_path: "/".into(),
             label: None,
+            connector_options: None,
         };
         let conn = connector_for(&cfg).unwrap();
         assert_eq!(conn.provider(), Provider::Dropbox);
@@ -300,6 +415,7 @@ sources:
             oauth_token: "x".into(),
             root_path: "/".into(),
             label: None,
+            connector_options: None,
         };
         let conn = connector_for(&cfg).unwrap();
         let err = conn.write("/foo", b"x").unwrap_err().to_string();
@@ -310,9 +426,13 @@ sources:
     }
 
     #[test]
-    fn is_live_returns_false_for_every_provider_today() {
-        // Pin status so a future commit that flips one provider
-        // to live without updating Tests + docs surfaces here.
+    fn is_live_returns_true_now_that_opendal_local_fs_landed() {
+        // R-8 Session 19 (2026-05-21): is_live flipped to true
+        // across all providers because the LocalFsConnector path
+        // works for every provider when the operator's desktop
+        // client mirrors that provider to a local folder. Future
+        // per-provider OAuth direct-API impls keep is_live=true;
+        // pin the status here.
         for p in [
             Provider::Dropbox,
             Provider::OneDrive,
@@ -321,7 +441,110 @@ sources:
             Provider::ICloud,
             Provider::Gmail,
         ] {
-            assert!(!is_live(p), "{} unexpectedly live", p.as_str());
+            assert!(is_live(p), "{} unexpectedly stub", p.as_str());
         }
+    }
+
+    // ── R-8 LocalFsConnector round-trip (Session 19) ────────────────
+
+    fn cfg_with_local_root(provider: Provider, root: &std::path::Path) -> CloudConfig {
+        let mut opts = std::collections::HashMap::new();
+        opts.insert("local_root".to_string(), root.to_string_lossy().into_owned());
+        CloudConfig {
+            provider,
+            oauth_token: String::new(),
+            root_path: "/".into(),
+            label: None,
+            connector_options: Some(opts),
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_fs_connector_round_trip_write_read_list() {
+        // OpenDAL's blocking shim spawns its own runtime; running
+        // it inside a single-threaded tokio runtime panics with
+        // "cannot start a runtime from within a runtime". We bridge
+        // via spawn_blocking so the shim runs on a worker thread
+        // outside the active runtime context. Daemon code paths
+        // already wrap CloudConnector calls in spawn_blocking per
+        // the trait doc-comment.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let entries = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<CloudFile>> {
+            let cfg = {
+                let mut opts = std::collections::HashMap::new();
+                opts.insert("local_root".to_string(), root.to_string_lossy().into_owned());
+                CloudConfig {
+                    provider: Provider::Dropbox,
+                    oauth_token: String::new(),
+                    root_path: "/".into(),
+                    label: None,
+                    connector_options: Some(opts),
+                }
+            };
+            let conn = connector_for(&cfg)?;
+            assert_eq!(conn.provider(), Provider::Dropbox);
+            conn.write("hello.txt", b"world!")?;
+            let got = conn.read("hello.txt")?;
+            assert_eq!(got, b"world!");
+            conn.list("/")
+        })
+        .await
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.path.contains("hello.txt")),
+            "list must surface hello.txt; got {entries:?}"
+        );
+        let row = entries
+            .iter()
+            .find(|e| e.path.contains("hello.txt"))
+            .unwrap();
+        assert_eq!(row.size_bytes, 6);
+        assert_eq!(row.provider, Provider::Dropbox);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_fs_connector_handles_missing_path_gracefully() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let err = tokio::task::spawn_blocking(move || {
+            let cfg = {
+                let mut opts = std::collections::HashMap::new();
+                opts.insert("local_root".to_string(), root.to_string_lossy().into_owned());
+                CloudConfig {
+                    provider: Provider::OneDrive,
+                    oauth_token: String::new(),
+                    root_path: "/".into(),
+                    label: None,
+                    connector_options: Some(opts),
+                }
+            };
+            let conn = connector_for(&cfg).unwrap();
+            conn.read("does_not_exist.txt").unwrap_err().to_string()
+        })
+        .await
+        .unwrap();
+        assert!(
+            err.contains("opendal read") || err.contains("does_not_exist"),
+            "diagnostic must name the operation/path: {err}"
+        );
+    }
+
+    #[test]
+    fn connector_for_falls_back_to_stub_when_no_local_root() {
+        // Backward compat: cloud_sources.yaml rows without
+        // connector_options still route to the stub.
+        let cfg = CloudConfig {
+            provider: Provider::Gmail,
+            oauth_token: "x".into(),
+            root_path: "/".into(),
+            label: None,
+            connector_options: None,
+        };
+        let conn = connector_for(&cfg).unwrap();
+        let err = conn.list("/").unwrap_err().to_string();
+        assert!(err.contains("OpenDAL"), "stub fired: {err}");
     }
 }

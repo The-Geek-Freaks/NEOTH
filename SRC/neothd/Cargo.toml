@@ -112,6 +112,23 @@ flate2 = "1.0"
 # stays honoured.
 zip     = { version = "1", default-features = false, features = ["deflate"] }
 lzma-rs = "0.3"
+
+# R-7 unblock (Session 19, 2026-05-21): pure-Rust Hyperswarm port for
+# the cluster module's PeerLoadRegistry → live peer discovery. Was
+# Phase-3 dep-blocked while `hyperswarm-rs` lived in a half-broken
+# state on crates.io; `peeroxide` 1.3.x is the maintained pure-Rust
+# replacement that exposes the same topic-based discovery + hole-
+# punching primitives.
+peeroxide = "1.3"
+
+# R-8 unblock (Session 19): Apache OpenDAL — unified cloud-storage
+# layer. Replaces the StubConnector per-provider deferred bail in
+# `cloud::*`. `default-features = false` strips every backend; we
+# opt into Dropbox / S3 / GCS / Azure individually as operator
+# configs land. Today: services-fs alone so the connector trait can
+# round-trip a local-folder backend for tests; cloud backends
+# enabled by operator-facing cargo features in a follow-up.
+opendal = { version = "0.56", default-features = false, features = ["services-fs", "blocking"] }
 # Promoted from dev-dependencies (Session 19) — the self-update apply
 # path stages the extracted binary in a same-volume tempdir before
 # atomic_replace_binary renames it onto the running daemon path.

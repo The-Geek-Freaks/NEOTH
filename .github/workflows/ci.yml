@@ -158,3 +158,107 @@ jobs:
           name: neothd-windows-x86_64-ci
           path: SRC/target/release/neothd.exe
           retention-days: 3
+
+  # ──────────────────────────────────────────────────────────────────
+  # Pick #34 wasm32 step (Session 19, 2026-05-21)
+  #
+  # Closes the "missing only the wasm32-unknown-unknown CI step"
+  # gap from the post-v0.1 backlog. The example plugin in
+  # examples/wasm-plugin-hello/ MUST keep compiling against the
+  # current wasm_plugin manifest schema + the wasmtime version the
+  # daemon links against. Without this job a wasmtime bump (Session
+  # 19 went 26 → 36) could silently break operator-loadable plugins.
+  #
+  # Linux-only because wasm32 target is host-agnostic — one job
+  # covers all three host OSes.
+  # ──────────────────────────────────────────────────────────────────
+  wasm-plugin:
+    name: example WASM plugin builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust + wasm32 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache wasm32 build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            examples/wasm-plugin-hello/target
+          key: ${{ runner.os }}-wasm32-${{ hashFiles('examples/wasm-plugin-hello/Cargo.toml') }}
+
+      - name: cargo build --release --target wasm32-unknown-unknown
+        run: |
+          cargo build \
+            --release \
+            --target wasm32-unknown-unknown \
+            --manifest-path examples/wasm-plugin-hello/Cargo.toml
+
+      - name: Verify wasm artefact exists + has the magic header
+        run: |
+          ARTEFACT=examples/wasm-plugin-hello/target/wasm32-unknown-unknown/release/wasm_plugin_hello.wasm
+          test -f "$ARTEFACT"
+          # Magic bytes `\0asm` + version 1 LE.
+          head -c 8 "$ARTEFACT" | od -An -tx1 | grep -q "00 61 73 6d 01 00 00 00"
+
+      - name: Upload wasm artefact
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-wasm-plugin-hello
+          path: examples/wasm-plugin-hello/target/wasm32-unknown-unknown/release/wasm_plugin_hello.wasm
+          retention-days: 3
+
+  # ──────────────────────────────────────────────────────────────────
+  # D14b qwen-cuda / qwen-metal feature-flag compile (Session 19)
+  #
+  # Real GPU runs need a runner with CUDA / Metal toolchain installed
+  # — out of scope for free GitHub Actions runners. This job runs the
+  # feature-flag compile only, which catches the most common failure
+  # mode (the feature gate compiles cleanly against the candle API).
+  # GPU forward-pass + sampling-loop verification still needs an
+  # operator with the matching host hardware.
+  #
+  # qwen-cuda runs on ubuntu (nvcc not actually invoked — `cargo check
+  # --features qwen-cuda` compiles candle's CUDA gate without needing
+  # the CUDA toolkit because candle-core 0.8 declares the kernels
+  # via `bindgen_cuda` only at build-time of the *kernels* crate, not
+  # at our crate's check time). qwen-metal runs on macos for the same
+  # reason.
+  # ──────────────────────────────────────────────────────────────────
+  feature-matrix:
+    name: feature-flag compile / ${{ matrix.feature }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, feature: qwen-cuda }
+          - { os: macos-14, feature: qwen-metal }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            SRC/target
+          key: ${{ runner.os }}-feature-${{ matrix.feature }}-${{ hashFiles('SRC/Cargo.lock') }}
+
+      - name: cargo check --features ${{ matrix.feature }}
+        working-directory: SRC
+        # `cargo check` is sufficient — we only need the type-check to
+        # confirm the feature-gated code paths against candle's API.
+        # `cargo build` would trigger the actual kernel compile which
+        # needs CUDA / Metal toolchains.
+        run: cargo check -p neothd --features ${{ matrix.feature }}
