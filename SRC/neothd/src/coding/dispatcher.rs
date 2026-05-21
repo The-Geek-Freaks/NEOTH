@@ -130,6 +130,16 @@ pub struct DispatchApplyConfig {
     pub test_cmd: Option<String>,
     pub test_timeout: std::time::Duration,
     pub wal_writer: WalWriterRef,
+    /// Pick #6 Phase 4 defense-in-depth (Chorus Q1a) —
+    /// per-task `permissions::evaluate(PatchApplyToRepo, level)`
+    /// gate. When `Some`, the dispatcher consults the policy
+    /// BEFORE creating the worktree. Strict → Deny (task
+    /// blocks); Standard/Elevated/Full → Confirm via the
+    /// CLI's pre-flight prompt (operator already opted in by
+    /// passing `--apply` in `neoth code`, so the in-loop
+    /// Confirm degrades to Allow). When `None`, the gate is
+    /// skipped (CLI one-shot operator-already-confirmed).
+    pub autonomy: Option<crate::permissions::AutonomyLevel>,
 }
 
 impl std::fmt::Debug for DispatchApplyConfig {
@@ -139,6 +149,7 @@ impl std::fmt::Debug for DispatchApplyConfig {
             .field("test_cmd", &self.test_cmd)
             .field("test_timeout", &self.test_timeout)
             .field("wal_writer", &self.wal_writer.as_ref().map(|_| "<live>"))
+            .field("autonomy", &self.autonomy)
             .finish()
     }
 }
@@ -150,7 +161,19 @@ impl DispatchApplyConfig {
             test_cmd: None,
             test_timeout: std::time::Duration::from_secs(5 * 60),
             wal_writer: None,
+            autonomy: None,
         }
+    }
+
+    /// Attach the operator's autonomy level so the dispatcher
+    /// runs `permissions::evaluate(PatchApplyToRepo, level)`
+    /// per task. Strict denies the task before any IO; other
+    /// levels Confirm but the caller (CLI) has already
+    /// confirmed by passing `--apply` so the in-loop Confirm
+    /// degrades to Allow.
+    pub fn with_autonomy(mut self, level: crate::permissions::AutonomyLevel) -> Self {
+        self.autonomy = Some(level);
+        self
     }
 
     /// Builder-style — flip the operator's test command on
@@ -396,6 +419,37 @@ fn apply_patch_via_worktree(
         // Worker produced no patch — nothing to apply. Caller
         // already promoted to Review based on the test summary.
         return Ok(());
+    }
+
+    // Pick #6 Phase 4 defense-in-depth (Chorus Q1a). When the
+    // caller passed an autonomy level, run the permission gate
+    // BEFORE any IO. Strict denies outright; other levels are
+    // Confirm — degraded to Allow because the CLI already
+    // prompted via `--apply` (operator-confirmed once,
+    // dispatcher trusts that signal for the session).
+    if let Some(level) = cfg.autonomy {
+        use crate::permissions::{evaluate, Action, Decision};
+        let action = Action::PatchApplyToRepo {
+            repo_root: cfg.repo_root.clone(),
+            task_id: task.task_id.raw() as u64,
+        };
+        match evaluate(&action, level) {
+            Decision::Allow => {}
+            Decision::Confirm(_) => {
+                // CLI-driven runs: operator already confirmed
+                // by passing `--apply`. Future unattended-
+                // scheduled-apply path (lives in cli::serve,
+                // not the CLI one-shot) will surface this
+                // Confirm to the operator via the existing
+                // PermissionConfirm channel.
+            }
+            Decision::Deny(reason) => {
+                return Err(format!(
+                    "permission gate denied apply for task {}: {reason}",
+                    task.task_id.raw()
+                ));
+            }
+        }
     }
 
     let wt_path = crate::coding::worktree::create_task_worktree(&cfg.repo_root, task.task_id)
@@ -1334,6 +1388,94 @@ mod tests {
             bytes.contains(&crate::wal::events::EVENT_TYPE_PATCH_APPLIED),
             "WAL segment must contain a 0xD3 byte from PATCH_APPLIED frame"
         );
+
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+    }
+
+    #[test]
+    fn dispatch_session_with_apply_strict_autonomy_denies_before_any_io() {
+        // Strict autonomy MUST refuse the apply BEFORE creating
+        // the worktree. The task ends in Blocked/Backlog via the
+        // retry path; no `.neoth-task-N/` directory is created.
+        let (dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "phase4-strict",
+            }),
+        );
+
+        // Use a path that does NOT need to exist — the gate
+        // fires before we ever touch the filesystem.
+        let fake_repo = dir.path().join("never-exists");
+        let apply_cfg = DispatchApplyConfig::new(&fake_repo)
+            .with_autonomy(crate::permissions::AutonomyLevel::Strict);
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .expect("dispatch with strict autonomy");
+
+        assert_eq!(outcome.tasks_completed, 0, "strict must NOT complete");
+        // No worktree created — the gate denied before
+        // worktree::create_task_worktree ran.
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(!wt.exists(), "strict gate must run BEFORE worktree IO");
+    }
+
+    #[test]
+    fn dispatch_session_with_apply_full_autonomy_still_applies_under_confirm() {
+        // Full autonomy yields Decision::Confirm for
+        // PatchApplyToRepo (v0.2-conservative). The CLI
+        // pre-confirmed via --apply, so the dispatcher
+        // degrades Confirm → Allow and the apply lands.
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let patch_path = dir.path().join("change.patch");
+        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: outcome_template,
+                name: "phase4-full-autonomy",
+            }),
+        );
+
+        let apply_cfg = DispatchApplyConfig::new(&repo)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full);
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .expect("dispatch full");
+
+        assert_eq!(outcome.tasks_completed, 1, "full → confirm → allow → complete");
 
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);

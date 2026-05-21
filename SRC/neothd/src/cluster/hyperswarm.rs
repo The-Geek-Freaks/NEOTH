@@ -66,6 +66,14 @@ use super::heartbeat::{
     PROTOCOL_VERSION,
 };
 use super::{PeerId, PeerLoad, PeerLoadRegistry};
+use crate::wal::writer::WalWriterHandle;
+
+/// Optional WAL writer handle threaded into `spawn_discovery`
+/// so each per-peer task emits `0xE0..=0xE5 CLUSTER_*` frames
+/// into the audit chain. CLI one-shots that don't have a
+/// live writer pass `None`; the daemon's `cli::serve` path
+/// threads its handle through.
+pub type ClusterWalWriter = Option<Arc<WalWriterHandle>>;
 
 /// Derive a 32-byte Hyperswarm topic from an operator-supplied
 /// cluster name. Pure function — operator-facing wire form is
@@ -121,6 +129,19 @@ pub async fn spawn_discovery(
     cluster_name: &str,
     registry: Arc<Mutex<PeerLoadRegistry>>,
 ) -> Result<SwarmHandle> {
+    spawn_discovery_with_wal(cluster_name, registry, None).await
+}
+
+/// Same as [`spawn_discovery`] but threads a live
+/// `WalWriterHandle` into every per-peer task so cluster
+/// lifecycle events emit `0xE0..=0xE5` frames. Used by
+/// `cli::serve` which holds the writer; CLI one-shots call
+/// [`spawn_discovery`] (no writer).
+pub async fn spawn_discovery_with_wal(
+    cluster_name: &str,
+    registry: Arc<Mutex<PeerLoadRegistry>>,
+    wal_writer: ClusterWalWriter,
+) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     let config = peeroxide::SwarmConfig::with_public_bootstrap();
     let (_swarm_task, handle, mut conn_rx) = peeroxide::spawn(config)
@@ -147,14 +168,25 @@ pub async fn spawn_discovery(
             let cluster = cluster_name_owned.clone();
             let own_id = own_peer_id.clone();
             let reg = Arc::clone(&registry);
+            let wal = wal_writer.clone();
             tokio::spawn(async move {
+                let peer_hex_for_wal = peer_hex.clone();
                 if let Err(e) =
-                    handle_peeroxide_connection(conn, cluster, own_id, reg).await
+                    handle_peeroxide_connection(conn, cluster, own_id, reg, wal.clone()).await
                 {
                     warn!(
                         peer = %peer_hex,
                         error = %e,
                         "hyperswarm: peer session ended with error"
+                    );
+                    // 0xE1 with reason=error if we never made it through handshake
+                    // is also recorded inside the handler; this branch covers
+                    // late-failure paths.
+                    emit_peer_disconnected_wal(
+                        wal.as_deref(),
+                        &peer_hex_for_wal,
+                        "error",
+                        Some(&e.to_string()),
                     );
                 } else {
                     debug!(peer = %peer_hex, "hyperswarm: peer session ended cleanly");
@@ -191,7 +223,9 @@ async fn handle_peeroxide_connection(
     cluster_name: String,
     own_peer_id: String,
     registry: Arc<Mutex<PeerLoadRegistry>>,
+    wal_writer: ClusterWalWriter,
 ) -> Result<()> {
+    let remote_pk_hex = hex_encode(conn.remote_public_key());
     let stream = &mut conn.peer.stream;
 
     // ── Step 1: send our Hello ──
@@ -224,11 +258,40 @@ async fn handle_peeroxide_connection(
     // ── Step 2: read peer's Hello ──
     let peer_bytes = match stream.read().await {
         Ok(Some(b)) => b,
-        Ok(None) => anyhow::bail!("peer closed before sending Hello"),
-        Err(e) => return Err(anyhow::anyhow!("read peer Hello: {e}")),
+        Ok(None) => {
+            emit_peer_rejected_wal(
+                wal_writer.as_deref(),
+                "(unknown)",
+                "peer closed before sending Hello",
+            );
+            anyhow::bail!("peer closed before sending Hello");
+        }
+        Err(e) => {
+            emit_peer_rejected_wal(
+                wal_writer.as_deref(),
+                "(unknown)",
+                &format!("read peer Hello: {e}"),
+            );
+            return Err(anyhow::anyhow!("read peer Hello: {e}"));
+        }
     };
-    let peer_frame = heartbeat::decode_frame(&peer_bytes).context("decode peer Hello")?;
+    let peer_frame = match heartbeat::decode_frame(&peer_bytes) {
+        Ok(f) => f,
+        Err(e) => {
+            emit_peer_rejected_wal(
+                wal_writer.as_deref(),
+                "(unknown)",
+                &format!("decode peer Hello: {e}"),
+            );
+            return Err(e).context("decode peer Hello");
+        }
+    };
     if peer_frame.kind != FrameKind::Hello {
+        emit_peer_rejected_wal(
+            wal_writer.as_deref(),
+            &peer_frame.peer_id,
+            &format!("peer first frame was {:?}, expected Hello", peer_frame.kind),
+        );
         anyhow::bail!(
             "peer first frame was {:?}, expected Hello",
             peer_frame.kind
@@ -237,16 +300,37 @@ async fn handle_peeroxide_connection(
     let peer_id = peer_frame.peer_id.clone();
     let mut peer_capabilities: Vec<String> = match peer_frame.body {
         FrameBody::Hello(ref body) => {
-            heartbeat::validate_hello(body).context("validate peer Hello")?;
+            if let Err(e) = heartbeat::validate_hello(body) {
+                emit_peer_rejected_wal(
+                    wal_writer.as_deref(),
+                    &peer_id,
+                    &format!("validate peer Hello: {e}"),
+                );
+                return Err(e).context("validate peer Hello");
+            }
             let expected_hash = derive_topic(&cluster_name);
             if body.cluster_name_hash != expected_hash {
+                emit_peer_rejected_wal(
+                    wal_writer.as_deref(),
+                    &peer_id,
+                    &format!(
+                        "cluster_name_hash mismatch for local cluster `{cluster_name}`"
+                    ),
+                );
                 anyhow::bail!(
                     "peer cluster_name_hash does not match local cluster `{cluster_name}`"
                 );
             }
             body.capabilities.clone()
         }
-        _ => anyhow::bail!("peer Hello frame body shape mismatch"),
+        _ => {
+            emit_peer_rejected_wal(
+                wal_writer.as_deref(),
+                &peer_id,
+                "peer Hello frame body shape mismatch",
+            );
+            anyhow::bail!("peer Hello frame body shape mismatch");
+        }
     };
 
     info!(
@@ -254,24 +338,234 @@ async fn handle_peeroxide_connection(
         capability_count = peer_capabilities.len(),
         "hyperswarm: handshake complete"
     );
+    emit_peer_connected_wal(
+        wal_writer.as_deref(),
+        &peer_id,
+        &remote_pk_hex,
+        &cluster_name,
+    );
 
     // ── Step 3: inbound loop ──
+    let mut seen_first_heartbeat = false;
+    let mut last_healthy: Option<bool> = None;
+    let mut last_capabilities_hash: Option<[u8; 32]> = None;
+
     loop {
         let bytes = match stream.read().await {
             Ok(Some(b)) => b,
             Ok(None) => {
                 info!(peer_id = %peer_id, "hyperswarm: peer disconnected cleanly");
+                emit_peer_disconnected_wal(wal_writer.as_deref(), &peer_id, "eof", None);
                 return Ok(());
             }
-            Err(e) => return Err(anyhow::anyhow!("read peer frame: {e}")),
+            Err(e) => {
+                emit_peer_disconnected_wal(
+                    wal_writer.as_deref(),
+                    &peer_id,
+                    "error",
+                    Some(&e.to_string()),
+                );
+                return Err(anyhow::anyhow!("read peer frame: {e}"));
+            }
         };
-        let frame = heartbeat::decode_frame(&bytes).context("decode peer frame")?;
+        let frame = match heartbeat::decode_frame(&bytes) {
+            Ok(f) => f,
+            Err(e) => {
+                emit_peer_disconnected_wal(
+                    wal_writer.as_deref(),
+                    &peer_id,
+                    "error",
+                    Some(&e.to_string()),
+                );
+                return Err(e).context("decode peer frame");
+            }
+        };
+        let kind = frame.kind;
+        let body_clone = frame.body.clone();
         match handle_inbound_frame(frame, &peer_id, &mut peer_capabilities, &registry) {
-            Ok(true) => continue,
-            Ok(false) => return Ok(()),
-            Err(e) => return Err(e),
+            Ok(true) => {
+                // Audit-anchor the heartbeat-band events.
+                if kind == FrameKind::Heartbeat {
+                    if let FrameBody::Heartbeat(b) = body_clone {
+                        if !seen_first_heartbeat {
+                            seen_first_heartbeat = true;
+                            emit_heartbeat_first_wal(wal_writer.as_deref(), &peer_id, &b);
+                        }
+                        if let Some(prev) = last_healthy {
+                            if prev != b.healthy {
+                                emit_peer_health_changed_wal(
+                                    wal_writer.as_deref(),
+                                    &peer_id,
+                                    prev,
+                                    b.healthy,
+                                    b.tokens_per_sec,
+                                );
+                            }
+                        }
+                        last_healthy = Some(b.healthy);
+
+                        if let Some(prev_hash) = last_capabilities_hash {
+                            if prev_hash != b.capabilities_hash {
+                                emit_capabilities_changed_wal(
+                                    wal_writer.as_deref(),
+                                    &peer_id,
+                                    &peer_capabilities,
+                                );
+                            }
+                        }
+                        last_capabilities_hash = Some(b.capabilities_hash);
+                    }
+                } else if kind == FrameKind::CapabilityUpdate {
+                    emit_capabilities_changed_wal(
+                        wal_writer.as_deref(),
+                        &peer_id,
+                        &peer_capabilities,
+                    );
+                }
+                continue;
+            }
+            Ok(false) => {
+                // Goodbye path — kind is Goodbye by elimination
+                emit_peer_disconnected_wal(wal_writer.as_deref(), &peer_id, "goodbye", None);
+                return Ok(());
+            }
+            Err(e) => {
+                emit_peer_disconnected_wal(
+                    wal_writer.as_deref(),
+                    &peer_id,
+                    "error",
+                    Some(&e.to_string()),
+                );
+                return Err(e);
+            }
         }
     }
+}
+
+// ── WAL emit helpers — best-effort, never bubble up ──────────────
+
+fn emit_peer_connected_wal(
+    writer: Option<&WalWriterHandle>,
+    peer_id: &str,
+    remote_pk_hex: &str,
+    cluster: &str,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "peer_id": peer_id,
+        "remote_public_key_hex": remote_pk_hex,
+        "cluster": cluster,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_CONNECTED, payload);
+}
+
+fn emit_peer_disconnected_wal(
+    writer: Option<&WalWriterHandle>,
+    peer_id: &str,
+    reason: &str,
+    error: Option<&str>,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "peer_id": peer_id,
+        "reason": reason,
+        "error": error.map(crate::security::redact::redact_text),
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_DISCONNECTED, payload);
+}
+
+fn emit_peer_rejected_wal(
+    writer: Option<&WalWriterHandle>,
+    peer_id_claim: &str,
+    reason: &str,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "peer_id_claim": peer_id_claim,
+        "reason": crate::security::redact::redact_text(reason),
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_REJECTED, payload);
+}
+
+fn emit_heartbeat_first_wal(
+    writer: Option<&WalWriterHandle>,
+    peer_id: &str,
+    body: &HeartbeatBody,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "peer_id": peer_id,
+        "tokens_per_sec": body.tokens_per_sec,
+        "healthy": body.healthy,
+        "inflight_requests": body.inflight_requests,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST, payload);
+}
+
+fn emit_peer_health_changed_wal(
+    writer: Option<&WalWriterHandle>,
+    peer_id: &str,
+    from_healthy: bool,
+    to_healthy: bool,
+    last_tps: f64,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "peer_id": peer_id,
+        "from_healthy": from_healthy,
+        "to_healthy": to_healthy,
+        "last_tps": last_tps,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED, payload);
+}
+
+fn emit_capabilities_changed_wal(
+    writer: Option<&WalWriterHandle>,
+    peer_id: &str,
+    capabilities: &[String],
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "peer_id": peer_id,
+        "capabilities": capabilities,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED, payload);
+}
+
+fn fire_wal(writer: &WalWriterHandle, event_type: u8, payload: Vec<u8>) {
+    let header = crate::wal::make_header(event_type, &payload);
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        warn!(
+            event_type = format!("0x{event_type:02X}"),
+            error = %e,
+            "hyperswarm: WAL emit failed (best-effort)"
+        );
+    }
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // ── Connection-loop primitives (testable against tokio::io::duplex) ────────
