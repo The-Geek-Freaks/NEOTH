@@ -200,6 +200,85 @@ pub struct FreedomConfig {
     /// (or similar).
     #[serde(default)]
     pub code_map: CodeMapConfig,
+    /// V03-09 Phase 2a (2026-05-21): daemon self-update policy.
+    /// `enabled: false` keeps the daemon silent (no check, no nag,
+    /// no download). `enabled: true && auto_apply: false` =
+    /// background check + nag in `neoth doctor` output (Phase 1
+    /// behaviour today). `auto_apply: true` lets Phase 2b
+    /// download + verify + extract + atomic-replace once that
+    /// landing arrives. Operators on a forked build override
+    /// `repo` to point at their own release feed.
+    #[serde(default)]
+    pub auto_update: AutoUpdateConfig,
+}
+
+/// V03-09 Phase 2a — operator-facing self-update knobs.
+///
+/// Field semantics:
+///   - `enabled` — master switch. Default `false` so a stock
+///     contributor build (or a daemon running behind a
+///     restricted-egress firewall) never reaches out to GitHub
+///     for releases. Operators flip to `true` during onboarding.
+///   - `auto_apply` — Phase 2b consumes this. `true` = download
+///     + verify SHA-256 + extract + atomic-replace + emit
+///     "restart required" hint. `false` (default) = check-only,
+///     surface the new version + URL in `neoth doctor` and let
+///     the operator install manually.
+///   - `channel` — release channel. Today only `"stable"` is
+///     wired; `"rc"` + `"nightly"` are reserved for future
+///     cargo-dist matrix variants.
+///   - `check_interval_secs` — how often the background check
+///     fires. Defaults to 24h (86400s). `0` disables the
+///     periodic task even when `enabled: true` (operator runs
+///     `neoth update --self` on demand).
+///   - `repo` — owner/repo slug. Default
+///     `"The-Geek-Freaks/NEOTH"`. Forks override.
+///   - `target_triple` — operator override for the cargo-dist
+///     target triple used during asset lookup. `None` (default)
+///     means the daemon detects via
+///     [`updater::self_update::host_target_triple`]; set
+///     explicitly when running an unusual host
+///     (e.g. `x86_64-unknown-linux-musl` against a glibc-built
+///     release).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AutoUpdateConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_apply: bool,
+    #[serde(default = "default_update_channel")]
+    pub channel: String,
+    #[serde(default = "default_check_interval_secs")]
+    pub check_interval_secs: u64,
+    #[serde(default = "default_update_repo")]
+    pub repo: String,
+    #[serde(default)]
+    pub target_triple: Option<String>,
+}
+
+fn default_update_channel() -> String {
+    "stable".to_string()
+}
+
+fn default_check_interval_secs() -> u64 {
+    24 * 60 * 60
+}
+
+fn default_update_repo() -> String {
+    "The-Geek-Freaks/NEOTH".to_string()
+}
+
+impl Default for AutoUpdateConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            auto_apply: false,
+            channel: default_update_channel(),
+            check_interval_secs: default_check_interval_secs(),
+            repo: default_update_repo(),
+            target_triple: None,
+        }
+    }
 }
 
 /// K-Repo-Map Phase 3c (Session 14 Pick #26) — code-map injection
@@ -947,6 +1026,90 @@ mod tests {
             yaml.contains("session_scope: singleton"),
             "expected snake_case scope, got: {yaml}"
         );
+    }
+
+    // ── V03-09 Phase 2a — AutoUpdateConfig ─────────────────────────
+
+    #[test]
+    fn auto_update_config_defaults_are_check_only_disabled() {
+        // Master switch is OFF; auto_apply is OFF. Stock build does
+        // nothing on the update front until the operator opts in.
+        let cfg = AutoUpdateConfig::default();
+        assert!(!cfg.enabled, "auto-update master switch must default OFF");
+        assert!(!cfg.auto_apply, "auto_apply must default OFF (check-only)");
+        assert_eq!(cfg.channel, "stable");
+        assert_eq!(cfg.check_interval_secs, 24 * 60 * 60);
+        assert_eq!(cfg.repo, "The-Geek-Freaks/NEOTH");
+        assert!(cfg.target_triple.is_none());
+    }
+
+    #[test]
+    fn auto_update_config_inherits_default_when_yaml_omits_block() {
+        // Backward compat with freedom.yaml written before this
+        // field existed: load must succeed + populate the default.
+        let dir = tempdir().unwrap();
+        let path = write_yaml(dir.path(), "operator_id: alice\n");
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert_eq!(cfg.auto_update, AutoUpdateConfig::default());
+    }
+
+    #[test]
+    fn auto_update_config_partial_block_fills_defaults() {
+        // Operator only writes `enabled: true` — channel, repo,
+        // interval, etc. must inherit defaults so a future field
+        // addition doesn't break existing configs.
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nauto_update:\n  enabled: true\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.auto_update.enabled);
+        assert!(!cfg.auto_update.auto_apply);
+        assert_eq!(cfg.auto_update.channel, "stable");
+        assert_eq!(cfg.auto_update.repo, "The-Geek-Freaks/NEOTH");
+    }
+
+    #[test]
+    fn auto_update_config_full_block_round_trips() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nauto_update:\n  enabled: true\n  auto_apply: true\n  channel: rc\n  check_interval_secs: 3600\n  repo: example/fork\n  target_triple: x86_64-unknown-linux-musl\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.auto_update.enabled);
+        assert!(cfg.auto_update.auto_apply);
+        assert_eq!(cfg.auto_update.channel, "rc");
+        assert_eq!(cfg.auto_update.check_interval_secs, 3_600);
+        assert_eq!(cfg.auto_update.repo, "example/fork");
+        assert_eq!(
+            cfg.auto_update.target_triple.as_deref(),
+            Some("x86_64-unknown-linux-musl")
+        );
+    }
+
+    #[test]
+    fn auto_update_config_serializes_to_yaml_with_snake_case_fields() {
+        // Wire form pin: operator-facing keys are snake_case so the
+        // wizard + docs match.
+        let cfg = FreedomConfig {
+            operator_id: Some("alice".to_string()),
+            auto_update: AutoUpdateConfig {
+                enabled: true,
+                auto_apply: true,
+                channel: "stable".to_string(),
+                check_interval_secs: 7_200,
+                repo: "The-Geek-Freaks/NEOTH".to_string(),
+                target_triple: None,
+            },
+            ..Default::default()
+        };
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        assert!(yaml.contains("auto_update:"));
+        assert!(yaml.contains("auto_apply: true"));
+        assert!(yaml.contains("check_interval_secs: 7200"));
+        assert!(yaml.contains("channel: stable"));
     }
 
     #[test]

@@ -2914,6 +2914,7 @@ mod tests {
             profile: crate::config::ProfileConfig::default(),
             refusal_recovery: crate::config::RefusalRecoveryConfig::default(),
             code_map: crate::config::CodeMapConfig::default(),
+            auto_update: crate::config::AutoUpdateConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3056,6 +3057,7 @@ mod tests {
             profile: crate::config::ProfileConfig::default(),
             refusal_recovery: crate::config::RefusalRecoveryConfig::default(),
             code_map: crate::config::CodeMapConfig::default(),
+            auto_update: crate::config::AutoUpdateConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3158,6 +3160,7 @@ mod tests {
             profile: crate::config::ProfileConfig::default(),
             refusal_recovery: crate::config::RefusalRecoveryConfig::default(),
             code_map: crate::config::CodeMapConfig::default(),
+            auto_update: crate::config::AutoUpdateConfig::default(),
         };
         let args = ChatArgs {
             message: Some("Capital of France?".into()),
@@ -3279,6 +3282,7 @@ mod tests {
             profile: crate::config::ProfileConfig::default(),
             refusal_recovery: crate::config::RefusalRecoveryConfig::default(),
             code_map: crate::config::CodeMapConfig::default(),
+            auto_update: crate::config::AutoUpdateConfig::default(),
         };
         let args = ChatArgs {
             message: Some("hi".into()),
@@ -3408,6 +3412,7 @@ mod tests {
             profile: crate::config::ProfileConfig::default(),
             refusal_recovery: crate::config::RefusalRecoveryConfig::default(),
             code_map: crate::config::CodeMapConfig::default(),
+            auto_update: crate::config::AutoUpdateConfig::default(),
         };
         let args = ChatArgs {
             message: Some("trigger".into()),
