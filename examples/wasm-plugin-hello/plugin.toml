@@ -1,0 +1,27 @@
+# NEOTH plugin manifest — copy alongside `plugin.wasm` to
+# `~/.neoth/plugins/hello/plugin.toml` after building.
+#
+# Field names match `wasm_plugin::manifest::PluginManifest`. The
+# manifest parser validates these fields at discovery time;
+# unknown fields are reserved for future ABI versions.
+
+id = "hello"
+name = "hello"
+version = "0.1.0"
+description = "Minimal NEOTH plugin — exports neoth_run() -> 0"
+
+# Memory cap (bytes). Defaults to 64 MiB if unset. Optional.
+# memory_limit_bytes = 16777216
+
+# Fuel budget per invocation. Defaults to 1_000_000 fuel units
+# (~50ms wall-clock on a laptop). Optional.
+# fuel_budget_override = 500000
+
+# Stages this plugin participates in. Hook actions in
+# ~/.neoth/hooks.toml reference plugin by `id`; the operator chooses
+# which stage(s) to wire.
+hook_stages = ["pre_provider_call"]
+
+# Hostcall permissions requested. This plugin uses none — the
+# `neoth_run()` body has no host imports.
+requested_permissions = []

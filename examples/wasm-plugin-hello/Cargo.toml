@@ -1,0 +1,25 @@
+[package]
+name = "wasm-plugin-hello"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Compile as a WebAssembly dynamic library that the NEOTH wasmtime
+# host can instantiate. Build with:
+#
+#   cargo build --release --target wasm32-unknown-unknown \
+#     --manifest-path examples/wasm-plugin-hello/Cargo.toml
+#
+# The output lands at:
+#   target/wasm32-unknown-unknown/release/wasm_plugin_hello.wasm
+#
+# Copy it to `~/.neoth/plugins/hello/plugin.wasm` (alongside the
+# `plugin.toml` from this directory) and the daemon's bootstrap
+# (`cli::serve::bootstrap_plugin_invoker`) picks it up on next start.
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Empty by design — `neoth_run` must be no_mangle + extern "C" with
+# no host-call dependencies for the simplest happy-path test.
