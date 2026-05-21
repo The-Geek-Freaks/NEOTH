@@ -19,6 +19,7 @@ use rusqlite::Connection;
 
 use super::store;
 use super::types::{KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus};
+use super::validate::{validate_patch_shape, PatchValidation};
 
 /// Why a REVIEW task was NOT auto-promoted. Used by the CLI surface
 /// (`neoth kanban review <task>`) to tell the operator what's
@@ -80,11 +81,61 @@ pub fn auto_promote_if_green(
     let task = fetch_task(conn, task_id)?;
     match check_auto_promotable(&task) {
         Ok(()) => {
+            // Smallcode port #4: shape-check the on-disk patch
+            // before promoting. A worker can pass the test
+            // summary gate (because the summary is self-
+            // reported) and still have left a malformed patch
+            // on disk — promoting that to DONE would freeze a
+            // broken artefact into the audit chain. Best-effort:
+            // missing file logs a warn but does not block (the
+            // worker may have produced a no-op outcome with
+            // `tests.all_green` and no patch, which is valid).
+            if !patch_shape_ok(&task) {
+                return Ok(false);
+            }
             store::patch_task_status(conn, task_id, TaskStatus::Done, now_ns)
                 .with_context(|| format!("auto-promote task #{} REVIEW → DONE", task_id.raw()))?;
             Ok(true)
         }
         Err(_) => Ok(false),
+    }
+}
+
+/// Read the task's on-disk patch (when present) and validate
+/// its shape. Returns true when the patch passes (or when there
+/// is no patch on disk — a no-op outcome with green tests is a
+/// legitimate "nothing to do here" promotion). Returns false +
+/// logs a warn when the patch text is malformed, so the
+/// dispatcher's sweep can carry on across other tasks without
+/// promoting the broken one.
+fn patch_shape_ok(task: &KanbanTask) -> bool {
+    let Some(path) = task.patch_path.as_deref() else {
+        return true;
+    };
+    let text = match std::fs::read_to_string(path) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!(
+                task_id = task.task_id.raw(),
+                path = %path.display(),
+                error = %e,
+                "auto-promote skipped: cannot read patch file"
+            );
+            return true;
+        }
+    };
+    match validate_patch_shape(&text) {
+        PatchValidation::Valid | PatchValidation::Empty => true,
+        PatchValidation::Malformed { reasons } => {
+            tracing::warn!(
+                task_id = task.task_id.raw(),
+                path = %path.display(),
+                reason_count = reasons.len(),
+                first_reason = %reasons.first().cloned().unwrap_or_default(),
+                "auto-promote blocked: patch failed shape validation"
+            );
+            false
+        }
     }
 }
 
@@ -101,7 +152,7 @@ pub fn auto_promote_session(
         .context("list tasks for session in review sweep")?;
     let mut promoted = 0usize;
     for task in &tasks {
-        if check_auto_promotable(task).is_ok() {
+        if check_auto_promotable(task).is_ok() && patch_shape_ok(task) {
             store::patch_task_status(conn, task.task_id, TaskStatus::Done, now_ns).with_context(
                 || {
                     format!(
@@ -419,5 +470,109 @@ mod tests {
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let promoted = auto_promote_session(&conn, s, 100).expect("empty");
         assert_eq!(promoted, 0);
+    }
+
+    // ── Smallcode port #4: patch-shape validation ─────────────────────────
+
+    #[test]
+    fn auto_promote_blocks_when_on_disk_patch_is_malformed() {
+        // Status + summary say "ready to promote", but the
+        // worker left a junk patch on disk. validate_patch_shape
+        // must catch this and refuse the promotion.
+        let (dir, conn) = fresh_db();
+        let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let t = store::insert_task(&conn, s, 10, "title", None, "ui", None).unwrap();
+        store::patch_task_status(&conn, t, TaskStatus::Review, 100).unwrap();
+
+        let patch_path = dir.path().join("task-bad.patch");
+        std::fs::write(&patch_path, "this is just prose, not a diff\n").unwrap();
+
+        store::attach_task_artifact(
+            &conn,
+            t,
+            Some(&patch_path),
+            Some(TestSummary {
+                added: 1,
+                total: 1,
+                passing: 1,
+                failing: 0,
+                skipped: 0,
+            }),
+        )
+        .unwrap();
+
+        let promoted = auto_promote_if_green(&conn, t, 200).expect("no IO error");
+        assert!(!promoted, "malformed patch must block auto-promote");
+
+        let tasks = store::list_tasks_for_session(&conn, s).unwrap();
+        let task = tasks.into_iter().find(|x| x.task_id == t).unwrap();
+        assert_eq!(task.status, TaskStatus::Review, "status stays Review");
+    }
+
+    #[test]
+    fn auto_promote_lands_when_on_disk_patch_is_valid_unified_diff() {
+        let (dir, conn) = fresh_db();
+        let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let t = store::insert_task(&conn, s, 10, "title", None, "ui", None).unwrap();
+        store::patch_task_status(&conn, t, TaskStatus::Review, 100).unwrap();
+
+        let patch_path = dir.path().join("task-good.patch");
+        let good_diff = "\
+diff --git a/x.rs b/x.rs
+--- a/x.rs
++++ b/x.rs
+@@ -1 +1,2 @@
+ use std::io;
++use std::fmt;
+";
+        std::fs::write(&patch_path, good_diff).unwrap();
+
+        store::attach_task_artifact(
+            &conn,
+            t,
+            Some(&patch_path),
+            Some(TestSummary {
+                added: 1,
+                total: 1,
+                passing: 1,
+                failing: 0,
+                skipped: 0,
+            }),
+        )
+        .unwrap();
+
+        let promoted = auto_promote_if_green(&conn, t, 200).expect("promote");
+        assert!(promoted, "well-formed patch must auto-promote");
+
+        let tasks = store::list_tasks_for_session(&conn, s).unwrap();
+        let task = tasks.into_iter().find(|x| x.task_id == t).unwrap();
+        assert_eq!(task.status, TaskStatus::Done);
+    }
+
+    #[test]
+    fn auto_promote_succeeds_when_no_patch_path_set() {
+        // A no-op task ("nothing to change here, tests already
+        // pass") is legitimate — green summary + no patch_path.
+        // The validator must NOT block this.
+        let (_dir, conn) = fresh_db();
+        let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let t = store::insert_task(&conn, s, 10, "noop", None, "ui", None).unwrap();
+        store::patch_task_status(&conn, t, TaskStatus::Review, 100).unwrap();
+        store::attach_task_artifact(
+            &conn,
+            t,
+            None,
+            Some(TestSummary {
+                added: 0,
+                total: 1,
+                passing: 1,
+                failing: 0,
+                skipped: 0,
+            }),
+        )
+        .unwrap();
+
+        let promoted = auto_promote_if_green(&conn, t, 200).expect("promote");
+        assert!(promoted, "no-op task with green tests must promote");
     }
 }

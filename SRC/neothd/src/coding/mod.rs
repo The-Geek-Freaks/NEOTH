@@ -52,6 +52,7 @@ pub mod review;
 pub mod second_opinion;
 pub mod store;
 pub mod types;
+pub mod validate;
 pub mod worker;
 
 // Public re-exports for downstream consumers. Currently unused in main
