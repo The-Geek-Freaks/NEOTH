@@ -1848,11 +1848,17 @@ pushed to `origin/main`.
 - ✅ **Frameless spec relax** — `docs/superpowers/specs/2026-05-15-neoth-uix-design-system.md` §4.1 documents OS-native chrome as v0.1 default + frameless as v0.2+ opt-in via `freedom.yaml::gui.frameless: true`.
 - ✅ **CHANGELOG v0.1.0** — operator-readable shipping summary for the initial public release, Keep-a-Changelog format.
 
+**Late-Session-18 additions (2026-05-21):**
+- ✅ **Pick #6 Phase 3 ProviderWorker** — `coding::provider_worker::ProviderWorker` wraps any `Arc<dyn Provider>` into a synchronous Worker. Builds a hemisphere-aware role-hint prompt from the kanban task; calls provider.complete via internal tokio::runtime::Handle::block_on; parses the response (```diff fenced block + `SUMMARY:` line + `TESTS: added/total/passing/failing/skipped`) into a WorkerOutcome; persists the patch best-effort under `<patch_root>/coding-sessions/<sid>/task-<tid>.patch`. Q1 patch-safety placeholder: STORES, does not apply. 11 pure tests pin every parse + prompt branch.
+- ✅ **`neoth code --dispatch`** — end-to-end coding workflow live. `cli/code.rs::run_dispatch_phase` resolves Left/Right/Cerebellum providers via `from_config_for_role` per role, wraps each Box<dyn Provider> in Arc + ProviderWorker (label `<hemisphere>/<provider>` via Box::leak), binds them into HemisphereWorkerSet, and calls `dispatch_session()` with the default budget. Per-role failure logs a warn + tasks on that hemisphere block. Aggregated outcome printed after run.
+- ✅ **Hook engine plugin variant** — `HookAction::Plugin { plugin_id }` 4th variant + new `PluginInvoker` trait + `run_stage_with_plugins(stage, body, hooks, invoker)` entry point. Concrete wasmtime-dep is decoupled: the hook module never imports wasmtime. With no invoker wired, Plugin actions degrade to Allow + warn log (slim daemon stays functional). With invoker, errors propagate as warns + the stage continues (a flaky plugin must not gate the operator pipeline). 3 new tests (30 hooks total).
+
 **Still open (not strictly v0.1 blockers):**
-- Pick #6 Phase 3 — concrete LeftWorker (against local_qwen) + RightWorker (against claude_cli/openai_compat) impls. Trait + dispatch shipped; provider-bindings + prompt engineering + response parsing still pending. ~500-700 LOC. Chorus verdict on Q1 patch-safety recommended before wire.
+- Pick #6 Phase 4 — Q1 patch-safety actual apply (direct vs git worktree vs stash-revert, Chorus-gated).
 - G-27 sovereign-curve screen transitions (polish, defer).
 - V03-09 phase 2 (download+replace) — needs binary-distribution channel decision.
 - Pick #34 happy-path test — needs `examples/wasm-plugin-hello/plugin.wasm` (real built fixture, not just minimal-WASM).
+- Daemon-side `PluginInvoker` wiring — concrete impl in `wasm_plugin::dispatch` that holds (engine, compiled_modules, hostcalls_linker) + the bootstrap registration site (probably `cli::serve`).
 - R-3 Hysteria transport, R-7 Cluster mode, R-8 Cloud connectors (each multi-day).
 - D14b Qwen Phase 2 (heavy ML forward-pass + sampling-loop).
 - LanceArrow + GitTree real row reads (waiting on Phase-3 C-dep block: `lance`, `git2`).
