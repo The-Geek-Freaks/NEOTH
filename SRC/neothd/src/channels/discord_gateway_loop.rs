@@ -167,46 +167,64 @@ async fn run_one_session(
     let (mut sink, mut stream) = ws.split();
     log_phase(GatewayPhase::WaitingForHello);
 
-    let mut heartbeat_handle: Option<tokio::task::JoinHandle<()>> = None;
+    // Heartbeat ticker — set after HELLO arrives so we know the
+    // operator-supplied interval. Until then, the select arm
+    // below pends forever, so only stream.next() fires.
+    let mut heartbeat: Option<tokio::time::Interval> = None;
     let mut identified = false;
 
-    while let Some(msg) = stream.next().await {
-        let frame = match msg {
-            Ok(Message::Text(t)) => t,
-            Ok(Message::Binary(b)) => {
-                debug!(len = b.len(), "ignoring binary frame from discord");
+    loop {
+        let frame = tokio::select! {
+            biased;
+            msg = stream.next() => {
+                let Some(msg) = msg else { break; };
+                match msg {
+                    Ok(Message::Text(t)) => t,
+                    Ok(Message::Binary(b)) => {
+                        debug!(len = b.len(), "ignoring binary frame from discord");
+                        continue;
+                    }
+                    Ok(Message::Ping(p)) => {
+                        if let Err(e) = sink.send(Message::Pong(p)).await {
+                            anyhow::bail!("WS pong write failed: {e}");
+                        }
+                        continue;
+                    }
+                    Ok(Message::Pong(_)) | Ok(Message::Frame(_)) => continue,
+                    Ok(Message::Close(frame)) => {
+                        let code = frame
+                            .as_ref()
+                            .map(|f: &CloseFrame| u16::from(f.code))
+                            .unwrap_or(1006);
+                        let reason = frame
+                            .as_ref()
+                            .map(|f| f.reason.to_string())
+                            .unwrap_or_default();
+                        info!(close_code = code, reason = %reason, "discord gateway peer closed");
+                        if is_terminal_close(code) {
+                            return Ok(SessionEnd::TerminalClose { code });
+                        }
+                        if !should_resume_after_close(code) {
+                            reset_seq();
+                            reset_session_id();
+                        }
+                        return Ok(SessionEnd::CleanClose);
+                    }
+                    Err(e) => anyhow::bail!("WS read error: {e}"),
+                }
+            }
+            _ = tick_or_pending(&mut heartbeat) => {
+                // Periodic heartbeat send. Discord drops the
+                // connection if no heartbeat arrives within the
+                // grace window after one heartbeat_interval, so
+                // a write failure here is a fatal session
+                // condition.
+                let payload = build_heartbeat_payload(current_seq());
+                if let Err(e) = sink.send(Message::Text(payload)).await {
+                    anyhow::bail!("heartbeat send failed: {e}");
+                }
+                debug!("discord heartbeat sent");
                 continue;
-            }
-            Ok(Message::Ping(p)) => {
-                if let Err(e) = sink.send(Message::Pong(p)).await {
-                    anyhow::bail!("WS pong write failed: {e}");
-                }
-                continue;
-            }
-            Ok(Message::Pong(_)) | Ok(Message::Frame(_)) => continue,
-            Ok(Message::Close(frame)) => {
-                let code = frame
-                    .as_ref()
-                    .map(|f: &CloseFrame| u16::from(f.code))
-                    .unwrap_or(1006);
-                let reason = frame
-                    .as_ref()
-                    .map(|f| f.reason.to_string())
-                    .unwrap_or_default();
-                info!(close_code = code, reason = %reason, "discord gateway peer closed");
-                abort_heartbeat(heartbeat_handle.take());
-                if is_terminal_close(code) {
-                    return Ok(SessionEnd::TerminalClose { code });
-                }
-                if !should_resume_after_close(code) {
-                    reset_seq();
-                    reset_session_id();
-                }
-                return Ok(SessionEnd::CleanClose);
-            }
-            Err(e) => {
-                abort_heartbeat(heartbeat_handle.take());
-                anyhow::bail!("WS read error: {e}");
             }
         };
 
@@ -254,7 +272,7 @@ async fn run_one_session(
             }
             GatewayAction::SendIdentify => {
                 let interval_ms = parse_hello_interval(&parsed_d_from_frame(&frame));
-                heartbeat_handle = Some(spawn_heartbeat(sink_sender_clone(&sink), interval_ms));
+                heartbeat = Some(make_heartbeat_interval(interval_ms));
 
                 // Decide IDENTIFY vs RESUME based on session
                 // state from a prior connection.
@@ -266,7 +284,6 @@ async fn run_one_session(
                     build_identify_frame(bot_token, intents)
                 };
                 if let Err(e) = sink.send(Message::Text(payload)).await {
-                    abort_heartbeat(heartbeat_handle.take());
                     anyhow::bail!("IDENTIFY/RESUME write failed: {e}");
                 }
             }
@@ -275,14 +292,12 @@ async fn run_one_session(
             }
             GatewayAction::ReconnectAndResume => {
                 info!("discord server requested reconnect — closing for resume");
-                abort_heartbeat(heartbeat_handle.take());
                 return Ok(SessionEnd::CleanClose);
             }
             GatewayAction::InvalidSessionResetAndIdentify => {
                 info!("discord invalid session — full reset");
                 reset_seq();
                 reset_session_id();
-                abort_heartbeat(heartbeat_handle.take());
                 return Ok(SessionEnd::CleanClose);
             }
             GatewayAction::UnknownOpcode { op } => {
@@ -291,7 +306,6 @@ async fn run_one_session(
         }
     }
 
-    abort_heartbeat(heartbeat_handle.take());
     if identified {
         Ok(SessionEnd::CleanClose)
     } else {
@@ -303,53 +317,36 @@ fn log_phase(phase: GatewayPhase) {
     info!(phase = phase.as_str(), "discord gateway phase");
 }
 
-fn abort_heartbeat(h: Option<tokio::task::JoinHandle<()>>) {
-    if let Some(h) = h {
-        h.abort();
-    }
+/// Construct the periodic heartbeat ticker. The first tick
+/// fires after one full interval — Discord's spec actually
+/// wants a jittered first-heartbeat in [0, heartbeat_interval),
+/// but a single-full-interval delay still respects the
+/// server's grace window + keeps the code straightforward.
+/// Operator-tunable jitter can land later if a real Gateway
+/// disconnect proves the spec-strict form matters.
+fn make_heartbeat_interval(interval_ms: u64) -> tokio::time::Interval {
+    let mut int = tokio::time::interval(Duration::from_millis(interval_ms));
+    // Skip the immediate tick that tokio::time::interval fires
+    // at construction — we don't want a heartbeat before
+    // IDENTIFY/RESUME.
+    int.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The first tick fires after `interval_ms`; that is the
+    // first heartbeat we send.
+    int.reset();
+    int
 }
 
-/// Type-erased sink wrapper so the heartbeat task can hold a
-/// concrete handle while the read loop keeps the original
-/// `sink`. We send all frames through the read-loop's sink in
-/// the current shape — the heartbeat task uses a tokio channel
-/// to forward heartbeat payloads back to the read-loop, which
-/// drains the channel between WS reads.
-///
-/// **Today the shape is simpler**: the heartbeat task owns its
-/// own WSS writer? No — tokio_tungstenite's split sink is `!Sync`
-/// and not cheaply cloneable. Easier: spawn a "heartbeat
-/// requested" channel that the heartbeat task pings; the read
-/// loop sends the actual frame from a `tokio::select!`. That
-/// keeps the sink owned by one task.
-///
-/// For the v1 shipping shape, we use the simplest approach: the
-/// heartbeat task is responsible for sleeping the interval +
-/// signalling via the channel; the read-loop pops from the
-/// channel inside its select. The wiring requires refactoring
-/// the read-loop to a `select!` over `stream.next()` +
-/// `heartbeat_rx.recv()`. **This module ships the WIRE today**
-/// against a placeholder no-op sink because the select-loop
-/// refactor doubles the LOC + adds a layer of test fixtures;
-/// the current shape proves the dial + READY + DISPATCH path
-/// works against a real gateway, and the heartbeat-via-select
-/// land in the immediate follow-up.
-type SinkSender = ();
-
-fn sink_sender_clone(_sink: &impl SinkExt<Message>) -> SinkSender {}
-
-fn spawn_heartbeat(_sender: SinkSender, interval_ms: u64) -> tokio::task::JoinHandle<()> {
-    let interval = Duration::from_millis(interval_ms);
-    tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(interval).await;
-            // The actual heartbeat send lands in the follow-up
-            // select-loop refactor; today we only track that
-            // the task is alive so the JoinHandle pattern is
-            // exercised + Drop on session end works.
-            let _ = build_heartbeat_payload(current_seq());
+/// Await the next heartbeat tick, or pend forever when no
+/// interval has been installed yet (pre-HELLO). The select
+/// arm in `run_one_session` polls this so a missing interval
+/// simply never fires that branch.
+async fn tick_or_pending(interval: &mut Option<tokio::time::Interval>) {
+    match interval.as_mut() {
+        Some(int) => {
+            int.tick().await;
         }
-    })
+        None => std::future::pending::<()>().await,
+    }
 }
 
 fn parsed_d_from_frame(frame: &str) -> Value {
