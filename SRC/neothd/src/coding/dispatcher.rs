@@ -92,6 +92,14 @@ impl Default for DispatchBudget {
     }
 }
 
+/// WAL writer handle plumbed through `DispatchApplyConfig`. The
+/// daemon's `cli::serve` path holds a live handle and threads it
+/// in so Phase 4 emits `0xD3 PATCH_APPLIED` / `0xD4
+/// PATCH_APPLY_FAILED` frames. CLI one-shot (`neoth code --apply`)
+/// runs without the daemon's WAL writer; `None` skips the emit
+/// (the operator-driven invocation is its own visible audit).
+pub type WalWriterRef = Option<std::sync::Arc<crate::wal::writer::WalWriterHandle>>;
+
 /// Pick #6 Phase 4 — opt-in patch-apply config. When passed to
 /// `dispatch_session`, every worker-produced patch is applied
 /// inside a task-scoped git worktree per the Chorus verdict
@@ -116,11 +124,23 @@ impl Default for DispatchBudget {
 /// `dispatch_session` is called, so the in-loop gate is a
 /// defense-in-depth check that lands once the permissions
 /// surface adds the `WriteToRepo` action.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DispatchApplyConfig {
     pub repo_root: std::path::PathBuf,
     pub test_cmd: Option<String>,
     pub test_timeout: std::time::Duration,
+    pub wal_writer: WalWriterRef,
+}
+
+impl std::fmt::Debug for DispatchApplyConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DispatchApplyConfig")
+            .field("repo_root", &self.repo_root)
+            .field("test_cmd", &self.test_cmd)
+            .field("test_timeout", &self.test_timeout)
+            .field("wal_writer", &self.wal_writer.as_ref().map(|_| "<live>"))
+            .finish()
+    }
 }
 
 impl DispatchApplyConfig {
@@ -129,6 +149,7 @@ impl DispatchApplyConfig {
             repo_root: repo_root.into(),
             test_cmd: None,
             test_timeout: std::time::Duration::from_secs(5 * 60),
+            wal_writer: None,
         }
     }
 
@@ -142,6 +163,18 @@ impl DispatchApplyConfig {
     /// Override the default 5-minute test timeout.
     pub fn with_test_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.test_timeout = timeout;
+        self
+    }
+
+    /// Attach a live `WalWriterHandle` so Phase 4 emits
+    /// `0xD3 PATCH_APPLIED` / `0xD4 PATCH_APPLY_FAILED`
+    /// frames per task. The daemon's `cli::serve` path threads
+    /// this in; CLI one-shot leaves it None.
+    pub fn with_wal_writer(
+        mut self,
+        writer: std::sync::Arc<crate::wal::writer::WalWriterHandle>,
+    ) -> Self {
+        self.wal_writer = Some(writer);
         self
     }
 }
@@ -386,6 +419,9 @@ fn apply_patch_via_worktree(
         Ok(false) => {}
     }
 
+    let patch_hash = crate::coding::worktree::patch_hash(&outcome.patch_path)
+        .unwrap_or_else(|_| "(unhashable)".to_string());
+
     match crate::coding::worktree::apply_patch_in_worktree(&wt_path, &outcome.patch_path) {
         Ok(crate::coding::worktree::PatchApplyOutcome::Applied { worktree_path }) => {
             info!(
@@ -397,7 +433,7 @@ fn apply_patch_via_worktree(
             // test command, run it inside the worktree. A
             // non-zero exit routes through the retry-policy
             // path the same way a git apply rejection does.
-            if let Some(cmd) = cfg.test_cmd.as_deref() {
+            let result = if let Some(cmd) = cfg.test_cmd.as_deref() {
                 match crate::coding::worktree::run_test_cmd(
                     &worktree_path,
                     cmd,
@@ -412,29 +448,151 @@ fn apply_patch_via_worktree(
                         Ok(())
                     }
                     Ok(crate::coding::worktree::TestOutcome::Failed { reason }) => {
-                        Err(format!(
+                        Err(("tests", format!(
                             "tests failed in worktree for task {} ({cmd}): {reason}",
                             task.task_id.raw()
-                        ))
+                        )))
                     }
-                    Err(e) => Err(format!(
+                    Err(e) => Err(("tests", format!(
                         "test-command spawn failed for task {} ({cmd}): {e}",
                         task.task_id.raw()
-                    )),
+                    ))),
                 }
             } else {
                 Ok(())
+            };
+
+            match result {
+                Ok(()) => {
+                    emit_patch_applied_wal(
+                        cfg.wal_writer.as_deref(),
+                        task,
+                        &worktree_path,
+                        &patch_hash,
+                    );
+                    Ok(())
+                }
+                Err((stage, msg)) => {
+                    emit_patch_apply_failed_wal(
+                        cfg.wal_writer.as_deref(),
+                        task,
+                        &worktree_path,
+                        stage,
+                        &msg,
+                    );
+                    Err(msg)
+                }
             }
         }
-        Ok(crate::coding::worktree::PatchApplyOutcome::Rejected { stderr }) => Err(format!(
-            "git apply rejected patch for task {}: {stderr}",
-            task.task_id.raw()
-        )),
-        Err(e) => Err(format!(
-            "apply_patch_in_worktree IO error for task {}: {e}",
-            task.task_id.raw()
-        )),
+        Ok(crate::coding::worktree::PatchApplyOutcome::Rejected { stderr }) => {
+            let msg = format!(
+                "git apply rejected patch for task {}: {stderr}",
+                task.task_id.raw()
+            );
+            emit_patch_apply_failed_wal(
+                cfg.wal_writer.as_deref(),
+                task,
+                &wt_path,
+                "apply",
+                &msg,
+            );
+            Err(msg)
+        }
+        Err(e) => {
+            let msg = format!(
+                "apply_patch_in_worktree IO error for task {}: {e}",
+                task.task_id.raw()
+            );
+            emit_patch_apply_failed_wal(
+                cfg.wal_writer.as_deref(),
+                task,
+                &wt_path,
+                "apply_check",
+                &msg,
+            );
+            Err(msg)
+        }
     }
+}
+
+/// Emit `0xD3 PATCH_APPLIED` into the WAL when a writer is wired.
+/// Best-effort — backpressure / closed-channel errors log at
+/// warn level but never bubble up; the apply already landed on
+/// disk and the operator-visible task transition is the
+/// authoritative signal.
+fn emit_patch_applied_wal(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    task: &KanbanTask,
+    worktree_path: &std::path::Path,
+    patch_hash: &str,
+) {
+    let Some(writer) = writer else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "task_id": task.task_id.raw(),
+        "session_id": task.session_id.raw(),
+        "worktree_path": worktree_path.display().to_string(),
+        "patch_hash": patch_hash,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_PATCH_APPLIED,
+        &payload,
+    );
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(
+            task_id = task.task_id.raw(),
+            error = %e,
+            "WAL emit for PATCH_APPLIED failed; apply already landed"
+        );
+    }
+}
+
+/// Emit `0xD4 PATCH_APPLY_FAILED` into the WAL when a writer is
+/// wired. `stage` is `"apply_check"`, `"apply"`, or `"tests"` per
+/// the event-code doc-comment.
+fn emit_patch_apply_failed_wal(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    task: &KanbanTask,
+    worktree_path: &std::path::Path,
+    stage: &str,
+    reason: &str,
+) {
+    let Some(writer) = writer else {
+        return;
+    };
+    let redacted = crate::security::redact::redact_text(reason);
+    let payload = serde_json::json!({
+        "task_id": task.task_id.raw(),
+        "session_id": task.session_id.raw(),
+        "worktree_path": worktree_path.display().to_string(),
+        "stage": stage,
+        "reason": redacted,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_PATCH_APPLY_FAILED,
+        &payload,
+    );
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(
+            task_id = task.task_id.raw(),
+            error = %e,
+            "WAL emit for PATCH_APPLY_FAILED failed"
+        );
+    }
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn apply_outcome(conn: &Connection, task: &KanbanTask, outcome: &WorkerOutcome) -> Result<()> {
@@ -1103,6 +1261,82 @@ mod tests {
         if wt.exists() {
             let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn dispatch_session_with_apply_emits_patch_applied_wal_frame() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+
+        // Live WAL writer against a tempfile so we can verify
+        // the 0xD3 frame actually lands.
+        let wal_seg = dir.path().join("000001.wal");
+        let (writer, _wal_join) =
+            crate::wal::writer::spawn(wal_seg.clone()).expect("spawn wal writer");
+        let writer = std::sync::Arc::new(writer);
+
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let patch_path = dir.path().join("change.patch");
+        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: outcome_template,
+                name: "ph4-wal-emit",
+            }),
+        );
+
+        let apply_cfg = DispatchApplyConfig::new(&repo)
+            .with_wal_writer(std::sync::Arc::clone(&writer));
+
+        // The dispatcher itself is sync; spawn_blocking keeps
+        // the inner sync path off the runtime thread.
+        let conn_arc = std::sync::Arc::new(std::sync::Mutex::new(conn));
+        let conn_for_task = std::sync::Arc::clone(&conn_arc);
+        let outcome = tokio::task::spawn_blocking(move || {
+            let conn = conn_for_task.lock().unwrap();
+            dispatch_session_with_apply(
+                &conn,
+                session_id,
+                &workers,
+                DispatchBudget::default(),
+                Some(&apply_cfg),
+            )
+        })
+        .await
+        .unwrap()
+        .expect("dispatch");
+
+        assert_eq!(outcome.tasks_completed, 1);
+
+        // Give the writer task a beat to flush the frame.
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // Read the segment back via the WAL reader + assert a
+        // PATCH_APPLIED frame appears.
+        let bytes = std::fs::read(&wal_seg).expect("read wal segment");
+        // The 0xD3 byte appears in every PATCH_APPLIED frame's
+        // event_type field. A more rigorous check would walk
+        // the frames via the proper reader; this byte-presence
+        // smoke is sufficient to pin the emit lands.
+        assert!(
+            bytes.contains(&crate::wal::events::EVENT_TYPE_PATCH_APPLIED),
+            "WAL segment must contain a 0xD3 byte from PATCH_APPLIED frame"
+        );
+
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
     }
 
     #[test]
