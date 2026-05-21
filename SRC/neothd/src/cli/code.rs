@@ -250,11 +250,26 @@ async fn run_dispatch_phase(
     // when the operator passed `--apply <repo>`. Without the
     // flag, legacy semantics (patch stored, never applied).
     let outcome = if let Some(repo) = apply_repo.as_ref() {
-        let apply_cfg = DispatchApplyConfig::new(repo);
-        println!(
-            "dispatch: --apply set; patches will land in <{}>/.neoth-task-<id>/",
-            repo.parent().unwrap_or(repo).display()
-        );
+        let mut apply_cfg = DispatchApplyConfig::new(repo);
+        if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
+            apply_cfg = apply_cfg
+                .with_test_cmd(cmd)
+                .with_test_timeout(std::time::Duration::from_secs(
+                    cfg.coding.test_timeout_secs,
+                ));
+            println!(
+                "dispatch: --apply set; patches land in <{}>/.neoth-task-<id>/, \
+                 tests via `{cmd}` (timeout {}s)",
+                repo.parent().unwrap_or(repo).display(),
+                cfg.coding.test_timeout_secs
+            );
+        } else {
+            println!(
+                "dispatch: --apply set; patches land in <{}>/.neoth-task-<id>/ \
+                 (no test_cmd configured — skipping test-loop)",
+                repo.parent().unwrap_or(repo).display()
+            );
+        }
         dispatch_session_with_apply(
             conn,
             session_id,

@@ -210,6 +210,47 @@ pub struct FreedomConfig {
     /// `repo` to point at their own release feed.
     #[serde(default)]
     pub auto_update: AutoUpdateConfig,
+    /// Pick #6 Phase 4 (2026-05-21): coding-workflow runtime knobs.
+    /// Today the only field is `test_cmd` — the operator's per-
+    /// repo test command (e.g. `"cargo check --quiet"` / `"pytest
+    /// -x"`). When set + `neoth code --apply` is active, the
+    /// dispatcher runs the command inside each task worktree
+    /// after a successful patch apply; non-zero exit triggers
+    /// the retryable-failure path.
+    #[serde(default)]
+    pub coding: CodingConfig,
+}
+
+/// Pick #6 Phase 4 coding-workflow config block.
+///
+/// `test_cmd: None` (default) preserves Phase-3 behaviour — the
+/// dispatcher applies the patch but never spawns a test command.
+/// Operators flip it on by editing `freedom.yaml::coding.test_cmd`
+/// or via the wizard (lands as a follow-up step).
+///
+/// `test_timeout_secs` caps a single test-command invocation so a
+/// hung test can't block the dispatcher indefinitely. 5 minutes
+/// is plenty for `cargo check` on a normal-sized repo + matches
+/// the default DispatchBudget per-task share.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CodingConfig {
+    #[serde(default)]
+    pub test_cmd: Option<String>,
+    #[serde(default = "default_test_timeout_secs")]
+    pub test_timeout_secs: u64,
+}
+
+fn default_test_timeout_secs() -> u64 {
+    5 * 60
+}
+
+impl Default for CodingConfig {
+    fn default() -> Self {
+        Self {
+            test_cmd: None,
+            test_timeout_secs: default_test_timeout_secs(),
+        }
+    }
 }
 
 /// V03-09 Phase 2a — operator-facing self-update knobs.

@@ -217,6 +217,94 @@ pub fn cleanup_worktree(repo_root: &Path, worktree: &Path, force: bool) -> Resul
     Ok(())
 }
 
+/// Outcome of one test-command invocation inside a worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestOutcome {
+    /// Command exited with status 0. Patch + tests are green;
+    /// the dispatcher transitions the task to Review.
+    Passed,
+    /// Command exited non-zero OR the wall-clock timeout fired.
+    /// `reason` carries the trimmed stderr (or "timed out
+    /// after Ns") so the retry-policy hint generator surfaces
+    /// the diagnostic.
+    Failed { reason: String },
+}
+
+impl TestOutcome {
+    pub fn is_passed(&self) -> bool {
+        matches!(self, TestOutcome::Passed)
+    }
+}
+
+/// Spawn the operator-configured test command inside a
+/// worktree. `cmd` is split on whitespace into argv — operators
+/// who need shell features wrap in a script. The wall-clock
+/// `timeout` caps a hung test so the dispatcher loop stays
+/// responsive.
+///
+/// Returns Err only for IO failures spawning the process;
+/// non-zero exit + timeout are reported as `TestOutcome::Failed`
+/// so the caller can route through the retry-policy path
+/// without panicking.
+pub fn run_test_cmd(
+    worktree: &Path,
+    cmd: &str,
+    timeout: std::time::Duration,
+) -> Result<TestOutcome> {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.is_empty() {
+        anyhow::bail!("empty test command — operator must set freedom.yaml::coding.test_cmd");
+    }
+    let (program, args) = parts.split_first().expect("non-empty by guard");
+
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(worktree)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawn test command `{cmd}` in {}", worktree.display()))?;
+
+    // Poll wait_timeout via try_wait + sleep — std doesn't ship
+    // a real timeout on Child::wait. We sleep in 100ms ticks
+    // which is responsive enough for a 5-minute default cap.
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait().context("test command try_wait")? {
+            Some(status) => {
+                if status.success() {
+                    return Ok(TestOutcome::Passed);
+                } else {
+                    // Drain stderr for the diagnostic. Best-effort
+                    // — if stderr was already consumed we report
+                    // the exit code alone.
+                    let mut buf = String::new();
+                    if let Some(mut s) = child.stderr.take() {
+                        use std::io::Read;
+                        let _ = s.read_to_string(&mut buf);
+                    }
+                    let reason = if buf.trim().is_empty() {
+                        format!("exit code {}", status.code().unwrap_or(-1))
+                    } else {
+                        buf.trim().to_string()
+                    };
+                    return Ok(TestOutcome::Failed { reason });
+                }
+            }
+            None => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(TestOutcome::Failed {
+                        reason: format!("timed out after {}s", timeout.as_secs()),
+                    });
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
+}
+
 /// Compute the SHA-256 of a patch file body. Used by the WAL
 /// emit (0xD3 PATCH_APPLIED) so the audit anchor carries an
 /// immutable reference to exactly which patch was applied;
@@ -412,6 +500,74 @@ mod tests {
         }
 
         let _ = cleanup_worktree(&repo, &wt, true);
+    }
+
+    // ── run_test_cmd ───────────────────────────────────────────────
+
+    /// Returns a command that always exits 0, cross-platform.
+    /// Windows: `cmd /C exit 0`. Unix: `true`.
+    fn always_pass_cmd() -> String {
+        if cfg!(windows) {
+            "cmd /C exit 0".to_string()
+        } else {
+            "true".to_string()
+        }
+    }
+
+    /// Returns a command that always exits non-zero.
+    fn always_fail_cmd() -> String {
+        if cfg!(windows) {
+            "cmd /C exit 1".to_string()
+        } else {
+            "false".to_string()
+        }
+    }
+
+    #[test]
+    fn run_test_cmd_reports_passed_on_zero_exit() {
+        let dir = tempdir().unwrap();
+        let outcome =
+            run_test_cmd(dir.path(), &always_pass_cmd(), std::time::Duration::from_secs(10))
+                .expect("spawn");
+        assert!(outcome.is_passed(), "got {outcome:?}");
+    }
+
+    #[test]
+    fn run_test_cmd_reports_failed_on_nonzero_exit() {
+        let dir = tempdir().unwrap();
+        let outcome =
+            run_test_cmd(dir.path(), &always_fail_cmd(), std::time::Duration::from_secs(10))
+                .expect("spawn");
+        assert!(!outcome.is_passed());
+        if let TestOutcome::Failed { reason } = outcome {
+            assert!(!reason.is_empty(), "diagnostic must be non-empty");
+        }
+    }
+
+    #[test]
+    fn run_test_cmd_errors_on_empty_command() {
+        let dir = tempdir().unwrap();
+        let err = run_test_cmd(dir.path(), "   ", std::time::Duration::from_secs(1))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("empty"), "diagnostic: {err}");
+    }
+
+    #[test]
+    fn run_test_cmd_errors_when_program_missing() {
+        // A binary that doesn't exist on PATH must surface as Err
+        // (spawn failed), not as TestOutcome::Failed — the caller
+        // distinguishes "your test runner is broken" from "tests
+        // failed".
+        let dir = tempdir().unwrap();
+        let err = run_test_cmd(
+            dir.path(),
+            "neoth-totally-fictional-binary-9000",
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("spawn") || err.contains("not found"), "got: {err}");
     }
 
     #[test]

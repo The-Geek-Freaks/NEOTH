@@ -102,6 +102,13 @@ impl Default for DispatchBudget {
 /// dispatcher does NOT auto-detect via walk-up; the operator's
 /// `neoth code --apply <repo_root>` provides it explicitly).
 ///
+/// `test_cmd` + `test_timeout` come from
+/// `freedom.yaml::coding.{test_cmd,test_timeout_secs}` when the
+/// CLI wires them. When `test_cmd` is `Some` and the apply
+/// succeeds, the dispatcher runs the command inside the
+/// worktree; non-zero exit routes through the retry-policy
+/// path the same way a `git apply --check` rejection does.
+///
 /// `autonomy` flows through `permissions::evaluate(WriteToRepo,
 /// level)` in a follow-up commit — today the dispatcher applies
 /// unconditionally when `apply_config` is `Some`. The CLI's
@@ -112,13 +119,30 @@ impl Default for DispatchBudget {
 #[derive(Debug, Clone)]
 pub struct DispatchApplyConfig {
     pub repo_root: std::path::PathBuf,
+    pub test_cmd: Option<String>,
+    pub test_timeout: std::time::Duration,
 }
 
 impl DispatchApplyConfig {
     pub fn new(repo_root: impl Into<std::path::PathBuf>) -> Self {
         Self {
             repo_root: repo_root.into(),
+            test_cmd: None,
+            test_timeout: std::time::Duration::from_secs(5 * 60),
         }
+    }
+
+    /// Builder-style — flip the operator's test command on
+    /// the config.
+    pub fn with_test_cmd(mut self, cmd: impl Into<String>) -> Self {
+        self.test_cmd = Some(cmd.into());
+        self
+    }
+
+    /// Override the default 5-minute test timeout.
+    pub fn with_test_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.test_timeout = timeout;
+        self
     }
 }
 
@@ -367,13 +391,40 @@ fn apply_patch_via_worktree(
             info!(
                 task_id = task.task_id.raw(),
                 worktree = %worktree_path.display(),
-                "patch applied; tests run in worktree (follow-up commit)"
+                "patch applied"
             );
-            // WAL 0xD3 PATCH_APPLIED emit + test execution land
-            // in the follow-up commit; today the operator sees
-            // the applied patch in the worktree + can inspect
-            // manually.
-            Ok(())
+            // Phase 4 test-loop: when the operator configured a
+            // test command, run it inside the worktree. A
+            // non-zero exit routes through the retry-policy
+            // path the same way a git apply rejection does.
+            if let Some(cmd) = cfg.test_cmd.as_deref() {
+                match crate::coding::worktree::run_test_cmd(
+                    &worktree_path,
+                    cmd,
+                    cfg.test_timeout,
+                ) {
+                    Ok(crate::coding::worktree::TestOutcome::Passed) => {
+                        info!(
+                            task_id = task.task_id.raw(),
+                            cmd = cmd,
+                            "tests passed in worktree"
+                        );
+                        Ok(())
+                    }
+                    Ok(crate::coding::worktree::TestOutcome::Failed { reason }) => {
+                        Err(format!(
+                            "tests failed in worktree for task {} ({cmd}): {reason}",
+                            task.task_id.raw()
+                        ))
+                    }
+                    Err(e) => Err(format!(
+                        "test-command spawn failed for task {} ({cmd}): {e}",
+                        task.task_id.raw()
+                    )),
+                }
+            } else {
+                Ok(())
+            }
         }
         Ok(crate::coding::worktree::PatchApplyOutcome::Rejected { stderr }) => Err(format!(
             "git apply rejected patch for task {}: {stderr}",
@@ -920,6 +971,134 @@ mod tests {
         );
 
         // Best-effort cleanup of any worktree left behind.
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        if wt.exists() {
+            let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+        }
+    }
+
+    fn always_pass_cmd_str() -> &'static str {
+        if cfg!(windows) {
+            "cmd /C exit 0"
+        } else {
+            "true"
+        }
+    }
+
+    fn always_fail_cmd_str() -> &'static str {
+        if cfg!(windows) {
+            "cmd /C exit 1"
+        } else {
+            "false"
+        }
+    }
+
+    #[test]
+    fn dispatch_session_with_apply_runs_test_cmd_and_marks_completed_on_zero_exit() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let patch_path = dir.path().join("change.patch");
+        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: outcome_template,
+                name: "phase4-test-pass",
+            }),
+        );
+
+        let apply_cfg = DispatchApplyConfig::new(&repo)
+            .with_test_cmd(always_pass_cmd_str())
+            .with_test_timeout(std::time::Duration::from_secs(10));
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .expect("dispatch with test_cmd");
+
+        assert_eq!(outcome.tasks_completed, 1, "passing tests must complete");
+
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+    }
+
+    #[test]
+    fn dispatch_session_with_apply_routes_test_failure_to_retry_path() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let patch_path = dir.path().join("change.patch");
+        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: outcome_template,
+                name: "phase4-test-fail",
+            }),
+        );
+
+        let apply_cfg = DispatchApplyConfig::new(&repo)
+            .with_test_cmd(always_fail_cmd_str())
+            .with_test_timeout(std::time::Duration::from_secs(10));
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .expect("dispatch with failing test_cmd");
+
+        // Failing tests must NOT mark complete + must route the
+        // task through the retry-policy path → Blocked at the
+        // ceiling (3 attempts for the default WorkerRetryPolicy).
+        assert_eq!(outcome.tasks_completed, 0);
+
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task_id == task_id)
+            .unwrap();
+        // The retry path leaves the task in Backlog (re-queue)
+        // OR Blocked (ceiling hit) — both are acceptable end
+        // states; we just must NOT see Review/Done from a
+        // failing test.
+        assert!(
+            matches!(task.status, TaskStatus::Blocked | TaskStatus::Backlog),
+            "failing tests must NOT promote; got {:?}",
+            task.status
+        );
+
+        // Cleanup any worktree the apply created before the
+        // test-fail bounce.
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         if wt.exists() {
             let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
