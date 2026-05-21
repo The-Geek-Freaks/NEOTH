@@ -242,7 +242,7 @@ neoth-plugin-sdk = { path = "../neoth-plugin-sdk", version = "0.1.0-alpha.0", fe
 # (feature `wasm-plugin-host`). Pinned to 26.x; the 2026 API is stable
 # enough for the Engine + Store + Linker surface we need. Compile-cost:
 # ~30s + ~80 MiB of transitive deps so a default `cargo build` skips it.
-wasmtime = { version = "26", default-features = false, features = ["cranelift", "runtime"], optional = true }
+wasmtime = { version = "36", default-features = false, features = ["cranelift", "runtime"], optional = true }
 
 # Unix-only: mlock for SecretString pages, umask at daemon startup.
 # Inline libc shim in main.rs covered umask; the libc crate is required for
