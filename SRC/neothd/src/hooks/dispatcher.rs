@@ -4,11 +4,36 @@
 //! the current stage, applies each in order, and returns a [`StageOutcome`]
 //! that the caller folds into its own dispatch logic.
 
+use std::sync::{Arc, OnceLock};
+
 use anyhow::Result;
 use regex::Regex;
 
 use super::schema::{HookAction, HookDef};
 use super::stages::HookStage;
+
+/// Process-wide registered plugin invoker. The daemon's startup
+/// bootstrap (cli::serve) builds a `CompiledPluginInvoker` from
+/// discovered plugins + registers it once. Existing `run_stage`
+/// call sites automatically pick it up — no per-call-site wiring.
+static GLOBAL_INVOKER: OnceLock<Arc<dyn PluginInvoker>> = OnceLock::new();
+
+/// Register the process-wide PluginInvoker. Called exactly once by
+/// the daemon bootstrap after discovery + compile complete. Returns
+/// the prior value's existence — if non-None, the daemon already
+/// registered an invoker and the caller chose not to overwrite
+/// (OnceLock semantics).
+pub fn register_global_invoker(inv: Arc<dyn PluginInvoker>) -> bool {
+    GLOBAL_INVOKER.set(inv).is_ok()
+}
+
+/// Read the current process-wide invoker. `None` before
+/// register_global_invoker fires (early startup, slim daemon,
+/// tests). Hook actions of kind `Plugin` degrade to Allow + warn in
+/// that case.
+pub fn current_global_invoker() -> Option<&'static Arc<dyn PluginInvoker>> {
+    GLOBAL_INVOKER.get()
+}
 
 /// What the dispatcher decided after running every applicable hook.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,9 +64,13 @@ pub trait PluginInvoker: Send + Sync {
 /// Regex compile errors on a single hook log + skip that hook but do not
 /// abort the stage.
 ///
-/// Equivalent to `run_stage_with_plugins(stage, body, hooks, None)`.
+/// Picks up the daemon's globally-registered PluginInvoker
+/// (`register_global_invoker`) automatically. Pre-registration calls
+/// (early startup, slim daemon, tests) see `None` and Plugin actions
+/// degrade to Allow.
 pub fn run_stage(stage: HookStage, body: &str, hooks: &[HookDef]) -> Result<StageOutcome> {
-    run_stage_with_plugins(stage, body, hooks, None)
+    let invoker = current_global_invoker().map(|arc| arc.as_ref());
+    run_stage_with_plugins(stage, body, hooks, invoker)
 }
 
 /// Extended form that accepts a plugin invoker. When a hook's action is
