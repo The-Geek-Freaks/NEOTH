@@ -363,7 +363,7 @@ export component MainWindow inherits Window {
         }
 
         // ── Welcome ────────────────────────────────────────────────────
-        if root.step == WizardStep.welcome: VerticalBox {
+        if root.step == WizardStep.welcome: SovereignFade { VerticalBox {
             spacing: Theme.space-loose;
             // Hero block — NEOTH logo at full hero scale, tagline below.
             // Only screen where the logo runs at hero size; every other
@@ -438,7 +438,7 @@ export component MainWindow inherits Window {
                     clicked => { root.step = WizardStep.license; }
                 }
             }
-        }
+        } }  // close Welcome VerticalBox + SovereignFade
 
         // ── License ────────────────────────────────────────────────────
         // G-2 fix: real plain-language summary instead of a single
@@ -939,7 +939,7 @@ export component MainWindow inherits Window {
         }
 
         // ── Done ───────────────────────────────────────────────────────
-        if root.step == WizardStep.done: VerticalLayout {
+        if root.step == WizardStep.done: SovereignFade { VerticalLayout {
             spacing: Theme.space-loose;
             ScreenHeader {
                 title: "Ready to go";
@@ -1096,7 +1096,7 @@ export component MainWindow inherits Window {
                     }
                 }
             }
-        }
+        } }  // close Done VerticalLayout + SovereignFade
 
         // ── Settings (Pick #32) ───────────────────────────────────────
         if root.step == WizardStep.settings: SettingsView {
