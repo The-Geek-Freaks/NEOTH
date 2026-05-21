@@ -337,18 +337,51 @@ fn device_for(accel: Option<Accelerator>) -> candle_core::Device {
     use candle_core::Device;
     match accel {
         Some(Accelerator::Cuda) => {
-            // candle-core's `new_cuda(0)` only compiles when the `cuda`
-            // feature is enabled. Until we wire that feature flag, CUDA
-            // requests warn-and-fall-through to CPU so the operator sees
-            // progress without a hard panic.
+            // D14b Phase 2c (2026-05-21): the `qwen-cuda` cargo
+            // feature gates this branch. With it enabled, candle-core
+            // compiles the CUDA kernels + the GPU device is real.
+            // Without it, we warn + fall through to CPU so the
+            // daemon still runs on operators who didn't build with
+            // the GPU toolchain.
+            #[cfg(feature = "qwen-cuda")]
+            {
+                match candle_core::Device::new_cuda(0) {
+                    Ok(d) => {
+                        tracing::info!("local_qwen: CUDA device 0 acquired");
+                        return d;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "local_qwen: candle Device::new_cuda(0) failed; falling back to CPU"
+                        );
+                    }
+                }
+            }
+            #[cfg(not(feature = "qwen-cuda"))]
             tracing::warn!(
                 "local_qwen: CUDA requested but candle `cuda` feature off; \
-                 using CPU. Enable via `cargo install --features qwen-cuda` \
-                 once the gate lands (Phase 2c)."
+                 using CPU. Rebuild with `--features qwen-cuda` to enable."
             );
             Device::Cpu
         }
         Some(Accelerator::Metal) => {
+            #[cfg(feature = "qwen-metal")]
+            {
+                match candle_core::Device::new_metal(0) {
+                    Ok(d) => {
+                        tracing::info!("local_qwen: Metal device 0 acquired");
+                        return d;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "local_qwen: candle Device::new_metal(0) failed; falling back to CPU"
+                        );
+                    }
+                }
+            }
+            #[cfg(not(feature = "qwen-metal"))]
             tracing::warn!(
                 "local_qwen: Metal requested but candle `metal` feature off; \
                  using CPU."

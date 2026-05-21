@@ -32,6 +32,23 @@ wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
 # WAL band reservation stay compiled in both feature configurations.
 wasm-plugin-host = ["dep:wasmtime"]
 
+# D14b Phase 2c — GPU acceleration for local_qwen. Pin per-platform
+# so contributors building on a non-GPU laptop don't fight CUDA
+# toolkit setup. Default OFF; release binaries flip ON via cargo-dist
+# when the target host has the matching toolchain.
+#
+# qwen-cuda  → candle-core compiles its CUDA kernels; local_qwen's
+#              accelerator gate flips from "warn + CPU fallback" to
+#              "Device::new_cuda(0) + GPU forward pass". Needs CUDA
+#              11.8+ toolkit at build time. Operator-runtime detection
+#              in `hardware::probe` already reports cuda=true when the
+#              .so/.dll is present.
+# qwen-metal → candle-core compiles its Metal kernels; macOS-only.
+#              Same warn-vs-GPU pattern as qwen-cuda. Apple Silicon
+#              + Intel-with-AMD-GPU Macs both benefit.
+qwen-cuda  = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+qwen-metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+
 [dependencies]
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
