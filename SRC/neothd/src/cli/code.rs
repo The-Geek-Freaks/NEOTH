@@ -53,6 +53,15 @@ pub struct CodeArgs {
     /// hemisphere binding.
     #[arg(long)]
     pub no_assign: bool,
+    /// Pick #6 Phase 3 (2026-05-20): after decomposition + assign,
+    /// actually run the workers. Without this flag the command stops
+    /// at "decomposed into N tasks" and the operator drives dispatch
+    /// manually (`neoth kanban move …`). With `--dispatch`, we build
+    /// a `HemisphereWorkerSet` from the freedom.yaml provider
+    /// bindings and call `dispatch_session()` once. Q1 patch-safety
+    /// placeholder applies — workers store patches, do not apply.
+    #[arg(long)]
+    pub dispatch: bool,
     /// Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -141,11 +150,103 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
 
     print_decomposition_summary(&conn, &result)?;
 
+    if args.dispatch {
+        run_dispatch_phase(&conn, &cfg, session_id).await?;
+    }
+
     // Session moves out of Planning now that work exists. Pick #6
     // (dispatcher) flips to Running once it actually starts firing
     // workers — for now, we land in Review-equivalent state by
     // leaving the status alone. Operators ALSO see this via
     // `neoth kanban show <session>`.
+    Ok(())
+}
+
+/// Pick #6 Phase 3 (2026-05-20): build a HemisphereWorkerSet from
+/// freedom.yaml provider bindings and run dispatch_session against
+/// the just-decomposed kanban session.
+///
+/// Per-hemisphere provider lookup:
+///   Left       -> `from_config_for_role(cfg, HemisphereRole::Left)`
+///   Right      -> `from_config_for_role(cfg, HemisphereRole::Right)`
+///   Cerebellum -> already-resolved during decompose; we re-resolve
+///                 here so the binding is independent of the
+///                 decomposer's call site
+///   Unassigned -> no worker bound; dispatch_session blocks tasks
+///
+/// Patch root defaults to the operator's WAL dir parent (~/.neoth).
+async fn run_dispatch_phase(
+    conn: &Connection,
+    cfg: &FreedomConfig,
+    session_id: crate::coding::types::KanbanSessionId,
+) -> Result<()> {
+    use std::sync::Arc;
+    use crate::coding::dispatcher::{DispatchBudget, HemisphereWorkerSet, dispatch_session};
+    use crate::coding::provider_worker::ProviderWorker;
+    use crate::coding::types::Hemisphere;
+
+    let runtime = tokio::runtime::Handle::current();
+    let patch_root = FreedomConfig::default_neoth_home();
+
+    let mut workers = HemisphereWorkerSet::new();
+
+    // Left + Right bindings come from the operator's per-hemisphere
+    // provider config. Each may legitimately fail (operator only
+    // bound one side) — the dispatcher blocks unassigned tasks
+    // cleanly. We log the resolution outcome for transparency.
+    for (role, hemi, name) in [
+        (HemisphereRole::Left, Hemisphere::Left, "left"),
+        (HemisphereRole::Right, Hemisphere::Right, "right"),
+        (HemisphereRole::Cerebellum, Hemisphere::Cerebellum, "cerebellum"),
+    ] {
+        match providers::from_config_for_role(cfg, role).await {
+            Ok(p) => {
+                let provider_name = p.name();
+                // Leak a `String` to get `&'static str` for the Worker
+                // name. One-off per dispatch invocation — cost is
+                // bounded and the audit trail benefits from the
+                // hemisphere/provider pair surfaced verbatim.
+                let label: &'static str =
+                    Box::leak(format!("{name}/{provider_name}").into_boxed_str());
+                let worker = ProviderWorker::new(
+                    label,
+                    Arc::from(p),
+                    patch_root.clone(),
+                    runtime.clone(),
+                );
+                workers.bind(hemi, Box::new(worker));
+                println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠  dispatch: {hemi} unbound — {e}. Tasks on this hemisphere \
+                     will block.",
+                    hemi = hemi.as_str()
+                );
+            }
+        }
+    }
+
+    if !workers.has_any() {
+        eprintln!("dispatch: no hemisphere has a worker bound — skipping");
+        return Ok(());
+    }
+
+    let outcome = dispatch_session(conn, session_id, &workers, DispatchBudget::default())
+        .context("dispatch_session run")?;
+
+    println!(
+        "dispatch: attempted={} completed={} blocked={} unassigned={}{}",
+        outcome.tasks_attempted,
+        outcome.tasks_completed,
+        outcome.tasks_blocked,
+        outcome.tasks_unassigned,
+        if outcome.budget_exhausted {
+            "  (budget exhausted)"
+        } else {
+            ""
+        }
+    );
     Ok(())
 }
 
