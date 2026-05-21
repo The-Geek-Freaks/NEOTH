@@ -119,7 +119,7 @@ impl Drop for SwarmHandle {
 /// ships (follow-up). Today the loop only logs.
 pub async fn spawn_discovery(
     cluster_name: &str,
-    _registry: Arc<Mutex<PeerLoadRegistry>>,
+    registry: Arc<Mutex<PeerLoadRegistry>>,
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     let config = peeroxide::SwarmConfig::with_public_bootstrap();
@@ -138,20 +138,140 @@ pub async fn spawn_discovery(
         "hyperswarm: announced + listening on topic"
     );
 
+    let cluster_name_owned = cluster_name.to_string();
+    let own_peer_id = local_peer_id();
     let join = tokio::spawn(async move {
         while let Some(conn) = conn_rx.recv().await {
             let peer_hex = hex_encode(conn.remote_public_key());
-            debug!(peer = %peer_hex, "hyperswarm: peer connected");
-            // TODO follow-up: spawn heartbeat protocol task,
-            //   write to registry on receive. Today we just
-            //   log + drop the connection so peeroxide cleans
-            //   it up.
-            drop(conn);
+            debug!(peer = %peer_hex, "hyperswarm: peer connected — driving handshake");
+            let cluster = cluster_name_owned.clone();
+            let own_id = own_peer_id.clone();
+            let reg = Arc::clone(&registry);
+            tokio::spawn(async move {
+                if let Err(e) =
+                    handle_peeroxide_connection(conn, cluster, own_id, reg).await
+                {
+                    warn!(
+                        peer = %peer_hex,
+                        error = %e,
+                        "hyperswarm: peer session ended with error"
+                    );
+                } else {
+                    debug!(peer = %peer_hex, "hyperswarm: peer session ended cleanly");
+                }
+            });
         }
         warn!("hyperswarm: connection receiver closed — discovery loop exiting");
     });
 
     Ok(SwarmHandle { join: Some(join) })
+}
+
+/// Derive a stable per-process peer id. UUID v7 (when
+/// `uuid::Uuid::now_v7` is reachable) carries a unix-ms
+/// timestamp so audit consumers see roughly when each peer
+/// came up.
+fn local_peer_id() -> String {
+    uuid::Uuid::now_v7().to_string()
+}
+
+/// Drive one peer connection end-to-end against peeroxide's
+/// SecretStream: handshake (`Hello` round-trip + validate) +
+/// inbound-frame loop until clean close.
+///
+/// SecretStream is message-framed by Noise (each `write` is
+/// one ciphertext, each `read` returns the next plaintext or
+/// `None` on EOF), so this function bypasses the
+/// length-prefix layer in [`super::heartbeat::write_framed`]
+/// + [`read_framed`] — those exist for the
+/// `tokio::io::duplex` test path and any future non-Noise
+/// transport.
+async fn handle_peeroxide_connection(
+    mut conn: peeroxide::SwarmConnection,
+    cluster_name: String,
+    own_peer_id: String,
+    registry: Arc<Mutex<PeerLoadRegistry>>,
+) -> Result<()> {
+    let stream = &mut conn.peer.stream;
+
+    // ── Step 1: send our Hello ──
+    let our_hello = WireFrame {
+        kind: FrameKind::Hello,
+        sequence: 0,
+        sent_unix_ms: now_unix_ms(),
+        peer_id: own_peer_id.clone(),
+        body: FrameBody::Hello(HelloBody {
+            protocol: PROTOCOL_NAME.to_string(),
+            version: PROTOCOL_VERSION,
+            cluster_name_hash: derive_topic(&cluster_name),
+            // Capabilities discovery from the daemon's bound
+            // providers lands in a follow-up; today the
+            // operator-visible information is "this peer is up
+            // + reachable + speaks our protocol", which is what
+            // the LeastLoaded routing needs to start emitting
+            // PeerLoad rows.
+            capabilities: Vec::new(),
+            capabilities_schema_version: 1,
+        }),
+    };
+    let our_hello_bytes =
+        heartbeat::encode_frame(&our_hello).context("encode our Hello")?;
+    stream
+        .write(&our_hello_bytes)
+        .await
+        .context("write Hello to peer")?;
+
+    // ── Step 2: read peer's Hello ──
+    let peer_bytes = match stream.read().await {
+        Ok(Some(b)) => b,
+        Ok(None) => anyhow::bail!("peer closed before sending Hello"),
+        Err(e) => return Err(anyhow::anyhow!("read peer Hello: {e}")),
+    };
+    let peer_frame = heartbeat::decode_frame(&peer_bytes).context("decode peer Hello")?;
+    if peer_frame.kind != FrameKind::Hello {
+        anyhow::bail!(
+            "peer first frame was {:?}, expected Hello",
+            peer_frame.kind
+        );
+    }
+    let peer_id = peer_frame.peer_id.clone();
+    let mut peer_capabilities: Vec<String> = match peer_frame.body {
+        FrameBody::Hello(ref body) => {
+            heartbeat::validate_hello(body).context("validate peer Hello")?;
+            let expected_hash = derive_topic(&cluster_name);
+            if body.cluster_name_hash != expected_hash {
+                anyhow::bail!(
+                    "peer cluster_name_hash does not match local cluster `{cluster_name}`"
+                );
+            }
+            body.capabilities.clone()
+        }
+        _ => anyhow::bail!("peer Hello frame body shape mismatch"),
+    };
+
+    info!(
+        peer_id = %peer_id,
+        capability_count = peer_capabilities.len(),
+        "hyperswarm: handshake complete"
+    );
+
+    // ── Step 3: inbound loop ──
+    loop {
+        let bytes = match stream.read().await {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                info!(peer_id = %peer_id, "hyperswarm: peer disconnected cleanly");
+                return Ok(());
+            }
+            Err(e) => return Err(anyhow::anyhow!("read peer frame: {e}")),
+        };
+        let frame = heartbeat::decode_frame(&bytes).context("decode peer frame")?;
+        match handle_inbound_frame(frame, &peer_id, &mut peer_capabilities, &registry) {
+            Ok(true) => continue,
+            Ok(false) => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    }
 }
 
 // ── Connection-loop primitives (testable against tokio::io::duplex) ────────
