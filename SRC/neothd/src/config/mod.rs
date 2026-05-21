@@ -219,6 +219,73 @@ pub struct FreedomConfig {
     /// the retryable-failure path.
     #[serde(default)]
     pub coding: CodingConfig,
+    /// NOOB-UX-3 (Session 19, 2026-05-21): operator-facing
+    /// plugin runtime gates. Pairs with the cargo build-time
+    /// `wasm-plugin-host` feature per the
+    /// `neoth-features-default-on-runtime-toggle` rule —
+    /// release builds compile the feature ON, this field
+    /// lets operators flip it OFF without recompiling.
+    #[serde(default)]
+    pub plugins: PluginsConfig,
+}
+
+/// NOOB-UX-3 plugin runtime gates.
+///
+/// `wasm.enabled` — master switch for the WASM plugin host.
+/// `false` makes the daemon skip plugin discovery + skip the
+/// `bootstrap_plugin_invoker` call so hook-engine `Plugin`
+/// actions degrade to Allow (same as a slim daemon build).
+/// Default is `true` because the wizard-shipped release
+/// already compiled the feature on; operators who want a
+/// quieter daemon flip it to `false`.
+///
+/// Future: per-plugin allowlist (`plugins.wasm.allow = ["hello",
+/// "morning-news"]`) — restricts which plugin IDs the
+/// discovery sweep accepts.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PluginsConfig {
+    #[serde(default)]
+    pub wasm: WasmPluginsConfig,
+}
+
+impl Default for PluginsConfig {
+    fn default() -> Self {
+        Self {
+            wasm: WasmPluginsConfig::default(),
+        }
+    }
+}
+
+/// WASM plugin host runtime gate. Field-level struct (not a
+/// bare `Option<bool>` on PluginsConfig) so a future field
+/// addition (`allow: Vec<String>`, `memory_limit_mib: u32`)
+/// extends the nested map without re-shuffling the schema.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct WasmPluginsConfig {
+    /// Master runtime switch. Pair-with the build-time
+    /// `wasm-plugin-host` cargo feature: when the feature is
+    /// compiled out, this field has no effect (the daemon
+    /// has no plugin host to disable). When compiled in,
+    /// `false` here makes the daemon skip plugin discovery +
+    /// invoker bootstrap.
+    #[serde(default = "default_wasm_plugins_enabled")]
+    pub enabled: bool,
+}
+
+fn default_wasm_plugins_enabled() -> bool {
+    // Default ON to honour the neoth-features-default-on
+    // hard rule for shipped release binaries. Operators on a
+    // slim build (no wasm-plugin-host feature) see no effect
+    // either way.
+    true
+}
+
+impl Default for WasmPluginsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_wasm_plugins_enabled(),
+        }
+    }
 }
 
 /// Pick #6 Phase 4 coding-workflow config block.
@@ -1151,6 +1218,52 @@ mod tests {
         assert!(yaml.contains("auto_apply: true"));
         assert!(yaml.contains("check_interval_secs: 7200"));
         assert!(yaml.contains("channel: stable"));
+    }
+
+    // ── NOOB-UX-3 PluginsConfig runtime gate ────────────────────────
+
+    #[test]
+    fn plugins_wasm_enabled_defaults_to_true() {
+        // Honours the neoth-features-default-on hard rule —
+        // operators on a shipped release expect the feature to
+        // be live unless they explicitly disabled it.
+        let cfg = PluginsConfig::default();
+        assert!(cfg.wasm.enabled);
+    }
+
+    #[test]
+    fn plugins_block_inherits_default_when_yaml_omits_it() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(dir.path(), "operator_id: alice\n");
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.plugins.wasm.enabled, "absent block → default ON");
+    }
+
+    #[test]
+    fn plugins_wasm_disabled_via_yaml_round_trips() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nplugins:\n  wasm:\n    enabled: false\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(!cfg.plugins.wasm.enabled, "operator override took effect");
+    }
+
+    #[test]
+    fn plugins_block_serialises_with_snake_case_fields() {
+        // Wire form pin — the wizard + docs use these exact keys.
+        let cfg = FreedomConfig {
+            operator_id: Some("alice".to_string()),
+            plugins: PluginsConfig {
+                wasm: WasmPluginsConfig { enabled: false },
+            },
+            ..Default::default()
+        };
+        let yaml = serde_yaml::to_string(&cfg).unwrap();
+        assert!(yaml.contains("plugins:"));
+        assert!(yaml.contains("wasm:"));
+        assert!(yaml.contains("enabled: false"));
     }
 
     #[test]

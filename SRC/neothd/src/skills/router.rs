@@ -277,4 +277,97 @@ mod tests {
         // Cannot become anything else without a compile error.
         let _: Option<f32> = m.embedding_score;
     }
+
+    // ── AP-1 gate test: router stays a Schicht-1 FILTER, never a Schicht-0 TOOL ──
+    //
+    // Per `memory/neoth-research-synthesis.md` G.12 Level-Confusion
+    // rule: a router that picks among candidate skills is a FILTER.
+    // It MUST stay side-effect-free. Any future drift that gives the
+    // router an effect surface (executed-action field, async IO, &mut
+    // on skills, network call) is a level violation. These tests pin
+    // the contract.
+
+    #[test]
+    fn ap1_route_is_pure_filter_idempotent_calls_return_equal_match() {
+        // Pure functions: same input + same skills → same output.
+        // No hidden state, no global cache mutation. If a future
+        // commit adds a hit-counter or last-routed-skill cache, this
+        // test surfaces the regression.
+        let skills = vec![
+            skill("news", &["news", "headlines"], true),
+            skill("memory", &["recall", "remember"], true),
+        ];
+        let a = route("show me the headlines", &skills);
+        let b = route("show me the headlines", &skills);
+        let c = route("show me the headlines", &skills);
+        // RouteMatch isn't PartialEq; compare via the observable
+        // fields (skill id + matched_keywords + embedding_score).
+        let triplet = (
+            a.as_ref().map(|m| (m.skill.id().to_string(), m.matched_keywords.clone(), m.embedding_score)),
+            b.as_ref().map(|m| (m.skill.id().to_string(), m.matched_keywords.clone(), m.embedding_score)),
+            c.as_ref().map(|m| (m.skill.id().to_string(), m.matched_keywords.clone(), m.embedding_score)),
+        );
+        assert_eq!(triplet.0, triplet.1, "first vs second call");
+        assert_eq!(triplet.1, triplet.2, "second vs third call");
+    }
+
+    #[test]
+    fn ap1_route_does_not_mutate_skills_slice() {
+        // Skills are passed by shared reference; the router MUST
+        // NOT mutate them. We pin this via a clone-before /
+        // clone-after equality check on the observable
+        // SkillManifest fields. (Skill doesn't derive PartialEq;
+        // serialise to YAML and compare strings.)
+        let skills = vec![
+            skill("news", &["news"], true),
+            skill("memory", &["recall"], false),
+        ];
+        let before: Vec<String> = skills
+            .iter()
+            .map(|s| serde_yaml::to_string(&s.manifest).unwrap())
+            .collect();
+        let _ = route("news today", &skills);
+        let _ = route_with_embedding("recall the answer", &skills);
+        let after: Vec<String> = skills
+            .iter()
+            .map(|s| serde_yaml::to_string(&s.manifest).unwrap())
+            .collect();
+        assert_eq!(before, after, "router must not mutate skill manifests");
+    }
+
+    #[test]
+    fn ap1_routematch_carries_only_filter_fields() {
+        // Compile-time gate: RouteMatch fields are
+        //   skill (read-only borrow),
+        //   matched_keywords (observable result of the filter),
+        //   embedding_score (filter-stage diagnostic).
+        // Adding an effect-bearing field (e.g. `executed_action:
+        // Option<ToolCall>`, `side_effects: Vec<Effect>`,
+        // `tx_handle: Sender<...>`) would require this test to
+        // compile with new field destructuring — surfacing the
+        // schicht violation at the source. Pin via exhaustive
+        // pattern match.
+        let skills = vec![skill("news", &["news"], true)];
+        let m = route("news", &skills).unwrap();
+        // Exhaustive destructure — if RouteMatch gains a new
+        // public field, this fails to compile.
+        let RouteMatch {
+            skill: _picked,
+            matched_keywords: _kws,
+            embedding_score: _score,
+        } = m;
+    }
+
+    #[test]
+    fn ap1_route_signature_is_sync_no_io_traits() {
+        // Compile-time + runtime sanity: route returns a
+        // synchronous `Option<RouteMatch>`. If a future refactor
+        // makes it `async fn` (i.e. needs an IO context), this
+        // test fails to compile because `Option<RouteMatch>` is
+        // not a Future. Schicht-1 filters MUST stay sync —
+        // routing is the FAST path before the LLM call, can't
+        // afford an IO round-trip per turn.
+        let skills: Vec<Skill> = vec![];
+        let _result: Option<RouteMatch> = route("any message", &skills);
+    }
 }

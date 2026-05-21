@@ -112,9 +112,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // plugin dir is silently fine.
     //
     // Feature-gated so the slim daemon (no wasm-plugin-host) skips the
-    // whole block without an `unused_imports` warning.
+    // whole block without an `unused_imports` warning. Runtime gate
+    // via `config.plugins.wasm.enabled` (NOOB-UX-3) — operator on a
+    // wasm-plugin-host-compiled release can still disable plugins
+    // via freedom.yaml without recompiling.
     #[cfg(feature = "wasm-plugin-host")]
-    bootstrap_plugin_invoker(&FreedomConfig::default_neoth_home());
+    {
+        if config.plugins.wasm.enabled {
+            bootstrap_plugin_invoker(&FreedomConfig::default_neoth_home());
+        } else {
+            info!(
+                "freedom.yaml::plugins.wasm.enabled = false; skipping plugin discovery + invoker bootstrap"
+            );
+        }
+    }
 
     // V03-08 + A-2 preflight: daemon has no TTY so `ensure_all_granted_or_prompt`
     // bails with an actionable error if any cloud provider in the

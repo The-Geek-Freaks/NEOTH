@@ -609,7 +609,7 @@ Six-agent audit: project-state, spec-compliance, refactor-scout, blind-spot hunt
 
 ### Phase 33e — Anti-pattern watch (per QUELLEN audit §5)
 
-- [ ] **AP-1** When Phase 27 router gets real Qwen3 embedding re-rank, add gate test: router must remain a **filter** (Schicht-1), never become a **tool** (Schicht-0) — else G.12 Level-Confusion violation.
+- [x] **AP-1** Router-stays-filter gate test — shipped Session 19 (2026-05-21). 4 new tests in `skills::router::tests::ap1_*` pin the Schicht-1 contract: (1) `ap1_route_is_pure_filter_idempotent_calls_return_equal_match` — same input + same skills triple-call returns equal triplet (no hidden cache mutation), (2) `ap1_route_does_not_mutate_skills_slice` — serialise-before / serialise-after equality check on every manifest, (3) `ap1_routematch_carries_only_filter_fields` — exhaustive `RouteMatch { skill, matched_keywords, embedding_score }` destructure that fails-to-compile if any effect-bearing field (`executed_action`, `side_effects`, `tx_handle`) lands, (4) `ap1_route_signature_is_sync_no_io_traits` — pins `Option<RouteMatch>` return type so an `async fn` drift surfaces at compile-time. Schicht-1 invariant locked in before the Stage-2 embedding re-rank lands.
 - [x] **AP-2** WAL events `0x2A LOCAL_INFERENCE_START` / `0x2B LOCAL_INFERENCE_END` — shipped (verified Session 19). Both event codes registered in `wal::events`; `cli::chat::tests::chat_emits_local_inference_start_and_end_for_local_qwen` pins emit. G.9 introspection rule satisfied for local-Qwen forward passes.
 
 ## Phase 34+ — Later (Day-8 WhatsApp, Day-23 WASM plugins, Bridge V2 tmux, …)
@@ -2243,10 +2243,7 @@ Concrete UX work (each is its own pick):
 - [ ] **NOOB-UX-2** Glossary screen in the wizard — one screen up-front
   that defines "plugin", "channel", "council", "provider", "WAL",
   "autonomy level". Operator reads it once, never needs to grep docs.
-- [ ] **NOOB-UX-3** `freedom.yaml::plugins.wasm.enabled` runtime
-  toggle (default true on builds with `wasm-plugin-host`). Wizard step
-  for opt-out. Doctor surfaces effective state ("compiled in + enabled
-  by config" vs "compiled in but disabled" vs "not compiled in").
+- [~] **NOOB-UX-3** `freedom.yaml::plugins.wasm.enabled` runtime toggle — runtime gate shipped Session 19 (2026-05-21). New `PluginsConfig { wasm: WasmPluginsConfig { enabled: bool } }` on FreedomConfig with default-ON (`default_wasm_plugins_enabled()` honours the neoth-features-default-on hard rule). `cli::serve::run_serve` Step 1a checks `config.plugins.wasm.enabled` before calling `bootstrap_plugin_invoker` — when false, an info log fires + the daemon skips discovery + invoker registration entirely (hook-engine `Plugin` actions degrade to Allow same as a slim build). 4 new tests pin default-true, absent-block inherits default, operator override round-trips, snake_case wire form. Wizard step for opt-out + doctor "effective state" check remain as follow-ups.
 - [ ] **NOOB-UX-4** Recommended-defaults audit — every wizard step
   reviewed against "would a non-developer pick this correctly without
   external docs?". Failing steps get a remediation pass.

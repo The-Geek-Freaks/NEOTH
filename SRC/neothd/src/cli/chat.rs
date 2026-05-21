@@ -2916,6 +2916,7 @@ mod tests {
             code_map: crate::config::CodeMapConfig::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
+            plugins: crate::config::PluginsConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3060,6 +3061,7 @@ mod tests {
             code_map: crate::config::CodeMapConfig::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
+            plugins: crate::config::PluginsConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3164,6 +3166,7 @@ mod tests {
             code_map: crate::config::CodeMapConfig::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
+            plugins: crate::config::PluginsConfig::default(),
         };
         let args = ChatArgs {
             message: Some("Capital of France?".into()),
@@ -3287,6 +3290,7 @@ mod tests {
             code_map: crate::config::CodeMapConfig::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
+            plugins: crate::config::PluginsConfig::default(),
         };
         let args = ChatArgs {
             message: Some("hi".into()),
@@ -3418,6 +3422,7 @@ mod tests {
             code_map: crate::config::CodeMapConfig::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
+            plugins: crate::config::PluginsConfig::default(),
         };
         let args = ChatArgs {
             message: Some("trigger".into()),
