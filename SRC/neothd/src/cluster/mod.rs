@@ -28,6 +28,13 @@ use serde::{Deserialize, Serialize};
 /// land in the protocol-design follow-up.
 pub mod hyperswarm;
 
+/// R-7 heartbeat wire protocol — per Chorus chat
+/// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
+/// length-prefix, 5s ± 20% jittered cadence, protocol-version
+/// handshake on connect. Connection-loop integration into
+/// hyperswarm::spawn_discovery lands as a follow-up.
+pub mod heartbeat;
+
 /// Stable identifier for a peer in the cluster. Format = UUID v7 string.
 /// First peer that brings a freshly-paired cluster online is the genesis;
 /// every join writes its UUID into the local cluster_roles table.
