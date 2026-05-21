@@ -601,7 +601,7 @@ Six-agent audit: project-state, spec-compliance, refactor-scout, blind-spot hunt
 - [ ] **Q-2** New module `src/wal/recovery.rs` — translate `recover_all_sessions_on_startup` + `.bak`-before-shrink logic. Idempotent startup pass.
 - [ ] **Q-3** Port hermes `metering.py` rolling-window TPS + 1Hz/10Hz adaptive ticker into `src/providers/meter.rs`. Feeds `idx_motor` (Cerebellum) — closes part of Phase 8 motor-view planning.
 - [ ] **Q-4** Port hermes `gateway_watcher.py` `_snapshot_hash()` for freedom.yaml hot-reload (Phase 5B). Hash = `xxh3_64(path + mtime + size)`.
-- [ ] **Q-5** Add `author`, `tags`, `homepage` to `SkillManifest` YAML schema. Cheap now; breaking later. Keep `trigger_keywords` + `tool_allowlist` (NEOTH-specific improvements over upstream).
+- [x] **Q-5** Add `author`, `tags`, `homepage` to `SkillManifest` YAML schema — shipped (verified Session 19): all three fields land on `SkillManifest` with `#[serde(default)]`, helper accessors `Skill::author()`/`tags()`/`homepage()` proxy to the manifest, 3 tests pin backward-compat (old manifest without Q-5 fields round-trips), forward shape (new fields parse), and helper proxying. `trigger_keywords` + `tool_allowlist` (NEOTH-specific) kept.
 - [ ] **Q-6** Hook format decision: TOML stays. Adopt **structural concept** from omc `hooks.json` — flat event-name keys, array of `{matcher, command, timeout}`. Map omc `UserPromptSubmit` ⇄ NEOTH `PreChannelIngress`, omc `SessionStart` ⇄ NEOTH daemon `OnSessionStart`.
 - [ ] **Q-7** Add `[[prompts]]` array to `~/.neoth/tweaks.toml` (Phase 32 TW-1) — named reusable system-prompt snippets, mirrors tweakcc `prompts[]`.
 - [ ] **Q-8** Schedule Hebbian decay via the cron engine: 2h cadence (per validated Jarvis `hippocampus-preprocess.timer` pattern). Wires into Phase 28c GT-3.
@@ -610,7 +610,7 @@ Six-agent audit: project-state, spec-compliance, refactor-scout, blind-spot hunt
 ### Phase 33e — Anti-pattern watch (per QUELLEN audit §5)
 
 - [ ] **AP-1** When Phase 27 router gets real Qwen3 embedding re-rank, add gate test: router must remain a **filter** (Schicht-1), never become a **tool** (Schicht-0) — else G.12 Level-Confusion violation.
-- [ ] **AP-2** When D14b lands local Qwen3 forward pass, add WAL events `0x2A LOCAL_INFERENCE_START` / `0x2B LOCAL_INFERENCE_END` to satisfy G.9 introspection rule. Include in scope of Day-37 test `test_cli_trace_in_every_provider_request_wal`.
+- [x] **AP-2** WAL events `0x2A LOCAL_INFERENCE_START` / `0x2B LOCAL_INFERENCE_END` — shipped (verified Session 19). Both event codes registered in `wal::events`; `cli::chat::tests::chat_emits_local_inference_start_and_end_for_local_qwen` pins emit. G.9 introspection rule satisfied for local-Qwen forward passes.
 
 ## Phase 34+ — Later (Day-8 WhatsApp, Day-23 WASM plugins, Bridge V2 tmux, …)
 
@@ -1604,7 +1604,7 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [ ] **L-11** Phase 4 third GPU slot for ambient processing (P4)
 - [ ] **L-12** Quantized weights support — currently F32 safetensors only; INT4 GGUF would 4× the cache hit-rate
 - [ ] **L-13** Stop-sequences support in sampling loop (P2)
-- [ ] **L-14** Disk-space pre-flight before HF download (P2) — currently no check before ~3 GB pull
+- [x] **L-14** Disk-space pre-flight before HF download — shipped Session 19 (2026-05-21). New `local_qwen::preflight_disk_space(cache_dir, min_free_bytes)` walks the path up to the nearest existing ancestor, picks the longest-matching mount point via `sysinfo::Disks`, bails with an operator-readable diagnostic (`"insufficient disk space: X available on /, need Y (free up Z, or set NEOTH_QWEN_SKIP_DISK_PREFLIGHT=1)"`) when free space is below `QWEN_DOWNLOAD_MIN_FREE_BYTES = 4 GiB`. Fires inside `ensure_artifacts` BEFORE any network call. Bypassable via `NEOTH_QWEN_SKIP_DISK_PREFLIGHT=1` for CI / tmpfs sandbox. `human_bytes` helper formats KiB/MiB/GiB. 4 new tests: zero-min always passes, absurd-min names bypass-envvar, walks-up-from-missing-cache-dir, scale-rendering vectors.
 
 ### Category 3 — Council / Hemispheres (14 items)
 

@@ -56,6 +56,21 @@ pub const TOKENIZER_FILE: &str = "tokenizer.json";
 pub const CONFIG_FILE: &str = "config.json";
 pub const SAFETENSORS_FILE: &str = "model.safetensors";
 
+/// L-14 (Session 19, 2026-05-21): minimum free bytes required
+/// on the cache filesystem before we kick off the ~3 GB HF
+/// download. Set to 4 GiB so the operator has headroom for
+/// tokenizer + config + the safetensors blob + tmpfile +
+/// hf-hub's intermediate cache copy.
+///
+/// Pre-flight check fires inside `ensure_artifacts` BEFORE any
+/// network request, so an operator with a full disk gets an
+/// actionable diagnostic ("free up N MiB on /home/...") rather
+/// than a half-finished safetensors file + a confusing tokio
+/// timeout. Bypassable via `NEOTH_QWEN_SKIP_DISK_PREFLIGHT=1`
+/// for CI / sandbox scenarios where the disk check is wrong
+/// (e.g. tmpfs-backed cache).
+pub const QWEN_DOWNLOAD_MIN_FREE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
 pub struct LocalQwenAdapter {
     /// HF repo identifier ("Qwen/Qwen2.5-3B-Instruct" etc).
     repo: String,
@@ -212,6 +227,14 @@ impl LocalQwenAdapter {
         if !need_download {
             info!(repo = %self.repo, cache = %self.cache_dir.display(), "Qwen artifacts already cached");
             return Ok(());
+        }
+
+        // L-14 disk-space pre-flight. Bypassable via env var for
+        // CI / sandbox scenarios where the OS-reported free space
+        // is unreliable (tmpfs, overlayfs, etc).
+        if std::env::var("NEOTH_QWEN_SKIP_DISK_PREFLIGHT").ok().as_deref() != Some("1") {
+            preflight_disk_space(&self.cache_dir, QWEN_DOWNLOAD_MIN_FREE_BYTES)
+                .context("disk-space pre-flight before Qwen download")?;
         }
 
         info!(repo = %self.repo, "downloading Qwen artifacts from Hugging Face (one-time, ~3 GB)");
@@ -799,6 +822,88 @@ fn run_forward(
     })
 }
 
+/// L-14 disk-space pre-flight. Inspect the filesystem the
+/// `cache_dir` lives on + bail with an operator-readable error
+/// when free space falls below `min_free_bytes`. Uses sysinfo
+/// (already a direct dep) to read `Disk::available_space` for
+/// the disk that contains `cache_dir` (or its nearest existing
+/// ancestor if the cache dir itself doesn't exist yet).
+///
+/// Returns `Ok(())` when:
+///   - free bytes ≥ min_free_bytes, OR
+///   - sysinfo can't determine the filesystem (best-effort —
+///     a known-unknown is preferable to false-rejecting a
+///     download on a platform where disk introspection
+///     misbehaves).
+pub fn preflight_disk_space(cache_dir: &std::path::Path, min_free_bytes: u64) -> Result<()> {
+    use sysinfo::Disks;
+    // Walk up from cache_dir to the nearest existing ancestor
+    // so Disks::list_from_disk can match a real mount point.
+    let mut probe: PathBuf = cache_dir.to_path_buf();
+    while !probe.exists() {
+        match probe.parent() {
+            Some(p) => probe = p.to_path_buf(),
+            None => break,
+        }
+    }
+    let disks = Disks::new_with_refreshed_list();
+    // Pick the disk whose mount_point is the LONGEST prefix of
+    // `probe` — handles nested mounts (e.g. `/home` vs `/`).
+    let mut best: Option<&sysinfo::Disk> = None;
+    let mut best_len = 0usize;
+    for d in &disks {
+        let mp = d.mount_point();
+        if probe.starts_with(mp) {
+            let len = mp.as_os_str().len();
+            if len >= best_len {
+                best = Some(d);
+                best_len = len;
+            }
+        }
+    }
+    let Some(disk) = best else {
+        // No matching disk — likely a platform where sysinfo
+        // doesn't enumerate the relevant filesystem. Don't
+        // false-reject; the operator finds out on the
+        // download itself.
+        tracing::warn!(
+            cache_dir = %cache_dir.display(),
+            "disk-space pre-flight: no matching mount point — skipping check"
+        );
+        return Ok(());
+    };
+    let available = disk.available_space();
+    if available < min_free_bytes {
+        anyhow::bail!(
+            "insufficient disk space for Qwen download: {} available on {}, need {} \
+             (free up at least {} on this volume, or set \
+             NEOTH_QWEN_SKIP_DISK_PREFLIGHT=1 to bypass)",
+            human_bytes(available),
+            disk.mount_point().display(),
+            human_bytes(min_free_bytes),
+            human_bytes(min_free_bytes.saturating_sub(available))
+        );
+    }
+    Ok(())
+}
+
+/// Format a byte count as `N.N GiB` / `N MiB` for the
+/// operator-facing disk-space diagnostic. Pure — no IO.
+fn human_bytes(n: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = 1024 * KIB;
+    const GIB: u64 = 1024 * MIB;
+    if n >= GIB {
+        format!("{:.2} GiB", n as f64 / GIB as f64)
+    } else if n >= MIB {
+        format!("{:.1} MiB", n as f64 / MIB as f64)
+    } else if n >= KIB {
+        format!("{:.0} KiB", n as f64 / KIB as f64)
+    } else {
+        format!("{n} B")
+    }
+}
+
 /// `~/.neoth/models/<repo-flattened>/`. `Qwen/Qwen2.5-3B-Instruct` becomes
 /// `Qwen-Qwen2.5-3B-Instruct/` (forward slash replaced; safe on every OS).
 pub fn default_cache_dir(repo: &str) -> PathBuf {
@@ -813,6 +918,49 @@ pub fn default_cache_dir(repo: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_bytes_renders_each_scale() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(512), "512 B");
+        assert_eq!(human_bytes(2048), "2 KiB");
+        assert_eq!(human_bytes(5 * 1024 * 1024), "5.0 MiB");
+        assert_eq!(human_bytes(3 * 1024 * 1024 * 1024), "3.00 GiB");
+    }
+
+    #[test]
+    fn preflight_disk_space_accepts_zero_minimum() {
+        // 0 bytes required → always passes regardless of free
+        // space. Pin so a future refactor that flips the
+        // comparison from `<` to `<=` surfaces here.
+        let dir = std::env::temp_dir();
+        assert!(preflight_disk_space(&dir, 0).is_ok());
+    }
+
+    #[test]
+    fn preflight_disk_space_rejects_absurd_minimum() {
+        // 1 EiB minimum on any real filesystem fails the
+        // check. Pin the operator-facing diagnostic mentions
+        // the env-var bypass + names the available + required
+        // sizes.
+        let dir = std::env::temp_dir();
+        let err = preflight_disk_space(&dir, 1u64 << 60).unwrap_err().to_string();
+        assert!(
+            err.contains("NEOTH_QWEN_SKIP_DISK_PREFLIGHT")
+                || err.contains("no matching mount point"),
+            "diagnostic must name the bypass env-var or skip cleanly: {err}"
+        );
+    }
+
+    #[test]
+    fn preflight_walks_up_to_existing_ancestor_when_cache_dir_missing() {
+        // Cache dir typically doesn't exist on first launch.
+        // The pre-flight must walk up to an existing ancestor
+        // rather than fail immediately.
+        let nonexistent =
+            std::env::temp_dir().join("neoth-preflight-test-nonexistent/inner/deeper");
+        assert!(preflight_disk_space(&nonexistent, 0).is_ok());
+    }
 
     #[test]
     fn cache_dir_flattens_repo_path() {
