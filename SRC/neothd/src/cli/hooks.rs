@@ -185,6 +185,7 @@ fn action_label(a: &HookAction) -> &'static str {
         HookAction::Allow => "allow",
         HookAction::Replace { .. } => "replace",
         HookAction::Block { .. } => "block",
+        HookAction::Plugin { .. } => "plugin",
     }
 }
 

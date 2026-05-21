@@ -70,6 +70,14 @@ pub enum HookAction {
     Replace { template: String },
     /// Stop the pipeline. The operator-visible reason is logged.
     Block { reason: String },
+    /// Pick #34 follow-up (2026-05-20): invoke a discovered WASM
+    /// plugin by id. The hook dispatcher delegates to the operator-
+    /// provided `PluginInvoker`; no wasmtime dep leaks into the
+    /// hook module itself. When no invoker is wired (CLI tests,
+    /// slim daemon, hook unit tests), Plugin actions degrade to
+    /// Allow + a warn log so the operator's audit still shows what
+    /// fired.
+    Plugin { plugin_id: String },
 }
 
 #[cfg(test)]

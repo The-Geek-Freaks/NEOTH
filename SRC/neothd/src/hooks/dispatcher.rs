@@ -20,13 +20,42 @@ pub enum StageOutcome {
     Block { name: String, reason: String },
 }
 
+/// Pick #34 follow-up (2026-05-20): operator-supplied callback the
+/// hook dispatcher uses to invoke a discovered WASM plugin without
+/// importing wasmtime. Concrete impl lives in `wasm_plugin::dispatch`
+/// + is wired by the daemon's bootstrap; hook unit tests pass `None`
+/// and the dispatcher degrades Plugin actions to Allow.
+pub trait PluginInvoker: Send + Sync {
+    /// Invoke the plugin by id. Errors propagate up so the dispatcher
+    /// can record them; they do NOT block the stage (a misbehaving
+    /// plugin should not stop the operator's turn).
+    fn invoke(&self, plugin_id: &str) -> Result<()>;
+}
+
 /// Apply every hook for `stage` to `body` in declaration order.
 ///
 /// Replace-actions update the body and the next hook sees the updated
 /// text. The first Block wins — later hooks at the same stage do not run.
 /// Regex compile errors on a single hook log + skip that hook but do not
 /// abort the stage.
+///
+/// Equivalent to `run_stage_with_plugins(stage, body, hooks, None)`.
 pub fn run_stage(stage: HookStage, body: &str, hooks: &[HookDef]) -> Result<StageOutcome> {
+    run_stage_with_plugins(stage, body, hooks, None)
+}
+
+/// Extended form that accepts a plugin invoker. When a hook's action is
+/// `Plugin { plugin_id }`, the dispatcher calls
+/// `invoker.invoke(plugin_id)`; failure surfaces in tracing but does
+/// not block the stage. When `invoker` is `None`, Plugin actions
+/// degrade to Allow with a warn log so the slim-daemon path stays
+/// usable.
+pub fn run_stage_with_plugins(
+    stage: HookStage,
+    body: &str,
+    hooks: &[HookDef],
+    invoker: Option<&dyn PluginInvoker>,
+) -> Result<StageOutcome> {
     let mut current = body.to_string();
     let mut hits = Vec::new();
 
@@ -69,6 +98,28 @@ pub fn run_stage(stage: HookStage, body: &str, hooks: &[HookDef]) -> Result<Stag
                     name: hook.name.clone(),
                     reason: reason.clone(),
                 });
+            }
+            HookAction::Plugin { plugin_id } => {
+                hits.push(hook.name.clone());
+                match invoker {
+                    Some(inv) => {
+                        if let Err(e) = inv.invoke(plugin_id) {
+                            tracing::warn!(
+                                hook = %hook.name,
+                                plugin_id = %plugin_id,
+                                error = %e,
+                                "plugin invocation failed — stage continues"
+                            );
+                        }
+                    }
+                    None => {
+                        tracing::warn!(
+                            hook = %hook.name,
+                            plugin_id = %plugin_id,
+                            "no PluginInvoker wired — Plugin action degrades to Allow"
+                        );
+                    }
+                }
             }
         }
     }
@@ -118,6 +169,104 @@ mod tests {
                 reason: reason.into(),
             },
         }
+    }
+
+    fn plugin_hook(name: &str, stage: HookStage, plugin_id: &str) -> HookDef {
+        HookDef {
+            name: name.into(),
+            stage,
+            enabled: Some(true),
+            matcher: None,
+            action: HookAction::Plugin {
+                plugin_id: plugin_id.into(),
+            },
+        }
+    }
+
+    /// Counting test invoker — records every invoke call so we can
+    /// assert the dispatcher hit the plugin path exactly once.
+    struct CountingInvoker {
+        calls: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl PluginInvoker for CountingInvoker {
+        fn invoke(&self, plugin_id: &str) -> Result<()> {
+            self.calls.lock().unwrap().push(plugin_id.to_string());
+            Ok(())
+        }
+    }
+
+    /// Failing test invoker — returns Err on every call so we can
+    /// assert the stage continues past a plugin error.
+    struct FailingInvoker;
+
+    impl PluginInvoker for FailingInvoker {
+        fn invoke(&self, _plugin_id: &str) -> Result<()> {
+            anyhow::bail!("simulated plugin failure")
+        }
+    }
+
+    #[test]
+    fn plugin_action_fires_invoker_and_records_hit() {
+        // Pick #34 hook-engine integration (2026-05-20): a hook
+        // whose action is Plugin{ plugin_id } MUST call
+        // invoker.invoke + record the hook name in StageOutcome.hits.
+        let invoker = CountingInvoker {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let hooks = vec![plugin_hook("audit-plugin", HookStage::PreProviderCall, "hello")];
+        let outcome = run_stage_with_plugins(
+            HookStage::PreProviderCall,
+            "operator body",
+            &hooks,
+            Some(&invoker),
+        )
+        .unwrap();
+        match outcome {
+            StageOutcome::Continue { body, hits } => {
+                assert_eq!(body, "operator body", "Plugin actions do not mutate body");
+                assert_eq!(hits, vec!["audit-plugin".to_string()]);
+            }
+            other => panic!("expected Continue, got {other:?}"),
+        }
+        let calls = invoker.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], "hello");
+    }
+
+    #[test]
+    fn plugin_action_degrades_to_allow_without_invoker() {
+        // When the daemon's bootstrap didn't wire a PluginInvoker
+        // (slim build / test path / pre-plugin-host startup), a
+        // Plugin hook still counts as a hit + the body passes
+        // through unchanged. The dispatcher logs a warn that the
+        // operator's audit grep can pick up.
+        let hooks = vec![plugin_hook("audit-plugin", HookStage::PreProviderCall, "x")];
+        let outcome = run_stage(HookStage::PreProviderCall, "body", &hooks).unwrap();
+        match outcome {
+            StageOutcome::Continue { body, hits } => {
+                assert_eq!(body, "body");
+                assert_eq!(hits, vec!["audit-plugin".to_string()]);
+            }
+            other => panic!("expected Continue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plugin_action_continues_when_invoker_errors() {
+        // A misbehaving plugin must NOT block the operator's turn —
+        // the dispatcher records the hit + warns + continues. Pin
+        // this so a regression doesn't accidentally let plugins
+        // gate the operator pipeline.
+        let hooks = vec![plugin_hook("flaky-plugin", HookStage::PreProviderCall, "x")];
+        let outcome = run_stage_with_plugins(
+            HookStage::PreProviderCall,
+            "body",
+            &hooks,
+            Some(&FailingInvoker),
+        )
+        .unwrap();
+        assert!(matches!(outcome, StageOutcome::Continue { .. }));
     }
 
     #[test]
