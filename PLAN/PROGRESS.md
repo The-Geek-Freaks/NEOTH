@@ -1853,20 +1853,28 @@ pushed to `origin/main`.
 - ✅ **`neoth code --dispatch`** — end-to-end coding workflow live. `cli/code.rs::run_dispatch_phase` resolves Left/Right/Cerebellum providers via `from_config_for_role` per role, wraps each Box<dyn Provider> in Arc + ProviderWorker (label `<hemisphere>/<provider>` via Box::leak), binds them into HemisphereWorkerSet, and calls `dispatch_session()` with the default budget. Per-role failure logs a warn + tasks on that hemisphere block. Aggregated outcome printed after run.
 - ✅ **Hook engine plugin variant** — `HookAction::Plugin { plugin_id }` 4th variant + new `PluginInvoker` trait + `run_stage_with_plugins(stage, body, hooks, invoker)` entry point. Concrete wasmtime-dep is decoupled: the hook module never imports wasmtime. With no invoker wired, Plugin actions degrade to Allow + warn log (slim daemon stays functional). With invoker, errors propagate as warns + the stage continues (a flaky plugin must not gate the operator pipeline). 3 new tests (30 hooks total).
 
+**Multi-day backlog sweep (2026-05-21):**
+- ✅ **R-3 Hysteria URL parser** — `transport::hysteria::parse_hysteria_url("hysteria2://auth@host:port")` with scheme-tolerant + port-default 443 + bare `auth@host` form support. Operator-facing path that closes the "how do I configure a relay" gap. Subprocess supervisor was already shipped. 7 new tests (15 hysteria total).
+- ✅ **R-7 PeerLoadRegistry** — `cluster::PeerLoadRegistry` in-memory peer heartbeat tracker with `record_heartbeat()` (last-write-wins) + `prune_stale(now, max_age)` (timestamp-based eviction) + `known_peers()` snapshot fed to `LeastLoaded` routing policy. Hyperswarm wire still stub until Phase-3 dep clears. 5 new tests (18 cluster total).
+- ✅ **R-8 Cloud scaffold** — new `cloud` module with `Provider` enum (Dropbox/OneDrive/GoogleDrive/GCS/iCloud/Gmail, explicit serde renames for natural wire forms), `CloudConfig` + `CloudFile` types, `CloudConnector` trait, `StubConnector` per-provider deferred-OpenDAL error message, `load_sources_from()` YAML loader. 8 new tests.
+- ✅ **D14b Phase 2c feature gates** — `qwen-cuda` + `qwen-metal` cargo features wire `Device::new_cuda(0)` / `Device::new_metal(0)` into `local_qwen::device_for()`. Without features → warn + CPU fallback (preserved). Release binaries flip ON via cargo-dist for matching host targets.
+
 **Pick #34 closure (2026-05-21):**
 - ✅ Daemon-side `CompiledPluginInvoker` — `Arc<dyn hooks::PluginInvoker>` impl holding (engine, compiled-module-map, hostcalls linker). `invoke(plugin_id)` looks up the registered `Arc<Module>` + delegates to `invoke_plugin()`; promotes `InvocationOutcome.error` to `Result::Err` so the hook dispatcher's warn-on-error path records the failure. Unknown id names both the missing id and the registered set for operator debuggability. 4 new tests.
 - ✅ OnceLock `GLOBAL_INVOKER` plumbing in `hooks::dispatcher` — zero call-site changes; `run_stage()` reads the registered invoker automatically. Pre-bootstrap (slim daemon, tests) sees None → Plugin actions degrade to Allow + warn. `register_global_invoker` + `current_global_invoker` API.
 - ✅ Bootstrap registration site `cli/serve.rs::bootstrap_plugin_invoker(&home)` — runs after freedom.yaml load: discover → compile → register. Empty plugins dir is silent noop; per-plugin compile failures log a warn but the daemon stays up; engine/linker build failure logs warn + returns without registering (Plugin hooks degrade to Allow). Single info log when invoker registers: `plugin invoker registered; hook actions Plugin{..} are live`.
 
-**Still open (not strictly v0.1 blockers):**
+**Still open (post-v0.1 features):**
 - Pick #6 Phase 4 — Q1 patch-safety actual apply (direct vs git worktree vs stash-revert, Chorus-gated).
-- G-27 sovereign-curve screen transitions (polish, defer).
 - V03-09 phase 2 (download+replace) — needs binary-distribution channel decision.
-- Pick #34 happy-path integration test — needs `examples/wasm-plugin-hello/` scaffold producing a real .wasm that exports `fn neoth_run() -> i32`. Discovery + compile + invoke are all unit-tested; the missing piece is a built fixture.
-- R-3 Hysteria transport, R-7 Cluster mode, R-8 Cloud connectors (each multi-day).
-- D14b Qwen Phase 2 (heavy ML forward-pass + sampling-loop).
+- Pick #34 happy-path integration test — `examples/wasm-plugin-hello/` scaffold shipped 2026-05-21; missing only the `wasm32-unknown-unknown` target build CI step to produce the `.wasm` fixture.
+- R-3 live SOCKS5 wire — supervisor + URL parser shipped; missing the actual subprocess lifecycle wire in `cli::serve` startup.
+- R-7 Hyperswarm live wire — PeerLoadRegistry + LeastLoaded routing shipped; missing the Hyperswarm bridge that populates the registry (deferred until Phase-3 dep block clears `hyperswarm-rs`).
+- R-8 OpenDAL wire — CloudConnector trait + stubs shipped; per-provider impls land when Phase-3 dep block accepts `opendal`.
+- D14b GPU-actual integration test — feature gates shipped; missing CI runner with CUDA/Metal toolchain.
 - LanceArrow + GitTree real row reads (waiting on Phase-3 C-dep block: `lance`, `git2`).
 - Live Discord WSS dial (`connect_async` + heartbeat task + reconnect loop using the now-shipped helpers).
+- G-27 sovereign-curve screen transitions — shipped on welcome / done / chat; could extend to settings + remaining wizard steps as polish.
 
 ### Session 17 — Follow-up batch (11 picks; v1.0 coding-workflow chain + review flow complete)
 
