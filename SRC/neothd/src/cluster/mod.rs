@@ -22,6 +22,12 @@ use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 
+/// R-7 Session 19 (2026-05-21): peeroxide-backed Hyperswarm
+/// discovery wire. Brings up a swarm, joins a topic, accepts
+/// peer connections. Heartbeat exchange + registry write
+/// land in the protocol-design follow-up.
+pub mod hyperswarm;
+
 /// Stable identifier for a peer in the cluster. Format = UUID v7 string.
 /// First peer that brings a freshly-paired cluster online is the genesis;
 /// every join writes its UUID into the local cluster_roles table.
