@@ -131,6 +131,60 @@ impl HyperswarmPeerRegistry {
     }
 }
 
+/// R-7 (2026-05-21): in-memory peer-load registry with staleness
+/// eviction. Holds the per-peer `PeerLoad` snapshot that routing
+/// policies (`LeastLoaded`, future variants) consult.
+///
+/// Lifecycle: the daemon's heartbeat reader calls
+/// `record_heartbeat(load)` on every inbound PEER_HEARTBEAT WAL
+/// frame; the router calls `known_peers()` before deciding where
+/// to fan out work. `prune_stale(now, max_age)` runs on a
+/// background tick + drops peers we haven't heard from.
+///
+/// Single-threaded API today — wrap in `Arc<Mutex<…>>` at the
+/// daemon-bootstrap layer once real Hyperswarm wire lands.
+#[derive(Default, Debug)]
+pub struct PeerLoadRegistry {
+    peers: std::collections::HashMap<String, PeerLoad>,
+}
+
+impl PeerLoadRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record (or update) a peer's load snapshot. Existing entry is
+    /// overwritten — last-write-wins semantics matching the daemon's
+    /// heartbeat-reader pattern elsewhere.
+    pub fn record_heartbeat(&mut self, load: PeerLoad) {
+        self.peers.insert(load.peer.as_str().to_string(), load);
+    }
+
+    /// Drop peers whose `last_observed` is older than `now - max_age`.
+    /// Returns the number of peers evicted so callers can log.
+    pub fn prune_stale(&mut self, now: Instant, max_age: std::time::Duration) -> usize {
+        let before = self.peers.len();
+        self.peers.retain(|_id, load| {
+            now.saturating_duration_since(load.last_observed) <= max_age
+        });
+        before - self.peers.len()
+    }
+
+    /// Snapshot of every still-tracked peer. The routing policies
+    /// (`LeastLoaded::pick_peer`) accept this directly.
+    pub fn known_peers(&self) -> Vec<PeerLoad> {
+        self.peers.values().cloned().collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.peers.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.peers.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +296,77 @@ mod tests {
         assert!(r.is_err());
         let msg = format!("{}", r.unwrap_err());
         assert!(msg.contains("deferred"));
+    }
+
+    // ── R-7 PeerLoadRegistry ─────────────────────────────────────────
+
+    fn load_at(peer: &str, tps: f64, when: Instant) -> PeerLoad {
+        PeerLoad {
+            peer: PeerId::new(peer),
+            tokens_per_sec: tps,
+            last_observed: when,
+            healthy: true,
+        }
+    }
+
+    #[test]
+    fn registry_starts_empty() {
+        let r = PeerLoadRegistry::new();
+        assert!(r.is_empty());
+        assert_eq!(r.len(), 0);
+        assert!(r.known_peers().is_empty());
+    }
+
+    #[test]
+    fn registry_records_and_overwrites_per_peer() {
+        let mut r = PeerLoadRegistry::new();
+        let now = Instant::now();
+        r.record_heartbeat(load_at("alpha", 10.0, now));
+        r.record_heartbeat(load_at("alpha", 20.0, now));
+        assert_eq!(r.len(), 1, "second heartbeat for same peer overwrites");
+        let p = r.known_peers();
+        assert_eq!(p[0].tokens_per_sec, 20.0);
+    }
+
+    #[test]
+    fn registry_prune_stale_evicts_old_entries() {
+        let mut r = PeerLoadRegistry::new();
+        let old = Instant::now() - Duration::from_secs(120);
+        let fresh = Instant::now();
+        r.record_heartbeat(load_at("old", 5.0, old));
+        r.record_heartbeat(load_at("fresh", 5.0, fresh));
+        let evicted = r.prune_stale(Instant::now(), Duration::from_secs(60));
+        assert_eq!(evicted, 1, "exactly one stale peer dropped");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r.known_peers()[0].peer.as_str(), "fresh");
+    }
+
+    #[test]
+    fn registry_prune_keeps_everyone_when_max_age_huge() {
+        let mut r = PeerLoadRegistry::new();
+        let now = Instant::now();
+        r.record_heartbeat(load_at("a", 1.0, now));
+        r.record_heartbeat(load_at("b", 1.0, now));
+        let evicted = r.prune_stale(now, Duration::from_secs(10_000));
+        assert_eq!(evicted, 0);
+        assert_eq!(r.len(), 2);
+    }
+
+    #[test]
+    fn registry_feeds_least_loaded_routing() {
+        // Integration: the registry's snapshot is the shape
+        // LeastLoaded::pick_peer expects. Pin that hookup.
+        let mut r = PeerLoadRegistry::new();
+        let now = Instant::now();
+        r.record_heartbeat(load_at("busy", 100.0, now));
+        r.record_heartbeat(load_at("idle", 5.0, now));
+        let policy = LeastLoaded {
+            max_load_age: Duration::from_secs(30),
+        };
+        let decision = policy.pick_peer(&r.known_peers());
+        match decision {
+            RoutingDecision::Remote(p) => assert_eq!(p.as_str(), "idle"),
+            other => panic!("expected Remote(idle), got {other:?}"),
+        }
     }
 }
