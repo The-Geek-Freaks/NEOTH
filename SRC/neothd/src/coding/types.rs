@@ -141,7 +141,7 @@ impl Hemisphere {
 /// Final test outcome a worker reports back as part of its task
 /// completion payload. Stored in `idx_kanban_task.test_summary` as
 /// JSON; the operator-facing summary panel reads it back.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TestSummary {
     pub added: u32,
     pub total: u32,

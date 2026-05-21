@@ -45,6 +45,7 @@ pub mod classifier;
 pub mod decomposer;
 pub mod dispatcher;
 pub mod feed;
+pub mod provider_worker;
 pub mod review;
 pub mod second_opinion;
 pub mod store;
@@ -86,6 +87,12 @@ pub use worker::{Worker, WorkerOutcome};
 // on Q1 patch safety.
 #[allow(unused_imports)]
 pub use dispatcher::{DispatchBudget, DispatchOutcome, HemisphereWorkerSet, dispatch_session};
+// Pick #6 Phase 3 (2026-05-20): concrete provider-backed worker.
+// Hooks Provider trait into Worker trait so the dispatcher can
+// actually drive real LLM calls. Q1 patch-safety verdict still
+// pending; this commit only stores patches, doesn't apply them.
+#[allow(unused_imports)]
+pub use provider_worker::{ProviderWorker, ParsedCompletion, parse_completion_text, patch_path_for};
 // Pick #9 (2026-05-20): LLM second-opinion classifier for the
 // Ambiguous bucket — re-uses the Cerebellum DecomposerLlm trait.
 #[allow(unused_imports)]
