@@ -5,6 +5,52 @@ All notable changes to NEOTH are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-05-21 — Post-v0.1 follow-up sprint
+
+After the v0.1 release force-push (commit `a879665`), this sprint
+closed the dispatcher chain, the WASM-plugin-hook loop, four
+multi-day backlog items, and shipped the example plugin fixture.
+Every commit pushed to `origin/main`.
+
+### Added
+
+- **Pick #6 Phase 3 ProviderWorker** — `coding::provider_worker::ProviderWorker` wraps any `Arc<dyn Provider>` into a synchronous Worker. Hemisphere-aware role-hint prompt; calls provider.complete via internal `tokio::runtime::Handle::block_on`; parses the response (```diff fenced block + `SUMMARY:` line + `TESTS: added/total/passing/failing/skipped`); persists the patch under `<patch_root>/coding-sessions/<sid>/task-<tid>.patch`. Q1 patch-safety placeholder — STORES, does not apply.
+- **`neoth code --dispatch`** — end-to-end coding workflow live. Resolves Left/Right/Cerebellum providers via `from_config_for_role`, wraps each in ProviderWorker, binds via HemisphereWorkerSet, calls `dispatch_session()` with default budget. Aggregated outcome (attempted / completed / blocked / unassigned + budget_exhausted) prints after run.
+- **Hook engine plugin variant** — `HookAction::Plugin { plugin_id }` 4th action variant + `PluginInvoker` trait + `run_stage_with_plugins()` entry point. Concrete wasmtime stays out of the hook crate.
+- **Daemon-side CompiledPluginInvoker** — `wasm_plugin::dispatch::CompiledPluginInvoker` impls `hooks::PluginInvoker`. Holds `(Arc<Engine>, HashMap<plugin_id, Arc<Module>>, Arc<Linker>)`; `invoke(id)` looks up + delegates to `invoke_plugin()`.
+- **OnceLock GLOBAL_INVOKER plumbing** — `hooks::dispatcher::register_global_invoker` + `current_global_invoker` API; zero call-site changes for the 6 existing `run_stage` invocations across `cli::serve` + `cli::chat`.
+- **`cli::serve::bootstrap_plugin_invoker(home)`** — runs after freedom.yaml load: discover → compile → register. Empty plugins dir silent noop; per-plugin compile failure logs a warn but daemon stays up; engine/linker build failure logs warn + returns. Single info log `plugin invoker registered; hook actions Plugin{..} are live` confirms wire.
+- **Example plugin fixture** — `examples/wasm-plugin-hello/` ships the smallest valid NEOTH plugin (exports `fn neoth_run() -> i32`). README documents `wasm32-unknown-unknown` build + install path + hooks.toml entry. Closes Pick #34's last gap for end-to-end testing.
+- **R-3 Hysteria URL parser** — `transport::hysteria::parse_hysteria_url("hysteria2://auth@host:port")` with scheme-tolerant + port-default 443 + bare `auth@host` form support. Closes the relay-configuration UX gap.
+- **R-7 PeerLoadRegistry** — `cluster::PeerLoadRegistry` in-memory heartbeat tracker. `record_heartbeat` / `prune_stale(now, max_age)` / `known_peers()` fed to `LeastLoaded` routing policy. Hyperswarm wire stays stub until Phase-3 dep block.
+- **R-8 Cloud-connector scaffold** — new `cloud` module: `Provider` enum (Dropbox / OneDrive / GoogleDrive / GCS / iCloud / Gmail) + `CloudConfig` + `CloudFile` + `CloudConnector` trait + `StubConnector` per-provider deferred-OpenDAL bail + `load_sources_from()` YAML loader.
+- **D14b Phase 2c GPU gates** — `qwen-cuda` + `qwen-metal` cargo features wire `Device::new_cuda(0)` / `Device::new_metal(0)` into `local_qwen::device_for()`. Without features → warn + CPU fallback (preserved).
+- **WAL event `0x77 KANBAN_TASK_PROGRESS`** reserved for dispatcher heartbeat frames.
+- **SovereignFade component** — G-27 sovereign-curve entry fade (600ms ease-in cubic-bezier) on welcome / done / chat surfaces.
+- **`neoth update --self`** — GitHub Releases API self-update check (Phase 1; Phase 2 download+replace pending binary-distribution channel decision).
+- **MCP secure-by-default** — `trust_all_tools: bool` field; gate denies `None && !trust_all_tools` with `MissingAllowlistSecureDefault` + WAL emit_reject + doctor warning.
+- **WASM memory limiter** — `ResourceLimiter` impl on `PluginStoreState`; was dead enforcement before.
+- **T-SEC-002 webhook fuzz** — 9 new edge tests pinning that the parser never panics + timestamp errors precede signature errors.
+
+### Changed
+
+- **GUI v0.1 polish** — 26 of 27 audit findings closed: WCAG-AA contrast, channels-screen disclosure, identity regex validation, chat composer label, NeothComboBox/CheckBox/LineEdit dark-mode replacements, Settings ← Chat back button, Welcome ← Mode back button, honest 11-row channels list, Done-screen Open-Settings shortcut.
+- **Code Sessions GUI tab** — all six steps shipped: static layout → CLI JSON output → Slint model binding → activity feed WAL parsing → 2s live-tail timer → click-to-detail pane → operator action buttons (move/promote/comment/assign) + comment-thread rendering.
+- **`verify.rs` refactor** — 113 LOC monolith → 28 LOC orchestrator + 3 pure helpers + `VerifyOutcome` struct.
+- **`verify.rs` filename marker** — `REDACTION_MARKER` writes `file_name()` only; the verifier normalises both sides via `file_name()`. Path-invariant.
+- **Webhook duplicate-key semantics** — last-write-wins documented, `tracing::warn` fires on duplicates.
+- **Frameless titlebar spec relaxed** — OS-native chrome as v0.1 default, frameless as v0.2+ opt-in.
+- **Letter-spacing tokens** — 31 hardcoded values → 4 design tokens (`tight`/`wide`/`extra-wide`/`brand-bar`).
+- **WalWriterHandle + QuotaGuard got `Debug` derives** (hidden behind `wasm-plugin-host` feature gate before).
+
+### Documentation
+
+- **`PLAN/CHORUS_dispatcher_design.md`** — Pick #6 architecture draft + 4 Chorus-worthy questions (patch safety, streaming, REVIEW gating, cycle prevention).
+- **`PLAN/REVIEWER_*_AUDIT_2026-05-20.md`** — three parallel audit reports from a11y-architect, security-auditor, code-reviewer.
+- **`PLAN/CHANNELS_SPEC_2026-05-20.md`** — authoritative messenger shipping matrix.
+- **`PLAN/GUI_AUDIT_2026-05-20.md`** — 27-finding GUI audit.
+- **README §Current status refresh** — operator-facing feature summary synced to actual ship state (Pick #6 / Pick #34 voll / Code Sessions / per-hemisphere binding / WASM plugins / secure-by-default).
+
 ## [0.1.0] — 2026-05-20 — Initial public release
 
 First public release. Initial commit `a879665` (force-pushed over a
