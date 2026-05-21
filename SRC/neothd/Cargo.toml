@@ -104,6 +104,15 @@ regex = "1.10"
 tar    = "0.4"
 flate2 = "1.0"
 
+# V03-09 Phase 2b (Session 19) -- archive extractors for the self-
+# update download path. cargo-dist publishes Windows releases as
+# `.zip` (zip crate), Linux + macOS as `.tar.xz` (lzma-rs + tar).
+# Both pure-Rust — no system liblzma linkage, no shell-out — so the
+# self-contained-binary rule (memory/neoth-hard-rule-self-contained)
+# stays honoured.
+zip     = { version = "1", default-features = false, features = ["deflate"] }
+lzma-rs = "0.3"
+
 # Pick #36 (Session 14, Agent #4 design-consensus): async-aware
 # Connection wrapper for `views.db`. Eliminates `block_in_place` +
 # per-message `store::open` in `cli/serve.rs`. One `AsyncConnection`

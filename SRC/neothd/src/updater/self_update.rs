@@ -15,6 +15,8 @@
 //! here too so unit tests can exercise the comparison without
 //! touching the network.
 
+use std::path::{Path, PathBuf};
+
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -314,6 +316,181 @@ pub struct UpdateAssets<'a> {
     pub sha256: Option<&'a ReleaseAsset>,
 }
 
+/// Extract a cargo-dist archive's `<binary>` member to `out_dir`.
+/// Returns the full path of the extracted file.
+///
+/// The archive's tarball contains the binary at one of two
+/// canonical locations:
+///   - top-level: `neoth.exe` / `neoth`
+///   - inside a target-named subdir: `neoth-x86_64-pc-windows-msvc/neoth.exe`
+///
+/// Both shapes are accepted. Anything else is rejected because
+/// we have no way to know which member is the binary.
+///
+/// `binary` is the base name (e.g. `"neoth"`). The function adds
+/// `.exe` on Windows automatically.
+pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
+    use std::io::Cursor;
+    let reader = Cursor::new(zip_bytes);
+    let mut archive = zip::ZipArchive::new(reader).context("open zip archive")?;
+    let want = binary_filename_for_host(binary);
+    let mut chosen: Option<usize> = None;
+    for i in 0..archive.len() {
+        let entry = archive.by_index(i).context("read zip entry")?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name();
+        if name.ends_with(&format!("/{want}")) || name == want {
+            chosen = Some(i);
+            break;
+        }
+    }
+    let index = chosen.ok_or_else(|| {
+        anyhow::anyhow!("zip archive missing expected member `{want}`")
+    })?;
+    let mut entry = archive.by_index(index).context("re-open chosen zip entry")?;
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("create out_dir {}", out_dir.display()))?;
+    let dest = out_dir.join(&want);
+    let mut out = std::fs::File::create(&dest)
+        .with_context(|| format!("create {}", dest.display()))?;
+    std::io::copy(&mut entry, &mut out).context("copy zip body to disk")?;
+    Ok(dest)
+}
+
+/// Extract a `.tar.xz` archive's `<binary>` member to `out_dir`.
+/// Pure-Rust pipeline: lzma-rs decompresses xz → tar reads the
+/// resulting tarball. No system liblzma linkage.
+pub fn extract_tar_xz_binary(
+    tar_xz_bytes: &[u8],
+    out_dir: &Path,
+    binary: &str,
+) -> Result<PathBuf> {
+    use std::io::Cursor;
+    let mut decompressed: Vec<u8> = Vec::with_capacity(tar_xz_bytes.len() * 3);
+    let mut reader = Cursor::new(tar_xz_bytes);
+    lzma_rs::xz_decompress(&mut reader, &mut decompressed)
+        .context("xz decompress tarball")?;
+    extract_tar_binary_from_bytes(&decompressed, out_dir, binary)
+}
+
+/// Extract a `.tar.gz` archive. Mirrors [`extract_tar_xz_binary`]
+/// but pipes through flate2 instead of lzma-rs.
+pub fn extract_tar_gz_binary(
+    tar_gz_bytes: &[u8],
+    out_dir: &Path,
+    binary: &str,
+) -> Result<PathBuf> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut gz = GzDecoder::new(tar_gz_bytes);
+    let mut decompressed: Vec<u8> = Vec::with_capacity(tar_gz_bytes.len() * 3);
+    gz.read_to_end(&mut decompressed)
+        .context("gz decompress tarball")?;
+    extract_tar_binary_from_bytes(&decompressed, out_dir, binary)
+}
+
+/// Walk a raw tar byte stream looking for the binary member.
+/// Shared between the xz + gz paths.
+fn extract_tar_binary_from_bytes(
+    raw_tar: &[u8],
+    out_dir: &Path,
+    binary: &str,
+) -> Result<PathBuf> {
+    use std::io::Cursor;
+    let want = binary_filename_for_host(binary);
+    let mut archive = tar::Archive::new(Cursor::new(raw_tar));
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("create out_dir {}", out_dir.display()))?;
+    let dest = out_dir.join(&want);
+    for entry in archive.entries().context("iterate tar entries")? {
+        let mut entry = entry.context("read tar entry")?;
+        let path_in_tar = entry
+            .path()
+            .context("read tar entry path")?
+            .into_owned();
+        let name = path_in_tar
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        if name == want {
+            let mut out = std::fs::File::create(&dest)
+                .with_context(|| format!("create {}", dest.display()))?;
+            std::io::copy(&mut entry, &mut out).context("copy tar body to disk")?;
+            return Ok(dest);
+        }
+    }
+    anyhow::bail!("tar archive missing expected member `{want}`")
+}
+
+/// Pick the host-appropriate binary filename. On Windows the
+/// cargo-dist binary carries a `.exe` suffix; on Unix it's bare.
+fn binary_filename_for_host(binary: &str) -> String {
+    if std::env::consts::EXE_SUFFIX.is_empty() {
+        binary.to_string()
+    } else {
+        format!("{binary}{}", std::env::consts::EXE_SUFFIX)
+    }
+}
+
+/// Atomic rename of `new_path` onto `target_path`.
+///
+/// Strategy:
+///   1. Move existing `target_path` → `<target>.bak.<unix_ms>` so
+///      a rollback is one rename away.
+///   2. Rename `new_path` → `target_path`.
+///   3. Best-effort delete the `.bak` only on Unix; Windows keeps
+///      the `.bak` since the running daemon may still have a
+///      handle to it (the OS releases the handle on next start,
+///      and `neoth update --self --gc-backups` can sweep later).
+///
+/// Both renames are `std::fs::rename`, which on POSIX is atomic
+/// inside the same filesystem and on Windows uses
+/// `ReplaceFileW` semantics via the std impl. Caller MUST ensure
+/// `new_path` lives on the same volume as `target_path`
+/// (e.g. by using a tempdir under the target's parent).
+pub fn atomic_replace_binary(new_path: &Path, target_path: &Path) -> Result<PathBuf> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let bak_path = backup_path_for(target_path, now_ms);
+    if target_path.exists() {
+        std::fs::rename(target_path, &bak_path).with_context(|| {
+            format!(
+                "rename {} → {}",
+                target_path.display(),
+                bak_path.display()
+            )
+        })?;
+    }
+    if let Err(e) = std::fs::rename(new_path, target_path) {
+        // Best-effort rollback: put the original back before
+        // surfacing the error.
+        if bak_path.exists() {
+            let _ = std::fs::rename(&bak_path, target_path);
+        }
+        return Err(anyhow::anyhow!(
+            "rename {} → {} failed: {e}",
+            new_path.display(),
+            target_path.display()
+        ));
+    }
+    Ok(bak_path)
+}
+
+/// Compute the rollback path for `target` at timestamp `now_ms`.
+/// Pure — used by [`atomic_replace_binary`] + the test suite.
+pub fn backup_path_for(target: &Path, now_ms: u128) -> PathBuf {
+    let mut name = target
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    name.push_str(&format!(".bak.{now_ms}"));
+    target.with_file_name(name)
+}
+
 /// Parse a cargo-dist `.sha256` companion file body. The
 /// canonical shape is `<hex-64>  <filename>` (two spaces),
 /// matching `sha256sum -b` output. Some publishers emit just
@@ -415,6 +592,7 @@ pub fn resolve_update_assets<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     #[test]
     fn parse_semver_strips_leading_v() {
@@ -818,5 +996,168 @@ mod tests {
         assert_eq!(hex.len(), 64);
         assert_eq!(&hex[..4], "0001");
         assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+    }
+
+    // ── Phase 2b extractor + atomic-replace coverage ────────────────
+
+    /// Build an in-memory ZIP archive containing one member with
+    /// the requested name + body.
+    fn make_zip_with_member(name: &str, body: &[u8]) -> Vec<u8> {
+        use std::io::Cursor;
+        use std::io::Write;
+        let mut out: Vec<u8> = Vec::new();
+        {
+            let cursor = Cursor::new(&mut out);
+            let mut writer = zip::ZipWriter::new(cursor);
+            writer
+                .start_file::<_, ()>(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            writer.write_all(body).unwrap();
+            writer.finish().unwrap();
+        }
+        out
+    }
+
+    /// Build an in-memory `.tar.gz` archive containing one
+    /// member with the requested name + body.
+    fn make_tar_gz_with_member(name: &str, body: &[u8]) -> Vec<u8> {
+        use flate2::write::GzEncoder;
+        use flate2::Compression;
+        use std::io::Write;
+        let mut tar_bytes: Vec<u8> = Vec::new();
+        {
+            let mut tb = tar::Builder::new(&mut tar_bytes);
+            let mut header = tar::Header::new_gnu();
+            header.set_path(name).unwrap();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tb.append(&header, body).unwrap();
+            tb.finish().unwrap();
+        }
+        let mut out: Vec<u8> = Vec::new();
+        let mut gz = GzEncoder::new(&mut out, Compression::default());
+        gz.write_all(&tar_bytes).unwrap();
+        gz.finish().unwrap();
+        out
+    }
+
+    #[test]
+    fn extract_zip_binary_finds_top_level_member() {
+        let want = binary_filename_for_host("neoth");
+        let zip_bytes = make_zip_with_member(&want, b"daemon-bytes-go-here");
+        let dir = tempdir().unwrap();
+        let dest = extract_zip_binary(&zip_bytes, dir.path(), "neoth").unwrap();
+        assert_eq!(dest, dir.path().join(&want));
+        let written = std::fs::read(&dest).unwrap();
+        assert_eq!(written, b"daemon-bytes-go-here");
+    }
+
+    #[test]
+    fn extract_zip_binary_finds_nested_member() {
+        // cargo-dist tarballs nest the binary under a target-
+        // named subdir. Mirror that shape.
+        let want = binary_filename_for_host("neoth");
+        let nested_name = format!("neoth-x86_64-pc-windows-msvc/{want}");
+        let zip_bytes = make_zip_with_member(&nested_name, b"nested-bytes");
+        let dir = tempdir().unwrap();
+        let dest = extract_zip_binary(&zip_bytes, dir.path(), "neoth").unwrap();
+        // The output filename strips the subdir — we always
+        // land the binary directly under out_dir.
+        assert_eq!(dest, dir.path().join(&want));
+        assert_eq!(std::fs::read(&dest).unwrap(), b"nested-bytes");
+    }
+
+    #[test]
+    fn extract_zip_binary_errors_when_member_missing() {
+        let zip_bytes = make_zip_with_member("README.md", b"only a readme");
+        let dir = tempdir().unwrap();
+        let err = extract_zip_binary(&zip_bytes, dir.path(), "neoth")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("missing"), "diagnostic must say missing: {err}");
+    }
+
+    #[test]
+    fn extract_tar_gz_binary_round_trips() {
+        let want = binary_filename_for_host("neoth");
+        let tar_gz = make_tar_gz_with_member(&want, b"gz-bytes");
+        let dir = tempdir().unwrap();
+        let dest = extract_tar_gz_binary(&tar_gz, dir.path(), "neoth").unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"gz-bytes");
+    }
+
+    #[test]
+    fn extract_tar_gz_binary_finds_nested_member() {
+        let want = binary_filename_for_host("neoth");
+        let nested = format!("neoth-x86_64-unknown-linux-gnu/{want}");
+        let tar_gz = make_tar_gz_with_member(&nested, b"nested-gz");
+        let dir = tempdir().unwrap();
+        let dest = extract_tar_gz_binary(&tar_gz, dir.path(), "neoth").unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"nested-gz");
+    }
+
+    #[test]
+    fn extract_tar_gz_binary_errors_when_member_missing() {
+        let tar_gz = make_tar_gz_with_member("LICENSE", b"only license");
+        let dir = tempdir().unwrap();
+        assert!(extract_tar_gz_binary(&tar_gz, dir.path(), "neoth").is_err());
+    }
+
+    #[test]
+    fn binary_filename_for_host_carries_exe_suffix_on_windows() {
+        let name = binary_filename_for_host("neoth");
+        if std::env::consts::EXE_SUFFIX.is_empty() {
+            assert_eq!(name, "neoth");
+        } else {
+            assert!(name.ends_with(std::env::consts::EXE_SUFFIX));
+            assert!(name.starts_with("neoth"));
+        }
+    }
+
+    #[test]
+    fn backup_path_for_appends_unix_ms_suffix() {
+        let bak = backup_path_for(Path::new("/usr/local/bin/neoth"), 1_716_000_000_000);
+        assert_eq!(
+            bak,
+            PathBuf::from("/usr/local/bin/neoth.bak.1716000000000")
+        );
+    }
+
+    #[test]
+    fn backup_path_for_handles_relative_target() {
+        let bak = backup_path_for(Path::new("neoth.exe"), 7);
+        assert_eq!(bak, PathBuf::from("neoth.exe.bak.7"));
+    }
+
+    #[test]
+    fn atomic_replace_binary_moves_new_into_place_and_backs_up_old() {
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("neoth.bin");
+        let new_path = dir.path().join("neoth.new");
+        std::fs::write(&target, b"old-daemon").unwrap();
+        std::fs::write(&new_path, b"new-daemon").unwrap();
+
+        let bak = atomic_replace_binary(&new_path, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new-daemon");
+        assert!(bak.exists(), "backup must exist at {}", bak.display());
+        assert_eq!(std::fs::read(&bak).unwrap(), b"old-daemon");
+        assert!(!new_path.exists(), "new_path must be renamed away");
+    }
+
+    #[test]
+    fn atomic_replace_binary_works_when_target_does_not_exist_yet() {
+        // First-install path — no prior binary to back up.
+        let dir = tempdir().unwrap();
+        let target = dir.path().join("neoth.bin");
+        let new_path = dir.path().join("neoth.new");
+        std::fs::write(&new_path, b"fresh-install").unwrap();
+
+        let bak = atomic_replace_binary(&new_path, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"fresh-install");
+        // bak path is the expected name even though no file was
+        // moved there.
+        assert!(bak.to_string_lossy().contains(".bak."));
+        assert!(!bak.exists(), "no backup file when target was missing");
     }
 }
