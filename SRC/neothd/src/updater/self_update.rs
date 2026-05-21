@@ -17,6 +17,7 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 /// One GitHub Release as returned by
 /// `/repos/{owner}/{repo}/releases/latest`. We only care about the
@@ -311,6 +312,74 @@ pub struct UpdateAssets<'a> {
     pub target: &'a str,
     pub binary: &'a ReleaseAsset,
     pub sha256: Option<&'a ReleaseAsset>,
+}
+
+/// Parse a cargo-dist `.sha256` companion file body. The
+/// canonical shape is `<hex-64>  <filename>` (two spaces),
+/// matching `sha256sum -b` output. Some publishers emit just
+/// the 64-char hex digest on its own line; both forms are
+/// accepted. Any line with fewer than 64 hex chars is rejected
+/// so a truncated download surfaces as an error instead of a
+/// "passes verify because the digest matches itself" footgun.
+///
+/// Returns the lowercase hex digest. Caller passes this to
+/// [`verify_sha256_bytes`] alongside the downloaded asset
+/// content.
+pub fn parse_sha256_companion(text: &str) -> Result<String> {
+    let line = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("sha256 companion is empty"))?;
+    let digest = line
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("sha256 companion has no digest field"))?;
+    if digest.len() != 64 {
+        anyhow::bail!(
+            "sha256 companion digest must be 64 hex chars; got {} chars",
+            digest.len()
+        );
+    }
+    if !digest.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("sha256 companion contains non-hex characters");
+    }
+    Ok(digest.to_ascii_lowercase())
+}
+
+/// Compute SHA-256 of `bytes` and compare against the expected
+/// lowercase hex digest. Returns `Ok(())` on match; `Err` with
+/// an operator-readable diagnostic on mismatch (includes BOTH
+/// digests so a copy-paste-mismatch is debuggable, but never
+/// the underlying bytes).
+///
+/// Comparison runs on the hex strings — sha2's digest is
+/// already constant-time-safe at the hash level, so the
+/// equality check on the hex form is appropriate (the input
+/// bytes are public-released-binary, not a secret).
+pub fn verify_sha256_bytes(bytes: &[u8], expected_hex: &str) -> Result<()> {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let actual = hasher.finalize();
+    let actual_hex = hex_encode(&actual);
+    let expected = expected_hex.to_ascii_lowercase();
+    if actual_hex != expected {
+        anyhow::bail!(
+            "sha256 mismatch: expected {expected}, got {actual_hex}"
+        );
+    }
+    Ok(())
+}
+
+/// Lowercase hex encoding without an extra dep. Sha256 always
+/// produces 32 bytes → 64 hex chars.
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 /// Resolve every asset Phase 2b needs to run `apply_update`.
@@ -655,5 +724,99 @@ mod tests {
         let resolved =
             resolve_update_assets(&release, "x86_64-apple-darwin", "neoth").unwrap();
         assert!(resolved.sha256.is_none());
+    }
+
+    // ── Phase 2a sha256 verify coverage ─────────────────────────────
+
+    const ZERO_BYTES_DIGEST: &str =
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    #[test]
+    fn parse_sha256_companion_accepts_sha256sum_b_format() {
+        let body = format!("{ZERO_BYTES_DIGEST}  neoth-x86_64-pc-windows-msvc.zip\n");
+        let parsed = parse_sha256_companion(&body).unwrap();
+        assert_eq!(parsed, ZERO_BYTES_DIGEST);
+    }
+
+    #[test]
+    fn parse_sha256_companion_accepts_bare_digest() {
+        let parsed = parse_sha256_companion(ZERO_BYTES_DIGEST).unwrap();
+        assert_eq!(parsed, ZERO_BYTES_DIGEST);
+    }
+
+    #[test]
+    fn parse_sha256_companion_lowercases_upper_hex() {
+        let parsed = parse_sha256_companion(&ZERO_BYTES_DIGEST.to_ascii_uppercase()).unwrap();
+        // Returned digest must be lowercase so the compare in
+        // verify_sha256_bytes is normalised.
+        assert_eq!(parsed, ZERO_BYTES_DIGEST);
+    }
+
+    #[test]
+    fn parse_sha256_companion_skips_leading_blank_lines() {
+        let body = format!("\n\n  \n{ZERO_BYTES_DIGEST}  asset.zip\n");
+        let parsed = parse_sha256_companion(&body).unwrap();
+        assert_eq!(parsed, ZERO_BYTES_DIGEST);
+    }
+
+    #[test]
+    fn parse_sha256_companion_rejects_truncated_digest() {
+        // 63 chars — one short. Catches a truncated upload that
+        // would otherwise self-verify.
+        let truncated = &ZERO_BYTES_DIGEST[..63];
+        let err = parse_sha256_companion(truncated).unwrap_err().to_string();
+        assert!(err.contains("64"), "diagnostic must name expected length: {err}");
+    }
+
+    #[test]
+    fn parse_sha256_companion_rejects_non_hex_chars() {
+        // Letter `z` is not a hex digit.
+        let bad = format!("z{}  asset.zip", &ZERO_BYTES_DIGEST[1..]);
+        assert!(parse_sha256_companion(&bad).is_err());
+    }
+
+    #[test]
+    fn parse_sha256_companion_rejects_empty_input() {
+        assert!(parse_sha256_companion("").is_err());
+        assert!(parse_sha256_companion("\n\n\n").is_err());
+    }
+
+    #[test]
+    fn verify_sha256_bytes_accepts_matching_digest() {
+        // Empty bytes hash to the well-known zero-length SHA-256.
+        verify_sha256_bytes(b"", ZERO_BYTES_DIGEST).unwrap();
+    }
+
+    #[test]
+    fn verify_sha256_bytes_accepts_uppercase_expected_hex() {
+        // The asset companion may carry uppercase; normalise.
+        verify_sha256_bytes(b"", &ZERO_BYTES_DIGEST.to_ascii_uppercase()).unwrap();
+    }
+
+    #[test]
+    fn verify_sha256_bytes_rejects_mismatch_with_both_digests_in_message() {
+        // A diagnostic that names BOTH digests lets the operator
+        // tell "wrong file" from "modified file" at a glance.
+        let err = verify_sha256_bytes(b"different content", ZERO_BYTES_DIGEST)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains(ZERO_BYTES_DIGEST), "must name expected: {err}");
+        assert!(err.contains("sha256 mismatch"), "must label as mismatch: {err}");
+    }
+
+    #[test]
+    fn verify_sha256_bytes_round_trips_known_text() {
+        // SHA-256 of "abc" (NIST test vector).
+        let expected = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        verify_sha256_bytes(b"abc", expected).unwrap();
+    }
+
+    #[test]
+    fn hex_encode_produces_lowercase_64_chars_for_32_input_bytes() {
+        let bytes: Vec<u8> = (0..32u8).collect();
+        let hex = hex_encode(&bytes);
+        assert_eq!(hex.len(), 64);
+        assert_eq!(&hex[..4], "0001");
+        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
     }
 }
