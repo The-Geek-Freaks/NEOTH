@@ -265,44 +265,141 @@ pub fn run_test_cmd(
         .spawn()
         .with_context(|| format!("spawn test command `{cmd}` in {}", worktree.display()))?;
 
+    // Drain stdout + stderr off threads so the child can't
+    // block on a full pipe buffer. A long-running test that
+    // emits >64 KiB to stdout without us reading would
+    // deadlock the wait() loop otherwise.
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdout_join = stdout_pipe.map(|mut p| {
+        std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let mut buf = Vec::new();
+            use std::io::Read;
+            p.read_to_end(&mut buf)?;
+            Ok(buf)
+        })
+    });
+    let stderr_join = stderr_pipe.map(|mut p| {
+        std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let mut buf = Vec::new();
+            use std::io::Read;
+            p.read_to_end(&mut buf)?;
+            Ok(buf)
+        })
+    });
+
     // Poll wait_timeout via try_wait + sleep — std doesn't ship
     // a real timeout on Child::wait. We sleep in 100ms ticks
     // which is responsive enough for a 5-minute default cap.
     let started = std::time::Instant::now();
-    loop {
+    let exit_status = loop {
         match child.try_wait().context("test command try_wait")? {
-            Some(status) => {
-                if status.success() {
-                    return Ok(TestOutcome::Passed);
-                } else {
-                    // Drain stderr for the diagnostic. Best-effort
-                    // — if stderr was already consumed we report
-                    // the exit code alone.
-                    let mut buf = String::new();
-                    if let Some(mut s) = child.stderr.take() {
-                        use std::io::Read;
-                        let _ = s.read_to_string(&mut buf);
-                    }
-                    let reason = if buf.trim().is_empty() {
-                        format!("exit code {}", status.code().unwrap_or(-1))
-                    } else {
-                        buf.trim().to_string()
-                    };
-                    return Ok(TestOutcome::Failed { reason });
-                }
-            }
+            Some(status) => break Some(status),
             None => {
                 if started.elapsed() >= timeout {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Ok(TestOutcome::Failed {
-                        reason: format!("timed out after {}s", timeout.as_secs()),
-                    });
+                    break None;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
+    };
+
+    let stdout_bytes = stdout_join
+        .and_then(|j| j.join().ok())
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    let stderr_bytes = stderr_join
+        .and_then(|j| j.join().ok())
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    let log_path = write_test_log(worktree, cmd, &stdout_bytes, &stderr_bytes, &exit_status);
+
+    let Some(status) = exit_status else {
+        return Ok(TestOutcome::Failed {
+            reason: format!(
+                "timed out after {}s — full log: {}",
+                timeout.as_secs(),
+                log_path.display()
+            ),
+        });
+    };
+
+    if status.success() {
+        Ok(TestOutcome::Passed)
+    } else {
+        // Tail of stderr is the most operator-useful summary;
+        // full streams sit in the log file for inspection.
+        let tail = String::from_utf8_lossy(&stderr_bytes);
+        let trimmed = tail.trim();
+        let head = if trimmed.is_empty() {
+            format!("exit code {}", status.code().unwrap_or(-1))
+        } else {
+            // Cap inline reason at ~400 chars — the WAL frame's
+            // `reason` field passes through the dispatcher's
+            // redact_text + we don't want a 64 KiB compiler dump
+            // inline.
+            let max = 400;
+            if trimmed.len() > max {
+                let mut s = trimmed[..max].to_string();
+                s.push_str(&format!(
+                    "... ({} more bytes — see {})",
+                    trimmed.len() - max,
+                    log_path.display()
+                ));
+                s
+            } else {
+                trimmed.to_string()
+            }
+        };
+        Ok(TestOutcome::Failed { reason: head })
     }
+}
+
+/// Persist the test command's full output streams under
+/// `<worktree>/.neoth-test-output.log` so the operator can
+/// inspect after a failed task without re-running. Always
+/// writes (pass + fail) since `cargo test` success output is
+/// useful too (which tests ran, timing). Best-effort — IO
+/// failure here just degrades to "no log file"; the caller's
+/// outcome is unaffected.
+fn write_test_log(
+    worktree: &Path,
+    cmd: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+    exit: &Option<std::process::ExitStatus>,
+) -> PathBuf {
+    let log_path = worktree.join(".neoth-test-output.log");
+    let exit_line = match exit {
+        Some(s) => format!("exit_status: {}", s.code().unwrap_or(-1)),
+        None => "exit_status: TIMEOUT".to_string(),
+    };
+    let body = format!(
+        "# NEOTH Phase 4 test-output log\n\
+         # cmd: {cmd}\n\
+         # worktree: {}\n\
+         # {exit_line}\n\
+         # written_unix_ms: {}\n\
+         \n\
+         ## stdout ({} bytes)\n\n\
+         {}\n\
+         ## stderr ({} bytes)\n\n\
+         {}\n",
+        worktree.display(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+        stdout.len(),
+        String::from_utf8_lossy(stdout),
+        stderr.len(),
+        String::from_utf8_lossy(stderr),
+    );
+    let _ = std::fs::write(&log_path, body);
+    log_path
 }
 
 /// Compute the SHA-256 of a patch file body. Used by the WAL
@@ -551,6 +648,37 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("empty"), "diagnostic: {err}");
+    }
+
+    #[test]
+    fn run_test_cmd_writes_test_output_log_on_pass() {
+        let dir = tempdir().unwrap();
+        let outcome =
+            run_test_cmd(dir.path(), &always_pass_cmd(), std::time::Duration::from_secs(10))
+                .expect("spawn");
+        assert!(outcome.is_passed());
+        let log = dir.path().join(".neoth-test-output.log");
+        assert!(log.exists(), "test log must exist after pass");
+        let body = std::fs::read_to_string(&log).unwrap();
+        assert!(body.contains("## stdout"));
+        assert!(body.contains("## stderr"));
+        assert!(body.contains("exit_status: 0"));
+    }
+
+    #[test]
+    fn run_test_cmd_writes_log_on_fail_with_nonzero_exit_status() {
+        let dir = tempdir().unwrap();
+        let outcome = run_test_cmd(
+            dir.path(),
+            &always_fail_cmd(),
+            std::time::Duration::from_secs(10),
+        )
+        .expect("spawn");
+        assert!(!outcome.is_passed());
+        let log = dir.path().join(".neoth-test-output.log");
+        assert!(log.exists(), "test log must exist after fail");
+        let body = std::fs::read_to_string(&log).unwrap();
+        assert!(body.contains("exit_status: 1"));
     }
 
     #[test]
