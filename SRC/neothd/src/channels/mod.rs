@@ -15,6 +15,7 @@
 
 pub mod discord;
 pub mod discord_gateway;
+pub mod discord_gateway_loop;
 pub mod formatter;
 pub mod keet;
 pub mod rate_limit;

@@ -1871,6 +1871,9 @@ pushed to `origin/main`.
 - ✅ OnceLock `GLOBAL_INVOKER` plumbing in `hooks::dispatcher` — zero call-site changes; `run_stage()` reads the registered invoker automatically. Pre-bootstrap (slim daemon, tests) sees None → Plugin actions degrade to Allow + warn. `register_global_invoker` + `current_global_invoker` API.
 - ✅ Bootstrap registration site `cli/serve.rs::bootstrap_plugin_invoker(&home)` — runs after freedom.yaml load: discover → compile → register. Empty plugins dir is silent noop; per-plugin compile failures log a warn but the daemon stays up; engine/linker build failure logs warn + returns without registering (Plugin hooks degrade to Allow). Single info log when invoker registers: `plugin invoker registered; hook actions Plugin{..} are live`.
 
+**Discord Gateway live dial (2026-05-21):**
+- ✅ **Channels Discord Gateway loop scaffold** — new module `channels::discord_gateway_loop` ships the live WSS receive path on top of all the helpers that landed in Pick #37. `run_gateway_loop` is the outer reconnect loop (consults `ReconnectTracker` for exponential backoff, terminates on `is_terminal_close` 4004/4010/4011/4012/4013/4014); `run_one_session` dials `wss://gateway.discord.gg/?v=10&encoding=json`, parses every frame via `classify_envelope`, handles HELLO → IDENTIFY-or-RESUME (RESUME when `current_session_id()` exists from a prior connection), READY → `record_session_id`, MESSAGE_CREATE → `parse_message_create` → handler, RECONNECT + INVALID_SESSION close paths, terminal close → bail. Pure helpers `build_identify_frame` / `build_resume_frame` (one `expose()` per frame, never enters tracing), `parse_hello_interval` (defaults to 41 250 ms on malformed input so a broken HELLO doesn't kill the connection), `parse_session_id_from_ready`, `parse_message_create` (filters empty content + flags bot=true so handler doesn't echo). 13 unit tests on the pure surface (frame construction round-trips, fallback paths, bot-flag detection, empty-content filtering). Known scope-limit: heartbeat task today is a placeholder timer because the split sink isn't cheaply cloneable; the periodic-tick send lands once the read-loop refactors to `tokio::select!` over `stream.next()` + `heartbeat_rx.recv()`. Reply-back-to-Discord (forwarding `OutboundMessage` to `chat.create-message`) also pending — needs `DiscordChannel` REST handle in the loop scope.
+
 **Still open (post-v0.1 features):**
 - Pick #6 Phase 4 — Q1 patch-safety actual apply (direct vs git worktree vs stash-revert, Chorus-gated).
 - V03-09 phase 2 (download+replace) — needs binary-distribution channel decision.
@@ -1880,7 +1883,8 @@ pushed to `origin/main`.
 - R-8 OpenDAL wire — CloudConnector trait + stubs shipped; per-provider impls land when Phase-3 dep block accepts `opendal`.
 - D14b GPU-actual integration test — feature gates shipped; missing CI runner with CUDA/Metal toolchain.
 - LanceArrow + GitTree real row reads (waiting on Phase-3 C-dep block: `lance`, `git2`).
-- Live Discord WSS dial (`connect_async` + heartbeat task + reconnect loop using the now-shipped helpers).
+- Discord WSS heartbeat-tick refactor — pure helpers + dial + IDENTIFY/RESUME + dispatch shipped 2026-05-21; periodic heartbeat send + reply-back wiring pending.
+- ~~R-3 live SOCKS5 wire~~ — already wired in `cli/serve.rs::run_serve` at step 5a-hysteria (spawn → probe → `NEOTH_HTTP_PROXY` env → drop-on-shutdown). Open-list entry was stale.
 - G-27 sovereign-curve screen transitions — shipped on welcome / done / chat; could extend to settings + remaining wizard steps as polish.
 
 ### Session 17 — Follow-up batch (11 picks; v1.0 coding-workflow chain + review flow complete)
