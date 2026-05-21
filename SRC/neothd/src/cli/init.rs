@@ -57,7 +57,7 @@ pub enum OperatorRole {
 }
 
 /// Arguments for `neoth init`.
-#[derive(Args, Debug, Clone)]
+#[derive(Args, Debug, Clone, Default)]
 pub struct InitArgs {
     /// Run without interactive prompts. All values via flags.
     /// On a TTY, `neoth init` defaults to interactive; pass this to force
@@ -190,6 +190,14 @@ pub struct WizardState {
     /// path, so an aborted wizard still writes a sane freedom.yaml.
     #[serde(default)]
     pub inference: crate::config::inference::InferenceTopology,
+    /// V03-09 Phase 2a (2026-05-21): operator-facing self-update
+    /// policy. `enabled: false` (default) keeps the daemon silent.
+    /// step7b_auto_update toggles this based on the operator's
+    /// answer. Lives in freedom.yaml under `auto_update:` so the
+    /// reload + read paths see the same shape as the rest of the
+    /// FreedomConfig surface.
+    #[serde(default)]
+    pub auto_update: crate::config::AutoUpdateConfig,
     pub steps_completed: Vec<u8>,
 }
 
@@ -229,6 +237,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step5b_inference_topology(&args, interactive, &mut state)?;
     step6_channel(&args, interactive, &mut state).await?;
     step7_autonomy(&args, interactive, &mut state)?;
+    step7b_auto_update(&args, interactive, &mut state)?;
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {
@@ -1656,6 +1665,70 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
     Ok(())
 }
 
+/// V03-09 Phase 2a wizard step. Two questions, both default to
+/// the conservative answer so a hammered-Enter operator leaves
+/// the daemon in the safest mode (no background HTTP traffic to
+/// GitHub, no auto-apply).
+///
+/// Non-interactive runs leave the default `AutoUpdateConfig`
+/// (enabled=false, auto_apply=false). Operators in CI / cold-
+/// start scripts who want different values edit freedom.yaml
+/// directly OR add `--auto-update` / `--auto-update-apply`
+/// flags later (not yet wired — would land alongside other
+/// non-interactive wizard knobs).
+fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+    info!("wizard step 7b: auto-update");
+
+    if !interactive {
+        // Default = enabled:false, auto_apply:false. Already set
+        // by WizardState::default(); just record the step.
+        state.steps_completed.push(70); // 7-and-a-half style marker
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        let check = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(
+                "[7b/8] Allow NEOTH to check GitHub for newer releases? (no background traffic until you say yes)",
+            )
+            .default(false)
+            .interact()
+            .context("auto-update check confirm")?;
+
+        if check {
+            state.auto_update.enabled = true;
+            let apply = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt(
+                    "  Also auto-apply updates (download + replace the daemon binary)? Recommend NO — most operators want check-only nag.",
+                )
+                .default(false)
+                .interact()
+                .context("auto-update apply confirm")?;
+            state.auto_update.auto_apply = apply;
+            println!(
+                "  [7b/8] auto_update: enabled={} auto_apply={} channel={}",
+                state.auto_update.enabled,
+                state.auto_update.auto_apply,
+                state.auto_update.channel,
+            );
+        } else {
+            // Explicit "no" — make sure both flags are false even
+            // if a prior wizard run had flipped them on.
+            state.auto_update.enabled = false;
+            state.auto_update.auto_apply = false;
+            println!("  [7b/8] auto_update: disabled");
+        }
+    }
+    #[cfg(not(feature = "wizard"))]
+    {
+        // Slim build: leave defaults.
+    }
+
+    state.steps_completed.push(70);
+    Ok(())
+}
+
 fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     info!("wizard step 8: summary");
     // Step 7 (autonomy) already pushed `7`; pushing again here corrupted
@@ -2566,6 +2639,7 @@ mod tests {
             telegram_user_id: Some(987654321),
             autonomy: crate::permissions::AutonomyLevel::Standard,
             inference: crate::config::inference::InferenceTopology::default(),
+            auto_update: crate::config::AutoUpdateConfig::default(),
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
@@ -2603,6 +2677,47 @@ mod tests {
             creds_body.contains("12345678:AAAAAAAAA"),
             "telegram_token must be in credentials.yaml",
         );
+        // V03-09 Phase 2a — freedom.yaml MUST carry the auto_update
+        // block so operators see the field exists + can edit it
+        // without a docs roundtrip.
+        assert!(
+            body.contains("auto_update:"),
+            "freedom.yaml must serialize auto_update block: {body}"
+        );
+        assert!(
+            body.contains("enabled: false"),
+            "auto_update default must serialize enabled: false"
+        );
+    }
+
+    #[tokio::test]
+    async fn step7b_non_interactive_leaves_default_auto_update() {
+        // The step writes the default AutoUpdateConfig when
+        // interactive == false. Pin the contract so a future
+        // refactor that flips the default doesn't silently
+        // enable background HTTP traffic.
+        let mut state = fixture_state();
+        state.auto_update = crate::config::AutoUpdateConfig {
+            // Pretend a prior wizard run had enabled it; the
+            // non-interactive re-run MUST NOT clobber that.
+            enabled: true,
+            auto_apply: true,
+            ..crate::config::AutoUpdateConfig::default()
+        };
+
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        step7b_auto_update(&args, false, &mut state).unwrap();
+
+        // Non-interactive run preserves whatever the prior state
+        // had — does NOT prompt, does NOT reset.
+        assert!(state.auto_update.enabled);
+        assert!(state.auto_update.auto_apply);
+        // Step marker recorded.
+        assert!(state.steps_completed.contains(&70));
     }
 
     #[tokio::test]
