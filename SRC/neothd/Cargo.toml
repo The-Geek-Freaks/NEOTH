@@ -112,6 +112,11 @@ flate2 = "1.0"
 # stays honoured.
 zip     = { version = "1", default-features = false, features = ["deflate"] }
 lzma-rs = "0.3"
+# Promoted from dev-dependencies (Session 19) — the self-update apply
+# path stages the extracted binary in a same-volume tempdir before
+# atomic_replace_binary renames it onto the running daemon path.
+# Runtime, not test-only.
+tempfile = "3"
 
 # Pick #36 (Session 14, Agent #4 design-consensus): async-aware
 # Connection wrapper for `views.db`. Eliminates `block_in_place` +
@@ -277,7 +282,9 @@ windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foun
 
 [dev-dependencies]
 tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
-tempfile     = "3"
+# tempfile moved to regular [dependencies] above for the V03-09
+# Phase 2b apply path. Dev-deps inherit the regular dep so existing
+# `use tempfile::*` test imports keep working.
 # CDX-04: HTTP mock server for round-trip tests against tools/web_*,
 # tools/arxiv, tools/github. Hits a live 127.0.0.1 port so the
 # reqwest-backed code paths actually run rather than just the

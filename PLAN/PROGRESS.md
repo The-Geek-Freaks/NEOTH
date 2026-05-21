@@ -1892,7 +1892,7 @@ pushed to `origin/main`.
 
 **Still open (post-v0.1 features):**
 - Pick #6 Phase 4 — Q1 patch-safety actual apply (direct vs git worktree vs stash-revert, Chorus-gated).
-- ~~V03-09 phase 2b (download+verify+extract+replace)~~ — closed 2026-05-21. `apply_downloaded` (pure-bytes-in, 3 tests) + `apply_update` (network wrapper, end-to-end). CLI surface `neoth update --self --apply` still pending — needs the wizard knob + a single CLI flag wire.
+- ~~V03-09 phase 2b (download+verify+extract+replace)~~ — closed 2026-05-21. `apply_downloaded` (pure-bytes-in, 3 tests) + `apply_update` (network wrapper, end-to-end) + `neoth update --self --apply` CLI surface (relaxes the `--self` vs `--apply` clap conflict; routes through `run_self_apply` which calls `current_exe()` to locate the install dir + emits the `restart_required` banner). Only the wizard knob remains.
 - Pick #34 happy-path integration test — `examples/wasm-plugin-hello/` scaffold shipped 2026-05-21; missing only the `wasm32-unknown-unknown` target build CI step to produce the `.wasm` fixture.
 - R-3 live SOCKS5 wire — supervisor + URL parser shipped; missing the actual subprocess lifecycle wire in `cli::serve` startup.
 - R-7 Hyperswarm live wire — PeerLoadRegistry + LeastLoaded routing shipped; missing the Hyperswarm bridge that populates the registry (deferred until Phase-3 dep block clears `hyperswarm-rs`).

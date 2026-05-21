@@ -9,7 +9,7 @@
 //! Output respects the global `--output` flag: table | json | jsonl.
 //! See OPEN_DECISIONS.md D-005 (consistent CLI output formatting).
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Args;
 use tracing::info;
 
@@ -23,6 +23,9 @@ pub struct UpdateArgs {
     pub check: bool,
 
     /// Probe, then update any component where installed != latest.
+    /// When combined with `--self`, runs the full daemon self-
+    /// update (download → SHA-256 verify → extract → atomic
+    /// replace) instead of the per-component CLI update.
     #[arg(long, conflicts_with_all = ["check", "list"])]
     pub apply: bool,
 
@@ -31,10 +34,12 @@ pub struct UpdateArgs {
     pub list: bool,
 
     /// V03-09 (2026-05-20): check whether a newer NEOTH daemon
-    /// release is published on GitHub. Implies --check semantics
-    /// (probe only, no apply). Pass `--self-repo owner/name` to
-    /// point at a fork; default is `The-Geek-Freaks/NEOTH`.
-    #[arg(long = "self", conflicts_with_all = ["apply", "list"])]
+    /// release is published on GitHub. Without `--apply` this is
+    /// probe-only (Phase 1). With `--apply` runs the full Phase 2b
+    /// flow: download → SHA-256 verify → extract → atomic replace.
+    /// Pass `--self-repo owner/name` to point at a fork; default
+    /// is `The-Geek-Freaks/NEOTH`.
+    #[arg(long = "self", conflicts_with = "list")]
     pub self_check: bool,
 
     /// Override the GitHub `owner/repo` slug for the self-check.
@@ -51,12 +56,17 @@ pub async fn run_update(args: UpdateArgs) -> Result<()> {
         return render_list(args.output);
     }
     if args.self_check {
-        // V03-09 daemon self-check path. Default repo is the
-        // published public release; operators on a fork override.
+        // V03-09 daemon self-check + optional apply path. Default
+        // repo is the published public release; operators on a
+        // fork override via --self-repo.
         let repo = args
             .self_repo
             .as_deref()
             .unwrap_or("The-Geek-Freaks/NEOTH");
+        if args.apply {
+            info!(repo = repo, "neoth update --self --apply: full Phase 2b flow");
+            return run_self_apply(repo, args.output).await;
+        }
         info!(repo = repo, "neoth update --self: checking GitHub release");
         let outcome = crate::updater::self_update::check_for_update(repo).await?;
         render_self_check(&outcome, args.output);
@@ -104,6 +114,85 @@ fn render_self_check(check: &crate::updater::self_update::UpdateCheck, output: O
             }
             if !check.published_at.is_empty() {
                 println!("  published    : {}", check.published_at);
+            }
+        }
+    }
+}
+
+/// V03-09 Phase 2b operator-facing apply path. Probes the release,
+/// short-circuits when the daemon is already on the latest version,
+/// and otherwise runs the full download → verify → extract →
+/// atomic-replace chain against the operator's current binary
+/// location (`std::env::current_exe()`).
+async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
+    use crate::updater::self_update::{
+        apply_update, fetch_latest_release, host_target_triple, version_is_newer,
+    };
+
+    let release = fetch_latest_release(repo).await?;
+    let current = crate::updater::self_update::current_version();
+    let needs = version_is_newer(&release.tag_name, current).unwrap_or(false);
+    if !needs {
+        info!(
+            current = %current,
+            latest = %release.tag_name,
+            "already on latest — skipping apply"
+        );
+        // Surface the no-op clearly so an operator running
+        // `--self --apply` in a script doesn't think the update
+        // landed when it didn't.
+        let check = crate::updater::self_update::UpdateCheck {
+            current: current.to_string(),
+            latest: release.tag_name.clone(),
+            needs_update: false,
+            release_url: release.html_url.clone(),
+            published_at: release.published_at.clone(),
+        };
+        render_self_check(&check, output);
+        return Ok(());
+    }
+
+    let target = host_target_triple().ok_or_else(|| {
+        anyhow::anyhow!(
+            "host target triple is not in the cargo-dist matrix; \
+             cannot self-apply. Install manually from {}",
+            release.html_url
+        )
+    })?;
+    let exe = std::env::current_exe().context("locate current executable")?;
+    let install_dir = exe
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
+
+    let outcome = apply_update(&release, target, "neoth", install_dir).await?;
+    render_self_apply(&outcome, output);
+    Ok(())
+}
+
+fn render_self_apply(
+    applied: &crate::updater::self_update::UpdateApplied,
+    output: OutputFormat,
+) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "from_version": applied.from_version,
+                    "to_version": applied.to_version,
+                    "backup_path": applied.backup_path.display().to_string(),
+                    "restart_required": applied.restart_required,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            println!("# NEOTH daemon self-update applied");
+            println!("  from         : {}", applied.from_version);
+            println!("  to           : {}", applied.to_version);
+            println!("  backup       : {}", applied.backup_path.display());
+            if applied.restart_required {
+                println!();
+                println!("  Restart the daemon to run the new binary.");
             }
         }
     }
