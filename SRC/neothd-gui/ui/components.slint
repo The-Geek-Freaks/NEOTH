@@ -283,6 +283,27 @@ export component ModeCard inherits Rectangle {
     }
 }
 
+// ── SovereignFade ────────────────────────────────────────────────────
+// G-27 (2026-05-21): screen-entry opacity fade per the design
+// system's sovereign-curve specification. Wrap any screen body in
+// this component to get a 600ms ease-in fade-in on mount. Slint
+// remounts the inner block when the parent `if root.step == X:`
+// condition flips, so `init` re-fires + the animation re-plays.
+//
+// Exit fades are NOT possible in Slint 1.8 (component is unmounted
+// before any animation can run). Operator gets entry-only polish;
+// the spec accepts this trade-off because exit perception is
+// dominated by the new screen's entry.
+
+export component SovereignFade inherits Rectangle {
+    opacity: 0;
+    init => { self.opacity = 1; }
+    animate opacity {
+        duration: Theme.duration-screen-min;
+        easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+}
+
 // ── NeothComboBox ────────────────────────────────────────────────────
 // G-3 fix: dark-mode-compliant dropdown. Replaces `std-widgets::ComboBox`
 // which renders a platform-native (light-mode on Windows) background

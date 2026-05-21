@@ -20,7 +20,7 @@
 
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox } from "components.slint";
+import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade } from "components.slint";
 import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow } from "settings.slint";
 import { ChatView, ChatMessage } from "chat.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
@@ -1145,7 +1145,11 @@ export component MainWindow inherits Window {
         // Primary post-onboarding view. Operator types + sees the
         // scrollback + slash autocomplete. ⚙ icon in sidebar opens
         // Settings.
-        if root.step == WizardStep.chat: ChatView {
+        // G-27 (2026-05-21): sovereign-curve entry fade on the chat
+        // surface — operator transitions from Done → Chat with a
+        // 600ms ease-in. Slint's `if`-remount triggers init →
+        // opacity 0→1 → smooth fade.
+        if root.step == WizardStep.chat: SovereignFade { ChatView {
             messages: root.chat-messages;
             composer-draft <=> root.chat-composer-draft;
             send-enabled: root.chat-send-enabled;
@@ -1156,7 +1160,7 @@ export component MainWindow inherits Window {
             send-clicked(text) => { root.chat-send-clicked(text); }
             channel-switched(idx) => { root.chat-channel-switched(idx); }
             open-settings => { root.step = WizardStep.settings; }
-        }
+        } }  // close ChatView + SovereignFade
     }
 
         FooterBar {
