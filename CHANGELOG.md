@@ -12,7 +12,37 @@ closed the dispatcher chain, the WASM-plugin-hook loop, four
 multi-day backlog items, and shipped the example plugin fixture.
 Every commit pushed to `origin/main`.
 
-### Added
+### Added (Session 19 — 2026-05-21 follow-on)
+
+- **Smallcode port #2 `coding::model_profile`** — `KNOWN_PROFILES` table mirrored from smallcode (gemma-4 / gemma-4-e4b / qwen3 / qwen2.5-coder / deepseek-coder / codellama / llama-3 / mistral-nemo / starcoder). `ModelProfile { context_length, max_output, supports_tool_calling, tool_format, strengths, weaknesses, matched_key }`. `ToolFormat::{Native,Hermes,Json,Xml,Text}`. Fuzzy matcher with longest-key-wins semantics (`huihui-gemma-4-e4b-it-abliterated` → `gemma-4-e4b`). `needs_two_stage_router()` gates port #5.
+- **Smallcode port #3 `security::redact`** — 11 secret-shape regexes (Anthropic / OpenAI / Bearer / GitHub PAT+OAuth / Google API / AWS / JWT / Slack-Discord-Telegram / `.env KEY=VAL` / PEM blocks). `redact_text(&str) -> String` + `redact_if_secret(&str) -> (String, bool)`. Wired into `coding::dispatcher::handle_retryable_failure` + every `wasm_plugin::dispatch::invoke_plugin` error path so provider diagnostics + plugin trap messages no longer leak literal secrets to the WAL.
+- **Smallcode port #4 `coding::validate`** — patch-shape validator. `PatchValidation::{Valid, Empty, Malformed { reasons }}`. Five shape rules catch small-LLM failure modes (no marker / mismatched `---`-vs-`+++` count / hunkless headers / hunk-without-body / trailing header). Wired into `coding::review::auto_promote_if_green` + the session sweep — even green tests can't promote a malformed on-disk patch to DONE.
+- **Smallcode port #5 `coding::tool_router`** — `ToolCategory::{Read,Write,Search,Run,Plan,CodeIntel}` + `RoutingMode::{Direct,TwoStage}` + `TWO_STAGE_THRESHOLD = 16_384` (inclusive). `routing_mode(ctx_length, env_override)` decision fn with `NEOTH_TOOL_ROUTING=direct|two_stage` operator override. `build_selector_prompt()` Stage-1 menu. Not a tool registry — slots in when NEOTH's MCP surface adds canonical names.
+- **Discord Gateway live WSS receive** — `channels::discord_gateway_loop::run_gateway_loop` is the operator-runnable end. `tokio::select!` over `stream.next()` + heartbeat ticker (Discord's `heartbeat_interval` HELLO field; fallback 41 250 ms). IDENTIFY vs RESUME decision via `current_session_id()`. MESSAGE_CREATE → handler → `OutboundSender` closure → `chat.create-message` REST. `DiscordChannel::run` no longer returns `Deferred`. Free-function `channels::discord::post_to_discord` extracted so the loop closure captures `Arc<reqwest::Client>` + `Arc<SecretString>` without holding the whole adapter.
+- **V03-09 self-update Phase 2a + 2b** — Phase 1 (check-only) shipped previously. This session closed the apply chain end-to-end:
+    - `LatestRelease.assets: Vec<ReleaseAsset>` + `ArchiveFormat::{Zip,TarXz,TarGz}` + `host_target_triple()` + `expected_asset_name(binary, target)` + `find_matching_asset` + `find_sha256_companion` + `resolve_update_assets`.
+    - `parse_sha256_companion(text)` (accepts `<hex>  <filename>` and bare-hex forms; rejects truncated digests) + `verify_sha256_bytes(bytes, expected_hex)`.
+    - `extract_zip_binary` / `extract_tar_xz_binary` (pure-Rust via `lzma-rs`) / `extract_tar_gz_binary` (via `flate2`). Both top-level + nested `<binary>-<target>/<binary>` archive shapes accepted.
+    - `atomic_replace_binary(new, target)` with `target → target.bak.<unix_ms>` rollback path.
+    - `apply_downloaded(bytes, companion, format, binary, install_dir)` pure-bytes-in orchestrator + `apply_update(release, target_triple, binary, install_dir)` network wrapper.
+    - `freedom.yaml::auto_update` config block (`enabled` / `auto_apply` / `channel` / `check_interval_secs` / `repo` / `target_triple`). Default-OFF for both flags.
+    - `neoth update --self --apply` CLI wire — relaxes the `--self` ↔ `--apply` clap conflict and routes to the full Phase 2b flow.
+    - `WAL 0xD2 SELF_UPDATE_APPLIED` event code reserved with payload-shape doc.
+    - `neoth init` step7b prompts opt-in (both questions default to NO).
+
+### Security (Session 19 — 2026-05-21)
+
+- **wasmtime 26 → 36** — closes 15 RUSTSEC advisories (2025-0046 fd_renumber panic, 2025-0118 shared-memory unsoundness, 2026-0020 WASI exhaustion, 2026-0021 fields panic, 2026-0085 flags-lift panic, 2026-0086 Winch table data leak, 2026-0087 Cranelift f64x2.splat OOB, 2026-0088 pooling-allocator data leak, 2026-0089 Winch table.fill panic, 2026-0091/92/93 string-transcode OOB/panic, 2026-0094 Winch table.grow mask, 2026-0095 Winch sandbox escape, 2026-0096 aarch64 Cranelift sandbox escape). Zero NEOTH code changes — surface we use is wire-compatible.
+
+### Changed (Session 19 — 2026-05-21)
+
+- **Cargo deps**: added `zip = "1"` (deflate-only) + `lzma-rs = "0.3"` (pure-Rust xz). Promoted `tempfile = "3"` from `[dev-dependencies]` to `[dependencies]` because the self-update apply path stages binary swaps in a same-volume tempdir at runtime.
+- **`coding::dispatcher::handle_retryable_failure`** redacts the diagnosis string via `security::redact::redact_text` before the trace event hits the WAL subscriber.
+- **`wasm_plugin::dispatch::invoke_plugin`** redacts every `InvocationOutcome.error` constructor (instantiate / export-lookup / run-trap).
+- **Hooks doctor doc-comments + minor `parse_semver` char-array literals** — clippy hygiene round, zero warnings now.
+- **`InitArgs` derives `Default`** for wizard-step test ergonomics.
+
+### Added (Session 18 — 2026-05-20)
 
 - **Pick #6 Phase 3 ProviderWorker** — `coding::provider_worker::ProviderWorker` wraps any `Arc<dyn Provider>` into a synchronous Worker. Hemisphere-aware role-hint prompt; calls provider.complete via internal `tokio::runtime::Handle::block_on`; parses the response (```diff fenced block + `SUMMARY:` line + `TESTS: added/total/passing/failing/skipped`); persists the patch under `<patch_root>/coding-sessions/<sid>/task-<tid>.patch`. Q1 patch-safety placeholder — STORES, does not apply.
 - **`neoth code --dispatch`** — end-to-end coding workflow live. Resolves Left/Right/Cerebellum providers via `from_config_for_role`, wraps each in ProviderWorker, binds via HemisphereWorkerSet, calls `dispatch_session()` with default budget. Aggregated outcome (attempted / completed / blocked / unassigned + budget_exhausted) prints after run.
