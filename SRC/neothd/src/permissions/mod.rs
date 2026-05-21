@@ -69,6 +69,21 @@ pub enum Action {
     /// effect lands. Payload includes the server id so per-server
     /// policy refinement is possible.
     McpToolInvocation { server_id: String, tool: String },
+    /// Pick #6 Phase 4 (2026-05-21): apply a worker-produced
+    /// patch into a task-scoped git worktree under
+    /// `<repo_parent>/.neoth-task-<id>/`. Chorus chat
+    /// `019E49EAC4EACB805644D020B8F74A03` Q1a verdict: require
+    /// explicit operator confirm at EVERY autonomy level except
+    /// Strict (which denies outright — Strict means agent must
+    /// never mutate operator checkouts).
+    ///
+    /// `repo_root` lets a future per-repo policy override the
+    /// default (e.g. operator marks `~/code/sandbox/` as
+    /// auto-allow + `~/code/prod/` as always-confirm).
+    PatchApplyToRepo {
+        repo_root: std::path::PathBuf,
+        task_id: u64,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -173,6 +188,9 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: MCP tool `{server_id}::{tool}` requires confirm"
         )),
         Action::DangerousTarget(t) => Decision::Deny(format!("strict: dangerous target '{t}'")),
+        Action::PatchApplyToRepo { task_id, .. } => Decision::Deny(format!(
+            "strict: agent MUST NOT mutate operator checkouts — task {task_id} apply denied"
+        )),
     }
 }
 
@@ -193,6 +211,10 @@ fn evaluate_standard(action: &Action) -> Decision {
             "standard: MCP tool `{server_id}::{tool}` requires confirm — external server effects"
         )),
         Action::DangerousTarget(t) => Decision::Deny(format!("standard: dangerous target '{t}'")),
+        Action::PatchApplyToRepo { task_id, repo_root } => Decision::Confirm(format!(
+            "standard: task {task_id} patch apply to {} requires confirm",
+            repo_root.display()
+        )),
     }
 }
 
@@ -213,6 +235,15 @@ fn evaluate_elevated(action: &Action) -> Decision {
         Action::DangerousTarget(t) => {
             Decision::Confirm(format!("elevated: dangerous target '{t}' requires confirm"))
         }
+        // Per Chorus chat 019E49EAC4EACB805644D020B8F74A03 Q1a:
+        // patch apply at Elevated MUST confirm — the boundary
+        // where "agent may materially mutate a checkout" is too
+        // broad to treat as implicit even with otherwise wide
+        // latitude.
+        Action::PatchApplyToRepo { task_id, repo_root } => Decision::Confirm(format!(
+            "elevated: task {task_id} patch apply to {} requires confirm (Chorus Q1a)",
+            repo_root.display()
+        )),
     }
 }
 
@@ -256,6 +287,15 @@ fn evaluate_full(action: &Action) -> Decision {
         Action::DangerousTarget(t) => {
             Decision::Confirm(format!("full: dangerous target '{t}' requires confirm"))
         }
+        // Pick #6 Phase 4 / Chorus Q1a: even at Full, agent must
+        // not materially mutate operator checkouts without an
+        // explicit per-task confirm. Conservative for the v0.2
+        // ship target; raise to Allow once the failure-taxonomy
+        // + audit chain prove the loop in v0.3.
+        Action::PatchApplyToRepo { task_id, repo_root } => Decision::Confirm(format!(
+            "full: task {task_id} patch apply to {} requires confirm (Chorus Q1a v0.2-conservative)",
+            repo_root.display()
+        )),
         // Full = trust the operator's other gates (policy.yaml allowlist,
         // hardware-2FA at level-set time). Everything else allowed.
         _ => Decision::Allow,
@@ -448,6 +488,82 @@ mod tests {
                 "Custom must match Standard until override map lands; action {:?}",
                 action,
             );
+        }
+    }
+
+    // ── Pick #6 Phase 4 PatchApplyToRepo gate (Chorus Q1a) ──────────
+
+    fn patch_apply_action(task_id: u64) -> Action {
+        Action::PatchApplyToRepo {
+            repo_root: std::path::PathBuf::from("/home/alice/myrepo"),
+            task_id,
+        }
+    }
+
+    #[test]
+    fn patch_apply_strict_denies() {
+        let d = evaluate(&patch_apply_action(1), AutonomyLevel::Strict);
+        assert!(d.is_deny(), "strict must DENY agent mutating checkouts");
+        if let Decision::Deny(msg) = d {
+            assert!(msg.contains("strict"));
+            assert!(msg.contains("task 1"));
+        }
+    }
+
+    #[test]
+    fn patch_apply_standard_confirms() {
+        let d = evaluate(&patch_apply_action(2), AutonomyLevel::Standard);
+        assert!(matches!(d, Decision::Confirm(_)), "standard must confirm");
+    }
+
+    #[test]
+    fn patch_apply_elevated_confirms_per_chorus_q1a() {
+        // Boundary case: Elevated normally allows WriteOutsideHome
+        // implicitly, but Chorus Q1a flagged this specific action
+        // as "too broad to treat as implicit". Pin via test so a
+        // future refactor that flips it to Allow surfaces here.
+        let d = evaluate(&patch_apply_action(3), AutonomyLevel::Elevated);
+        assert!(
+            matches!(d, Decision::Confirm(_)),
+            "elevated MUST confirm patch apply per Chorus Q1a"
+        );
+        if let Decision::Confirm(msg) = d {
+            assert!(msg.contains("Chorus Q1a"));
+        }
+    }
+
+    #[test]
+    fn patch_apply_full_confirms_v02_conservative() {
+        // Full normally allows everything bar DangerousTarget;
+        // v0.2 ship conservatively confirms patch apply per
+        // Chorus verdict. Lift this to Allow in v0.3 once the
+        // failure taxonomy + WAL audit prove the loop.
+        let d = evaluate(&patch_apply_action(4), AutonomyLevel::Full);
+        assert!(
+            matches!(d, Decision::Confirm(_)),
+            "full MUST confirm patch apply for v0.2 (Chorus Q1a conservative)"
+        );
+    }
+
+    #[test]
+    fn patch_apply_custom_inherits_standard() {
+        // Custom delegates to Standard until per-category
+        // overrides ship. Pin so a future refactor that adds an
+        // override path knows to flip this assertion.
+        let d = evaluate(&patch_apply_action(5), AutonomyLevel::Custom);
+        assert!(matches!(d, Decision::Confirm(_)));
+    }
+
+    #[test]
+    fn patch_apply_confirm_message_names_repo_path() {
+        // Operator-facing prompt must surface the repo path so
+        // a multi-repo workflow can tell which checkout is
+        // about to mutate.
+        let d = evaluate(&patch_apply_action(6), AutonomyLevel::Standard);
+        if let Decision::Confirm(msg) = d {
+            assert!(msg.contains("/home/alice/myrepo"));
+        } else {
+            panic!("expected Confirm, got {d:?}");
         }
     }
 
