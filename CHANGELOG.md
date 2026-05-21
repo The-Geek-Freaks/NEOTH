@@ -29,6 +29,18 @@ Every commit pushed to `origin/main`.
     - `neoth update --self --apply` CLI wire — relaxes the `--self` ↔ `--apply` clap conflict and routes to the full Phase 2b flow.
     - `WAL 0xD2 SELF_UPDATE_APPLIED` event code reserved with payload-shape doc.
     - `neoth init` step7b prompts opt-in (both questions default to NO).
+- **Pick #6 Phase 4 (full coding-workflow apply chain)** — Chorus chat `019E49EAC4EACB805644D020B8F74A03` picked Strategy B (git worktree per task). Verdict + required design changes in `PLAN/CHORUS_pick6_phase4_VERDICT.md`. Implementation:
+    - `coding::worktree` module — `worktree_path_for(repo, task_id)` (sibling-of-repo path), `is_worktree_dirty` (`git status --porcelain`), `create_task_worktree` (`git worktree add --detach HEAD`), `apply_patch_in_worktree` (two-pass `git apply --check` → real apply with typed `PatchApplyOutcome`), `cleanup_worktree`, `patch_hash` (SHA-256 hex), `run_test_cmd` (dedicated-thread stdout+stderr drain + `<worktree>/.neoth-test-output.log` persistence + 400-char inline reason cap), `TestOutcome::{Passed, Failed { reason }}`.
+    - `DispatchApplyConfig { repo_root, test_cmd, test_timeout, wal_writer }` with builder methods.
+    - `dispatch_session_with_apply` orchestrator — apply → optional test-cmd → success or retry-via-`WorkerRetryPolicy`. On dirty-worktree refusal: apply blocked per Chorus Q1b.
+    - `freedom.yaml::coding.{test_cmd, test_timeout_secs}` operator knobs.
+    - `neoth code --dispatch --apply <repo>` CLI flag.
+    - WAL `0xD3 PATCH_APPLIED` + `0xD4 PATCH_APPLY_FAILED` event codes reserved + emit (best-effort `try_append_sync` from inside the sync dispatcher). `reason` redacted via `security::redact`.
+- **R-7 Hyperswarm cluster wire** — `peeroxide 1.3` (pure-Rust Hyperswarm port) added. Phase-3 dep block lifted.
+    - `cluster::hyperswarm::{derive_topic, spawn_discovery, SwarmHandle, send_hello, receive_hello, handle_inbound_frame, run_inbound_loop}` — per-connection lifecycle primitives testable against `tokio::io::duplex`.
+    - `cluster::heartbeat` — wire protocol per Chorus chat `019E4A48975F25C0BD9F8B96BC085C94`: CBOR (ciborium 0.2) + u32 LE length-prefix + 64 KiB max-frame + 5s ± 20% jittered cadence + protocol-version handshake. Four `FrameKind` variants (Hello / Heartbeat / CapabilityUpdate / Goodbye). Validators reject NaN/Inf/negative/absurd `tokens_per_sec`, oversized capability lists, wrong protocol/version. Verdict + required additions in `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`.
+- **R-8 OpenDAL live LocalFsConnector** — `opendal 0.56` (services-fs + blocking) added. `LocalFsConnector` impl of `CloudConnector` against the operator's cloud-vendor-desktop-client synced folder. `is_live` flipped to `true` for every provider (all work in local-mirror mode today). `CloudConfig.connector_options.local_root` points NEOTH at the synced folder.
+- **Pick #34 wasm32 + D14b GPU CI jobs** — `.github/workflows/ci.yml` `wasm-plugin` job (Linux + `wasm32-unknown-unknown` target + builds `examples/wasm-plugin-hello/` + magic-byte verify) + `feature-matrix` job (`qwen-cuda` on Ubuntu, `qwen-metal` on macOS, `check` not `build`).
 
 ### Security (Session 19 — 2026-05-21)
 

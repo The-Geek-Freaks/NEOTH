@@ -121,6 +121,12 @@ lzma-rs = "0.3"
 # punching primitives.
 peeroxide = "1.3"
 
+# R-7 heartbeat wire format (Session 19) — per Chorus
+# 019E4A48975F25C0BD9F8B96BC085C94 both reviewers picked CBOR.
+# `ciborium` is the maintained successor of `serde_cbor`; no_std-
+# friendly + no extra C deps. Used only by cluster::heartbeat.
+ciborium = "0.2"
+
 # R-8 unblock (Session 19): Apache OpenDAL — unified cloud-storage
 # layer. Replaces the StubConnector per-provider deferred bail in
 # `cloud::*`. `default-features = false` strips every backend; we
