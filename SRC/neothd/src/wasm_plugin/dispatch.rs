@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use wasmtime::Module;
 
+use crate::security::redact::redact_text;
 use crate::wasm_plugin::discovery::{DiscoveredPlugin, DiscoveryReport};
 use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState};
 
@@ -164,7 +165,7 @@ pub fn invoke_plugin(
             return InvocationOutcome {
                 plugin_id,
                 stage: InvocationStage::Instantiate,
-                error: Some(format!("new_store: {e}")),
+                error: Some(redact_text(&format!("new_store: {e}"))),
             };
         }
     };
@@ -175,7 +176,7 @@ pub fn invoke_plugin(
             return InvocationOutcome {
                 plugin_id,
                 stage: InvocationStage::Instantiate,
-                error: Some(format!("linker.instantiate: {e}")),
+                error: Some(redact_text(&format!("linker.instantiate: {e}"))),
             };
         }
     };
@@ -186,9 +187,9 @@ pub fn invoke_plugin(
             return InvocationOutcome {
                 plugin_id,
                 stage: InvocationStage::ExportLookup,
-                error: Some(format!(
+                error: Some(redact_text(&format!(
                     "missing `fn neoth_run() -> i32` export: {e}"
-                )),
+                ))),
             };
         }
     };
@@ -202,7 +203,7 @@ pub fn invoke_plugin(
         Err(e) => InvocationOutcome {
             plugin_id,
             stage: InvocationStage::Run,
-            error: Some(format!("neoth_run trapped: {e}")),
+            error: Some(redact_text(&format!("neoth_run trapped: {e}"))),
         },
     }
 }

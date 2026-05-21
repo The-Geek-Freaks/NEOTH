@@ -7,6 +7,7 @@
 //! through it first. Skipping = memory-poisoning surface wide open.
 
 pub mod ingress_sanitizer;
+pub mod redact;
 pub mod refusal_cause;
 pub mod refusal_detect;
 pub mod refusal_recovery;

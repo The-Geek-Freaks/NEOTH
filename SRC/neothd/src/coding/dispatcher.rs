@@ -28,6 +28,7 @@ use crate::coding::retry::WorkerRetryPolicy;
 use crate::coding::store;
 use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTask, TaskStatus};
 use crate::coding::worker::{Worker, WorkerOutcome};
+use crate::security::redact::redact_text;
 
 /// Map of hemisphere → bound worker. The dispatcher consults this for
 /// every BACKLOG task; if no worker is bound for the task's
@@ -285,6 +286,12 @@ fn handle_retryable_failure(
 ) -> anyhow::Result<()> {
     let attempt = retry_policy.record_attempt(task.task_id);
     let now_ns = now_unix_ns();
+
+    // Diagnosis strings ride into `tracing::info!`/`warn!` which the
+    // WAL subscriber persists durably. Provider-error messages can
+    // carry an API key in a URL query string, a Bearer header, or a
+    // leaked .env line. Redact before logging — see `security::redact`.
+    let diagnosis = redact_text(diagnosis);
 
     if retry_policy.should_retry(task.task_id) {
         // Re-queue with a strategy hint appended to the description.
