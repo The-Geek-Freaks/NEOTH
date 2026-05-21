@@ -774,3 +774,77 @@ Current read:
 - GUI / installer / release polish: 70-76%.
 - Verification confidence: 9.5/10 locally. Remaining confidence gap is live
   external e2e, CI/artifact install proof, and production soak.
+
+## 2026-05-20 14:19 active-coding recheck
+
+Current `PROGRESS.md` math with strict checklist-row parsing:
+
+- Total tracked boxes: 728.
+- Done: 512.
+- Open: 203.
+- In progress: 4.
+- Blocked: 1.
+- Deferred: 8.
+- Raw completion: 512 / 728 = 70.3%.
+- Pre-master implementation/history section: 340 / 417 = 81.5%.
+- Master open checklist: 23 / 116 = 19.8%.
+- Production roadmap section: 25 / 44 = 56.8%.
+- Post-roadmap session additions: 124 / 151 = 82.1%.
+
+Fresh movement since the 09:05 recheck:
+
+- Formal checklist completion did not move: done stayed at 512 and total stayed
+  at 728.
+- Runtime-verified test volume moved: workspace tests grew from 2341 passed to
+  2369 passed.
+- Static Rust source-dir test-attribute scan is now 2417; a full `SRC` tree scan
+  reports 2445, but that broader number can include build-tree noise after test
+  runs.
+- New visible substance is concentrated in:
+  - Coding/Kanban: worker outcome contracts, dispatcher result persistence,
+    activity-feed/GUI rail plumbing, and the new LLM second-opinion classifier
+    for ambiguous tasks.
+  - `neoth verify`: the large `run_verify` path is split into outcome,
+    segment verification, authorisation reclassification, and render helpers.
+  - Webhook verification: Slack timestamp/replay edge coverage tightened.
+  - WASM/plugin host: engine/memory formatting and tests remain green.
+  - GUI: Kanban board snapshot/live refresh/select/move/promote paths compile
+    and stay inside the green GUI test target.
+
+Verification for this snapshot:
+
+- Initial `cargo fmt --all -- --check`: FAIL, mechanical formatting deltas in
+  current active-coding files.
+- Local cleanup applied: `cargo fmt --all`; fixed two Clippy
+  `doc_lazy_continuation` warnings in `cli/verify.rs` and `coding/worker.rs`;
+  removed the stale dispatcher-test import path after the worker-result refactor.
+- Final `cargo fmt --all -- --check`: PASS.
+- Final `.\scripts\cargo-msvc.ps1 clippy --workspace --all-targets -- -D warnings`:
+  PASS.
+- Final `.\scripts\cargo-msvc.ps1 test --workspace`: PASS. Result: 2369
+  passed, 0 failed, 3 ignored. Breakdown: `neoth-migrate` 17/17, plugin SDK
+  10/10, `neothd` 2326 passed / 2 ignored, multimodal smoke 7/7,
+  no-outbound-network 1/1, GUI 8/8, plugin SDK doctest ignored.
+
+Current read:
+
+- Overall NEOTH vision: 70.3% raw; 78-82% engineering judgement. Raw completion
+  is unchanged because no `PROGRESS.md` boxes were flipped, but the code is
+  more real than at 09:05.
+- v0.2/readiness: 77-81%.
+- Core daemon / CLI / memory / WAL: 91-93%.
+- Providers / model management: 89-92%.
+- MCP / tooling / security: 87-90%.
+- Council / hemispheres: 81-85%.
+- Channels: 81-85%, mainly from webhook verification hardening rather than
+  full live receive.
+- Coding/Kanban subsystem: 60-68%. The subsystem now has real worker contracts,
+  dispatcher persistence, second-opinion classification, CLI/GUI surfaces, and
+  green unit coverage. It is still not production-grade until live worker
+  execution, patch application, rollback, and operator review loops are proven
+  end-to-end.
+- WASM/plugin/migration surface: 63-71%.
+- GUI / installer / release polish: 71-77%.
+- Verification confidence: 9.5/10 locally. Remaining confidence gap is live
+  external e2e, CI/artifact install proof, release packaging, and production
+  soak.

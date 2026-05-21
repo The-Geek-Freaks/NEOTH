@@ -35,8 +35,8 @@ pub struct VerifyArgs {
 /// of verifying one or more WAL segments. The previous 113-line
 /// `run_verify` did key handling + segment selection + marker extract
 /// + authorisation extract + verification + reclassification + render
-/// in one block; now each phase has its own helper and this struct
-/// carries the result between them.
+///   in one block; now each phase has its own helper and this struct
+///   carries the result between them.
 struct VerifyOutcome {
     total_markers: usize,
     total_verified: usize,
@@ -50,7 +50,10 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
         .wal_dir
         .clone()
         .unwrap_or_else(FreedomConfig::default_wal_dir);
-    let key_path = args.key.clone().unwrap_or_else(compaction::default_key_path);
+    let key_path = args
+        .key
+        .clone()
+        .unwrap_or_else(compaction::default_key_path);
     let key = compaction::load_or_init_key(&key_path)
         .with_context(|| format!("load HMAC key from {}", key_path.display()))?;
 
@@ -65,10 +68,7 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
     render_verify_outcome(&segments, &outcome, args.output);
 
     if !outcome.failures.is_empty() {
-        anyhow::bail!(
-            "{} marker(s) failed verification",
-            outcome.failures.len()
-        );
+        anyhow::bail!("{} marker(s) failed verification", outcome.failures.len());
     }
     Ok(())
 }
@@ -134,11 +134,7 @@ fn verify_segments(
 
 /// Render the verify outcome to stdout in either JSON envelope or the
 /// operator-friendly table form. Side-effect only — no return value.
-fn render_verify_outcome(
-    segments: &[PathBuf],
-    outcome: &VerifyOutcome,
-    output: OutputFormat,
-) {
+fn render_verify_outcome(segments: &[PathBuf], outcome: &VerifyOutcome, output: OutputFormat) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(

@@ -39,7 +39,7 @@ pub trait Worker: Send + Sync {
 /// What a worker reports back after one task run. Stored in
 /// `idx_kanban_task.test_summary` (JSON-encoded `TestSummary` only)
 /// + the patch text/path columns. The `summary` field surfaces in
-/// the activity-feed-right-rail one-line.
+///   the activity-feed-right-rail one-line.
 #[derive(Debug, Clone)]
 pub struct WorkerOutcome {
     /// The patch text the worker produced. Unified-diff format ready

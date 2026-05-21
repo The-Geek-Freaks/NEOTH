@@ -491,13 +491,8 @@ mod tests {
         // fail fast with MalformedTimestamp (the parser bailout
         // path), not proceed to a constant-time compare that could
         // leak side-channel information.
-        let outcome = verify_slack_signature(
-            b"x",
-            "not-a-number",
-            "v0=sig",
-            b"secret",
-            1_700_000_000,
-        );
+        let outcome =
+            verify_slack_signature(b"x", "not-a-number", "v0=sig", b"secret", 1_700_000_000);
         assert!(matches!(outcome, Err(SlackVerifyError::MalformedTimestamp)));
     }
 

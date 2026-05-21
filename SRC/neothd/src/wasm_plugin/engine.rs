@@ -327,8 +327,9 @@ mod tests {
         // still cannot exceed 64 MiB.
         let mut s = PluginStoreState::new("dual-cap").with_memory_limit(64 * 1024 * 1024);
         // module max 8 MiB, desired 16 MiB → denied (module's own cap).
-        let denied =
-            s.memory_growing(0, 16 * 1024 * 1024, Some(8 * 1024 * 1024)).unwrap();
+        let denied = s
+            .memory_growing(0, 16 * 1024 * 1024, Some(8 * 1024 * 1024))
+            .unwrap();
         assert!(!denied);
     }
 
