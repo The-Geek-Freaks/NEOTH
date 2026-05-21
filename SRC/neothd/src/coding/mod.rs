@@ -55,6 +55,7 @@ pub mod tool_router;
 pub mod types;
 pub mod validate;
 pub mod worker;
+pub mod worktree;
 
 // Public re-exports for downstream consumers. Currently unused in main
 // because Pick #4+ wires the decomposer/dispatcher/CLI; the module

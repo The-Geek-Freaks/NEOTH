@@ -589,6 +589,32 @@ pub const EVENT_TYPE_CONFIG_RELOAD_REJECTED: u8 = 0xD1;
 /// rollback CLI later.
 pub const EVENT_TYPE_SELF_UPDATE_APPLIED: u8 = 0xD2;
 
+/// `0xD3 PATCH_APPLIED` — Pick #6 Phase 4. Emitted after the
+/// dispatcher successfully applies a worker-produced patch
+/// inside the task-scoped git worktree. Per the Chorus verdict
+/// (`PLAN/CHORUS_pick6_phase4_VERDICT.md`), the frame carries
+/// enough state for `neoth rollback` to find + restore.
+///
+/// Payload (JSON): `{task_id, session_id, worktree_path,
+/// base_commit, patch_hash, ts_unix}`. `patch_hash` is the
+/// SHA-256 of the patch file body, computed via
+/// `coding::worktree::patch_hash`.
+pub const EVENT_TYPE_PATCH_APPLIED: u8 = 0xD3;
+
+/// `0xD4 PATCH_APPLY_FAILED` — companion to
+/// `EVENT_TYPE_PATCH_APPLIED`. Fires when `git apply --check`
+/// (or the apply itself) rejected the patch OR the test command
+/// failed inside the worktree. The dispatcher transitions the
+/// task to Blocked after one retry (per the Chorus verdict's
+/// conservative-for-v0.2 stance); future v0.3 may raise to 3
+/// retries via WorkerRetryPolicy.
+///
+/// Payload (JSON): `{task_id, session_id, worktree_path,
+/// stage, reason, ts_unix}`. `stage` is one of
+/// `"apply_check"`, `"apply"`, `"tests"` so the operator can
+/// tell whether the diff conflicted vs the tests failed.
+pub const EVENT_TYPE_PATCH_APPLY_FAILED: u8 = 0xD4;
+
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
 ///
@@ -827,6 +853,10 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_SELF_UPDATE_APPLIED < 0xD0
         || EVENT_TYPE_SELF_UPDATE_APPLIED > 0xDF) as usize];
     let _ = [(); 1]
+        [(EVENT_TYPE_PATCH_APPLIED < 0xD0 || EVENT_TYPE_PATCH_APPLIED > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PATCH_APPLY_FAILED < 0xD0
+        || EVENT_TYPE_PATCH_APPLY_FAILED > 0xDF) as usize];
+    let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
     // true (clippy::absurd_extreme_comparisons). Only lower-bound check
@@ -950,6 +980,8 @@ mod tests {
             ("CONFIG_RELOADED", EVENT_TYPE_CONFIG_RELOADED),
             ("CONFIG_RELOAD_REJECTED", EVENT_TYPE_CONFIG_RELOAD_REJECTED),
             ("SELF_UPDATE_APPLIED", EVENT_TYPE_SELF_UPDATE_APPLIED),
+            ("PATCH_APPLIED", EVENT_TYPE_PATCH_APPLIED),
+            ("PATCH_APPLY_FAILED", EVENT_TYPE_PATCH_APPLY_FAILED),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),
             ("PRE_MUTATION_SNAPSHOT", EVENT_TYPE_PRE_MUTATION_SNAPSHOT),
