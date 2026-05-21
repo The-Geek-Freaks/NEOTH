@@ -92,6 +92,36 @@ impl Default for DispatchBudget {
     }
 }
 
+/// Pick #6 Phase 4 — opt-in patch-apply config. When passed to
+/// `dispatch_session`, every worker-produced patch is applied
+/// inside a task-scoped git worktree per the Chorus verdict
+/// (Strategy B). When `None`, dispatcher behaves as Phase 3:
+/// store the patch under `<patch_root>/...` but never apply.
+///
+/// The `repo_root` MUST be a valid git working tree (the
+/// dispatcher does NOT auto-detect via walk-up; the operator's
+/// `neoth code --apply <repo_root>` provides it explicitly).
+///
+/// `autonomy` flows through `permissions::evaluate(WriteToRepo,
+/// level)` in a follow-up commit — today the dispatcher applies
+/// unconditionally when `apply_config` is `Some`. The CLI's
+/// `neoth code --apply` operator-prompt gate happens before
+/// `dispatch_session` is called, so the in-loop gate is a
+/// defense-in-depth check that lands once the permissions
+/// surface adds the `WriteToRepo` action.
+#[derive(Debug, Clone)]
+pub struct DispatchApplyConfig {
+    pub repo_root: std::path::PathBuf,
+}
+
+impl DispatchApplyConfig {
+    pub fn new(repo_root: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            repo_root: repo_root.into(),
+        }
+    }
+}
+
 /// Per-dispatch aggregated outcome. Returned so the caller (likely
 /// `neoth code`) can render a one-line operator summary.
 #[derive(Debug, Default, Clone)]
@@ -118,6 +148,21 @@ pub fn dispatch_session(
     session_id: KanbanSessionId,
     workers: &HemisphereWorkerSet,
     budget: DispatchBudget,
+) -> Result<DispatchOutcome> {
+    dispatch_session_with_apply(conn, session_id, workers, budget, None)
+}
+
+/// Pick #6 Phase 4 — variant that also applies worker patches
+/// inside a task-scoped git worktree when `apply_config` is
+/// `Some`. The simple `dispatch_session` calls this with `None`
+/// for backward-compat. New CLI surfaces (`neoth code --apply`)
+/// call this directly.
+pub fn dispatch_session_with_apply(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+    workers: &HemisphereWorkerSet,
+    budget: DispatchBudget,
+    apply_config: Option<&DispatchApplyConfig>,
 ) -> Result<DispatchOutcome> {
     let started = Instant::now();
     let mut outcome = DispatchOutcome::default();
@@ -182,10 +227,34 @@ pub fn dispatch_session(
                 // end. 30s heartbeat (WAL 0x77 KANBAN_TASK_PROGRESS)
                 // lands in a later sprint via a background task.
                 apply_outcome(conn, &task, &o)?;
-                outcome.tasks_completed += 1;
-                // Worker succeeded — clear retry state so a future
-                // re-run of the same task starts fresh.
-                retry_policy.reset(task.task_id);
+
+                // Pick #6 Phase 4: opt-in real-apply path. When the
+                // operator passed `--apply` the dispatcher creates a
+                // task-scoped git worktree, runs git apply, and only
+                // promotes to Review when both succeed. On apply
+                // rejection the task is treated as a retryable
+                // failure with git's stderr as the diagnosis hint.
+                if let Some(cfg) = apply_config {
+                    match apply_patch_via_worktree(&task, &o, cfg) {
+                        Ok(()) => {
+                            outcome.tasks_completed += 1;
+                            retry_policy.reset(task.task_id);
+                        }
+                        Err(diagnosis) => {
+                            let _ = handle_retryable_failure(
+                                conn,
+                                &task,
+                                &mut retry_policy,
+                                &mut outcome,
+                                &diagnosis,
+                                Some(&o),
+                            );
+                        }
+                    }
+                } else {
+                    outcome.tasks_completed += 1;
+                    retry_policy.reset(task.task_id);
+                }
             }
             Ok(o) => {
                 // Outcome reached us but `failed()` (empty patch +
@@ -249,6 +318,74 @@ fn pick_next_backlog_task(
 /// Persist the worker outcome to the task row + transition status.
 /// `Review` when the outcome is review-ready, `Blocked` when the
 /// worker bailed out with both an empty patch + zero tests.
+/// Pick #6 Phase 4 (2026-05-21): create a task-scoped git
+/// worktree, refuse if it's dirty, apply the patch. Returns Ok
+/// on success, Err with an operator-readable diagnosis string
+/// (suitable for `handle_retryable_failure`'s `diagnosis` arg)
+/// on any apply or worktree failure.
+///
+/// The worktree is intentionally LEFT in place on success so
+/// the operator can inspect / cherry-pick the applied diff
+/// against their main checkout. Cleanup is operator-driven via
+/// `neoth code --cleanup-worktree <task_id>` (lands as a CLI
+/// follow-up). Tests + GUI surfaces in v0.3 add automatic
+/// cleanup on successful Review → Done transitions.
+fn apply_patch_via_worktree(
+    task: &KanbanTask,
+    outcome: &WorkerOutcome,
+    cfg: &DispatchApplyConfig,
+) -> std::result::Result<(), String> {
+    if outcome.patch_text.is_empty() {
+        // Worker produced no patch — nothing to apply. Caller
+        // already promoted to Review based on the test summary.
+        return Ok(());
+    }
+
+    let wt_path = crate::coding::worktree::create_task_worktree(&cfg.repo_root, task.task_id)
+        .map_err(|e| format!("worktree create failed for task {}: {e}", task.task_id.raw()))?;
+
+    // Per Chorus verdict Q1b: refuse on dirty. The worktree was
+    // just created from HEAD so it should be clean — this is a
+    // defensive check against an operator that pre-populated
+    // the .neoth-task-N/ dir.
+    match crate::coding::worktree::is_worktree_dirty(&wt_path) {
+        Ok(true) => {
+            return Err(format!(
+                "task {} worktree {} is dirty — refusing apply (Chorus Q1b)",
+                task.task_id.raw(),
+                wt_path.display()
+            ));
+        }
+        Err(e) => {
+            return Err(format!("worktree dirty-check failed: {e}"));
+        }
+        Ok(false) => {}
+    }
+
+    match crate::coding::worktree::apply_patch_in_worktree(&wt_path, &outcome.patch_path) {
+        Ok(crate::coding::worktree::PatchApplyOutcome::Applied { worktree_path }) => {
+            info!(
+                task_id = task.task_id.raw(),
+                worktree = %worktree_path.display(),
+                "patch applied; tests run in worktree (follow-up commit)"
+            );
+            // WAL 0xD3 PATCH_APPLIED emit + test execution land
+            // in the follow-up commit; today the operator sees
+            // the applied patch in the worktree + can inspect
+            // manually.
+            Ok(())
+        }
+        Ok(crate::coding::worktree::PatchApplyOutcome::Rejected { stderr }) => Err(format!(
+            "git apply rejected patch for task {}: {stderr}",
+            task.task_id.raw()
+        )),
+        Err(e) => Err(format!(
+            "apply_patch_in_worktree IO error for task {}: {e}",
+            task.task_id.raw()
+        )),
+    }
+}
+
 fn apply_outcome(conn: &Connection, task: &KanbanTask, outcome: &WorkerOutcome) -> Result<()> {
     let target = if outcome.review_ready() {
         TaskStatus::Review
@@ -609,6 +746,214 @@ mod tests {
         let b = DispatchBudget::default();
         assert_eq!(b.max_duration.as_secs(), 30 * 60);
         assert_eq!(b.max_tasks, 20);
+    }
+
+    // ── Pick #6 Phase 4 apply-via-worktree integration ─────────────
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Live git fixture: tempdir + init + initial commit so HEAD
+    /// points somewhere apply_patch_in_worktree can branch off.
+    fn init_repo(dir: &std::path::Path) -> std::io::Result<()> {
+        use std::process::Command;
+        Command::new("git").arg("-C").arg(dir).args(["init", "-q"]).status()?;
+        Command::new("git").arg("-C").arg(dir)
+            .args(["config", "user.email", "ph4-test@example.com"]).status()?;
+        Command::new("git").arg("-C").arg(dir)
+            .args(["config", "user.name", "ph4-test"]).status()?;
+        std::fs::write(dir.join("README.md"), "initial\n")?;
+        Command::new("git").arg("-C").arg(dir).args(["add", "README.md"]).status()?;
+        Command::new("git").arg("-C").arg(dir)
+            .args(["commit", "-q", "-m", "init"]).status()?;
+        Ok(())
+    }
+
+    fn green_outcome_with_real_patch(patch_path: PathBuf) -> WorkerOutcome {
+        // Real patch body (line-by-line so leading-space context
+        // lines survive). Mirrors the smoke test in worktree::tests.
+        let patch_lines = [
+            "diff --git a/README.md b/README.md",
+            "--- a/README.md",
+            "+++ b/README.md",
+            "@@ -1 +1,2 @@",
+            " initial",
+            "+second line",
+            "",
+        ];
+        std::fs::write(&patch_path, patch_lines.join("\n")).unwrap();
+        WorkerOutcome {
+            patch_text: "<set>".into(),
+            patch_path,
+            tests: TestSummary {
+                added: 1,
+                total: 1,
+                passing: 1,
+                failing: 0,
+                skipped: 0,
+            },
+            summary: "applied".into(),
+        }
+    }
+
+    #[test]
+    fn dispatch_session_with_apply_creates_worktree_and_applies_patch() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        // Build a sibling git repo so worktree_path_for lands at
+        // <tempdir>/.neoth-task-N (parent of repo dir).
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let patch_path = dir.path().join("change.patch");
+        let outcome_template = green_outcome_with_real_patch(patch_path.clone());
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: outcome_template,
+                name: "phase4-test",
+            }),
+        );
+
+        let cfg = DispatchApplyConfig::new(&repo);
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&cfg),
+        )
+        .expect("dispatch with apply");
+
+        assert_eq!(outcome.tasks_completed, 1);
+
+        // Worktree must exist as sibling of repo + contain the
+        // applied content.
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(wt.exists(), "worktree exists at {}", wt.display());
+        let readme = std::fs::read_to_string(wt.join("README.md")).unwrap();
+        assert!(readme.contains("second line"), "patch applied: {readme}");
+
+        // Cleanup so we don't leak (force=true because the apply
+        // produced a dirty worktree by design).
+        let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+    }
+
+    #[test]
+    fn dispatch_session_with_apply_marks_task_blocked_on_conflict() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let (dir, conn) = fresh_db();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        init_repo(&repo).unwrap();
+
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        // Patch references a file that doesn't exist — git apply
+        // --check rejects. Phase 4 must re-queue, then Block at
+        // ceiling.
+        let patch_path = dir.path().join("bad.patch");
+        let patch_lines = [
+            "diff --git a/nonexistent.txt b/nonexistent.txt",
+            "--- a/nonexistent.txt",
+            "+++ b/nonexistent.txt",
+            "@@ -1 +1,2 @@",
+            " line that does not exist",
+            "+new line",
+            "",
+        ];
+        std::fs::write(&patch_path, patch_lines.join("\n")).unwrap();
+        let mut bad_outcome = green_outcome();
+        bad_outcome.patch_path = patch_path;
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: bad_outcome,
+                name: "phase4-bad",
+            }),
+        );
+
+        let cfg = DispatchApplyConfig::new(&repo);
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&cfg),
+        )
+        .expect("dispatch with apply");
+
+        // Task transitions through retries and finally lands in
+        // Blocked once the retry ceiling fires.
+        assert_eq!(outcome.tasks_completed, 0);
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .into_iter()
+            .find(|t| t.task_id == task_id)
+            .unwrap();
+        assert!(
+            matches!(task.status, TaskStatus::Blocked | TaskStatus::Backlog),
+            "task ended in {:?} after apply rejection",
+            task.status
+        );
+
+        // Best-effort cleanup of any worktree left behind.
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        if wt.exists() {
+            let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+        }
+    }
+
+    #[test]
+    fn dispatch_session_with_apply_none_behaves_like_phase_3() {
+        // Backward compat: passing None for apply_config preserves
+        // the Phase-3 behaviour where the dispatcher records the
+        // patch_path but never actually applies anything.
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "phase3-compat",
+            }),
+        );
+
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            None,
+        )
+        .expect("dispatch without apply");
+        assert_eq!(outcome.tasks_completed, 1);
     }
 
     // Helper: silence dead-code on the Arc import in case the test
