@@ -615,6 +615,78 @@ pub const EVENT_TYPE_PATCH_APPLIED: u8 = 0xD3;
 /// tell whether the diff conflicted vs the tests failed.
 pub const EVENT_TYPE_PATCH_APPLY_FAILED: u8 = 0xD4;
 
+// ---- 0xE0..=0xE7  Cluster lifecycle (R-7, Session 19) ---------------------
+//
+// Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
+// this band trace cluster mode events — peer discovery, heart-
+// beat receive, disconnect, rejection — so a multi-host
+// operator can reconstruct who-was-up-when from the audit
+// chain. Emit fires from inside `cli::serve` (the daemon path
+// that has a live WalWriterHandle); CLI one-shots stay silent.
+
+/// `0xE0 CLUSTER_PEER_CONNECTED` — emitted once per peer
+/// connection after the handshake completes (our Hello sent,
+/// peer's Hello received + validated).
+///
+/// Payload (JSON): `{peer_id, remote_public_key_hex,
+/// cluster, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_PEER_CONNECTED: u8 = 0xE0;
+
+/// `0xE1 CLUSTER_PEER_DISCONNECTED` — emitted when a peer
+/// connection closes (clean EOF, Goodbye, or error). `reason`
+/// is one of `"eof"` / `"goodbye"` / `"error"`.
+///
+/// Payload (JSON): `{peer_id, reason, error, ts_unix}`.
+/// `error` is `null` for clean disconnects; redacted via
+/// `security::redact::redact_text` when present so a
+/// validation-failure message can't leak secrets the peer
+/// shoved into a frame.
+pub const EVENT_TYPE_CLUSTER_PEER_DISCONNECTED: u8 = 0xE1;
+
+/// `0xE2 CLUSTER_PEER_REJECTED` — handshake failure (wrong
+/// protocol / version, cluster_name_hash mismatch, malformed
+/// CBOR Hello). Distinct from `DISCONNECTED` so audit greps
+/// can tell "we lost a peer" from "we refused a peer".
+///
+/// Payload (JSON): `{peer_id_claim, reason, ts_unix}`.
+/// `peer_id_claim` is whatever the peer advertised — may be
+/// untrusted (no handshake completed) so the audit log
+/// quotes it verbatim. `reason` is redacted.
+pub const EVENT_TYPE_CLUSTER_PEER_REJECTED: u8 = 0xE2;
+
+/// `0xE3 CLUSTER_HEARTBEAT_FIRST` — emitted on the first
+/// valid heartbeat from a peer after CONNECTED. Subsequent
+/// heartbeats are NOT logged individually (would flood the
+/// WAL at 5s cadence × N peers); load-class changes get
+/// their own dedicated frame (planned: `0xE4`).
+///
+/// Payload (JSON): `{peer_id, tokens_per_sec, healthy,
+/// inflight_requests, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST: u8 = 0xE3;
+
+/// `0xE4 CLUSTER_PEER_HEALTH_CHANGED` — emitted when a peer's
+/// `healthy` flag transitions (true → false or false → true).
+/// One of the two operator-relevant heartbeat-band events;
+/// other heartbeats land only in the in-memory PeerLoadRegistry.
+///
+/// Payload (JSON): `{peer_id, from_healthy, to_healthy,
+/// last_tps, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED: u8 = 0xE4;
+
+/// `0xE5 CLUSTER_CAPABILITIES_CHANGED` — emitted when a
+/// peer's `capabilities_hash` changes (operator reconfigured
+/// the peer's provider bindings while it was up). Distinct
+/// from disconnect-then-reconnect so audit consumers see "X
+/// added capability foo" as a single event.
+///
+/// Payload (JSON): `{peer_id, capabilities, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED: u8 = 0xE5;
+
+/// `0xE6` + `0xE7` — reserved for future cluster events
+/// (orchestrator election, peer-load class crossing thresholds).
+/// Not yet emitted; placeholder so the band reservation is
+/// stable for future commits.
+
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
 ///
@@ -856,6 +928,19 @@ const _: () = {
         [(EVENT_TYPE_PATCH_APPLIED < 0xD0 || EVENT_TYPE_PATCH_APPLIED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PATCH_APPLY_FAILED < 0xD0
         || EVENT_TYPE_PATCH_APPLY_FAILED > 0xDF) as usize];
+    // R-7 cluster lifecycle band (0xE0..=0xE7).
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_CONNECTED < 0xE0
+        || EVENT_TYPE_CLUSTER_PEER_CONNECTED > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_DISCONNECTED < 0xE0
+        || EVENT_TYPE_CLUSTER_PEER_DISCONNECTED > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_REJECTED < 0xE0
+        || EVENT_TYPE_CLUSTER_PEER_REJECTED > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST < 0xE0
+        || EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED < 0xE0
+        || EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED < 0xE0
+        || EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED > 0xE7) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
@@ -982,6 +1067,15 @@ mod tests {
             ("SELF_UPDATE_APPLIED", EVENT_TYPE_SELF_UPDATE_APPLIED),
             ("PATCH_APPLIED", EVENT_TYPE_PATCH_APPLIED),
             ("PATCH_APPLY_FAILED", EVENT_TYPE_PATCH_APPLY_FAILED),
+            ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
+            ("CLUSTER_PEER_DISCONNECTED", EVENT_TYPE_CLUSTER_PEER_DISCONNECTED),
+            ("CLUSTER_PEER_REJECTED", EVENT_TYPE_CLUSTER_PEER_REJECTED),
+            ("CLUSTER_HEARTBEAT_FIRST", EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST),
+            ("CLUSTER_PEER_HEALTH_CHANGED", EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED),
+            (
+                "CLUSTER_CAPABILITIES_CHANGED",
+                EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED,
+            ),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),
             ("PRE_MUTATION_SNAPSHOT", EVENT_TYPE_PRE_MUTATION_SNAPSHOT),
