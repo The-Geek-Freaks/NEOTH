@@ -55,9 +55,9 @@ pub fn current_version() -> &'static str {
 /// it). Pre-release / build metadata after `-` or `+` is ignored —
 /// comparison runs on the major.minor.patch triple only.
 pub fn parse_semver(s: &str) -> Result<(u32, u32, u32)> {
-    let trimmed = s.trim().trim_start_matches(|c: char| c == 'v' || c == 'V');
+    let trimmed = s.trim().trim_start_matches(['v', 'V']);
     let core = trimmed
-        .split(|c: char| c == '-' || c == '+')
+        .split(['-', '+'])
         .next()
         .unwrap_or(trimmed);
     let parts: Vec<&str> = core.split('.').collect();

@@ -85,7 +85,7 @@ impl SeedValidation {
 /// — bad keypair".
 ///
 /// Does NOT verify the checksum — that requires Keet's own wordlist
-/// + algorithm which lives in the JS Holepunch stack. The transport
+/// and algorithm which live in the JS Holepunch stack. The transport
 /// will reject a checksum-failing phrase at pairing time; this
 /// function catches the 90% of operator typos.
 pub fn validate_seed_phrase(s: &str) -> SeedValidation {

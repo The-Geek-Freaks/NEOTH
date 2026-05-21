@@ -157,10 +157,10 @@ impl DiscordChannel {
 /// Free-function counterpart to `DiscordChannel::post_one`. The
 /// receive loop (`channels::discord_gateway_loop`) builds its
 /// reply-sender closure against this, capturing only an
-/// `Arc<reqwest::Client>` + `Arc<SecretString>` instead of an
-/// `Arc<DiscordChannel>` (the adapter doesn't impl Clone +
+/// `Arc<reqwest::Client>` plus `Arc<SecretString>` instead of an
+/// `Arc<DiscordChannel>` (the adapter doesn't impl Clone, and
 /// would need a layered Arc to share across the WSS read-loop
-/// + the heartbeat tick). The shape mirrors
+/// and the heartbeat tick). The shape mirrors
 /// `slack_api::post_message` so cross-channel reviewers see the
 /// same pattern.
 pub async fn post_to_discord(

@@ -48,7 +48,7 @@ pub enum StageOutcome {
 /// Pick #34 follow-up (2026-05-20): operator-supplied callback the
 /// hook dispatcher uses to invoke a discovered WASM plugin without
 /// importing wasmtime. Concrete impl lives in `wasm_plugin::dispatch`
-/// + is wired by the daemon's bootstrap; hook unit tests pass `None`
+/// and is wired by the daemon's bootstrap; hook unit tests pass `None`
 /// and the dispatcher degrades Plugin actions to Allow.
 pub trait PluginInvoker: Send + Sync {
     /// Invoke the plugin by id. Errors propagate up so the dispatcher
