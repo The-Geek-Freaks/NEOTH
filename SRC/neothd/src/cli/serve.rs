@@ -103,6 +103,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "loaded freedom.yaml"
     );
 
+    // ── 1a. Plugin discovery + invoker registration (Pick #34 follow-up) ───
+    //
+    // Discover `~/.neoth/plugins/<id>/`, compile each .wasm, register the
+    // resulting CompiledPluginInvoker as the process-wide hook invoker.
+    // Failure on any individual plugin logs a warn + continues (operator
+    // sees the cause in `neoth plugins list` separately); a missing
+    // plugin dir is silently fine.
+    //
+    // Feature-gated so the slim daemon (no wasm-plugin-host) skips the
+    // whole block without an `unused_imports` warning.
+    #[cfg(feature = "wasm-plugin-host")]
+    bootstrap_plugin_invoker(&FreedomConfig::default_neoth_home());
+
     // V03-08 + A-2 preflight: daemon has no TTY so `ensure_all_granted_or_prompt`
     // bails with an actionable error if any cloud provider in the
     // operator's freedom.yaml is not yet consented. Covers both the
@@ -2275,6 +2288,72 @@ pub(crate) async fn handle_media_attachment(
         AssetKind::Pdf | AssetKind::Other => extraction.text,
     };
     Ok(synthesised)
+}
+
+/// Pick #34 follow-up (2026-05-21): discover plugins, compile, build
+/// the daemon-side PluginInvoker, register it as the process-wide
+/// invoker so existing `run_stage` calls automatically fire Plugin
+/// actions.
+///
+/// Single-shot; safe to call multiple times (OnceLock semantics —
+/// subsequent calls noop). Failure modes all log a warn + return
+/// without registering; the daemon stays up + Plugin hooks degrade
+/// to Allow (their pre-bootstrap behaviour).
+#[cfg(feature = "wasm-plugin-host")]
+fn bootstrap_plugin_invoker(home: &std::path::Path) {
+    use std::sync::Arc;
+    let plugins_root = home.join("plugins");
+    let report = crate::wasm_plugin::discovery::discover(&plugins_root);
+    if report.is_empty() {
+        // No plugins dir or zero entries — operator hasn't installed
+        // anything. Skip silently; the next run_serve will re-scan.
+        return;
+    }
+    if !report.rejected.is_empty() {
+        for e in &report.rejected {
+            warn!(error = %e, "plugin discovery rejected entry");
+        }
+    }
+    let engine = match crate::wasm_plugin::engine::NeothEngine::new() {
+        Ok(e) => Arc::new(e),
+        Err(e) => {
+            warn!(error = %e, "wasmtime engine build failed — plugin hooks disabled");
+            return;
+        }
+    };
+    let linker = match crate::wasm_plugin::hostcalls::build_linker(engine.raw()) {
+        Ok(l) => Arc::new(l),
+        Err(e) => {
+            warn!(error = %e, "hostcalls linker build failed — plugin hooks disabled");
+            return;
+        }
+    };
+    let outcomes = crate::wasm_plugin::dispatch::compile_all_discovered(&engine, &report);
+    let failed: Vec<&str> = outcomes.iter().filter(|o| !o.is_ok()).map(|o| o.plugin_id()).collect();
+    if !failed.is_empty() {
+        warn!(
+            failed_plugins = ?failed,
+            "some plugins failed compile — they will NOT be invoked by hooks; \
+             see `neoth plugins list` for details"
+        );
+    }
+    let invoker = crate::wasm_plugin::dispatch::CompiledPluginInvoker::from_compile_outcomes(
+        engine, &outcomes, linker,
+    );
+    if invoker.is_empty() {
+        warn!("plugin discovery returned entries but zero compiled — invoker not registered");
+        return;
+    }
+    let count = invoker.len();
+    let arc: Arc<dyn crate::hooks::dispatcher::PluginInvoker> = Arc::new(invoker);
+    if crate::hooks::dispatcher::register_global_invoker(arc) {
+        info!(plugins = count, "plugin invoker registered; hook actions Plugin{{..}} are live");
+    } else {
+        warn!(
+            "plugin invoker already registered earlier in this process — \
+             keeping the existing instance"
+        );
+    }
 }
 
 #[cfg(test)]
