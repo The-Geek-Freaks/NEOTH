@@ -43,6 +43,7 @@ pub mod shutdown;
 mod adr;
 mod channels;
 mod cli;
+mod cloud;
 mod cluster;
 mod code_map;
 // V11 coding-workflow scaffold (Session 17 Pick #38, 2026-05-19).
