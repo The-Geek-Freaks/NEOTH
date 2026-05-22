@@ -45,6 +45,34 @@ struct LoadedModel {
     eos_id: Option<u32>,
 }
 
+/// Day-14b Phase 1b — bare-model state for the embed() surface.
+///
+/// Uses `qwen2::Model` (no `lm_head` projection) instead of
+/// `ModelForCausalLM` so the forward pass returns post-norm hidden
+/// states directly. Embedding is opt-in — this slot is only
+/// populated on first `embed()` call so operators who never use
+/// the embedding surface pay zero extra memory.
+///
+/// **Memory trade-off**: on CUDA/Metal the model weights are
+/// copied to device memory; loading `Model` separately from
+/// `ModelForCausalLM` means ~2× the parameter footprint. For the
+/// 3B-parameter default checkpoint that's ~6 GB peak. On CPU the
+/// safetensors mmap is shared between both views so the cost is
+/// just struct overhead (tens of MB). Future Phase 1c: PR candle
+/// upstream to expose `forward_hidden` on `ModelForCausalLM` so
+/// the two views can share weights on every device.
+struct LoadedEmbedModel {
+    /// Bare model — no `lm_head`. `Model::forward(input, 0, None)`
+    /// returns `[batch, seq, hidden_size]` post-norm hidden states.
+    model: candle_transformers::models::qwen2::Model,
+    tokenizer: tokenizers::Tokenizer,
+    device: candle_core::Device,
+    /// Hidden dimension — operators read via `EmbedProvider::default_dim`
+    /// for dim-mismatch guards before computing cosine. Varies by
+    /// checkpoint (Qwen2.5-3B = 2048, Qwen2.5-0.5B = 896).
+    hidden_size: usize,
+}
+
 /// Default Hugging Face repo for the Qwen3-4B base. Operators may override
 /// via `freedom.yaml::provider_model` if they want a different variant
 /// (Instruct, Chat-tuned, INT4 quant, etc).
@@ -93,6 +121,10 @@ pub struct LocalQwenAdapter {
     /// subsequent call re-uses the cached `LoadedModel`. KV-cache is
     /// cleared between calls so prior conversations don't leak.
     loaded: Arc<Mutex<Option<LoadedModel>>>,
+    /// Day-14b Phase 1b — lazy-loaded embed-only `qwen2::Model` (no
+    /// `lm_head`). Populated on first `embed()` call; operators who
+    /// never use the embedding surface pay nothing.
+    loaded_embed: Arc<Mutex<Option<LoadedEmbedModel>>>,
 }
 
 /// Default new-token cap when the operator doesn't override. Fits typical
@@ -234,6 +266,7 @@ impl LocalQwenAdapter {
             sampling,
             max_new_tokens: clamp_max_new_tokens(max_new_tokens),
             loaded: Arc::new(Mutex::new(None)),
+            loaded_embed: Arc::new(Mutex::new(None)),
         };
         adapter.ensure_artifacts().await?;
         Ok(adapter)
@@ -880,6 +913,229 @@ fn run_forward(
     })
 }
 
+// ─── Day-14b Phase 1b: embed surface ──────────────────────────────────
+
+/// Load the bare `qwen2::Model` (no `lm_head`) into the
+/// embed-only slot. Same weights file as the chat path; on CPU
+/// the safetensors mmap is shared so cost is just struct overhead,
+/// on CUDA/Metal the parameters are copied to device memory a
+/// second time.
+fn ensure_embed_loaded(
+    loaded_embed: &Arc<Mutex<Option<LoadedEmbedModel>>>,
+    tokenizer_path: &Path,
+    config_path: &Path,
+    weights_path: &Path,
+    accelerator: Option<Accelerator>,
+    repo: &str,
+) -> Result<()> {
+    use candle_core::DType;
+    use candle_nn::VarBuilder;
+    use candle_transformers::models::qwen2::{Config, Model as Qwen2BareModel};
+    use tokenizers::Tokenizer;
+
+    let mut slot = loaded_embed
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if slot.is_some() {
+        return Ok(());
+    }
+    let started = std::time::Instant::now();
+    eprintln!(
+        "→ loading Qwen embed-only model from {} (first embed() call only)",
+        weights_path.display()
+    );
+    let device = device_for(accelerator);
+    let dtype = DType::F32;
+    let tokenizer = Tokenizer::from_file(tokenizer_path)
+        .map_err(|e| anyhow::anyhow!("load tokenizer.json: {e}"))?;
+    let config: Config = {
+        let body = std::fs::read_to_string(config_path)
+            .with_context(|| format!("read {}", config_path.display()))?;
+        serde_json::from_str(&body).context("parse Qwen2 config.json")?
+    };
+    let hidden_size = config.hidden_size;
+    // SAFETY: weights file is operator-owned + already opened R/O
+    // by the chat path. mmap_safetensors is documented unsafe for
+    // the truncation-during-read class of bugs; we own the
+    // process and don't truncate.
+    let vb = unsafe {
+        VarBuilder::from_mmaped_safetensors(&[weights_path], dtype, &device)
+            .with_context(|| format!("mmap safetensors {}", weights_path.display()))?
+    };
+    let model = Qwen2BareModel::new(&config, vb).context("build Qwen2 Model (bare, no lm_head)")?;
+    info!(
+        repo = %repo,
+        device = ?device,
+        hidden_size,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "local_qwen: embed-only model loaded into cache",
+    );
+    eprintln!(
+        "✓ Qwen embed-only model loaded in {:.1}s",
+        started.elapsed().as_secs_f32()
+    );
+    *slot = Some(LoadedEmbedModel {
+        model,
+        tokenizer,
+        device,
+        hidden_size,
+    });
+    Ok(())
+}
+
+/// Run one embedding pass. Blocking — callers (the `EmbedProvider`
+/// impl below) wrap in `spawn_blocking`. Returns an L2-normalised
+/// vector of dim `hidden_size`.
+///
+/// Pooling strategy: mean over the sequence dimension of the
+/// post-norm hidden states. Cheap, no extra trained heads
+/// required, gives a usable semantic signature for the Stage-2
+/// router + dissent + dreaming-clustering downstreams. Future
+/// upgrade: weighted pooling (e.g. attention-pooled last token)
+/// once an instruction-tuned embedding checkpoint lands.
+fn run_embed(
+    loaded_embed: Arc<Mutex<Option<LoadedEmbedModel>>>,
+    tokenizer_path: &Path,
+    config_path: &Path,
+    weights_path: &Path,
+    accelerator: Option<Accelerator>,
+    repo: &str,
+    text: &str,
+) -> Result<Vec<f32>> {
+    use candle_core::Tensor;
+
+    ensure_embed_loaded(
+        &loaded_embed,
+        tokenizer_path,
+        config_path,
+        weights_path,
+        accelerator,
+        repo,
+    )?;
+    let mut slot = loaded_embed
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let loaded = slot.as_mut().expect("ensure_embed_loaded populated slot");
+
+    if text.trim().is_empty() {
+        anyhow::bail!("embed: empty text — caller MUST filter before invoking");
+    }
+    let encoding = loaded
+        .tokenizer
+        .encode(text, true)
+        .map_err(|e| anyhow::anyhow!("tokenize: {e}"))?;
+    let ids = encoding.get_ids();
+    if ids.is_empty() {
+        anyhow::bail!("embed: tokenizer produced zero tokens for non-empty input");
+    }
+    let input_ids = Tensor::new(ids, &loaded.device)
+        .context("build input_ids tensor")?
+        .unsqueeze(0)
+        .context("add batch dim")?;
+    // Forward through the bare model. Returns post-norm hidden
+    // states with shape [batch=1, seq_len, hidden_size].
+    let hidden = loaded
+        .model
+        .forward(&input_ids, 0, None)
+        .context("qwen2::Model::forward for embed")?;
+    // Mean-pool across the sequence dimension. mean_keepdim then
+    // squeeze keeps the API explicit + avoids dim-arithmetic
+    // mistakes when the candle signature changes.
+    let pooled = hidden
+        .mean(1)
+        .context("mean over seq dim")?
+        .squeeze(0)
+        .context("drop batch dim")?;
+    let vec_f32: Vec<f32> = pooled
+        .to_dtype(candle_core::DType::F32)
+        .context("cast hidden state to f32")?
+        .to_vec1()
+        .context("extract Vec<f32> from pooled tensor")?;
+    let mut out = vec_f32;
+    if !crate::providers::embed::l2_normalize(&mut out) {
+        anyhow::bail!("embed: pooled hidden state is zero — model misload?");
+    }
+    Ok(out)
+}
+
+impl LocalQwenAdapter {
+    /// Async wrapper around the embed forward-pass. Spawns the
+    /// blocking model call on the tokio blocking pool so the
+    /// caller's tokio runtime stays responsive.
+    pub async fn embed_async(&self, text: String) -> Result<Vec<f32>> {
+        let loaded_embed = Arc::clone(&self.loaded_embed);
+        let tokenizer_path = self.tokenizer_path.clone();
+        let config_path = self.config_path.clone();
+        let weights_path = self.weights_path.clone();
+        let accelerator = self.accelerator;
+        let repo = self.repo.clone();
+        tokio::task::spawn_blocking(move || {
+            run_embed(
+                loaded_embed,
+                &tokenizer_path,
+                &config_path,
+                &weights_path,
+                accelerator,
+                &repo,
+                &text,
+            )
+        })
+        .await
+        .context("embed: spawn_blocking join")?
+    }
+
+    /// Hidden dimensionality for the operator's configured model —
+    /// returned via `EmbedProvider::default_dim`. Reads the cached
+    /// `LoadedEmbedModel` when warm; falls back to parsing
+    /// config.json when cold so the consumer can build dim-mismatch
+    /// guards without forcing the embed model into memory.
+    pub fn embed_dim_hint(&self) -> usize {
+        if let Ok(slot) = self.loaded_embed.lock() {
+            if let Some(loaded) = slot.as_ref() {
+                return loaded.hidden_size;
+            }
+        }
+        // Cold path: parse config.json on demand.
+        std::fs::read_to_string(&self.config_path)
+            .ok()
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok())
+            .and_then(|v| v.get("hidden_size").and_then(|h| h.as_u64()))
+            .map(|n| n as usize)
+            .unwrap_or(2048) // Qwen2.5-3B fallback for the shipped default.
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::providers::embed::EmbedProvider for LocalQwenAdapter {
+    fn name(&self) -> &'static str {
+        "local_qwen"
+    }
+
+    fn default_dim(&self) -> usize {
+        self.embed_dim_hint()
+    }
+
+    async fn embed(
+        &self,
+        req: crate::providers::embed::EmbedRequest,
+    ) -> Result<crate::providers::embed::EmbedResponse> {
+        let started = std::time::Instant::now();
+        let vector = self.embed_async(req.text).await?;
+        debug_assert!(
+            {
+                let len_sq: f32 = vector.iter().map(|x| x * x).sum();
+                (len_sq - 1.0).abs() < 1e-4
+            },
+            "EmbedProvider contract violated: vector is not L2-normalised"
+        );
+        Ok(crate::providers::embed::EmbedResponse {
+            vector,
+            model: req.model.unwrap_or_else(|| self.repo.clone()),
+            latency: started.elapsed(),
+        })
+    }
+}
+
 /// L-14 disk-space pre-flight. Inspect the filesystem the
 /// `cache_dir` lives on + bail with an operator-readable error
 /// when free space falls below `min_free_bytes`. Uses sysinfo
@@ -1242,6 +1498,7 @@ mod tests {
             sampling: SamplingConfig::default(),
             max_new_tokens: DEFAULT_MAX_NEW_TOKENS,
             loaded: Arc::clone(&slot),
+            loaded_embed: Arc::new(Mutex::new(None)),
         };
         let adapter_b = LocalQwenAdapter {
             repo: "test".into(),
@@ -1253,6 +1510,7 @@ mod tests {
             sampling: SamplingConfig::default(),
             max_new_tokens: DEFAULT_MAX_NEW_TOKENS,
             loaded: Arc::clone(&slot),
+            loaded_embed: Arc::new(Mutex::new(None)),
         };
         // Two adapters built from the same Arc share the same cache.
         // This is the path the council debate uses when the same
@@ -1318,6 +1576,7 @@ mod tests {
             sampling: SamplingConfig::default(),
             max_new_tokens: DEFAULT_MAX_NEW_TOKENS,
             loaded: Arc::new(Mutex::new(None)),
+            loaded_embed: Arc::new(Mutex::new(None)),
         };
         let req = Request {
             prompt: "Capital of France?".to_string(),
@@ -1336,5 +1595,128 @@ mod tests {
             "expected 'paris' in reply, got: {}",
             completion.text,
         );
+    }
+
+    // ── Day-14b Phase 1b — embed surface ─────────────────────────────
+
+    fn synthetic_adapter_with_config(config_path: PathBuf) -> LocalQwenAdapter {
+        LocalQwenAdapter {
+            repo: "test/embed".into(),
+            cache_dir: config_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default(),
+            tokenizer_path: PathBuf::new(),
+            config_path,
+            weights_path: PathBuf::new(),
+            accelerator: None,
+            sampling: SamplingConfig::default(),
+            max_new_tokens: DEFAULT_MAX_NEW_TOKENS,
+            loaded: Arc::new(Mutex::new(None)),
+            loaded_embed: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    #[test]
+    fn embed_dim_hint_reads_hidden_size_from_config_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        std::fs::write(
+            &path,
+            r#"{"vocab_size":151936,"hidden_size":896,"num_hidden_layers":24}"#,
+        )
+        .unwrap();
+        let adapter = synthetic_adapter_with_config(path);
+        // Cold path — no embed model loaded yet, falls through to
+        // config.json parse.
+        assert_eq!(adapter.embed_dim_hint(), 896);
+    }
+
+    #[test]
+    fn embed_dim_hint_falls_back_when_config_missing() {
+        let adapter = synthetic_adapter_with_config(PathBuf::from(
+            "/definitely/nonexistent/path/config.json",
+        ));
+        // Fallback default = 2048 (Qwen2.5-3B hidden size — matches the
+        // DEFAULT_HF_REPO checkpoint NEOTH ships).
+        assert_eq!(adapter.embed_dim_hint(), 2048);
+    }
+
+    #[test]
+    fn embed_dim_hint_falls_back_when_config_malformed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        // Missing hidden_size + malformed top-level → fallback.
+        std::fs::write(&path, "not json").unwrap();
+        let adapter = synthetic_adapter_with_config(path);
+        assert_eq!(adapter.embed_dim_hint(), 2048);
+    }
+
+    #[test]
+    fn embed_dim_hint_falls_back_when_hidden_size_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        // Valid JSON but no hidden_size key.
+        std::fs::write(&path, r#"{"vocab_size":151936}"#).unwrap();
+        let adapter = synthetic_adapter_with_config(path);
+        assert_eq!(adapter.embed_dim_hint(), 2048);
+    }
+
+    #[tokio::test]
+    async fn embed_provider_name_is_local_qwen() {
+        // Pure trait-surface check — no weights required because
+        // default_dim's cold path reads config.json (missing → 2048).
+        use crate::providers::embed::EmbedProvider;
+        let adapter = synthetic_adapter_with_config(PathBuf::from(
+            "/definitely/nonexistent/path/config.json",
+        ));
+        let provider: &dyn EmbedProvider = &adapter;
+        assert_eq!(provider.name(), "local_qwen");
+        assert_eq!(provider.default_dim(), 2048);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Qwen2 weights; set NEOTH_QWEN_TEST_REPO_PATH"]
+    async fn local_qwen_embed_against_cached_weights() {
+        use crate::providers::embed::{EmbedProvider, EmbedRequest};
+        let Ok(path) = std::env::var("NEOTH_QWEN_TEST_REPO_PATH") else {
+            eprintln!("skipping: NEOTH_QWEN_TEST_REPO_PATH not set");
+            return;
+        };
+        let cache_dir = PathBuf::from(path);
+        assert!(cache_dir.join(TOKENIZER_FILE).exists());
+        assert!(cache_dir.join(CONFIG_FILE).exists());
+        assert!(cache_dir.join(SAFETENSORS_FILE).exists());
+
+        let adapter = LocalQwenAdapter {
+            repo: "test/embed-integration".to_string(),
+            cache_dir: cache_dir.clone(),
+            tokenizer_path: cache_dir.join(TOKENIZER_FILE),
+            config_path: cache_dir.join(CONFIG_FILE),
+            weights_path: cache_dir.join(SAFETENSORS_FILE),
+            accelerator: None,
+            sampling: SamplingConfig::default(),
+            max_new_tokens: DEFAULT_MAX_NEW_TOKENS,
+            loaded: Arc::new(Mutex::new(None)),
+            loaded_embed: Arc::new(Mutex::new(None)),
+        };
+
+        let resp = adapter
+            .embed(EmbedRequest::new("hello world"))
+            .await
+            .expect("embed forward pass");
+        let len_sq: f32 = resp.vector.iter().map(|x| x * x).sum();
+        assert!(
+            (len_sq - 1.0).abs() < 1e-3,
+            "L2 norm must be ≈ 1.0, got len² = {len_sq}"
+        );
+        assert!(resp.vector.len() >= 768, "expected hidden_size ≥ 768");
+        // Two different prompts should NOT produce identical vectors.
+        let resp2 = adapter
+            .embed(EmbedRequest::new("the quick brown fox"))
+            .await
+            .expect("second embed");
+        let cos = crate::providers::embed::cosine(&resp.vector, &resp2.vector);
+        assert!(cos < 0.99, "distinct prompts should yield cos < 0.99, got {cos}");
     }
 }
