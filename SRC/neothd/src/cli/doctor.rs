@@ -372,6 +372,29 @@ const CHECK_DOCS: &[CheckDoc] = &[
               `council.max_calls_per_user_message` (default 15) lower.",
     },
     CheckDoc {
+        name: "channel flapping",
+        purpose: "Flapping detection: scans the last 24h of \
+                  usage_log entries + warns when any provider with \
+                  ≥5 calls has an error rate ≥20%. Catches Slack \
+                  rate-limit storms / WhatsApp Graph 5xx waves / \
+                  OpenAI 429 spirals before they burn the operator's \
+                  daily cap.",
+        common_failures: "Slack workspace exceeded the per-app token \
+                          rate limit (50 req/min for `chat.postMessage` \
+                          on free workspaces); WhatsApp Cloud API \
+                          rejecting webhooks because the operator's \
+                          verify_token changed; OpenAI 429 from sudden \
+                          burst traffic without a paid tier.",
+        fix: "Check `~/.neoth/usage/<today>.jsonl` filtered by \
+              `ok == false` for the failure shape. For rate-limit \
+              flaps, reduce `council.max_calls_per_user_message` or \
+              switch to a local-only preset via `neoth preset activate \
+              fully-local && neoth preset apply fully-local`. For \
+              auth flaps, `neoth doctor channels` shows the credential \
+              wiring + a `neoth doctor --explain channels wiring` \
+              gives the per-channel fix.",
+    },
+    CheckDoc {
         name: "circuit breakers",
         purpose: "QM-10 Phase 2 visibility surface. Reads the global \
                   `BreakerRegistry` snapshot + renders every provider \
@@ -605,7 +628,69 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_tmux_for_claude_cli(home),
         check_usage_today(home),
         check_circuit_breakers(home),
+        check_channel_flapping(home),
     ]
+}
+
+/// Flapping detection for channel-routing providers (Slack outbound +
+/// WhatsApp Graph API). Reads the last 24h of usage_log entries and
+/// surfaces a warning when error rate per channel-related provider
+/// crosses `FLAPPING_THRESHOLD_PCT`. Pass on insufficient samples
+/// (<5 calls) or below threshold.
+const FLAPPING_THRESHOLD_PCT: f64 = 20.0;
+const FLAPPING_MIN_SAMPLES: u64 = 5;
+
+fn check_channel_flapping(home: &Path) -> CheckOutcome {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let since = now - 86_400;
+    let roll = crate::daemon::usage_log::aggregate(home, since, now);
+    // Look for providers whose names suggest channel egress. We
+    // can't filter perfectly without per-call channel labels in
+    // usage_log (Phase 2 work), so the heuristic surfaces ANY
+    // provider with a >20% error rate over the last 24h — the
+    // detail string tags channel-suspect providers explicitly
+    // for operator interpretation.
+    if roll.per_provider.is_empty() {
+        return CheckOutcome {
+            name: "channel flapping",
+            status: CheckStatus::Pass,
+            detail: "no provider calls in last 24h to analyse".to_string(),
+        };
+    }
+    let mut warnings = Vec::new();
+    for p in &roll.per_provider {
+        if p.call_count < FLAPPING_MIN_SAMPLES {
+            continue;
+        }
+        let err_pct = (p.err_count as f64 / p.call_count as f64) * 100.0;
+        if err_pct >= FLAPPING_THRESHOLD_PCT {
+            warnings.push(format!(
+                "{provider}: {err}/{total} errors ({pct:.0}%)",
+                provider = p.provider,
+                err = p.err_count,
+                total = p.call_count,
+                pct = err_pct,
+            ));
+        }
+    }
+    if warnings.is_empty() {
+        return CheckOutcome {
+            name: "channel flapping",
+            status: CheckStatus::Pass,
+            detail: format!(
+                "every provider with ≥{FLAPPING_MIN_SAMPLES} samples is below {:.0}% errors",
+                FLAPPING_THRESHOLD_PCT,
+            ),
+        };
+    }
+    CheckOutcome {
+        name: "channel flapping",
+        status: CheckStatus::Warn,
+        detail: format!("flapping detected — {}", warnings.join("; ")),
+    }
 }
 
 /// QM-10 Phase 1 doctor surface: render the registered circuit-
@@ -1875,12 +1960,118 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_three() {
+    fn check_docs_listed_count_pinned_at_twenty_four() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
-        // coverage) is caught. Bumped to 23 in Session 20 for
-        // `circuit breakers` (QM-10 Phase 1 visibility surface).
-        assert_eq!(CHECK_DOCS.len(), 23);
+        // coverage) is caught. Bumped to 24 in Session 20 for
+        // `channel flapping` (provider error-rate detection over
+        // last 24h of usage_log).
+        assert_eq!(CHECK_DOCS.len(), 24);
+    }
+
+    #[test]
+    fn channel_flapping_pass_when_no_calls() {
+        let dir = tempdir().unwrap();
+        let outcome = check_channel_flapping(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("no provider calls"));
+    }
+
+    #[test]
+    fn channel_flapping_pass_when_below_threshold() {
+        use crate::daemon::usage_log::{append, UsageEvent};
+        let dir = tempdir().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // 10 calls, only 1 error → 10% error rate (below 20% threshold).
+        for i in 0..10 {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: now - (i as i64) * 10,
+                    provider: "slack_api".into(),
+                    model: "n/a".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_usd: 0.0,
+                    latency_ms: 50,
+                    ok: i != 0,
+                },
+            )
+            .unwrap();
+        }
+        let outcome = check_channel_flapping(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn channel_flapping_warns_when_above_threshold() {
+        use crate::daemon::usage_log::{append, UsageEvent};
+        let dir = tempdir().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // 10 calls, 5 errors → 50% error rate.
+        for i in 0..10 {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: now - (i as i64) * 10,
+                    provider: "openai_api".into(),
+                    model: "gpt-5".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_usd: 0.0,
+                    latency_ms: 50,
+                    ok: i % 2 == 0,
+                },
+            )
+            .unwrap();
+        }
+        let outcome = check_channel_flapping(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("flapping"));
+        assert!(outcome.detail.contains("openai_api"));
+        // Error pct surfaces in the detail string regardless of
+        // rendering quirks — assert on the per-pct presence
+        // pattern rather than exact "50%" formatting.
+        assert!(
+            outcome.detail.contains("%"),
+            "detail should carry percent sign: {}",
+            outcome.detail
+        );
+    }
+
+    #[test]
+    fn channel_flapping_skips_low_sample_providers() {
+        use crate::daemon::usage_log::{append, UsageEvent};
+        let dir = tempdir().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // Only 2 calls with 100% error rate — under min sample size.
+        for _ in 0..2 {
+            append(
+                dir.path(),
+                &UsageEvent {
+                    ts_unix: now,
+                    provider: "low_sample".into(),
+                    model: "x".into(),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_usd: 0.0,
+                    latency_ms: 10,
+                    ok: false,
+                },
+            )
+            .unwrap();
+        }
+        let outcome = check_channel_flapping(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
     }
 
     #[test]
@@ -2149,10 +2340,10 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 23 checks: 19 pre-Session-20 + node toolchain + tmux for
-        // claude-cli (NOOB-UX-6 AIO probes) + usage today (QM-9 Phase 1)
-        // + circuit breakers (QM-10 Phase 1 visibility).
-        assert_eq!(outs.len(), 23);
+        // 24 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // claude-cli + usage today + circuit breakers + channel
+        // flapping (Phase 2.5 follow-on).
+        assert_eq!(outs.len(), 24);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

@@ -634,7 +634,6 @@ pub async fn run_chat_with(
 
         use futures_util::stream::StreamExt;
         use std::io::Write as _;
-        let mut stream_error = false;
         while let Some(item) = stream.next().await {
             match item {
                 Ok(chunk) => {
@@ -652,7 +651,6 @@ pub async fn run_chat_with(
                     }
                 }
                 Err(e) => {
-                    stream_error = true;
                     if let Some(p) = stream_permit {
                         p.record_failure();
                     }
@@ -663,10 +661,12 @@ pub async fn run_chat_with(
                 }
             }
         }
-        if !stream_error {
-            if let Some(p) = stream_permit {
-                p.record_success();
-            }
+        // Loop only reaches here on clean exit — every Err arm
+        // returns above so success path is implicit.
+        if let Some(p) = stream_permit {
+            p.record_success();
+        }
+        {
             // QM-9 Phase 1.5: persist a usage event for the
             // streaming chat path. Best-effort I/O.
             let home = crate::config::FreedomConfig::default_neoth_home();
