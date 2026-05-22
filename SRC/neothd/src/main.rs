@@ -74,6 +74,7 @@ mod permissions;
 mod policy;
 mod profile;
 mod providers;
+mod recall;
 mod secret;
 mod security;
 mod skills;
