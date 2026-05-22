@@ -137,13 +137,15 @@ fn main() -> Result<()> {
         });
     });
 
-    // QM-9 Phase 2: usage rollup probe runs in its own worker so a
-    // slow `neoth usage` subprocess can't block the window. Same
-    // pattern as the hardware probe — placeholder string until the
-    // real summary lands via invoke_from_event_loop.
+    // QM-9 Phase 2/3+: usage rollup probe runs in its own worker so a
+    // slow `neoth usage` subprocess can't block the window. Phase 3+
+    // re-fires the probe every USAGE_REFRESH_INTERVAL so the dashboard
+    // tile stays current as new chat turns land in the persisted log.
+    // Placeholder string shows until the first probe lands via
+    // invoke_from_event_loop.
     window.set_usage_summary("Loading usage…".into());
     let weak_usage = window.as_weak();
-    std::thread::spawn(move || {
+    std::thread::spawn(move || loop {
         let summary = probe_usage_via_subprocess();
         let weak = weak_usage.clone();
         let _ = slint::invoke_from_event_loop(move || {
@@ -151,6 +153,7 @@ fn main() -> Result<()> {
                 w.set_usage_summary(summary.into());
             }
         });
+        std::thread::sleep(USAGE_REFRESH_INTERVAL);
     });
 
     // G-2 first-launch detection: if `~/.neoth/freedom.yaml` already
@@ -1343,6 +1346,13 @@ pub const BINARY_MISSING_MESSAGE: &str =
      Install the daemon first (the release tarball ships both \
      `neothd-gui` and `neothd` side-by-side; from source, \
      `cargo install --path ../neothd`).";
+
+/// QM-9 Phase 3+: how often the dashboard tile re-fires the
+/// `neoth usage` subprocess. 60s feels live-enough for chat-
+/// cost monitoring without spawning a subprocess every second.
+/// Operators wanting faster refresh use `neoth usage --format
+/// json` in a `watch -n 1` loop.
+pub const USAGE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
 #[cfg(test)]
 mod chat_subprocess_tests {
