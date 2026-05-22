@@ -158,6 +158,185 @@ pub fn clear_active(home: &Path) -> Result<bool> {
     Ok(had)
 }
 
+/// Apply a named preset's values INTO `freedom.yaml`. Atomic merge
+/// (read → mutate → write `.tmp` → rename). Fields the preset
+/// doesn't set are left untouched — operator manual edits between
+/// preset switches survive for the un-set fields.
+///
+/// Returns the report of what was changed so the CLI/UI can show
+/// the operator a confirmation diff. Side effect: writes
+/// `~/.neoth/freedom.yaml` atomically.
+///
+/// The merge target uses a `serde_yaml::Value` walk so the daemon
+/// doesn't need to know every field the preset can touch — adding
+/// a new preset knob in `Preset` doesn't require updating apply
+/// logic, just round-trips through YAML.
+pub fn apply(home: &Path, name: &str) -> Result<ApplyReport> {
+    let file = load(home)?;
+    let preset = file
+        .presets
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("preset `{}` not found", name))?
+        .clone();
+    apply_preset_to_freedom_yaml(home, &preset)
+}
+
+/// Same as `apply` but takes an already-resolved `Preset` value.
+/// Public for callers (Slint panel "save current state as preset
+/// + apply", scripted apply paths) that work with a Preset they
+/// constructed in-process.
+pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<ApplyReport> {
+    let freedom_path = home.join("freedom.yaml");
+    let original = if freedom_path.exists() {
+        std::fs::read_to_string(&freedom_path)
+            .with_context(|| format!("read {}", freedom_path.display()))?
+    } else {
+        String::new()
+    };
+    let mut root: serde_yaml::Value = if original.is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&original)
+            .with_context(|| format!("parse {}", freedom_path.display()))?
+    };
+    let mapping = match &mut root {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
+    };
+    let mut report = ApplyReport::default();
+    if let Some(cap) = preset.daily_usd_cap {
+        ensure_council_block(mapping);
+        set_nested(mapping, "council", "daily_usd_cap", &mut report, |m, k| {
+            insert_value(m, k, serde_yaml::Value::from(cap));
+        });
+    }
+    if let Some(currency) = preset.usage_currency.as_ref() {
+        let was = mapping.insert(
+            serde_yaml::Value::from("usage_currency"),
+            serde_yaml::Value::from(currency.clone()),
+        );
+        if was != Some(serde_yaml::Value::from(currency.clone())) {
+            report.fields_changed.push("usage_currency".into());
+        }
+    }
+    if let Some(depth) = preset.max_recursion_depth {
+        ensure_council_block(mapping);
+        set_nested(mapping, "council", "max_recursion_depth", &mut report, |m, k| {
+            insert_value(m, k, serde_yaml::Value::from(depth));
+        });
+    }
+    if let Some(calls) = preset.max_calls_per_user_message {
+        ensure_council_block(mapping);
+        set_nested(
+            mapping,
+            "council",
+            "max_calls_per_user_message",
+            &mut report,
+            |m, k| {
+                insert_value(m, k, serde_yaml::Value::from(calls));
+            },
+        );
+    }
+    if let Some(mode) = preset.selection_mode.as_ref() {
+        ensure_council_block(mapping);
+        set_nested(mapping, "council", "selection_mode", &mut report, |m, k| {
+            insert_value(m, k, serde_yaml::Value::from(mode.clone()));
+        });
+    }
+    if let Some(level) = preset.autonomy.as_ref() {
+        let was = mapping.insert(
+            serde_yaml::Value::from("autonomy"),
+            serde_yaml::Value::from(level.clone()),
+        );
+        if was != Some(serde_yaml::Value::from(level.clone())) {
+            report.fields_changed.push("autonomy".into());
+        }
+    }
+    if !preset.hemispheres.is_empty() || !preset.models.is_empty() {
+        let mut inference_mapping = match mapping
+            .get(serde_yaml::Value::from("inference"))
+            .and_then(|v| v.as_mapping())
+        {
+            Some(m) => m.clone(),
+            None => serde_yaml::Mapping::new(),
+        };
+        for (role, provider) in &preset.hemispheres {
+            let role_key = serde_yaml::Value::from(role.clone());
+            let mut role_mapping = inference_mapping
+                .get(&role_key)
+                .and_then(|v| v.as_mapping())
+                .cloned()
+                .unwrap_or_default();
+            role_mapping.insert(
+                serde_yaml::Value::from("provider"),
+                serde_yaml::Value::from(provider.clone()),
+            );
+            if let Some(model) = preset.models.get(role) {
+                role_mapping.insert(
+                    serde_yaml::Value::from("model"),
+                    serde_yaml::Value::from(model.clone()),
+                );
+            }
+            inference_mapping.insert(role_key, serde_yaml::Value::Mapping(role_mapping));
+            report.fields_changed.push(format!("inference.{role}"));
+        }
+        mapping.insert(
+            serde_yaml::Value::from("inference"),
+            serde_yaml::Value::Mapping(inference_mapping),
+        );
+    }
+    // Atomic write — same .tmp + rename pattern as save().
+    let tmp = freedom_path.with_extension("yaml.tmp");
+    let body = serde_yaml::to_string(&root)?;
+    std::fs::write(&tmp, body)?;
+    std::fs::rename(&tmp, &freedom_path)?;
+    report.preset_applied = true;
+    Ok(report)
+}
+
+/// Diff report from `apply()`. Surfaces what changed so the
+/// CLI/UI shows a confirmation summary.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ApplyReport {
+    pub preset_applied: bool,
+    pub fields_changed: Vec<String>,
+}
+
+fn ensure_council_block(mapping: &mut serde_yaml::Mapping) {
+    if mapping
+        .get(serde_yaml::Value::from("council"))
+        .and_then(|v| v.as_mapping())
+        .is_none()
+    {
+        mapping.insert(
+            serde_yaml::Value::from("council"),
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        );
+    }
+}
+
+fn set_nested<F: FnOnce(&mut serde_yaml::Mapping, &str)>(
+    mapping: &mut serde_yaml::Mapping,
+    block: &str,
+    key: &str,
+    report: &mut ApplyReport,
+    mutate: F,
+) {
+    let block_key = serde_yaml::Value::from(block);
+    let mut inner = mapping
+        .get(&block_key)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    mutate(&mut inner, key);
+    mapping.insert(block_key, serde_yaml::Value::Mapping(inner));
+    report.fields_changed.push(format!("{block}.{key}"));
+}
+
+fn insert_value(mapping: &mut serde_yaml::Mapping, key: &str, value: serde_yaml::Value) {
+    mapping.insert(serde_yaml::Value::from(key), value);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,5 +470,88 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(default_path(dir.path()), ": : :\n").unwrap();
         assert!(load(dir.path()).is_err());
+    }
+
+    #[test]
+    fn apply_creates_freedom_yaml_when_missing() {
+        let dir = tempdir().unwrap();
+        let preset = Preset {
+            daily_usd_cap: Some(7.5),
+            usage_currency: Some("EUR".into()),
+            ..Default::default()
+        };
+        upsert(dir.path(), "test", preset).unwrap();
+        let report = apply(dir.path(), "test").unwrap();
+        assert!(report.preset_applied);
+        assert!(report.fields_changed.contains(&"usage_currency".to_string()));
+        assert!(report
+            .fields_changed
+            .contains(&"council.daily_usd_cap".to_string()));
+        let body = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
+        assert!(body.contains("usage_currency: EUR"));
+        assert!(body.contains("daily_usd_cap: 7.5"));
+    }
+
+    #[test]
+    fn apply_preserves_unmentioned_fields() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "operator_id: alex\nprovider_kind: claude_cli\n",
+        )
+        .unwrap();
+        let preset = Preset {
+            daily_usd_cap: Some(2.0),
+            ..Default::default()
+        };
+        apply_preset_to_freedom_yaml(dir.path(), &preset).unwrap();
+        let body = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
+        assert!(body.contains("operator_id: alex"));
+        assert!(body.contains("provider_kind: claude_cli"));
+        assert!(body.contains("daily_usd_cap: 2"));
+    }
+
+    #[test]
+    fn apply_merges_hemisphere_bindings() {
+        let dir = tempdir().unwrap();
+        let mut hemis = BTreeMap::new();
+        hemis.insert("left".into(), "openai_api".into());
+        hemis.insert("right".into(), "claude_cli".into());
+        let mut models = BTreeMap::new();
+        models.insert("left".into(), "gpt-5.5".into());
+        let preset = Preset {
+            hemispheres: hemis,
+            models,
+            ..Default::default()
+        };
+        let report = apply_preset_to_freedom_yaml(dir.path(), &preset).unwrap();
+        assert!(report.fields_changed.contains(&"inference.left".to_string()));
+        assert!(report
+            .fields_changed
+            .contains(&"inference.right".to_string()));
+        let body = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
+        assert!(body.contains("inference:"));
+        assert!(body.contains("openai_api"));
+        assert!(body.contains("claude_cli"));
+        assert!(body.contains("gpt-5.5"));
+    }
+
+    #[test]
+    fn apply_unknown_preset_errors() {
+        let dir = tempdir().unwrap();
+        let err = apply(dir.path(), "ghost").unwrap_err();
+        assert!(err.to_string().contains("ghost"));
+    }
+
+    #[test]
+    fn apply_atomic_no_tmp_left() {
+        let dir = tempdir().unwrap();
+        let preset = Preset {
+            usage_currency: Some("USD".into()),
+            ..Default::default()
+        };
+        apply_preset_to_freedom_yaml(dir.path(), &preset).unwrap();
+        let tmp = dir.path().join("freedom.yaml.tmp");
+        assert!(!tmp.exists());
     }
 }

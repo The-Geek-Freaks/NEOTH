@@ -32,6 +32,13 @@ pub enum PresetAction {
     },
     /// Clear the active marker without deleting any preset.
     Deactivate,
+    /// QM-8 Phase 1.5: merge a preset's values INTO `freedom.yaml`.
+    /// Atomic write — survives a mid-write crash via `.tmp` + rename.
+    /// Fields the preset doesn't set are left untouched in
+    /// `freedom.yaml`, so manual edits between switches survive.
+    Apply {
+        name: String,
+    },
 }
 
 pub fn run(home: &Path, args: PresetArgs) -> Result<()> {
@@ -41,7 +48,21 @@ pub fn run(home: &Path, args: PresetArgs) -> Result<()> {
         PresetAction::Delete { name } => run_delete(home, &name),
         PresetAction::Activate { name } => run_activate(home, &name),
         PresetAction::Deactivate => run_deactivate(home),
+        PresetAction::Apply { name } => run_apply(home, &name),
     }
+}
+
+fn run_apply(home: &Path, name: &str) -> Result<()> {
+    let report = presets::apply(home, name)?;
+    if report.fields_changed.is_empty() {
+        println!("applied preset `{name}` (no changes — preset was empty)");
+    } else {
+        println!("applied preset `{name}` ({} fields):", report.fields_changed.len());
+        for f in &report.fields_changed {
+            println!("  • {f}");
+        }
+    }
+    Ok(())
 }
 
 fn run_list(home: &Path) -> Result<()> {
