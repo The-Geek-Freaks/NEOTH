@@ -91,6 +91,55 @@ fn jaccard_distance(a: &HashSet<String>, b: &HashSet<String>) -> f32 {
     1.0 - (intersection / union)
 }
 
+/// Day-14b Phase 3 — semantic dissent via embedding cosine distance.
+/// Drop-in replacement for [`score_dissent`] when an `EmbedProvider`
+/// is available. Catches "agreement in different words" — two
+/// responses that share zero word tokens but mean the same thing
+/// (e.g. "yes, confirmed" vs "affirmative, that's right") score
+/// near-zero dissent under cosine but ~1.0 under Jaccard.
+///
+/// Algorithm: embed each text, compute pairwise `1 - cos(a, b)`
+/// distance, average across all 2-combinations, clamp to `[0, 1]`.
+/// Cosine of L2-normalised embeddings is bounded `[-1, 1]`; for
+/// natural-language texts it's almost always `[0, 1]` so the clamp
+/// only catches pathological inputs (negative-cosine vectors).
+///
+/// Returns `Err` when any embed call fails — callers (council
+/// orchestrator) should fall back to [`score_dissent`] in that case
+/// per the L-07 `allow_cloud_fallback: false` safe-default
+/// pattern. Empty / single-text inputs return `Ok(DissentScore(0.0))`
+/// without calling the provider.
+pub async fn score_dissent_via_embedding(
+    texts: &[&str],
+    provider: &dyn crate::providers::embed::EmbedProvider,
+) -> anyhow::Result<DissentScore> {
+    use crate::providers::embed::{cosine, EmbedRequest};
+    if texts.len() < 2 {
+        return Ok(DissentScore(0.0));
+    }
+    let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+    for text in texts {
+        let resp = provider
+            .embed(EmbedRequest::new(text.to_string()))
+            .await?;
+        vectors.push(resp.vector);
+    }
+    let mut sum = 0.0_f32;
+    let mut pairs = 0u32;
+    for i in 0..vectors.len() {
+        for j in (i + 1)..vectors.len() {
+            // 1 - cos = distance. Clamp to [0, 1] so the DissentScore
+            // semantic invariant holds even if cos drops below 0 for
+            // pathological embedding inputs.
+            let distance = (1.0 - cosine(&vectors[i], &vectors[j])).clamp(0.0, 1.0);
+            sum += distance;
+            pairs += 1;
+        }
+    }
+    let avg = if pairs > 0 { sum / pairs as f32 } else { 0.0 };
+    Ok(DissentScore(avg.clamp(0.0, 1.0)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,5 +219,141 @@ mod tests {
         let texts = ["", ""];
         let s = score_dissent(&texts);
         assert_eq!(s.0, 0.0);
+    }
+
+    // ── Phase 3 — score_dissent_via_embedding ───────────────────────
+
+    /// Toy provider for embedding-dissent tests. Each input text maps
+    /// to a canonical unit vector at slot `keyword_to_slot(text)` →
+    /// cosine becomes deterministic + we can construct identical-text /
+    /// orthogonal-text / opposite-axis scenarios without real weights.
+    struct SlotMockEmbed {
+        dim: usize,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for SlotMockEmbed {
+        fn name(&self) -> &'static str {
+            "slot_mock"
+        }
+        fn default_dim(&self) -> usize {
+            self.dim
+        }
+        async fn embed(
+            &self,
+            req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            // Slot mapping: first word of input → slot index.
+            // "yes" → 0, "affirmative" → 0 (semantic agreement),
+            // "no" → 1, "negative" → 1, default → last slot.
+            let slot = match req.text.split_whitespace().next().unwrap_or("") {
+                "yes" | "affirmative" => 0,
+                "no" | "negative" => 1,
+                _ => self.dim - 1,
+            };
+            let mut v = vec![0.0f32; self.dim];
+            v[slot] = 1.0;
+            Ok(crate::providers::embed::EmbedResponse {
+                vector: v,
+                model: "slot_mock".into(),
+                latency: std::time::Duration::from_micros(1),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_zero_for_identical_texts() {
+        let provider = SlotMockEmbed { dim: 4 };
+        let texts = ["yes confirmed", "yes confirmed"];
+        let s = score_dissent_via_embedding(&texts, &provider).await.unwrap();
+        assert!((s.0).abs() < 1e-6, "identical texts: dissent ≈ 0.0, got {}", s.0);
+        assert!(s.is_consensus());
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_catches_semantic_agreement_jaccard_misses() {
+        // "yes" and "affirmative" share zero word tokens — Jaccard
+        // would score this 1.0 (max dissent). Cosine via the slot
+        // mock maps both to slot 0 → dissent 0.0. This is the
+        // headline win of Phase 3.
+        let provider = SlotMockEmbed { dim: 4 };
+        let texts = ["yes that is right", "affirmative correct"];
+        let cosine_score = score_dissent_via_embedding(&texts, &provider)
+            .await
+            .unwrap();
+        let jaccard_score = score_dissent(&texts);
+        assert!(
+            cosine_score.0 < 0.01,
+            "embedding catches semantic agreement: dissent ≈ 0.0, got {}",
+            cosine_score.0
+        );
+        assert!(
+            jaccard_score.0 > 0.9,
+            "jaccard misses semantic agreement: dissent ≈ 1.0, got {}",
+            jaccard_score.0
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_one_for_orthogonal_texts() {
+        let provider = SlotMockEmbed { dim: 4 };
+        let texts = ["yes confirmed", "no rejected"];
+        let s = score_dissent_via_embedding(&texts, &provider).await.unwrap();
+        // Slot 0 vs slot 1 are orthogonal → cos = 0 → distance = 1.
+        assert!((s.0 - 1.0).abs() < 1e-6, "orthogonal: dissent ≈ 1.0, got {}", s.0);
+        assert!(s.is_strong_dissent());
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_short_circuits_for_fewer_than_two_texts() {
+        let provider = SlotMockEmbed { dim: 4 };
+        let zero = score_dissent_via_embedding(&[], &provider).await.unwrap();
+        assert_eq!(zero.0, 0.0);
+        let one = score_dissent_via_embedding(&["solo"], &provider)
+            .await
+            .unwrap();
+        assert_eq!(one.0, 0.0);
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_pairwise_average_with_three_texts() {
+        // A, B identical (both slot 0); C orthogonal (slot 1). Pairs:
+        // (A,B) = 0.0, (A,C) = 1.0, (B,C) = 1.0. Average = 2/3.
+        let provider = SlotMockEmbed { dim: 4 };
+        let texts = ["yes one", "yes two", "no three"];
+        let s = score_dissent_via_embedding(&texts, &provider).await.unwrap();
+        let expected = 2.0 / 3.0;
+        assert!(
+            (s.0 - expected).abs() < 1e-5,
+            "got {} expected {}",
+            s.0,
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_propagates_provider_errors() {
+        // Provider that always fails — ensures the caller's fallback
+        // path (use Jaccard) gets the error rather than a silent 0.0.
+        struct FailingEmbed;
+        #[async_trait::async_trait]
+        impl crate::providers::embed::EmbedProvider for FailingEmbed {
+            fn name(&self) -> &'static str {
+                "failing"
+            }
+            fn default_dim(&self) -> usize {
+                4
+            }
+            async fn embed(
+                &self,
+                _req: crate::providers::embed::EmbedRequest,
+            ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+                anyhow::bail!("provider unavailable")
+            }
+        }
+        let provider = FailingEmbed;
+        let texts = ["a", "b"];
+        let err = score_dissent_via_embedding(&texts, &provider).await;
+        assert!(err.is_err());
     }
 }
