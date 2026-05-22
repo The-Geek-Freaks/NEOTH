@@ -37,6 +37,10 @@ export enum WizardStep {
     provider,
     autonomy,
     channels,
+    /// SPEC `cluster_auto_discovery` Q4 ratification: Design B —
+    /// default ON + explanatory step + opt-out checkbox. Inserted
+    /// between Channels and Keys.
+    cluster,
     keys,
     done,
     /// Post-onboarding settings surface — Pick #32. Renders the
@@ -87,6 +91,11 @@ export component MainWindow inherits Window {
     in-out property <string> provider-choice: "claude_cli";
     in-out property <string> autonomy-choice: "standard";
     in-out property <bool> enable-telegram: false;
+    /// SPEC `cluster_auto_discovery` Q4: operator's choice on the
+    /// cluster step. True = disable mDNS announce on this device.
+    /// Default false (announce enabled per Design B + the noob-
+    /// wizard hard rule "default ON in shipped release").
+    in-out property <bool> cluster-discovery-disabled: false;
     in-out property <string> provider-key: "";
     in-out property <string> telegram-token: "";
     /// Reviewer-3 P1-B (2026-05-20): channel-screen disclosure toggle.
@@ -115,13 +124,15 @@ export component MainWindow inherits Window {
     // matches the rendered screen. Keys-step is conditional — when
     // `need-keys-step` is false the operator skips from channels
     // straight to done, so we collapse the displayed count to 7.
-    /// G-13 fix: total-steps is constant 8, regardless of whether
+    /// G-13 fix: total-steps is constant 9 (welcome..summary).
+    /// Cluster step inserted at slot 7 per Q4 ratification.
+    /// Previously 8 — bumped after the cluster step landed.
     /// the keys screen is shown. Previously the denominator would
     /// flip from "Step 6 of 8" to "Step 7 of 7" mid-flow when the
     /// operator picked claude_cli + no channels — visibly confusing.
     /// When keys is skipped, current-step jumps from 6 (Channels) to
     /// 8 (Summary), which the bar fills smoothly.
-    out property <int> total-steps: 8;
+    out property <int> total-steps: 9;
     out property <int> current-step:
         root.step == WizardStep.welcome  ? 1 :
         root.step == WizardStep.license  ? 2 :
@@ -129,8 +140,9 @@ export component MainWindow inherits Window {
         root.step == WizardStep.provider ? 4 :
         root.step == WizardStep.autonomy ? 5 :
         root.step == WizardStep.channels ? 6 :
-        root.step == WizardStep.keys     ? 7 :
-        root.step == WizardStep.done     ? 8 :
+        root.step == WizardStep.cluster  ? 7 :
+        root.step == WizardStep.keys     ? 8 :
+        root.step == WizardStep.done     ? 9 :
         0;
     // G-23 fix: removed dead `mode-selection` branch — the progress
     // indicator is hidden on that screen so the label is never read.
@@ -141,6 +153,7 @@ export component MainWindow inherits Window {
         root.step == WizardStep.provider ? "Provider" :
         root.step == WizardStep.autonomy ? "Autonomy" :
         root.step == WizardStep.channels ? "Channels" :
+        root.step == WizardStep.cluster  ? "Cluster" :
         root.step == WizardStep.keys     ? "API Keys" :
                                             "Summary";
     /// `true` only when the persistent ProgressIndicator should
@@ -942,6 +955,52 @@ export component MainWindow inherits Window {
                 }
                 NeothButton {
                     label: "Continue →";
+                    clicked => { root.step = WizardStep.cluster; }
+                }
+            }
+        }
+
+        // ── Cluster (Q4 ratification: default ON + opt-out checkbox) ────
+        // SPEC: cluster_auto_discovery_2026-05-22.md
+        if root.step == WizardStep.cluster: VerticalLayout {
+            spacing: Theme.space-loose;
+            ScreenHeader {
+                title: "Network buddy discovery";
+                subtitle: "Optional: let your NEOTH devices find each other on the same network and pair as a team.";
+            }
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-base;
+                    Text {
+                        text: "NEOTH can automatically find your other devices on this network and connect them into one team — shared memory, shared chat, shared task board. It uses a lightweight mDNS broadcast (same technology as Airplay and Chromecast) to announce itself every 60 seconds. On a home or office LAN this is safe; on a shared or public network it reveals your instance label and public key to other devices on the subnet. If you only ever run one NEOTH instance, turn this off — you can re-enable it later with `neoth cluster enable`.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-body;
+                        color: Theme.text-primary;
+                        wrap: word-wrap;
+                    }
+                    CheckBox {
+                        text: "Disable buddy discovery on this device";
+                        checked <=> root.cluster-discovery-disabled;
+                    }
+                    Text {
+                        text: "Recommended: leave unchecked if you run NEOTH on more than one device.";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            HorizontalLayout {
+                alignment: space-between;
+                NeothButton {
+                    label: "← Back";
+                    primary: false;
+                    clicked => { root.step = WizardStep.channels; }
+                }
+                NeothButton {
+                    label: "Continue →";
                     clicked => {
                         // Skip the keys screen when nothing needs a
                         // secret — operator goes straight to Summary.
@@ -1005,7 +1064,7 @@ export component MainWindow inherits Window {
                 NeothButton {
                     label: "← Back";
                     primary: false;
-                    clicked => { root.step = WizardStep.channels; }
+                    clicked => { root.step = WizardStep.cluster; }
                 }
                 NeothButton {
                     label: "Continue →";
