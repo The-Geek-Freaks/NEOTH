@@ -8,7 +8,7 @@
 // so the daemon picks up changes within 2s without an explicit
 // "Apply" button.
 
-import { VerticalBox, HorizontalBox, LineEdit } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, LineEdit, CheckBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, NeothComboBox } from "components.slint";
 
@@ -20,6 +20,7 @@ export enum SettingsTab {
     plugins,
     memory,
     privacy,
+    cluster,
     config,
     code-sessions,
 }
@@ -354,6 +355,18 @@ export component SettingsView inherits Rectangle {
     in-out property <string> autonomy-current: "standard";
     in-out property <string> provider-current: "claude_cli";
 
+    // Bite #5 — Cluster settings (post-onboarding mirror of the
+    // wizard step). Rust side loads cluster.mdns.enabled from
+    // freedom.yaml on settings-open + sets `cluster-mdns-enabled`;
+    // toggle fires `cluster-mdns-enabled-changed(bool)` which
+    // mutates freedom.yaml + drops the reload sentinel.
+    in-out property <bool> cluster-mdns-enabled: true;
+    in-out property <int> cluster-listen-port: 49737;
+    /// Operator-readable summary of `cluster.policy.trusted_ssids`.
+    /// Empty string renders the "no trusted SSIDs set" placeholder.
+    in-out property <string> cluster-trusted-ssids-summary: "";
+    callback cluster-mdns-enabled-changed(bool);
+
     // ── Code Sessions tab state (Pick #8 step 2) ────────────────────
     // Rust side fetches `neothd kanban list/show --output json` on tab
     // open + populates the five status-bucket arrays here. Empty
@@ -488,6 +501,11 @@ export component SettingsView inherits Rectangle {
                     clicked => { root.active = SettingsTab.privacy; }
                 }
                 TabButton {
+                    label: "Cluster";
+                    active: root.active == SettingsTab.cluster;
+                    clicked => { root.active = SettingsTab.cluster; }
+                }
+                TabButton {
                     label: "Config";
                     active: root.active == SettingsTab.config;
                     clicked => { root.active = SettingsTab.config; }
@@ -579,6 +597,110 @@ export component SettingsView inherits Rectangle {
                         }
                         Text {
                             text: "Five levels: strict / standard / elevated / full / custom. Switch via the CLI: /autonomy <level>. Slider UI lands in the autonomy-ui Pick.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+            }
+
+            // Bite #5 (2026-05-23): cluster auto-discovery panel.
+            // Mirrors the wizard's Q4-ratified cluster step so an
+            // already-onboarded operator can flip mDNS announce
+            // on/off without re-running the wizard or editing
+            // freedom.yaml by hand. CLI parity: `neoth cluster
+            // enable` / `disable`.
+            if root.active == SettingsTab.cluster: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Cluster";
+                    subtitle: "Auto-discover other NEOTH instances on your network and connect them into one team — shared memory, shared chat, shared task board. Uses lightweight mDNS broadcasts (same tech as AirPlay and Chromecast).";
+                    mirrors-slash: "/cluster enable   |   /cluster disable   |   neoth cluster discover";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "mDNS ANNOUNCE";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            color: Theme.accent-green;
+                        }
+                        CheckBox {
+                            text: "Auto-discover other NEOTH instances on this network";
+                            checked: root.cluster-mdns-enabled;
+                            toggled => {
+                                root.cluster-mdns-enabled = self.checked;
+                                root.cluster-mdns-enabled-changed(self.checked);
+                            }
+                        }
+                        Text {
+                            text: "On a home or office LAN this is safe; on a shared or public network it reveals your instance label and public key to other devices on the subnet. Disable if you only ever run one NEOTH instance.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "LISTEN PORT";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: root.cluster-listen-port + "  (default 49737)";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-body;
+                            color: Theme.text-primary;
+                        }
+                        Text {
+                            text: "Edit `cluster.listen_port` in ~/.neoth/freedom.yaml to change. The mDNS announcer + Tailscale TCP probe both use this port — operator must keep them aligned.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "TRUSTED SSIDS";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-bold;
+                            letter-spacing: Theme.letter-spacing-wide;
+                            color: Theme.accent-green;
+                        }
+                        Text {
+                            text: root.cluster-trusted-ssids-summary != ""
+                                ? root.cluster-trusted-ssids-summary
+                                : "(no trusted SSIDs set — announcer stays silent on every wifi)";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: root.cluster-trusted-ssids-summary != ""
+                                ? Theme.text-primary
+                                : Theme.text-dim;
+                            wrap: word-wrap;
+                        }
+                        Text {
+                            text: "Edit `cluster.policy.trusted_ssids` in freedom.yaml (YAML list of wifi names). Or set `cluster.policy.announce_on_untrusted_wifi: true` to broadcast on every network. `neoth cluster discover` surfaces the current verdict before scanning.";
                             font-family: Theme.font-display;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;

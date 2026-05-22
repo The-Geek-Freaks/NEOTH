@@ -213,6 +213,19 @@ fn main() -> Result<()> {
             }
         }
 
+        // Bite #5 — populate the cluster settings panel from the
+        // existing freedom.yaml so the post-onboarding operator sees
+        // their current cluster state (not Q4 defaults) when they
+        // click the Cluster tab. Lossless reader — doesn't touch
+        // unrelated fields.
+        let cluster_state =
+            load_cluster_settings(&neoth_dir.join("freedom.yaml"));
+        window.set_cluster_mdns_enabled(cluster_state.mdns_enabled);
+        window.set_cluster_listen_port(cluster_state.listen_port as i32);
+        window.set_cluster_trusted_ssids_summary(
+            cluster_state.trusted_ssids_summary.into(),
+        );
+
         window.set_status_line(
             format!(
                 "NEOTH is already configured at {}.\n\
@@ -744,6 +757,44 @@ fn main() -> Result<()> {
         }
     });
 
+    // Bite #5 — operator flipped the cluster auto-discovery
+    // checkbox in Settings → Cluster. Mutate `cluster.mdns.enabled`
+    // in freedom.yaml losslessly (`serde_yaml::Value` round-trip
+    // preserves every other field) and drop the reload sentinel
+    // so the daemon picks the change up within ~2s — same dispatch
+    // path as `neoth cluster enable` / `disable`.
+    let weak_cluster = window.as_weak();
+    window.on_cluster_mdns_enabled_changed(move |enabled| {
+        let neoth_dir = default_neoth_home();
+        let freedom_path = neoth_dir.join("freedom.yaml");
+        let result = (|| -> anyhow::Result<()> {
+            set_cluster_mdns_enabled_in_freedom(&freedom_path, enabled)?;
+            std::fs::write(neoth_dir.join(".reload-requested"), b"reload\n")
+                .with_context(|| "write reload sentinel")?;
+            Ok(())
+        })();
+        if let Some(w) = weak_cluster.upgrade() {
+            match result {
+                Ok(_) => {
+                    info!(enabled, "cluster: mdns.enabled rewritten + reload sentinel dropped");
+                    let verb = if enabled { "enabled" } else { "disabled" };
+                    w.set_status_line(
+                        format!(
+                            "Cluster auto-discovery {verb}. Daemon reloading within 2s."
+                        )
+                        .into(),
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "cluster: mdns toggle failed");
+                    w.set_status_line(
+                        format!("Cluster toggle failed: {e}").into(),
+                    );
+                }
+            }
+        }
+    });
+
     // Pick #32 — Settings panel "Re-run wizard". Reset the wizard
     // state back to mode-selection so the operator walks the flow
     // fresh.
@@ -951,6 +1002,110 @@ fn read_freedom_yaml(path: &Path) -> Result<MinimalFreedomYaml> {
     let cfg: MinimalFreedomYaml =
         serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?;
     Ok(cfg)
+}
+
+/// Bite #5 — settings panel populates these on tab activation.
+/// Lossless read via `serde_yaml::Value` so we don't drop fields
+/// the GUI's typed `MinimalFreedomYaml` doesn't know about.
+struct ClusterSettingsSnapshot {
+    mdns_enabled: bool,
+    listen_port: u16,
+    trusted_ssids_summary: String,
+}
+
+/// Load cluster state from freedom.yaml for the settings panel
+/// populator. Missing file / unparseable YAML / absent keys collapse
+/// to the Q4-ratified defaults: `mdns_enabled = true`, `listen_port =
+/// 49737`, empty `trusted_ssids`. Reader is read-only — never writes.
+fn load_cluster_settings(path: &Path) -> ClusterSettingsSnapshot {
+    const DEFAULT_LISTEN_PORT: u16 = 49737;
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return ClusterSettingsSnapshot {
+            mdns_enabled: true,
+            listen_port: DEFAULT_LISTEN_PORT,
+            trusted_ssids_summary: String::new(),
+        };
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return ClusterSettingsSnapshot {
+            mdns_enabled: true,
+            listen_port: DEFAULT_LISTEN_PORT,
+            trusted_ssids_summary: String::new(),
+        };
+    };
+    let cluster = root.get("cluster");
+    let mdns_enabled = cluster
+        .and_then(|c| c.get("mdns"))
+        .and_then(|m| m.get("enabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let listen_port = cluster
+        .and_then(|c| c.get("listen_port"))
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u16::try_from(n).ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(DEFAULT_LISTEN_PORT);
+    let trusted_ssids_summary = cluster
+        .and_then(|c| c.get("policy"))
+        .and_then(|p| p.get("trusted_ssids"))
+        .and_then(|v| v.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .unwrap_or_default();
+    ClusterSettingsSnapshot {
+        mdns_enabled,
+        listen_port,
+        trusted_ssids_summary,
+    }
+}
+
+/// Bite #5 — flip `cluster.mdns.enabled` in freedom.yaml without
+/// disturbing other fields. Uses `serde_yaml::Value` round-trip so
+/// the rest of the operator's config (inference, hemispheres,
+/// council, ...) survives the rewrite unchanged. Atomic via
+/// `.tmp` + rename.
+fn set_cluster_mdns_enabled_in_freedom(path: &Path, enabled: bool) -> Result<()> {
+    let body = if path.exists() {
+        std::fs::read_to_string(path)
+            .with_context(|| format!("read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    let mut root: serde_yaml::Value = if body.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&body)
+            .with_context(|| format!("parse {}", path.display()))?
+    };
+    let map = match &mut root {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
+    };
+    let cluster_key = serde_yaml::Value::from("cluster");
+    let mut cluster_map = map
+        .get(&cluster_key)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    let mdns_key = serde_yaml::Value::from("mdns");
+    let mut mdns_map = cluster_map
+        .get(&mdns_key)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    mdns_map.insert(
+        serde_yaml::Value::from("enabled"),
+        serde_yaml::Value::from(enabled),
+    );
+    cluster_map.insert(mdns_key, serde_yaml::Value::Mapping(mdns_map));
+    map.insert(cluster_key, serde_yaml::Value::Mapping(cluster_map));
+    let serialised = serde_yaml::to_string(&root)
+        .context("serialise freedom.yaml after cluster mdns toggle")?;
+    write_mode_0600(path, serialised.as_bytes())
 }
 
 fn validate_autonomy(level: &str) -> Result<()> {
@@ -2026,5 +2181,112 @@ mod tests {
             body.contains("enabled: false"),
             "expected enabled: false: {body}"
         );
+    }
+
+    // ── Bite #5 — settings panel cluster state ─────────────────────
+
+    #[test]
+    fn load_cluster_settings_returns_defaults_when_freedom_missing() {
+        let dir = TempDir::new().unwrap();
+        let snap = load_cluster_settings(&dir.path().join("freedom.yaml"));
+        assert!(snap.mdns_enabled, "Q4 default: mdns enabled");
+        assert_eq!(snap.listen_port, 49737);
+        assert!(snap.trusted_ssids_summary.is_empty());
+    }
+
+    #[test]
+    fn load_cluster_settings_returns_defaults_when_unparseable() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "::: garbage :::").unwrap();
+        let snap = load_cluster_settings(&path);
+        assert!(snap.mdns_enabled);
+        assert_eq!(snap.listen_port, 49737);
+        assert!(snap.trusted_ssids_summary.is_empty());
+    }
+
+    #[test]
+    fn load_cluster_settings_reads_full_block() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let yaml = "operator_id: alice\n\
+                    cluster:\n  \
+                    mdns:\n    enabled: false\n  \
+                    listen_port: 4242\n  \
+                    policy:\n    \
+                    announce_on_untrusted_wifi: false\n    \
+                    trusted_ssids:\n      - home-wifi\n      - home-wifi-5g\n";
+        std::fs::write(&path, yaml).unwrap();
+        let snap = load_cluster_settings(&path);
+        assert!(!snap.mdns_enabled);
+        assert_eq!(snap.listen_port, 4242);
+        assert_eq!(snap.trusted_ssids_summary, "home-wifi, home-wifi-5g");
+    }
+
+    #[test]
+    fn load_cluster_settings_rejects_out_of_range_listen_port() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "cluster:\n  listen_port: 70000\n").unwrap();
+        let snap = load_cluster_settings(&path);
+        assert_eq!(snap.listen_port, 49737, "out-of-range falls back to default");
+    }
+
+    #[test]
+    fn set_cluster_mdns_writes_enabled_field_atomically() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        set_cluster_mdns_enabled_in_freedom(&path, false).unwrap();
+        assert!(path.exists());
+        let body = std::fs::read_to_string(&path).unwrap();
+        // YAML normalises bool to the unquoted token.
+        assert!(body.contains("enabled: false"), "got: {body}");
+        // .tmp left behind would mean the rename didn't happen.
+        assert!(!dir.path().join("freedom.yaml.tmp").exists());
+    }
+
+    #[test]
+    fn set_cluster_mdns_round_trip_via_load_cluster_settings() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        // Start ENABLED → toggle OFF → load sees false → toggle ON →
+        // load sees true. Pins the wire shape across the read+write
+        // pair so the settings panel can't drift away from the
+        // on-disk format.
+        set_cluster_mdns_enabled_in_freedom(&path, true).unwrap();
+        assert!(load_cluster_settings(&path).mdns_enabled);
+        set_cluster_mdns_enabled_in_freedom(&path, false).unwrap();
+        assert!(!load_cluster_settings(&path).mdns_enabled);
+        set_cluster_mdns_enabled_in_freedom(&path, true).unwrap();
+        assert!(load_cluster_settings(&path).mdns_enabled);
+    }
+
+    #[test]
+    fn set_cluster_mdns_preserves_other_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        // Pre-seed freedom.yaml with fields the GUI's MinimalFreedomYaml
+        // doesn't know about. The toggle MUST NOT drop them — that's
+        // the whole point of using the lossless serde_yaml::Value
+        // round-trip instead of typed read-merge-write.
+        let original = "operator_id: alice\n\
+                        provider_kind: openai_api\n\
+                        inference:\n  topology: triplet\n  left:\n    provider: openai_api\n\
+                        cluster:\n  \
+                        mdns:\n    enabled: true\n  \
+                        listen_port: 50000\n  \
+                        policy:\n    \
+                        trusted_ssids:\n      - home-wifi\n";
+        std::fs::write(&path, original).unwrap();
+        set_cluster_mdns_enabled_in_freedom(&path, false).unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        // Toggle landed.
+        assert!(body.contains("enabled: false"));
+        // Untyped neighbours survived.
+        assert!(body.contains("operator_id: alice"));
+        assert!(body.contains("provider_kind: openai_api"));
+        assert!(body.contains("topology: triplet"));
+        assert!(body.contains("listen_port: 50000"));
+        assert!(body.contains("home-wifi"));
     }
 }
