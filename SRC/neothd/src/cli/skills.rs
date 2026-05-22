@@ -7,22 +7,24 @@
 //!
 //! Output respects the global `--output` flag.
 
+use std::path::PathBuf;
+
 use anyhow::Result;
 use clap::Args;
 use tracing::info;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::skills::{load_all, route};
+use crate::skills::{installer, load_all, route};
 
 #[derive(Args, Debug, Clone)]
 pub struct SkillsArgs {
     /// Print the table of installed skills.
-    #[arg(long, conflicts_with_all = ["test", "run_tests"])]
+    #[arg(long, conflicts_with_all = ["test", "run_tests", "install", "uninstall"])]
     pub list: bool,
 
     /// Run the router against an arbitrary message and report the match.
-    #[arg(long, value_name = "MESSAGE", conflicts_with_all = ["list", "run_tests"])]
+    #[arg(long, value_name = "MESSAGE", conflicts_with_all = ["list", "run_tests", "install", "uninstall"])]
     pub test: Option<String>,
 
     /// Run the RED/GREEN scenario suite for a skill. Loads
@@ -30,8 +32,24 @@ pub struct SkillsArgs {
     /// (without and with the skill's system prompt), reports pass/fail.
     /// Requires a working provider in `freedom.yaml`. Phase 33+ (obra/
     /// superpowers Item #3 port).
-    #[arg(long = "run-tests", value_name = "SKILL_ID", conflicts_with_all = ["list", "test"])]
+    #[arg(long = "run-tests", value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "install", "uninstall"])]
     pub run_tests: Option<String>,
+
+    /// QM-11 install a skill from a local directory containing `skill.yaml`.
+    /// Validates the manifest BEFORE copying; refuses to replace an
+    /// existing install unless `--force` is set.
+    #[arg(long, value_name = "PATH", conflicts_with_all = ["list", "test", "run_tests", "uninstall"])]
+    pub install: Option<PathBuf>,
+
+    /// QM-11 uninstall the named skill from `~/.neoth/skills/<id>/`.
+    /// Idempotent — missing id is reported as such, not an error.
+    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install"])]
+    pub uninstall: Option<String>,
+
+    /// QM-11: force replacement when `--install` would overwrite an
+    /// existing skill of the same id.
+    #[arg(long, requires = "install")]
+    pub force: bool,
 
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
@@ -40,6 +58,61 @@ pub struct SkillsArgs {
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     let skills_dir = FreedomConfig::default_neoth_home().join("skills");
+
+    // QM-11 install — happens BEFORE the load so the operator sees
+    // their just-installed skill in the post-install list.
+    if let Some(source) = &args.install {
+        let report = installer::install_from_local(source, &skills_dir, args.force)?;
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                let v = serde_json::json!({
+                    "id": report.id,
+                    "installed_at": report.installed_at.display().to_string(),
+                    "replaced_existing": report.replaced_existing,
+                });
+                println!("{}", serde_json::to_string(&v)?);
+            }
+            OutputFormat::Table => {
+                let verb = if report.replaced_existing {
+                    "Reinstalled"
+                } else {
+                    "Installed"
+                };
+                println!(
+                    "{verb} `{}` at {}",
+                    report.id,
+                    report.installed_at.display()
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    // QM-11 uninstall.
+    if let Some(id) = &args.uninstall {
+        let removed = installer::uninstall(&skills_dir, id)?;
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                let v = serde_json::json!({
+                    "id": id,
+                    "removed": removed,
+                });
+                println!("{}", serde_json::to_string(&v)?);
+            }
+            OutputFormat::Table => {
+                if removed {
+                    println!("Uninstalled `{id}`");
+                } else {
+                    println!(
+                        "Skill `{id}` was not installed under {} — nothing to remove.",
+                        skills_dir.display()
+                    );
+                }
+            }
+        }
+        return Ok(());
+    }
+
     let skills = load_all(&skills_dir).await?;
     info!(
         path = %skills_dir.display(),

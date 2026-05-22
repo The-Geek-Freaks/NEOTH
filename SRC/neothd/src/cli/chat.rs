@@ -213,7 +213,7 @@ pub async fn run_chat_with(
     let mode_registry = crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
         .unwrap_or_default();
     let mode_hit = mode_registry.match_trigger(&prompt);
-    let (combined_system, skill_match) = if let Some(resolved) = mode_hit {
+    let (combined_system, _skill_match) = if let Some(resolved) = mode_hit {
         // Find the parent skill so we can layer the base prompt + delta.
         let parent = installed_skills
             .iter()

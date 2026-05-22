@@ -43,6 +43,7 @@ pub mod keys;
 pub mod mcp;
 pub mod memory;
 pub mod migrate;
+pub mod mode;
 pub mod models;
 pub mod obsidian;
 pub mod obsidian_sync_task;
@@ -193,7 +194,16 @@ pub enum Commands {
     ///
     /// `--list` (default) shows id / enabled / keyword count / description.
     /// `--test "msg"` runs the keyword router and prints the match.
+    /// `--install <path>` copies a local skill dir into ~/.neoth/skills/ (QM-11).
+    /// `--uninstall <id>` removes ~/.neoth/skills/<id>/ (QM-11).
     Skills(skills::SkillsArgs),
+
+    /// QM-3 mode-registry surface — list / show / match operator-facing
+    /// view of every named mode the bundled + user-installed skills ship.
+    ///
+    /// Subcommands: `list`, `show <id>`, `match "<text>"`. Composes with
+    /// QM-3 ModeRegistry foundation + QM-23 academic modes.
+    Mode(mode::ModeArgs),
 
     /// Manage hard-stored ground-truth facts (Phase 28c R-24).
     ///
@@ -572,6 +582,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Skills(mut args) => {
             args.output = global_output;
             skills::run_skills(args).await?;
+        }
+        Commands::Mode(mut args) => {
+            args.output = global_output;
+            mode::run_mode(args).await?;
         }
         Commands::Groundtruth(mut args) => {
             args.output = global_output;
