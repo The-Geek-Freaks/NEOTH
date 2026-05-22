@@ -220,6 +220,45 @@ pub fn built_in_commands() -> Vec<SlashCommand> {
             SlashAction::Quit,
             "Usage: /quit",
         ),
+        // ── NOOB-UX slash pair (Session 20 batch) ────────────────────
+        // Three new prompt-based slash commands that mirror the CLI
+        // subcommands shipped this session. Each routes the operator
+        // to the canonical `neoth ...` invocation; the chat surface
+        // doesn't render long blocks of text inline (operators on
+        // small panels see truncation), the LLM gets a directive to
+        // suggest the matching CLI command. Operator's autonomy
+        // chooses whether to run it for them.
+        prompt_cmd(
+            "glossary",
+            "Operator-readable cheat sheet for NEOTH terms.",
+            "Run `neoth glossary` in a separate terminal and report which \
+             terms the operator just looked up. If they ask about a specific \
+             term, fetch that entry's body via `neoth glossary --term <name>` \
+             and quote it verbatim.",
+            "Usage: /glossary [term]\n\
+             Mirrors `neoth glossary --term <name>`.",
+        ),
+        prompt_cmd(
+            "privacy",
+            "Pre-prompt privacy audit — see what hits cloud before sending.",
+            "Run `neoth privacy audit` and quote the findings table. The \
+             operator wants to know — without ambiguity — whether the next \
+             chat call leaves their machine, and which channels relay data \
+             off-host. Highlight every WARN-severity row.",
+            "Usage: /privacy\n\
+             Mirrors `neoth privacy audit`.",
+        ),
+        prompt_cmd(
+            "tour",
+            "First-launch operator tour — 5 stops, ~3 min read.",
+            "Walk the operator through the `neoth tour` stops one at a time: \
+             chat / memory / consent / audit / next. After each stop, wait \
+             for them to confirm before moving on. They can jump to any stop \
+             via `/tour <id>` or `neoth tour --step <id>`.",
+            "Usage: /tour [step]\n\
+             Mirrors `neoth tour --step <id>`.\n\
+             Available stops: chat, memory, consent, audit, next.",
+        ),
     ]
 }
 

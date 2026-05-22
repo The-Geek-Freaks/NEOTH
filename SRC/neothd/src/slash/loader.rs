@@ -79,10 +79,14 @@ mod tests {
         assert!(names.contains(&"config"));
         assert!(names.contains(&"provider"));
         assert!(names.contains(&"connect"));
+        // Session 20 NOOB-UX slash pair: glossary / privacy / tour.
+        assert!(names.contains(&"glossary"));
+        assert!(names.contains(&"privacy"));
+        assert!(names.contains(&"tour"));
         assert_eq!(
             cmds.len(),
-            18,
-            "ships 6 prompt-based + 12 action-based built-ins: {names:?}"
+            21,
+            "ships 9 prompt-based + 12 action-based built-ins: {names:?}"
         );
     }
 
