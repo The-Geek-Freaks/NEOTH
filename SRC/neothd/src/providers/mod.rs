@@ -410,6 +410,61 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
     }
 }
 
+/// Day-14b Phase 2 — build the operator-configured embedding
+/// provider (if any). Returns `None` when:
+///   - `freedom.yaml::inference.embedding_provider` is absent
+///   - operator picked a cloud provider that doesn't have an
+///     `EmbedProvider` impl yet (only `local_qwen` ships in v0.1)
+///   - the local provider failed to construct (no weights, no
+///     disk, network blocked on first download)
+///
+/// Always non-fatal: callers (skill router Stage-2, council
+/// dissent, dreaming clustering) fall back to keyword / Jaccard
+/// when no provider is available. The L-07 `allow_cloud_fallback:
+/// false` safe-default lives on the consumer side — this function
+/// just reports availability honestly.
+pub async fn embed_provider_from_config(
+    config: &FreedomConfig,
+) -> Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>> {
+    let provider_kind = config.inference.embedding_provider?;
+    match provider_kind {
+        crate::config::inference::InferenceProvider::LocalQwen => {
+            let repo = config.provider_model.clone();
+            let accelerator = config
+                .inference
+                .accelerator_override
+                .as_deref()
+                .and_then(crate::daemon::accelerator::Accelerator::from_str);
+            let sampling = crate::providers::local_qwen::SamplingConfig::default();
+            let max_new_tokens = config.inference.max_new_tokens;
+            match crate::providers::local_qwen::LocalQwenAdapter::new_with_full_options(
+                repo,
+                accelerator,
+                sampling,
+                max_new_tokens,
+            )
+            .await
+            {
+                Ok(adapter) => Some(std::sync::Arc::new(adapter)),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "embed_provider_from_config: local_qwen build failed; Stage-2 disabled"
+                    );
+                    None
+                }
+            }
+        }
+        other => {
+            tracing::warn!(
+                provider = %other.as_str(),
+                "embed_provider_from_config: no EmbedProvider impl yet; Stage-2 disabled (v0.1 ships local_qwen only)"
+            );
+            None
+        }
+    }
+}
+
 fn require_provider_key(config: &FreedomConfig, name: &str) -> Result<SecretString> {
     config.provider_key.clone().ok_or_else(|| {
         anyhow::anyhow!(

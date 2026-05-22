@@ -128,6 +128,75 @@ pub fn cosine_rerank<'a>(
     best
 }
 
+/// Day-14b Phase 2 chat-loop entry point. Runs Stage-2 cosine
+/// re-rank over installed skills via an `EmbedProvider` — embeds
+/// the message, then embeds each enabled skill's description on
+/// demand. Returns the highest-cosine skill above
+/// [`EMBEDDING_THRESHOLD`], or `None` when nothing crosses the bar.
+///
+/// **Cost**: N+1 embedding calls per invocation (1 message + 1 per
+/// enabled skill). For the default 22-skill bundle on CPU Qwen2.5-3B
+/// this is ~10-30s cold-start; warm calls run in seconds. Phase 2b
+/// adds a session-level cache (compute skill embeddings once, reuse
+/// across messages) — operators who want it today can run with
+/// `freedom.yaml::inference.embedding_provider: null` to skip Stage-2
+/// entirely.
+///
+/// Failure modes are silent + fall back to keyword-only:
+///   - Provider returns Err on the message embed → returns None
+///   - Any individual skill embed fails → that skill is skipped, others
+///     still scored
+///   - Dim mismatch between message + skill embeddings → `cosine()`
+///     returns 0.0, that skill never crosses threshold
+pub async fn route_stage2_embedding<'a>(
+    message: &str,
+    skills: &'a [Skill],
+    embed_provider: &dyn crate::providers::embed::EmbedProvider,
+) -> Option<(&'a Skill, f32)> {
+    use crate::providers::embed::EmbedRequest;
+    if message.trim().is_empty() || skills.is_empty() {
+        return None;
+    }
+    let msg_resp = match embed_provider
+        .embed(EmbedRequest::new(message))
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                provider = embed_provider.name(),
+                error = %e,
+                "stage2: message embed failed; falling back to keyword-only"
+            );
+            return None;
+        }
+    };
+    let mut skill_embeddings: std::collections::HashMap<String, Vec<f32>> =
+        std::collections::HashMap::new();
+    for skill in skills {
+        if !skill.is_enabled() {
+            continue;
+        }
+        let desc = skill.description();
+        if desc.trim().is_empty() {
+            continue;
+        }
+        match embed_provider.embed(EmbedRequest::new(desc.to_string())).await {
+            Ok(r) => {
+                skill_embeddings.insert(skill.id().to_string(), r.vector);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    skill = skill.id(),
+                    error = %e,
+                    "stage2: skill embed failed; skipping in cosine re-rank"
+                );
+            }
+        }
+    }
+    cosine_rerank(&msg_resp.vector, skills, &skill_embeddings)
+}
+
 fn lowercase_tokens(s: &str) -> Vec<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
@@ -606,22 +675,191 @@ mod tests {
         assert_eq!(pick.0.id(), "a");
     }
 
+    // ── route_stage2_embedding ─────────────────────────────────────
+
+    /// Toy embed provider: text containing `key` returns the canonical
+    /// unit vector at `slot`; texts without the key return an orthogonal
+    /// "neutral" vector. Used to drive the stage-2 router through
+    /// deterministic cosine scores without real weights.
+    struct KeySlotMock {
+        dim: usize,
+        rules: Vec<(&'static str, usize)>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for KeySlotMock {
+        fn name(&self) -> &'static str {
+            "key_slot_mock"
+        }
+        fn default_dim(&self) -> usize {
+            self.dim
+        }
+        async fn embed(
+            &self,
+            req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            let mut v = vec![0.0f32; self.dim];
+            let mut matched = false;
+            for (needle, slot) in &self.rules {
+                if req.text.to_lowercase().contains(needle) {
+                    v[*slot] = 1.0;
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                // Land in the last slot — orthogonal to all rule slots.
+                v[self.dim - 1] = 1.0;
+            }
+            crate::providers::embed::l2_normalize(&mut v);
+            Ok(crate::providers::embed::EmbedResponse {
+                vector: v,
+                model: "mock".into(),
+                latency: std::time::Duration::from_micros(1),
+            })
+        }
+    }
+
+    fn skill_with_desc(id: &str, desc: &str, enabled: bool) -> Skill {
+        Skill {
+            manifest: SkillManifest {
+                id: id.to_string(),
+                description: desc.to_string(),
+                version: "1.0.0".to_string(),
+                trigger_keywords: vec![],
+                system_prompt: format!("you are {id}"),
+                tool_allowlist: vec![],
+                author: None,
+                tags: vec![],
+                homepage: None,
+                modes: vec![],
+                enabled,
+            },
+            path: PathBuf::from(format!("/tmp/{id}/skill.yaml")),
+        }
+    }
+
+    #[tokio::test]
+    async fn stage2_returns_matching_skill_when_message_aligns() {
+        // Message contains "weather" → embedded into slot 0.
+        // Skill A description contains "weather" → also slot 0.
+        // Skill B description contains "news" → slot 1.
+        // Expected: cosine(A, msg) = 1.0 → A wins.
+        let skills = vec![
+            skill_with_desc("a", "weather forecasts", true),
+            skill_with_desc("b", "news headlines", true),
+        ];
+        let provider = KeySlotMock {
+            dim: 4,
+            rules: vec![("weather", 0), ("news", 1)],
+        };
+        let pick = route_stage2_embedding("show me the weather", &skills, &provider).await;
+        assert!(pick.is_some());
+        assert_eq!(pick.unwrap().0.id(), "a");
+    }
+
+    #[tokio::test]
+    async fn stage2_returns_none_when_message_orthogonal() {
+        // Message landed in the neutral slot; all skill descriptions
+        // map to slot 0/1. Cosine = 0.0 everywhere → below threshold.
+        let skills = vec![
+            skill_with_desc("a", "weather forecasts", true),
+            skill_with_desc("b", "news headlines", true),
+        ];
+        let provider = KeySlotMock {
+            dim: 4,
+            rules: vec![("weather", 0), ("news", 1)],
+        };
+        let pick = route_stage2_embedding("how do I cook risotto", &skills, &provider).await;
+        assert!(pick.is_none());
+    }
+
+    #[tokio::test]
+    async fn stage2_ignores_empty_message() {
+        let skills = vec![skill_with_desc("a", "weather forecasts", true)];
+        let provider = KeySlotMock {
+            dim: 4,
+            rules: vec![("weather", 0)],
+        };
+        assert!(route_stage2_embedding("", &skills, &provider).await.is_none());
+        assert!(
+            route_stage2_embedding("   ", &skills, &provider)
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn stage2_ignores_disabled_skills() {
+        // Disabled skill matches perfectly but stays unselected.
+        let skills = vec![
+            skill_with_desc("a", "weather forecasts", false),
+            skill_with_desc("b", "news headlines", true),
+        ];
+        let provider = KeySlotMock {
+            dim: 4,
+            rules: vec![("weather", 0), ("news", 1)],
+        };
+        // Message hits weather → if `a` were enabled it'd win, but
+        // disabled → no other skill scores above threshold → None.
+        let pick = route_stage2_embedding("show me the weather", &skills, &provider).await;
+        assert!(pick.is_none());
+    }
+
     #[test]
     fn cosine_rerank_at_exact_threshold_passes() {
-        // Construct a message + skill embedding pair whose dot product
-        // equals EMBEDDING_THRESHOLD (0.72). Verify the threshold is
-        // **inclusive** (filter is `< threshold`, so == threshold passes).
+        // Probe the EMBEDDING_THRESHOLD = 0.72 boundary directly.
+        // Build two unit vectors whose dot product equals the
+        // threshold within FP tolerance:
+        //
+        //   msg       = [1.0, 0.0]                  (unit @ slot 0)
+        //   skill_emb = [0.72, sqrt(1 - 0.72²), 0]  (unit, cos with msg = 0.72)
+        //
+        // |skill_emb|² = 0.72² + (1 - 0.72²) = 1.0 ✓
+        //
+        // The router's filter is `score < EMBEDDING_THRESHOLD`, so
+        // a score equal to the threshold MUST pass (inclusive lower
+        // bound). This test fails the day someone flips the check to
+        // `<= threshold` without thinking about it.
         let skills = vec![skill("a", &["foo"], true)];
-        let mut msg = vec![EMBEDDING_THRESHOLD, 0.0, 0.0];
-        let mut skill_emb = vec![1.0f32, 0.0, 0.0];
-        // Both must be L2-normalised so cosine == dot product.
-        crate::providers::embed::l2_normalize(&mut msg);
-        crate::providers::embed::l2_normalize(&mut skill_emb);
+        let msg = vec![1.0f32, 0.0];
+        let skill_emb = vec![EMBEDDING_THRESHOLD, (1.0 - EMBEDDING_THRESHOLD * EMBEDDING_THRESHOLD).sqrt()];
+        // Sanity: skill_emb is already unit-length.
+        let len_sq: f32 = skill_emb.iter().map(|x| x * x).sum();
+        assert!((len_sq - 1.0).abs() < 1e-6, "test setup: skill_emb must be unit");
+        // Sanity: cos(msg, skill_emb) == EMBEDDING_THRESHOLD exactly.
+        let cos = crate::providers::embed::cosine(&msg, &skill_emb);
+        assert!(
+            (cos - EMBEDDING_THRESHOLD).abs() < 1e-6,
+            "test setup: cos must equal threshold, got {cos}"
+        );
         let mut embs = std::collections::HashMap::new();
         embs.insert("a".to_string(), skill_emb);
-        // After normalisation msg = [1.0, 0.0, 0.0] (since the threshold
-        // is the only non-zero component) → cos = 1.0 ≥ threshold.
         let pick = cosine_rerank(&msg, &skills, &embs);
-        assert!(pick.is_some());
+        assert!(pick.is_some(), "score at exact threshold MUST pass (inclusive)");
+        let (winner, score) = pick.unwrap();
+        assert_eq!(winner.id(), "a");
+        assert!((score - EMBEDDING_THRESHOLD).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_rerank_just_below_threshold_is_rejected() {
+        // Companion to the at-threshold test — verify a score one ULP
+        // below the threshold is REJECTED. Same construction but
+        // cos = threshold - 1e-4 (well inside FP precision).
+        let skills = vec![skill("a", &["foo"], true)];
+        let below = EMBEDDING_THRESHOLD - 1e-4;
+        let msg = vec![1.0f32, 0.0];
+        let skill_emb = vec![below, (1.0 - below * below).sqrt()];
+        let len_sq: f32 = skill_emb.iter().map(|x| x * x).sum();
+        assert!((len_sq - 1.0).abs() < 1e-5);
+        let cos = crate::providers::embed::cosine(&msg, &skill_emb);
+        assert!(cos < EMBEDDING_THRESHOLD);
+        let mut embs = std::collections::HashMap::new();
+        embs.insert("a".to_string(), skill_emb);
+        assert!(
+            cosine_rerank(&msg, &skills, &embs).is_none(),
+            "score below threshold MUST be rejected"
+        );
     }
 }

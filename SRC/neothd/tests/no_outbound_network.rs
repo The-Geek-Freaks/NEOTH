@@ -43,6 +43,18 @@
 //!                                    Operator-configured channel adapter
 //!                                    that dials Discord's gateway URL after
 //!                                    `gateway.json` discovery.
+//!   - `src/cluster/`               — Operator-configured peer discovery +
+//!                                    federation. Today: `tailscale.rs`
+//!                                    TCP-probes tailnet peers (CGNAT
+//!                                    `100.64.0.0/10` — operator's own
+//!                                    private network, not the public
+//!                                    internet) for `neoth cluster
+//!                                    discover`. Phase 5 (Hysteria relay)
+//!                                    + Phase 6 (gossip state-sync) will
+//!                                    add more peer-dial code here. Same
+//!                                    category as channels/ — operator
+//!                                    opts into network access via
+//!                                    explicit CLI / wizard step.
 //!
 //! Adding a new allowed path means editing both the codebase AND this
 //! file, which makes the audit trail loud.
@@ -60,6 +72,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/channels/slack_socket.rs",
     "src/channels/discord.rs",
     "src/channels/discord_gateway_loop.rs",
+    "src/cluster/",
     "src/transport/",
 ];
 

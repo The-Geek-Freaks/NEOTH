@@ -246,18 +246,56 @@ pub async fn run_chat_with(
         // is the explicit operator path; modes don't trigger it.
         (merged, None)
     } else {
-        let skill_match = crate::skills::route(&prompt, &installed_skills);
+        let mut skill_match = crate::skills::route(&prompt, &installed_skills);
+        // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
+        // Runs ONLY when keyword Stage-1 missed AND the operator
+        // configured `freedom.yaml::inference.embedding_provider`.
+        // The L-07 `allow_cloud_fallback: false` safe-default lives
+        // in `embed_provider_from_config` (returns None when no
+        // local impl is available + the operator picked cloud).
+        // Stage-2 winner is folded into the same `RouteMatch` shape
+        // so all downstream logic (system_prompt layering, WAL audit)
+        // stays unchanged. embedding_score: Some(score) marks the
+        // path in operator-visible logs.
+        if skill_match.is_none() {
+            if let Some(embed_provider) =
+                crate::providers::embed_provider_from_config(&config).await
+            {
+                if let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
+                    &prompt,
+                    &installed_skills,
+                    embed_provider.as_ref(),
+                )
+                .await
+                {
+                    info!(
+                        skill = skill.id(),
+                        cosine = score,
+                        "skill activated via Stage-2 embedding re-rank"
+                    );
+                    skill_match = Some(crate::skills::router::RouteMatch {
+                        skill,
+                        matched_keywords: Vec::new(),
+                        embedding_score: Some(score),
+                    });
+                }
+            }
+        }
         let merged = match (&skill_match, combined_system) {
             (Some(m), Some(sys)) => Some(format!("{sys}\n\n{}", m.skill.system_prompt())),
             (Some(m), None) => Some(m.skill.system_prompt().to_string()),
             (None, sys) => sys,
         };
         if let Some(m) = &skill_match {
-            info!(
-                skill = m.skill.id(),
-                matched_keywords = ?m.matched_keywords,
-                "skill activated"
-            );
+            if m.embedding_score.is_none() {
+                info!(
+                    skill = m.skill.id(),
+                    matched_keywords = ?m.matched_keywords,
+                    "skill activated"
+                );
+            }
+            // Stage-2 winners already logged above with their cosine
+            // score so the operator sees the path that activated.
         }
         (merged, skill_match)
     };
