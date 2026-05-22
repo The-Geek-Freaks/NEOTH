@@ -17,8 +17,14 @@
 //!   - a skill manifest references it via `delegate_to: <name>`
 //!   - the daemon programmatically calls `sub_agents::dispatch_to(name, ...)`
 //!
-//! For v0.1 only the first path is wired; skill delegation lands when the
-//! Skills Stage-2 router gets a real embedding re-rank (Day-14b).
+//! For v0.1 only the first path is wired; skill delegation lands when
+//! the Skills Stage-2 router consumes the
+//! [`crate::providers::embed::EmbedProvider`] surface (shipped
+//! Day-14b Phase 1b — Session 21, 2026-05-23) for cosine re-rank.
+//! Phase 2 of the embed-wire plan threads pre-computed message +
+//! skill embeddings into `skills::router::cosine_rerank`, after
+//! which `delegate_to:` can resolve to a sub-agent via the matched
+//! skill instead of bare keyword fallback.
 
 pub mod builtins;
 pub mod loader;

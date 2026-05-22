@@ -5,9 +5,15 @@
 //! words. Cheap, deterministic, no LLM call required.
 //!
 //! Future iterations (CH-12 adaptive thresholds, CH-09 profile-aware
-//! re-rank) can replace this with embedding cosine distance once the
-//! local-Qwen embedding path lands. The score type itself is stable;
-//! only the scoring function changes.
+//! re-rank) can replace this Jaccard heuristic with embedding cosine
+//! distance via [`crate::providers::embed::cosine`] now that the
+//! local-Qwen embedding path shipped in Day-14b Phase 1b (Session 21,
+//! 2026-05-23). The score type itself is stable; only the scoring
+//! function changes. Phase 3 of the embed-wire plan switches the
+//! default path to cosine when an `EmbedProvider` is wired into the
+//! council orchestrator, falling back to Jaccard when no provider
+//! is configured (matches the L-07 `allow_cloud_fallback: false`
+//! safe-default).
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;

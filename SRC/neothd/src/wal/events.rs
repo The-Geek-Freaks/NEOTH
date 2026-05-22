@@ -493,8 +493,12 @@ pub const EVENT_TYPE_PROFILE_SUPERSEDED: u8 = 0xB2;
 /// Payload (JSON): `{snapshot_id, claim_count, claim_hashes,
 /// embedding_b64, neoth_version, seeded_at_ts_unix}`. `embedding_b64`
 /// is the behavioural-style embedding referenced in v1.1 §A3 for the
-/// Phase-3 parity-substrate evaluation; left as `null` when the local
-/// Qwen embedding tower hasn't been wired into the seed migration yet.
+/// Phase-3 parity-substrate evaluation; populated via
+/// [`crate::providers::embed::EmbedProvider::embed`] (Day-14b Phase 1b
+/// shipped 2026-05-23 — `local_qwen` `EmbedProvider` impl returns
+/// L2-normalised hidden-state mean-pooled vectors). Left `null` when
+/// no `EmbedProvider` is wired into the seed migration path yet
+/// (Phase 4 of the embed-wire plan).
 ///
 /// **NOT YET EMITTED.** This constant reserves the code for the Phase-3
 /// emitter; the daemon today never writes a frame with `event_type =

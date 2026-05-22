@@ -75,9 +75,57 @@ pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
 }
 
 /// Future-proof entry point — currently delegates to keyword scan.
-/// When Day-14b lands, the second arg will be the embedding service.
+/// Day-14b Phase 1b (Session 21, 2026-05-23) shipped the embedding
+/// service at [`crate::providers::embed::EmbedProvider`] — Phase 2
+/// rewires this function to accept `Option<&[f32]>` message embedding +
+/// `Option<&HashMap<&str, Vec<f32>>>` cached skill embeddings and run
+/// the [`EMBEDDING_THRESHOLD`] cosine re-rank when keyword Stage-1
+/// produces ties. Signature stays back-compat until Phase 2 lands.
 pub fn route_with_embedding<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
     route(message, skills)
+}
+
+/// Stage-2 cosine re-rank helper for callers that already hold a
+/// pre-computed message embedding + cached skill embeddings. Pure
+/// function — no I/O, no embedding model required. Returns the
+/// best-cosine skill **only when the score crosses
+/// [`EMBEDDING_THRESHOLD`]**; below threshold returns `None` so
+/// callers can fall back to keyword Stage-1.
+///
+/// The Phase 2 wire-up in `cli::chat` will:
+///   1. Embed the operator's message once via `EmbedProvider`
+///   2. Look up each candidate skill's pre-computed description
+///      embedding from the session-cached `HashMap<&str, Vec<f32>>`
+///   3. Call this function to pick the cosine winner
+///
+/// Today this exists so consumers can prep against the stable API
+/// surface; the actual chat-loop wire-up is a follow-on commit.
+pub fn cosine_rerank<'a>(
+    message_embedding: &[f32],
+    skills: &'a [Skill],
+    skill_embeddings: &std::collections::HashMap<String, Vec<f32>>,
+) -> Option<(&'a Skill, f32)> {
+    let mut best: Option<(&Skill, f32)> = None;
+    for skill in skills {
+        if !skill.is_enabled() {
+            continue;
+        }
+        let Some(skill_emb) = skill_embeddings.get(skill.id()) else {
+            continue;
+        };
+        let score = crate::providers::embed::cosine(message_embedding, skill_emb);
+        if score < EMBEDDING_THRESHOLD {
+            continue;
+        }
+        let take = match &best {
+            None => true,
+            Some((_, bs)) => score > *bs,
+        };
+        if take {
+            best = Some((skill, score));
+        }
+    }
+    best
 }
 
 fn lowercase_tokens(s: &str) -> Vec<String> {
@@ -498,5 +546,82 @@ mod tests {
                 m.unwrap().skill.id()
             );
         }
+    }
+
+    // ── Day-14b Phase 2 hook: cosine_rerank ─────────────────────────
+
+    fn unit_vec(idx: usize, dim: usize) -> Vec<f32> {
+        let mut v = vec![0.0f32; dim];
+        v[idx] = 1.0;
+        v
+    }
+
+    #[test]
+    fn cosine_rerank_returns_none_below_threshold() {
+        // Message embedding orthogonal to all skill embeddings →
+        // every cosine score is 0.0, below EMBEDDING_THRESHOLD = 0.72.
+        let skills = vec![skill("a", &["foo"], true), skill("b", &["bar"], true)];
+        let msg = unit_vec(0, 4);
+        let mut embs = std::collections::HashMap::new();
+        embs.insert("a".to_string(), unit_vec(1, 4));
+        embs.insert("b".to_string(), unit_vec(2, 4));
+        assert!(cosine_rerank(&msg, &skills, &embs).is_none());
+    }
+
+    #[test]
+    fn cosine_rerank_picks_highest_above_threshold() {
+        let skills = vec![skill("a", &["foo"], true), skill("b", &["bar"], true)];
+        let msg = unit_vec(0, 4);
+        let mut embs = std::collections::HashMap::new();
+        // skill a → identical to msg → cos = 1.0 (above threshold)
+        embs.insert("a".to_string(), unit_vec(0, 4));
+        // skill b → orthogonal → cos = 0.0 (below)
+        embs.insert("b".to_string(), unit_vec(1, 4));
+        let pick = cosine_rerank(&msg, &skills, &embs).unwrap();
+        assert_eq!(pick.0.id(), "a");
+        assert!((pick.1 - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn cosine_rerank_ignores_disabled_skills() {
+        let skills = vec![skill("a", &["foo"], false), skill("b", &["bar"], true)];
+        let msg = unit_vec(0, 4);
+        let mut embs = std::collections::HashMap::new();
+        // Both perfect matches, but `a` is disabled — `b` must win.
+        embs.insert("a".to_string(), unit_vec(0, 4));
+        embs.insert("b".to_string(), unit_vec(0, 4));
+        let pick = cosine_rerank(&msg, &skills, &embs).unwrap();
+        assert_eq!(pick.0.id(), "b");
+    }
+
+    #[test]
+    fn cosine_rerank_skips_skills_without_cached_embedding() {
+        let skills = vec![skill("a", &["foo"], true), skill("b", &["bar"], true)];
+        let msg = unit_vec(0, 4);
+        // Only skill `a` has an embedding; skill `b` is skipped without
+        // panicking on missing-key.
+        let mut embs = std::collections::HashMap::new();
+        embs.insert("a".to_string(), unit_vec(0, 4));
+        let pick = cosine_rerank(&msg, &skills, &embs).unwrap();
+        assert_eq!(pick.0.id(), "a");
+    }
+
+    #[test]
+    fn cosine_rerank_at_exact_threshold_passes() {
+        // Construct a message + skill embedding pair whose dot product
+        // equals EMBEDDING_THRESHOLD (0.72). Verify the threshold is
+        // **inclusive** (filter is `< threshold`, so == threshold passes).
+        let skills = vec![skill("a", &["foo"], true)];
+        let mut msg = vec![EMBEDDING_THRESHOLD, 0.0, 0.0];
+        let mut skill_emb = vec![1.0f32, 0.0, 0.0];
+        // Both must be L2-normalised so cosine == dot product.
+        crate::providers::embed::l2_normalize(&mut msg);
+        crate::providers::embed::l2_normalize(&mut skill_emb);
+        let mut embs = std::collections::HashMap::new();
+        embs.insert("a".to_string(), skill_emb);
+        // After normalisation msg = [1.0, 0.0, 0.0] (since the threshold
+        // is the only non-zero component) → cos = 1.0 ≥ threshold.
+        let pick = cosine_rerank(&msg, &skills, &embs);
+        assert!(pick.is_some());
     }
 }
