@@ -372,6 +372,25 @@ const CHECK_DOCS: &[CheckDoc] = &[
               `council.max_calls_per_user_message` (default 15) lower.",
     },
     CheckDoc {
+        name: "cluster registry",
+        purpose: "Cluster auto-discovery Phase 4 visibility surface. \
+                  Reads `~/.neoth/cluster.yaml` + reports the count \
+                  of confirmed peers + warns when any haven't been \
+                  seen in 14 days (Phase 2+ gossip refreshes \
+                  last_seen_unix on each authenticated announce). \
+                  Single-instance operators see Pass with `no \
+                  confirmed cluster peers` — no noise.",
+        common_failures: "Peer device offline for >14 days (laptop \
+                          retired, server move, network change). \
+                          Stale entry keeps eating Phase 6 gossip \
+                          retry budget until revoked.",
+        fix: "Verify the peer device is still reachable: `neoth \
+              cluster list` shows the addr + via. If the device \
+              is truly gone, `neoth cluster revoke <pub_key_prefix>` \
+              removes it. If it's just been offline, leave it — \
+              gossip will refresh once the peer returns.",
+    },
+    CheckDoc {
         name: "channel flapping",
         purpose: "Flapping detection: scans the last 24h of \
                   usage_log entries + warns when any provider with \
@@ -629,7 +648,67 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_usage_today(home),
         check_circuit_breakers(home),
         check_channel_flapping(home),
+        check_cluster_registry(home),
     ]
+}
+
+/// Cluster registry surface — Phase 4 doctor entry. Reads
+/// `~/.neoth/cluster.yaml` + reports peer count + stale-peer warning
+/// when any paired peer hasn't been seen in 14 days. Empty registry
+/// passes silently — single-instance operators don't see noise.
+fn check_cluster_registry(home: &Path) -> CheckOutcome {
+    let reg = match crate::cluster::registry::load(home) {
+        Ok(r) => r,
+        Err(e) => {
+            return CheckOutcome {
+                name: "cluster registry",
+                status: CheckStatus::Warn,
+                detail: format!("cluster.yaml unreadable: {e}"),
+            };
+        }
+    };
+    if reg.peers.is_empty() {
+        return CheckOutcome {
+            name: "cluster registry",
+            status: CheckStatus::Pass,
+            detail: "no confirmed cluster peers (single-instance)".to_string(),
+        };
+    }
+    const STALE_AFTER_SECS: i64 = 14 * 86_400;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let mut stale = Vec::new();
+    for p in &reg.peers {
+        if now - p.last_seen_unix > STALE_AFTER_SECS {
+            stale.push(format!(
+                "{}({})",
+                p.instance_label,
+                &p.pub_key_hex[..8.min(p.pub_key_hex.len())]
+            ));
+        }
+    }
+    let detail = format!(
+        "{} confirmed peer(s); {} stale (>14d since last_seen)",
+        reg.peers.len(),
+        stale.len()
+    );
+    let status = if stale.is_empty() {
+        CheckStatus::Pass
+    } else {
+        CheckStatus::Warn
+    };
+    let detail = if stale.is_empty() {
+        detail
+    } else {
+        format!("{} — stale: {}", detail, stale.join(", "))
+    };
+    CheckOutcome {
+        name: "cluster registry",
+        status,
+        detail,
+    }
 }
 
 /// Flapping detection for channel-routing providers (Slack outbound +
@@ -1960,13 +2039,63 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_four() {
+    fn check_docs_listed_count_pinned_at_twenty_five() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
-        // coverage) is caught. Bumped to 24 in Session 20 for
-        // `channel flapping` (provider error-rate detection over
-        // last 24h of usage_log).
-        assert_eq!(CHECK_DOCS.len(), 24);
+        // coverage) is caught. Bumped to 25 in Session 20 for
+        // `cluster registry` (Phase 4 visibility surface).
+        assert_eq!(CHECK_DOCS.len(), 25);
+    }
+
+    #[test]
+    fn cluster_registry_pass_when_empty() {
+        let dir = tempdir().unwrap();
+        let outcome = check_cluster_registry(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("no confirmed"));
+    }
+
+    #[test]
+    fn cluster_registry_pass_when_fresh() {
+        let dir = tempdir().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let peer = crate::cluster::registry::PairedPeer {
+            pub_key_hex: "ab".repeat(32),
+            instance_label: "laptop".into(),
+            addr: "192.0.2.1:4242".into(),
+            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+            paired_at_unix: now - 3600,
+            last_seen_unix: now - 60,
+        };
+        crate::cluster::registry::upsert(dir.path(), peer).unwrap();
+        let outcome = check_cluster_registry(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("1 confirmed"));
+    }
+
+    #[test]
+    fn cluster_registry_warns_on_stale() {
+        let dir = tempdir().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let peer = crate::cluster::registry::PairedPeer {
+            pub_key_hex: "ab".repeat(32),
+            instance_label: "old-laptop".into(),
+            addr: "192.0.2.1:4242".into(),
+            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+            paired_at_unix: now - 30 * 86_400,
+            last_seen_unix: now - 30 * 86_400, // 30 days old > 14d threshold
+        };
+        crate::cluster::registry::upsert(dir.path(), peer).unwrap();
+        let outcome = check_cluster_registry(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("stale"));
+        assert!(outcome.detail.contains("old-laptop"));
     }
 
     #[test]
@@ -2340,10 +2469,10 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 24 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // 25 checks: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
-        // flapping (Phase 2.5 follow-on).
-        assert_eq!(outs.len(), 24);
+        // flapping + cluster registry (Phase 4 follow-on).
+        assert_eq!(outs.len(), 25);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
