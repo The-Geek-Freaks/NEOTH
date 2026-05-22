@@ -26,8 +26,7 @@ pub struct ClusterArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ClusterAction {
-    /// Print the active policy + known peer state. v0.1.x always
-    /// reports `single-node` until Hyperswarm transport lands.
+    /// Print the active policy + known peer state.
     Status,
     /// Run the routing policy against a synthetic load table to show
     /// what `pick_peer` would decide. Useful for sanity-checking the
@@ -43,13 +42,171 @@ pub enum ClusterAction {
         #[arg(long, value_name = "POLICY")]
         policy: Option<String>,
     },
+    /// SPEC `cluster_auto_discovery` Phase 4: list confirmed peers
+    /// from `~/.neoth/cluster.yaml`.
+    List,
+    /// Confirm a discovered peer + add to the registry. Phase 4
+    /// of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface
+    /// candidates; this command writes them in atomically.
+    Confirm {
+        /// 64-char lowercase-hex of the peer's pub key, OR a
+        /// unique prefix.
+        pub_key: String,
+        /// Operator-readable label. Required at confirm time;
+        /// Phase 2 announces will refresh it.
+        #[arg(long)]
+        label: String,
+        /// Reachable socket address. Phase 6 gossip overrides.
+        #[arg(long)]
+        addr: String,
+        /// Transport that surfaced the peer. Defaults to "manual"
+        /// (operator typed the pub_key in directly).
+        #[arg(long, default_value = "manual")]
+        via: String,
+    },
+    /// Remove a confirmed peer by pub_key OR unique prefix.
+    Revoke {
+        pub_key: String,
+    },
+    /// Enable cluster auto-discovery (writes
+    /// `freedom.yaml::cluster.mdns.enabled = true`).
+    Enable,
+    /// Disable cluster auto-discovery.
+    Disable,
 }
 
 pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
     match args.action {
         ClusterAction::Status => run_status(&args.output),
         ClusterAction::Plan { peers, policy } => run_plan(&peers, policy.as_deref(), &args.output),
+        ClusterAction::List => run_list(),
+        ClusterAction::Confirm {
+            pub_key,
+            label,
+            addr,
+            via,
+        } => run_confirm(&pub_key, &label, &addr, &via),
+        ClusterAction::Revoke { pub_key } => run_revoke(&pub_key),
+        ClusterAction::Enable => run_toggle(true),
+        ClusterAction::Disable => run_toggle(false),
     }
+}
+
+fn run_list() -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let reg = crate::cluster::registry::load(&home)?;
+    if reg.peers.is_empty() {
+        println!("(no confirmed cluster peers — run `neoth cluster discover` to find some)");
+        return Ok(());
+    }
+    println!(
+        "{:<16} {:<24} {:<22} {:<14}",
+        "pub_key", "label", "addr", "via"
+    );
+    for p in &reg.peers {
+        let key_short = &p.pub_key_hex[..16.min(p.pub_key_hex.len())];
+        println!(
+            "{:<16} {:<24} {:<22} {:<14}",
+            key_short,
+            p.instance_label,
+            p.addr,
+            p.discovered_via.as_str(),
+        );
+    }
+    Ok(())
+}
+
+fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> {
+    let pub_key_norm = pub_key.trim().to_ascii_lowercase();
+    if pub_key_norm.is_empty() {
+        anyhow::bail!("pub_key required (64-char hex or unique prefix)");
+    }
+    let via_enum = match via.trim().to_ascii_lowercase().as_str() {
+        "mdns" => crate::cluster::discovery::DiscoveryVia::Mdns,
+        "tailscale" => crate::cluster::discovery::DiscoveryVia::Tailscale,
+        "hysteria_relay" | "hysteria" => {
+            crate::cluster::discovery::DiscoveryVia::HysteriaRelay
+        }
+        "manual" | "" => crate::cluster::discovery::DiscoveryVia::Manual,
+        other => anyhow::bail!(
+            "unknown discovered_via `{}` — use mdns/tailscale/hysteria_relay/manual",
+            other
+        ),
+    };
+    let home = FreedomConfig::default_neoth_home();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let peer = crate::cluster::registry::PairedPeer {
+        pub_key_hex: pub_key_norm.clone(),
+        instance_label: label.into(),
+        addr: addr.into(),
+        discovered_via: via_enum,
+        paired_at_unix: now,
+        last_seen_unix: now,
+    };
+    crate::cluster::registry::upsert(&home, peer)?;
+    let key_short = &pub_key_norm[..16.min(pub_key_norm.len())];
+    println!("confirmed peer `{label}` ({key_short}) via {via_enum_str}", via_enum_str = via_enum.as_str());
+    Ok(())
+}
+
+fn run_revoke(pub_key: &str) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let key = pub_key.trim().to_ascii_lowercase();
+    if crate::cluster::registry::remove(&home, &key)? {
+        println!("revoked peer `{key}`");
+    } else {
+        println!("no peer matched `{key}` (no-op)");
+    }
+    Ok(())
+}
+
+fn run_toggle(enabled: bool) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let freedom_path = home.join("freedom.yaml");
+    let body = if freedom_path.exists() {
+        std::fs::read_to_string(&freedom_path)?
+    } else {
+        String::new()
+    };
+    let mut root: serde_yaml::Value = if body.is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&body)?
+    };
+    let map = match &mut root {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
+    };
+    let cluster_key_val = serde_yaml::Value::from("cluster");
+    let mut cluster_map = map
+        .get(&cluster_key_val)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    let mdns_key = serde_yaml::Value::from("mdns");
+    let mut mdns_map = cluster_map
+        .get(&mdns_key)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    mdns_map.insert(
+        serde_yaml::Value::from("enabled"),
+        serde_yaml::Value::from(enabled),
+    );
+    cluster_map.insert(mdns_key, serde_yaml::Value::Mapping(mdns_map));
+    map.insert(cluster_key_val, serde_yaml::Value::Mapping(cluster_map));
+    let tmp = freedom_path.with_extension("yaml.tmp");
+    std::fs::write(&tmp, serde_yaml::to_string(&root)?)?;
+    std::fs::rename(&tmp, &freedom_path)?;
+    println!(
+        "cluster.mdns.enabled = {} (in {})",
+        enabled,
+        freedom_path.display()
+    );
+    Ok(())
 }
 
 fn run_status(output: &OutputFormat) -> Result<()> {

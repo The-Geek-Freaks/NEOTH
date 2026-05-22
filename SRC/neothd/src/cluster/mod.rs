@@ -34,6 +34,12 @@ pub mod hyperswarm;
 /// SPEC: `PLAN/SPEC_cluster_auto_discovery_2026-05-22.md`.
 pub mod discovery;
 
+/// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
+/// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
+/// Phase 6 gossip refreshes `last_seen_unix` on each authenticated
+/// announce.
+pub mod registry;
+
 /// R-7 heartbeat wire protocol — per Chorus chat
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version
