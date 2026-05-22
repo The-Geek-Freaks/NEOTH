@@ -197,6 +197,7 @@ mod tests {
                 author: None,
                 tags: vec![],
                 homepage: None,
+                modes: vec![],
                 enabled: true,
             },
             path: PathBuf::from("/tmp/test-skill/skill.yaml"),

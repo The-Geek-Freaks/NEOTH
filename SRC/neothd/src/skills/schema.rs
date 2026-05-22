@@ -34,8 +34,104 @@ pub struct SkillManifest {
     /// Project homepage URL — appears in `neoth skills list` table output.
     #[serde(default)]
     pub homepage: Option<String>,
+    /// QM-3 (2026-05-22) MODE_REGISTRY pattern. Optional list of named
+    /// modes a skill ships — each carries its own system-prompt delta,
+    /// spectrum, oversight level, and trigger phrases. Backward-compat:
+    /// skills without `modes:` behave exactly as before (single
+    /// keyword-based activation). When present, the registry-lookup
+    /// path activates: operator says "fact-check these claims" →
+    /// `mode:fact-check` hits before the broader skill match.
+    #[serde(default)]
+    pub modes: Vec<ModeEntry>,
     #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+/// QM-3 mode-spectrum enum. Controls how template-heavy the output
+/// is — fidelity = strict template adherence, balanced = mix,
+/// originality = synthesis priority. ARS source: `mode_spectrum.md`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Spectrum {
+    Fidelity,
+    Balanced,
+    Originality,
+}
+
+impl Spectrum {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Spectrum::Fidelity => "fidelity",
+            Spectrum::Balanced => "balanced",
+            Spectrum::Originality => "originality",
+        }
+    }
+}
+
+/// QM-3 oversight enum. Drives how much operator confirmation a
+/// mode demands — Low = autonomous, VeryHigh = step-by-step confirm.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Oversight {
+    Low,
+    Medium,
+    High,
+    VeryHigh,
+}
+
+impl Oversight {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Oversight::Low => "low",
+            Oversight::Medium => "medium",
+            Oversight::High => "high",
+            Oversight::VeryHigh => "very_high",
+        }
+    }
+}
+
+/// QM-3 output contract. Operator-readable format + length hint so
+/// the mode's renderer knows what shape to produce.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutputContract {
+    /// `markdown` / `json` / `prose` / `table` / `bullets` / ...
+    pub format: String,
+    /// Free-form length hint: `short`, `medium`, `long`,
+    /// `~500-words`, `<= 3 paragraphs`. The renderer interprets.
+    #[serde(default)]
+    pub length_hint: Option<String>,
+}
+
+/// QM-3 mode entry — one named mode inside a skill.
+///
+/// Skills can ship 1..N modes. The registry-flatten step collects
+/// them into a process-wide [`crate::skills::mode_registry::ModeRegistry`]
+/// at boot so operator commands like `/mode fact-check` route in
+/// O(1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModeEntry {
+    /// Stable mode id (kebab-case). Unique within a skill; the
+    /// registry-flatten asserts uniqueness across the whole set so
+    /// two skills can't claim the same mode name.
+    pub id: String,
+    /// Operator-readable one-liner shown in `neoth mode list`.
+    pub description: String,
+    /// Spectrum classification.
+    pub spectrum: Spectrum,
+    /// Oversight level the mode demands.
+    pub oversight: Oversight,
+    /// Output shape contract.
+    pub output: OutputContract,
+    /// Trigger phrases that activate the mode. Mirrors the skill's
+    /// trigger_keywords but at mode granularity — "do a lit-review"
+    /// activates `mode:lit-review` even though the parent skill's
+    /// keywords might be broader.
+    #[serde(default)]
+    pub trigger_phrases: Vec<String>,
+    /// Optional system-prompt delta the mode prepends ABOVE the
+    /// skill's base system_prompt. Mode-specific instructions.
+    #[serde(default)]
+    pub system_prompt_delta: String,
 }
 
 fn default_version() -> String {
@@ -108,7 +204,85 @@ system_prompt: "hi"
         assert!(m.author.is_none());
         assert!(m.tags.is_empty());
         assert!(m.homepage.is_none());
+        assert!(m.modes.is_empty(), "QM-3 modes defaults to empty");
         assert!(m.enabled, "enabled defaults to true");
+    }
+
+    // ── QM-3 mode registry shape tests ───────────────────────────────────
+
+    #[test]
+    fn qm_3_manifest_with_modes_round_trips() {
+        let yaml = r#"
+id: deep-research
+description: research skill with named modes
+version: "0.1.0"
+trigger_keywords: ["research"]
+system_prompt: "base prompt"
+modes:
+  - id: lit-review
+    description: Annotated bibliography output
+    spectrum: balanced
+    oversight: high
+    output:
+      format: markdown
+      length_hint: "~500-1000 words"
+    trigger_phrases: ["lit review", "literature review"]
+    system_prompt_delta: "Focus on citation density."
+  - id: fact-check
+    description: Per-claim verification pass
+    spectrum: fidelity
+    oversight: very_high
+    output:
+      format: json
+    trigger_phrases: ["fact-check", "verify these claims"]
+"#;
+        let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
+        assert_eq!(m.modes.len(), 2);
+        let lit = &m.modes[0];
+        assert_eq!(lit.id, "lit-review");
+        assert_eq!(lit.spectrum, Spectrum::Balanced);
+        assert_eq!(lit.oversight, Oversight::High);
+        assert_eq!(lit.output.format, "markdown");
+        assert_eq!(lit.output.length_hint.as_deref(), Some("~500-1000 words"));
+        assert_eq!(lit.trigger_phrases.len(), 2);
+        let fc = &m.modes[1];
+        assert_eq!(fc.spectrum, Spectrum::Fidelity);
+        assert_eq!(fc.oversight, Oversight::VeryHigh);
+        // Length hint omitted in YAML → None.
+        assert!(fc.output.length_hint.is_none());
+    }
+
+    #[test]
+    fn qm_3_spectrum_round_trips_serde() {
+        for s in [Spectrum::Fidelity, Spectrum::Balanced, Spectrum::Originality] {
+            let json = serde_json::to_string(&s).unwrap();
+            let back: Spectrum = serde_json::from_str(&json).unwrap();
+            assert_eq!(s, back);
+            assert_eq!(s.as_str(), json.trim_matches('"'));
+        }
+    }
+
+    #[test]
+    fn qm_3_oversight_round_trips_serde() {
+        for o in [
+            Oversight::Low,
+            Oversight::Medium,
+            Oversight::High,
+            Oversight::VeryHigh,
+        ] {
+            let json = serde_json::to_string(&o).unwrap();
+            let back: Oversight = serde_json::from_str(&json).unwrap();
+            assert_eq!(o, back);
+            assert_eq!(o.as_str(), json.trim_matches('"'));
+        }
+    }
+
+    #[test]
+    fn qm_3_oversight_very_high_serializes_with_snake_case_underscore() {
+        // Pin the wire shape — VeryHigh becomes "very_high", not
+        // "veryhigh" or "very-high".
+        let s = serde_json::to_string(&Oversight::VeryHigh).unwrap();
+        assert_eq!(s, "\"very_high\"");
     }
 
     /// New manifests carry author + tags + homepage.
@@ -145,6 +319,7 @@ homepage: "https://example.com/morning-news"
             author: Some("alex".into()),
             tags: vec!["one".into(), "two".into()],
             homepage: Some("https://x".into()),
+            modes: vec![],
             enabled: true,
         };
         let s = Skill {
