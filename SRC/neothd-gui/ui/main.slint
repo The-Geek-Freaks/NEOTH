@@ -427,6 +427,33 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            // QM-9 Phase 3 — usage rollup tile. Mirrors the hardware
+            // card layout so the visual rhythm carries from
+            // "what hardware do you have" → "what did you spend".
+            // Populated by the probe_usage_via_subprocess worker
+            // thread on window-create.
+            Card {
+                preferred-height: 100px;
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "Last 24h usage";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        color: Theme.accent-green;
+                    }
+                    Text {
+                        text: root.usage-summary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
             // G-11 fix: every wizard step from License onward has a
             // Back-button; Welcome was the only exception. Operator
             // who landed here from Mode Selection had no way back.
