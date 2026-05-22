@@ -84,6 +84,21 @@ pub enum Action {
         repo_root: std::path::PathBuf,
         task_id: u64,
     },
+    /// Cluster auto-discovery (SPEC `cluster_auto_discovery_2026-05-22`)
+    /// per-peer pairing decision. A peer's `pub_key` has authenticated
+    /// via the cluster_key HMAC; the autonomy gate decides whether to
+    /// auto-add OR require operator confirm OR deny outright. Matches
+    /// the `PatchApplyToRepo` precedent: Strict denies (cluster makes
+    /// no autonomous topology changes), Standard/Elevated confirm
+    /// (operator confirms each new peer once), Full allows (operator
+    /// opted into autonomous behaviour).
+    ClusterPeerPairing {
+        /// Lowercase-hex 32-byte ed25519 pub key of the candidate peer.
+        pub_key_hex: String,
+        /// Transport that surfaced the peer (`"mdns"`, `"tailscale"`,
+        /// `"hysteria_relay"`, `"manual"`).
+        discovered_via: String,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -191,6 +206,10 @@ fn evaluate_strict(action: &Action) -> Decision {
         Action::PatchApplyToRepo { task_id, .. } => Decision::Deny(format!(
             "strict: agent MUST NOT mutate operator checkouts — task {task_id} apply denied"
         )),
+        Action::ClusterPeerPairing { pub_key_hex, .. } => Decision::Deny(format!(
+            "strict: cluster makes no autonomous topology changes — peer {} denied",
+            &pub_key_hex[..16.min(pub_key_hex.len())]
+        )),
     }
 }
 
@@ -214,6 +233,13 @@ fn evaluate_standard(action: &Action) -> Decision {
         Action::PatchApplyToRepo { task_id, repo_root } => Decision::Confirm(format!(
             "standard: task {task_id} patch apply to {} requires confirm",
             repo_root.display()
+        )),
+        Action::ClusterPeerPairing {
+            pub_key_hex,
+            discovered_via,
+        } => Decision::Confirm(format!(
+            "standard: peer {} (via {discovered_via}) requires confirm before pairing",
+            &pub_key_hex[..16.min(pub_key_hex.len())]
         )),
     }
 }
@@ -243,6 +269,17 @@ fn evaluate_elevated(action: &Action) -> Decision {
         Action::PatchApplyToRepo { task_id, repo_root } => Decision::Confirm(format!(
             "elevated: task {task_id} patch apply to {} requires confirm (Chorus Q1a)",
             repo_root.display()
+        )),
+        // Same precedent as patch apply at Elevated: topology
+        // changes (new cluster peer = read+write access to
+        // memory + WAL + usage budget) are material enough to
+        // require explicit confirm even at Elevated latitude.
+        Action::ClusterPeerPairing {
+            pub_key_hex,
+            discovered_via,
+        } => Decision::Confirm(format!(
+            "elevated: peer {} (via {discovered_via}) requires confirm — topology change",
+            &pub_key_hex[..16.min(pub_key_hex.len())]
         )),
     }
 }
@@ -296,6 +333,10 @@ fn evaluate_full(action: &Action) -> Decision {
             "full: task {task_id} patch apply to {} requires confirm (Chorus Q1a v0.2-conservative)",
             repo_root.display()
         )),
+        // Cluster Phase-1 architect verdict: Full operator opted
+        // into autonomous behaviour → auto-pair on matching
+        // cluster_key. The HMAC check upstream is the gate.
+        Action::ClusterPeerPairing { .. } => Decision::Allow,
         // Full = trust the operator's other gates (policy.yaml allowlist,
         // hardware-2FA at level-set time). Everything else allowed.
         _ => Decision::Allow,
@@ -305,6 +346,60 @@ fn evaluate_full(action: &Action) -> Decision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cluster_peer_pairing_strict_denies() {
+        let action = Action::ClusterPeerPairing {
+            pub_key_hex: "abcdef0123456789".repeat(4),
+            discovered_via: "mdns".into(),
+        };
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Strict),
+            Decision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn cluster_peer_pairing_standard_and_elevated_confirm() {
+        let action = Action::ClusterPeerPairing {
+            pub_key_hex: "abcdef0123456789".repeat(4),
+            discovered_via: "tailscale".into(),
+        };
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Elevated),
+            Decision::Confirm(_)
+        ));
+    }
+
+    #[test]
+    fn cluster_peer_pairing_full_allows() {
+        let action = Action::ClusterPeerPairing {
+            pub_key_hex: "ab".repeat(32),
+            discovered_via: "manual".into(),
+        };
+        assert!(evaluate(&action, AutonomyLevel::Full).is_allow());
+    }
+
+    #[test]
+    fn cluster_peer_pairing_detail_carries_pub_key_prefix_and_via() {
+        let action = Action::ClusterPeerPairing {
+            pub_key_hex: "deadbeef".to_string() + &"00".repeat(28),
+            discovered_via: "hysteria_relay".into(),
+        };
+        let dec = evaluate(&action, AutonomyLevel::Standard);
+        let msg = match dec {
+            Decision::Confirm(s) => s,
+            other => panic!("expected Confirm, got {other:?}"),
+        };
+        // Prefix of the pub_key + the via tag should both surface
+        // so a confirm prompt renders meaningful operator context.
+        assert!(msg.contains("deadbeef"));
+        assert!(msg.contains("hysteria_relay"));
+    }
 
     #[test]
     fn strict_confirms_writes_and_exec() {

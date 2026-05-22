@@ -91,15 +91,105 @@ Out of scope for the discovery primitive. Multi-week follow-up:
   Hysteria config + relay-side support). Multi-week.
 - **Phase 6**: State-sync gossip protocol. Multi-week.
 
-## Open questions (Alex to ratify)
+## Open questions (Alex to ratify) — RATIFIED 2026-05-22
 
-1. Should cluster_key be derived from the operator's Keet seed
-   (one-secret-everywhere) OR a separate phrase (defense in depth)?
-2. mDNS broadcasts the operator's pub key in plaintext. Risk
-   profile acceptable on home LAN; on shared office network the
-   operator might prefer an opaque ID instead.
-3. Default cluster mode = strict (require operator consent for
-   every peer) vs trusting (auto-pair anyone with a matching
-   cluster_key). Memory `neoth_autonomy` suggests strict by default.
-4. Should cluster discovery be enabled by default in the wizard
-   or opt-in?
+4-agent audit (security-auditor + security-auditor + architect +
+planner) ran 2026-05-22 Session 20. Verdicts:
+
+### Q1 — Phrase reuse: **ALLOW REUSE** with warning
+
+Single phrase, derive both Keet topic + cluster keys via
+domain-separated SHA-256. Domain separation + SHA-256 avalanche
+makes the two 32-byte outputs cryptographically uncorrelated;
+requiring a second phrase adds zero security against the
+opportunistic-observer threat model.
+
+Would change if: threat model expands to include compromised-
+device (malware reading `SecretString` from mlocked memory). Then
+expose `--separate-phrases` flag in advanced setup but keep
+single-phrase as the wizard default.
+
+### Q2 — mDNS pub_key: **KEEP RAW** + add `announce_on_untrusted_wifi: false` flag
+
+Pseudonym design buys nothing against a static-cluster_key
+operator (HMAC-derived pseudonym is just as linkable as the raw
+pub_key). The actual mitigation for the cross-network linkability
+threat is operational: suppress mDNS broadcasts on untrusted
+networks. Default `freedom.yaml::cluster.announce_on_untrusted_wifi
+= false`. Operator-named trusted SSID list OR Tailscale-only
+opt-in.
+
+Auditor also flagged three code issues in the Phase-1 primitives
+(now fixed in 248f6XX series):
+  - HMAC key construction: namespace moved from key-side into
+    data-side per RFC 2104 idiom
+  - Variable-length fields (addr_str, instance_label) now
+    length-prefixed (LE u32) before HMAC input — defends the
+    canonicalisation-collision corner case
+  - `ClusterKey` no longer `Copy`; Drop impl writes volatile
+    zeroes byte-by-byte
+
+Instance labels in mDNS broadcasts: same suppress-on-untrusted-
+wifi treatment. Optional defense-in-depth: render label as
+`HMAC(cluster_key, hostname)[:8]` hex in the broadcast TXT
+record; full label only in `cluster.yaml`.
+
+### Q3 — Trust model: **REQUIRE-CONSENT default, autonomy-mapped**
+
+Map to `permissions::AutonomyLevel`:
+
+| AutonomyLevel | ClusterPeerPairing Decision |
+|---|---|
+| Strict | Deny (cluster makes no autonomous topology changes) |
+| Standard | Confirm |
+| Elevated | Confirm (topology-change is material per Chorus Q1a precedent) |
+| Full | Allow (HMAC check is the gate) |
+| Custom | Delegate to Standard until per-category map ships |
+
+Reject the LAN-auto-pair / Tailscale-consent split — transport
+provenance isn't reliable (Tailscale is layer-3 overlay; an
+attacker on the tailnet has the same transport privileges as a
+legitimate peer).
+
+CLI surface:
+  - `neoth cluster discover` — read-only peer enumeration
+  - `neoth cluster confirm <pub_key_prefix>` — operator-initiated
+    consent; writes to `~/.neoth/cluster.yaml`, emits WAL 0xE0
+  - `neoth cluster revoke <pub_key_prefix>` — removes peer +
+    emits WAL 0xE2; revoked peer rediscovers as PENDING_CONSENT
+  - `neoth doctor cluster` — surfaces pending peers as WARN
+
+Confirm-prompt text (TTY): `[cluster] Peer '<label>'
+(<pub_key_prefix>) wants to join your cluster via <transport>.
+This grants it read/write access to your memory and WAL.
+Approve? [y/N]`
+
+WAL audit frame on consent records `pub_key`, `instance_label`,
+`discovered_via`, `autonomy_level` so `neoth doctor cluster
+--history` traces every admission.
+
+### Q4 — Wizard default: **Design B** (Default ON + explanatory step + opt-out checkbox)
+
+New wizard step inserts between Channels (current step 7) and
+Keys, becoming step 8 of 9. Checkbox is unchecked by default;
+discovery stays ON unless operator explicitly disables.
+
+Wizard copy:
+
+> **Network buddy discovery**
+>
+> NEOTH can automatically find your other devices on this network
+> and connect them into one team — shared memory, shared chat,
+> shared task board. It uses a lightweight mDNS broadcast (same
+> technology as Airplay and Chromecast) to announce itself every
+> 60 seconds. On a home or office LAN this is completely safe;
+> on a shared or public network it reveals your instance label
+> and public key to other devices on the subnet. If you only
+> ever run one NEOTH instance, you can turn this off — you can
+> always re-enable it later with `neoth cluster enable`.
+>
+> [ ] **Disable buddy discovery on this device** *(recommended:
+> leave unchecked if you run NEOTH on more than one device)*
+
+Post-install CLI: `neoth cluster {enable,disable,status}`
+toggles `freedom.yaml::cluster.mdns.enabled`.
