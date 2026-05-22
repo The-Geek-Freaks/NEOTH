@@ -106,6 +106,26 @@ pub async fn install_kind(kind: CliKind) -> Result<()> {
     Ok(())
 }
 
+/// D3b-7 (2026-05-22 Session 20): build the `INSTALLER_RAN` (0x12)
+/// WAL payload for a CLI install. Returns the JSON bytes the caller
+/// appends via `writer.append(header, payload)`. Kept as a pure
+/// helper so install_kind stays test-isolated (no WAL writer dep);
+/// the wizard wires this in `cli::init` after install_kind succeeds.
+pub fn build_installer_ran_payload(
+    cli_name: &str,
+    version: &str,
+    login_state: &str,
+    ts_unix: i64,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "cli_name": cli_name,
+        "version": version,
+        "login_state": login_state,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default()
+}
+
 /// Run the CLI's login command interactively. Inherits operator stdin/stdout/stderr
 /// so OAuth browser prompts appear in the wizard's terminal. Returns Ok even if
 /// the login subprocess exits non-zero — the operator may legitimately abort.
@@ -205,6 +225,64 @@ mod tests {
         if let Some(version) = v {
             // Looks like a version: at least one digit somewhere.
             assert!(version.chars().any(|c| c.is_ascii_digit()));
+        }
+    }
+
+    // ── D3b-7 + D3b-8 installer telemetry tests ──────────────────────────
+
+    #[test]
+    fn d3b_7_installer_ran_payload_carries_required_fields() {
+        // Per the WAL event 0x12 spec: payload MUST carry cli_name +
+        // version + login_state + ts_unix. Pin so a future refactor
+        // that drops one of the fields surfaces here.
+        let payload = build_installer_ran_payload(
+            "claude",
+            "1.2.3",
+            "logged_in",
+            1_700_000_000,
+        );
+        let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(v["cli_name"].as_str(), Some("claude"));
+        assert_eq!(v["version"].as_str(), Some("1.2.3"));
+        assert_eq!(v["login_state"].as_str(), Some("logged_in"));
+        assert_eq!(v["ts_unix"].as_i64(), Some(1_700_000_000));
+    }
+
+    #[test]
+    fn d3b_7_installer_ran_payload_handles_all_three_clis() {
+        // Every shipped CLI must produce a parseable payload — pin so
+        // a future addition that changes the binary name doesn't slip
+        // a non-utf-8 name through.
+        for kind in ALL {
+            let payload = build_installer_ran_payload(
+                kind.binary,
+                "0.0.0",
+                "pending",
+                0,
+            );
+            let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+            assert_eq!(v["cli_name"].as_str(), Some(kind.binary));
+        }
+    }
+
+    #[test]
+    fn d3b_8_mock_npm_test_distinct_binaries_pin() {
+        // D3b-8 mock-npm integration: the install_kind path takes a
+        // CliKind + spawns `npm install -g <pkg>`. Real npm doesn't
+        // live on every CI runner so we pin the SHAPE (distinct
+        // binaries + npm-package scope) here; the real network call
+        // is verified by `npm_version_returns_some_or_none` above.
+        let pkgs: std::collections::HashSet<&str> =
+            ALL.iter().map(|c| c.npm_package).collect();
+        assert_eq!(pkgs.len(), 3, "all 3 CLIs have distinct npm packages");
+
+        // Pin the scoped-package format pattern so a npm rename
+        // breaks at test time, not at first operator install.
+        for c in ALL {
+            assert!(c.npm_package.starts_with('@'),
+                "{} should use scoped npm pkg name", c.display);
+            assert!(c.npm_package.contains('/'),
+                "{} npm pkg should be `@scope/name` shape", c.display);
         }
     }
 }

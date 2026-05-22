@@ -49,6 +49,13 @@ pub const EVENT_TYPE_REINFORCE: u8 = 0x02;
 pub const EVENT_TYPE_BOOT: u8 = 0x10;
 /// Daemon received a shutdown signal and is draining.
 pub const EVENT_TYPE_SHUTDOWN: u8 = 0x11;
+/// D3b-7 (2026-05-22 Session 20): a NEOTH-managed CLI (claude-cli,
+/// gemini-cli, codex) was first-time-installed by `neoth init` wizard
+/// step 5 OR `neoth update --apply`. Distinct from `UPDATE_RAN` (0x13)
+/// which fires on later version bumps — `INSTALLER_RAN` fires when
+/// the binary first lands on the operator's PATH.
+/// Payload: `{ cli_name, version, login_state, ts_unix }`.
+pub const EVENT_TYPE_INSTALLER_RAN: u8 = 0x12;
 /// A NEOTH-managed component (claude-cli, gemini-cli, codex, obsidian, ...) was
 /// upgraded by the auto-update task or `neoth update --apply`.
 /// Payload: `{ component, old_version, new_version, status, ts }`.
@@ -789,6 +796,8 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_REINFORCE < 0x01 || EVENT_TYPE_REINFORCE > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_BOOT < 0x10 || EVENT_TYPE_BOOT > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SHUTDOWN < 0x10 || EVENT_TYPE_SHUTDOWN > 0x1F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_INSTALLER_RAN < 0x10 || EVENT_TYPE_INSTALLER_RAN > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_UPDATE_RAN < 0x10 || EVENT_TYPE_UPDATE_RAN > 0x1F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_SEGMENT_ROLLOVER < 0x10 || EVENT_TYPE_SEGMENT_ROLLOVER > 0x1F) as usize];
@@ -965,6 +974,7 @@ mod tests {
             ("REINFORCE", EVENT_TYPE_REINFORCE),
             ("BOOT", EVENT_TYPE_BOOT),
             ("SHUTDOWN", EVENT_TYPE_SHUTDOWN),
+            ("INSTALLER_RAN", EVENT_TYPE_INSTALLER_RAN),
             ("UPDATE_RAN", EVENT_TYPE_UPDATE_RAN),
             ("SEGMENT_ROLLOVER", EVENT_TYPE_SEGMENT_ROLLOVER),
             ("COMPACTION_MARKER", EVENT_TYPE_COMPACTION_MARKER),

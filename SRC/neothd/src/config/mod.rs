@@ -469,6 +469,22 @@ pub struct ProfileConfig {
     /// (logged at warn) and the operator gets their shell prompt back.
     #[serde(default = "default_profile_timeout_secs")]
     pub timeout_secs: u64,
+    /// L-06 (2026-05-22 Session 20): preferred provider name for the
+    /// profile-extract LLM call. `None` → uses the operator's default
+    /// provider from `provider_kind`. Operators on paid cloud providers
+    /// (claude_cli / openai_api / gemini_api) typically set this to
+    /// `local_qwen` so the post-reply extract stays free + offline.
+    /// Defaults to `Some("local_qwen")` — the cheap-by-default stance.
+    #[serde(default = "default_profile_learn_provider")]
+    pub learn_provider: Option<String>,
+    /// L-07 (2026-05-22 Session 20): when the configured
+    /// `learn_provider` is unavailable (local_qwen weights missing,
+    /// model download failed, hardware unsupported), fall back to the
+    /// operator's main `provider_kind` IF this flag is true. Default
+    /// `false` — operators on local-qwen-only profile-learn explicitly
+    /// opt in to "spend cloud tokens when local doesn't work today".
+    #[serde(default = "default_profile_allow_cloud_fallback")]
+    pub allow_cloud_fallback: bool,
 }
 
 impl Default for ProfileConfig {
@@ -476,6 +492,8 @@ impl Default for ProfileConfig {
         Self {
             learn_enabled: default_profile_learn_enabled(),
             timeout_secs: default_profile_timeout_secs(),
+            learn_provider: default_profile_learn_provider(),
+            allow_cloud_fallback: default_profile_allow_cloud_fallback(),
         }
     }
 }
@@ -486,6 +504,18 @@ fn default_profile_learn_enabled() -> bool {
 
 fn default_profile_timeout_secs() -> u64 {
     15
+}
+
+/// L-06: profile-extract should use the cheapest available path by
+/// default — local_qwen avoids surprise paid-cloud tokens.
+fn default_profile_learn_provider() -> Option<String> {
+    Some("local_qwen".to_string())
+}
+
+/// L-07: fail-closed by default. Operators who explicitly want cloud
+/// fallback for profile-learning flip this to `true`.
+fn default_profile_allow_cloud_fallback() -> bool {
+    false
 }
 
 /// B-6 Item 2: Claude CLI adapter configuration.
@@ -1017,6 +1047,49 @@ mod tests {
         let cfg = ProfileConfig::default();
         assert!(!cfg.learn_enabled, "default must be opt-out");
         assert_eq!(cfg.timeout_secs, 15);
+        // L-06 (2026-05-22): cheap-by-default learn provider so
+        // turning learning ON doesn't suddenly cost cloud tokens.
+        assert_eq!(cfg.learn_provider.as_deref(), Some("local_qwen"));
+        // L-07: fail-closed by default. Operators explicitly opt in
+        // to "spend cloud tokens when local fails".
+        assert!(!cfg.allow_cloud_fallback);
+    }
+
+    #[test]
+    fn l_06_l_07_profile_block_round_trips_new_fields() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\n\
+             profile:\n  \
+               learn_enabled: true\n  \
+               learn_provider: openai_api\n  \
+               allow_cloud_fallback: true\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.profile.learn_enabled);
+        assert_eq!(
+            cfg.profile.learn_provider.as_deref(),
+            Some("openai_api")
+        );
+        assert!(cfg.profile.allow_cloud_fallback);
+    }
+
+    #[test]
+    fn l_06_explicit_null_learn_provider_disables_pin() {
+        // Operator who wants the profile-extract to follow the main
+        // provider_kind sets learn_provider: null. Verify the
+        // round-trip preserves None instead of falling back to the
+        // default `Some("local_qwen")`.
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\n\
+             profile:\n  \
+               learn_provider: null\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.profile.learn_provider.is_none());
     }
 
     #[test]
