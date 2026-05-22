@@ -377,6 +377,26 @@ fn main() -> Result<()> {
     // when the operator clicks "View full text →" on the License
     // screen. Uses platform-native open commands so we don't ship a
     // webview dependency.
+    // QM-8 Phase 2.5 — operator clicked "Apply active" on the
+    // preset tile. Resolve the active preset via `neothd preset
+    // list`, then shell `neothd preset apply <name>` to merge
+    // its values into freedom.yaml.
+    let weak_preset_apply = window.as_weak();
+    window.on_preset_apply_clicked(move || {
+        let outcome = apply_active_preset_via_subprocess();
+        let weak = weak_preset_apply.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_status_line(outcome.into());
+                // Force-refresh the preset summary so the active
+                // marker reflects any change without waiting for
+                // the next 5-minute tick.
+                let summary = probe_preset_summary_via_subprocess();
+                w.set_preset_summary(summary.into());
+            }
+        });
+    });
+
     window.on_open_license_url(|| {
         let url = "https://github.com/owner/neoth/blob/main/LICENSE";
         let result = if cfg!(target_os = "windows") {
@@ -1568,6 +1588,33 @@ mod chat_subprocess_tests {
     }
 
     #[test]
+    fn parse_active_preset_name_finds_starred_row() {
+        let stdout = b"   alpha\n * middle\n   zeta\n";
+        assert_eq!(
+            crate::parse_active_preset_name(stdout),
+            Some("middle".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_active_preset_name_returns_none_without_marker() {
+        let stdout = b"   alpha\n   zeta\n";
+        assert_eq!(crate::parse_active_preset_name(stdout), None);
+    }
+
+    #[test]
+    fn parse_active_preset_name_handles_empty_stdout() {
+        assert_eq!(crate::parse_active_preset_name(b""), None);
+    }
+
+    #[test]
+    fn parse_active_preset_name_handles_only_star() {
+        // Star without name → None.
+        let stdout = b"   alpha\n * \n   zeta\n";
+        assert_eq!(crate::parse_active_preset_name(stdout), None);
+    }
+
+    #[test]
     fn chat_via_subprocess_with_returns_error_when_bin_does_not_exist() {
         // Bin at a path that doesn't exist on disk → subprocess
         // spawn errors with NotFound. Pin the operator-readable
@@ -1661,6 +1708,67 @@ pub fn shape_usage_summary(json: &str) -> String {
         return "No usage in the last 24h.".to_string();
     }
     format!("Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4}")
+}
+
+/// QM-8 Phase 2.5: resolve the active preset (via `neoth preset list`),
+/// then shell `neoth preset apply <active>`. Returns an operator-
+/// readable result string for the status line.
+fn apply_active_preset_via_subprocess() -> String {
+    let candidate = which_neothd();
+    let Some(bin) = candidate else {
+        return "Preset apply unavailable — `neothd` binary not on PATH.".to_string();
+    };
+    // First: list to find the active marker.
+    let list_output = spawn_neothd_plain(&bin).arg("preset").arg("list").output();
+    let stdout = match list_output {
+        Ok(out) if out.status.success() => out.stdout,
+        Ok(out) => {
+            return format!(
+                "preset list failed (exit {}): {}",
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        Err(e) => return format!("preset list could not start: {e}"),
+    };
+    let active = parse_active_preset_name(&stdout);
+    let Some(name) = active else {
+        return "No active preset — `neoth preset activate <name>` first.".to_string();
+    };
+    let apply_output = spawn_neothd_plain(&bin)
+        .arg("preset")
+        .arg("apply")
+        .arg(&name)
+        .output();
+    match apply_output {
+        Ok(out) if out.status.success() => format!("Applied preset `{name}`."),
+        Ok(out) => format!(
+            "preset apply `{name}` failed (exit {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => format!("preset apply could not start: {e}"),
+    }
+}
+
+/// Parse the active preset name out of `neoth preset list` stdout.
+/// Returns the bare name (no `*` prefix) when an active marker is
+/// present, else None.
+pub fn parse_active_preset_name(stdout: &[u8]) -> Option<String> {
+    let body = String::from_utf8_lossy(stdout);
+    for line in body.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('*') {
+            let name = trimmed
+                .trim_start_matches(|c: char| c == '*' || c.is_whitespace())
+                .trim()
+                .to_string();
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+    }
+    None
 }
 
 /// QM-8 Phase 2: probe the saved preset list via `neoth preset list`

@@ -178,6 +178,13 @@ export component MainWindow inherits Window {
     /// → Config. Rust persists the change.
     callback provider-changed(string);
 
+    /// QM-8 Phase 2.5 — operator clicked "Apply Active" on the
+    /// preset tile. Rust shells `neothd preset apply <active>`
+    /// + refreshes the summary. The string carries the operator
+    /// hint string for logging — the active preset is resolved
+    /// Rust-side from a fresh `neoth preset list` probe.
+    callback preset-apply-clicked();
+
     // ── Chat surface state (Pick #33) ─────────────────────────────────
     /// Scrollback feed. Rust pushes ChatMessage rows as the daemon
     /// emits PROVIDER_RESPONSE / CHANNEL_INGRESS frames. The
@@ -457,12 +464,13 @@ export component MainWindow inherits Window {
                     }
                 }
             }
-            // QM-8 Phase 2 — saved preset bundle tile. Operator-
-            // visible list of named preset bundles + the active one.
-            // Apply via `neoth preset apply <name>` from a terminal
-            // until the full save/load button surface lands.
+            // QM-8 Phase 2 + 2.5 — saved preset bundle tile.
+            // Operator-visible list of named preset bundles + the
+            // active one. The Apply button shells `neothd preset
+            // apply <active>` so operators flip the active bundle
+            // into freedom.yaml in one click.
             Card {
-                preferred-height: 100px;
+                preferred-height: 130px;
                 VerticalBox {
                     padding: Theme.space-base;
                     spacing: Theme.space-tight;
@@ -480,6 +488,14 @@ export component MainWindow inherits Window {
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;
                         wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        alignment: end;
+                        NeothButton {
+                            label: "Apply active";
+                            primary: false;
+                            clicked => { root.preset-apply-clicked(); }
+                        }
                     }
                 }
             }
