@@ -88,6 +88,129 @@ pub fn evaluate(
     }
 }
 
+/// Cross-platform SSID lookup. Shells to the OS's wifi-info
+/// utility + parses the SSID out of stdout. Returns `None` when:
+///   - the OS doesn't expose it (wired connection, VPN, headless)
+///   - the utility isn't on PATH
+///   - parsing fails (unexpected output format from an OS upgrade)
+///
+/// None is the SAFE answer for the policy evaluator — strict
+/// policy treats unknown SSID as untrusted.
+pub fn current_ssid() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        ssid_via_netsh()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        ssid_via_networksetup()
+    }
+    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+    {
+        ssid_via_iwgetid()
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    {
+        None
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ssid_via_netsh() -> Option<String> {
+    let output = std::process::Command::new("netsh")
+        .args(["wlan", "show", "interfaces"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_netsh_ssid(&stdout)
+}
+
+#[cfg(target_os = "macos")]
+fn ssid_via_networksetup() -> Option<String> {
+    // networksetup -getairportnetwork takes a device name; we
+    // try `en0` (typical primary wifi) first, then fall through.
+    for dev in ["en0", "en1"] {
+        let output = std::process::Command::new("networksetup")
+            .args(["-getairportnetwork", dev])
+            .output()
+            .ok();
+        if let Some(out) = output {
+            if out.status.success() {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if let Some(ssid) = parse_networksetup_ssid(&stdout) {
+                    return Some(ssid);
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "openbsd"))]
+fn ssid_via_iwgetid() -> Option<String> {
+    let output = std::process::Command::new("iwgetid")
+        .arg("-r")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// Parse the "SSID :" line from `netsh wlan show interfaces`
+/// stdout. Operator-locale-aware: matches both the English
+/// "SSID" and the German "SSID" labels (same word in both).
+/// Returns None when no SSID line is found OR when the line
+/// has empty value.
+pub fn parse_netsh_ssid(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        // Look for an exact "SSID" prefix (avoid matching "BSSID").
+        let after_label = trimmed
+            .strip_prefix("SSID")
+            .filter(|rest| {
+                // First char after "SSID" must be space or colon —
+                // BSSID would have 'I' here.
+                rest.chars()
+                    .next()
+                    .map(|c| c == ' ' || c == ':')
+                    .unwrap_or(false)
+            });
+        let Some(rest) = after_label else { continue };
+        if let Some((_, value)) = rest.split_once(':') {
+            let ssid = value.trim();
+            if !ssid.is_empty() {
+                return Some(ssid.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Parse `networksetup -getairportnetwork enN` stdout. Format:
+/// `Current Wi-Fi Network: <ssid>` (one line). When the device
+/// isn't associated, the tool emits "You are not associated with
+/// an AirPort network." — None in that case.
+pub fn parse_networksetup_ssid(stdout: &str) -> Option<String> {
+    let line = stdout.lines().next()?.trim();
+    let after = line.strip_prefix("Current Wi-Fi Network:")?;
+    let ssid = after.trim();
+    if ssid.is_empty() {
+        None
+    } else {
+        Some(ssid.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +307,75 @@ mod tests {
             evaluate(true, &p, None),
             ShouldAnnounce::No(NoReason::SsidUnknown)
         );
+    }
+
+    #[test]
+    fn parse_netsh_ssid_extracts_home_wifi() {
+        // Real Windows 11 `netsh wlan show interfaces` snippet,
+        // trimmed for the relevant lines + with leading-spaces
+        // preserved as netsh actually emits.
+        let stdout = "    Name                   : Wi-Fi\n\
+                      Description            : Intel Wi-Fi 6 AX201\n\
+                      GUID                   : abc-123\n\
+                      Physical address       : aa:bb:cc:dd:ee:ff\n\
+                      Interface type         : Primary\n\
+                      State                  : connected\n\
+                      SSID                   : home-wifi\n\
+                      BSSID                  : 11:22:33:44:55:66\n\
+                      Network type           : Infrastructure\n";
+        assert_eq!(
+            parse_netsh_ssid(stdout),
+            Some("home-wifi".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_netsh_ssid_skips_bssid_line() {
+        // BSSID must NOT be picked up as SSID.
+        let stdout = "    BSSID                  : 11:22:33:44:55:66\n";
+        assert_eq!(parse_netsh_ssid(stdout), None);
+    }
+
+    #[test]
+    fn parse_netsh_ssid_returns_none_when_no_ssid_line() {
+        let stdout = "Some unrelated output\nNo SSID information available\n";
+        assert_eq!(parse_netsh_ssid(stdout), None);
+    }
+
+    #[test]
+    fn parse_netsh_ssid_returns_none_when_empty_value() {
+        // Disconnected state — netsh emits the line but with no value.
+        let stdout = "    SSID                   : \n";
+        assert_eq!(parse_netsh_ssid(stdout), None);
+    }
+
+    #[test]
+    fn parse_networksetup_ssid_extracts_current_network() {
+        let stdout = "Current Wi-Fi Network: home-wifi-5g\n";
+        assert_eq!(
+            parse_networksetup_ssid(stdout),
+            Some("home-wifi-5g".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_networksetup_ssid_handles_not_associated() {
+        let stdout = "You are not associated with an AirPort network.\n";
+        assert_eq!(parse_networksetup_ssid(stdout), None);
+    }
+
+    #[test]
+    fn parse_networksetup_ssid_handles_empty_value() {
+        let stdout = "Current Wi-Fi Network:    \n";
+        assert_eq!(parse_networksetup_ssid(stdout), None);
+    }
+
+    #[test]
+    fn current_ssid_does_not_panic() {
+        // Cross-platform smoke — the helper might return Some or
+        // None depending on the test runner's network state, but
+        // it MUST NOT panic regardless of platform / connectivity.
+        let _ = current_ssid();
     }
 
     #[test]

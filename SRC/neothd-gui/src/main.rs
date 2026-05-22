@@ -772,6 +772,7 @@ fn main() -> Result<()> {
                 enable_telegram: w.get_enable_telegram(),
                 provider_key: w.get_provider_key().to_string(),
                 telegram_token: w.get_telegram_token().to_string(),
+                cluster_discovery_disabled: w.get_cluster_discovery_disabled(),
             };
             match finish(&state) {
                 Ok(report) => {
@@ -801,6 +802,11 @@ struct WizardSnapshot {
     enable_telegram: bool,
     provider_key: String,
     telegram_token: String,
+    /// Q4 ratification: operator's choice on the cluster step.
+    /// True means freedom.yaml gets `cluster.mdns.enabled: false`;
+    /// false (default) means mDNS discovery stays ON per the
+    /// noob-wizard "default ON in release" hard rule.
+    cluster_discovery_disabled: bool,
 }
 
 /// What `finish()` returns. `credentials_path` is `None` when no secret
@@ -842,6 +848,21 @@ struct MinimalFreedomYaml {
     /// should see what they configured.
     #[serde(default)]
     channels: Vec<String>,
+    /// Q4-ratified cluster block. Only serialised when the operator
+    /// explicitly disabled discovery on the wizard step. Omitted
+    /// otherwise — the daemon's serde-default keeps mDNS ON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cluster: Option<ClusterYamlBlock>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ClusterYamlBlock {
+    mdns: ClusterMdnsYamlBlock,
+}
+
+#[derive(Serialize, Deserialize)]
+struct ClusterMdnsYamlBlock {
+    enabled: bool,
 }
 
 /// Mirror of `config::credentials::Credentials`, serialised here
@@ -889,11 +910,15 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     if state.enable_telegram {
         channels.push("telegram".to_string());
     }
+    let cluster = state.cluster_discovery_disabled.then_some(ClusterYamlBlock {
+        mdns: ClusterMdnsYamlBlock { enabled: false },
+    });
     let yaml = MinimalFreedomYaml {
         operator_id: state.operator_id.clone(),
         provider_kind: state.provider_kind.clone(),
         autonomy: state.autonomy.clone(),
         channels,
+        cluster,
     };
     let body = serde_yaml::to_string(&yaml).context("serialise freedom.yaml")?;
     let path = neoth_dir.join("freedom.yaml");
@@ -1870,6 +1895,7 @@ mod tests {
             enable_telegram: false,
             provider_key: String::new(),
             telegram_token: String::new(),
+            cluster_discovery_disabled: false,
         }
     }
 
@@ -1966,5 +1992,39 @@ mod tests {
         let body = std::fs::read_to_string(&freedom).unwrap();
         assert!(body.contains("- cli"));
         assert!(body.contains("- telegram"));
+    }
+
+    #[test]
+    fn cluster_block_omitted_when_discovery_stays_default() {
+        // Operator left the checkbox unchecked → discovery stays
+        // ON per the noob-wizard "default ON" rule. We must NOT
+        // write `cluster.mdns.enabled: false` because that would
+        // override the daemon's serde-default + tell future
+        // operators reading the YAML that the field was set
+        // intentionally.
+        let dir = TempDir::new().unwrap();
+        let state = empty_snapshot();
+        assert!(!state.cluster_discovery_disabled);
+        let freedom = write_freedom_yaml(&state, dir.path()).expect("freedom");
+        let body = std::fs::read_to_string(&freedom).unwrap();
+        assert!(
+            !body.contains("cluster"),
+            "freedom.yaml must NOT carry a cluster block when discovery defaults stay: {body}"
+        );
+    }
+
+    #[test]
+    fn cluster_block_written_when_discovery_disabled() {
+        let dir = TempDir::new().unwrap();
+        let mut state = empty_snapshot();
+        state.cluster_discovery_disabled = true;
+        let freedom = write_freedom_yaml(&state, dir.path()).expect("freedom");
+        let body = std::fs::read_to_string(&freedom).unwrap();
+        assert!(body.contains("cluster:"), "expected cluster block: {body}");
+        assert!(body.contains("mdns:"), "expected mdns subblock: {body}");
+        assert!(
+            body.contains("enabled: false"),
+            "expected enabled: false: {body}"
+        );
     }
 }

@@ -817,6 +817,62 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "models catalog refresh task spawned (K-Models-Discovery)"
     );
 
+    // ── Cluster audit-sidecar ingester ─────────────────────────────────────
+    // CLI commands (`neoth cluster confirm` / `revoke`) drop JSON
+    // sidecars at `~/.neoth/pending_audit/cluster_*.json`. This
+    // task polls every 5s, reads pending sidecars, appends WAL
+    // 0xE6/0xE7 frames, removes the consumed file.
+    let cluster_audit_task: tokio::task::JoinHandle<()> = {
+        let writer_for_audit = writer.clone();
+        let home = FreedomConfig::default_neoth_home();
+        tokio::spawn(async move {
+            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+            loop {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                let pending = match crate::cluster::audit_sidecar::list_pending(&home) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "cluster audit sidecar list failed");
+                        continue;
+                    }
+                };
+                for (path, sidecar) in pending {
+                    let event_type = sidecar.kind.wal_event_type();
+                    let body =
+                        crate::cluster::audit_sidecar::build_wal_frame_body(&sidecar);
+                    let header = crate::wal::HeaderBuilder::new(event_type, &body).build();
+                    match writer_for_audit.append(header, body).await {
+                        Ok(_) => {
+                            if let Err(e) =
+                                crate::cluster::audit_sidecar::remove_sidecar(&path)
+                            {
+                                warn!(
+                                    error = %e,
+                                    path = %path.display(),
+                                    "cluster audit sidecar remove failed after WAL append"
+                                );
+                            } else {
+                                info!(
+                                    kind = sidecar.kind.as_str(),
+                                    pub_key_prefix = &sidecar.pub_key_hex[..16.min(sidecar.pub_key_hex.len())],
+                                    "cluster audit frame appended to WAL"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                path = %path.display(),
+                                "cluster audit WAL append failed; sidecar retained for next tick"
+                            );
+                        }
+                    }
+                }
+            }
+        })
+    };
+    info!("cluster audit sidecar ingester spawned (5s tick)");
+
     // ── QM-10 Phase 3 breaker state restore ────────────────────────────────
     // Replay the failure counters from the prior daemon run so a
     // flapping provider that built up failure history before
@@ -1042,6 +1098,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // next daemon start will re-run discovery on its first tick.
     catalog_task.abort();
     let _ = catalog_task.await;
+
+    // Abort the cluster audit sidecar ingester. Pending sidecars
+    // on disk are retained — the next daemon start picks them up
+    // on its first tick (at-least-once semantics are fine for an
+    // audit frame, the WAL writer dedupes by frame hash).
+    cluster_audit_task.abort();
+    let _ = cluster_audit_task.await;
 
     // Abort the indexer next. It may have been mid-pass; the next `neoth serve`
     // start picks up from `wal_cursor`.

@@ -57,6 +57,11 @@ pub mod tailscale;
 /// run on the current network.
 pub mod policy;
 
+/// CLI ↔ daemon audit-frame bridge. `neoth cluster confirm` /
+/// `revoke` drop sidecar JSONs that the serve loop ingests +
+/// emits as WAL 0xE6 / 0xE7 frames on next tick.
+pub mod audit_sidecar;
+
 /// R-7 heartbeat wire protocol — per Chorus chat
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version

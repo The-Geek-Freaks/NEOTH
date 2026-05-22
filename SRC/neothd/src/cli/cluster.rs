@@ -296,6 +296,22 @@ fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> 
         last_seen_unix: now,
     };
     crate::cluster::registry::upsert(&home, peer)?;
+    // Drop a sidecar so the running daemon emits WAL 0xE6
+    // on its next tick. Best-effort — sidecar write failure
+    // doesn't roll back the registry change.
+    let payload = serde_json::json!({
+        "label": label,
+        "addr": addr,
+        "discovered_via": via_enum.as_str(),
+    });
+    if let Err(e) = crate::cluster::audit_sidecar::write_sidecar(
+        &home,
+        crate::cluster::audit_sidecar::ClusterAuditKind::PeerConfirmed,
+        &pub_key_norm,
+        payload,
+    ) {
+        tracing::warn!(error = %e, "cluster confirm sidecar write failed (non-fatal)");
+    }
     let key_short = &pub_key_norm[..16.min(pub_key_norm.len())];
     println!("confirmed peer `{label}` ({key_short}) via {via_enum_str}", via_enum_str = via_enum.as_str());
     Ok(())
@@ -305,6 +321,16 @@ fn run_revoke(pub_key: &str) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let key = pub_key.trim().to_ascii_lowercase();
     if crate::cluster::registry::remove(&home, &key)? {
+        // Best-effort sidecar drop for the WAL 0xE7 audit frame.
+        let payload = serde_json::json!({});
+        if let Err(e) = crate::cluster::audit_sidecar::write_sidecar(
+            &home,
+            crate::cluster::audit_sidecar::ClusterAuditKind::PeerRevoked,
+            &key,
+            payload,
+        ) {
+            tracing::warn!(error = %e, "cluster revoke sidecar write failed (non-fatal)");
+        }
         println!("revoked peer `{key}`");
     } else {
         println!("no peer matched `{key}` (no-op)");
