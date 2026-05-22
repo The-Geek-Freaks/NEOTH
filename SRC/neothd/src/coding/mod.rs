@@ -40,12 +40,14 @@
 //! - `RECON/hermes_coding_workflow.md` — upstream analysis
 //! - `cli/hemispheres.rs` — existing hemisphere binding CLI
 
+pub mod brainstorm;
 pub mod cerebellum_provider;
 pub mod classifier;
 pub mod decomposer;
 pub mod dispatcher;
 pub mod feed;
 pub mod model_profile;
+pub mod plan_writer;
 pub mod provider_worker;
 pub mod retry;
 pub mod review;
