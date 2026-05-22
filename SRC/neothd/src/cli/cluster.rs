@@ -56,6 +56,14 @@ pub enum ClusterAction {
         /// announce cycle from typical-cadence peers.
         #[arg(long, default_value_t = 10)]
         timeout: u64,
+        /// Scan even when the operator's announce policy
+        /// resolves to No (mdns disabled, untrusted SSID, or
+        /// SSID unknown). Without this flag the discover
+        /// surface prints the policy verdict + suggested fix
+        /// and exits without browsing — the safe-by-default
+        /// path mirrors the Q2-ratified announce gate.
+        #[arg(long, default_value_t = false)]
+        force: bool,
     },
     /// Confirm a discovered peer + add to the registry. Phase 4
     /// of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface
@@ -110,7 +118,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
         ClusterAction::Status => run_status(&args.output),
         ClusterAction::Plan { peers, policy } => run_plan(&peers, policy.as_deref(), &args.output),
         ClusterAction::List => run_list(),
-        ClusterAction::Discover { timeout } => run_discover(timeout).await,
+        ClusterAction::Discover { timeout, force } => run_discover(timeout, force).await,
         ClusterAction::Confirm {
             pub_key,
             label,
@@ -123,7 +131,45 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
     }
 }
 
-async fn run_discover(timeout_secs: u64) -> Result<()> {
+async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
+    // Surface the Q2-ratified announce policy verdict before
+    // touching the mDNS daemon. The browse itself is listen-only
+    // (no leak), but the operator's announcer is silent on
+    // untrusted networks — that asymmetry surprises operators
+    // who paired two hosts on home wifi + then ran discover on
+    // a coffee shop SSID. The verdict + suggested fix go out
+    // first; `--force` bypasses the gate for operators who want
+    // the listen-only scan anyway.
+    let freedom_path = FreedomConfig::default_neoth_home().join("freedom.yaml");
+    let (mdns_enabled, policy) =
+        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+    let ssid = crate::cluster::policy::current_ssid();
+    let gate = crate::cluster::policy::gate_discover(
+        mdns_enabled,
+        &policy,
+        ssid.as_deref(),
+    );
+    match gate {
+        crate::cluster::policy::DiscoverGate::Proceed => {
+            let ssid_label = ssid
+                .as_deref()
+                .map(|s| format!("SSID `{s}`"))
+                .unwrap_or_else(|| "wired/VPN/unknown SSID".to_string());
+            println!("announce policy: allowed on this network ({ssid_label})");
+        }
+        crate::cluster::policy::DiscoverGate::SkipWith(reason) => {
+            print_skip_with_fix(reason, ssid.as_deref());
+            if !force {
+                println!(
+                    "\nRe-run with `--force` to scan anyway (listen-only — \
+                     no announce leak)."
+                );
+                return Ok(());
+            }
+            println!("(--force passed — scanning anyway)");
+        }
+    }
+
     println!(
         "scanning for NEOTH peers via mDNS for {timeout_secs}s on {}…",
         crate::cluster::mdns::DEFAULT_SERVICE_TYPE
@@ -228,6 +274,44 @@ async fn run_discover(timeout_secs: u64) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Operator-readable explanation + concrete fix for the
+/// `DiscoverGate::SkipWith(reason)` path. Each `NoReason`
+/// variant maps to a one-line cause + an actionable command
+/// the operator can run to flip the verdict to `Proceed`.
+fn print_skip_with_fix(
+    reason: crate::cluster::policy::NoReason,
+    ssid: Option<&str>,
+) {
+    use crate::cluster::policy::NoReason;
+    match reason {
+        NoReason::Disabled => {
+            println!(
+                "announce policy: SKIP (cluster.mdns.enabled = false in freedom.yaml).\n\
+                 Fix: run `neoth cluster enable` to flip it on (Q4-ratified default)."
+            );
+        }
+        NoReason::UntrustedSsid => {
+            let label = ssid.unwrap_or("<unknown>");
+            println!(
+                "announce policy: SKIP — current SSID `{label}` isn't in \
+                 `cluster.policy.trusted_ssids`.\n\
+                 Fix: add the SSID to `cluster.policy.trusted_ssids` in \
+                 freedom.yaml, or set `announce_on_untrusted_wifi: true` \
+                 for broadcast-on-any-network."
+            );
+        }
+        NoReason::SsidUnknown => {
+            println!(
+                "announce policy: SKIP — no SSID detected (wired / VPN / OS \
+                 doesn't expose it).\n\
+                 Fix: set `cluster.policy.announce_on_untrusted_wifi: true` \
+                 in freedom.yaml, OR connect to a wifi listed in \
+                 `cluster.policy.trusted_ssids`."
+            );
+        }
+    }
 }
 
 fn run_list() -> Result<()> {
@@ -633,5 +717,32 @@ mod tests {
             decision_label(&RoutingDecision::NoPeerAvailable),
             "NoPeerAvailable"
         );
+    }
+
+    #[test]
+    fn print_skip_with_fix_handles_all_reasons() {
+        // Smoke — exercises every NoReason variant so a future
+        // variant addition is forced to update the match arm.
+        use crate::cluster::policy::NoReason;
+        print_skip_with_fix(NoReason::Disabled, None);
+        print_skip_with_fix(NoReason::UntrustedSsid, Some("coffee-shop"));
+        print_skip_with_fix(NoReason::SsidUnknown, None);
+    }
+
+    #[test]
+    fn discover_action_carries_force_flag() {
+        // Field-presence pin so the clap derivation doesn't drift
+        // away from the policy verdict surfacing contract.
+        let action = ClusterAction::Discover {
+            timeout: 5,
+            force: true,
+        };
+        match action {
+            ClusterAction::Discover { timeout, force } => {
+                assert_eq!(timeout, 5);
+                assert!(force);
+            }
+            _ => panic!("expected Discover variant"),
+        }
     }
 }

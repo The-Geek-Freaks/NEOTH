@@ -37,6 +37,75 @@ pub enum ShouldAnnounce {
     No(NoReason),
 }
 
+/// Verdict for `cluster discover` — should the listener scan
+/// proceed without operator `--force`? Mirrors `ShouldAnnounce`
+/// but pins the discover-side semantics: `Proceed` means the
+/// scan is safe to run, `SkipWith(reason)` means the operator's
+/// announce policy says No so the discover surfaces the
+/// explanation + suggested fix instead of running blind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DiscoverGate {
+    Proceed,
+    SkipWith(NoReason),
+}
+
+/// Decide whether `neoth cluster discover` should start its mDNS
+/// browse without an operator `--force`. The decision shares the
+/// `evaluate()` logic so the policy is consistent across the
+/// announce path + the discover surface.
+///
+/// `Proceed` ⇔ `ShouldAnnounce::Yes`. The browse runs without
+/// extra noise.
+///
+/// `SkipWith(reason)` ⇔ `ShouldAnnounce::No(reason)`. The caller
+/// prints the reason + actionable fix + (if not `--force`) bails
+/// out before spawning the mDNS daemon.
+pub fn gate_discover(
+    mdns_enabled: bool,
+    policy: &AnnouncePolicy,
+    current_ssid: Option<&str>,
+) -> DiscoverGate {
+    match evaluate(mdns_enabled, policy, current_ssid) {
+        ShouldAnnounce::Yes => DiscoverGate::Proceed,
+        ShouldAnnounce::No(reason) => DiscoverGate::SkipWith(reason),
+    }
+}
+
+/// Load `cluster.mdns.enabled` + `cluster.policy` from
+/// `freedom.yaml`. Best-effort: missing file / unparseable YAML
+/// / absent keys all collapse to the safe defaults:
+///
+/// - `mdns_enabled = true` (Q4-ratified default-ON for cluster
+///   auto-discovery — operator opts out via the wizard step or
+///   `neoth cluster disable`)
+/// - `AnnouncePolicy::default()` — strict (announce only on
+///   trusted SSIDs, empty trusted list)
+///
+/// Reader is **read-only**; never writes. Callers that need to
+/// flip `mdns.enabled` go through `cli::cluster::run_toggle`
+/// which uses the same raw YAML shape.
+pub fn load_policy_from_freedom(
+    freedom_path: &std::path::Path,
+) -> (bool, AnnouncePolicy) {
+    let Ok(body) = std::fs::read_to_string(freedom_path) else {
+        return (true, AnnouncePolicy::default());
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return (true, AnnouncePolicy::default());
+    };
+    let cluster = root.get("cluster");
+    let mdns_enabled = cluster
+        .and_then(|c| c.get("mdns"))
+        .and_then(|m| m.get("enabled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let policy = cluster
+        .and_then(|c| c.get("policy"))
+        .and_then(|p| serde_yaml::from_value::<AnnouncePolicy>(p.clone()).ok())
+        .unwrap_or_default();
+    (mdns_enabled, policy)
+}
+
 /// Why the announcer is suppressed. Operator-readable via
 /// `as_str()` for log lines + doctor detail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -387,5 +456,140 @@ mod tests {
         let yaml = serde_yaml::to_string(&original).unwrap();
         let back: AnnouncePolicy = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(original, back);
+    }
+
+    // ── gate_discover ──────────────────────────────────────────────
+
+    #[test]
+    fn gate_discover_proceeds_under_open_policy() {
+        assert_eq!(
+            gate_discover(true, &open_policy(), Some("coffee-shop")),
+            DiscoverGate::Proceed
+        );
+        assert_eq!(
+            gate_discover(true, &open_policy(), None),
+            DiscoverGate::Proceed
+        );
+    }
+
+    #[test]
+    fn gate_discover_proceeds_on_strict_plus_trusted_ssid() {
+        assert_eq!(
+            gate_discover(true, &strict_policy(), Some("home-wifi")),
+            DiscoverGate::Proceed
+        );
+    }
+
+    #[test]
+    fn gate_discover_skips_when_disabled() {
+        assert_eq!(
+            gate_discover(false, &open_policy(), Some("home-wifi")),
+            DiscoverGate::SkipWith(NoReason::Disabled)
+        );
+    }
+
+    #[test]
+    fn gate_discover_skips_on_strict_untrusted_ssid() {
+        assert_eq!(
+            gate_discover(true, &strict_policy(), Some("coffee-shop")),
+            DiscoverGate::SkipWith(NoReason::UntrustedSsid)
+        );
+    }
+
+    #[test]
+    fn gate_discover_skips_when_ssid_unknown() {
+        assert_eq!(
+            gate_discover(true, &strict_policy(), None),
+            DiscoverGate::SkipWith(NoReason::SsidUnknown)
+        );
+    }
+
+    // ── load_policy_from_freedom ───────────────────────────────────
+
+    #[test]
+    fn load_policy_returns_defaults_when_freedom_missing() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth-policy-load-missing-{}",
+            std::process::id()
+        ));
+        // Path that definitely doesn't exist.
+        let (enabled, policy) = load_policy_from_freedom(&tmp);
+        assert!(enabled, "Q4-ratified default: mdns enabled when freedom.yaml missing");
+        assert_eq!(policy, AnnouncePolicy::default());
+    }
+
+    #[test]
+    fn load_policy_returns_defaults_when_freedom_unparseable() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-policy-load-unparse-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        std::fs::write(&path, "::: not valid yaml :::").unwrap();
+        let (enabled, policy) = load_policy_from_freedom(&path);
+        assert!(enabled);
+        assert_eq!(policy, AnnouncePolicy::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_policy_returns_defaults_when_cluster_section_absent() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-policy-load-noclu-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        std::fs::write(&path, "operator_id: alice\n").unwrap();
+        let (enabled, policy) = load_policy_from_freedom(&path);
+        assert!(enabled, "missing cluster section ⇒ Q4 default ON");
+        assert_eq!(policy, AnnouncePolicy::default());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_policy_reads_strict_block_with_trusted_ssids() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-policy-load-strict-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        let yaml = "cluster:\n  \
+                    mdns:\n    enabled: false\n  \
+                    policy:\n    \
+                    announce_on_untrusted_wifi: false\n    \
+                    trusted_ssids:\n      - home-wifi\n      - home-wifi-5g\n";
+        std::fs::write(&path, yaml).unwrap();
+        let (enabled, policy) = load_policy_from_freedom(&path);
+        assert!(!enabled);
+        assert!(!policy.announce_on_untrusted_wifi);
+        assert_eq!(
+            policy.trusted_ssids,
+            vec!["home-wifi".to_string(), "home-wifi-5g".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_policy_reads_open_block() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-policy-load-open-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        let yaml = "cluster:\n  \
+                    mdns:\n    enabled: true\n  \
+                    policy:\n    \
+                    announce_on_untrusted_wifi: true\n    \
+                    trusted_ssids: []\n";
+        std::fs::write(&path, yaml).unwrap();
+        let (enabled, policy) = load_policy_from_freedom(&path);
+        assert!(enabled);
+        assert!(policy.announce_on_untrusted_wifi);
+        assert!(policy.trusted_ssids.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
