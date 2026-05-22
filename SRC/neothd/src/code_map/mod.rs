@@ -32,6 +32,7 @@
 //!   recall path so the LLM auto-pulls relevant files
 //! - Incremental refresh on PreEgress / PostProviderCall hooks
 
+pub mod graph;
 pub mod persist;
 pub mod recall;
 pub mod symbols;
