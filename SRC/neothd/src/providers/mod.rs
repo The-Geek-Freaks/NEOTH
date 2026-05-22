@@ -26,6 +26,7 @@ pub mod known_endpoints;
 pub mod local_probe;
 pub mod local_qwen;
 pub mod meter;
+pub mod model_roles;
 pub mod openai_api;
 pub mod quota;
 pub mod singleflight;
