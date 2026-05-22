@@ -309,6 +309,142 @@ pub(crate) fn dur_to_ms(d: Duration) -> u64 {
     u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
+// ─── QM-13 CouncilVoice (agency-agents adoption) ────────────────────────────
+//
+// New per-hemisphere "voice" specialisation tag. The orchestrator can pin
+// a voice on a hemisphere so its system prompt + trigger conditions match
+// the security / performance / accessibility / threat-intel slot it
+// occupies in council debates. Per
+// `PLAN/QUELLEN_ADOPT_agency_2026-05-21.md` §5 ADOPT-AS-COUNCIL-VOICE.
+//
+// The voice is metadata, not a routing decision — the council orchestrator
+// still picks providers via `freedom.yaml::hemispheres`. The voice tells
+// the orchestrator WHICH system prompt to layer on top of the operator-md
+// + skill stack, and WHICH trigger conditions to use for auto-convening.
+
+/// One of the six specialist council voices. Each maps to a specific
+/// concern domain + a default auto-trigger condition. Operators pin a
+/// voice to a hemisphere via `freedom.yaml::hemispheres::<role>::voice`
+/// (when the config wiring lands) or invoke explicitly via
+/// `/council voice <name> <prompt>`.
+///
+/// Pinned at six variants per the agency QUELLEN audit + NEOTH's
+/// existing concerns:
+///
+/// - `SecurityEngineer` — autonomy / permission / consent gates (0xA0-0xA3)
+/// - `ThreatDetectionEngineer` — WAL cluster events (0xE0-0xE7), pairs
+///   with SecurityEngineer for sec-flavoured council debates
+/// - `PerformanceBenchmarker` — fires when "perf" / "latency" / "slow"
+///   surfaces in the prompt OR when the retry budget is approaching
+/// - `AccessibilityAuditor` — fires on GUI council debates (NOOB-UX items),
+///   pushes back against operator-hostile UI choices
+/// - `IncidentResponder` — daemon crash / recovery path; pairs with
+///   ThreatDetectionEngineer
+/// - `EvidenceCollector` — highest-priority quality voice, owns the QA
+///   verdict path (QM-6 QaVerdict)
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CouncilVoice {
+    SecurityEngineer,
+    ThreatDetectionEngineer,
+    PerformanceBenchmarker,
+    AccessibilityAuditor,
+    IncidentResponder,
+    EvidenceCollector,
+}
+
+impl CouncilVoice {
+    /// Stable wire id matching serde's `rename_all`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CouncilVoice::SecurityEngineer => "security_engineer",
+            CouncilVoice::ThreatDetectionEngineer => "threat_detection_engineer",
+            CouncilVoice::PerformanceBenchmarker => "performance_benchmarker",
+            CouncilVoice::AccessibilityAuditor => "accessibility_auditor",
+            CouncilVoice::IncidentResponder => "incident_responder",
+            CouncilVoice::EvidenceCollector => "evidence_collector",
+        }
+    }
+
+    /// Parse a wire id back to the enum. `None` for unknown strings —
+    /// the caller decides whether to surface "unknown voice" to the
+    /// operator or fall through to no-voice.
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "security_engineer" => Some(Self::SecurityEngineer),
+            "threat_detection_engineer" => Some(Self::ThreatDetectionEngineer),
+            "performance_benchmarker" => Some(Self::PerformanceBenchmarker),
+            "accessibility_auditor" => Some(Self::AccessibilityAuditor),
+            "incident_responder" => Some(Self::IncidentResponder),
+            "evidence_collector" => Some(Self::EvidenceCollector),
+            _ => None,
+        }
+    }
+
+    /// One-line operator-readable description. Surfaces in `neoth council
+    /// voices` output + the GUI voice picker.
+    pub fn description(self) -> &'static str {
+        match self {
+            CouncilVoice::SecurityEngineer => {
+                "Audits autonomy + permission gates (0xA0-0xA3); pairs with ThreatDetection."
+            }
+            CouncilVoice::ThreatDetectionEngineer => {
+                "Inspects WAL cluster events (0xE0-0xE7) for tamper / intrusion signals."
+            }
+            CouncilVoice::PerformanceBenchmarker => {
+                "Critiques latency, allocations, retry-budget posture; fires on perf prompts."
+            }
+            CouncilVoice::AccessibilityAuditor => {
+                "Reviews GUI council debates against NOOB-UX hard rules + WCAG basics."
+            }
+            CouncilVoice::IncidentResponder => {
+                "Owns daemon crash / recovery + post-mortem framing."
+            }
+            CouncilVoice::EvidenceCollector => {
+                "Highest-priority QA voice; owns QaVerdict path (QM-6) after worker patch apply."
+            }
+        }
+    }
+
+    /// The system-prompt fragment this voice prepends when active. Layered
+    /// AFTER operator-md / persona / skill prompts so it adds specialist
+    /// framing without overriding operator context. Stays short — the
+    /// voice is metadata, not a full prompt rewrite.
+    pub fn system_prompt_fragment(self) -> &'static str {
+        match self {
+            CouncilVoice::SecurityEngineer => {
+                "Voice: SecurityEngineer. Treat every change as a potential gate-bypass. \
+                 Identify: authn/authz, consent, autonomy escalation, secret handling, \
+                 supply-chain. For each finding state premise + impact + minimum fix."
+            }
+            CouncilVoice::ThreatDetectionEngineer => {
+                "Voice: ThreatDetectionEngineer. Inspect WAL cluster events + adjacent state \
+                 for tamper signals or anomalous patterns. Report observation + confidence + \
+                 follow-up to validate."
+            }
+            CouncilVoice::PerformanceBenchmarker => {
+                "Voice: PerformanceBenchmarker. Surface latency, allocation, lock-contention, \
+                 and retry-budget concerns. Quote concrete numbers; reject 'should be fast' \
+                 in favour of measured or estimated cost."
+            }
+            CouncilVoice::AccessibilityAuditor => {
+                "Voice: AccessibilityAuditor. Push back against operator-hostile choices: \
+                 hidden settings, unexplained jargon, missing recommended-defaults, \
+                 keyboard-only paths broken. Cite the NOOB-UX hard rule when relevant."
+            }
+            CouncilVoice::IncidentResponder => {
+                "Voice: IncidentResponder. Frame the situation as: detect → contain → \
+                 diagnose → recover → document. Surface the missing step explicitly."
+            }
+            CouncilVoice::EvidenceCollector => {
+                "Voice: EvidenceCollector. Produce a structured QaVerdict (Pass/Fail/Blocked). \
+                 Each Fail item carries kind + message + citation. Each Pass carries \
+                 the evidence (test output line, file:line, command run)."
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -837,5 +973,77 @@ mod tests {
         assert_eq!(r.outcome().text(), Some("denied"));
         let e = errored_resp(HemisphereRole::Cerebellum, "x");
         assert_eq!(e.outcome().text(), None);
+    }
+
+    // ── QM-13 CouncilVoice tests ────────────────────────────────────────
+
+    #[test]
+    fn qm_13_council_voice_round_trips_serde() {
+        for v in [
+            CouncilVoice::SecurityEngineer,
+            CouncilVoice::ThreatDetectionEngineer,
+            CouncilVoice::PerformanceBenchmarker,
+            CouncilVoice::AccessibilityAuditor,
+            CouncilVoice::IncidentResponder,
+            CouncilVoice::EvidenceCollector,
+        ] {
+            let s = serde_json::to_string(&v).unwrap();
+            let back: CouncilVoice = serde_json::from_str(&s).unwrap();
+            assert_eq!(v, back);
+            assert_eq!(v.as_str(), s.trim_matches('"'));
+            assert_eq!(CouncilVoice::from_str(v.as_str()), Some(v));
+        }
+    }
+
+    #[test]
+    fn qm_13_council_voice_from_str_returns_none_for_unknown() {
+        assert!(CouncilVoice::from_str("nonexistent").is_none());
+        assert!(CouncilVoice::from_str("").is_none());
+        assert!(CouncilVoice::from_str("SecurityEngineer").is_none()); // case-sensitive
+    }
+
+    #[test]
+    fn qm_13_every_voice_has_nonempty_description_and_prompt() {
+        // Pin the contract: every voice surfaces something operators
+        // can read in `neoth council voices` AND something the
+        // orchestrator can layer onto the system prompt.
+        for v in [
+            CouncilVoice::SecurityEngineer,
+            CouncilVoice::ThreatDetectionEngineer,
+            CouncilVoice::PerformanceBenchmarker,
+            CouncilVoice::AccessibilityAuditor,
+            CouncilVoice::IncidentResponder,
+            CouncilVoice::EvidenceCollector,
+        ] {
+            assert!(
+                !v.description().is_empty(),
+                "{:?} missing description",
+                v
+            );
+            assert!(
+                v.system_prompt_fragment().len() > 50,
+                "{:?} system prompt fragment too short",
+                v
+            );
+            assert!(
+                v.system_prompt_fragment()
+                    .to_lowercase()
+                    .contains(v.as_str().replace('_', "")
+                        .to_lowercase().as_str())
+                    || v.system_prompt_fragment().contains("Voice:"),
+                "{:?} system prompt should announce itself",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn qm_13_evidence_collector_prompt_mentions_qaverdict() {
+        // EvidenceCollector composes with QM-6 QaVerdict — its system
+        // prompt must wire the operator toward the structured PASS/
+        // FAIL/BLOCKED shape, not free-form prose.
+        let s = CouncilVoice::EvidenceCollector.system_prompt_fragment();
+        assert!(s.contains("QaVerdict"));
+        assert!(s.contains("Pass") || s.contains("Fail") || s.contains("Blocked"));
     }
 }

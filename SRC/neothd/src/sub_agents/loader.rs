@@ -79,7 +79,9 @@ mod tests {
         assert!(names.contains(&"security-reviewer"));
         assert!(names.contains(&"planner"));
         assert!(names.contains(&"critic"));
-        assert_eq!(agents.len(), 4);
+        assert!(names.contains(&"session-summarizer"));
+        // QM-14 (Session 20) bumped built-ins from 4 to 5.
+        assert_eq!(agents.len(), 5);
     }
 
     #[tokio::test]
@@ -132,8 +134,9 @@ system = "You write docs"
         .await
         .unwrap();
         let agents = load_all(dir.path()).await.unwrap();
-        // 4 built-ins (code-reviewer, security-reviewer, planner, critic) + 1 operator override = 5
-        assert_eq!(agents.len(), 5);
+        // 5 built-ins (code-reviewer, security-reviewer, planner, critic,
+        // session-summarizer) + 1 operator new = 6. QM-14 bumped from 4→5.
+        assert_eq!(agents.len(), 6);
         assert!(agents.iter().any(|a| a.name == "doc-writer"));
     }
 
@@ -151,8 +154,9 @@ system = ""
         .await
         .unwrap();
         let agents = load_all(dir.path()).await.unwrap();
-        // Validation drops the bad one but 4 built-ins still load.
+        // Validation drops the bad one but 5 built-ins still load
+        // (QM-14 bumped from 4→5 with the session-summarizer addition).
         assert!(!agents.iter().any(|a| a.name == "bad"));
-        assert_eq!(agents.len(), 4);
+        assert_eq!(agents.len(), 5);
     }
 }
