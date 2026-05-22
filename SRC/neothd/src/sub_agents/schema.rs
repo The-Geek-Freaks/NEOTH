@@ -1,5 +1,19 @@
 //! Sub-agent TOML schema — Phase 30 R-18 SA-1.
 //!
+//! ## QM-5 NEXUS handoff schema (2026-05-22)
+//!
+//! In addition to the static `SubAgent` config shape, this module now
+//! also ships [`SubAgentRequest`] + [`SubAgentResult`] — the runtime
+//! payload that flows between Cerebellum → Left/Right hemispheres and
+//! between successive sub-agents in a coding-workflow chain. Adopted
+//! verbatim from the NEXUS handoff pattern documented in
+//! `PLAN/QUELLEN_ADOPT_agency_2026-05-21.md` §4: every transfer carries
+//! `from / to / phase / task_id / priority / context / success_criteria /
+//! deliverable / evidence_required`. Returns carry `verdict` (typed via
+//! [`crate::council::quality_score::QaVerdict`] from QM-6) + `evidence` +
+//! `next_agent` so the dispatcher loop has structured pass/fail/blocked
+//! semantics instead of free-form prose.
+//!
 //! ```toml
 //! # ~/.neoth/agents/code-reviewer.toml
 //! name        = "code-reviewer"
@@ -17,7 +31,9 @@
 //! exposes. Unknown tool names log + skip at dispatch time, they don't
 //! fail validation — operator-typo recovery without daemon restart.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+use crate::council::quality_score::QaVerdict;
 
 /// One sub-agent definition. Either operator-defined (TOML) or built-in
 /// (returned by [`super::builtins::built_in_agents`]).
@@ -57,6 +73,106 @@ impl SubAgent {
     pub fn allows_tool(&self, tool_name: &str) -> bool {
         self.tools.iter().any(|t| t == tool_name)
     }
+}
+
+// ─── QM-5 NEXUS handoff types ───────────────────────────────────────────────
+
+/// Handoff priority. NEXUS spec uses Low/Normal/High/Critical; ports
+/// verbatim so operators familiar with the NEXUS taxonomy don't have
+/// to relearn it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffPriority {
+    Low,
+    Normal,
+    High,
+    Critical,
+}
+
+impl Default for HandoffPriority {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+/// One-shot work item flowing FROM one agent TO another. Replaces the
+/// pre-QM-5 implicit handoff (just task text + WAL frame) with a
+/// structured contract.
+///
+/// Wire serialised as JSON for two reasons:
+///   1. WAL frames live in `0x7X` event band (coding workflow) and
+///      already carry JSON payloads.
+///   2. The `neoth code show <task>` operator surface renders the
+///      request structure for grep-friendly diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubAgentRequest {
+    /// Sender agent id — `"cerebellum"`, `"left"`, `"right"`, or any
+    /// operator-defined sub-agent name from [`SubAgent::name`].
+    pub from: String,
+    /// Recipient agent id.
+    pub to: String,
+    /// Workflow phase — `"plan"` / `"implementation"` / `"verify"` /
+    /// `"merge"`. Operator-readable; the dispatcher doesn't enforce a
+    /// fixed enum so future phases don't need a schema bump.
+    pub phase: String,
+    /// Stable task identifier — typically `idx_kanban_*.task_id`.
+    pub task_id: String,
+    /// Urgency — drives dispatcher scheduling (`Critical` preempts
+    /// in-flight Low/Normal work; default `Normal`).
+    #[serde(default)]
+    pub priority: HandoffPriority,
+    /// Free-form context for the recipient — current state, relevant
+    /// files, dependencies. NEXUS calls this `current_state`.
+    pub context: String,
+    /// What the recipient must produce — patch, test plan, verdict,
+    /// summary. NEXUS calls this `deliverable`.
+    pub deliverable: String,
+    /// Acceptance criteria the deliverable must satisfy. Recipient's
+    /// QA verdict (`SubAgentResult::verdict`) checks these. Empty
+    /// list means "no formal criteria" — recipient applies its own
+    /// judgment.
+    #[serde(default)]
+    pub success_criteria: Vec<String>,
+    /// What evidence the recipient must include in its response.
+    /// `cargo test` output, `file:line` citations, etc. Drives the
+    /// EvidenceCollector sub-agent's verification pass.
+    #[serde(default)]
+    pub evidence_required: Vec<String>,
+    /// Wall-clock seconds when the handoff was created. Used for
+    /// stale-handoff detection (a 24h-old Critical request that
+    /// hasn't been picked up flags an operator alert).
+    pub ts_unix: i64,
+}
+
+/// Response from a sub-agent back to its caller (typically Cerebellum)
+/// or forward to the next sub-agent in the chain. The verdict field
+/// carries the structured PASS/FAIL/BLOCKED outcome from QM-6
+/// (`QaVerdict`) so the dispatcher's retry path has typed routing
+/// instead of free-form text parsing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubAgentResult {
+    /// The sub-agent that produced this result.
+    pub from: String,
+    /// Intended recipient — usually `"cerebellum"`, sometimes a peer.
+    pub to: String,
+    /// Mirrors the originating `SubAgentRequest::task_id` so the
+    /// dispatcher can correlate handoffs across the chain.
+    pub task_id: String,
+    /// Structured pass/fail/blocked. Pass → merge, Fail → retry path
+    /// consumes the failure items, Blocked → escalate to operator.
+    pub verdict: QaVerdict,
+    /// Free-form evidence the sub-agent collected — `cargo test`
+    /// excerpts, screenshots, log lines, citations. Operators see
+    /// this in `neoth code show <task>`.
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    /// Optional pointer to the next sub-agent in the chain. `Some`
+    /// for Dev → QA handoffs; `None` for terminal results that close
+    /// the kanban row.
+    #[serde(default)]
+    pub next_agent: Option<String>,
+    /// Wall-clock seconds when the result was emitted.
+    pub ts_unix: i64,
 }
 
 #[cfg(test)]
@@ -117,5 +233,117 @@ mod tests {
             enabled: true,
         };
         assert!(!a.allows_tool("anything"));
+    }
+
+    // ── QM-5 NEXUS handoff tests ────────────────────────────────────────
+
+    #[test]
+    fn nexus_request_round_trips_through_json() {
+        let r = SubAgentRequest {
+            from: "cerebellum".into(),
+            to: "right".into(),
+            phase: "implementation".into(),
+            task_id: "T-42".into(),
+            priority: HandoffPriority::High,
+            context: "refactor the WAL writer to use io_uring".into(),
+            deliverable: "diff against main + cargo test green".into(),
+            success_criteria: vec![
+                "no clippy warnings".into(),
+                "writer_recovers_torn_tail still passes".into(),
+            ],
+            evidence_required: vec!["paste cargo test output".into()],
+            ts_unix: 1_700_000_000,
+        };
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(json.contains("\"priority\":\"high\""));
+        let back: SubAgentRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(r, back);
+    }
+
+    #[test]
+    fn nexus_result_with_pass_verdict_round_trips() {
+        let res = SubAgentResult {
+            from: "right".into(),
+            to: "cerebellum".into(),
+            task_id: "T-42".into(),
+            verdict: QaVerdict::pass_with_evidence(vec![
+                "1450 tests pass".into(),
+            ]),
+            evidence: vec!["cargo test output: 1450 / 0".into()],
+            next_agent: Some("evidence_collector".into()),
+            ts_unix: 1_700_000_500,
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        assert!(json.contains("\"verdict\""));
+        assert!(json.contains("\"kind\":\"pass\""));
+        let back: SubAgentResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(res, back);
+        assert!(back.verdict.is_pass());
+    }
+
+    #[test]
+    fn nexus_result_with_fail_verdict_round_trips() {
+        use crate::council::quality_score::FailureItem;
+        let res = SubAgentResult {
+            from: "left".into(),
+            to: "cerebellum".into(),
+            task_id: "T-99".into(),
+            verdict: QaVerdict::fail(vec![FailureItem {
+                kind: "test_failure".into(),
+                message: "ArithmeticError in line 88".into(),
+                citation: Some("src/math.rs:88".into()),
+            }]),
+            evidence: vec!["cargo test failed".into()],
+            next_agent: None,
+            ts_unix: 1_700_001_000,
+        };
+        let json = serde_json::to_string(&res).unwrap();
+        assert!(json.contains("\"kind\":\"fail\""));
+        let back: SubAgentResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(res, back);
+        assert!(back.verdict.is_retriable());
+    }
+
+    #[test]
+    fn handoff_priority_round_trips_serde() {
+        for p in [
+            HandoffPriority::Low,
+            HandoffPriority::Normal,
+            HandoffPriority::High,
+            HandoffPriority::Critical,
+        ] {
+            let s = serde_json::to_string(&p).unwrap();
+            let back: HandoffPriority = serde_json::from_str(&s).unwrap();
+            assert_eq!(p, back);
+        }
+    }
+
+    #[test]
+    fn handoff_priority_serializes_as_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&HandoffPriority::Critical).unwrap(),
+            "\"critical\""
+        );
+        assert_eq!(
+            serde_json::to_string(&HandoffPriority::Normal).unwrap(),
+            "\"normal\""
+        );
+    }
+
+    #[test]
+    fn nexus_request_defaults_keep_optional_lists_empty() {
+        let minimal = r#"{
+            "from": "ce",
+            "to": "left",
+            "phase": "plan",
+            "task_id": "T-1",
+            "priority": "normal",
+            "context": "x",
+            "deliverable": "y",
+            "ts_unix": 1
+        }"#;
+        let r: SubAgentRequest = serde_json::from_str(minimal).unwrap();
+        assert!(r.success_criteria.is_empty());
+        assert!(r.evidence_required.is_empty());
     }
 }
