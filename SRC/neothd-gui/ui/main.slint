@@ -102,6 +102,10 @@ export component MainWindow inherits Window {
     in property <bool> operator-id-valid: false;
     in-out property <string> status-line: "";
     in property <string> hardware-summary: "";
+    // QM-9 Phase 2: last 24h usage rollup rendered for the dashboard.
+    // Format: "<calls> calls (ok=<x>, err=<y>), <cost> (<pct>% of cap)"
+    // — populated by a subprocess probe to `neoth usage --format json`.
+    in property <string> usage-summary: "Loading usage…";
 
     // Pick #28 (12/10 polish): derive the step counter + label from
     // the active `WizardStep` so the top ProgressIndicator always

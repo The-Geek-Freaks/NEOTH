@@ -137,6 +137,22 @@ fn main() -> Result<()> {
         });
     });
 
+    // QM-9 Phase 2: usage rollup probe runs in its own worker so a
+    // slow `neoth usage` subprocess can't block the window. Same
+    // pattern as the hardware probe — placeholder string until the
+    // real summary lands via invoke_from_event_loop.
+    window.set_usage_summary("Loading usage…".into());
+    let weak_usage = window.as_weak();
+    std::thread::spawn(move || {
+        let summary = probe_usage_via_subprocess();
+        let weak = weak_usage.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_usage_summary(summary.into());
+            }
+        });
+    });
+
     // G-2 first-launch detection: if `~/.neoth/freedom.yaml` already
     // exists the operator has been through the wizard before. Jump
     // straight to the done screen so they don't accidentally overwrite
@@ -1441,6 +1457,57 @@ mod chat_subprocess_tests {
             || BINARY_MISSING_MESSAGE.contains("cargo install"));
     }
 
+    // ── QM-9 Phase 2 dashboard probe tests ──────────────────────────────
+
+    #[test]
+    fn shape_usage_summary_renders_calls_ok_err_cost() {
+        let json = r#"{
+            "since_unix": 0,
+            "until_unix": 100,
+            "total_call_count": 7,
+            "total_ok_count": 6,
+            "total_err_count": 1,
+            "total_input_tokens": 500,
+            "total_output_tokens": 800,
+            "total_cost_usd": 0.1234,
+            "per_provider": []
+        }"#;
+        let s = crate::shape_usage_summary(json);
+        assert!(s.contains("7 calls"));
+        assert!(s.contains("ok=6"));
+        assert!(s.contains("err=1"));
+        assert!(s.contains("$0.1234"));
+    }
+
+    #[test]
+    fn shape_usage_summary_zero_calls_says_no_usage() {
+        let json = r#"{
+            "since_unix": 0,
+            "until_unix": 100,
+            "total_call_count": 0,
+            "total_ok_count": 0,
+            "total_err_count": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_cost_usd": 0.0,
+            "per_provider": []
+        }"#;
+        let s = crate::shape_usage_summary(json);
+        assert!(s.contains("No usage"));
+    }
+
+    #[test]
+    fn shape_usage_summary_malformed_json_returns_error_string() {
+        let s = crate::shape_usage_summary("{not json");
+        assert!(s.contains("malformed"));
+    }
+
+    #[test]
+    fn shape_usage_summary_missing_fields_defaults_to_zero() {
+        let s = crate::shape_usage_summary("{}");
+        assert!(s.contains("No usage"));
+    }
+
     #[test]
     fn chat_via_subprocess_with_returns_error_when_bin_does_not_exist() {
         // Bin at a path that doesn't exist on disk → subprocess
@@ -1476,6 +1543,65 @@ fn probe_hardware_via_subprocess() -> String {
         ),
         Err(e) => format!("Hardware probe could not start: {e}"),
     }
+}
+
+/// QM-9 Phase 2: probe the last 24h of usage via the same `neoth
+/// usage --format json` surface the CLI ships. Returns an operator-
+/// readable one-line summary on success, or a clear error string
+/// when the subprocess can't run / fails / returns malformed JSON.
+fn probe_usage_via_subprocess() -> String {
+    let candidate = which_neothd();
+    let Some(bin) = candidate else {
+        return "Usage unavailable — `neothd` binary not on PATH.".to_string();
+    };
+    let output = spawn_neothd_plain(&bin)
+        .arg("usage")
+        .arg("--format")
+        .arg("json")
+        .arg("--days")
+        .arg("1")
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            shape_usage_summary(&stdout)
+        }
+        Ok(out) => format!(
+            "Usage probe failed (exit {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => format!("Usage probe could not start: {e}"),
+    }
+}
+
+/// Parse the `neoth usage --format json` envelope + render a one-line
+/// summary. Pure function so the test path can pin the rendering
+/// without spawning a real subprocess.
+pub fn shape_usage_summary(json: &str) -> String {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(json) else {
+        return "Usage: malformed response".to_string();
+    };
+    let calls = val
+        .get("total_call_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let ok = val
+        .get("total_ok_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let err = val
+        .get("total_err_count")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let cost = val
+        .get("total_cost_usd")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    if calls == 0 {
+        return "No usage in the last 24h.".to_string();
+    }
+    format!("Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4}")
 }
 
 fn which_neothd() -> Option<PathBuf> {
