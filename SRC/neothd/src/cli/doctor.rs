@@ -352,6 +352,26 @@ const CHECK_DOCS: &[CheckDoc] = &[
               new PATH takes effect.",
     },
     CheckDoc {
+        name: "usage today",
+        purpose: "QM-9 Phase 1 spend-visibility surface. Aggregates \
+                  the last 24h of `~/.neoth/usage/*.jsonl` and warns \
+                  when cost crosses `council.daily_usd_cap` (default \
+                  $5) or 80% of it. Pass when usage dir is missing \
+                  (clean install) or cost is under threshold. Detail \
+                  always carries call count + ok/err split + dollars \
+                  + percent-of-cap so the operator sees burn rate at \
+                  a glance.",
+        common_failures: "Spend creeps past the daily cap before the \
+                         operator notices. Errors-vs-successes ratio \
+                         spikes (provider outage, broken prompt \
+                         template).",
+        fix: "If the spend is intentional, raise `council.daily_usd_cap` \
+              in freedom.yaml. If unexpected, tail \
+              `~/.neoth/usage/<today>.jsonl` to find the chatty path. \
+              Lower the cap to throttle inadvertent loops by setting \
+              `council.max_calls_per_user_message` (default 15) lower.",
+    },
+    CheckDoc {
         name: "tmux for claude-cli",
         purpose: "NOOB-UX-6 AIO-compliance probe. claude-cli's working \
                   backend is the tmux warm-session path \
@@ -564,7 +584,70 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_channels_wiring(home),
         check_node_toolchain(home),
         check_tmux_for_claude_cli(home),
+        check_usage_today(home),
     ]
+}
+
+/// QM-9 Phase 1 doctor surface: aggregate the last 24h of
+/// `~/.neoth/usage/*.jsonl` and warn when cost crosses the operator's
+/// configured daily cap. Pass when no usage dir exists yet (clean
+/// install) or when cost is below the cap. The cap defaults to
+/// `freedom.yaml::council.daily_usd_cap` (typical value $5).
+fn check_usage_today(home: &Path) -> CheckOutcome {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let since = now - 86_400;
+    let roll = crate::daemon::usage_log::aggregate(home, since, now);
+    if roll.total_call_count == 0 {
+        return CheckOutcome {
+            name: "usage today",
+            status: CheckStatus::Pass,
+            detail: "no calls in last 24h".to_string(),
+        };
+    }
+    let cap = freedom_daily_usd_cap(home);
+    let pct_of_cap = if cap > 0.0 {
+        (roll.total_cost_usd / cap) * 100.0
+    } else {
+        0.0
+    };
+    let detail = format!(
+        "{} calls (ok={}, err={}), ${:.4} ({:.0}% of ${:.2} cap)",
+        roll.total_call_count, roll.total_ok_count, roll.total_err_count,
+        roll.total_cost_usd, pct_of_cap, cap,
+    );
+    let status = if cap > 0.0 && roll.total_cost_usd >= cap {
+        CheckStatus::Warn
+    } else if cap > 0.0 && pct_of_cap >= 80.0 {
+        CheckStatus::Warn
+    } else {
+        CheckStatus::Pass
+    };
+    CheckOutcome {
+        name: "usage today",
+        status,
+        detail,
+    }
+}
+
+/// Read `freedom.yaml::council.daily_usd_cap`. Returns 5.0 as the
+/// sensible default when the field is missing or unparseable —
+/// matches the Pick #8 council redesign default in the spec.
+fn freedom_daily_usd_cap(home: &Path) -> f64 {
+    const DEFAULT_CAP: f64 = 5.0;
+    let path = home.join("freedom.yaml");
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return DEFAULT_CAP;
+    };
+    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return DEFAULT_CAP;
+    };
+    val.get("council")
+        .and_then(|c| c.get("daily_usd_cap"))
+        .and_then(|v| v.as_f64())
+        .unwrap_or(DEFAULT_CAP)
 }
 
 /// Probe a binary's `--version`. Returns `Some(stdout)` on success,
@@ -1700,13 +1783,99 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_one() {
+    fn check_docs_listed_count_pinned_at_twenty_two() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
-        // coverage) is caught. Bumped to 21 in Session 20 for
-        // `node toolchain` + `tmux for claude-cli` (NOOB-UX-6 AIO
-        // probe surface).
-        assert_eq!(CHECK_DOCS.len(), 21);
+        // coverage) is caught. Bumped to 22 in Session 20 for
+        // `usage today` (QM-9 Phase 1 spend-visibility surface).
+        assert_eq!(CHECK_DOCS.len(), 22);
+    }
+
+    #[test]
+    fn check_usage_today_pass_when_no_usage_dir() {
+        let dir = tempdir().unwrap();
+        let outcome = check_usage_today(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("no calls"));
+    }
+
+    #[test]
+    fn check_usage_today_warns_when_cost_crosses_cap() {
+        use crate::daemon::usage_log::{append, UsageEvent};
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "council:\n  daily_usd_cap: 1.0\n",
+        )
+        .unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        append(
+            dir.path(),
+            &UsageEvent {
+                ts_unix: now - 30,
+                provider: "openai_api".into(),
+                model: "gpt-5.5".into(),
+                input_tokens: 100,
+                output_tokens: 100,
+                cost_usd: 1.5,
+                latency_ms: 500,
+                ok: true,
+            },
+        )
+        .unwrap();
+        let outcome = check_usage_today(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("1.5") || outcome.detail.contains("1.50"));
+    }
+
+    #[test]
+    fn check_usage_today_warns_at_80_pct_of_cap() {
+        use crate::daemon::usage_log::{append, UsageEvent};
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "council:\n  daily_usd_cap: 2.0\n",
+        )
+        .unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        // $1.70 of $2 cap = 85% → Warn (below cap, above 80%).
+        append(
+            dir.path(),
+            &UsageEvent {
+                ts_unix: now - 30,
+                provider: "openai_api".into(),
+                model: "gpt-5.5".into(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cost_usd: 1.70,
+                latency_ms: 0,
+                ok: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(check_usage_today(dir.path()).status, CheckStatus::Warn);
+    }
+
+    #[test]
+    fn freedom_daily_usd_cap_defaults_when_missing() {
+        let dir = tempdir().unwrap();
+        assert!((freedom_daily_usd_cap(dir.path()) - 5.0).abs() < f64::EPSILON);
+        // Malformed YAML → default.
+        std::fs::write(dir.path().join("freedom.yaml"), ": : :").unwrap();
+        assert!((freedom_daily_usd_cap(dir.path()) - 5.0).abs() < f64::EPSILON);
+        // Explicit value parses.
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "council:\n  daily_usd_cap: 12.5\n",
+        )
+        .unwrap();
+        assert!((freedom_daily_usd_cap(dir.path()) - 12.5).abs() < f64::EPSILON);
     }
 
     #[test]
@@ -1872,12 +2041,9 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 21 checks (freedom, credentials, credentials age, views.db, wal,
-        // hmac, quota, policy, tweaks, model caches, hysteria, cloud archive,
-        // disk space, hooks, agents, profile_extensions, mcp servers,
-        // wasm plugins, channels wiring, node toolchain, tmux for claude-cli).
-        // Bumped 19 → 21 in Session 20 for NOOB-UX-6 AIO probes.
-        assert_eq!(outs.len(), 21);
+        // 22 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // claude-cli (NOOB-UX-6 AIO probes) + usage today (QM-9 Phase 1).
+        assert_eq!(outs.len(), 22);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
