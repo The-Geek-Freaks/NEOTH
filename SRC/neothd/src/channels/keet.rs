@@ -42,6 +42,22 @@ impl KeetChannel {
     /// install confirmation.
     pub const PAIRING_HINT: &'static str =
         "Paste the 24-word seed phrase Keet generated on your phone.";
+
+    /// R-2 Phase 1 pairing-anchor preview: derive the 32-byte topic
+    /// key + discovery key from the configured seed phrase. Returns
+    /// the deterministic hex prefix the operator can match against
+    /// their phone (the JS Keet side will surface the SAME hex
+    /// prefix in the pairing UI once both sides upgrade to the
+    /// same derivation). Empty phrase returns None.
+    pub fn pairing_anchor_preview(&self) -> Option<String> {
+        let topic = super::keet_crypto::topic_key(self.seed_phrase.expose()).ok()?;
+        let discovery = super::keet_crypto::discovery_key(topic);
+        // Render 16 hex chars from each so the operator can scan
+        // both anchors at a glance.
+        let topic_hex: String = topic.0[..8].iter().map(|b| format!("{b:02x}")).collect();
+        let disc_hex: String = discovery.0[..8].iter().map(|b| format!("{b:02x}")).collect();
+        Some(format!("topic:{topic_hex}… disc:{disc_hex}…"))
+    }
 }
 
 /// What a seed-phrase validation pass concluded. Operator-readable
@@ -138,6 +154,26 @@ mod tests {
             "word ".repeat(24).trim_end().to_string(),
         ));
         assert_eq!(c.name(), "keet");
+    }
+
+    #[test]
+    fn pairing_anchor_preview_renders_topic_and_discovery_hex() {
+        let phrase = "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
+                      kilo lima mike november oscar papa quebec romeo sierra tango \
+                      uniform victor whiskey xray";
+        let c = KeetChannel::new(SecretString::from(phrase.to_string()));
+        let preview = c.pairing_anchor_preview().expect("non-empty phrase");
+        assert!(preview.contains("topic:"));
+        assert!(preview.contains("disc:"));
+        // Hex prefixes should be deterministic across calls.
+        let again = c.pairing_anchor_preview().unwrap();
+        assert_eq!(preview, again);
+    }
+
+    #[test]
+    fn pairing_anchor_preview_returns_none_for_empty_phrase() {
+        let c = KeetChannel::new(SecretString::from("   \t\n  ".to_string()));
+        assert!(c.pairing_anchor_preview().is_none());
     }
 
     #[tokio::test]
