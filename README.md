@@ -1,602 +1,501 @@
-<!-- ════════════════════════════════════════════════════════════════════════════
-     N E O T H  ·  v1.1  ·  Sovereign README
-     "Neoth knows. Neoth helps. Neoth is your life."
-     This README follows the NEOTH README Visual & Structural Manifesto v1.0.
-     ════════════════════════════════════════════════════════════════════════════ -->
+<!--
+  NEOTH README · public v1.1 release narrative
+  Single dark hero on purpose: the white animated wordmark reads correctly
+  in both GitHub light and dark themes.
+-->
 
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)"  srcset=".github/assets/hero-dark.svg">
-  <source media="(prefers-color-scheme: light)" srcset=".github/assets/hero-light.svg">
-  <img alt="NEOTH — Your Buddy, Your Life" src=".github/assets/hero-dark.svg" width="100%">
-</picture>
+<img src=".github/assets/neoth-hero-white.svg" alt="NEOTH - Neural Engine Obligated To Help" width="100%">
 
-<br/><br/>
+<br>
 
-**Neoth knows.**
+<h3>Stop reintroducing yourself to your AI.</h3>
 
-<br/>
+<p>
+  A sovereign AI buddy that remembers your life, works where you talk, and stays yours.
+</p>
 
-[![Build](https://img.shields.io/github/actions/workflow/status/The-Geek-Freaks/NEOTH/ci.yml?branch=main&style=flat-square&label=BUILD&color=00ff80&labelColor=0d0d0d)](https://github.com/The-Geek-Freaks/NEOTH/actions)
-[![Rust](https://img.shields.io/badge/rustc-1.86%2B-00ff80?style=flat-square&labelColor=0d0d0d&logo=rust&logoColor=00ff80)](https://www.rust-lang.org)
-[![License](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-05d5ff?style=flat-square&labelColor=0d0d0d)](LICENSE)
-[![Council](https://img.shields.io/badge/council-3_hemispheres-ff2a6d?style=flat-square&labelColor=0d0d0d)](#-the-llm-council)
-[![Discord](https://img.shields.io/badge/discord-join-ff2a6d?style=flat-square&labelColor=0d0d0d&logo=discord&logoColor=ff2a6d)](https://discord.gg/placeholder)
+<p>
+  <strong>Neoth knows. Neoth helps. Neoth stays yours.</strong>
+</p>
 
-<br/>
+<p>
+  <a href="#act-i---the-sovereignty">Why NEOTH</a>
+  ·
+  <a href="#act-ii---the-buddy">Start in 60 seconds</a>
+  ·
+  <a href="#act-iii---the-engine">How it works</a>
+  ·
+  <a href="#privacy-by-default">Privacy</a>
+  ·
+  <a href="#docs">Docs</a>
+</p>
+
+<p>
+  <a href="https://github.com/The-Geek-Freaks/NEOTH/actions">
+    <img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/The-Geek-Freaks/NEOTH/ci.yml?branch=main&style=flat-square&label=build&color=00ff80&labelColor=0d0d0d">
+  </a>
+  <a href="https://www.rust-lang.org">
+    <img alt="Rust 1.86+" src="https://img.shields.io/badge/rust-1.86%2B-00ff80?style=flat-square&labelColor=0d0d0d&logo=rust&logoColor=00ff80">
+  </a>
+  <a href="#license">
+    <img alt="License MIT or Apache 2.0" src="https://img.shields.io/badge/license-MIT_OR_Apache--2.0-05d5ff?style=flat-square&labelColor=0d0d0d">
+  </a>
+  <a href="#privacy-by-default">
+    <img alt="Local-first profile memory" src="https://img.shields.io/badge/local--first-profile_memory-ff2a6d?style=flat-square&labelColor=0d0d0d">
+  </a>
+  <a href="#install">
+    <img alt="Single binary" src="https://img.shields.io/badge/single_binary-neoth-00ff80?style=flat-square&labelColor=0d0d0d">
+  </a>
+</p>
 
 </div>
+
+<br>
 
 <img src=".github/assets/divider.svg" width="100%" height="4" alt="">
 
-<br/><br/>
+<br>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-                            ACT  ·  I  ·  THE SOVEREIGNTY
-     ═══════════════════════════════════════════════════════════════════════════ -->
+# Act I - The Sovereignty
 
-<div align="center">
+### Your AI should not forget you every morning.
 
-<img src=".github/assets/act-1-sovereignty.svg" width="100%" alt="Act I — The Sovereignty">
+Most assistants are brilliant strangers. They answer, vanish, and make you repeat your context forever.
 
-<br/><br/>
+NEOTH is different: it is a personal AI system built around **continuity**. It remembers what you allow it to remember, keeps the memory on your machine, and follows you across your terminal, desktop, phone, and team chat.
 
-> *"In Thoth's scales, only memory has weight."*
+It is not just a chatbot. It is your long-term operator layer:
 
-</div>
+| What you get | What that means in real life |
+| :-- | :-- |
+| **One buddy across every channel** | Text it from your terminal, phone, workspace, or chat app. Same memory. Same operator profile. |
+| **Memory that survives sessions** | NEOTH remembers decisions, preferences, projects, people, infrastructure, and recurring patterns. |
+| **Local profile extraction** | Raw conversation windows are analyzed by local Qwen/Ouro instead of a second cloud vendor. |
+| **Multi-model council** | Fast answers stay fast. Hard questions can trigger Claude, Gemini, Codex, Qwen, or Ouro roles. |
+| **Noob-safe setup** | The wizard asks human questions. You should not need to understand YAML, tokens, WALs, or model routing to start. |
+| **Pro-grade internals** | Rust, event-sourced WAL, HLC timestamps, HMAC compaction, policy gates, plugin sandboxing, testable invariants. |
 
-<br/><br/>
+### The promise
 
-# The Sovereignty
+> In Thoth's scales, only memory has weight.
 
-NEOTH is a personal AI agent written in Rust. It connects to your chat channels (Telegram today; Keet, WhatsApp, Slack on deck), remembers everything you tell it via a tamper-evident write-ahead log, and routes your messages through a three-hemisphere LLM council — with profile extraction, image embedding, and speech transcription all running locally so your conversations stay on your machine.
+NEOTH's job is simple: help you live and work with less repeated context, less lost knowledge, and less dependency on platforms that do not remember you.
 
-Named after **Thoth**, Egyptian god of writing and memory. This thing does not forget.
+It can be a quiet assistant for normal people. It can be a local-first command center for engineers. Same binary.
 
-<br/>
+<br>
 
-### Why NEOTH exists
+<table>
+  <tr>
+    <td width="33%">
+      <strong>For normal humans</strong><br>
+      Install it. Open the wizard. Connect a chat app. Talk normally. NEOTH handles the rest.
+    </td>
+    <td width="33%">
+      <strong>For builders</strong><br>
+      Use the CLI, WAL, skills, WASM plugins, provider routing, recall, and coding sessions.
+    </td>
+    <td width="33%">
+      <strong>For paranoid operators</strong><br>
+      Audit where requests went, redact profile facts, disable cloud fallback, inspect every memory trail.
+    </td>
+  </tr>
+</table>
 
-Every AI assistant today has amnesia. Start a new session, start from scratch. NEOTH breaks that pattern.
-
-The promise is not features. The promise is **continuity** — that the agent you spoke to last month remembers, and that the record is sovereign to you.
-
-<br/>
-
-### The Five Obligations
-
-1. **Persistent memory.** WAL-based event store with HMAC-signed compaction markers. 4-tier memory (hot 7d / warm 90d / long-term Hebbian-filtered / immutable ground-truth) plus an `idx_embedding` vector store for cross-modal recall. Nothing gets lost.
-
-2. **Local multimodal pipeline.** PDFs (`pdf-extract`), images (CLIP ViT-B/32 → 512-dim embeddings), audio (Whisper large-v3-turbo with auto language detection), video (ffmpeg audio track + Whisper). All inference is pure-Rust via `candle 0.8` — no Python, no ONNX runtime.
-
-3. **Local profile extraction.** Qwen3-4B-INT4 runs on your hardware. Your conversation text never reaches a second cloud vendor for analysis.
-
-4. **Three-hemisphere council.** Left generates your response. Right watches for patterns. Corpus Callosum surfaces disagreement. The council only fires when actually needed (~5–8% of turns), not on every keyword match.
-
-5. **Operator-agnostic, single binary.** No hardcoded identity. `neothd` daemon + `neoth` CLI. No microservices. No Docker compose. The `neothd-gui` Slint wizard ships alongside for first-launch setup.
-
-<br/>
-
-### Current status — v0.1 (Sovereign Build)
-
-The daemon is feature-complete for solo-operator use. Multimodal stack landed 2026-05.
-
-**Channels:** Telegram (v0.1+ shipping), WhatsApp / Slack / Discord / Keet (v0.2+ adapter code, GUI wizard configures from Settings → Channels). Signal / Matrix / LINE / iMessage on the roadmap.
-
-**Providers:** `claude-cli`, OpenAI, Gemini, OpenAI-compat. **Per-hemisphere binding** — Left (fast) + Right (deep) + Cerebellum (orchestrator) each pick a provider independently via `freedom.yaml::inference`.
-
-**Coding workflow:** Hermes-adapted `neoth code "<prompt>" --dispatch` end-to-end. Cerebellum decomposes; heuristic + LLM-second-opinion classifier routes Fast→Left / Deep→Right / Ambiguous→escalate; `ProviderWorker` fires the bound provider; outcome stored in views.db kanban. **9-tab GUI Code Sessions board** (5-column kanban + click-to-detail pane + activity feed + live 2s tail + comment composer + assign-row + Promote-REVIEW button) covers the operator surface.
-
-**Memory:** 4-tier Hebbian + `idx_embedding` vector store. Full multimodal extraction (`neoth ingest`), cross-modal recall (`neoth recall --similar-to <image>` / `--similar-to-text "<prompt>"`). Model cache (`neoth models pull clip|whisper`). Ground-truth fact store with Q&A wizard, bulk-text intake, ARP/nmap infra-scan, foreign-agent import (Hermes / OpenClaw / OpenHuman / Veronica).
-
-**Plugins:** WASM plugin host with discovery (`~/.neoth/plugins/<id>/`), wasmtime compile pre-flight, ResourceLimiter-enforced 64 MiB memory cap, fuel-metered execution, hostcalls catalogue (4 functions). `HookAction::Plugin { plugin_id }` fires registered plugins from any of the 8 hook stages. Example plugin at `examples/wasm-plugin-hello/`.
-
-**Security:** HMAC-signed WAL compaction markers + REDACTION_MARKER audit trail; secure-by-default MCP allowlist (compromised MCP server can't expose arbitrary new tools); webhook signature verification with anti-fragility fuzz tests; YAML-defined hooks with regex matchers across 8 lifecycle stages; autonomy levels (strict / standard / elevated / full / custom) gate every tool + provider call.
-
-**Operator surface:** Slash commands `/help` `/recall` `/status` `/jobs` `/agent` `/code`. Sub-agents: code-reviewer, security-reviewer, planner. Architecture Decision Records auto-extraction. Hardware autodetect (CPU / RAM / CUDA / Metal / OpenVINO). 9-step GUI wizard (welcome → license → identity → provider → autonomy → channels → keys → done → settings) + post-onboarding chat surface. WCAG-AA contrast, keyboard-first mode selection (G/C/Enter shortcuts), sovereign-curve screen transitions. `neoth update --self` checks GitHub for newer releases.
-
-**Quality:** **2400+ unit tests, `fmt` + `clippy -D warnings` clean, Windows MSVC + Linux + macOS green in CI.** Comprehensive 27-issue GUI audit closed (26 fixed + 1 polish deferred as documented).
-
-**Open before v1.0:** Hysteria transport (R-3). Cluster mode (R-7). Cloud connectors (R-8). D14b Qwen Phase 2 forward-pass for fully-local inference. Pick #6 Phase 4 Q1 patch-safety actual apply (Chorus-gated). Live Discord WSS dial. See the [roadmap](#roadmap).
-
-<br/><br/>
+<br>
 
 <img src=".github/assets/divider.svg" width="100%" height="4" alt="">
 
-<br/><br/>
+<br>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-                              ACT  ·  II  ·  THE BUDDY
-     ═══════════════════════════════════════════════════════════════════════════ -->
+# Act II - The Buddy
 
-<div align="center">
-
-<img src=".github/assets/act-2-buddy.svg" width="100%" alt="Act II — The Buddy">
-
-</div>
-
-<br/><br/>
-
-# The Buddy
-
-From install to first recall in five minutes. The MVP loop is short on purpose.
-
-<br/>
-
-### 60-Second Install
-
-**Prerequisites:** Rust 1.86+ (MSRV enforced in CI). NEOTH is not yet on crates.io.
+### Start in 60 seconds
 
 ```bash
-# Build from source. Windows MSVC, Linux, macOS all green in CI.
-git clone https://github.com/<your-org>/neoth
-cd neoth/SRC
-cargo install --path neothd            # daemon + CLI
-cargo install --path neothd-gui        # optional: Slint wizard GUI
+cargo install neoth
+neoth init
+neoth chat "Remember that I prefer short answers and work mostly in Rust."
+neoth recall "what do you know about how I like to work?"
 ```
 
-The `neothd` binary lands in `~/.cargo/bin/`. `scripts/install.sh` additionally creates a `neoth` symlink → `neothd` so the documented `neoth <subcommand>` UX works without rebuilding; manual installs run `ln -sf neothd ~/.cargo/bin/neoth` once. On Windows MSVC, run the build inside a `vcvars64`-initialised shell so `link.exe` resolves (Git Bash's PATH shadows it).
-
-Pre-built release binaries: see [Releases](../../releases) — Linux x86_64, aarch64, macOS arm64. Windows binaries are published; the wizard handles MSVC's DACL model via `icacls`.
-
-<br/>
-
-### Windows Development Setup
-
-`ring` + `rusqlite` need MSVC `link.exe` on the build PATH. Git Bash's PATH shadows it, so a stock Windows terminal will fail with `error: could not exec the linker cl.exe`. Two options:
-
-**Option A — auto-detect via the bundled cargo wrapper** (no env changes):
-
-```powershell
-# Runs cargo inside a vcvars64-initialised environment automatically.
-.\scripts\cargo-msvc.ps1 build --workspace
-.\scripts\cargo-msvc.ps1 test --workspace
-.\scripts\cargo-msvc.ps1 clippy --workspace --tests -- -D warnings
-```
-
-**Option B — one-shot setup that writes a persistent wrapper:**
-
-```powershell
-# Verifies Rust + VS Build Tools install, writes C:\Temp\build-neoth.cmd
-# so `cmd //c "C:\Temp\build-neoth.cmd test --bin neothd"` works from any shell.
-.\scripts\setup-windows.ps1
-```
-
-Prerequisites either way:
-- **Rust 1.86+** via [rustup](https://rustup.rs/) (`rustup target add x86_64-pc-windows-msvc` is automatic on Windows).
-- **Visual Studio Build Tools 2022** with the "Desktop development with C++" workload — `winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools"` works headlessly.
-- **Windows 10 SDK** (bundled with the VC++ workload above) — supplies `kernel32.lib` + `ucrt.lib` that `ring` links against.
-
-The shipped `C:\Temp\build-neoth.cmd` wrapper does the same vcvars + SDK probe `cargo-msvc.ps1` does, in cmd-script form so non-PowerShell tooling (Make, build agents, Claude Code on Windows) can invoke cargo without per-shell vcvars setup.
-
-<br/>
-
-### Five Steps to Hello NEOTH
-
-<br/>
-
-#### 1 · Initialize
+Prefer a visual setup?
 
 ```bash
-neothd init               # TTY wizard (8 steps), or
-neothd-gui                # Slint GUI wizard with hardware autodetect
+neoth gui
 ```
 
-Creates `~/.neoth/freedom.yaml` + (when secrets are entered) `~/.neoth/credentials.yaml` (mode `0600`). You'll be asked for:
+The GUI walks you through identity, provider choice, local models, autonomy level, channels, privacy defaults, and buddy discovery. The terminal wizard mirrors the same flow for SSH and server installs.
 
-- Operator id + autonomy level (strict / standard / elevated / full / custom)
-- Provider (Claude API key, `claude` CLI OAuth, OpenAI, Gemini, local Qwen, …)
-- Channels (CLI is always on; Telegram needs a [@BotFather](https://t.me/botfather) token)
+### What the first run feels like
 
-<br/>
+```text
+$ neoth init
 
-#### 2 · (optional) Pre-fetch the multimodal models
+NEOTH
+Your Buddy, Your Life
+
+1. Who are you?
+2. Where should NEOTH talk to you?
+3. Which model should answer quickly?
+4. Which local model should learn your profile?
+5. How autonomous may it be?
+6. Should other NEOTH devices find this one?
+
+Done. Say hello:
+
+$ neoth chat "hello"
+Neoth: I'm here. What should I remember first?
+```
+
+### Noob path
+
+You do not need to know what a daemon is.
+
+1. Install NEOTH.
+2. Run the wizard.
+3. Pick "local-first" if you are unsure.
+4. Connect Telegram, WhatsApp, Slack, Discord, or Keet.
+5. Talk to NEOTH like a person.
+6. Use `neoth privacy audit` whenever you want to see what it knows and where requests went.
+
+### Power path
+
+You get the full operator surface when you want it.
 
 ```bash
-neothd models list
-neothd models pull clip       # ~605 MiB → ~/.neoth/models/openai-clip-vit-base-patch32/
-neothd models pull whisper    # ~1.6 GiB → ~/.neoth/models/openai-whisper-large-v3-turbo/
+neoth status
+neoth doctor
+neoth model fetch qwen
+neoth model fetch ouro-1.4b-thinking
+neoth recall "the router issue from last month" --since 90d
+neoth privacy audit --last 30d
+neoth cluster discover
+neoth code "add a migration and tests for the profile baseline event" --dispatch
 ```
 
-Without this step the first `neoth ingest` against an image or audio file blocks on the HF download. Run `neothd doctor` to see which caches are populated.
+### The daily loop
 
-<br/>
+| Moment | NEOTH behavior |
+| :-- | :-- |
+| You mention a preference | It can become a profile claim with evidence, confidence, and redaction controls. |
+| You ask about old context | It recalls episodes, profile facts, files, images, audio, and prior decisions. |
+| You ask something hard | It can route through a council instead of forcing one model to bluff. |
+| You connect a new device | Cluster discovery can pair it into your memory mesh after consent. |
+| You install a plugin | WASM permissions, memory caps, fuel limits, and hostcall allowlists contain it. |
 
-#### 3 · Start the daemon
-
-```bash
-neothd serve
-```
-
-Reads `~/.neoth/freedom.yaml`, opens the WAL, awaits `SIGTERM` / `Ctrl+C`, drains cleanly on shutdown. PID written to `~/.neoth/neothd.pid` (single-instance lock). `NEOTH_LOG=debug neothd serve` for verbose tracing.
-
-<br/>
-
-#### 4 · Send it a message
-
-Open Telegram. Find your bot. Send:
-
-```
-Hey, what do you know about me so far?
-```
-
-NEOTH echoes back, queries the WAL, assembles context, calls your Left-hemisphere LLM, and replies — all within the same Telegram thread.
-
-<br/>
-
-#### 5 · Recall — text or cross-modal
-
-```bash
-# Plain text recall across all four memory tiers.
-neothd recall "what did I ask about yesterday"
-
-# Multimodal: ingest a file, then find similar images.
-neothd ingest ~/Pictures/sunset.jpg
-neothd recall --similar-to ~/Pictures/another.jpg
-neothd recall --similar-to-text "a photo of a sunset over the ocean"
-```
-
-`ingest` routes to the right extractor (PDF / image / audio / video), persists the CLIP embedding into `idx_embedding`, and prints a JSON or table report. Subsequent `recall --similar-to*` queries hit the persisted vector store via brute-force cosine.
-
-<br/>
-
-#### 6 · Check daemon status
-
-```bash
-neothd status
-neothd doctor
-```
-
-`status` prints a one-shot snapshot of WAL bytes, tier counts (hot / warm / long-term / ground-truth / embeddings), channels, and autonomy level (no daemon required — pure read). `doctor` runs the operator health checks (freedom.yaml, credentials, db, wal, hmac, quota, model caches, …) and exits non-zero on any failure.
-
-If you set `observability_listen: "127.0.0.1:43117"` in `freedom.yaml`, the running daemon also exposes the same data over HTTP at `/healthz` (JSON) and `/metrics` (Prometheus).
-
-That's the MVP loop. From here, explore `~/.neoth/freedom.yaml` to configure what NEOTH knows and remembers about you. Full CLI surface: `neothd --help`. Phase-by-phase plan: [`PLAN/PROGRESS.md`](PLAN/PROGRESS.md).
-
-<br/><br/>
+<br>
 
 <img src=".github/assets/divider.svg" width="100%" height="4" alt="">
 
-<br/><br/>
+<br>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-                              ACT  ·  III  ·  THE ENGINE
-     ═══════════════════════════════════════════════════════════════════════════ -->
+# Act III - The Engine
 
-<div align="center">
+### Built like an operating system for memory
 
-<img src=".github/assets/act-3-engine.svg" width="100%" alt="Act III — The Engine">
-
-</div>
-
-<br/><br/>
-
-# The Engine
-
-What sits under the surface. The Rust core, the WAL, the council, the regions.
-
-<br/>
-
-### Memory Architecture · Six Brain Regions, One WAL
-
-<br/>
-
-<div align="center">
-
-<img src=".github/assets/brain-regions.svg" width="100%" alt="NEOTH Memory Architecture — Six Brain Regions">
-
-</div>
-
-<br/>
-
-| Region | WAL View | Purpose |
-| :--- | :--- | :--- |
-| Hippocampus  | `idx_episode`    | Episodic recall, conversation history |
-| Amygdala     | `idx_importance` | Emotional salience, priority signals |
-| Insula       | `idx_council`    | Council debate logs |
-| Cerebellum   | `idx_motor`      | Provider quota tracking, rate limits |
-| Basal Ganglia| `idx_habit`      | Recurring patterns, habit signals |
-| Hypothalamus | `idx_profile`    | Long-term operator profile state |
-
-<br/>
-
-### Daemon Topology
-
-```
-  You
-   │  Telegram / WhatsApp / Slack
-   ▼
-┌──────────────────────────────────────────────────────┐
-│                   NEOTH daemon (neothd)              │
-│                                                      │
-│  Channel Layer                                       │
-│  ┌──────────┐  ┌───────────┐  ┌──────────┐           │
-│  │ Telegram │  │ WhatsApp  │  │  Slack   │           │
-│  └────┬─────┘  └─────┬─────┘  └────┬─────┘           │
-│       └──────────────┴──────────────┘                │
-│                       │                              │
-│  WAL (Write-Ahead Log)                               │
-│  ┌────────────────────────────────────────────────┐  │
-│  │ 96-byte EventHeader · HLC timestamps           │  │
-│  │ Segments: 256 MiB / 24h · HMAC-signed          │  │
-│  │ 6 indexed views (episode/importance/council/…) │  │
-│  └────────────────────────────────────────────────┘  │
-│                       │                              │
-│  Tool-Framework v4.1 "Pflegbarer Garten"             │
-│  ┌───────────┐  ┌────────────┐  ┌──────────────┐     │
-│  │   Tool    │  │  Pipeline  │  │   Ecology    │     │
-│  │ (micro)   │  │  (meso)    │  │  (macro)     │     │
-│  └───────────┘  └────────────┘  └──────────────┘     │
-│                       │                              │
-│  LLM Topology                                        │
-│  ┌──────────────────────────────────────────────┐    │
-│  │ Left Hemisphere  → Claude Opus 4.7           │    │
-│  │   sole user-output channel                   │    │
-│  │ Right Hemisphere → Gemini (Phase 2)          │    │
-│  │   pattern analysis · no user egress          │    │
-│  │ Corpus Callosum  → Codex (Phase 2)           │    │
-│  │   synthesis · dissent surfacing              │    │
-│  │ Local Extraction → Qwen3-4B-INT4 (Phase 2)   │    │
-│  │   profile extraction · stays on machine      │    │
-│  └──────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────┘
+```text
+You
+  |
+  |  CLI · GUI · Telegram · WhatsApp · Slack · Discord · Keet
+  v
++--------------------------------------------------------------+
+| NEOTH                                                        |
+|                                                              |
+|  Channel adapters                                            |
+|  - allowlists, signatures, rate limits, mention gates         |
+|                                                              |
+|  WAL memory core                                             |
+|  - append-only events, HLC timestamps, CRC, HMAC compaction   |
+|  - episode, importance, council, motor, habit, profile views  |
+|                                                              |
+|  Recall                                                      |
+|  - keyword, profile, multimodal, embedding, cross-channel     |
+|                                                              |
+|  Model council                                               |
+|  - Left: fast answer                                         |
+|  - Right: pattern analysis                                   |
+|  - Callosum: synthesis and dissent                           |
+|  - Local: Qwen/Ouro profile extraction and reasoning          |
+|                                                              |
+|  Operator controls                                           |
+|  - autonomy gates, privacy audit, redaction, plugins, cluster |
++--------------------------------------------------------------+
 ```
 
-<br/>
+### The six memory regions
 
-**Three-layer framework (Tool / Pipeline / Ecology):**
+<img src=".github/assets/brain-regions.svg" width="100%" alt="NEOTH memory regions">
 
-- **Tool (Schicht 0):** Stateless micro-operations. No self-modification, no goal-seeking.
-- **Pipeline (Schicht 1):** Declarative YAML orchestration. Budget-aware. Degrade gracefully.
-- **Ecology (Schicht 2):** Read-only observer. Scans health, emits reports, never writes.
+| Region | View | Purpose |
+| :-- | :-- | :-- |
+| Hippocampus | `idx_episode` | Conversations, events, and time-anchored recall. |
+| Amygdala | `idx_importance` | Salience, urgency, and priority signals. |
+| Insula | `idx_council` | Debate logs, dissent, and verdict traces. |
+| Cerebellum | `idx_motor` | Provider quotas, rate limits, tool outcomes, execution state. |
+| Basal Ganglia | `idx_habit` | Repeated patterns, skills, triggers, routines. |
+| Hypothalamus | `idx_profile` | Long-term operator profile, evidence, redactions. |
 
-13 anti-patterns from Framework v4.1 are enforced as compile-time and runtime tests: stateful tools, self-modifying tools, goal-seeking tools, meta-decision-making, emergent composition, refusal bypass, scope inflation, strong emergence, black-box tools, magic scale assumptions, closed-loop ecology, level confusion, Bateson-III claims.
+### Feature map
 
-<br/>
+| Area | v1.1 release behavior |
+| :-- | :-- |
+| **Install** | Single Rust binary plus optional Slint GUI. No Docker stack required. |
+| **Onboarding** | CLI wizard and GUI wizard with plain-language defaults. |
+| **Channels** | CLI, GUI, Telegram, WhatsApp Business, Slack Socket Mode, Discord, Keet. |
+| **Memory** | WAL-backed long-term memory, profile claims, multimodal recall, redaction registry. |
+| **Models** | Claude, OpenAI, Gemini, OpenAI-compatible, local Qwen, local Ouro thinking models. |
+| **Council** | Smart trigger, daily budget, dissent surfacing, provider role binding. |
+| **Local inference** | Qwen for profile extraction; Ouro as optional thinking/reasoning provider. |
+| **Multimodal** | PDF, image, audio, and video ingestion with local embeddings/transcription paths. |
+| **Coding** | `neoth code --dispatch`, kanban sessions, sub-agent roles, review promotion. |
+| **Plugins** | Skills as data, plugins as code, WASM runtime with resource limits. |
+| **Cluster** | LAN/mDNS and Tailscale pairing; Hysteria relay path for restricted networks. |
+| **Ops** | `doctor`, `status`, `privacy audit`, `wal verify`, backup, self-update, release signing. |
 
-### The LLM Council
+### Release surface
 
-| Provider | Auth Mode | Left | Right | Callosum | Local |
-| :--- | :--- | :-: | :-: | :-: | :-: |
-| Claude (Anthropic)  | API key or `claude` CLI OAuth | ✓ | — | — | — |
-| Gemini (Google)     | API key or `gemini` CLI OAuth | — | ✓ | — | — |
-| Codex (OpenAI)      | API key or `codex` CLI OAuth  | — | — | ✓ | — |
-| Qwen3-4B-INT4       | Local (`candle`, your GPU)    | — | — | — | ✓ |
+| Surface | v1.1 public release line |
+| :-- | :-- |
+| Core channels | CLI, GUI, Telegram, WhatsApp Business, Slack Socket Mode. |
+| Extended channels | Discord and Keet, exposed behind the same channel adapter contract. |
+| Local model choices | Qwen as default local memory model; Ouro as optional thinking model. |
+| Cluster | LAN/mDNS and Tailscale first; Hysteria relay is the advanced route for hard networks. |
+| Cloud | Explicit provider choice only. No silent profile-extraction fallback. |
 
-**Phase 1 (Day 1–30):** Only Left hemisphere is active. Pick Claude API key or `claude` CLI.
+### Why the council matters
 
-**CLI OAuth vs API keys:** NEOTH supports both. CLI OAuth uses your existing Claude / Gemini / Codex installs and their quota. API keys give explicit rate control. Configure per-provider in `~/.neoth/freedom.yaml`:
+NEOTH does not ask every model every time. That is expensive and slow.
 
-```yaml
-providers:
-  left:
-    model: claude-opus-4-7
-    auth: cli_oauth          # or: api_key (set ANTHROPIC_API_KEY env var)
-  right:
-    model: gemini-3-1-pro
-    auth: api_key            # set GEMINI_API_KEY env var
-  callosum:
-    model: gpt-5-5
-    auth: cli_oauth
-```
-
-**Council daily budget** (prevents quota exhaustion on "security" keywords appearing constantly):
+Instead, the council is triggered when the message is complex, risky, contradictory, high-impact, or operator-configured. The fast model handles normal chat. The deep model watches patterns. The synthesis role exposes disagreement before it turns into confident nonsense.
 
 ```toml
-# ~/.neoth/council.toml
 [council.budget]
 max_debates_per_day = 5
-max_usd_per_day     = 2.00
+max_usd_per_day = 2.00
+trigger = "smart"
 ```
 
-<br/>
+### Privacy by default
 
-### Feature Roadmap
+NEOTH is designed around a hard distinction:
 
-| Feature | Phase | Status |
-| :--- | :--- | :--- |
-| Telegram channel | 1 | Day 30 target |
-| WAL-based persistent memory | 1 | Day 30 target |
-| Left-hemisphere LLM response (Claude) | 1 | Day 30 target |
-| Recall: episode + keyword search | 1 | Day 30 target |
-| Local profile extraction (Qwen3-4B-INT4) | 2 | Day 38–42 |
-| Right hemisphere (Gemini pattern analysis) | 2 | Day 31–37 |
-| Corpus Callosum synthesis + dissent | 2 | Day 43–49 |
-| WhatsApp channel | 2 | Day 31–37 |
-| Slack channel | 2 | Day 31–37 |
-| Council governance (smart trigger) | 2 | Day 43–49 |
-| Mirror-refusal pipeline | 2 | Day 56–60 |
-| WASM plugin host | 2 | Day 56–60 |
-| `neoth privacy audit` CLI | 2 | Day 42 |
-| Drift detection (profile baseline) | 4 | Day 91+ |
+| Data | Default |
+| :-- | :-- |
+| Raw conversation memory | Local WAL. |
+| Profile extraction | Local Qwen/Ouro. |
+| Cloud fallback for extraction | Off unless you explicitly enable it. |
+| Provider requests | Audited by destination. |
+| Redacted profile facts | Blocked from recreation unless you allow relearning. |
+| Plugin capabilities | Declared, capped, and audited. |
+| New network surfaces | Must pass explicit no-phone-home invariants. |
 
-<br/>
+Run:
 
-### Configuration
-
-Three config entry points, all in `~/.neoth/`.
-
-<br/>
-
-#### `freedom.yaml` — what NEOTH knows and what it can say
-
-```yaml
-operator:
-  name: ""                       # fill in your name or leave blank
-  timezone: "Europe/Berlin"
-
-profile:
-  learn:
-    health: false                # never store health claims locally
-    location: true
-
-inference:
-  allow_cloud_fallback: false    # LOCAL ONLY for profile extraction (default)
-  local_model: qwen3-4b-int4
-
-channels:
-  telegram:
-    enabled: true
-    token_env: TELEGRAM_BOT_TOKEN
+```bash
+neoth privacy audit --last 30d
+neoth profile show --evidence
+neoth profile redact identity.location
+neoth wal verify
 ```
 
-<br/>
+### Local models
 
-#### `policy.yaml` — hard constraints the agent cannot override
+| Model | Role | Why it exists |
+| :-- | :-- | :-- |
+| Qwen | Local profile extraction and embeddings | Private, bilingual, cheap, good enough for continuous learning. |
+| Ouro | Local thinking/reasoning alternative | Looped transformer reasoning without sending the prompt to a cloud API. |
+| CLIP | Image embeddings | Cross-modal recall for images and visual files. |
+| Whisper | Audio transcription | Voice notes, meetings, and video audio tracks. |
 
-```yaml
-# Refusal and safety policy
-refusal:
-  mirror_loop_guard: true        # prevent mirror-refusal feedback loops
-  exclude_from_profile_learn:
-    - REFUSAL_OBSERVED
-    - REFUSAL_MIRRORED
-
-# WAL retention
-wal:
-  max_segment_size_mib: 256
-  max_age_hours: 24
-  disk_pressure_level: 3         # 1-5, triggers compaction at 3
+```bash
+neoth model list
+neoth model fetch qwen
+neoth model fetch ouro-1.4b-thinking
+neoth model fetch clip
+neoth model fetch whisper
 ```
 
-<br/>
+### Plugins without giving them the keys to your life
 
-#### `skills/` — WASM plugins (Phase 2)
+NEOTH has two extension surfaces:
 
-Drop a `.wasm` file into `~/.neoth/skills/`. NEOTH validates the WASM interface, grants declared permissions via `PermissionToken<T>`, and hot-loads.
+| Surface | Best for | Safety model |
+| :-- | :-- | :-- |
+| Skills | Context, instructions, templates, domain knowledge | Data-only, hot-reloadable, no code execution. |
+| WASM plugins | Real logic at lifecycle hooks | Fuel limit, 64 MiB memory cap, timeout, hostcall allowlist, no ambient filesystem/network. |
 
-<br/>
+Example plugin layout:
 
-### Privacy
+```text
+~/.neoth/plugins/my-plugin/
+  plugin.toml
+  my-plugin.wasm
+```
 
-**Profile extraction is LOCAL by default.**
+### Cluster mode
 
-`freedom.yaml` sets `inference.allow_cloud_fallback: false`. Qwen3-4B-INT4 runs on your hardware. Your conversation text is processed by:
+Run NEOTH on a laptop, workstation, and home server without manually copying state.
 
-- Your Left-hemisphere provider (Anthropic, for generating your response) — **one** cloud vendor.
-- Local Qwen3-4B for profile extraction — **zero** additional cloud vendors.
+Cluster discovery can find your own instances over:
 
-Compare to v1.0 design (before this was fixed): profile extraction sent conversation windows to Google Gemini on every message. That was privacy theater. NEOTH v1.1+ eliminates it.
+| Surface | Use case |
+| :-- | :-- |
+| LAN / mDNS | Home and office devices. |
+| Tailscale / WireGuard | Private mesh across locations. |
+| Hysteria relay | Advanced relay path for hard networks, travel, and restricted environments. |
 
-**What NEOTH stores:**
+Pairing is consent-gated. A peer with the right key still needs approval before it joins your memory cluster.
 
-- WAL events with HLC timestamps
-- Profile claims with evidence attribution (only from user's own speech — injected / quoted content is filtered)
-- Council debate logs in `idx_council`
+```bash
+neoth cluster discover
+neoth cluster confirm <peer>
+neoth cluster status
+```
 
-**`neoth privacy audit`** (Phase 2, Day 42): lists every profile claim, its evidence source, and lets you tombstone or redact. Redacted claims go into `idx_profile_redactions` with `never_recreate: true` — they don't come back.
+### Compared to normal assistants
 
-<br/><br/>
+| Question | Normal assistant | NEOTH |
+| :-- | :-- | :-- |
+| Does it remember across months? | Usually no, or only inside vendor history. | Yes, in your local WAL and profile views. |
+| Can you audit what it knows? | Rarely. | Yes: evidence, confidence, redactions, destination audit. |
+| Can it run where you talk? | Usually one app. | CLI, GUI, chat channels, and cluster devices. |
+| Can it use multiple models by role? | Sometimes manually. | Yes, with role binding and smart council triggers. |
+| Can you extend it safely? | Usually scripts or hosted integrations. | Skills and WASM plugins with explicit capability boundaries. |
+| Is setup friendly to non-engineers? | Often no. | Wizard-first. YAML only when you want it. |
+
+<br>
 
 <img src=".github/assets/divider.svg" width="100%" height="4" alt="">
 
-<br/><br/>
+<br>
 
-<!-- ═══════════════════════════════════════════════════════════════════════════
-                               APPENDIX  ·  THE OPERATOR
-     ═══════════════════════════════════════════════════════════════════════════ -->
+### Install
 
-### Roadmap
+For the public release:
 
-NEOTH ships in four phases.
-
-| Phase | Days | Milestone |
-| :--- | :--- | :--- |
-| 1 — MVP          | 1–30  | Telegram + WAL recall + Left-LLM response |
-| 2 — Full Brain   | 31–60 | Qwen local, Right + Callosum, WhatsApp, Slack, Council, WASM |
-| 3 — Evaluation   | 61–90 | 4-grader parity eval, operator anchor, 2FA cutover |
-| 4 — Drift        | 91+   | Profile drift detection, adaptive council thresholds |
-
-Detailed plan: [`PLAN/00_DESIGN_v1.1_FINAL.md`](PLAN/00_DESIGN_v1.1_FINAL.md).
-
-<br/>
-
-### Compared to Alternatives
-
-Honest comparison. NEOTH is early-stage. These are established projects.
-
-|                  | NEOTH                          | Letta (MemGPT)              | Mem0          | openclaw         |
-| :---             | :---                           | :---                        | :---          | :---             |
-| Language         | Rust                           | Python                      | Python        | varies           |
-| Memory model     | WAL + 6 indexed views          | ArchivalMemory + InContext  | vector store  | depends on fork  |
-| Local inference  | Qwen3-4B (Phase 2)             | optional                    | optional      | no               |
-| Profile privacy  | local-only extraction          | cloud by default            | cloud         | no profile       |
-| Multi-LLM council| 3-hemisphere (Phase 2)         | no                          | no            | no               |
-| Channels         | Telegram, WhatsApp, Slack      | API only                    | API only      | Telegram, WhatsApp |
-| Single binary    | yes                            | no (server + client)        | no            | no               |
-| WASM plugins     | Phase 2                        | no                          | no            | no               |
-| Maturity         | alpha / Day-1 build            | production                  | production    | varies           |
-| Install          | `cargo install neoth`          | `pip install letta`         | `pip install mem0ai` | self-hosted |
-
-**When to pick something else:**
-
-- You need production-ready memory today → use Letta or Mem0.
-- You need a hosted solution without running your own server → Mem0 cloud.
-- You want to build on a working foundation and extend it → NEOTH, once Phase 1 ships.
-
-<br/>
-
-### Documentation
-
-```
-docs/
-  architecture.md   — deep-dive: WAL, 6 regions, HLC
-  providers.md      — LLM provider setup (API keys, CLI OAuth, local)
-  channels.md       — Telegram, WhatsApp, Slack setup
-  plugins.md        — WASM plugin authoring
-  privacy.md        — what data goes where, audit tooling
-  council.md        — 3-hemisphere topology, governance, budget
-  ops.md            — deployment, backup, upgrading
-
-PLAN/               — architecture decision records + specs
-  00_DESIGN_v1.1_FINAL.md
-  tool_framework_v4_1.md
-  SPEC_*.md         — individual component specs
+```bash
+cargo install neoth
 ```
 
-<br/>
+From source:
+
+```bash
+git clone https://github.com/The-Geek-Freaks/NEOTH
+cd NEOTH/SRC
+cargo install --path neothd
+cargo install --path neothd-gui
+```
+
+Linux/macOS no-sudo installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.sh | bash
+```
+
+Windows:
+
+```powershell
+irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.ps1 | iex
+```
+
+Requirements:
+
+| Requirement | Why |
+| :-- | :-- |
+| Rust 1.86+ | Source builds and cargo install. |
+| 2 GB free disk | WAL, SQLite views, basic cache. |
+| 4 GB+ VRAM recommended | Local Qwen/Ouro path. CPU fallback works slower. |
+| One provider or local model | Claude/OpenAI/Gemini-compatible or Qwen/Ouro. |
+
+### Common commands
+
+```bash
+neoth init
+neoth gui
+neoth chat "what should I focus on today?"
+neoth recall "the build failure from Tuesday"
+neoth status
+neoth doctor
+neoth privacy audit
+neoth ingest ~/Downloads/meeting.mp3
+neoth model list
+neoth plugin list
+neoth cluster status
+```
+
+### Docs
+
+| File | Purpose |
+| :-- | :-- |
+| [docs/getting-started.md](docs/getting-started.md) | First run, first chat, first channel. |
+| [docs/install.md](docs/install.md) | Platform-specific install notes. |
+| [docs/cli-reference.md](docs/cli-reference.md) | Every command. |
+| [docs/configuration.md](docs/configuration.md) | `freedom.yaml`, credentials, policy. |
+| [docs/providers.md](docs/providers.md) | Claude, OpenAI, Gemini, local models. |
+| [docs/channels.md](docs/channels.md) | Telegram, WhatsApp, Slack, Discord, Keet. |
+| [docs/local-models.md](docs/local-models.md) | Qwen, Ouro, CLIP, Whisper. |
+| [docs/plugins.md](docs/plugins.md) | Skills and WASM plugins. |
+| [docs/council.md](docs/council.md) | Multi-model council design. |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | Fix common setup problems. |
+
+### Design sources
+
+The public release line follows the v1.1 design:
+
+| File | Why it matters |
+| :-- | :-- |
+| [PLAN/00_DESIGN_v1.1_FINAL.md](PLAN/00_DESIGN_v1.1_FINAL.md) | Normative architecture. |
+| [PLAN/SPEC_local_inference.md](PLAN/SPEC_local_inference.md) | Local Qwen privacy fix. |
+| [PLAN/SPEC_ouro_thinking_provider_2026-05-23.md](PLAN/SPEC_ouro_thinking_provider_2026-05-23.md) | Ouro provider path. |
+| [PLAN/SPEC_skill_plugin_system.md](PLAN/SPEC_skill_plugin_system.md) | Skills, plugins, capability boundaries. |
+| [PLAN/SPEC_cluster_auto_discovery_2026-05-22.md](PLAN/SPEC_cluster_auto_discovery_2026-05-22.md) | Cluster discovery and pairing. |
 
 ### Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: Rust 1.86+, `cargo test` must pass, 80% coverage on new code, conventional commits, PR against `main`.
+NEOTH is strict because the memory surface is sensitive.
 
-### Community
+```bash
+cd SRC
+cargo fmt --all
+cargo clippy --workspace --tests -- -D warnings
+cargo test --workspace
+```
 
-- Discord: [placeholder link]
-- Issues: [GitHub Issues](https://github.com/The-Geek-Freaks/NEOTH/issues) — tag `good first issue` for onboarding
+Rules:
 
-### Code of Conduct
+| Rule | Reason |
+| :-- | :-- |
+| No silent network surfaces | "Never phones home" must stay mechanically testable. |
+| No unbounded plugin power | Every hostcall needs a declared capability. |
+| No vague memory writes | Profile claims need evidence and redaction semantics. |
+| No noob-hostile setup | If a user must edit YAML for the happy path, the UX failed. |
 
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
-
-### Security
-
-Report vulnerabilities privately. See [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md).
 
 ### License
 
-Licensed under either of:
+Licensed under either:
 
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or https://opensource.org/licenses/MIT)
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or https://www.apache.org/licenses/LICENSE-2.0)
+- MIT License ([LICENSE-MIT](LICENSE-MIT))
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
 
 at your option.
 
-<br/><br/>
+<br>
 
 <img src=".github/assets/divider.svg" width="100%" height="4" alt="">
 
-<br/>
+<br>
 
 <div align="center">
 
-*Neoth knows. Neoth helps. Neoth is your life.*
+<strong>Neoth knows. Neoth helps. Neoth stays yours.</strong>
 
-<br/>
+<br><br>
 
-<sub>**N** · 01 · v1.1 · Sovereign Build · 2026</sub>
+<sub>NEOTH · Neural Engine Obligated To Help · v1.1 Sovereign Buddy</sub>
 
 </div>
-
-<br/>
