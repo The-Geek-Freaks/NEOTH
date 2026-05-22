@@ -391,6 +391,29 @@ const CHECK_DOCS: &[CheckDoc] = &[
               gossip will refresh once the peer returns.",
     },
     CheckDoc {
+        name: "cluster mDNS announcer",
+        purpose: "Cluster auto-discovery Phase 2 announcer state. \
+                  Composes `cluster.mdns.enabled` + the Q2-ratified \
+                  announce policy (announce_on_untrusted_wifi + \
+                  trusted_ssids) + the OS-detected current SSID to \
+                  report whether the announcer would actually \
+                  broadcast on the current network. Noise scales \
+                  with paired peers — single-instance operators \
+                  never see WARN.",
+        common_failures: "Paired-peer operator joins coffee-shop \
+                          wifi (untrusted SSID) → announcer goes \
+                          silent → peers can't auto-rediscover. \
+                          OR operator on wired/VPN with no SSID \
+                          → strict default treats unknown SSID as \
+                          untrusted → silent.",
+        fix: "Add the current SSID to `cluster.policy.trusted_ssids` \
+              in freedom.yaml, OR set `cluster.policy.announce_on_untrusted_wifi: \
+              true` for broadcast-on-any-network, OR pair peers \
+              via Tailscale (tailnet bypasses the SSID gate). \
+              `neoth cluster discover` surfaces the same verdict \
+              + suggested fix before scanning.",
+    },
+    CheckDoc {
         name: "channel flapping",
         purpose: "Flapping detection: scans the last 24h of \
                   usage_log entries + warns when any provider with \
@@ -2144,12 +2167,12 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_five() {
+    fn check_docs_listed_count_pinned_at_twenty_six() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
-        // coverage) is caught. Bumped to 25 in Session 20 for
-        // `cluster registry` (Phase 4 visibility surface).
-        assert_eq!(CHECK_DOCS.len(), 25);
+        // coverage) is caught. Bumped to 26 in Session 21 for
+        // `cluster mDNS announcer` (Bite #2 announcer state surface).
+        assert_eq!(CHECK_DOCS.len(), 26);
     }
 
     #[test]
@@ -2695,10 +2718,11 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 25 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // 26 checks: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
-        // flapping + cluster registry (Phase 4 follow-on).
-        assert_eq!(outs.len(), 25);
+        // flapping + cluster registry (Phase 4 follow-on) + cluster
+        // mDNS announcer (Session 21 bite #2).
+        assert_eq!(outs.len(), 26);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
