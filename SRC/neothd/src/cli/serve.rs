@@ -823,6 +823,68 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "models catalog refresh task spawned (K-Models-Discovery)"
     );
 
+    // ── OnSessionStart hooks (QM-15 follow-on) ─────────────────────────────
+    // Fire operator-defined hooks at the `on_session_start` stage AFTER
+    // all subsystems (WAL writer, indexer, channels, cron, models catalog
+    // refresh) have spawned. Mirrors the OnShutdown firing on the other
+    // side of the wait loop. Each fired hook writes a HOOK_FIRED WAL
+    // frame so the audit log shows that configured boot actions ran.
+    // Block at this stage logs + skips (a hook that hard-stops boot would
+    // need explicit operator escalation — defer to v0.4).
+    {
+        let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
+        let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
+            warn!(
+                error = %e,
+                dir = %hook_dir.display(),
+                "hook load failed at session-start — proceeding with empty hook set"
+            );
+            Default::default()
+        });
+        match crate::hooks::run_stage(
+            crate::hooks::HookStage::OnSessionStart,
+            "session-start",
+            &hooks,
+        ) {
+            Ok(crate::hooks::StageOutcome::Continue { hits, .. }) => {
+                for name in &hits {
+                    let payload = match serde_json::to_vec(&serde_json::json!({
+                        "name": name,
+                        "stage": "on_session_start",
+                        "ts_unix": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    })) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(error = %e, "serialize OnSessionStart hook frame failed");
+                            continue;
+                        }
+                    };
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(e) = writer.append(header, payload).await {
+                        warn!(error = %e, "WAL append OnSessionStart HOOK_FIRED failed");
+                    } else {
+                        info!(hook = name, "on_session_start hook fired");
+                    }
+                }
+            }
+            Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+                warn!(
+                    hook = %name,
+                    reason = %reason,
+                    "on_session_start hook returned Block; ignored (daemon already booted)"
+                );
+            }
+            Err(e) => warn!(error = %e, "OnSessionStart hook dispatch failed"),
+        }
+    }
+
     // ── 6. Idle until shutdown signal arrives ──────────────────────────────
     if channel_tasks.is_empty() {
         info!("no channels configured; idling until shutdown signal");
