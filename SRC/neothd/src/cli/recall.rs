@@ -112,43 +112,48 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
         .unwrap_or(0);
 
-    // Hot tier: FTS5 first (BM25), LIKE fallback for pure-symbol queries.
-    let hot = match recall_fts(&conn, &args.query, args.limit) {
-        Ok(hits) if !hits.is_empty() => hits,
-        Ok(_) => recall_like(&conn, &args.query, args.limit)?,
-        Err(e) => {
-            tracing::debug!(error = %e, "FTS5 match failed, falling back to LIKE");
-            recall_like(&conn, &args.query, args.limit)?
-        }
-    };
-    // Warm + cold tiers: LIKE-only for v0.1 — these tables have no FTS5
-    // mirror because their volume stays small enough that BM25 isn't
-    // worth the index cost.
-    let warm = recall_warm_like(&conn, &args.query, args.limit)?;
-    let cold = recall_cold_like(&conn, &args.query, args.limit)?;
+    // K-Perf-3 full (2026-05-22): wrap the 5-tier SQLite query block in
+    // `spawn_blocking` so the async runtime worker isn't pinned on
+    // rusqlite for the full multi-tier read pass. Each query is bounded
+    // by `LIMIT` (~5ms typical, longer on cold caches / large tables);
+    // the cumulative CPU+I/O time off the async worker was the Phase-3
+    // performance regression the agent flagged.
+    //
+    // The Connection moves INTO the blocking task and back OUT so the
+    // Hebbian reinforcement pass below (which needs the conn + per-row
+    // updates) can run on the async caller. `move` semantics keep the
+    // Connection's !Send constraint satisfied — it never crosses an
+    // async await point while in scope.
+    let query = args.query.clone();
+    let limit = args.limit;
+    let (rows, conn) = tokio::task::spawn_blocking(move || -> Result<(Vec<EpisodeHit>, Connection)> {
+        let hot = match recall_fts(&conn, &query, limit) {
+            Ok(hits) if !hits.is_empty() => hits,
+            Ok(_) => recall_like(&conn, &query, limit)?,
+            Err(e) => {
+                tracing::debug!(error = %e, "FTS5 match failed, falling back to LIKE");
+                recall_like(&conn, &query, limit)?
+            }
+        };
+        let warm = recall_warm_like(&conn, &query, limit)?;
+        let cold = recall_cold_like(&conn, &query, limit)?;
+        let gt_rows = recall_groundtruth_like(&conn, &query, limit)?;
 
-    // Ground-truth tier (decay-immune authoritative facts). These ALWAYS
-    // surface before episodic hits — operators saved them precisely so
-    // they outrank whatever the importance ranker would have picked.
-    // The composite-score ranker is bypassed entirely; ground-truth rows
-    // are prepended verbatim so the operator sees facts first.
-    let gt_rows = recall_groundtruth_like(&conn, &args.query, args.limit)?;
+        let mut episodic: Vec<EpisodeHit> =
+            Vec::with_capacity(hot.len() + warm.len() + cold.len());
+        episodic.extend(hot);
+        episodic.extend(warm);
+        episodic.extend(cold);
+        rank_in_place(&mut episodic, now_ns);
 
-    // Merge episodic tiers and rank by composite score
-    // (importance × tier_weight − days_since_access × recency_penalty).
-    // Hot rows dominate when fresh; a high-importance cold row can still
-    // surface above a stale hot row. Ground-truth is then prepended to
-    // the ranked result so authoritative facts always win.
-    let mut episodic: Vec<EpisodeHit> = Vec::with_capacity(hot.len() + warm.len() + cold.len());
-    episodic.extend(hot);
-    episodic.extend(warm);
-    episodic.extend(cold);
-    rank_in_place(&mut episodic, now_ns);
-
-    let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + episodic.len());
-    rows.extend(gt_rows);
-    rows.extend(episodic);
-    rows.truncate(args.limit);
+        let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + episodic.len());
+        rows.extend(gt_rows);
+        rows.extend(episodic);
+        rows.truncate(limit);
+        Ok((rows, conn))
+    })
+    .await
+    .context("recall query task panicked")??;
 
     // Phase 28a R-22 MT-3: Hebbian reinforce on hot-tier hits.
     // Warm/cold rows live in different tables; reinforcement for those

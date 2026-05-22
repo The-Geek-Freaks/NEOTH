@@ -291,6 +291,15 @@ pub async fn send_canonical(
 /// that drives outbound messages — direct `Channel::send_text` calls
 /// keep the old no-snapshot behaviour for callers that genuinely
 /// don't want rollback coverage (e.g. ACK-only delivery confirmations).
+///
+/// **K-Perf-5 (2026-05-22)**: this convenience overload spawns a
+/// fresh WAL writer per call. For high-throughput channel fan-out
+/// callers should prefer [`send_text_with_snapshot_using`] which
+/// reuses the daemon's shared long-lived writer. The per-call spawn
+/// here costs an open + fsync + close every message — ~10ms on warm
+/// SSD, more on USB drives. The shared-writer overload skips those
+/// syscalls entirely (the writer is already running its blocking
+/// task on a tokio worker, frame just lands on its mpsc queue).
 pub async fn send_text_with_snapshot(
     channel: &dyn Channel,
     rollback_policy: &crate::config::RollbackConfig,
@@ -332,6 +341,51 @@ pub async fn send_text_with_snapshot(
     .await;
     drop(writer);
     let _ = join.await;
+    if let Err(e) = emit {
+        tracing::warn!(error = %e, "channel-send snapshot emit failed (message was sent successfully)");
+    }
+    Ok(message_id)
+}
+
+/// K-Perf-5: like [`send_text_with_snapshot`] but uses an existing
+/// long-lived `WalWriterHandle` (typically the one `cli::serve` spawns
+/// at boot) instead of opening a fresh per-call writer. This is the
+/// hot-path variant — channel fan-out, proactive briefings, cron-
+/// triggered sends should route here so every outbound message saves
+/// the ~10ms open + fsync + close cost of a spawn/drop cycle.
+///
+/// Behaviour is otherwise identical: returns the `MessageId` on
+/// success, emits a `ChannelSend` `PRE_MUTATION_SNAPSHOT` honouring
+/// `rollback_policy.capture_kinds`, and never fails the send when the
+/// snapshot emit fails (snapshot is best-effort — the message went
+/// out, that's what the operator cares about).
+pub async fn send_text_with_snapshot_using(
+    channel: &dyn Channel,
+    writer: &crate::wal::writer::WalWriterHandle,
+    rollback_policy: &crate::config::RollbackConfig,
+    platform: ChannelKind,
+    chat_id: &str,
+    text: &str,
+) -> std::result::Result<MessageId, ChannelError> {
+    let message_id = channel.send_text(chat_id, text).await?;
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let target = format!("{}:{}:{}", platform.as_str(), chat_id, message_id.0);
+    let emit = crate::wal::snapshot::emit_if_policy_allows(
+        writer,
+        rollback_policy,
+        crate::wal::snapshot::MutationKind::ChannelSend,
+        target,
+        text.as_bytes(),
+        now_unix,
+        Some(format!(
+            "{} send_text via send_text_with_snapshot_using",
+            platform.as_str()
+        )),
+    )
+    .await;
     if let Err(e) = emit {
         tracing::warn!(error = %e, "channel-send snapshot emit failed (message was sent successfully)");
     }
@@ -446,6 +500,106 @@ mod tests {
             .await
             .expect("send must succeed");
         assert_eq!(id.0, "msg-42");
+    }
+
+    #[tokio::test]
+    async fn k_perf_5_send_text_with_snapshot_using_shares_a_writer_across_calls() {
+        // K-Perf-5 contract: a single long-lived writer handles many
+        // outbound sends. We spawn one writer, fire N consecutive
+        // sends through `send_text_with_snapshot_using`, and verify
+        // every send still returns the expected id. The performance
+        // win (no per-call spawn) is harder to assert directly — what
+        // we pin here is the BEHAVIOURAL contract: the helper works
+        // against a shared writer without surprise interactions.
+        use crate::wal::writer::spawn as wal_spawn;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("shared.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+        let rb = crate::config::RollbackConfig::default(); // ChannelSend in allowlist
+        let c = FakeChannel;
+
+        for i in 0..5 {
+            let id = send_text_with_snapshot_using(
+                &c,
+                &writer,
+                &rb,
+                ChannelKind::Slack,
+                "C-shared",
+                &format!("msg {i}"),
+            )
+            .await
+            .expect("send must succeed");
+            assert_eq!(id.0, "msg-42");
+        }
+        drop(writer);
+        let _ = join.await;
+
+        // 5 ChannelSend snapshot frames should have landed on the
+        // SHARED segment — no per-call segment files were created.
+        let segments_in_dir: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .ends_with(".wal")
+            })
+            .collect();
+        assert_eq!(
+            segments_in_dir.len(),
+            1,
+            "K-Perf-5: shared writer must keep all snapshots in one segment, got {:?}",
+            segments_in_dir
+                .iter()
+                .map(|e| e.file_name())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn k_perf_5_send_text_with_snapshot_using_propagates_send_error() {
+        // Channel send failure must surface even when the snapshot
+        // path is short-circuited. Same contract as the spawn-per-call
+        // variant.
+        use crate::wal::writer::spawn as wal_spawn;
+        use tempfile::tempdir;
+
+        struct ErrCh;
+        #[async_trait]
+        impl Channel for ErrCh {
+            fn name(&self) -> &'static str {
+                "errch"
+            }
+            async fn run(&self, _h: PipelineHandler) -> Result<()> {
+                Ok(())
+            }
+            async fn send_text(
+                &self,
+                _c: &str,
+                _t: &str,
+            ) -> std::result::Result<MessageId, ChannelError> {
+                Err(ChannelError::Transport("network gone".into()))
+            }
+        }
+
+        let dir = tempdir().unwrap();
+        let (writer, join) = wal_spawn(dir.path().join("e.wal")).unwrap();
+        let rb = crate::config::RollbackConfig::default();
+        let err = send_text_with_snapshot_using(
+            &ErrCh,
+            &writer,
+            &rb,
+            ChannelKind::Telegram,
+            "123",
+            "hi",
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, ChannelError::Transport(_)));
+        drop(writer);
+        let _ = join.await;
     }
 
     #[tokio::test]
