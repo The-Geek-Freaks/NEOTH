@@ -358,6 +358,120 @@ pub struct BreakerSnapshot {
     pub seconds_in_open: Option<f64>,
 }
 
+/// QM-10 Phase 3: persistable snapshot per-breaker for cross-restart
+/// continuity. Only the failure counter persists — the Open state is
+/// intentionally NOT restored (a restarted daemon should retry every
+/// provider afresh, per the Phase 1 design note). Operators who hit
+/// a transient Open just before shutdown shouldn't see the breaker
+/// still Open after a daemon restart.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct BreakerPersistedRow {
+    pub provider_id: String,
+    pub consecutive_failures: u32,
+    pub last_seen_ts_unix: i64,
+}
+
+/// JSONL persistence layer for the breaker registry. Mirrors the
+/// usage_log pattern — one row per provider, append-only with the
+/// daily file naming so historical breaker behaviour is auditable.
+pub mod persist {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    /// Directory under `home` that holds the breaker state file.
+    pub fn dir(home: &Path) -> std::path::PathBuf {
+        home.join("breakers")
+    }
+
+    /// Single-row file — the breaker state surfaces a NOT-time-
+    /// series view, just the latest counter per provider. Daily
+    /// rotation isn't useful here (unlike usage_log which is
+    /// per-event); operators want "what does the state look like
+    /// right now" persisted across restarts.
+    pub fn state_file(home: &Path) -> std::path::PathBuf {
+        dir(home).join("state.jsonl")
+    }
+
+    /// Snapshot every registered breaker into the state file.
+    /// Atomic write via `.tmp` + rename. Best-effort I/O — caller
+    /// decides whether to warn-and-continue on error.
+    pub fn snapshot_to_disk(
+        home: &Path,
+        registry: &BreakerRegistry,
+    ) -> std::io::Result<usize> {
+        fs::create_dir_all(dir(home))?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let snaps = registry.snapshot_all();
+        // Only persist providers that have non-zero failure
+        // history — saves disk + keeps the restore noise-free.
+        let rows: Vec<BreakerPersistedRow> = snaps
+            .into_iter()
+            .filter(|(_, snap)| snap.consecutive_failures > 0)
+            .map(|(provider_id, snap)| BreakerPersistedRow {
+                provider_id,
+                consecutive_failures: snap.consecutive_failures,
+                last_seen_ts_unix: now,
+            })
+            .collect();
+        let path = state_file(home);
+        let tmp = path.with_extension("jsonl.tmp");
+        {
+            let mut f = fs::File::create(&tmp)?;
+            for row in &rows {
+                let line = serde_json::to_vec(row).map_err(std::io::Error::other)?;
+                f.write_all(&line)?;
+                f.write_all(b"\n")?;
+            }
+            f.flush()?;
+        }
+        fs::rename(&tmp, &path)?;
+        Ok(rows.len())
+    }
+
+    /// Restore failure counters into the global registry. Stale
+    /// rows (older than `stale_after_secs` seconds) are skipped —
+    /// a breaker that's been idle for a day shouldn't restore its
+    /// pre-idle failure count.
+    pub fn restore_from_disk(
+        home: &Path,
+        registry: &BreakerRegistry,
+        stale_after_secs: i64,
+    ) -> std::io::Result<usize> {
+        let path = state_file(home);
+        if !path.exists() {
+            return Ok(0);
+        }
+        let body = fs::read_to_string(&path)?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let mut restored = 0usize;
+        for line in body.lines() {
+            let Ok(row) = serde_json::from_str::<BreakerPersistedRow>(line) else {
+                continue;
+            };
+            if now - row.last_seen_ts_unix > stale_after_secs {
+                continue;
+            }
+            let breaker = registry.breaker_for(&row.provider_id);
+            // Restore only the failure counter — never the Open
+            // state (per Phase 1 design note).
+            let mut g = breaker.lock();
+            g.consecutive_failures = row.consecutive_failures;
+            drop(g);
+            restored += 1;
+        }
+        Ok(restored)
+    }
+}
+
 /// One-shot RAII permit. Caller settles by calling `record_success`
 /// or `record_failure`. Dropping the permit without settling counts
 /// as a failure (conservative — a forgotten settle usually means the
@@ -587,6 +701,77 @@ mod tests {
             }
             other => panic!("expected Open after 5 drops, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn persist_snapshot_roundtrip_restores_failure_counter() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let r1 = BreakerRegistry::with_defaults();
+        // Drive one breaker to 3 failures.
+        let b = r1.breaker_for("openai");
+        for _ in 0..3 {
+            b.try_acquire().unwrap().record_failure();
+        }
+        assert_eq!(b.snapshot().consecutive_failures, 3);
+        let written = persist::snapshot_to_disk(dir.path(), &r1).unwrap();
+        assert_eq!(written, 1);
+        // Fresh registry: restore picks up the counter.
+        let r2 = BreakerRegistry::with_defaults();
+        let restored = persist::restore_from_disk(dir.path(), &r2, 86_400).unwrap();
+        assert_eq!(restored, 1);
+        let b2 = r2.breaker_for("openai");
+        assert_eq!(b2.snapshot().consecutive_failures, 3);
+        // State stays Closed even though pre-snapshot was approaching
+        // Open — restart-grace per Phase 1 design.
+        assert_eq!(b2.snapshot().state, BreakerState::Closed);
+    }
+
+    #[test]
+    fn persist_snapshot_skips_zero_failure_breakers() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let r = BreakerRegistry::with_defaults();
+        let _ = r.breaker_for("openai");
+        let _ = r.breaker_for("gemini");
+        let written = persist::snapshot_to_disk(dir.path(), &r).unwrap();
+        assert_eq!(written, 0, "no failure history → nothing persisted");
+    }
+
+    #[test]
+    fn persist_restore_missing_file_returns_zero() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let r = BreakerRegistry::with_defaults();
+        let restored = persist::restore_from_disk(dir.path(), &r, 86_400).unwrap();
+        assert_eq!(restored, 0);
+    }
+
+    #[test]
+    fn persist_skips_stale_rows() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        // Write a row with last_seen_ts_unix in the deep past.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let stale_row = BreakerPersistedRow {
+            provider_id: "stale_provider".into(),
+            consecutive_failures: 99,
+            last_seen_ts_unix: now - 86_400 * 30, // 30 days old
+        };
+        std::fs::create_dir_all(persist::dir(dir.path())).unwrap();
+        std::fs::write(
+            persist::state_file(dir.path()),
+            format!("{}\n", serde_json::to_string(&stale_row).unwrap()),
+        )
+        .unwrap();
+        let r = BreakerRegistry::with_defaults();
+        // stale_after = 7 days → 30-day row gets skipped.
+        let restored = persist::restore_from_disk(dir.path(), &r, 7 * 86_400).unwrap();
+        assert_eq!(restored, 0);
     }
 
     #[test]

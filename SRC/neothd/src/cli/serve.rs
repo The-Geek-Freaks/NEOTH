@@ -817,6 +817,29 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "models catalog refresh task spawned (K-Models-Discovery)"
     );
 
+    // ── QM-10 Phase 3 breaker state restore ────────────────────────────────
+    // Replay the failure counters from the prior daemon run so a
+    // flapping provider that built up failure history before
+    // shutdown doesn't get a clean slate after restart. Open
+    // state is intentionally NOT restored — a fresh boot should
+    // retry every provider once. Stale rows (older than 7 days)
+    // are skipped.
+    {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        match crate::providers::circuit_breaker::persist::restore_from_disk(
+            &home,
+            &crate::providers::circuit_breaker::GLOBAL,
+            7 * 86_400,
+        ) {
+            Ok(0) => {}
+            Ok(n) => info!(
+                providers = n,
+                "QM-10 Phase 3: restored circuit-breaker failure counters from prior run"
+            ),
+            Err(e) => warn!(error = %e, "breaker state restore failed (non-fatal)"),
+        }
+    }
+
     // ── OnSessionStart hooks (QM-15 follow-on) ─────────────────────────────
     // Fire operator-defined hooks at the `on_session_start` stage AFTER
     // all subsystems (WAL writer, indexer, channels, cron, models catalog
@@ -918,6 +941,25 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         info!("WAL writer death detected; aborting channels + exiting");
     } else {
         info!("shutdown signal received; aborting channels + draining WAL writer");
+    }
+
+    // ── QM-10 Phase 3 breaker state snapshot ───────────────────────────────
+    // Persist the current failure counters BEFORE the shutdown hooks
+    // fire so a restart-grace path sees the same state. Best-effort —
+    // a stuck disk doesn't block the shutdown sequence.
+    {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        match crate::providers::circuit_breaker::persist::snapshot_to_disk(
+            &home,
+            &crate::providers::circuit_breaker::GLOBAL,
+        ) {
+            Ok(0) => {}
+            Ok(n) => info!(
+                providers = n,
+                "QM-10 Phase 3: snapshotted circuit-breaker failure counters to disk"
+            ),
+            Err(e) => warn!(error = %e, "breaker state snapshot failed (non-fatal)"),
+        }
     }
 
     // ── OnShutdown hooks (Phase 29 R-15) ──────────────────────────────────
