@@ -46,6 +46,12 @@ pub mod registry;
 /// module doesn't touch secret-key material itself.
 pub mod mdns;
 
+/// Phase 3 Tailscale magic-DNS peer enumeration via
+/// `tailscale status --json` shell-out. Soft-fails when the
+/// Tailscale CLI isn't on PATH so operators not on a tailnet
+/// pay zero cost.
+pub mod tailscale;
+
 /// R-7 heartbeat wire protocol — per Chorus chat
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version

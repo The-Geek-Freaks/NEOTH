@@ -175,19 +175,55 @@ async fn run_discover(timeout_secs: u64) -> Result<()> {
         }
     }
     let _ = daemon.shutdown();
-    if seen.is_empty() {
+
+    // Phase 3 — Tailscale magic-DNS enumeration. Runs in parallel
+    // with the mDNS scan above; soft-fails when Tailscale CLI is
+    // missing so non-tailnet operators pay zero cost.
+    let ts_port = crate::cluster::tailscale::DEFAULT_NEOTH_LISTEN_PORT;
+    let ts_candidates = match crate::cluster::tailscale::enumerate(ts_port).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::info!(error = %e, "tailscale enumeration soft-failed");
+            Vec::new()
+        }
+    };
+
+    if seen.is_empty() && ts_candidates.is_empty() {
         println!("(no peers seen during scan window)");
     } else {
-        println!(
-            "{:<16} {:<24} {:<22}",
-            "pub_key", "label", "addr"
-        );
-        for (pub_key, (label, addr)) in &seen {
-            let key_short = &pub_key[..16.min(pub_key.len())];
-            println!("{:<16} {:<24} {:<22}", key_short, label, addr);
+        if !seen.is_empty() {
+            println!(
+                "{:<16} {:<24} {:<22} {:<10}",
+                "pub_key", "label", "addr", "via"
+            );
+            for (pub_key, (label, addr)) in &seen {
+                let key_short = &pub_key[..16.min(pub_key.len())];
+                println!(
+                    "{:<16} {:<24} {:<22} {:<10}",
+                    key_short, label, addr, "mdns"
+                );
+            }
+        }
+        if !ts_candidates.is_empty() {
+            if seen.is_empty() {
+                println!(
+                    "{:<16} {:<24} {:<22} {:<10}",
+                    "pub_key", "label", "addr", "via"
+                );
+            }
+            for cand in &ts_candidates {
+                println!(
+                    "{:<16} {:<24} {:<22} {:<10}",
+                    "(probe-only)", cand.host_name, cand.addr, "tailscale"
+                );
+            }
+            println!(
+                "\nNote: Tailscale candidates are TCP-probed only — they don't broadcast a pub_key. \
+                 Operator obtains the peer's pub_key out-of-band (e.g. peer runs `neoth identity show`)."
+            );
         }
         println!(
-            "\nRun `neoth cluster confirm <pub_key> --label <label> --addr <addr> --via mdns` \
+            "\nRun `neoth cluster confirm <pub_key> --label <label> --addr <addr> --via <mdns|tailscale>` \
              to add a peer (Phase 4 require-consent gate)."
         );
     }
