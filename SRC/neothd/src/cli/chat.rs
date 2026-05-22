@@ -589,11 +589,28 @@ pub async fn run_chat_with(
             )
             .await;
         }
+        // QM-10 Phase 2.5: streaming path also consults the breaker.
+        // Acquire BEFORE provider.stream so an Open breaker rejects
+        // the call without opening a stream we'd have to drain.
+        let stream_permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+            Ok(p) => Some(p),
+            Err(berr) => {
+                drop(writer);
+                let _ = writer_join.await;
+                return Err(anyhow::anyhow!(
+                    "provider `{provider_name}`: {berr}"
+                ));
+            }
+        };
+        let stream_call_started = std::time::Instant::now();
         // Streaming path: print each delta as it arrives, accumulate the
         // full response for the WAL PROVIDER_RESPONSE frame.
         let mut stream = match provider.stream(req).await {
             Ok(s) => s,
             Err(e) => {
+                if let Some(p) = stream_permit {
+                    p.record_failure();
+                }
                 if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
                     record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
                 }
@@ -617,6 +634,7 @@ pub async fn run_chat_with(
 
         use futures_util::stream::StreamExt;
         use std::io::Write as _;
+        let mut stream_error = false;
         while let Some(item) = stream.next().await {
             match item {
                 Ok(chunk) => {
@@ -634,11 +652,42 @@ pub async fn run_chat_with(
                     }
                 }
                 Err(e) => {
+                    stream_error = true;
+                    if let Some(p) = stream_permit {
+                        p.record_failure();
+                    }
                     warn!(error = %e, "stream chunk error");
                     drop(writer);
                     let _ = writer_join.await;
                     return Err(e);
                 }
+            }
+        }
+        if !stream_error {
+            if let Some(p) = stream_permit {
+                p.record_success();
+            }
+            // QM-9 Phase 1.5: persist a usage event for the
+            // streaming chat path. Best-effort I/O.
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
+            let cost = crate::providers::cost::actual_cost_usd(
+                provider_name,
+                &model_used,
+                input_tokens.unwrap_or(0),
+                output_tokens.unwrap_or(0),
+            );
+            if let Err(e) = crate::daemon::usage_log::record_now(
+                &home,
+                provider_name,
+                &model_used,
+                input_tokens.unwrap_or(0),
+                output_tokens.unwrap_or(0),
+                cost,
+                elapsed_ms,
+                true,
+            ) {
+                warn!(error = %e, "usage_log append failed on stream path (non-fatal)");
             }
         }
         // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
