@@ -645,20 +645,36 @@ fn check_usage_today(home: &Path) -> CheckOutcome {
             detail: "no calls in last 24h".to_string(),
         };
     }
-    let cap = freedom_daily_usd_cap(home);
-    let pct_of_cap = if cap > 0.0 {
-        (roll.total_cost_usd / cap) * 100.0
+    // Storage canonical stays USD; render in the operator's chosen
+    // currency. Cap stays a USD value (council.daily_usd_cap) so the
+    // gate is currency-stable across operator preference changes.
+    let cap_usd = freedom_daily_usd_cap(home);
+    let currency = crate::cli::usage::resolve_currency(home, None);
+    let pct_of_cap = if cap_usd > 0.0 {
+        (roll.total_cost_usd / cap_usd) * 100.0
     } else {
         0.0
     };
-    let detail = format!(
-        "{} calls (ok={}, err={}), ${:.4} ({:.0}% of ${:.2} cap)",
-        roll.total_call_count, roll.total_ok_count, roll.total_err_count,
-        roll.total_cost_usd, pct_of_cap, cap,
+    let cost_rendered = crate::providers::cost::format_amount(
+        crate::providers::cost::convert_from_usd(roll.total_cost_usd, currency),
+        currency,
     );
-    let status = if cap > 0.0 && roll.total_cost_usd >= cap {
+    let cap_rendered = crate::providers::cost::format_amount(
+        crate::providers::cost::convert_from_usd(cap_usd, currency),
+        currency,
+    );
+    let detail = format!(
+        "{} calls (ok={}, err={}), {} ({:.0}% of {} cap)",
+        roll.total_call_count,
+        roll.total_ok_count,
+        roll.total_err_count,
+        cost_rendered,
+        pct_of_cap,
+        cap_rendered,
+    );
+    let status = if cap_usd > 0.0 && roll.total_cost_usd >= cap_usd {
         CheckStatus::Warn
-    } else if cap > 0.0 && pct_of_cap >= 80.0 {
+    } else if cap_usd > 0.0 && pct_of_cap >= 80.0 {
         CheckStatus::Warn
     } else {
         CheckStatus::Pass

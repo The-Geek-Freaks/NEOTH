@@ -1036,9 +1036,56 @@ pub async fn run_chat_with(
                 model_for_estimate(&args, &config),
             )
         } else {
-            let completion = match provider.complete(req).await {
-                Ok(c) => c,
+            let call_started = std::time::Instant::now();
+            let result = provider.complete(req).await;
+            let elapsed_ms = call_started.elapsed().as_millis() as u64;
+            match result {
+                Ok(completion) => {
+                    // QM-9 Phase 1.5: persist a usage event for the
+                    // non-streaming chat path. Best-effort; warn on I/O
+                    // error so a stuck disk doesn't break the reply.
+                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    let cost = crate::providers::cost::actual_cost_usd(
+                        provider_name,
+                        &completion.model,
+                        completion.input_tokens.unwrap_or(0),
+                        completion.output_tokens.unwrap_or(0),
+                    );
+                    if let Err(e) = crate::daemon::usage_log::record_now(
+                        &home,
+                        provider_name,
+                        &completion.model,
+                        completion.input_tokens.unwrap_or(0),
+                        completion.output_tokens.unwrap_or(0),
+                        cost,
+                        elapsed_ms,
+                        true,
+                    ) {
+                        warn!(error = %e, "usage_log append failed (non-fatal)");
+                    }
+                    println!("{}", completion.text);
+                    (
+                        completion.text,
+                        completion.input_tokens,
+                        completion.output_tokens,
+                        completion.model,
+                    )
+                }
                 Err(e) => {
+                    // Record the failure too so the rollup distinguishes
+                    // ok-vs-err for the same provider.
+                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    let model = model_for_estimate(&args, &config);
+                    let _ = crate::daemon::usage_log::record_now(
+                        &home,
+                        provider_name,
+                        &model,
+                        0,
+                        0,
+                        0.0,
+                        elapsed_ms,
+                        false,
+                    );
                     if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
                         record_quota_exceeded(provider_name, qe, &quota_path, &writer).await;
                     }
@@ -1047,14 +1094,7 @@ pub async fn run_chat_with(
                     let _ = writer_join.await;
                     return Err(e);
                 }
-            };
-            println!("{}", completion.text);
-            (
-                completion.text,
-                completion.input_tokens,
-                completion.output_tokens,
-                completion.model,
-            )
+            }
         }
     };
 

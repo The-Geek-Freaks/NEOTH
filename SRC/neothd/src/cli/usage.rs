@@ -12,6 +12,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 
 use crate::daemon::usage_log::{aggregate, UsageRollup};
+use crate::providers::cost::{convert_from_usd, format_amount, Currency};
 
 /// CLI args for `neoth usage`.
 #[derive(Args, Debug, Clone)]
@@ -28,23 +29,52 @@ pub struct UsageArgs {
     /// Optional explicit end unix timestamp (overrides --days).
     #[arg(long)]
     pub until_unix: Option<i64>,
+    /// Display currency: USD (default) / EUR / GBP / CHF / JPY / CNY.
+    /// Storage canonical stays USD; this only affects the rendering.
+    /// Operator can also pin in `freedom.yaml::usage_currency`.
+    #[arg(long)]
+    pub currency: Option<String>,
 }
 
 /// Entry point for `Commands::Usage` dispatch.
 pub fn run(home: &Path, args: UsageArgs) -> Result<()> {
     let format = UsageFormat::parse(&args.format).unwrap_or(UsageFormat::Table);
+    let currency = resolve_currency(home, args.currency.as_deref());
     match (args.since_unix, args.until_unix) {
-        (Some(s), Some(u)) => run_usage_range(home, s, u, format),
+        (Some(s), Some(u)) => run_usage_range(home, s, u, format, currency),
         (Some(s), None) => {
             let now = now_unix()?;
-            run_usage_range(home, s, now, format)
+            run_usage_range(home, s, now, format, currency)
         }
         (None, Some(u)) => {
             let since = u - (args.days.max(1) as i64) * 86_400;
-            run_usage_range(home, since, u, format)
+            run_usage_range(home, since, u, format, currency)
         }
-        (None, None) => run_usage(home, args.days, format),
+        (None, None) => run_usage(home, args.days, format, currency),
     }
+}
+
+/// Resolve the display currency. Precedence:
+///   1. `--currency` flag (explicit operator override)
+///   2. `freedom.yaml::usage_currency`
+///   3. USD (default)
+pub fn resolve_currency(home: &Path, flag: Option<&str>) -> Currency {
+    if let Some(s) = flag {
+        if let Some(c) = Currency::parse(s) {
+            return c;
+        }
+    }
+    let path = home.join("freedom.yaml");
+    if let Ok(body) = std::fs::read_to_string(&path) {
+        if let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&body) {
+            if let Some(s) = val.get("usage_currency").and_then(|v| v.as_str()) {
+                if let Some(c) = Currency::parse(s) {
+                    return c;
+                }
+            }
+        }
+    }
+    Currency::default()
 }
 
 fn now_unix() -> Result<i64> {
@@ -72,7 +102,7 @@ impl UsageFormat {
 }
 
 /// Aggregate the usage window and render to stdout.
-pub fn run_usage(home: &Path, days: u32, format: UsageFormat) -> Result<()> {
+pub fn run_usage(home: &Path, days: u32, format: UsageFormat, currency: Currency) -> Result<()> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .with_context(|| "system clock before unix epoch")?
@@ -85,7 +115,7 @@ pub fn run_usage(home: &Path, days: u32, format: UsageFormat) -> Result<()> {
             println!("{body}");
         }
         UsageFormat::Table => {
-            print_table(&roll);
+            print_table(&roll, currency);
         }
     }
     Ok(())
@@ -97,6 +127,7 @@ pub fn run_usage_range(
     since_unix: i64,
     until_unix: i64,
     format: UsageFormat,
+    currency: Currency,
 ) -> Result<()> {
     let roll = aggregate(home, since_unix, until_unix);
     match format {
@@ -104,14 +135,15 @@ pub fn run_usage_range(
             let body = serde_json::to_string_pretty(&roll)?;
             println!("{body}");
         }
-        UsageFormat::Table => print_table(&roll),
+        UsageFormat::Table => print_table(&roll, currency),
     }
     Ok(())
 }
 
-fn print_table(roll: &UsageRollup) {
+fn print_table(roll: &UsageRollup, currency: Currency) {
+    let total_in_target = convert_from_usd(roll.total_cost_usd, currency);
     println!(
-        "Usage rollup [{} .. {}]  calls={} ok={} err={} in_tok={} out_tok={} cost=${:.4}",
+        "Usage rollup [{} .. {}]  calls={} ok={} err={} in_tok={} out_tok={} cost={}",
         roll.since_unix,
         roll.until_unix,
         roll.total_call_count,
@@ -119,26 +151,28 @@ fn print_table(roll: &UsageRollup) {
         roll.total_err_count,
         roll.total_input_tokens,
         roll.total_output_tokens,
-        roll.total_cost_usd,
+        format_amount(total_in_target, currency),
     );
     if roll.per_provider.is_empty() {
         println!("  (no events in window — check ~/.neoth/usage/)");
         return;
     }
+    let cost_col = format!("cost_{}", currency.code().to_lowercase());
     println!(
-        "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>10} {:>10}",
-        "provider", "calls", "ok", "err", "in_tok", "out_tok", "cost_usd", "mean_ms"
+        "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>12} {:>10}",
+        "provider", "calls", "ok", "err", "in_tok", "out_tok", cost_col, "mean_ms"
     );
     for p in &roll.per_provider {
+        let cost_in_target = convert_from_usd(p.cost_usd, currency);
         println!(
-            "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>10.4} {:>10.0}",
+            "{:<20} {:>6} {:>6} {:>6} {:>10} {:>10} {:>12} {:>10.0}",
             p.provider,
             p.call_count,
             p.ok_count,
             p.err_count,
             p.input_tokens,
             p.output_tokens,
-            p.cost_usd,
+            format_amount(cost_in_target, currency),
             p.mean_latency_ms,
         );
     }
@@ -165,8 +199,8 @@ mod tests {
     fn run_usage_with_empty_home_prints_zero_rollup_without_error() {
         // Smoke: shouldn't panic when there's no usage dir at all.
         let dir = tempdir().unwrap();
-        run_usage(dir.path(), 1, UsageFormat::Json).unwrap();
-        run_usage(dir.path(), 1, UsageFormat::Table).unwrap();
+        run_usage(dir.path(), 1, UsageFormat::Json, Currency::Usd).unwrap();
+        run_usage(dir.path(), 1, UsageFormat::Table, Currency::Eur).unwrap();
     }
 
     #[test]
@@ -188,8 +222,40 @@ mod tests {
             )
             .unwrap();
         }
-        // Both formats run to completion; we don't capture stdout here.
-        run_usage_range(dir.path(), 1_779_494_400, 1_779_494_700, UsageFormat::Json).unwrap();
-        run_usage_range(dir.path(), 0, i64::MAX, UsageFormat::Table).unwrap();
+        run_usage_range(
+            dir.path(),
+            1_779_494_400,
+            1_779_494_700,
+            UsageFormat::Json,
+            Currency::Usd,
+        )
+        .unwrap();
+        run_usage_range(
+            dir.path(),
+            0,
+            i64::MAX,
+            UsageFormat::Table,
+            Currency::Gbp,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn resolve_currency_flag_wins_over_freedom_yaml() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "usage_currency: EUR\n",
+        )
+        .unwrap();
+        assert_eq!(resolve_currency(dir.path(), Some("GBP")), Currency::Gbp);
+        assert_eq!(resolve_currency(dir.path(), None), Currency::Eur);
+        assert_eq!(resolve_currency(dir.path(), Some("invalid")), Currency::Eur);
+    }
+
+    #[test]
+    fn resolve_currency_defaults_to_usd_on_no_config() {
+        let dir = tempdir().unwrap();
+        assert_eq!(resolve_currency(dir.path(), None), Currency::Usd);
     }
 }

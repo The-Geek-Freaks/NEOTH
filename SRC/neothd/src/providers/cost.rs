@@ -120,6 +120,140 @@ pub fn lookup_price(provider: &str, model: &str) -> Option<PriceRow> {
     }
 }
 
+/// Display currencies the operator can request via
+/// `freedom.yaml::usage_currency` or `neoth usage --currency`.
+/// USD is the storage canonical (cloud providers quote in USD);
+/// other currencies are computed by FX conversion at display time.
+///
+/// FX rates are v0.1 fixed snapshots. Dynamic FX rotation is
+/// Phase 2 work — when it lands, this enum's variants stay
+/// stable but `rate_per_usd()` becomes a runtime lookup instead
+/// of a const match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Currency {
+    Usd,
+    Eur,
+    Gbp,
+    Chf,
+    Jpy,
+    Cny,
+}
+
+impl Currency {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_uppercase().as_str() {
+            "USD" | "US$" | "$" => Some(Self::Usd),
+            "EUR" | "€" => Some(Self::Eur),
+            "GBP" | "£" => Some(Self::Gbp),
+            "CHF" | "FR." => Some(Self::Chf),
+            "JPY" | "¥" => Some(Self::Jpy),
+            "CNY" | "RMB" => Some(Self::Cny),
+            _ => None,
+        }
+    }
+
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Usd => "USD",
+            Self::Eur => "EUR",
+            Self::Gbp => "GBP",
+            Self::Chf => "CHF",
+            Self::Jpy => "JPY",
+            Self::Cny => "CNY",
+        }
+    }
+
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Self::Usd => "$",
+            Self::Eur => "€",
+            Self::Gbp => "£",
+            Self::Chf => "Fr.",
+            Self::Jpy => "¥",
+            Self::Cny => "¥",
+        }
+    }
+
+    /// FX rate — 1 USD = N <currency>. Fixed v0.1 snapshot taken
+    /// 2026-05-22. Dynamic FX rotation lands in Phase 2; until
+    /// then operators expecting penny-perfect numbers should keep
+    /// the daemon in USD.
+    pub fn rate_per_usd(&self) -> f64 {
+        match self {
+            Self::Usd => 1.0,
+            Self::Eur => 0.92,
+            Self::Gbp => 0.79,
+            Self::Chf => 0.91,
+            Self::Jpy => 156.0,
+            Self::Cny => 7.25,
+        }
+    }
+}
+
+impl Default for Currency {
+    fn default() -> Self {
+        Self::Usd
+    }
+}
+
+impl std::fmt::Display for Currency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.code())
+    }
+}
+
+/// Convert a USD-denominated amount into `target`. Pure arithmetic.
+pub fn convert_from_usd(usd: f64, target: Currency) -> f64 {
+    usd * target.rate_per_usd()
+}
+
+/// Format a numeric amount with the right grouping for the currency.
+/// JPY + CNY conventionally render without fractional cents.
+pub fn format_amount(amount: f64, currency: Currency) -> String {
+    match currency {
+        Currency::Jpy | Currency::Cny => format!("{}{:.0}", currency.symbol(), amount),
+        _ => format!("{}{:.4}", currency.symbol(), amount),
+    }
+}
+
+/// Compute USD cost for an actually-completed call using the same
+/// price table as `predict()`. Unlike `predict()`, this takes the
+/// real token counts from the provider's `Completion` rather than
+/// estimating from the input. Returns `0.0` for unknown / free
+/// models — this is the post-hoc usage_log path (QM-9), not the
+/// pre-call permission gate that fails-closed on unknowns.
+///
+/// Storage canonical: USD. Operators who want other display
+/// currencies use `Currency::*` + `convert_from_usd` at the
+/// presentation layer.
+pub fn actual_cost_usd(provider: &str, model: &str, input_tokens: u32, output_tokens: u32) -> f64 {
+    let Some(price) = lookup_price(provider, model) else {
+        return 0.0;
+    };
+    // PriceRow holds EUR per Mtok with the 0.92 conversion baked in.
+    // Reverse the rate to recover USD per Mtok.
+    const EUR_TO_USD_INV: f64 = 1.0 / 0.92;
+    let input_usd_per_mtok = price.input_eur_per_mtok as f64 * EUR_TO_USD_INV;
+    let output_usd_per_mtok = price.output_eur_per_mtok as f64 * EUR_TO_USD_INV;
+    let input_usd = (input_tokens as f64 / 1_000_000.0) * input_usd_per_mtok;
+    let output_usd = (output_tokens as f64 / 1_000_000.0) * output_usd_per_mtok;
+    input_usd + output_usd
+}
+
+/// Convenience: compute the cost in any display currency in one call.
+pub fn actual_cost_in(
+    provider: &str,
+    model: &str,
+    input_tokens: u32,
+    output_tokens: u32,
+    currency: Currency,
+) -> f64 {
+    convert_from_usd(
+        actual_cost_usd(provider, model, input_tokens, output_tokens),
+        currency,
+    )
+}
+
 /// Predict the cost of a turn before dispatching the provider call.
 /// `input_text` is the assembled prompt + system; we count it via the
 /// 4-chars-per-token heuristic (matches tiktoken cl100k to within 5%
@@ -210,6 +344,89 @@ mod tests {
     #[test]
     fn lookup_price_unknown_provider_returns_none() {
         assert!(lookup_price("brand_new_provider_2026", "any-model").is_none());
+    }
+
+    #[test]
+    fn currency_parse_accepts_codes_and_symbols() {
+        assert_eq!(Currency::parse("USD"), Some(Currency::Usd));
+        assert_eq!(Currency::parse("usd"), Some(Currency::Usd));
+        assert_eq!(Currency::parse("$"), Some(Currency::Usd));
+        assert_eq!(Currency::parse("EUR"), Some(Currency::Eur));
+        assert_eq!(Currency::parse("€"), Some(Currency::Eur));
+        assert_eq!(Currency::parse("GBP"), Some(Currency::Gbp));
+        assert_eq!(Currency::parse("£"), Some(Currency::Gbp));
+        assert_eq!(Currency::parse("CHF"), Some(Currency::Chf));
+        assert_eq!(Currency::parse("JPY"), Some(Currency::Jpy));
+        assert_eq!(Currency::parse("CNY"), Some(Currency::Cny));
+        assert_eq!(Currency::parse("RMB"), Some(Currency::Cny));
+        assert_eq!(Currency::parse("brand-new-coin"), None);
+        assert_eq!(Currency::parse(""), None);
+    }
+
+    #[test]
+    fn currency_code_and_symbol_pinned() {
+        assert_eq!(Currency::Usd.code(), "USD");
+        assert_eq!(Currency::Usd.symbol(), "$");
+        assert_eq!(Currency::Eur.code(), "EUR");
+        assert_eq!(Currency::Eur.symbol(), "€");
+        assert_eq!(Currency::Gbp.symbol(), "£");
+        assert_eq!(Currency::Chf.symbol(), "Fr.");
+        assert_eq!(Currency::Jpy.symbol(), "¥");
+    }
+
+    #[test]
+    fn currency_default_is_usd() {
+        assert_eq!(Currency::default(), Currency::Usd);
+    }
+
+    #[test]
+    fn convert_from_usd_uses_pinned_rates() {
+        // 1 USD → exactly 1 USD.
+        assert!((convert_from_usd(1.0, Currency::Usd) - 1.0).abs() < f64::EPSILON);
+        // 100 USD → 92 EUR.
+        assert!((convert_from_usd(100.0, Currency::Eur) - 92.0).abs() < 0.01);
+        // 100 USD → 79 GBP.
+        assert!((convert_from_usd(100.0, Currency::Gbp) - 79.0).abs() < 0.01);
+        // 1 USD → 156 JPY (Yen has no cents).
+        assert!((convert_from_usd(1.0, Currency::Jpy) - 156.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn format_amount_yen_has_no_cents() {
+        // Use values that aren't half-to-even rounding edge cases.
+        assert_eq!(format_amount(1234.7, Currency::Jpy), "¥1235");
+        assert_eq!(format_amount(1234.7, Currency::Cny), "¥1235");
+        assert_eq!(format_amount(1234.2, Currency::Jpy), "¥1234");
+        // Other currencies keep 4 decimals (cost values are often
+        // < $0.01 for cheap models — full precision matters).
+        let usd = format_amount(1.2345, Currency::Usd);
+        assert!(usd.starts_with('$'));
+        assert!(usd.contains("1.234"));
+    }
+
+    #[test]
+    fn actual_cost_usd_matches_known_rates() {
+        // gpt-4o: $5 in, $15 out per Mtok. 100 + 50 tokens →
+        // (100/1M)*5 + (50/1M)*15 = 0.0005 + 0.00075 = 0.00125.
+        let c = actual_cost_usd("openai_api", "gpt-4o", 100, 50);
+        assert!((c - 0.00125).abs() < 1e-6, "got {c}");
+    }
+
+    #[test]
+    fn actual_cost_in_eur_equals_usd_times_rate() {
+        let usd = actual_cost_usd("openai_api", "gpt-4o", 100, 50);
+        let eur = actual_cost_in("openai_api", "gpt-4o", 100, 50, Currency::Eur);
+        assert!((eur - usd * 0.92).abs() < 1e-6);
+    }
+
+    #[test]
+    fn actual_cost_unknown_model_returns_zero() {
+        // Post-hoc usage_log path returns 0 for unknown models.
+        // The pre-call gate is the one that fails closed.
+        assert_eq!(
+            actual_cost_usd("brand-new-cloud", "future-model", 1_000_000, 1_000_000),
+            0.0
+        );
     }
 
     #[test]
