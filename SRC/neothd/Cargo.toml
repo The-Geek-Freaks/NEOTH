@@ -150,6 +150,11 @@ tempfile = "3"
 # `Arc<AsyncConnection>` into the channel pipeline handler.
 tokio-rusqlite = "0.5"
 
+# Cluster auto-discovery Phase 2 (R-2 SPEC):
+# mDNS service announcer + listener. Pure-Rust, no system zeroconf
+# daemon required. Cross-platform (Windows / macOS / Linux).
+mdns-sd = "0.11"
+
 # Pick #36 (Session 14, Agent #4 design-consensus): lock-free atomic
 # pointer swaps for hot-reloadable config. `FreedomConfig` lives
 # behind `Arc<ArcSwap<FreedomConfig>>`; every `.load()` is lock-free

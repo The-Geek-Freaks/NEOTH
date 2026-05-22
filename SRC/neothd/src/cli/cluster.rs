@@ -45,12 +45,24 @@ pub enum ClusterAction {
     /// SPEC `cluster_auto_discovery` Phase 4: list confirmed peers
     /// from `~/.neoth/cluster.yaml`.
     List,
+    /// SPEC Phase 2 mDNS scan — spawn the `mdns-sd` daemon for
+    /// `--timeout` seconds, print every authenticated announce
+    /// the listener sees. Does NOT write to cluster.yaml — use
+    /// `neoth cluster confirm <pub_key>` after reviewing the
+    /// output.
+    Discover {
+        /// How long the scan runs before printing the final
+        /// summary. Default 10s — long enough for one
+        /// announce cycle from typical-cadence peers.
+        #[arg(long, default_value_t = 10)]
+        timeout: u64,
+    },
     /// Confirm a discovered peer + add to the registry. Phase 4
     /// of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface
     /// candidates; this command writes them in atomically.
     Confirm {
-        /// 64-char lowercase-hex of the peer's pub key, OR a
-        /// unique prefix.
+        /// 64-char lowercase-hex of the peer's pub key. Strict
+        /// validation: must be exactly 64 chars of [0-9a-f].
         pub_key: String,
         /// Operator-readable label. Required at confirm time;
         /// Phase 2 announces will refresh it.
@@ -75,11 +87,30 @@ pub enum ClusterAction {
     Disable,
 }
 
+/// Strict validation: 64-char lowercase hex. Phase 4 architect
+/// verdict pinned this — confirm shouldn't accept arbitrary
+/// strings.
+pub fn validate_pub_key_hex(s: &str) -> Result<()> {
+    if s.len() != 64 {
+        anyhow::bail!(
+            "pub_key must be exactly 64 hex chars (got {} chars)",
+            s.len()
+        );
+    }
+    if !s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
+        anyhow::bail!(
+            "pub_key must be lowercase hex [0-9a-f]; got a char outside that range"
+        );
+    }
+    Ok(())
+}
+
 pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
     match args.action {
         ClusterAction::Status => run_status(&args.output),
         ClusterAction::Plan { peers, policy } => run_plan(&peers, policy.as_deref(), &args.output),
         ClusterAction::List => run_list(),
+        ClusterAction::Discover { timeout } => run_discover(timeout).await,
         ClusterAction::Confirm {
             pub_key,
             label,
@@ -92,11 +123,85 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
     }
 }
 
+async fn run_discover(timeout_secs: u64) -> Result<()> {
+    println!(
+        "scanning for NEOTH peers via mDNS for {timeout_secs}s on {}…",
+        crate::cluster::mdns::DEFAULT_SERVICE_TYPE
+    );
+    let daemon = mdns_sd::ServiceDaemon::new()
+        .map_err(|e| anyhow::anyhow!("mdns daemon: {e}"))?;
+    let receiver = daemon
+        .browse(crate::cluster::mdns::DEFAULT_SERVICE_TYPE)
+        .map_err(|e| anyhow::anyhow!("mdns browse: {e}"))?;
+    let deadline =
+        tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1));
+    let mut seen: std::collections::HashMap<String, (String, String)> = Default::default();
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            break;
+        }
+        let remaining = deadline - now;
+        match tokio::time::timeout(remaining, async {
+            receiver.recv_async().await.ok()
+        })
+        .await
+        {
+            Ok(Some(event)) => {
+                if let mdns_sd::ServiceEvent::ServiceResolved(info) = event {
+                    let txt: std::collections::HashMap<String, String> = info
+                        .get_properties()
+                        .iter()
+                        .map(|p| (p.key().to_string(), p.val_str().to_string()))
+                        .collect();
+                    let label = txt
+                        .get("label")
+                        .cloned()
+                        .unwrap_or_else(|| info.get_fullname().to_string());
+                    let pubkey = txt.get("pubkey").cloned().unwrap_or_default();
+                    let port = info.get_port();
+                    let addr_line = info
+                        .get_addresses()
+                        .iter()
+                        .next()
+                        .map(|a| format!("{a}:{port}"))
+                        .unwrap_or_else(|| format!("(no addr):{port}"));
+                    if !pubkey.is_empty() {
+                        seen.insert(pubkey, (label, addr_line));
+                    }
+                }
+            }
+            _ => break,
+        }
+    }
+    let _ = daemon.shutdown();
+    if seen.is_empty() {
+        println!("(no peers seen during scan window)");
+    } else {
+        println!(
+            "{:<16} {:<24} {:<22}",
+            "pub_key", "label", "addr"
+        );
+        for (pub_key, (label, addr)) in &seen {
+            let key_short = &pub_key[..16.min(pub_key.len())];
+            println!("{:<16} {:<24} {:<22}", key_short, label, addr);
+        }
+        println!(
+            "\nRun `neoth cluster confirm <pub_key> --label <label> --addr <addr> --via mdns` \
+             to add a peer (Phase 4 require-consent gate)."
+        );
+    }
+    Ok(())
+}
+
 fn run_list() -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let reg = crate::cluster::registry::load(&home)?;
     if reg.peers.is_empty() {
-        println!("(no confirmed cluster peers — run `neoth cluster discover` to find some)");
+        println!(
+            "(no confirmed cluster peers — run `neoth cluster discover` for an mDNS scan, \
+             then `neoth cluster confirm <pub_key>` to add a peer)"
+        );
         return Ok(());
     }
     println!(
@@ -118,8 +223,16 @@ fn run_list() -> Result<()> {
 
 fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> {
     let pub_key_norm = pub_key.trim().to_ascii_lowercase();
-    if pub_key_norm.is_empty() {
-        anyhow::bail!("pub_key required (64-char hex or unique prefix)");
+    // Strict validation per Phase 4 audit: 64-char lowercase hex.
+    // Prefix matching is reserved for `revoke` where we have a
+    // candidate set to disambiguate against; `confirm` writes a
+    // new entry so the full key MUST be present.
+    validate_pub_key_hex(&pub_key_norm)?;
+    if label.trim().is_empty() {
+        anyhow::bail!("--label required (operator-readable instance name)");
+    }
+    if let Err(e) = addr.trim().parse::<std::net::SocketAddr>() {
+        anyhow::bail!("--addr must parse as SocketAddr (host:port): {e}");
     }
     let via_enum = match via.trim().to_ascii_lowercase().as_str() {
         "mdns" => crate::cluster::discovery::DiscoveryVia::Mdns,
@@ -349,6 +462,45 @@ fn parse_peers(spec: &str) -> Result<Vec<PeerLoad>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_pub_key_hex_accepts_64_lowercase_hex() {
+        let ok = "0".repeat(64);
+        assert!(validate_pub_key_hex(&ok).is_ok());
+        let ok = "ab".repeat(32);
+        assert!(validate_pub_key_hex(&ok).is_ok());
+        let ok = format!("{}{}", "deadbeef".repeat(7), "fedcba98");
+        assert!(validate_pub_key_hex(&ok).is_ok());
+    }
+
+    #[test]
+    fn validate_pub_key_hex_rejects_wrong_length() {
+        // Too short.
+        assert!(validate_pub_key_hex("ab").is_err());
+        // Too long.
+        assert!(validate_pub_key_hex(&"a".repeat(65)).is_err());
+        // Empty.
+        assert!(validate_pub_key_hex("").is_err());
+    }
+
+    #[test]
+    fn validate_pub_key_hex_rejects_uppercase() {
+        // Strict lowercase — operator copy-paste from `gh api` etc.
+        // sometimes uppercases; we want to surface the formatting
+        // bug at validate time.
+        let upper = "AB".repeat(32);
+        assert!(validate_pub_key_hex(&upper).is_err());
+    }
+
+    #[test]
+    fn validate_pub_key_hex_rejects_non_hex_chars() {
+        let mut bad = "a".repeat(62);
+        bad.push_str("xy");
+        assert!(validate_pub_key_hex(&bad).is_err());
+        // Whitespace inside also rejected (caller trims first).
+        let with_space = format!("{}  {}", "a".repeat(31), "b".repeat(31));
+        assert!(validate_pub_key_hex(&with_space).is_err());
+    }
 
     #[test]
     fn parse_peers_returns_empty_on_blank() {

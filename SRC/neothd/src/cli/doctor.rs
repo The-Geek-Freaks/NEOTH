@@ -814,9 +814,7 @@ fn check_circuit_breakers(_home: &Path) -> CheckOutcome {
         ));
     }
     let detail = parts.join("; ");
-    let status = if any_open {
-        CheckStatus::Warn
-    } else if any_half_open {
+    let status = if any_open || any_half_open {
         CheckStatus::Warn
     } else {
         CheckStatus::Pass
@@ -874,13 +872,12 @@ fn check_usage_today(home: &Path) -> CheckOutcome {
         pct_of_cap,
         cap_rendered,
     );
-    let status = if cap_usd > 0.0 && roll.total_cost_usd >= cap_usd {
-        CheckStatus::Warn
-    } else if cap_usd > 0.0 && pct_of_cap >= 80.0 {
-        CheckStatus::Warn
-    } else {
-        CheckStatus::Pass
-    };
+    let status =
+        if cap_usd > 0.0 && (roll.total_cost_usd >= cap_usd || pct_of_cap >= 80.0) {
+            CheckStatus::Warn
+        } else {
+            CheckStatus::Pass
+        };
     CheckOutcome {
         name: "usage today",
         status,

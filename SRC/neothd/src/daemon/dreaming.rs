@@ -195,7 +195,7 @@ pub fn seed_with_dreams(
             }
         }
     }
-    all.sort_by(|a, b| b.composed_ts_unix.cmp(&a.composed_ts_unix));
+    all.sort_by_key(|d| std::cmp::Reverse(d.composed_ts_unix));
     all.truncate(max_hits);
     all
 }

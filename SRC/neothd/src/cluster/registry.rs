@@ -273,7 +273,7 @@ mod tests {
         assert!(is_paired(dir.path(), "dead"));
         assert!(is_paired(
             dir.path(),
-            &"dead0000000000000000000000000000000000000000000000000000000000".to_string()
+            "dead0000000000000000000000000000000000000000000000000000000000"
         ));
         assert!(!is_paired(dir.path(), "beef"));
     }

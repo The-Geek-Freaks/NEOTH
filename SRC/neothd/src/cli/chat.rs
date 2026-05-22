@@ -1867,7 +1867,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         let raw = self.provider.complete(req).await;
         let elapsed_ms = call_started.elapsed().as_millis() as u64;
         let home = crate::config::FreedomConfig::default_neoth_home();
-        let result = match raw {
+        match raw {
             Ok(c) => {
                 if let Some(p) = permit {
                     p.record_success();
@@ -1910,8 +1910,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 );
                 Err(e.to_string())
             }
-        };
-        result
+        }
     }
     /// E-2 Phase 2 (Session 13) — recursive sub-council override.
     /// Pick #19 (Session 14 F6) — budget-aware path. Delegates to

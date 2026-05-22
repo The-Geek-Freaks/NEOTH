@@ -40,6 +40,12 @@ pub mod discovery;
 /// announce.
 pub mod registry;
 
+/// Phase 2 mDNS announcer + listener — `_neoth._udp.local.`
+/// service, cross-platform via `mdns-sd` crate. Identity surface
+/// (`MdnsIdentity`) carries the pre-signed authenticator so this
+/// module doesn't touch secret-key material itself.
+pub mod mdns;
+
 /// R-7 heartbeat wire protocol — per Chorus chat
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version
