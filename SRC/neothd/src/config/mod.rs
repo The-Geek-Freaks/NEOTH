@@ -41,6 +41,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 pub mod credentials;
+pub mod presets;
 
 use crate::cli::init::{OperatorRole, ProviderKind};
 use crate::secret::SecretString;

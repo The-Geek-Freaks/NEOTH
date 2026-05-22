@@ -49,6 +49,7 @@ pub mod models;
 pub mod obsidian;
 pub mod obsidian_sync_task;
 pub mod permissions;
+pub mod preset;
 pub mod privacy;
 pub mod profile;
 pub mod providers;
@@ -516,6 +517,12 @@ pub enum Commands {
     /// explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`.
     Usage(usage::UsageArgs),
 
+    /// QM-8 Phase 1: named provider+config preset bundles.
+    /// `list` enumerates saved bundles; `show <name>` dumps one; `activate
+    /// <name>` marks a bundle active; `deactivate` clears the marker;
+    /// `delete <name>` removes (idempotent). Source: `~/.neoth/presets.yaml`.
+    Preset(preset::PresetArgs),
+
     /// LLM provider catalogue (C-1 Session 13). `list` enumerates all
     /// supported `InferenceProvider` variants + their implementation
     /// status + the OpenAI-compatible endpoint examples that the
@@ -825,6 +832,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Usage(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();
             usage::run(&home, args)?;
+        }
+        Commands::Preset(args) => {
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            preset::run(&home, args)?;
         }
         Commands::Channel { action } => {
             let _ = action;
