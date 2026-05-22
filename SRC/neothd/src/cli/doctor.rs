@@ -649,7 +649,115 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_circuit_breakers(home),
         check_channel_flapping(home),
         check_cluster_registry(home),
+        check_cluster_mdns_announcer(home),
     ]
+}
+
+/// Cluster mDNS announcer state — surfaces whether the announcer
+/// would actually broadcast on the current network. Composes the
+/// Q2-ratified `policy::gate_discover` verdict with the paired-peer
+/// count so the check stays quiet for single-instance operators
+/// and only warns when the operator HAS paired peers but the
+/// announcer is silenced by SSID gating.
+fn check_cluster_mdns_announcer(home: &Path) -> CheckOutcome {
+    let freedom_path = home.join("freedom.yaml");
+    let (mdns_enabled, policy) =
+        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+    let ssid = crate::cluster::policy::current_ssid();
+    let peer_count = crate::cluster::registry::load(home)
+        .map(|r| r.peers.len())
+        .unwrap_or(0);
+    evaluate_announcer_state(mdns_enabled, &policy, ssid.as_deref(), peer_count)
+}
+
+/// Pure decision matrix for [`check_cluster_mdns_announcer`].
+///
+/// PASS paths (silent / informational):
+///   - announcer disabled by operator (`mdns.enabled = false`)
+///   - announcer policy yields Yes — running on current network
+///   - announcer would skip, but operator has no paired peers
+///     (single-instance — nothing to broadcast to anyway)
+///
+/// WARN paths (operator has paired peers AND announcer is silent):
+///   - UntrustedSsid: peers won't find this host on the current SSID
+///   - SsidUnknown: peers won't find this host on wired/VPN/headless
+///
+/// Each WARN carries the actionable fix (add SSID to trusted list,
+/// flip `announce_on_untrusted_wifi`, or pair via Tailscale).
+fn evaluate_announcer_state(
+    mdns_enabled: bool,
+    policy: &crate::cluster::policy::AnnouncePolicy,
+    current_ssid: Option<&str>,
+    paired_peers: usize,
+) -> CheckOutcome {
+    use crate::cluster::policy::{gate_discover, DiscoverGate, NoReason};
+    let name = "cluster mDNS announcer";
+    match gate_discover(mdns_enabled, policy, current_ssid) {
+        DiscoverGate::Proceed => {
+            let ssid_label = current_ssid
+                .map(|s| format!("SSID `{s}`"))
+                .unwrap_or_else(|| {
+                    "any-network (announce_on_untrusted_wifi = true)".to_string()
+                });
+            CheckOutcome {
+                name,
+                status: CheckStatus::Pass,
+                detail: format!(
+                    "announcer would run on {ssid_label} — {paired_peers} paired peer(s)"
+                ),
+            }
+        }
+        DiscoverGate::SkipWith(NoReason::Disabled) => CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: "announcer disabled (cluster.mdns.enabled = false)".to_string(),
+        },
+        DiscoverGate::SkipWith(NoReason::UntrustedSsid) => {
+            let ssid_label = current_ssid.unwrap_or("<unknown>");
+            if paired_peers == 0 {
+                CheckOutcome {
+                    name,
+                    status: CheckStatus::Pass,
+                    detail: format!(
+                        "announcer silent on SSID `{ssid_label}` (not in trusted list, \
+                         no paired peers — single-instance)"
+                    ),
+                }
+            } else {
+                CheckOutcome {
+                    name,
+                    status: CheckStatus::Warn,
+                    detail: format!(
+                        "announcer silent on SSID `{ssid_label}` — {paired_peers} paired \
+                         peer(s) won't find this host. Fix: add SSID to \
+                         `cluster.policy.trusted_ssids` in freedom.yaml, OR pair via \
+                         Tailscale (tailnet bypasses SSID gate)."
+                    ),
+                }
+            }
+        }
+        DiscoverGate::SkipWith(NoReason::SsidUnknown) => {
+            if paired_peers == 0 {
+                CheckOutcome {
+                    name,
+                    status: CheckStatus::Pass,
+                    detail: "announcer silent — no SSID (wired/VPN) + no paired peers"
+                        .to_string(),
+                }
+            } else {
+                CheckOutcome {
+                    name,
+                    status: CheckStatus::Warn,
+                    detail: format!(
+                        "announcer silent — no SSID detected (wired/VPN/headless); \
+                         {paired_peers} paired peer(s) won't find this host via mDNS. \
+                         Fix: set `cluster.policy.announce_on_untrusted_wifi: true` \
+                         in freedom.yaml, OR pair via Tailscale."
+                    ),
+                }
+            }
+        }
+    }
 }
 
 /// Cluster registry surface — Phase 4 doctor entry. Reads
@@ -2093,6 +2201,127 @@ mod tests {
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("stale"));
         assert!(outcome.detail.contains("old-laptop"));
+    }
+
+    // ── check_cluster_mdns_announcer (Bite #2) ─────────────────────────
+
+    fn open_announce_policy() -> crate::cluster::policy::AnnouncePolicy {
+        crate::cluster::policy::AnnouncePolicy {
+            announce_on_untrusted_wifi: true,
+            trusted_ssids: vec![],
+        }
+    }
+
+    fn strict_announce_policy() -> crate::cluster::policy::AnnouncePolicy {
+        crate::cluster::policy::AnnouncePolicy {
+            announce_on_untrusted_wifi: false,
+            trusted_ssids: vec!["home-wifi".into()],
+        }
+    }
+
+    #[test]
+    fn mdns_announcer_pass_when_disabled() {
+        let outcome = evaluate_announcer_state(
+            false,
+            &open_announce_policy(),
+            Some("anything"),
+            0,
+        );
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("disabled"));
+    }
+
+    #[test]
+    fn mdns_announcer_pass_when_proceed_with_ssid() {
+        let outcome = evaluate_announcer_state(
+            true,
+            &strict_announce_policy(),
+            Some("home-wifi"),
+            2,
+        );
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("home-wifi"));
+        assert!(outcome.detail.contains("2 paired"));
+    }
+
+    #[test]
+    fn mdns_announcer_pass_when_open_policy_any_network() {
+        let outcome = evaluate_announcer_state(
+            true,
+            &open_announce_policy(),
+            None,
+            0,
+        );
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        // Open policy → SsidUnknown path collapses to Proceed via gate;
+        // detail uses the any-network label.
+        assert!(outcome.detail.contains("any-network"));
+    }
+
+    #[test]
+    fn mdns_announcer_pass_when_untrusted_ssid_but_no_peers() {
+        let outcome = evaluate_announcer_state(
+            true,
+            &strict_announce_policy(),
+            Some("coffee-shop"),
+            0,
+        );
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("single-instance"));
+        assert!(outcome.detail.contains("coffee-shop"));
+    }
+
+    #[test]
+    fn mdns_announcer_warn_when_untrusted_ssid_with_peers() {
+        let outcome = evaluate_announcer_state(
+            true,
+            &strict_announce_policy(),
+            Some("coffee-shop"),
+            3,
+        );
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("coffee-shop"));
+        assert!(outcome.detail.contains("3 paired"));
+        assert!(outcome.detail.contains("trusted_ssids"));
+    }
+
+    #[test]
+    fn mdns_announcer_pass_when_ssid_unknown_and_no_peers() {
+        let outcome = evaluate_announcer_state(
+            true,
+            &strict_announce_policy(),
+            None,
+            0,
+        );
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("no paired peers"));
+    }
+
+    #[test]
+    fn mdns_announcer_warn_when_ssid_unknown_with_peers() {
+        let outcome = evaluate_announcer_state(
+            true,
+            &strict_announce_policy(),
+            None,
+            1,
+        );
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("wired"));
+        assert!(outcome.detail.contains("1 paired"));
+        assert!(outcome.detail.contains("announce_on_untrusted_wifi"));
+    }
+
+    #[test]
+    fn mdns_announcer_check_via_home_does_not_panic() {
+        // End-to-end smoke for the home-reading wrapper: missing
+        // freedom.yaml + missing cluster.yaml → safe defaults +
+        // ssid lookup might return either None or Some depending
+        // on the test host. Must not panic.
+        let dir = tempdir().unwrap();
+        let outcome = check_cluster_mdns_announcer(dir.path());
+        assert_eq!(outcome.name, "cluster mDNS announcer");
+        // Status is platform-dependent (host SSID may match nothing
+        // in the default trusted list); we only pin that it ran.
     }
 
     #[test]
