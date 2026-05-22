@@ -58,6 +58,17 @@ impl EdgeKind {
     }
 }
 
+/// Comment family the strip pre-pass should apply. Default = C-family
+/// which covers the vast majority of NEOTH's input languages; callers
+/// who already know the file is Python / Shell / Ruby / YAML / TOML
+/// flip to `HashFamily` to get `#`-comment stripping.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CommentFamily {
+    #[default]
+    CFamily,
+    HashFamily,
+}
+
 /// One file's worth of input: the symbols extracted by
 /// `symbols::extract_symbols` + the original source text the
 /// extractor saw. The graph builder needs both — symbols mark the
@@ -67,6 +78,41 @@ pub struct FileInput {
     pub file_path: String,
     pub source: String,
     pub symbols: Vec<Symbol>,
+    /// QM-2 Phase 2.5: comment family for the strip pre-pass.
+    /// Defaults to C-family — Python / Shell / Ruby callers
+    /// flip to HashFamily for accurate `#`-comment stripping.
+    #[doc(hidden)]
+    pub comment_family: CommentFamily,
+}
+
+impl FileInput {
+    /// Convenience constructor that defaults `comment_family` to
+    /// C-family. Tests using inline source literals don't need to
+    /// know the strip variant exists.
+    pub fn c_family(file_path: impl Into<String>, source: impl Into<String>, symbols: Vec<Symbol>) -> Self {
+        Self {
+            file_path: file_path.into(),
+            source: source.into(),
+            symbols,
+            comment_family: CommentFamily::CFamily,
+        }
+    }
+
+    /// Convenience constructor for Python / Shell / Ruby / YAML /
+    /// TOML / Perl sources — flips the strip pre-pass to handle
+    /// `#`-comments + triple-quoted strings.
+    pub fn hash_family(
+        file_path: impl Into<String>,
+        source: impl Into<String>,
+        symbols: Vec<Symbol>,
+    ) -> Self {
+        Self {
+            file_path: file_path.into(),
+            source: source.into(),
+            symbols,
+            comment_family: CommentFamily::HashFamily,
+        }
+    }
 }
 
 /// Adjacency-list graph. Cloning is cheap because the underlying
@@ -127,7 +173,10 @@ impl CallGraph {
         for f in files {
             let mut symbols_sorted = f.symbols.clone();
             symbols_sorted.sort_by_key(|s| s.line);
-            let stripped_source = strip_comments_and_strings_c_family(&f.source);
+            let stripped_source = match f.comment_family {
+                CommentFamily::CFamily => strip_comments_and_strings_c_family(&f.source),
+                CommentFamily::HashFamily => strip_comments_and_strings_hash_family(&f.source),
+            };
             for (i, s) in symbols_sorted.iter().enumerate() {
                 let start_line = s.line as usize;
                 let end_line = symbols_sorted
@@ -286,10 +335,6 @@ fn file_slice(src: &str, start_line: usize, end_line: usize) -> String {
 /// natural-language commentary or sample-data strings. Pure C-family
 /// rules (`//` to EOL + `/* … */` block + `"…"` + `'…'`) cover
 /// Rust / C / C++ / JS / TS / Go / Java / Kotlin / Swift / Scala.
-/// Python / Shell / Ruby (`#`-comments + triple-quoted strings) are
-/// the v0.2 follow-up; Python sources today still get false
-/// positives but the regex extractor only marks a small set of
-/// files as Python anyway.
 ///
 /// Pure function — tested in isolation. Quotation chars + comment
 /// markers themselves remain in the output so line numbering is
@@ -380,6 +425,97 @@ pub fn strip_comments_and_strings_c_family(src: &str) -> String {
     String::from_utf8(out).unwrap_or_else(|_| src.to_string())
 }
 
+/// QM-2 Phase 2.5: strip `#`-comments + `"…"` / `'…'` + triple-
+/// quoted strings (`"""…"""`, `'''…'''`) from Python / Shell /
+/// Ruby / YAML / TOML / Perl sources. Same line-preservation
+/// contract as the C-family variant — one byte → one space
+/// (or newline) so the body-segmentation slice stays correct.
+///
+/// Heuristic limitation v0.2.5: a `#` inside a string literal
+/// IS recognised (string scan precedes comment scan in the
+/// state machine). A `#` followed by code on the same line
+/// (Ruby `#{interpolation}`) gets neutralised — acceptable for
+/// the call-graph use case since neutralising over-strips
+/// (false negatives) rather than under-strips (false positives).
+pub fn strip_comments_and_strings_hash_family(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        // Triple-quoted strings — """ … """ or ''' … '''.
+        if (c == b'"' || c == b'\'')
+            && bytes.get(i + 1) == Some(&c)
+            && bytes.get(i + 2) == Some(&c)
+        {
+            out.push(c);
+            out.push(c);
+            out.push(c);
+            i += 3;
+            while i + 2 < bytes.len()
+                && !(bytes[i] == c && bytes[i + 1] == c && bytes[i + 2] == c)
+            {
+                if bytes[i] == b'\n' {
+                    out.push(b'\n');
+                } else {
+                    out.push(b' ');
+                }
+                i += 1;
+            }
+            if i + 2 < bytes.len() {
+                out.push(c);
+                out.push(c);
+                out.push(c);
+                i += 3;
+            }
+            continue;
+        }
+        // Single-quoted string "…" or '…'.
+        if c == b'"' || c == b'\'' {
+            let quote = c;
+            out.push(quote);
+            i += 1;
+            while i < bytes.len() && bytes[i] != quote {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    out.push(b' ');
+                    out.push(b' ');
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'\n' {
+                    out.push(b'\n');
+                    break;
+                } else {
+                    out.push(b' ');
+                }
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == quote {
+                out.push(quote);
+                i += 1;
+            }
+            continue;
+        }
+        // # comment to EOL.
+        if c == b'#' {
+            out.push(b'#');
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                if bytes[i].is_ascii_whitespace() {
+                    out.push(bytes[i]);
+                } else {
+                    out.push(b' ');
+                }
+                i += 1;
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
+}
+
 /// True when `body` contains `<name>(` as a callsite. Word-boundary
 /// is approximated by requiring the previous char (when present)
 /// to be a non-identifier char (so `foo_bar(` is matched but
@@ -414,11 +550,16 @@ mod tests {
 
     fn rust_file(path: &str, src: &str) -> FileInput {
         let syms = crate::code_map::symbols::extract_symbols(src, Language::Rust);
-        FileInput {
-            file_path: path.to_string(),
-            source: src.to_string(),
-            symbols: syms,
-        }
+        FileInput::c_family(path, src, syms)
+    }
+
+    fn python_file(path: &str, src: &str) -> FileInput {
+        // Python regex extractor exists in symbols::extract_symbols too —
+        // for the QM-2 Phase 2.5 test we just need the comment family
+        // to flip; the symbols can come from the Rust extractor since
+        // the test inputs are syntactically compatible.
+        let syms = crate::code_map::symbols::extract_symbols(src, Language::Python);
+        FileInput::hash_family(path, src, syms)
     }
 
     #[test]
@@ -615,6 +756,61 @@ fn caller() {
         // Function names + braces survive.
         assert!(stripped.contains("fn a"));
         assert!(stripped.contains("fn b"));
+    }
+
+    #[test]
+    fn strip_hash_family_removes_pound_comment() {
+        let src = "def foo():\n    pass  # call foo() here doesn't count\n";
+        let stripped = strip_comments_and_strings_hash_family(src);
+        assert!(stripped.contains("def foo"));
+        // The "foo()" reference inside the comment gets neutralised.
+        assert!(!stripped.contains("foo() here"));
+        assert_eq!(src.lines().count(), stripped.lines().count());
+    }
+
+    #[test]
+    fn strip_hash_family_removes_triple_quoted_docstring() {
+        let src = "def foo():\n    \"\"\"docstring mentions foo() but isn't a call\"\"\"\n    pass\n";
+        let stripped = strip_comments_and_strings_hash_family(src);
+        assert!(stripped.contains("def foo"));
+        assert!(!stripped.contains("docstring mentions"));
+        assert_eq!(src.lines().count(), stripped.lines().count());
+    }
+
+    #[test]
+    fn strip_hash_family_handles_single_quoted_string() {
+        let src = "msg = 'this string has foo() inside'\n";
+        let stripped = strip_comments_and_strings_hash_family(src);
+        // Identifier inside the string literal gets neutralised.
+        assert!(!stripped.contains("foo()"));
+        assert!(stripped.starts_with("msg ="));
+    }
+
+    #[test]
+    fn python_file_comment_with_foo_no_false_positive() {
+        // Python sources use hash_family — # comments containing
+        // foo() must NOT create false-positive edges.
+        let src = r#"
+def foo():
+    pass
+def caller():
+    # foo() is mentioned in this comment but not called
+    pass
+"#;
+        let g = CallGraph::build(&[python_file("a.py", src)]);
+        let to_foo: Vec<_> = g
+            .edges()
+            .iter()
+            .filter(|e| e.from_symbol == "caller" && e.to_name == "foo")
+            .collect();
+        assert!(to_foo.is_empty(), "Python `# foo()` comment shouldn't edge");
+    }
+
+    #[test]
+    fn comment_family_default_is_c_family() {
+        let fi = FileInput::c_family("x.rs", "fn x() {}", vec![]);
+        assert_eq!(fi.comment_family, CommentFamily::CFamily);
+        assert_eq!(CommentFamily::default(), CommentFamily::CFamily);
     }
 
     #[test]
