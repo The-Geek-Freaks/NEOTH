@@ -1859,21 +1859,58 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         };
         let mut req = self.base_req.clone();
         req.prompt = prompt.to_string();
-        let result = self
-            .provider
-            .complete(req)
-            .await
-            .map(|c| crate::council::orchestrator::CompletionRecord {
-                text: c.text,
-                input_tokens: c.input_tokens,
-                output_tokens: c.output_tokens,
-            })
-            .map_err(|e| e.to_string());
-        match (&result, permit) {
-            (Ok(_), Some(p)) => p.record_success(),
-            (Err(_), Some(p)) => p.record_failure(),
-            _ => {}
-        }
+        // QM-9 Phase 1.5 follow-on: council debate path now also
+        // persists usage events. Each hemisphere call counts —
+        // operators on a Pick #8 council see the per-hemisphere
+        // burn instead of one aggregate "council ran" row.
+        let call_started = std::time::Instant::now();
+        let raw = self.provider.complete(req).await;
+        let elapsed_ms = call_started.elapsed().as_millis() as u64;
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let result = match raw {
+            Ok(c) => {
+                if let Some(p) = permit {
+                    p.record_success();
+                }
+                let cost = crate::providers::cost::actual_cost_usd(
+                    provider_name,
+                    &c.model,
+                    c.input_tokens.unwrap_or(0),
+                    c.output_tokens.unwrap_or(0),
+                );
+                let _ = crate::daemon::usage_log::record_now(
+                    &home,
+                    provider_name,
+                    &c.model,
+                    c.input_tokens.unwrap_or(0),
+                    c.output_tokens.unwrap_or(0),
+                    cost,
+                    elapsed_ms,
+                    true,
+                );
+                Ok(crate::council::orchestrator::CompletionRecord {
+                    text: c.text,
+                    input_tokens: c.input_tokens,
+                    output_tokens: c.output_tokens,
+                })
+            }
+            Err(e) => {
+                if let Some(p) = permit {
+                    p.record_failure();
+                }
+                let _ = crate::daemon::usage_log::record_now(
+                    &home,
+                    provider_name,
+                    "unknown",
+                    0,
+                    0,
+                    0.0,
+                    elapsed_ms,
+                    false,
+                );
+                Err(e.to_string())
+            }
+        };
         result
     }
     /// E-2 Phase 2 (Session 13) — recursive sub-council override.
@@ -3005,13 +3042,55 @@ pub(crate) async fn run_mcp_dispatch_loop(
                         return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
                     }
                 };
-                let result = provider.complete(req).await.map(|c| c.text);
-                match (&result, permit) {
-                    (Ok(_), Some(p)) => p.record_success(),
-                    (Err(_), Some(p)) => p.record_failure(),
-                    _ => {}
+                // QM-9 Phase 1.5 follow-on: streaming MCP-loop now
+                // also persists usage events. Each tool-call hop is
+                // a discrete provider dispatch — operators want to
+                // see the cost of an autoroute chain, not just the
+                // final composed reply.
+                let call_started = std::time::Instant::now();
+                let result = provider.complete(req).await;
+                let elapsed_ms = call_started.elapsed().as_millis() as u64;
+                let home = crate::config::FreedomConfig::default_neoth_home();
+                match result {
+                    Ok(c) => {
+                        if let Some(p) = permit {
+                            p.record_success();
+                        }
+                        let cost = crate::providers::cost::actual_cost_usd(
+                            provider_name,
+                            &c.model,
+                            c.input_tokens.unwrap_or(0),
+                            c.output_tokens.unwrap_or(0),
+                        );
+                        let _ = crate::daemon::usage_log::record_now(
+                            &home,
+                            provider_name,
+                            &c.model,
+                            c.input_tokens.unwrap_or(0),
+                            c.output_tokens.unwrap_or(0),
+                            cost,
+                            elapsed_ms,
+                            true,
+                        );
+                        Ok(c.text)
+                    }
+                    Err(e) => {
+                        if let Some(p) = permit {
+                            p.record_failure();
+                        }
+                        let _ = crate::daemon::usage_log::record_now(
+                            &home,
+                            provider_name,
+                            "unknown",
+                            0,
+                            0,
+                            0.0,
+                            elapsed_ms,
+                            false,
+                        );
+                        Err(e)
+                    }
                 }
-                result
             })
         }
     }
