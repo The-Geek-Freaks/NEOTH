@@ -403,18 +403,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                     match crate::transport::hysteria::probe_socks_port(port).await {
                         Ok(()) => {
-                            let proxy_url = format!("socks5://127.0.0.1:{port}");
-                            // SAFETY: process-wide env-var write at the
-                            // start of `run_serve`. No provider client
-                            // has been built yet (next block constructs
-                            // them), no async handler tasks are spawned
-                            // (those land after `build_pipeline_handler`
-                            // further down). The tokio runtime is live
-                            // but nothing else reads or writes the env
-                            // block at this point.
-                            unsafe {
-                                std::env::set_var("NEOTH_HTTP_PROXY", &proxy_url);
-                            }
+                            // R-3 Phase 3b helper — single source of truth
+                            // for the SOCKS5 URL + NEOTH_HTTP_PROXY env
+                            // write. No provider client built yet (next
+                            // block constructs them) so the env-write
+                            // beats every reqwest::Client::builder call.
+                            let proxy_url = sup.install_as_process_proxy();
                             info!(
                                 proxy = %proxy_url,
                                 "Hysteria SOCKS5 up; routing provider HTTP through it",
