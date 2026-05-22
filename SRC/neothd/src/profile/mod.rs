@@ -29,6 +29,7 @@ pub mod fact_check;
 pub mod lookup;
 pub mod redaction;
 pub mod runner;
+pub mod temporal_guard;
 pub mod timestamp_check;
 pub mod types;
 pub mod validate;
