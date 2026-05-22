@@ -156,6 +156,21 @@ fn main() -> Result<()> {
         std::thread::sleep(USAGE_REFRESH_INTERVAL);
     });
 
+    // QM-8 Phase 2: preset list probe — same refresh-loop shape as
+    // usage. Lighter cadence (5min) since presets change rarely.
+    window.set_preset_summary("Loading presets…".into());
+    let weak_preset = window.as_weak();
+    std::thread::spawn(move || loop {
+        let summary = probe_preset_summary_via_subprocess();
+        let weak = weak_preset.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_preset_summary(summary.into());
+            }
+        });
+        std::thread::sleep(PRESET_REFRESH_INTERVAL);
+    });
+
     // G-2 first-launch detection: if `~/.neoth/freedom.yaml` already
     // exists the operator has been through the wizard before. Jump
     // straight to the done screen so they don't accidentally overwrite
@@ -1354,6 +1369,10 @@ pub const BINARY_MISSING_MESSAGE: &str =
 /// json` in a `watch -n 1` loop.
 pub const USAGE_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// QM-8 Phase 2: how often the preset tile re-fires `neoth preset
+/// list`. Lighter cadence than usage since presets change rarely.
+pub const PRESET_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
+
 #[cfg(test)]
 mod chat_subprocess_tests {
     use super::*;
@@ -1518,6 +1537,36 @@ mod chat_subprocess_tests {
         assert!(s.contains("No usage"));
     }
 
+    // ── QM-8 Phase 2 preset summary tests ───────────────────────────────
+
+    #[test]
+    fn shape_preset_summary_no_presets_says_so() {
+        let s = crate::shape_preset_summary(b"(no presets - run `neoth preset --help` ...)\n");
+        assert!(s.contains("No presets saved"));
+    }
+
+    #[test]
+    fn shape_preset_summary_renders_count_and_active() {
+        let stdout = b"   alpha\n * middle\n   zeta\n";
+        let s = crate::shape_preset_summary(stdout);
+        assert!(s.contains("3 presets"));
+        assert!(s.contains("middle"));
+    }
+
+    #[test]
+    fn shape_preset_summary_handles_no_active_marker() {
+        let stdout = b"   alpha\n   zeta\n";
+        let s = crate::shape_preset_summary(stdout);
+        assert!(s.contains("2 presets"));
+        assert!(s.contains("no active"));
+    }
+
+    #[test]
+    fn shape_preset_summary_empty_stdout_says_no_presets() {
+        let s = crate::shape_preset_summary(b"");
+        assert!(s.contains("No presets saved"));
+    }
+
     #[test]
     fn chat_via_subprocess_with_returns_error_when_bin_does_not_exist() {
         // Bin at a path that doesn't exist on disk → subprocess
@@ -1612,6 +1661,48 @@ pub fn shape_usage_summary(json: &str) -> String {
         return "No usage in the last 24h.".to_string();
     }
     format!("Last 24h: {calls} calls (ok={ok}, err={err}), ${cost:.4}")
+}
+
+/// QM-8 Phase 2: probe the saved preset list via `neoth preset list`
+/// and render a compact summary. Same worker-thread shape as the
+/// usage probe.
+fn probe_preset_summary_via_subprocess() -> String {
+    let candidate = which_neothd();
+    let Some(bin) = candidate else {
+        return "Preset list unavailable — `neothd` binary not on PATH.".to_string();
+    };
+    let output = spawn_neothd_plain(&bin).arg("preset").arg("list").output();
+    match output {
+        Ok(out) if out.status.success() => shape_preset_summary(&out.stdout),
+        Ok(out) => format!(
+            "Preset list failed (exit {}): {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ),
+        Err(e) => format!("Preset list could not start: {e}"),
+    }
+}
+
+/// Pure shaping helper — tested in isolation. Input shape matches
+/// `cli::preset::run_list` stdout (lines like "  zeta", "* active").
+pub fn shape_preset_summary(stdout: &[u8]) -> String {
+    let body = String::from_utf8_lossy(stdout);
+    let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
+    if lines.is_empty() || lines[0].starts_with("(no presets") {
+        return "No presets saved. Use `neoth preset ...` from a terminal.".to_string();
+    }
+    let mut active: Option<&str> = None;
+    let mut count = 0usize;
+    for line in &lines {
+        if line.trim_start().starts_with('*') {
+            active = Some(line.trim_start_matches(|c: char| c == '*' || c.is_whitespace()));
+        }
+        count += 1;
+    }
+    match active {
+        Some(name) => format!("{count} presets · active: {name}"),
+        None => format!("{count} presets · no active"),
+    }
 }
 
 fn which_neothd() -> Option<PathBuf> {

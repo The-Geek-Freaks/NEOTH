@@ -106,6 +106,9 @@ export component MainWindow inherits Window {
     // Format: "<calls> calls (ok=<x>, err=<y>), <cost> (<pct>% of cap)"
     // — populated by a subprocess probe to `neoth usage --format json`.
     in property <string> usage-summary: "Loading usage…";
+    // QM-8 Phase 2: saved preset list + active marker.
+    // Populated by a subprocess probe to `neoth preset list`.
+    in property <string> preset-summary: "Loading presets…";
 
     // Pick #28 (12/10 polish): derive the step counter + label from
     // the active `WizardStep` so the top ProgressIndicator always
@@ -431,7 +434,7 @@ export component MainWindow inherits Window {
             // card layout so the visual rhythm carries from
             // "what hardware do you have" → "what did you spend".
             // Populated by the probe_usage_via_subprocess worker
-            // thread on window-create.
+            // thread on window-create + every USAGE_REFRESH_INTERVAL.
             Card {
                 preferred-height: 100px;
                 VerticalBox {
@@ -447,6 +450,32 @@ export component MainWindow inherits Window {
                     }
                     Text {
                         text: root.usage-summary;
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+            // QM-8 Phase 2 — saved preset bundle tile. Operator-
+            // visible list of named preset bundles + the active one.
+            // Apply via `neoth preset apply <name>` from a terminal
+            // until the full save/load button surface lands.
+            Card {
+                preferred-height: 100px;
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "Saved presets";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        color: Theme.accent-green;
+                    }
+                    Text {
+                        text: root.preset-summary;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;
