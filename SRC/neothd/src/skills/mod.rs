@@ -18,6 +18,7 @@
 //! provider.complete(). Skill system_prompt is appended to the assembled
 //! operator context so per-turn skill instructions win over global rules.
 
+pub mod bundled;
 pub mod installer;
 pub mod loader;
 pub mod router;
