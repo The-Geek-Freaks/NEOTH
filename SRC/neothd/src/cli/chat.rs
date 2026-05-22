@@ -464,13 +464,23 @@ pub async fn run_chat_with(
     // Original moves were tightening Rust's borrow-checker around the
     // Request literal; the cost of the extra Option<String> clone is
     // negligible compared to the LLM round-trip about to fire.
+    // Q1 (Session 19): inject the Karpathy metacognitive
+    // preamble (think-before-coding / simplicity-first /
+    // surgical-changes) before the operator-supplied system
+    // block. Idempotent — re-entry from council debate
+    // doesn't double-inject. Per
+    // `PLAN/QUELLEN_ADOPT_karpathy_2026-05-21.md`.
+    let merged_system = Some(crate::providers::context_guards::apply_karpathy_preamble(
+        final_system.as_deref(),
+    ));
     let req = Request {
         prompt: final_prompt.clone(),
-        system: final_system.clone(),
+        system: merged_system.clone(),
         model: args.model.clone(),
         temperature: args.temperature,
         top_p: args.top_p,
         sampling_seed: args.sampling_seed,
+        stop_sequences: Vec::new(),
     };
 
     let started = std::time::Instant::now();
@@ -1150,7 +1160,16 @@ pub async fn run_chat_with(
         if report.is_refusal() {
             let recovery_req = crate::providers::Request {
                 prompt: final_prompt.clone(),
-                system: final_system.clone(),
+                // Q1: idempotent apply — re-entry path also
+                // gets the Karpathy preamble. The
+                // `apply_karpathy_preamble` no-ops when the
+                // preamble is already present so this is
+                // safe under any sequencing.
+                system: Some(
+                    crate::providers::context_guards::apply_karpathy_preamble(
+                        final_system.as_deref(),
+                    ),
+                ),
                 model: Some(model_used.clone()),
                 ..Default::default()
             };

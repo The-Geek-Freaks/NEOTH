@@ -1897,6 +1897,58 @@ pushed to `origin/main`.
 **R-7 heartbeat wire protocol (2026-05-21):**
 - ✅ **`cluster::heartbeat` module** — closes the R-7 wire-format design gate. Chorus chat `019E4A48975F25C0BD9F8B96BC085C94` (codex-cli + gemini-cli both approve with required additions); full verdict in `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. CBOR encoding via ciborium 0.2 + u32 LE length-prefix framing + 64 KiB max-frame cap + 5s ± 20% jittered cadence + protocol-version handshake (`PROTOCOL_NAME = "neoth-r7-heartbeat"`, `PROTOCOL_VERSION = 1`). Four `FrameKind` variants (`Hello` / `Heartbeat` / `CapabilityUpdate` / `Goodbye`) inside a `WireFrame` envelope carrying monotonic per-connection sequence number + sent-unix-ms + peer_id. Hot-path heartbeat body carries only volatile load metrics (`tokens_per_sec`, `inflight_requests`, `healthy`, `capabilities_hash`) — capabilities live in a separate frame so the 5s ticker stays light. Validators: `validate_hello` (protocol + version match, capability cap), `validate_heartbeat` (NaN/Inf/negative tokens_per_sec rejected, absurd > 1M tps rejected), `validate_capabilities` (count + per-string-length caps). `next_jittered_interval(rng)` is pure (deterministic-seedable for tests). `hash_capabilities(list)` is SHA-256 over a newline-joined join so capability changes flip the hash. `write_framed` / `read_framed` over any `AsyncRead`/`AsyncWrite`; `read_framed` rejects oversized length-prefix BEFORE allocating (defends against a hostile peer claiming 4 GiB). 16 unit tests pin Hello+Heartbeat round-trip, CBOR-vs-JSON size, oversized-prefix rejection, NaN/Inf/negative/absurd-tps validation, capability/protocol/version validation, jitter band, capability-hash determinism + collision-distinguishment, snake_case wire form, all 8 protocol constants. Connection-loop integration into `cluster::hyperswarm::spawn_discovery` lands as the next R-7 commit.
 
+**QUELLEN adoption sweep — 7 repos analysed (2026-05-21):**
+
+Synthesis: `PLAN/QUELLEN_ADOPT_MASTER_2026-05-21.md`.
+Individual reports: cc-switch / codegraph / karpathy /
+academic / mattpocock / superpowers / agency.
+
+24-item adoption table queued. Build order in master plan
+§3. Tier-1 cross-cuts:
+
+- **Code graph edges** (Q2) — biggest data-model gap. NEOTH's
+  K-Repo-Map indexes symbols but has zero edge data. Add
+  `code_map::edges` (calls / imports / extends).
+- **MODE_REGISTRY** (Q3) — table-driven mode-as-state-machine
+  above per-skill routing. `/mode research` flips system
+  prompt + agent composition + oversight in one lookup.
+- **Meta-skill preambles** (Q1, Q4, Q7) — Karpathy
+  think-before-coding + simplicity + surgical-changes,
+  superpowers brainstorming + plan-writing, mattpocock tdd
+  doctrine. All CORE, not skill router.
+- **NEXUS handoff schema** (Q5) — formal sub-agent contract.
+- **cc-switch cherry-pick** (Q8-Q12) — provider presets,
+  request-log dashboard, proxy+circuit-breaker. Skip
+  wholesale Tauri fork — Slint is the target.
+
+Sprint 1 ships next:
+
+- [x] **Q1** Karpathy `context_guards` (0.5d) — always-on
+  preamble layer. Shipped Session 19 (see below).
+- [ ] **Q2** Code graph edges + BFS (3-4d)
+- [ ] **Q3** MODE_REGISTRY pattern (2-3d)
+- [ ] **Q4** Brainstorming + PlanWriter gates (1-2d)
+- [ ] **Q5** NEXUS sub-agent handoff schema (1d)
+- [ ] **Q6** QaVerdict enum (0.5d)
+- [ ] **Q7** TDD pre-flight in cli/code (1d)
+- [ ] **Q8** Provider preset catalog + Slint panel (2d)
+- [ ] **Q9** Request-log + usage dashboard (2d)
+- [ ] **Q10** Local proxy + circuit-breaker (3d)
+- [ ] **Q11** Skills installer (1d)
+- [ ] **Q12** Role-based model mapping (0.5d)
+- [ ] **Q13** 6 new Council voices (1d)
+- [ ] **Q14** SessionSummarizer Stop-hook (0.5d)
+- [ ] **Q15** Brainstorming bootstrap hook (0.5d)
+- [ ] **Q16** Parallel-agents dispatcher (1d)
+- [ ] **Q17** Two-stage review gate (1d)
+- [ ] **Q18** Citation-check helper (1d)
+- [ ] **Q19** Fact-check claim_guard wire (0.5d)
+- [ ] **Q20** Temporal-integrity verifier (1d)
+- [ ] **Q21** 5 superpowers P1 skill YAMLs (0.5d)
+- [ ] **Q22** 9 mattpocock skill YAMLs (1d)
+- [ ] **Q23** 15 academic mode entries (1d, gated on Q3)
+- [ ] **Q24** 8 superpowers P4 skill YAMLs (0.5d)
+
 **Pick #6 Phase 4 WAL audit emit (2026-05-21):**
 - ✅ **`DispatchApplyConfig::with_wal_writer` + `0xD3`/`0xD4` emit** — closes the Phase 4 audit-anchor piece. New `WalWriterRef = Option<Arc<WalWriterHandle>>` field on `DispatchApplyConfig` + builder `.with_wal_writer(arc)`. When the daemon's `cli::serve` threads a live handle through, `apply_patch_via_worktree` fires the appropriate frame on each outcome: `0xD3 PATCH_APPLIED { task_id, session_id, worktree_path, patch_hash, ts_unix }` on success, `0xD4 PATCH_APPLY_FAILED { task_id, session_id, worktree_path, stage, reason, ts_unix }` on apply-check / apply / tests failure. `stage` discriminates the three failure points so audit consumers can grep specifically. `reason` flows through `security::redact::redact_text` so a leaked Bearer header or `.env` line in git's stderr never lands raw in the WAL. Uses `try_append_sync` (fire-and-forget) — backpressure or closed-channel errors log at warn level but never bubble; the operator-visible task transition is the authoritative signal regardless of WAL state. CLI one-shot (`neoth code --apply`) leaves the writer None and skips emit — operator-driven invocation is its own visible audit. 1 new integration test spawns a real `WalWriterHandle` against a tempfile, runs the apply, asserts the segment file contains the 0xD3 magic byte after a 200ms flush window.
 

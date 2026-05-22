@@ -18,6 +18,7 @@ pub mod azure_openai;
 pub mod claude_cli;
 pub mod claude_tmux;
 pub mod clip_engine;
+pub mod context_guards;
 pub mod cost;
 pub mod gemini_api;
 pub mod http_client;
