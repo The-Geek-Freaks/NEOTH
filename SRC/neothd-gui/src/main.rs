@@ -214,14 +214,25 @@ fn main() -> Result<()> {
         std::process::exit(0);
     });
 
-    // C-1 fix — chat-send-clicked was declared in main.slint:162 and
-    // wired through ChatView → Composer but the Rust side had no
-    // closure registered. Every Send click + Enter hit fired into a
-    // void. We now log the message + clear the composer + push a stub
-    // operator bubble into scrollback so the GUI proves it received
-    // the keystroke. The full provider dispatch lands in the next
-    // Chat-wiring pick; for now the operator sees their own message
-    // bubble appear and knows the surface is alive.
+    // R2-P0-1 (2026-05-22 Session 20) — GUI chat now reaches the
+    // provider/WAL/permission/cost stack via the daemon binary, the
+    // exact same code path as `neothd chat` from a terminal. Pre-fix:
+    // operator bubble was pushed and the surface looked alive but Send
+    // never reached an LLM. R2 reviewer flagged this as the #1 first-
+    // moment regression (`PLAN/REEVALUATION_GESAMT_2026-05-21_R2.md`
+    // §4 P0-1).
+    //
+    // Flow:
+    //   1. Push operator bubble + composer empty (immediate feedback).
+    //   2. Push placeholder assistant bubble ("…", streaming=true) so
+    //      the operator sees "the system is thinking" without an empty
+    //      scrollback gap.
+    //   3. Spawn a worker thread that runs `neothd chat <body>` and
+    //      captures stdout. Subprocess inherits the operator's
+    //      freedom.yaml + credentials so provider / autonomy / cost
+    //      gates fire identically to the CLI path.
+    //   4. `invoke_from_event_loop` swaps the placeholder for the real
+    //      reply (or an error bubble if the subprocess failed).
     let weak_chat_send = window.as_weak();
     window.on_chat_send_clicked(move |text| {
         let body = text.trim().to_string();
@@ -229,18 +240,71 @@ fn main() -> Result<()> {
             return;
         }
         info!(message_len = body.len(), "chat: send-clicked");
-        if let Some(w) = weak_chat_send.upgrade() {
-            use slint::{Model, ModelRc, VecModel};
-            let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
-            rows.push(ChatMessage {
-                role: "operator".into(),
-                text: body.into(),
-                timestamp: format_now_hms().into(),
-                streaming: false,
+        let Some(w) = weak_chat_send.upgrade() else {
+            return;
+        };
+
+        use slint::{Model, ModelRc, VecModel};
+        let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
+        let placeholder_idx = rows.len() + 1;
+        rows.push(ChatMessage {
+            role: "operator".into(),
+            text: body.clone().into(),
+            timestamp: format_now_hms().into(),
+            streaming: false,
+        });
+        rows.push(ChatMessage {
+            role: "assistant".into(),
+            text: "…".into(),
+            timestamp: format_now_hms().into(),
+            streaming: true,
+        });
+        w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+        w.set_chat_composer_draft("".into());
+
+        let weak_worker = w.as_weak();
+        std::thread::spawn(move || {
+            let outcome = chat_via_subprocess(&body);
+            let weak_for_loop = weak_worker.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak_for_loop.upgrade() {
+                    use slint::{Model, ModelRc, VecModel};
+                    let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
+                    let target = match outcome {
+                        Ok(reply) => ChatMessage {
+                            role: "assistant".into(),
+                            text: reply.into(),
+                            timestamp: format_now_hms().into(),
+                            streaming: false,
+                        },
+                        Err(err) => ChatMessage {
+                            // `error` bubble role lets the .slint side
+                            // colour the surface differently (red tint
+                            // when the Composer's theme picks it up).
+                            // Older Composer versions render "error" the
+                            // same as "assistant" — degrades cleanly.
+                            role: "error".into(),
+                            text: err.into(),
+                            timestamp: format_now_hms().into(),
+                            streaming: false,
+                        },
+                    };
+                    // Replace the streaming placeholder (penultimate row
+                    // by construction; check defensively in case the
+                    // operator sent a second message before the first
+                    // returned).
+                    if placeholder_idx < rows.len()
+                        && rows[placeholder_idx].streaming
+                        && rows[placeholder_idx].role == "assistant"
+                    {
+                        rows[placeholder_idx] = target;
+                    } else {
+                        rows.push(target);
+                    }
+                    w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+                }
             });
-            w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
-            w.set_chat_composer_draft("".into());
-        }
+        });
     });
 
     // H-1 fix — chat-channel-switched was likewise unbound. Now logged
@@ -1168,6 +1232,75 @@ fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
     window.set_kanban_done(ModelRc::new(VecModel::from(snap.done)));
     window.set_kanban_feed(ModelRc::new(VecModel::from(snap.feed)));
     window.set_kanban_session_summary(snap.summary.into());
+}
+
+/// R2-P0-1: GUI chat dispatch via the `neothd chat` subprocess. Returns
+/// `Ok(reply_text)` on success or `Err(error_for_bubble)` so the caller
+/// can render either path as a chat bubble.
+///
+/// Routing through the daemon binary (same pattern as
+/// `probe_hardware_via_subprocess`) keeps the GUI crate decoupled from
+/// daemon internals while ensuring GUI Send hits EXACTLY the same
+/// provider / WAL / permission / cost / autonomy code path as
+/// `neothd chat` from a terminal — that's the R2 done-criterion.
+fn chat_via_subprocess(message: &str) -> std::result::Result<String, String> {
+    let Some(bin) = which_neothd() else {
+        return Err(
+            "Chat unavailable — `neothd` binary not on PATH.\n\
+             Install the daemon first (the release tarball ships both \
+             `neothd-gui` and `neothd` side-by-side; from source, \
+             `cargo install --path ../neothd`)."
+                .to_string(),
+        );
+    };
+    let output = spawn_neothd_plain(&bin).arg("chat").arg(message).output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            // `neothd chat` prints the reply on stdout; trim trailing
+            // newlines so the chat bubble doesn't render an empty line
+            // at the bottom. Preserve internal newlines (code blocks /
+            // lists need them).
+            let reply = stdout.trim_end_matches(['\n', '\r']).to_string();
+            if reply.is_empty() {
+                Err(
+                    "Provider returned an empty reply. Check `neoth doctor` + \
+                     `~/.neoth/freedom.yaml` provider settings."
+                        .to_string(),
+                )
+            } else {
+                Ok(reply)
+            }
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            let trimmed = stderr.trim();
+            if trimmed.is_empty() {
+                Err(format!(
+                    "`neothd chat` exited {} with no diagnostic. Run from \
+                     a terminal to capture the failure context.",
+                    out.status
+                ))
+            } else {
+                // Cap at ~600 chars so a stack-traceful Rust panic
+                // doesn't blow the chat bubble. Operators reading the
+                // full failure run `neothd chat` from a shell anyway.
+                let snippet = if trimmed.len() > 600 {
+                    format!("{}…", &trimmed[..600])
+                } else {
+                    trimmed.to_string()
+                };
+                Err(format!(
+                    "Chat failed (exit {}):\n{}",
+                    out.status, snippet
+                ))
+            }
+        }
+        Err(e) => Err(format!(
+            "Chat subprocess could not start: {e}\n\
+             Verify `neothd --version` works from a terminal."
+        )),
+    }
 }
 
 fn probe_hardware_via_subprocess() -> String {
