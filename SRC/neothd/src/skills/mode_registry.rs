@@ -324,6 +324,85 @@ mod tests {
         assert!(hit.is_none());
     }
 
+    // ── QM-23 acceptance: bundled academic_research skill ships 15 modes ──
+
+    #[tokio::test]
+    async fn qm_23_bundled_academic_skill_registers_fifteen_modes() {
+        // R3-P0 + QM-3 + QM-23 integration: the bundled academic_research
+        // skill YAML loads via `loader::load_all`, parses through serde
+        // into 15 ModeEntry rows, and ModeRegistry::from_skills surfaces
+        // all of them by id without duplicate-id errors. Pinning the
+        // count at exactly 15 means a future PR that drops one of the
+        // academic modes (or adds a 16th) surfaces here.
+        use crate::skills::loader::load_all;
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let skills = load_all(dir.path()).await.unwrap();
+        let academic = skills
+            .iter()
+            .find(|s| s.id() == "academic_research")
+            .expect("academic_research bundled skill must load");
+        assert_eq!(
+            academic.manifest.modes.len(),
+            15,
+            "QM-23: academic_research skill must ship 15 modes"
+        );
+        // Build a registry just from this one skill — must succeed
+        // (no duplicate ids within the skill).
+        let registry = ModeRegistry::from_skills(&[academic.clone()]).unwrap();
+        assert_eq!(registry.len(), 15);
+
+        // Sample a known mode and verify its shape.
+        let lit = registry
+            .get("research_lit_review")
+            .expect("research_lit_review must register");
+        assert_eq!(lit.skill_id, "academic_research");
+        assert_eq!(lit.mode.spectrum, Spectrum::Balanced);
+        assert_eq!(lit.mode.oversight, Oversight::High);
+        assert_eq!(lit.mode.output.format, "markdown");
+        assert!(!lit.mode.trigger_phrases.is_empty());
+    }
+
+    #[tokio::test]
+    async fn qm_23_academic_mode_trigger_phrases_match_typical_prompts() {
+        // Pin a handful of operator-language → mode routings so
+        // future trigger-phrase edits don't break the discovered UX.
+        use crate::skills::loader::load_all;
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let skills = load_all(dir.path()).await.unwrap();
+        let academic = skills
+            .iter()
+            .find(|s| s.id() == "academic_research")
+            .unwrap()
+            .clone();
+        let registry = ModeRegistry::from_skills(&[academic]).unwrap();
+
+        // Operator says "fact-check these claims" → research_fact_check
+        let hit = registry
+            .match_trigger("Please fact-check these claims for me")
+            .expect("trigger must hit");
+        assert_eq!(hit.mode.id, "research_fact_check");
+
+        // Operator says "I need a lit review" → research_lit_review
+        let hit = registry
+            .match_trigger("I need a lit review on transformer architectures")
+            .expect("trigger must hit");
+        assert_eq!(hit.mode.id, "research_lit_review");
+
+        // Operator says "do a PRISMA review" → research_systematic
+        let hit = registry
+            .match_trigger("Can you do a PRISMA review of these 12 papers?")
+            .expect("trigger must hit");
+        assert_eq!(hit.mode.id, "research_systematic");
+
+        // Operator says "review methodology of this paper" → reviewer_methodology
+        let hit = registry
+            .match_trigger("Please review methodology of attached manuscript")
+            .expect("trigger must hit");
+        assert_eq!(hit.mode.id, "reviewer_methodology");
+    }
+
     #[test]
     fn iter_yields_every_resolved_mode() {
         let s1 = make_skill(

@@ -41,6 +41,10 @@
 /// prefix.
 pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
+        "academic_research",
+        include_str!("../../assets/skills/academic_research/skill.yaml"),
+    ),
+    (
         "brainstorming",
         include_str!("../../assets/skills/brainstorming/skill.yaml"),
     ),

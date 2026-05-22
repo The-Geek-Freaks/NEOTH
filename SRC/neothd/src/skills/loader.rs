@@ -262,6 +262,8 @@ mod tests {
             "dispatching_parallel_agents",
             "using_git_worktrees",
             "finishing_a_development_branch",
+            // QM-23 (academic-research-skills, 15 modes in one skill)
+            "academic_research",
         ];
         for id in expected {
             assert!(

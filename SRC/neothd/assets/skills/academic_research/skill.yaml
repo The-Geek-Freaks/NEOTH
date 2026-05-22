@@ -1,0 +1,303 @@
+id: academic_research
+description: |
+  Academic-research workflow skill with 15 named modes (QM-23 port
+  from `QUELLEN/academic-research-skills/MODE_REGISTRY.md`). Operator
+  invokes specific modes via `/mode <id>` (e.g. `/mode lit-review`,
+  `/mode fact-check`). Each mode carries its own spectrum (fidelity /
+  balanced / originality), oversight level (low / medium / high /
+  very_high), output contract, and trigger phrases. Skill router
+  hits the broad keywords; ModeRegistry hits the specific phrases for
+  Stage-1 routing into the right mode within the skill.
+version: "0.1.0"
+
+# Ported from QUELLEN/academic-research-skills/MODE_REGISTRY.md
+# (2026-05-22 Session 20 — QM-23). Composes with QM-3 ModeRegistry
+# foundation. SKIP modes from the ARS source: format-convert (LaTeX/
+# Pandoc out of NEOTH scope), disclosure (venue-specific AI statement),
+# calibration (reviewer gold-set publishing UX).
+author: ported from QUELLEN/academic-research-skills
+homepage: https://github.com/multica-ai/academic-research-skills
+tags:
+  - academic
+  - research
+  - modes
+  - ported
+
+trigger_keywords:
+  - "research"
+  - "academic"
+  - "paper"
+  - "lit review"
+  - "literature review"
+  - "fact-check"
+  - "systematic review"
+  - "PRISMA"
+  - "citation check"
+  - "peer review"
+  - "wissenschaftlich"
+  - "forschung"
+
+system_prompt: |
+  Academic research skill (auto-installed). When an operator says
+  "do research on X" / "review this paper" / "fact-check these
+  claims", route through one of the named modes via `/mode <id>`.
+  Each mode has a specific spectrum + oversight + output contract.
+  Operate exactly inside the mode's contract when active; surface
+  the active mode in your reply preface so the operator sees which
+  scoping you're using.
+
+# QM-23 — 15 academic modes via QM-3 ModeRegistry foundation.
+modes:
+  # ── deep-research/ (6 modes) ───────────────────────────────────────
+  - id: research_quick
+    description: Brief synthesis mode, recall-lite path
+    spectrum: balanced
+    oversight: low
+    output:
+      format: markdown
+      length_hint: "short, 1-3 paragraphs"
+    trigger_phrases:
+      - "quick research"
+      - "brief synthesis"
+      - "schnelle recherche"
+    system_prompt_delta: |
+      Mode: research_quick. Produce a tight 1-3 paragraph synthesis
+      pulling from operator's existing memory (recall-lite). No
+      external lookups; no PRISMA shape. Citations only when already
+      in the recall context.
+
+  - id: research_lit_review
+    description: Annotated bibliography output contract
+    spectrum: balanced
+    oversight: high
+    output:
+      format: markdown
+      length_hint: "~500-1500 words"
+    trigger_phrases:
+      - "lit review"
+      - "literature review"
+      - "annotated bibliography"
+      - "literaturübersicht"
+    system_prompt_delta: |
+      Mode: research_lit_review. Produce an annotated bibliography:
+      one entry per source with citation + 2-4 sentence summary +
+      relevance to the operator's question. Group by theme. Note
+      gaps explicitly.
+
+  - id: research_fact_check
+    description: Claim-by-claim verification pass
+    spectrum: fidelity
+    oversight: very_high
+    output:
+      format: json
+      length_hint: "one entry per claim"
+    trigger_phrases:
+      - "fact-check"
+      - "verify these claims"
+      - "claim-by-claim"
+      - "fakten prüfen"
+    system_prompt_delta: |
+      Mode: research_fact_check. Compose with profile::fact_check
+      module (QM-19). Per claim: classify as
+      verifiable/plausible/opinion/suspect + rationale + citation
+      pointer when available. JSON output for tooling consumption.
+
+  - id: research_socratic
+    description: Intent-based Socratic Q&A — semantic activation
+    spectrum: originality
+    oversight: medium
+    output:
+      format: prose
+      length_hint: "iterative Q&A"
+    trigger_phrases:
+      - "socratic"
+      - "guided questions"
+      - "sokratisch"
+    system_prompt_delta: |
+      Mode: research_socratic. Drive the operator's thinking via
+      questions, not answers. One question per turn. Use the
+      operator's previous reply to scope the next question.
+
+  - id: research_review
+    description: Source evaluation mode for academic claims
+    spectrum: fidelity
+    oversight: high
+    output:
+      format: markdown
+      length_hint: "~400-800 words"
+    trigger_phrases:
+      - "evaluate source"
+      - "source evaluation"
+      - "quellenbewertung"
+    system_prompt_delta: |
+      Mode: research_review. Per source: assess credibility, recency,
+      bias, methodology rigour. Surface red flags explicitly. Do
+      NOT generate citations the source doesn't have — flag missing.
+
+  - id: research_systematic
+    description: PRISMA-shaped systematic review (long-form)
+    spectrum: fidelity
+    oversight: very_high
+    output:
+      format: markdown
+      length_hint: "long-form, 2000+ words with PRISMA flow"
+    trigger_phrases:
+      - "systematic review"
+      - "PRISMA"
+      - "meta-analysis"
+      - "systematische review"
+    system_prompt_delta: |
+      Mode: research_systematic. PRISMA flow diagram + inclusion/
+      exclusion criteria + per-study extraction + bias assessment.
+      Long-form, multi-pass. Pause for operator confirm after
+      inclusion-criteria step.
+
+  # ── academic-paper/ (5 adopted modes) ──────────────────────────────
+  - id: paper_full
+    description: Multi-agent full paper pipeline (heavy oversight)
+    spectrum: balanced
+    oversight: very_high
+    output:
+      format: markdown
+      length_hint: "full paper, 3000-8000 words"
+    trigger_phrases:
+      - "write the full paper"
+      - "complete paper"
+      - "vollständiges paper"
+    system_prompt_delta: |
+      Mode: paper_full. Orchestrate intro → method → results →
+      discussion → conclusion in pass-then-confirm cadence. Pause
+      after each section for operator review.
+
+  - id: paper_plan
+    description: Socratic guided paper planning
+    spectrum: originality
+    oversight: medium
+    output:
+      format: markdown
+      length_hint: "outline + decisions list"
+    trigger_phrases:
+      - "plan the paper"
+      - "plan a paper"
+      - "paper plan"
+      - "paper planen"
+    system_prompt_delta: |
+      Mode: paper_plan. Guide the operator through audience / claim /
+      method / outline. Output a markdown plan with one decision
+      per row + their rationale.
+
+  - id: paper_outline_only
+    description: Outline only — low complexity, low oversight
+    spectrum: balanced
+    oversight: low
+    output:
+      format: markdown
+      length_hint: "outline, no prose"
+    trigger_phrases:
+      - "outline only"
+      - "just the outline"
+      - "nur outline"
+    system_prompt_delta: |
+      Mode: paper_outline_only. Produce a hierarchical outline.
+      Section titles + 1-line per-section summary. No prose.
+
+  - id: paper_revision
+    description: Revise existing paper using reviewer comments
+    spectrum: fidelity
+    oversight: high
+    output:
+      format: markdown
+      length_hint: "diff-style per-comment response"
+    trigger_phrases:
+      - "revise the paper"
+      - "address reviewer comments"
+      - "paper überarbeiten"
+    system_prompt_delta: |
+      Mode: paper_revision. Per reviewer comment: respond + apply
+      change OR push back with citation. Composes with the QM-21
+      receiving_code_review skill's three-response discipline
+      adapted to academic context.
+
+  - id: paper_abstract_only
+    description: Bilingual abstract — short, focused
+    spectrum: fidelity
+    oversight: low
+    output:
+      format: markdown
+      length_hint: "150-300 words each"
+    trigger_phrases:
+      - "abstract only"
+      - "just the abstract"
+      - "nur abstract"
+    system_prompt_delta: |
+      Mode: paper_abstract_only. Produce abstract in English AND
+      operator's primary language. Background-method-results-
+      conclusion-keywords structure.
+
+  # ── academic-paper-reviewer/ (4 adopted modes) ─────────────────────
+  - id: reviewer_full
+    description: Full peer-review report
+    spectrum: fidelity
+    oversight: very_high
+    output:
+      format: markdown
+      length_hint: "~1000-2000 words structured review"
+    trigger_phrases:
+      - "review this paper"
+      - "peer review"
+      - "begutachten"
+    system_prompt_delta: |
+      Mode: reviewer_full. Structure: summary of contribution /
+      strengths / weaknesses (major + minor) / specific suggestions /
+      decision recommendation. Cite specific line numbers.
+
+  - id: reviewer_quick
+    description: Quick triage review — high-level only
+    spectrum: balanced
+    oversight: medium
+    output:
+      format: markdown
+      length_hint: "short, 3-5 bullets each section"
+    trigger_phrases:
+      - "quick review"
+      - "triage review"
+      - "schnelle begutachtung"
+    system_prompt_delta: |
+      Mode: reviewer_quick. High-level triage: novelty, soundness,
+      clarity. 3-5 bullets each. No line-by-line.
+
+  - id: reviewer_methodology
+    description: Methodology-only review (rigour focus)
+    spectrum: fidelity
+    oversight: very_high
+    output:
+      format: markdown
+      length_hint: "~500-1000 words on methods section"
+    trigger_phrases:
+      - "review methodology"
+      - "methods review"
+      - "methodik prüfen"
+    system_prompt_delta: |
+      Mode: reviewer_methodology. Focus on the methods section:
+      design validity, statistical power, controls, reproducibility,
+      bias mitigation. Flag every shortcut.
+
+  - id: reviewer_revision_coach
+    description: Coach the AUTHOR through a revision (not a review)
+    spectrum: originality
+    oversight: medium
+    output:
+      format: markdown
+      length_hint: "stepwise guidance"
+    trigger_phrases:
+      - "revision coach"
+      - "help revise"
+      - "revision coachen"
+    system_prompt_delta: |
+      Mode: reviewer_revision_coach. Coach posture, not gatekeeper.
+      Per reviewer comment: explain the underlying concern + suggest
+      revision path. Surface the operator's choices, don't make
+      them.
+
+tool_allowlist: []
+enabled: true
