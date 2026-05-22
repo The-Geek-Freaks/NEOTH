@@ -30,8 +30,105 @@
 //! scope (a restarted daemon should retry every provider afresh).
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+
+/// Process-wide breaker registry. v0.1.x has no runtime sidecar
+/// exposing the registry into the doctor context yet (Phase 3),
+/// but the chat dispatch path consults this Lazy to keep state
+/// across requests within one daemon run. Per-process scope is
+/// the right v0.1 default — surviving a daemon restart is the
+/// Phase 3 follow-up (persisted breaker state would tip the
+/// daemon into the "open" state on boot after a transient
+/// outage just before shutdown).
+pub static GLOBAL: LazyLock<BreakerRegistry> = LazyLock::new(BreakerRegistry::with_defaults);
+
+/// Owned permit — same RAII contract as `Permit<'a>` but holds an
+/// `Arc<CircuitBreaker>` so it can outlive any stack frame and
+/// be returned from a registry helper. Use this when the call
+/// site needs the permit to live past a borrow boundary
+/// (typical for the chat dispatch hot path).
+#[must_use = "must call record_success() or record_failure() on an OwnedPermit"]
+#[derive(Debug)]
+pub struct OwnedPermit {
+    breaker: std::sync::Arc<CircuitBreaker>,
+    settled: bool,
+}
+
+impl OwnedPermit {
+    pub fn record_success(mut self) {
+        self.breaker.record_success_inner();
+        self.settled = true;
+    }
+
+    pub fn record_failure(mut self) {
+        self.breaker.record_failure_inner();
+        self.settled = true;
+    }
+}
+
+impl Drop for OwnedPermit {
+    fn drop(&mut self) {
+        if !self.settled {
+            self.breaker.record_failure_inner();
+        }
+    }
+}
+
+/// Helper for the chat / dispatch hot path. Looks up the breaker
+/// for `provider_id` from the global registry + tries to acquire.
+/// Returns `Ok(OwnedPermit)` on admit, `Err(BreakerError)` when
+/// the breaker is Open / probing. Callers settle the permit with
+/// `record_success` / `record_failure` after the provider call;
+/// dropping without settling counts as a failure (conservative).
+pub fn acquire_for(provider_id: &str) -> Result<OwnedPermit, BreakerError> {
+    let breaker_arc = GLOBAL.breaker_for(provider_id);
+    // Replicate the state-machine transition logic from
+    // `CircuitBreaker::try_acquire` without holding the lifetime
+    // borrow — we own the Arc so the permit can live as long as
+    // the caller needs.
+    let mut g = breaker_arc.lock();
+    match g.state {
+        BreakerState::Closed => {
+            drop(g);
+            Ok(OwnedPermit {
+                breaker: breaker_arc,
+                settled: false,
+            })
+        }
+        BreakerState::HalfOpen => {
+            if g.half_open_probe_inflight {
+                Err(BreakerError::HalfOpenBusy)
+            } else {
+                g.half_open_probe_inflight = true;
+                drop(g);
+                Ok(OwnedPermit {
+                    breaker: breaker_arc,
+                    settled: false,
+                })
+            }
+        }
+        BreakerState::Open => {
+            let opened_at = g
+                .opened_at
+                .expect("Open state must carry an opened_at timestamp");
+            let elapsed = Instant::now().saturating_duration_since(opened_at);
+            if elapsed >= breaker_arc.config.reset_after {
+                g.state = BreakerState::HalfOpen;
+                g.half_open_probe_inflight = true;
+                drop(g);
+                Ok(OwnedPermit {
+                    breaker: breaker_arc,
+                    settled: false,
+                })
+            } else {
+                Err(BreakerError::Open {
+                    retry_after: breaker_arc.config.reset_after - elapsed,
+                })
+            }
+        }
+    }
+}
 
 /// Operator-tweakable knobs. Defaults match the QM-10 spec
 /// (5 failures / 30s cooldown / single probe).
@@ -461,6 +558,35 @@ mod tests {
         assert!(std::sync::Arc::ptr_eq(&a, &b));
         let c = r.breaker_for("gemini");
         assert!(!std::sync::Arc::ptr_eq(&a, &c));
+    }
+
+    #[test]
+    fn acquire_for_admits_when_global_breaker_is_closed() {
+        // Use a provider id unique to this test to avoid global
+        // state collisions with other tests in the same process.
+        let id = "qm10_admit_test_provider";
+        let p = acquire_for(id).expect("global Closed breaker admits");
+        p.record_success();
+        // Repeat admit — should still pass.
+        let p2 = acquire_for(id).expect("Closed admit again after success");
+        p2.record_success();
+    }
+
+    #[test]
+    fn acquire_for_owned_permit_drop_counts_as_failure() {
+        let id = "qm10_drop_failure_test_provider";
+        // Drop without settling 5 times to flip the global breaker
+        // to Open for this provider id.
+        for _ in 0..5 {
+            let _ = acquire_for(id);
+        }
+        // 6th attempt should be rejected.
+        match acquire_for(id) {
+            Err(BreakerError::Open { retry_after }) => {
+                assert!(retry_after.as_secs() > 0);
+            }
+            other => panic!("expected Open after 5 drops, got {other:?}"),
+        }
     }
 
     #[test]

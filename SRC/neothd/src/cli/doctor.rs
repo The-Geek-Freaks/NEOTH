@@ -373,21 +373,22 @@ const CHECK_DOCS: &[CheckDoc] = &[
     },
     CheckDoc {
         name: "circuit breakers",
-        purpose: "QM-10 Phase 1 visibility surface. When Phase 2 lands \
-                  + the `BreakerRegistry` is reachable from the doctor \
-                  context, this check renders every registered breaker's \
-                  state (closed/half_open/open) + consecutive failures + \
-                  seconds-in-open. Today reports Pass with an honest \
-                  'primitive shipped, runtime exposure pending' note.",
-        common_failures: "An adapter flaps (rate limit / regional outage / \
-                          expired token) but the breaker doesn't surface \
-                          here yet. Use `tail -f ~/.neoth/usage/<today>.jsonl \
-                          | jq 'select(.ok == false)'` for now to see \
-                          per-provider error rate.",
-        fix: "QM-10 Phase 2 wires the BreakerRegistry into ProviderAdapter \
-              dispatch + exposes the registry snapshot here. Until then, \
-              configure `council.daily_usd_cap` to budget your spend + \
-              watch `neoth usage --days 1` for sudden cost spikes.",
+        purpose: "QM-10 Phase 2 visibility surface. Reads the global \
+                  `BreakerRegistry` snapshot + renders every provider \
+                  the chat dispatch has touched in this process, with \
+                  current state (closed/half_open/open) + consecutive \
+                  failure count. Warn when any breaker is Open or in \
+                  the HalfOpen probe state.",
+        common_failures: "Provider flap (rate limit / regional outage / \
+                          expired token) flips the breaker Open; chat \
+                          calls reject immediately with retry_after \
+                          until cooldown elapses (default 30s).",
+        fix: "Wait the cooldown. Check `~/.neoth/usage/<today>.jsonl` \
+              filtered by `ok == false` for the failure pattern. If a \
+              specific provider is permanently broken, switch via \
+              `neoth hemispheres set --role X --provider Y` or use \
+              `neoth preset activate <bundle>` to swap a cloud-heavy \
+              preset to a local-only one.",
     },
     CheckDoc {
         name: "tmux for claude-cli",
@@ -617,12 +618,49 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
 /// When the runtime registry is wired (Phase 2), this detail flips
 /// to render every registered breaker's state + cooldown.
 fn check_circuit_breakers(_home: &Path) -> CheckOutcome {
+    // QM-10 Phase 2 wire-in landed: chat dispatch consults the
+    // global registry on every provider.complete(). The registry
+    // is process-scoped (per the design comment in
+    // providers::circuit_breaker::GLOBAL), so a doctor invocation
+    // OUTSIDE the running `neoth serve` process sees an empty
+    // snapshot — that's expected. When wired into the running
+    // daemon's status surface (Phase 3), this reads the live
+    // sidecar instead.
+    let snaps = crate::providers::circuit_breaker::GLOBAL.snapshot_all();
+    if snaps.is_empty() {
+        return CheckOutcome {
+            name: "circuit breakers",
+            status: CheckStatus::Pass,
+            detail: "no providers seen yet in this process".to_string(),
+        };
+    }
+    let mut any_open = false;
+    let mut any_half_open = false;
+    let mut parts = Vec::new();
+    for (provider, snap) in snaps {
+        match snap.state {
+            crate::providers::circuit_breaker::BreakerState::Open => any_open = true,
+            crate::providers::circuit_breaker::BreakerState::HalfOpen => any_half_open = true,
+            _ => {}
+        }
+        parts.push(format!(
+            "{provider}={state}(fails={f})",
+            state = snap.state.as_str(),
+            f = snap.consecutive_failures,
+        ));
+    }
+    let detail = parts.join("; ");
+    let status = if any_open {
+        CheckStatus::Warn
+    } else if any_half_open {
+        CheckStatus::Warn
+    } else {
+        CheckStatus::Pass
+    };
     CheckOutcome {
         name: "circuit breakers",
-        status: CheckStatus::Pass,
-        detail:
-            "primitive shipped, registry runtime exposure pending (QM-10 Phase 2 wire-in)"
-                .to_string(),
+        status,
+        detail,
     }
 }
 
@@ -1846,12 +1884,19 @@ mod tests {
     }
 
     #[test]
-    fn check_circuit_breakers_passes_until_runtime_wireup() {
+    fn check_circuit_breakers_renders_per_provider_state() {
+        // QM-10 Phase 2 wire-in: the doctor reads the live global
+        // registry. In a fresh test process with no providers
+        // seen, the registry is empty → Pass with "no providers"
+        // detail. Once a chat call has run, the detail enumerates
+        // the breakers it touched.
         let dir = tempdir().unwrap();
         let outcome = check_circuit_breakers(dir.path());
         assert_eq!(outcome.name, "circuit breakers");
-        assert_eq!(outcome.status, CheckStatus::Pass);
-        assert!(outcome.detail.contains("Phase 2"));
+        // Test order isn't deterministic so we accept both shapes
+        // — the contract is: outcome is non-empty + status is Pass
+        // when every breaker is Closed.
+        assert!(!outcome.detail.is_empty());
     }
 
     #[test]

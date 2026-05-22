@@ -1036,11 +1036,33 @@ pub async fn run_chat_with(
                 model_for_estimate(&args, &config),
             )
         } else {
+            // QM-10 Phase 2: consult the circuit breaker for this
+            // provider before dispatching. Open breakers reject
+            // immediately with operator-readable retry_after.
+            let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+                Ok(p) => Some(p),
+                Err(berr) => {
+                    warn!(
+                        provider = provider_name,
+                        breaker_err = %berr,
+                        "circuit breaker rejected call"
+                    );
+                    drop(writer);
+                    let _ = writer_join.await;
+                    return Err(anyhow::anyhow!(
+                        "provider `{provider_name}`: {berr}"
+                    ));
+                }
+            };
             let call_started = std::time::Instant::now();
             let result = provider.complete(req).await;
             let elapsed_ms = call_started.elapsed().as_millis() as u64;
             match result {
                 Ok(completion) => {
+                    // QM-10 Phase 2: settle the permit on success.
+                    if let Some(p) = permit {
+                        p.record_success();
+                    }
                     // QM-9 Phase 1.5: persist a usage event for the
                     // non-streaming chat path. Best-effort; warn on I/O
                     // error so a stuck disk doesn't break the reply.
@@ -1072,6 +1094,10 @@ pub async fn run_chat_with(
                     )
                 }
                 Err(e) => {
+                    // QM-10 Phase 2: settle the permit on failure.
+                    if let Some(p) = permit {
+                        p.record_failure();
+                    }
                     // Record the failure too so the rollup distinguishes
                     // ok-vs-err for the same provider.
                     let home = crate::config::FreedomConfig::default_neoth_home();
