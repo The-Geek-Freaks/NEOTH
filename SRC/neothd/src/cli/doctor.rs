@@ -308,6 +308,29 @@ const CHECK_DOCS: &[CheckDoc] = &[
               `plugins:\\n  wasm:\\n    enabled: true`, then \
               restart the daemon.",
     },
+    CheckDoc {
+        name: "channels wiring",
+        purpose: "R2-P0-2 honesty surface. Loads `credentials.yaml` + \
+                  classifies every configured channel as one of: LIVE \
+                  (send + receive both real), OUTBOUND-ONLY (send works, \
+                  inbound receive loop not yet wired), CONFIGURED-NOT-\
+                  STARTED (full inbound code ships but serve does not \
+                  bootstrap it), or absent (silent). Closes the \
+                  documented gap where README/Status claimed channels \
+                  were live while `cli::serve` only spawned Telegram.",
+        common_failures: "Operator configures Slack/WhatsApp credentials \
+                         + expects bidirectional chat. Aggregate Warn \
+                         when any partial (OUTBOUND-ONLY / CONFIGURED-NOT-\
+                         STARTED) channel is in the set so the gap \
+                         surfaces during install verification.",
+        fix: "Telegram inbound + outbound: live today. Slack inbound: \
+              awaits socket-mode wiring in `cli::serve`. WhatsApp \
+              inbound: awaits webhook listener wiring in `cli::serve` \
+              (the listener + decoder ship; the bootstrap step is \
+              deferred). Until then, use the channel for outbound-only \
+              workflows (cron briefings, proactive alerts) and route \
+              inbound through Telegram or CLI.",
+    },
 ];
 
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
@@ -497,6 +520,7 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_profile_extensions(home),
         check_mcp_servers(home),
         check_wasm_plugins(home),
+        check_channels_wiring(home),
     ]
 }
 
@@ -1263,6 +1287,105 @@ fn check_wasm_plugins(home: &Path) -> CheckOutcome {
     }
 }
 
+/// R2-P0-2 doctor surface — honest per-channel wiring status.
+///
+/// Closes the "Channels on deck" honesty gap flagged by the R2
+/// reviewer (`PLAN/REEVALUATION_GESAMT_2026-05-21_R2.md` §4 P0-2).
+/// Pre-fix: README/Status claimed channels were live when
+/// `cli::serve` only spawned Telegram. Operators configured Slack /
+/// WhatsApp tokens, saw "ok" in their setup, and never realised
+/// inbound was deferred.
+///
+/// Post-fix: each channel gets one of four classifications:
+///
+/// - **LIVE**: tokens configured + adapter has live inbound + serve
+///   spawns it. Telegram today.
+/// - **OUTBOUND-ONLY**: tokens configured + adapter can send_text but
+///   the inbound receive loop is deferred. WhatsApp + Keet adapters
+///   bail on `run()`. Slack adapter has socket_mode but serve does
+///   not spawn it yet.
+/// - **CONFIGURED-NOT-STARTED**: tokens configured + adapter has full
+///   inbound code BUT serve does not bootstrap it. Discord (gateway
+///   loop ships) is the current example.
+/// - **NOT-CONFIGURED**: no credentials present. Silent.
+fn check_channels_wiring(home: &Path) -> CheckOutcome {
+    let creds = match crate::config::credentials::Credentials::load_or_default(
+        &home.join("credentials.yaml"),
+    ) {
+        Ok(c) => c,
+        Err(_) => {
+            return CheckOutcome {
+                name: "channels wiring",
+                status: CheckStatus::Warn,
+                detail: "credentials.yaml unreadable; per-channel status unavailable".to_string(),
+            };
+        }
+    };
+
+    // Tuple shape: (channel name, classification, note). Only configured
+    // channels show up — silent on NOT-CONFIGURED to keep doctor output
+    // focused on what the operator actually set up.
+    let mut rows: Vec<(&'static str, &'static str, &'static str)> = Vec::new();
+
+    if creds.telegram_token.is_some() {
+        rows.push((
+            "telegram",
+            "LIVE",
+            "polling loop spawned by serve; send + receive both real",
+        ));
+    }
+    if creds.slack_bot_token.is_some() || creds.slack_app_token.is_some() {
+        rows.push((
+            "slack",
+            "OUTBOUND-ONLY",
+            "send_text via chat.postMessage works; socket-mode receive loop \
+             not yet spawned by serve",
+        ));
+    }
+    if creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some() {
+        rows.push((
+            "whatsapp",
+            "OUTBOUND-ONLY",
+            "send_text via Graph API works; webhook listener not yet wired \
+             into serve (channels::WhatsAppChannel::run bails)",
+        ));
+    }
+    // Discord + Keet have no credentials.yaml fields yet, so they only
+    // surface here when their config moves to credentials.yaml. Note
+    // the design intent so operators reading the diagnostic see why
+    // they aren't listed.
+
+    if rows.is_empty() {
+        return CheckOutcome {
+            name: "channels wiring",
+            status: CheckStatus::Pass,
+            detail: "no channel credentials configured — daemon runs in CLI-only mode".to_string(),
+        };
+    }
+
+    // Aggregate status: LIVE counts as Pass; anything less downgrades
+    // the whole check to Warn so operators who configured Slack/
+    // WhatsApp expecting live inbound see a yellow flag.
+    let any_partial = rows.iter().any(|(_, cls, _)| *cls != "LIVE");
+    let status = if any_partial {
+        CheckStatus::Warn
+    } else {
+        CheckStatus::Pass
+    };
+
+    let detail = rows
+        .iter()
+        .map(|(ch, cls, note)| format!("{ch}: {cls} — {note}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+
+    CheckOutcome {
+        name: "channels wiring",
+        status,
+        detail,
+    }
+}
+
 /// Warn when free disk on `~/.neoth/`'s partition is below the full
 /// model-cache footprint. Operators who haven't pulled CLIP / whisper /
 /// Qwen yet see a heads-up before the download stalls at 70%.
@@ -1401,12 +1524,13 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_eighteen() {
+    fn check_docs_listed_count_pinned_at_nineteen() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
-        // coverage) is caught. Bumped to 18 in Session 19 for
-        // `wasm plugins` (NOOB-UX-3 effective-state doctor surface).
-        assert_eq!(CHECK_DOCS.len(), 18);
+        // coverage) is caught. Bumped to 19 in Session 20 for
+        // `channels wiring` (R2-P0-2 honesty surface — per-channel
+        // LIVE / OUTBOUND-ONLY / CONFIGURED-NOT-STARTED classification).
+        assert_eq!(CHECK_DOCS.len(), 19);
     }
 
     #[tokio::test]
@@ -1514,14 +1638,95 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 18 checks (freedom, credentials, credentials age, views.db, wal,
+        // 19 checks (freedom, credentials, credentials age, views.db, wal,
         // hmac, quota, policy, tweaks, model caches, hysteria, cloud archive,
         // disk space, hooks, agents, profile_extensions, mcp servers,
-        // wasm plugins — Session 19 NOOB-UX-3 addition).
-        assert_eq!(outs.len(), 18);
+        // wasm plugins, channels wiring — Session 20 R2-P0-2 addition).
+        assert_eq!(outs.len(), 19);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
+    }
+
+    // ── R2-P0-2 channels-wiring tests ────────────────────────────────────
+
+    #[test]
+    fn r2_p0_2_channels_wiring_pass_when_no_credentials() {
+        let dir = tempdir().unwrap();
+        // No credentials.yaml → daemon runs CLI-only, no channel claims
+        // to make. Pass + explanatory detail.
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.name, "channels wiring");
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(
+            outcome.detail.contains("CLI-only") || outcome.detail.contains("no channel credentials"),
+            "detail must explain the no-credentials state: {}",
+            outcome.detail
+        );
+    }
+
+    #[test]
+    fn r2_p0_2_channels_wiring_live_when_only_telegram_configured() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "telegram_token: \"123:abcXYZ_test_token_value\"\n",
+        )
+        .unwrap();
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("telegram"));
+        assert!(outcome.detail.contains("LIVE"));
+    }
+
+    #[test]
+    fn r2_p0_2_channels_wiring_warn_when_slack_configured() {
+        // Operator configured Slack expecting bidirectional chat. The
+        // doctor must Warn so the gap surfaces during install
+        // verification (matches R2 P0-2 done-criterion: "neoth doctor
+        // channels muss 'outbound-only' / 'live' / 'scaffold' sauber
+        // trennen").
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "slack_bot_token: \"xoxb-test-token\"\n",
+        )
+        .unwrap();
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("slack"));
+        assert!(outcome.detail.contains("OUTBOUND-ONLY"));
+    }
+
+    #[test]
+    fn r2_p0_2_channels_wiring_warn_when_whatsapp_configured() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "whatsapp_token: \"test-wa-token\"\nwhatsapp_phone_id: \"123456789\"\n",
+        )
+        .unwrap();
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("whatsapp"));
+        assert!(outcome.detail.contains("OUTBOUND-ONLY"));
+    }
+
+    #[test]
+    fn r2_p0_2_channels_wiring_mixed_aggregates_to_warn() {
+        // Telegram alone = Pass. Telegram + Slack = Warn (the partial
+        // channel pulls the aggregate down so the gap is visible at
+        // a glance instead of getting buried under one green row).
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "telegram_token: \"123:abc\"\nslack_bot_token: \"xoxb-test\"\n",
+        )
+        .unwrap();
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("telegram: LIVE"));
+        assert!(outcome.detail.contains("slack: OUTBOUND-ONLY"));
     }
 
     #[test]
