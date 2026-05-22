@@ -1,20 +1,16 @@
 <!--
-  NEOTH README · public v1.1 release narrative
-  Single dark hero on purpose: the white animated wordmark reads correctly
-  in both GitHub light and dark themes.
+  NEOTH README - public v1.1 release narrative.
+  This is written for the intended v1.1 release surface, not for an
+  intermediate private build snapshot.
 -->
 
 <div align="center">
 
-<img src=".github/assets/neoth-hero-white.svg" alt="NEOTH - Neural Engine Obligated To Help" width="100%">
+<img src=".github/assets/neoth-readme-hero.svg" alt="NEOTH - Stop reintroducing yourself to your AI" width="100%">
 
 <br>
 
-<h3>Stop reintroducing yourself to your AI.</h3>
-
-<p>
-  A sovereign AI buddy that remembers your life, works where you talk, and stays yours.
-</p>
+<h3>The Sovereign AI Buddy.</h3>
 
 <p>
   <strong>Neoth knows. Neoth helps. Neoth stays yours.</strong>
@@ -22,13 +18,13 @@
 
 <p>
   <a href="#act-i---the-sovereignty">Why NEOTH</a>
-  ·
+  -
   <a href="#act-ii---the-buddy">Start in 60 seconds</a>
-  ·
+  -
   <a href="#act-iii---the-engine">How it works</a>
-  ·
+  -
   <a href="#privacy-by-default">Privacy</a>
-  ·
+  -
   <a href="#docs">Docs</a>
 </p>
 
@@ -58,30 +54,34 @@
 
 <br>
 
+<img src=".github/assets/act-1-sovereignty.svg" alt="Act I - The Sovereignty" width="100%">
+
+<br>
+
 # Act I - The Sovereignty
 
 ### Your AI should not forget you every morning.
 
 Most assistants are brilliant strangers. They answer, vanish, and make you repeat your context forever.
 
-NEOTH is different: it is a personal AI system built around **continuity**. It remembers what you allow it to remember, keeps the memory on your machine, and follows you across your terminal, desktop, phone, and team chat.
+NEOTH is built around **continuity**. It remembers what you allow it to remember, keeps that memory under your control, and follows you across terminal, desktop, phone, and team chat.
 
-It is not just a chatbot. It is your long-term operator layer:
+It is not just a chatbot. It is your long-term operator layer.
 
 | What you get | What that means in real life |
 | :-- | :-- |
-| **One buddy across every channel** | Text it from your terminal, phone, workspace, or chat app. Same memory. Same operator profile. |
-| **Memory that survives sessions** | NEOTH remembers decisions, preferences, projects, people, infrastructure, and recurring patterns. |
+| **One buddy across every surface** | CLI, GUI, Telegram, WhatsApp, Slack, Discord, Keet - same memory, same profile, same operator. |
+| **Memory that survives sessions** | Decisions, projects, preferences, people, infrastructure, and recurring patterns stop disappearing. |
 | **Local profile extraction** | Raw conversation windows are analyzed by local Qwen/Ouro instead of a second cloud vendor. |
-| **Multi-model council** | Fast answers stay fast. Hard questions can trigger Claude, Gemini, Codex, Qwen, or Ouro roles. |
-| **Noob-safe setup** | The wizard asks human questions. You should not need to understand YAML, tokens, WALs, or model routing to start. |
+| **Multi-model council** | Fast answers stay fast. High-impact questions can trigger deeper roles and dissent. |
+| **Noob-safe setup** | The wizard asks human questions. You should not need to understand YAML, WALs, tokens, or model routing. |
 | **Pro-grade internals** | Rust, event-sourced WAL, HLC timestamps, HMAC compaction, policy gates, plugin sandboxing, testable invariants. |
 
 ### The promise
 
 > In Thoth's scales, only memory has weight.
 
-NEOTH's job is simple: help you live and work with less repeated context, less lost knowledge, and less dependency on platforms that do not remember you.
+NEOTH exists to reduce repeated context, lost knowledge, and dependency on platforms that do not remember you.
 
 It can be a quiet assistant for normal people. It can be a local-first command center for engineers. Same binary.
 
@@ -91,15 +91,15 @@ It can be a quiet assistant for normal people. It can be a local-first command c
   <tr>
     <td width="33%">
       <strong>For normal humans</strong><br>
-      Install it. Open the wizard. Connect a chat app. Talk normally. NEOTH handles the rest.
+      Install it. Open the wizard. Connect a chat app. Talk normally. NEOTH handles the machinery.
     </td>
     <td width="33%">
       <strong>For builders</strong><br>
-      Use the CLI, WAL, skills, WASM plugins, provider routing, recall, and coding sessions.
+      Use the CLI, WAL, skills, plugins, provider routing, recall, cluster mode, and coding sessions.
     </td>
     <td width="33%">
       <strong>For paranoid operators</strong><br>
-      Audit where requests went, redact profile facts, disable cloud fallback, inspect every memory trail.
+      Audit requests, redact profile facts, disable cloud fallback, inspect every memory trail.
     </td>
   </tr>
 </table>
@@ -107,6 +107,10 @@ It can be a quiet assistant for normal people. It can be a local-first command c
 <br>
 
 <img src=".github/assets/divider.svg" width="100%" height="4" alt="">
+
+<br>
+
+<img src=".github/assets/act-2-buddy.svg" alt="Act II - The Buddy" width="100%">
 
 <br>
 
@@ -142,7 +146,7 @@ Your Buddy, Your Life
 3. Which model should answer quickly?
 4. Which local model should learn your profile?
 5. How autonomous may it be?
-6. Should other NEOTH devices find this one?
+6. Should your other NEOTH devices find this one?
 
 Done. Say hello:
 
@@ -150,7 +154,7 @@ $ neoth chat "hello"
 Neoth: I'm here. What should I remember first?
 ```
 
-### Noob path
+### The noob path
 
 You do not need to know what a daemon is.
 
@@ -161,7 +165,7 @@ You do not need to know what a daemon is.
 5. Talk to NEOTH like a person.
 6. Use `neoth privacy audit` whenever you want to see what it knows and where requests went.
 
-### Power path
+### The power path
 
 You get the full operator surface when you want it.
 
@@ -170,6 +174,7 @@ neoth status
 neoth doctor
 neoth model fetch qwen
 neoth model fetch ouro-1.4b-thinking
+neoth ingest ~/Downloads/meeting.mp3
 neoth recall "the router issue from last month" --since 90d
 neoth privacy audit --last 30d
 neoth cluster discover
@@ -182,7 +187,7 @@ neoth code "add a migration and tests for the profile baseline event" --dispatch
 | :-- | :-- |
 | You mention a preference | It can become a profile claim with evidence, confidence, and redaction controls. |
 | You ask about old context | It recalls episodes, profile facts, files, images, audio, and prior decisions. |
-| You ask something hard | It can route through a council instead of forcing one model to bluff. |
+| You ask something hard | It can route through a council instead of forcing one model to bluff alone. |
 | You connect a new device | Cluster discovery can pair it into your memory mesh after consent. |
 | You install a plugin | WASM permissions, memory caps, fuel limits, and hostcall allowlists contain it. |
 
@@ -192,38 +197,15 @@ neoth code "add a migration and tests for the profile baseline event" --dispatch
 
 <br>
 
+<img src=".github/assets/act-3-engine.svg" alt="Act III - The Engine" width="100%">
+
+<br>
+
 # Act III - The Engine
 
-### Built like an operating system for memory
+### One memory, many surfaces
 
-```text
-You
-  |
-  |  CLI · GUI · Telegram · WhatsApp · Slack · Discord · Keet
-  v
-+--------------------------------------------------------------+
-| NEOTH                                                        |
-|                                                              |
-|  Channel adapters                                            |
-|  - allowlists, signatures, rate limits, mention gates         |
-|                                                              |
-|  WAL memory core                                             |
-|  - append-only events, HLC timestamps, CRC, HMAC compaction   |
-|  - episode, importance, council, motor, habit, profile views  |
-|                                                              |
-|  Recall                                                      |
-|  - keyword, profile, multimodal, embedding, cross-channel     |
-|                                                              |
-|  Model council                                               |
-|  - Left: fast answer                                         |
-|  - Right: pattern analysis                                   |
-|  - Callosum: synthesis and dissent                           |
-|  - Local: Qwen/Ouro profile extraction and reasoning          |
-|                                                              |
-|  Operator controls                                           |
-|  - autonomy gates, privacy audit, redaction, plugins, cluster |
-+--------------------------------------------------------------+
-```
+<img src=".github/assets/neoth-readme-system.svg" alt="NEOTH system map - one memory, many surfaces" width="100%">
 
 ### The six memory regions
 
@@ -269,7 +251,7 @@ You
 
 NEOTH does not ask every model every time. That is expensive and slow.
 
-Instead, the council is triggered when the message is complex, risky, contradictory, high-impact, or operator-configured. The fast model handles normal chat. The deep model watches patterns. The synthesis role exposes disagreement before it turns into confident nonsense.
+Instead, the council triggers when a message is complex, risky, contradictory, high-impact, or operator-configured. The fast model handles normal chat. The deep role watches patterns. The synthesis role exposes disagreement before it turns into confident nonsense.
 
 ```toml
 [council.budget]
@@ -327,8 +309,6 @@ NEOTH has two extension surfaces:
 | Skills | Context, instructions, templates, domain knowledge | Data-only, hot-reloadable, no code execution. |
 | WASM plugins | Real logic at lifecycle hooks | Fuel limit, 64 MiB memory cap, timeout, hostcall allowlist, no ambient filesystem/network. |
 
-Example plugin layout:
-
 ```text
 ~/.neoth/plugins/my-plugin/
   plugin.toml
@@ -338,8 +318,6 @@ Example plugin layout:
 ### Cluster mode
 
 Run NEOTH on a laptop, workstation, and home server without manually copying state.
-
-Cluster discovery can find your own instances over:
 
 | Surface | Use case |
 | :-- | :-- |
@@ -420,7 +398,6 @@ neoth recall "the build failure from Tuesday"
 neoth status
 neoth doctor
 neoth privacy audit
-neoth ingest ~/Downloads/meeting.mp3
 neoth model list
 neoth plugin list
 neoth cluster status
@@ -492,10 +469,14 @@ at your option.
 
 <div align="center">
 
+<img src=".github/assets/neoth-hero-white.svg" alt="NEOTH - Your Buddy, Your Life" width="100%">
+
+<br>
+
 <strong>Neoth knows. Neoth helps. Neoth stays yours.</strong>
 
 <br><br>
 
-<sub>NEOTH · Neural Engine Obligated To Help · v1.1 Sovereign Buddy</sub>
+<sub>NEOTH - Neural Engine Obligated To Help - v1.1 Sovereign Buddy</sub>
 
 </div>
