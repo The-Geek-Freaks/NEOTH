@@ -15,6 +15,7 @@ pub mod aws_bedrock;
 pub mod aws_credentials;
 pub mod aws_sigv4;
 pub mod azure_openai;
+pub mod circuit_breaker;
 pub mod claude_cli;
 pub mod claude_tmux;
 pub mod clip_engine;
