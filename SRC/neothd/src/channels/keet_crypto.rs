@@ -171,7 +171,10 @@ pub fn discovery_key(topic: TopicKey) -> DiscoveryKey {
 /// Tiny HMAC-SHA256 — uses the existing sha2 dep so we don't add
 /// `hmac` to the Cargo.toml just for one call. Matches the
 /// standard RFC 2104 construction.
-fn hmac_sha256(key: &[u8], data: &[u8], out: &mut [u8; 32]) {
+///
+/// Public so the cluster-discovery layer can reuse it for its own
+/// authenticator without re-deriving the construction.
+pub fn hmac_sha256(key: &[u8], data: &[u8], out: &mut [u8; 32]) {
     const BLOCK_SIZE: usize = 64;
     let mut key_block = [0u8; BLOCK_SIZE];
     if key.len() > BLOCK_SIZE {

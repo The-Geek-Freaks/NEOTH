@@ -28,6 +28,12 @@ use serde::{Deserialize, Serialize};
 /// land in the protocol-design follow-up.
 pub mod hyperswarm;
 
+/// Cluster auto-discovery primitives (Phase 1) — `cluster_key`
+/// derivation + HMAC-authenticated announce packets used by the
+/// future mDNS / Tailscale / Hysteria-relay discovery surfaces.
+/// SPEC: `PLAN/SPEC_cluster_auto_discovery_2026-05-22.md`.
+pub mod discovery;
+
 /// R-7 heartbeat wire protocol — per Chorus chat
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version
