@@ -49,6 +49,7 @@ pub mod models;
 pub mod obsidian;
 pub mod obsidian_sync_task;
 pub mod permissions;
+pub mod privacy;
 pub mod profile;
 pub mod providers;
 pub mod quota;
@@ -214,6 +215,14 @@ pub enum Commands {
     /// `--term <name>` filters to a single term by case-insensitive
     /// substring match.
     Glossary(glossary::GlossaryArgs),
+
+    /// L-08 privacy audit. `neoth privacy audit` reports — before
+    /// you send a prompt — whether the next call hits a cloud
+    /// provider, whether profile-learning is on, which channels are
+    /// configured, and how WAL frames are sealed.
+    ///
+    /// Pure read-only; no network, no mutation.
+    Privacy(privacy::PrivacyArgs),
 
     /// Manage hard-stored ground-truth facts (Phase 28c R-24).
     ///
@@ -600,6 +609,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Glossary(mut args) => {
             args.output = global_output;
             glossary::run_glossary(args)?;
+        }
+        Commands::Privacy(mut args) => {
+            args.output = global_output;
+            privacy::run_privacy(args).await?;
         }
         Commands::Groundtruth(mut args) => {
             args.output = global_output;
