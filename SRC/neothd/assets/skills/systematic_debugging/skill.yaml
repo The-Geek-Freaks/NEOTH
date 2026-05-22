@@ -1,0 +1,102 @@
+id: systematic_debugging
+description: |
+  Block proposed fixes until root cause is understood. When the operator
+  or a sub-agent hits an error, test failure, panic, or "unexpected
+  behavior", install a four-phase discipline: Investigate → Pattern →
+  Hypothesis → Implement. Symptom-patching is failure; root-cause-
+  driven fixes are the bar.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/systematic-debugging` (2026-05-22
+# Session 20 — QM-21). The upstream skill formalises the NEOTH CLAUDE.md
+# "Anti-Hallucination" + "Pre-Flight" rules into an explicit Iron Law +
+# four-phase gate so the model cannot skip straight to "let me try X".
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - debugging
+  - quality
+  - root-cause
+  - ported
+
+trigger_keywords:
+  - "error:"
+  - "exception"
+  - "panic"
+  - "fails"
+  - "failing"
+  - "broken"
+  - "doesn't work"
+  - "crashes"
+  - "stack trace"
+  - "regression"
+  - "test failure"
+  - "fehler"
+  - "kaputt"
+
+system_prompt: |
+  Systematic debugging discipline (auto-installed). Before proposing
+  ANY fix, you must complete four phases in order. No phase is optional.
+  Skipping a phase is a debugging failure.
+
+  ## Iron Law
+
+  NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST.
+
+  If you have not completed Phase 1, you cannot propose fixes.
+
+  ## Phase 1 — Investigate
+
+  1. Read the full error message + stack trace, including line numbers
+     and file paths. Quote the exact line that fails.
+  2. Reproduce the failure consistently — name the exact command, the
+     observed output, and the expected output.
+  3. Identify the smallest input that triggers the failure.
+  4. Note what changed recently (last commit, last config edit, last
+     dependency update). Errors after a green run point at the change.
+
+  Output of Phase 1: a one-paragraph statement of what fails, how to
+  trigger it, and which file:line emits the error.
+
+  ## Phase 2 — Pattern
+
+  Ask whether this fits a known shape:
+    - Off-by-one / boundary condition
+    - Type confusion at a boundary
+    - Race condition (concurrent access, async-after-await)
+    - Resource exhaustion (file handle, mutex, memory)
+    - Stale cache / stale snapshot
+    - Misconfiguration
+    - Upstream API change
+
+  If the pattern is known, the fix scope is bounded. If not, expand
+  investigation before continuing.
+
+  ## Phase 3 — Hypothesis
+
+  State a hypothesis: "I believe the cause is X because Y is observed
+  and Z would explain it." Make the hypothesis falsifiable — name
+  exactly what command + output would PROVE it wrong.
+
+  ## Phase 4 — Implement
+
+  Only now write the fix. The fix must:
+    - Target the root cause, not the symptom
+    - Be the smallest change that resolves the cause
+    - Include the verification command + observed output line proving
+      the cause is resolved (this composes with the
+      `verification_before_completion` skill — they reinforce)
+
+  ## Red flags (stop and re-investigate)
+
+    - "Let me just try X to see if it works" → Phase 3 not done
+    - "Maybe wrap it in a try/catch" → suppressing the symptom
+    - "Should be fine" → no Phase 1 evidence
+    - "I'll add a workaround" → root cause not understood
+
+  When you find yourself wanting to skip a phase because the bug "seems
+  obvious", that is the moment to slow down. Simple bugs have root
+  causes too.
+
+tool_allowlist: []
+enabled: true

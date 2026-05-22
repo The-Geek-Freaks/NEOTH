@@ -1,0 +1,91 @@
+id: writing_skills
+description: |
+  Auto-installed when the operator is about to author a new NEOTH
+  skill (skill.yaml in `~/.neoth/skills/<id>/`). Surfaces the TDD-
+  adapted skill-authoring methodology: RED = a baseline scenario the
+  skill should reshape, GREEN = compliance demonstrated, REFACTOR =
+  loophole closure. Composes with the daemon's `skills::test_harness`.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/writing-skills` (2026-05-22
+# Session 20 — QM-21). Adapted for NEOTH's YAML-based skill schema +
+# the existing test harness primitive.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - skills
+  - authoring
+  - quality
+  - ported
+
+trigger_keywords:
+  - "new skill"
+  - "write a skill"
+  - "skill schreiben"
+  - "skill authoring"
+  - "skill manifest"
+  - "trigger_keywords"
+  - "system_prompt:"
+
+system_prompt: |
+  Skill authoring discipline (auto-installed). When you write a new
+  NEOTH skill, follow the RED-GREEN-REFACTOR pattern adapted for
+  prompt-driven artifacts.
+
+  ## Iron Law
+
+  EVERY SKILL HAS A FAILING BASELINE BEFORE IT HAS A PASSING ONE.
+
+  ## RED — Capture the failure mode
+
+  1. Name the operator-visible problem the skill solves in one
+     sentence. "Without this skill, when X happens, Y fails."
+  2. Write down a baseline scenario where the failure occurs. Quote
+     the exact prompt that triggers it + the unwanted response shape.
+     This is the skill's reason-to-exist; without it the skill is
+     speculative.
+  3. Validate that the baseline reproduces: run the prompt against
+     NEOTH with the skill DISABLED, observe the failure.
+
+  ## GREEN — Make the skill correct the failure
+
+  1. Author the skill.yaml: `id` (snake_case), `description` (one
+     paragraph), `trigger_keywords` (the lexical signals that should
+     activate the skill — bias for precision over recall), and
+     `system_prompt` (the instruction the model receives when the
+     skill activates).
+  2. Re-run the baseline scenario with the skill ENABLED. The
+     response should now match the desired shape.
+  3. Quote both responses (before/after) in the skill's CREATION-LOG.
+
+  ## REFACTOR — Close loopholes
+
+  1. Generate three to five adversarial prompts: rephrasings,
+     edge cases, prompts that lexically miss the trigger keywords but
+     semantically need the skill. Run each.
+  2. Where the skill silently fails to activate, expand
+     `trigger_keywords` minimally — bias for keeping precision high.
+     A skill that activates on every prompt is noise.
+  3. Where the skill activates but the instruction is unclear, tighten
+     the `system_prompt`. Remove ambiguous phrases. Add concrete
+     anti-patterns the model should reject.
+
+  ## Composing with the test harness
+
+  NEOTH's `skills::test_harness` (when present) lets a skill author
+  pin RED + GREEN scenarios as test cases inside the skill's
+  directory. A future `neoth skill test <id>` invocation re-runs the
+  scenarios so a skill regression surfaces immediately. Author the
+  scenarios alongside the skill; do not defer.
+
+  ## When you should NOT write a new skill
+
+  - The behaviour belongs in a Rust gate, not a prompt (e.g. autonomy
+    permission checks — those go in `permissions::evaluate`)
+  - The behaviour is already covered by an existing skill — extend
+    the existing one rather than spawning a near-duplicate
+  - The "skill" would just say "be careful with X" — that's CLAUDE.md
+    rule territory, not a router-invokable surface
+
+tool_allowlist: []
+enabled: true

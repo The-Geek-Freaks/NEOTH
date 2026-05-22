@@ -133,6 +133,54 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn qm_21_ported_superpowers_skills_all_parse_clean() {
+        // QM-21 (2026-05-22 Session 20): the 5 shipped P1 skill YAMLs
+        // in SRC/neothd/assets/skills/ must round-trip the loader
+        // without warning. A typo'd YAML field (e.g. wrong indentation
+        // on system_prompt:) would silently drop the skill at runtime
+        // because parse_one logs warn + continues. This smoke test
+        // makes such a regression surface at build time instead.
+        let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skills_dir = manifest_dir.join("assets").join("skills");
+        if !skills_dir.exists() {
+            // Some CI shapes (cargo publish --dry-run, source-only
+            // builds) may not carry the assets dir. Skip gracefully.
+            return;
+        }
+        let skills = load_all(&skills_dir).await.unwrap();
+        let expected = [
+            "receiving_code_review",
+            "requesting_code_review",
+            "systematic_debugging",
+            "test_driven_development",
+            "verification_before_completion",
+            "writing_skills",
+        ];
+        for id in expected {
+            assert!(
+                skills.iter().any(|s| s.id() == id),
+                "QM-21: expected shipped skill `{id}` to parse cleanly; got: {:?}",
+                skills.iter().map(|s| s.id()).collect::<Vec<_>>(),
+            );
+        }
+        // Every skill must carry trigger_keywords (a manifest with an
+        // empty list is a router miss waiting to happen) + a non-empty
+        // system_prompt (the whole point of the skill).
+        for s in &skills {
+            assert!(
+                !s.trigger_keywords().is_empty(),
+                "skill `{}` has no trigger_keywords",
+                s.id()
+            );
+            assert!(
+                !s.manifest.system_prompt.trim().is_empty(),
+                "skill `{}` has empty system_prompt",
+                s.id()
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn loads_well_formed_manifest() {
         let dir = tempdir().unwrap();
         write_manifest(

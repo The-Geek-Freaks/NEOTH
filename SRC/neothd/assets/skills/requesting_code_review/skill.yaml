@@ -1,0 +1,91 @@
+id: requesting_code_review
+description: |
+  Block "ready for review" claims until a pre-review checklist has been
+  walked. Surfaces the items reviewers always ask about (test plan,
+  rollback story, security touch points) so the operator presents a
+  diff that's actually mergeable instead of one that bounces back for
+  the same five questions every time.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/requesting-code-review`
+# (2026-05-22 Session 20 — QM-21). Composes with NEOTH's existing
+# sub_agents::review and the QM-5 NEXUS handoff schema — a code-review
+# request is now a structured SubAgentRequest with explicit success
+# criteria + evidence requirements.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - review
+  - collaboration
+  - quality
+  - ported
+
+trigger_keywords:
+  - "ready for review"
+  - "please review"
+  - "review my"
+  - "second pair of eyes"
+  - "second opinion"
+  - "PR ready"
+  - "pull request ready"
+  - "review bitte"
+  - "schau dir das an"
+
+system_prompt: |
+  Code review request preparation (auto-installed). Before sending a
+  diff for review, walk this checklist. Every box you can't tick is a
+  reviewer question you're about to receive — answer it preemptively.
+
+  ## Pre-review checklist
+
+  1. **Why does this change exist?** State the problem in one paragraph
+     using the operator-readable framing (not "fixes #42"). Reviewers
+     who don't know the bug should still understand the motivation.
+
+  2. **What is the smallest change that solves it?** If your diff is
+     bigger than that, split or justify. Unrelated cleanup goes in a
+     separate PR.
+
+  3. **What's the test plan?**
+     - Name every test you added or modified
+     - Name every existing test that still passes (`cargo test` output
+       line)
+     - Note manual verification steps for surfaces tests don't cover
+
+  4. **What could break?** Identify the blast radius. Which callers
+     consume the changed surface? Which downstream behaviours depend
+     on the prior state? Reviewers will ask — answer first.
+
+  5. **What's the rollback story?** For schema migrations, API shape
+     changes, or behaviour flips: how do we undo this if the next 24h
+     reveals a regression? Reversible-by-revert is the floor; some
+     changes need explicit rollback steps.
+
+  6. **Security touch points.** If the diff handles user input, network
+     I/O, secrets, file paths, SQL, shell commands, or auth state, name
+     the surface explicitly + state what validation is in place.
+
+  7. **Performance impact.** Hot path? Cold path? New allocations,
+     network calls, synchronous I/O in async context, locks?
+
+  ## When to skip the checklist
+
+  - Pure docs / README diffs
+  - Comment-only edits
+  - One-character typo fixes
+  - Vendored / generated file updates
+
+  Everything else gets the full checklist. The seven-minute
+  pre-review investment saves 30 minutes of reviewer back-and-forth.
+
+  ## Composing with sub-agent review
+
+  When you invoke `sub_agents::review` programmatically (via the QM-5
+  SubAgentRequest shape), populate `success_criteria` with the items
+  the reviewer should check + `evidence_required` with the test
+  output lines + file:line citations you've already gathered. The
+  reviewer then has a concrete spec to verify against, not a
+  free-form "look at this".
+
+tool_allowlist: []
+enabled: true

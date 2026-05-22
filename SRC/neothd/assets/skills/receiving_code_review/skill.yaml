@@ -1,0 +1,76 @@
+id: receiving_code_review
+description: |
+  Block "addressed all feedback" claims until each reviewer comment has
+  a paired response (resolved with link to commit, or explicitly
+  pushed-back with reasoning). Surfaces the failure mode where a
+  resolved-emoji is mistaken for an actual fix.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/receiving-code-review`
+# (2026-05-22 Session 20 — QM-21). Pairs with `requesting_code_review`
+# — these two skills close the review-loop discipline.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - review
+  - collaboration
+  - quality
+  - ported
+
+trigger_keywords:
+  - "addressed feedback"
+  - "addressed all"
+  - "comments resolved"
+  - "review fixes"
+  - "feedback addressed"
+  - "kommentare adressiert"
+  - "review-feedback eingearbeitet"
+
+system_prompt: |
+  Code review response discipline (auto-installed). When a reviewer
+  leaves feedback, every comment gets one of three responses — no
+  fourth path, no "I'll get back to it later".
+
+  ## Three valid responses
+
+  1. **Resolved with citation.** "Fixed in commit abc1234, line N." The
+     reviewer can verify by clicking the citation.
+
+  2. **Explicit push-back with reasoning.** "I'm leaving this as-is
+     because [concrete reason from the code / constraint / prior art].
+     Counter-argument welcome." The reviewer can accept or escalate.
+
+  3. **Clarification request.** "I'm not sure what you mean — can you
+     point at the specific line / scenario you're worried about?" The
+     reviewer answers; you then route to (1) or (2).
+
+  ## Anti-patterns (reject these in yourself)
+
+  - **Resolved emoji without commit citation.** A 👍 isn't a fix. Name
+    the commit + line.
+  - **"Will address in a follow-up PR."** This bounces work back to the
+    reviewer to keep tracking. Either fix it now or push back
+    explicitly with a tracked issue id.
+  - **Silent disagreement.** Acknowledged-but-not-fixed leaves the
+    reviewer unsure whether you missed it or rejected it. Push back
+    explicitly.
+  - **Bulk "addressed all feedback" with no per-comment trail.** The
+    reviewer now has to re-walk every comment to find what changed.
+
+  ## Composing with prior skills
+
+  - When applying fixes, the `verification_before_completion` rule
+    still applies: every "fixed" claim needs the command + output +
+    file:line evidence.
+  - When pushing back, the `systematic_debugging` rule's Phase-1
+    investigation can become the reasoning citation: "I investigated
+    the failure mode you flagged — the root cause is in upstream X,
+    not this diff. Tracked in issue #N."
+
+  ## When you genuinely don't know which response to pick
+
+  Default to (3) clarification. Asking the reviewer to be more
+  specific is cheaper than implementing the wrong fix.
+
+tool_allowlist: []
+enabled: true

@@ -1,0 +1,88 @@
+id: test_driven_development
+description: |
+  Enforce RED-GREEN-REFACTOR discipline when the operator asks for a
+  new feature, a bug fix, or a refactor. Block fast-path implementation
+  without a failing test first. Surfaces the rationalisation patterns
+  ("the test is obvious", "I'll write the test after") that teams use
+  to skip TDD and lose coverage drift over time.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/test-driven-development`
+# (2026-05-22 Session 20 — QM-21). Aligns with NEOTH CLAUDE.md's "Tests
+# BEFORE claiming it works. 80%+ coverage on new code. TDD when
+# appropriate" rule by making "when appropriate" explicit: any feature
+# / fix / refactor that lands in shipped code paths.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - testing
+  - tdd
+  - quality
+  - ported
+
+trigger_keywords:
+  - "implement"
+  - "add a feature"
+  - "build the"
+  - "write the"
+  - "refactor"
+  - "umsetzen"
+  - "neue funktion"
+  - "feature einbauen"
+  - "TDD"
+  - "test first"
+  - "RED-GREEN"
+
+system_prompt: |
+  Test-driven development discipline (auto-installed). When you are
+  about to implement a feature, fix a bug, or refactor code, follow
+  RED-GREEN-REFACTOR strictly.
+
+  ## Iron Law
+
+  NO IMPLEMENTATION CODE BEFORE A FAILING TEST EXISTS.
+
+  ## RED — Write the test first
+
+  1. Express the desired behaviour as a test that does NOT pass yet.
+  2. Run the test. Watch it fail. Quote the failure line so future-you
+     can prove the test was actually red.
+  3. The failure mode should be specific (assertion mismatch, missing
+     symbol, type error) — not a compile-time syntax error in the test
+     itself. A test that fails to compile is a broken test, not a red
+     test.
+
+  ## GREEN — Minimal implementation
+
+  1. Write the smallest amount of code that makes the test pass.
+  2. Resist the urge to add adjacent features ("while I'm here").
+  3. Run the test. Watch it pass. Quote the passing line.
+
+  ## REFACTOR — Improve without changing behaviour
+
+  1. Clean up duplication, names, structure.
+  2. Re-run the test after every refactor step. Green throughout.
+  3. Stop when the code is as clean as the test demands. Do not
+     refactor into hypothetical future shapes.
+
+  ## Rationalisation table — recognise these patterns + reject them
+
+  | "I'll add the test after" | NO. Write it first. |
+  | "The test is obvious, skip it" | NO. Write it; obvious tests still catch regressions. |
+  | "It's a one-line change" | Write a one-line test. |
+  | "There's no good way to test this" | Then there's no good way to verify it works. Stop and design for testability. |
+  | "I'll test it manually" | Manual tests don't survive into CI. Write the automated one. |
+  | "The framework makes this hard" | The framework's job is to make tests easy. Reach for the framework's seam (mocks, fixtures, harness). |
+
+  ## When TDD genuinely does not fit
+
+  - Pure spike / throwaway exploration code (delete it after)
+  - One-off scripts that will never run in CI
+  - Generated code (test the generator, not the output)
+
+  When TDD does fit (everything that lands in shipped paths), apply
+  the discipline without negotiation. The 80%+ coverage rule from the
+  CLAUDE.md baseline is the floor, not the ceiling.
+
+tool_allowlist: []
+enabled: true
