@@ -68,21 +68,40 @@ pub enum ClusterAction {
     /// Confirm a discovered peer + add to the registry. Phase 4
     /// of the SPEC — Phase 2 mDNS / Phase 3 Tailscale surface
     /// candidates; this command writes them in atomically.
+    ///
+    /// Two modes: positional one-shot (`neoth cluster confirm
+    /// <pub_key> --label X --addr Y`) OR `--interactive` (scan
+    /// + numbered-list picker — no copy-paste of pub_keys).
     Confirm {
         /// 64-char lowercase-hex of the peer's pub key. Strict
         /// validation: must be exactly 64 chars of [0-9a-f].
-        pub_key: String,
-        /// Operator-readable label. Required at confirm time;
-        /// Phase 2 announces will refresh it.
+        /// Required unless `--interactive` is passed.
+        pub_key: Option<String>,
+        /// Operator-readable label. Required unless `--interactive`.
+        /// In interactive mode the label is taken from the discovered
+        /// peer's announce TXT record.
         #[arg(long)]
-        label: String,
-        /// Reachable socket address. Phase 6 gossip overrides.
+        label: Option<String>,
+        /// Reachable socket address. Required unless `--interactive`.
+        /// In interactive mode the addr is taken from the discovered
+        /// peer's announce. Phase 6 gossip overrides.
         #[arg(long)]
-        addr: String,
+        addr: Option<String>,
         /// Transport that surfaced the peer. Defaults to "manual"
         /// (operator typed the pub_key in directly).
         #[arg(long, default_value = "manual")]
         via: String,
+        /// Interactive picker: run a mDNS scan first, render a
+        /// numbered list of discovered peers, prompt operator for a
+        /// selection, then confirm the pick. Skips the positional
+        /// pub_key + --label + --addr requirement (values come from
+        /// the selected announce). Tailscale candidates are excluded
+        /// from the picker — they don't carry a pub_key.
+        #[arg(long, default_value_t = false)]
+        interactive: bool,
+        /// Scan timeout for `--interactive`. Default 10s.
+        #[arg(long, default_value_t = 10)]
+        interactive_timeout: u64,
     },
     /// Remove a confirmed peer by pub_key OR unique prefix.
     Revoke {
@@ -124,56 +143,52 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             label,
             addr,
             via,
-        } => run_confirm(&pub_key, &label, &addr, &via),
+            interactive,
+            interactive_timeout,
+        } => {
+            if interactive {
+                run_confirm_interactive(interactive_timeout, &via).await
+            } else {
+                let pub_key = pub_key.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "missing positional pub_key (or pass --interactive)"
+                    )
+                })?;
+                let label = label.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "missing --label (or pass --interactive)"
+                    )
+                })?;
+                let addr = addr.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "missing --addr (or pass --interactive)"
+                    )
+                })?;
+                run_confirm(&pub_key, &label, &addr, &via)
+            }
+        }
         ClusterAction::Revoke { pub_key } => run_revoke(&pub_key),
         ClusterAction::Enable => run_toggle(true),
         ClusterAction::Disable => run_toggle(false),
     }
 }
 
-async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
-    // Surface the Q2-ratified announce policy verdict before
-    // touching the mDNS daemon. The browse itself is listen-only
-    // (no leak), but the operator's announcer is silent on
-    // untrusted networks — that asymmetry surprises operators
-    // who paired two hosts on home wifi + then ran discover on
-    // a coffee shop SSID. The verdict + suggested fix go out
-    // first; `--force` bypasses the gate for operators who want
-    // the listen-only scan anyway.
-    let freedom_path = FreedomConfig::default_neoth_home().join("freedom.yaml");
-    let (mdns_enabled, policy) =
-        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
-    let ssid = crate::cluster::policy::current_ssid();
-    let gate = crate::cluster::policy::gate_discover(
-        mdns_enabled,
-        &policy,
-        ssid.as_deref(),
-    );
-    match gate {
-        crate::cluster::policy::DiscoverGate::Proceed => {
-            let ssid_label = ssid
-                .as_deref()
-                .map(|s| format!("SSID `{s}`"))
-                .unwrap_or_else(|| "wired/VPN/unknown SSID".to_string());
-            println!("announce policy: allowed on this network ({ssid_label})");
-        }
-        crate::cluster::policy::DiscoverGate::SkipWith(reason) => {
-            print_skip_with_fix(reason, ssid.as_deref());
-            if !force {
-                println!(
-                    "\nRe-run with `--force` to scan anyway (listen-only — \
-                     no announce leak)."
-                );
-                return Ok(());
-            }
-            println!("(--force passed — scanning anyway)");
-        }
-    }
+/// One discovered peer surfaced by a mDNS scan. Shared shape for
+/// `cluster discover` rendering + `cluster confirm --interactive`
+/// picker so the formats can't drift.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DiscoveredPeer {
+    pub pub_key_hex: String,
+    pub label: String,
+    pub addr: String,
+}
 
-    println!(
-        "scanning for NEOTH peers via mDNS for {timeout_secs}s on {}…",
-        crate::cluster::mdns::DEFAULT_SERVICE_TYPE
-    );
+/// Spawn the mDNS browse daemon, collect verified announces for
+/// `timeout_secs`, then shut down + return the de-duplicated peer
+/// list. Pure scan path — no rendering; callers decide how to
+/// present (discover prints a table, confirm --interactive
+/// renders a numbered list).
+async fn discover_scan(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>> {
     let daemon = mdns_sd::ServiceDaemon::new()
         .map_err(|e| anyhow::anyhow!("mdns daemon: {e}"))?;
     let receiver = daemon
@@ -221,6 +236,128 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
         }
     }
     let _ = daemon.shutdown();
+    Ok(seen
+        .into_iter()
+        .map(|(pub_key_hex, (label, addr))| DiscoveredPeer {
+            pub_key_hex,
+            label,
+            addr,
+        })
+        .collect())
+}
+
+/// Render a numbered-list picker for `cluster confirm --interactive`.
+/// Pure: input → operator-facing string. Picker indices are 1-based
+/// because that's how operators read lists.
+pub fn render_picker(peers: &[DiscoveredPeer]) -> String {
+    if peers.is_empty() {
+        return "(no peers found — run `neoth cluster discover` to confirm \
+                your network is reachable, or pair via a different transport)"
+            .to_string();
+    }
+    let mut out = String::new();
+    out.push_str("Pick a peer to confirm:\n");
+    for (i, p) in peers.iter().enumerate() {
+        let key_short = &p.pub_key_hex[..16.min(p.pub_key_hex.len())];
+        out.push_str(&format!(
+            "  [{idx}] {label} ({key_short}) @ {addr}\n",
+            idx = i + 1,
+            label = p.label,
+            addr = p.addr,
+        ));
+    }
+    out
+}
+
+/// Parse a 1-indexed picker input ("1\n", " 2 ", "3") into the
+/// 0-indexed `Vec` slot. Rejects 0, out-of-range, and non-numeric
+/// input with operator-readable errors so the caller can re-prompt
+/// or bail cleanly.
+pub fn parse_pick(input: &str, peer_count: usize) -> Result<usize> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("empty selection — type the number of the peer to confirm");
+    }
+    let n: usize = trimmed
+        .parse()
+        .map_err(|_| anyhow::anyhow!("not a number: `{trimmed}` — picker uses 1-based indices"))?;
+    if n == 0 {
+        anyhow::bail!("0 is not a valid pick — picker is 1-indexed");
+    }
+    if n > peer_count {
+        anyhow::bail!(
+            "pick {n} is out of range (only {peer_count} peer(s) shown)"
+        );
+    }
+    Ok(n - 1)
+}
+
+async fn run_confirm_interactive(timeout_secs: u64, via: &str) -> Result<()> {
+    println!(
+        "interactive confirm: scanning for NEOTH peers for {timeout_secs}s…"
+    );
+    let peers = discover_scan(timeout_secs).await?;
+    if peers.is_empty() {
+        println!("{}", render_picker(&peers));
+        return Ok(());
+    }
+    print!("{}", render_picker(&peers));
+    print!("> ");
+    use std::io::Write;
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .map_err(|e| anyhow::anyhow!("read stdin: {e}"))?;
+    let idx = parse_pick(&line, peers.len())?;
+    let picked = &peers[idx];
+    run_confirm(&picked.pub_key_hex, &picked.label, &picked.addr, via)
+}
+
+async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
+    // Surface the Q2-ratified announce policy verdict before
+    // touching the mDNS daemon. The browse itself is listen-only
+    // (no leak), but the operator's announcer is silent on
+    // untrusted networks — that asymmetry surprises operators
+    // who paired two hosts on home wifi + then ran discover on
+    // a coffee shop SSID. The verdict + suggested fix go out
+    // first; `--force` bypasses the gate for operators who want
+    // the listen-only scan anyway.
+    let freedom_path = FreedomConfig::default_neoth_home().join("freedom.yaml");
+    let (mdns_enabled, policy) =
+        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+    let ssid = crate::cluster::policy::current_ssid();
+    let gate = crate::cluster::policy::gate_discover(
+        mdns_enabled,
+        &policy,
+        ssid.as_deref(),
+    );
+    match gate {
+        crate::cluster::policy::DiscoverGate::Proceed => {
+            let ssid_label = ssid
+                .as_deref()
+                .map(|s| format!("SSID `{s}`"))
+                .unwrap_or_else(|| "wired/VPN/unknown SSID".to_string());
+            println!("announce policy: allowed on this network ({ssid_label})");
+        }
+        crate::cluster::policy::DiscoverGate::SkipWith(reason) => {
+            print_skip_with_fix(reason, ssid.as_deref());
+            if !force {
+                println!(
+                    "\nRe-run with `--force` to scan anyway (listen-only — \
+                     no announce leak)."
+                );
+                return Ok(());
+            }
+            println!("(--force passed — scanning anyway)");
+        }
+    }
+
+    println!(
+        "scanning for NEOTH peers via mDNS for {timeout_secs}s on {}…",
+        crate::cluster::mdns::DEFAULT_SERVICE_TYPE
+    );
+    let peers = discover_scan(timeout_secs).await?;
 
     // Phase 3 — Tailscale magic-DNS enumeration. Runs in parallel
     // with the mDNS scan above; soft-fails when Tailscale CLI is
@@ -234,24 +371,24 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
         }
     };
 
-    if seen.is_empty() && ts_candidates.is_empty() {
+    if peers.is_empty() && ts_candidates.is_empty() {
         println!("(no peers seen during scan window)");
     } else {
-        if !seen.is_empty() {
+        if !peers.is_empty() {
             println!(
                 "{:<16} {:<24} {:<22} {:<10}",
                 "pub_key", "label", "addr", "via"
             );
-            for (pub_key, (label, addr)) in &seen {
-                let key_short = &pub_key[..16.min(pub_key.len())];
+            for p in &peers {
+                let key_short = &p.pub_key_hex[..16.min(p.pub_key_hex.len())];
                 println!(
                     "{:<16} {:<24} {:<22} {:<10}",
-                    key_short, label, addr, "mdns"
+                    key_short, p.label, p.addr, "mdns"
                 );
             }
         }
         if !ts_candidates.is_empty() {
-            if seen.is_empty() {
+            if peers.is_empty() {
                 println!(
                     "{:<16} {:<24} {:<22} {:<10}",
                     "pub_key", "label", "addr", "via"
@@ -270,7 +407,8 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
         }
         println!(
             "\nRun `neoth cluster confirm <pub_key> --label <label> --addr <addr> --via <mdns|tailscale>` \
-             to add a peer (Phase 4 require-consent gate)."
+             to add a peer (Phase 4 require-consent gate), \
+             or `neoth cluster confirm --interactive` for a number-picker."
         );
     }
     Ok(())
@@ -744,5 +882,116 @@ mod tests {
             }
             _ => panic!("expected Discover variant"),
         }
+    }
+
+    // ── Bite #3: cluster confirm --interactive ─────────────────────
+
+    fn sample_peer(idx: u8) -> DiscoveredPeer {
+        DiscoveredPeer {
+            pub_key_hex: format!("{:02x}", idx).repeat(32),
+            label: format!("peer-{idx}"),
+            addr: format!("192.0.2.{idx}:4242"),
+        }
+    }
+
+    #[test]
+    fn render_picker_handles_empty_list() {
+        let out = render_picker(&[]);
+        assert!(out.contains("no peers found"));
+        assert!(out.contains("neoth cluster discover"));
+    }
+
+    #[test]
+    fn render_picker_lists_every_peer_with_one_based_idx() {
+        let peers = vec![sample_peer(1), sample_peer(2), sample_peer(3)];
+        let out = render_picker(&peers);
+        assert!(out.contains("[1] peer-1"));
+        assert!(out.contains("[2] peer-2"));
+        assert!(out.contains("[3] peer-3"));
+        // No [0] — picker is 1-indexed.
+        assert!(!out.contains("[0]"));
+        // First 16 chars of pub_key surfaced.
+        assert!(out.contains("0101010101010101"));
+    }
+
+    #[test]
+    fn parse_pick_accepts_valid_one_indexed() {
+        assert_eq!(parse_pick("1", 3).unwrap(), 0);
+        assert_eq!(parse_pick("2", 3).unwrap(), 1);
+        assert_eq!(parse_pick("3", 3).unwrap(), 2);
+    }
+
+    #[test]
+    fn parse_pick_tolerates_whitespace_and_newlines() {
+        assert_eq!(parse_pick("  2  \n", 3).unwrap(), 1);
+        assert_eq!(parse_pick("3\r\n", 3).unwrap(), 2);
+    }
+
+    #[test]
+    fn parse_pick_rejects_zero() {
+        let err = parse_pick("0", 3).unwrap_err();
+        assert!(err.to_string().contains("1-indexed"));
+    }
+
+    #[test]
+    fn parse_pick_rejects_out_of_range() {
+        let err = parse_pick("4", 3).unwrap_err();
+        assert!(err.to_string().contains("out of range"));
+        assert!(err.to_string().contains("3 peer"));
+    }
+
+    #[test]
+    fn parse_pick_rejects_non_numeric() {
+        let err = parse_pick("abc", 5).unwrap_err();
+        assert!(err.to_string().contains("not a number"));
+        let err = parse_pick("", 5).unwrap_err();
+        assert!(err.to_string().contains("empty"));
+    }
+
+    #[test]
+    fn confirm_action_carries_interactive_flags() {
+        let action = ClusterAction::Confirm {
+            pub_key: None,
+            label: None,
+            addr: None,
+            via: "manual".into(),
+            interactive: true,
+            interactive_timeout: 15,
+        };
+        match action {
+            ClusterAction::Confirm {
+                pub_key,
+                label,
+                addr,
+                interactive,
+                interactive_timeout,
+                via,
+            } => {
+                assert!(pub_key.is_none());
+                assert!(label.is_none());
+                assert!(addr.is_none());
+                assert!(interactive);
+                assert_eq!(interactive_timeout, 15);
+                assert_eq!(via, "manual");
+            }
+            _ => panic!("expected Confirm variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn confirm_non_interactive_requires_pub_key() {
+        let args = ClusterArgs {
+            action: ClusterAction::Confirm {
+                pub_key: None,
+                label: Some("x".into()),
+                addr: Some("127.0.0.1:1".into()),
+                via: "manual".into(),
+                interactive: false,
+                interactive_timeout: 10,
+            },
+            output: OutputFormat::Json,
+        };
+        let err = run_cluster(args).await.unwrap_err();
+        assert!(err.to_string().contains("pub_key"));
     }
 }
