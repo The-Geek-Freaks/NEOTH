@@ -1,0 +1,76 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 540" width="1280" height="540" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH system map">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="48%" r="72%">
+      <stop offset="0%" stop-color="#202020"/>
+      <stop offset="100%" stop-color="#0d0d0d"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="5" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
+      .label { font-size: 12px; letter-spacing: 1.8px; }
+      .small { font-size: 10px; letter-spacing: 1.2px; opacity: .76; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="540" rx="38" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1278" height="538" rx="38" fill="none" stroke="#fff" stroke-opacity="0.08"/>
+
+  <text x="640" y="62" class="sans" text-anchor="middle" font-size="34" font-weight="200" letter-spacing="10" fill="#fff">ONE MEMORY, MANY SURFACES</text>
+  <text x="640" y="96" class="mono" text-anchor="middle" font-size="10" letter-spacing="3" fill="#00ff80" opacity=".75">CLI / GUI / CHANNELS / LOCAL MODELS / COUNCIL / PLUGINS / CLUSTER</text>
+
+  <g class="mono" text-anchor="middle">
+    <rect x="64" y="150" width="210" height="86" rx="18" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".35"/>
+    <text x="169" y="184" class="label" fill="#00ff80">YOU</text>
+    <text x="169" y="211" class="small" fill="#eee">terminal, phone, team chat</text>
+
+    <rect x="360" y="135" width="560" height="116" rx="26" fill="#fff" opacity=".045" stroke="#fff" stroke-opacity=".12" filter="url(#glow)"/>
+    <text x="640" y="180" class="sans" font-size="58" font-weight="100" letter-spacing="24" fill="#fff">NEOTH</text>
+    <text x="640" y="220" class="small" fill="#bdbdbd">sovereign buddy runtime</text>
+
+    <rect x="1006" y="150" width="210" height="86" rx="18" fill="#ff2a6d" opacity=".075" stroke="#ff2a6d" stroke-opacity=".35"/>
+    <text x="1111" y="184" class="label" fill="#ff2a6d">OUTPUT</text>
+    <text x="1111" y="211" class="small" fill="#eee">answer, recall, action</text>
+
+    <line x1="274" y1="193" x2="360" y2="193" stroke="#00ff80" stroke-width="1" opacity=".7"/>
+    <line x1="920" y1="193" x2="1006" y2="193" stroke="#ff2a6d" stroke-width="1" opacity=".7"/>
+  </g>
+
+  <g class="mono">
+    <rect x="70" y="318" width="220" height="118" rx="18" fill="#00ff80" opacity=".07" stroke="#00ff80" stroke-opacity=".26"/>
+    <text x="96" y="350" class="label" fill="#00ff80">WAL MEMORY</text>
+    <text x="96" y="378" class="small" fill="#eee">append-only events</text>
+    <text x="96" y="402" class="small" fill="#eee">HLC + CRC + HMAC</text>
+
+    <rect x="325" y="318" width="220" height="118" rx="18" fill="#05d5ff" opacity=".07" stroke="#05d5ff" stroke-opacity=".26"/>
+    <text x="351" y="350" class="label" fill="#05d5ff">RECALL</text>
+    <text x="351" y="378" class="small" fill="#eee">profile + episodes</text>
+    <text x="351" y="402" class="small" fill="#eee">text, image, audio</text>
+
+    <rect x="580" y="318" width="220" height="118" rx="18" fill="#ff2a6d" opacity=".07" stroke="#ff2a6d" stroke-opacity=".26"/>
+    <text x="606" y="350" class="label" fill="#ff2a6d">COUNCIL</text>
+    <text x="606" y="378" class="small" fill="#eee">fast / deep / dissent</text>
+    <text x="606" y="402" class="small" fill="#eee">budgeted triggers</text>
+
+    <rect x="835" y="318" width="220" height="118" rx="18" fill="#fff" opacity=".055" stroke="#fff" stroke-opacity=".16"/>
+    <text x="861" y="350" class="label" fill="#fff">EXTENSIONS</text>
+    <text x="861" y="378" class="small" fill="#eee">skills + WASM</text>
+    <text x="861" y="402" class="small" fill="#eee">no ambient network</text>
+
+    <rect x="1090" y="318" width="120" height="118" rx="18" fill="#00ff80" opacity=".05" stroke="#00ff80" stroke-opacity=".22"/>
+    <text x="1116" y="350" class="label" fill="#00ff80">CLUSTER</text>
+    <text x="1116" y="378" class="small" fill="#eee">LAN</text>
+    <text x="1116" y="402" class="small" fill="#eee">Tailnet</text>
+  </g>
+
+  <path d="M180,318 C300,274 520,274 640,251 C760,274 980,274 1150,318" fill="none" stroke="#fff" stroke-opacity=".16"/>
+  <path d="M640,251 C570,294 510,306 435,318" fill="none" stroke="#05d5ff" stroke-opacity=".35"/>
+  <path d="M640,251 C682,294 690,306 690,318" fill="none" stroke="#ff2a6d" stroke-opacity=".35"/>
+  <path d="M640,251 C438,296 310,302 180,318" fill="none" stroke="#00ff80" stroke-opacity=".35"/>
+</svg>

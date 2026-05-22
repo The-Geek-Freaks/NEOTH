@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 680" width="1280" height="680" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH - Stop reintroducing yourself to your AI">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="48%" r="78%">
+      <stop offset="0%" stop-color="#262626"/>
+      <stop offset="55%" stop-color="#151515"/>
+      <stop offset="100%" stop-color="#070707"/>
+    </radialGradient>
+    <linearGradient id="green" x1="0%" x2="100%">
+      <stop offset="0%" stop-color="#00ff80" stop-opacity="0"/>
+      <stop offset="45%" stop-color="#00ff80" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#00ff80" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0%" x2="100%">
+      <stop offset="0%" stop-color="#05d5ff" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#05d5ff" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#05d5ff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="pink" x1="0%" x2="100%">
+      <stop offset="0%" stop-color="#ff2a6d" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#ff2a6d" stop-opacity="0.5"/>
+      <stop offset="100%" stop-color="#ff2a6d" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-60%" width="160%" height="220%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="180%">
+      <feDropShadow dx="0" dy="30" stdDeviation="34" flood-color="#000" flood-opacity="0.62"/>
+    </filter>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="680" rx="44" fill="url(#bg)"/>
+
+  <circle cx="150" cy="90" r="300" fill="#ff2a6d" opacity="0.05"/>
+  <circle cx="1090" cy="560" r="350" fill="#05d5ff" opacity="0.06"/>
+  <circle cx="640" cy="340" r="310" fill="#00ff80" opacity="0.025"/>
+
+  <path d="M58,238 C258,74 447,386 640,238 C833,74 1022,386 1222,238" fill="none" stroke="url(#green)" stroke-width="1.5" opacity="0.72">
+    <animate attributeName="d" dur="14s" repeatCount="indefinite" values="M58,238 C258,74 447,386 640,238 C833,74 1022,386 1222,238;M58,238 C258,386 447,74 640,238 C833,386 1022,74 1222,238;M58,238 C258,74 447,386 640,238 C833,74 1022,386 1222,238"/>
+  </path>
+  <path d="M88,258 C316,318 492,170 640,258 C788,318 964,170 1192,258" fill="none" stroke="url(#blue)" stroke-width="1" opacity="0.55">
+    <animate attributeName="d" dur="18s" repeatCount="indefinite" values="M88,258 C316,318 492,170 640,258 C788,318 964,170 1192,258;M88,258 C316,170 492,318 640,258 C788,170 964,318 1192,258;M88,258 C316,318 492,170 640,258 C788,318 964,170 1192,258"/>
+  </path>
+  <path d="M120,278 C360,240 475,318 640,278 C805,240 920,318 1160,278" fill="none" stroke="url(#pink)" stroke-width="0.9" stroke-dasharray="3 12" opacity="0.58">
+    <animate attributeName="stroke-dashoffset" values="0;-300" dur="24s" repeatCount="indefinite"/>
+  </path>
+
+  <rect x="155" y="118" width="970" height="350" rx="54" fill="#fff" opacity="0.028" stroke="#fff" stroke-opacity="0.12" filter="url(#shadow)"/>
+  <rect x="192" y="154" width="896" height="276" rx="38" fill="#000" opacity="0.18" stroke="#fff" stroke-opacity="0.06"/>
+
+  <text x="98" y="86" class="mono" font-size="10" letter-spacing="5" fill="#00ff80" opacity="0.78">N-01 / SOVEREIGN CORE</text>
+  <text x="1182" y="86" class="mono" font-size="10" letter-spacing="5" fill="#bdbdbd" opacity="0.56" text-anchor="end">v1.1 PUBLIC RELEASE</text>
+
+  <g class="sans" text-anchor="middle">
+    <text x="640" y="270" font-size="96" font-weight="100" letter-spacing="36" fill="#fff" filter="url(#glow)">NEOTH</text>
+    <line x1="530" y1="310" x2="750" y2="310" stroke="#fff" stroke-opacity="0.28"/>
+    <text x="640" y="348" font-size="12" font-weight="300" letter-spacing="10" fill="#bdbdbd">YOUR BUDDY, YOUR LIFE</text>
+    <text x="640" y="397" font-size="30" font-weight="500" letter-spacing="0" fill="#fff">Stop reintroducing yourself to your AI.</text>
+  </g>
+
+  <g class="mono" font-size="11" letter-spacing="1.6">
+    <rect x="150" y="512" width="230" height="74" rx="18" fill="#00ff80" opacity="0.08" stroke="#00ff80" stroke-opacity="0.32"/>
+    <text x="176" y="544" fill="#00ff80">LOCAL MEMORY</text>
+    <text x="176" y="568" fill="#d8d8d8" opacity="0.78">WAL + evidence + recall</text>
+
+    <rect x="405" y="512" width="230" height="74" rx="18" fill="#05d5ff" opacity="0.08" stroke="#05d5ff" stroke-opacity="0.32"/>
+    <text x="431" y="544" fill="#05d5ff">MODEL COUNCIL</text>
+    <text x="431" y="568" fill="#d8d8d8" opacity="0.78">fast, deep, dissent</text>
+
+    <rect x="660" y="512" width="230" height="74" rx="18" fill="#ff2a6d" opacity="0.08" stroke="#ff2a6d" stroke-opacity="0.32"/>
+    <text x="686" y="544" fill="#ff2a6d">NOOB SAFE</text>
+    <text x="686" y="568" fill="#d8d8d8" opacity="0.78">wizard-first setup</text>
+
+    <rect x="915" y="512" width="230" height="74" rx="18" fill="#fff" opacity="0.055" stroke="#fff" stroke-opacity="0.16"/>
+    <text x="941" y="544" fill="#ffffff">SINGLE BINARY</text>
+    <text x="941" y="568" fill="#d8d8d8" opacity="0.78">Rust daemon + CLI + GUI</text>
+  </g>
+
+  <text x="640" y="632" class="mono" font-size="10" letter-spacing="4" fill="#00ff80" opacity="0.68" text-anchor="middle">// neural engine obligated to help</text>
+</svg>
