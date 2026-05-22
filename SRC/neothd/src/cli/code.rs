@@ -82,6 +82,17 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         anyhow::bail!("neoth code: prompt is empty — nothing to decompose");
     }
 
+    // QM-7 (2026-05-22 Session 20) — TDD pre-flight. Classify the
+    // operator's prompt before decomposition + surface the matching
+    // checklist so the discipline expectation is visible up front.
+    // Non-blocking by design: the operator's authority is final;
+    // pre-flight is education, not gatekeeping.
+    let preflight = crate::coding::tdd_preflight::evaluate(&args.prompt);
+    println!("{}", preflight.headline);
+    if !preflight.skip_tdd {
+        println!("{}", preflight.checklist);
+    }
+
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
 

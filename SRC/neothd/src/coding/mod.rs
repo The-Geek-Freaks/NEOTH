@@ -51,6 +51,7 @@ pub mod retry;
 pub mod review;
 pub mod second_opinion;
 pub mod store;
+pub mod tdd_preflight;
 pub mod tool_router;
 pub mod types;
 pub mod validate;
