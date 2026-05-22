@@ -73,11 +73,35 @@ pub enum HookAction {
     /// Pick #34 follow-up (2026-05-20): invoke a discovered WASM
     /// plugin by id. The hook dispatcher delegates to the operator-
     /// provided `PluginInvoker`; no wasmtime dep leaks into the
-    /// hook module itself. When no invoker is wired (CLI tests,
-    /// slim daemon, hook unit tests), Plugin actions degrade to
-    /// Allow + a warn log so the operator's audit still shows what
-    /// fired.
-    Plugin { plugin_id: String },
+    /// hook module itself.
+    ///
+    /// ## `required` flag (R2-P0-3 / 2026-05-22)
+    ///
+    /// Closes the silent-fail-open hole flagged by the R2 reviewer
+    /// (`PLAN/REEVALUATION_GESAMT_2026-05-21_R2.md` §4 P0-3).
+    /// Pre-fix: missing invoker / compile failure / discovery skip
+    /// silently degraded Plugin actions to Allow + warn log. Fine for
+    /// optional telemetry hooks; catastrophic for safety hooks that
+    /// the operator wrote precisely BECAUSE they wanted a block.
+    /// Post-fix:
+    ///
+    /// - `required: false` (default) — invoker-missing degrades to
+    ///   Allow + warn (legacy semantics, telemetry-style usage).
+    /// - `required: true` — invoker-missing OR invoker-error escalates
+    ///   to `Block { reason: "required plugin <id> unavailable" }`
+    ///   so the operator's safety contract holds.
+    ///
+    /// Doctor surfaces required-plugin-with-no-invoker as a red
+    /// policy gap; the `bootstrap_plugin_invoker` slim-build path
+    /// must refuse to boot if any required hook is unresolvable.
+    Plugin {
+        plugin_id: String,
+        /// Operator-set safety guarantee. `false` (default) preserves
+        /// the pre-2026-05-22 telemetry-style fail-open behaviour;
+        /// `true` flips to fail-closed for safety hooks.
+        #[serde(default)]
+        required: bool,
+    },
 }
 
 #[cfg(test)]
@@ -138,6 +162,56 @@ mod tests {
                 assert_eq!(reason, "shell-out attempt detected");
             }
             other => panic!("expected Block, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r2_p0_3_plugin_hook_required_field_defaults_false() {
+        // Legacy TOML without explicit `required = true` must still
+        // parse — operators with existing plugin hooks keep their
+        // telemetry-style fail-open semantics unless they opt in.
+        let toml_src = r#"
+            name = "audit-plugin"
+            stage = "pre_provider_call"
+            [action]
+            kind = "plugin"
+            plugin_id = "audit-logger"
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        match h.action {
+            HookAction::Plugin {
+                plugin_id,
+                required,
+            } => {
+                assert_eq!(plugin_id, "audit-logger");
+                assert!(!required, "required defaults to false (telemetry-style)");
+            }
+            other => panic!("expected Plugin, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r2_p0_3_plugin_hook_can_be_marked_required() {
+        // Safety-hook operators opt in with required = true. Missing
+        // invoker must escalate to Block, not silent Allow.
+        let toml_src = r#"
+            name = "safety-gate"
+            stage = "pre_provider_call"
+            [action]
+            kind = "plugin"
+            plugin_id = "policy-checker"
+            required = true
+        "#;
+        let h: HookDef = toml::from_str(toml_src).unwrap();
+        match h.action {
+            HookAction::Plugin {
+                plugin_id,
+                required,
+            } => {
+                assert_eq!(plugin_id, "policy-checker");
+                assert!(required, "required: true must be picked up");
+            }
+            other => panic!("expected Plugin, got {other:?}"),
         }
     }
 

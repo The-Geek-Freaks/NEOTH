@@ -128,24 +128,63 @@ pub fn run_stage_with_plugins(
                     reason: reason.clone(),
                 });
             }
-            HookAction::Plugin { plugin_id } => {
+            HookAction::Plugin {
+                plugin_id,
+                required,
+            } => {
                 hits.push(hook.name.clone());
                 match invoker {
                     Some(inv) => {
                         if let Err(e) = inv.invoke(plugin_id) {
+                            if *required {
+                                // R2-P0-3: required plugin failure
+                                // MUST escalate to Block. Silent-Allow
+                                // on a safety hook was the documented
+                                // hole — fix it here.
+                                tracing::error!(
+                                    hook = %hook.name,
+                                    plugin_id = %plugin_id,
+                                    error = %e,
+                                    "required plugin invocation failed — blocking stage"
+                                );
+                                return Ok(StageOutcome::Block {
+                                    name: hook.name.clone(),
+                                    reason: format!(
+                                        "required plugin `{plugin_id}` failed: {e}"
+                                    ),
+                                });
+                            }
                             tracing::warn!(
                                 hook = %hook.name,
                                 plugin_id = %plugin_id,
                                 error = %e,
-                                "plugin invocation failed — stage continues"
+                                "plugin invocation failed — stage continues (required=false)"
                             );
                         }
                     }
                     None => {
+                        if *required {
+                            // R2-P0-3: no invoker + required hook is a
+                            // safety policy gap. Block immediately + log
+                            // at error level so doctor can surface the
+                            // policy hole.
+                            tracing::error!(
+                                hook = %hook.name,
+                                plugin_id = %plugin_id,
+                                "required plugin hook has no PluginInvoker — \
+                                 blocking stage (safety contract violation)"
+                            );
+                            return Ok(StageOutcome::Block {
+                                name: hook.name.clone(),
+                                reason: format!(
+                                    "required plugin `{plugin_id}` unavailable — no invoker registered"
+                                ),
+                            });
+                        }
                         tracing::warn!(
                             hook = %hook.name,
                             plugin_id = %plugin_id,
-                            "no PluginInvoker wired — Plugin action degrades to Allow"
+                            "no PluginInvoker wired — optional Plugin action degrades to Allow"
                         );
                     }
                 }
@@ -208,6 +247,20 @@ mod tests {
             matcher: None,
             action: HookAction::Plugin {
                 plugin_id: plugin_id.into(),
+                required: false,
+            },
+        }
+    }
+
+    fn required_plugin_hook(name: &str, stage: HookStage, plugin_id: &str) -> HookDef {
+        HookDef {
+            name: name.into(),
+            stage,
+            enabled: Some(true),
+            matcher: None,
+            action: HookAction::Plugin {
+                plugin_id: plugin_id.into(),
+                required: true,
             },
         }
     }
@@ -419,5 +472,119 @@ mod tests {
             StageOutcome::Continue { hits, .. } => assert!(hits.is_empty()),
             _ => panic!("expected Continue"),
         }
+    }
+
+    // ── R2-P0-3 required Plugin hook tests ──────────────────────────────
+
+    #[test]
+    fn r2_p0_3_required_plugin_blocks_when_invoker_missing() {
+        // The reviewer-flagged failure mode: operator wrote a Plugin
+        // hook at PreProviderCall expecting it to act as a safety
+        // gate, but the daemon's invoker registration didn't run
+        // (slim build / compile failure / discovery skip). Pre-fix:
+        // silent Allow. Post-fix: Block with explicit reason so the
+        // operator's audit sees the policy gap fire instead of
+        // falsely-green telemetry.
+        let hooks = vec![required_plugin_hook(
+            "safety-gate",
+            HookStage::PreProviderCall,
+            "missing-plugin",
+        )];
+        let out = run_stage(HookStage::PreProviderCall, "operator body", &hooks).unwrap();
+        match out {
+            StageOutcome::Block { name, reason } => {
+                assert_eq!(name, "safety-gate");
+                assert!(reason.contains("missing-plugin"));
+                assert!(
+                    reason.contains("no invoker") || reason.contains("unavailable"),
+                    "block reason must name the unavailable-invoker cause: {reason}"
+                );
+            }
+            other => panic!(
+                "required plugin without invoker must Block, got: {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn r2_p0_3_required_plugin_blocks_when_invoker_errors() {
+        // Same failure-closed contract, different failure mode: the
+        // invoker IS registered but the plugin invocation itself
+        // failed (wasm trap / panic / load error). Required = true
+        // must escalate to Block.
+        let hooks = vec![required_plugin_hook(
+            "safety-gate",
+            HookStage::PreProviderCall,
+            "broken-plugin",
+        )];
+        let out = run_stage_with_plugins(
+            HookStage::PreProviderCall,
+            "operator body",
+            &hooks,
+            Some(&FailingInvoker),
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Block { name, reason } => {
+                assert_eq!(name, "safety-gate");
+                assert!(reason.contains("broken-plugin"));
+                assert!(reason.contains("simulated plugin failure") || reason.contains("failed"));
+            }
+            other => panic!("required plugin error must Block, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r2_p0_3_optional_plugin_keeps_legacy_fail_open_semantics() {
+        // Operators who haven't opted into required-mode keep the
+        // pre-2026-05-22 behaviour: invoker-missing degrades to Allow
+        // + warn log. Pin so we don't accidentally break telemetry
+        // hooks that the field defaulting to false should leave alone.
+        let hooks = vec![plugin_hook(
+            "telemetry-only",
+            HookStage::PreProviderCall,
+            "metrics-emitter",
+        )];
+        let out = run_stage(HookStage::PreProviderCall, "operator body", &hooks).unwrap();
+        match out {
+            StageOutcome::Continue { body, hits } => {
+                assert_eq!(body, "operator body");
+                assert_eq!(hits, vec!["telemetry-only"]);
+            }
+            other => panic!(
+                "optional plugin without invoker must Continue, got: {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn r2_p0_3_required_plugin_continues_when_invoker_succeeds() {
+        // Happy path: invoker present + invocation succeeds. Even
+        // required = true continues through the stage.
+        let invoker = CountingInvoker {
+            calls: std::sync::Mutex::new(Vec::new()),
+        };
+        let hooks = vec![required_plugin_hook(
+            "safety-gate",
+            HookStage::PreProviderCall,
+            "policy-checker",
+        )];
+        let out = run_stage_with_plugins(
+            HookStage::PreProviderCall,
+            "operator body",
+            &hooks,
+            Some(&invoker),
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Continue { body, hits } => {
+                assert_eq!(body, "operator body");
+                assert_eq!(hits, vec!["safety-gate"]);
+            }
+            other => panic!(
+                "happy-path required plugin must Continue, got: {other:?}"
+            ),
+        }
+        assert_eq!(invoker.calls.lock().unwrap().len(), 1);
     }
 }
