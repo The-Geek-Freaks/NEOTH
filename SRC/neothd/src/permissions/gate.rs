@@ -18,6 +18,9 @@
 //! before the side effect (provider call, channel send, shell exec). The
 //! gate never owns the WAL writer; it borrows it.
 
+use std::sync::Arc;
+use std::time::Duration;
+
 use anyhow::Result;
 use thiserror::Error;
 
@@ -56,10 +59,41 @@ pub enum ConfirmStrategy {
     AlwaysAllow,
 }
 
+/// R2-P1-2: trait the channel layer implements so the permission gate
+/// can ask the operator a yes/no question through their active channel
+/// (Telegram, Slack, future surfaces) and await a typed reply with a
+/// bounded timeout. Returns `Some(true)` for approve / `Some(false)`
+/// for deny / `None` if the channel adapter couldn't reach the
+/// operator (offline, send failed). `None` is treated as deny by the
+/// gate but distinguished in the audit log.
+///
+/// The trait is async because every real channel send is async; the
+/// timeout is enforced INSIDE the gate via `tokio::time::timeout` so
+/// implementations don't have to repeat the bounding logic.
+#[async_trait::async_trait]
+pub trait ChannelAsker: Send + Sync {
+    /// Phrase a yes/no question on the operator's channel. `reason`
+    /// is the operator-readable explanation of what the daemon is
+    /// about to do (e.g. "send Telegram message to +49..." or
+    /// "execute `rm -rf $TMP`"). Return `Some(approve)` once a reply
+    /// arrives, `None` when the channel is unavailable.
+    async fn ask(&self, reason: &str) -> Option<bool>;
+}
+
 /// One per autonomy decision site. Cheap to construct.
 pub struct Gate {
     level: AutonomyLevel,
     confirm: ConfirmStrategy,
+    /// R2-P1-2: when `Some`, the `ConfirmStrategy::Channel` path
+    /// routes through this asker instead of dead-failing. None
+    /// preserves the pre-2026-05-22 deny-with-hint behaviour so
+    /// existing call sites that haven't wired a channel layer keep
+    /// their fail-closed semantics.
+    channel_asker: Option<Arc<dyn ChannelAsker>>,
+    /// R2-P1-2: bounded wait for the channel reply. Defaults to
+    /// 90s (matches `confirm::DEFAULT_CHANNEL_TIMEOUT`). Operators
+    /// running NEOTH in proactive-mode can lower it via builder.
+    channel_timeout: Duration,
 }
 
 impl Gate {
@@ -67,12 +101,30 @@ impl Gate {
         Self {
             level,
             confirm: ConfirmStrategy::FailClosed,
+            channel_asker: None,
+            channel_timeout: Duration::from_secs(90),
         }
     }
 
     /// Replace the confirm strategy. Defaults to `FailClosed`.
     pub fn with_confirm(mut self, strategy: ConfirmStrategy) -> Self {
         self.confirm = strategy;
+        self
+    }
+
+    /// R2-P1-2: wire the channel-asker callback so
+    /// `ConfirmStrategy::Channel` can actually ask the operator
+    /// instead of dead-failing. Without this the strategy keeps
+    /// returning Deny with a "channel-confirm not wired" hint so
+    /// the operator sees WHY the action didn't run + how to fix it.
+    pub fn with_channel_asker(mut self, asker: Arc<dyn ChannelAsker>) -> Self {
+        self.channel_asker = Some(asker);
+        self
+    }
+
+    /// R2-P1-2: override the channel-reply timeout. Default 90s.
+    pub fn with_channel_timeout(mut self, timeout: Duration) -> Self {
+        self.channel_timeout = timeout;
         self
     }
 
@@ -127,11 +179,39 @@ impl Gate {
                 Decision::Deny(format!("daemon-mode fail-closed; {reason}"))
             }
             ConfirmStrategy::Channel => {
-                // Phase 28b AU-4-part-2 wires this. Until then keep the
-                // safety floor: deny. A real implementation calls back into
-                // the channel adapter with a yes/no question and awaits a
-                // reply with a configurable timeout.
-                Decision::Deny(format!("channel-confirm not wired; {reason}"))
+                // R2-P1-2 (2026-05-22 Session 20): route through the
+                // operator-supplied ChannelAsker when wired. Reply
+                // semantics:
+                //   - Some(true)  → Allow (operator approved)
+                //   - Some(false) → Deny  ("operator denied: …")
+                //   - None        → Deny  ("channel unavailable: …")
+                //   - timeout     → Deny  ("channel-confirm timed out: …")
+                // Without an asker we surface a clear "not wired" hint
+                // so the operator sees WHY the action didn't run + how
+                // to fix it (wire a channel adapter to the Gate).
+                let _ = action;
+                match &self.channel_asker {
+                    Some(asker) => {
+                        let timeout = self.channel_timeout;
+                        match tokio::time::timeout(timeout, asker.ask(reason)).await {
+                            Ok(Some(true)) => Decision::Allow,
+                            Ok(Some(false)) => {
+                                Decision::Deny(format!("operator denied via channel: {reason}"))
+                            }
+                            Ok(None) => Decision::Deny(format!(
+                                "channel unavailable for confirm; {reason}"
+                            )),
+                            Err(_) => Decision::Deny(format!(
+                                "channel-confirm timed out after {}s; {reason}",
+                                timeout.as_secs()
+                            )),
+                        }
+                    }
+                    None => Decision::Deny(format!(
+                        "channel-confirm not wired (wire a ChannelAsker via \
+                         Gate::with_channel_asker); {reason}"
+                    )),
+                }
             }
             ConfirmStrategy::Tty => {
                 #[cfg(feature = "wizard")]
@@ -240,12 +320,129 @@ mod tests {
 
     #[tokio::test]
     async fn channel_strategy_denies_until_wired() {
-        // Phase 28b AU-4-part-2 placeholder: until the channel callback is
-        // wired, the safe floor is to deny. Regression guard catches an
-        // accidental relaxation that silently grants without the callback.
+        // R2-P1-2: when no ChannelAsker is wired, the strategy
+        // surfaces an actionable "wire a ChannelAsker via
+        // Gate::with_channel_asker" hint instead of an opaque deny.
         let gate = Gate::for_level(AutonomyLevel::Standard).with_confirm(ConfirmStrategy::Channel);
         let r = gate.check(&Action::WriteOutsideHome, None).await;
-        assert!(matches!(r, Err(GateError::Denied(_))), "got {:?}", r);
+        match r {
+            Err(GateError::Denied(reason)) => {
+                assert!(
+                    reason.contains("not wired") && reason.contains("ChannelAsker"),
+                    "deny reason must guide the operator: {reason}"
+                );
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+    }
+
+    // ── R2-P1-2 channel-confirm wired-asker tests ────────────────────────
+
+    struct ApproveAsker;
+    #[async_trait::async_trait]
+    impl ChannelAsker for ApproveAsker {
+        async fn ask(&self, _reason: &str) -> Option<bool> {
+            Some(true)
+        }
+    }
+
+    struct DenyAsker;
+    #[async_trait::async_trait]
+    impl ChannelAsker for DenyAsker {
+        async fn ask(&self, _reason: &str) -> Option<bool> {
+            Some(false)
+        }
+    }
+
+    struct UnavailableAsker;
+    #[async_trait::async_trait]
+    impl ChannelAsker for UnavailableAsker {
+        async fn ask(&self, _reason: &str) -> Option<bool> {
+            None
+        }
+    }
+
+    struct SlowAsker;
+    #[async_trait::async_trait]
+    impl ChannelAsker for SlowAsker {
+        async fn ask(&self, _reason: &str) -> Option<bool> {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Some(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn r2_p1_2_channel_asker_approve_results_in_allow() {
+        let gate = Gate::for_level(AutonomyLevel::Standard)
+            .with_confirm(ConfirmStrategy::Channel)
+            .with_channel_asker(Arc::new(ApproveAsker));
+        let r = gate.check(&Action::WriteOutsideHome, None).await;
+        assert!(
+            r.is_ok(),
+            "channel approve must let action through, got {r:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn r2_p1_2_channel_asker_deny_results_in_denied_with_operator_reason() {
+        let gate = Gate::for_level(AutonomyLevel::Standard)
+            .with_confirm(ConfirmStrategy::Channel)
+            .with_channel_asker(Arc::new(DenyAsker));
+        let r = gate.check(&Action::WriteOutsideHome, None).await;
+        match r {
+            Err(GateError::Denied(reason)) => {
+                assert!(
+                    reason.contains("operator denied via channel"),
+                    "deny reason must surface the operator's choice: {reason}"
+                );
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn r2_p1_2_channel_unavailable_yields_distinct_denied_reason() {
+        let gate = Gate::for_level(AutonomyLevel::Standard)
+            .with_confirm(ConfirmStrategy::Channel)
+            .with_channel_asker(Arc::new(UnavailableAsker));
+        let r = gate.check(&Action::WriteOutsideHome, None).await;
+        match r {
+            Err(GateError::Denied(reason)) => {
+                assert!(
+                    reason.contains("channel unavailable"),
+                    "deny reason must distinguish unavailable channel from operator-denied: {reason}"
+                );
+            }
+            other => panic!("expected Denied, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn r2_p1_2_channel_confirm_respects_timeout() {
+        // R2 done-criterion: "Channel-confirm mit Timeout". A slow
+        // asker that takes 5s must hit the bounded wait + return
+        // timeout-tagged deny so the WAL audit can distinguish a
+        // hung channel from operator-denied.
+        let gate = Gate::for_level(AutonomyLevel::Standard)
+            .with_confirm(ConfirmStrategy::Channel)
+            .with_channel_asker(Arc::new(SlowAsker))
+            .with_channel_timeout(Duration::from_millis(80));
+        let start = std::time::Instant::now();
+        let r = gate.check(&Action::WriteOutsideHome, None).await;
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "timeout must fire well before the asker's 5s sleep, took {elapsed:?}"
+        );
+        match r {
+            Err(GateError::Denied(reason)) => {
+                assert!(
+                    reason.contains("timed out"),
+                    "timeout deny must say so: {reason}"
+                );
+            }
+            other => panic!("expected Denied on timeout, got {other:?}"),
+        }
     }
 
     #[tokio::test]
