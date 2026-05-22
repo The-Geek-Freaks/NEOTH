@@ -53,6 +53,7 @@ impl DecomposerLlm for CerebellumDecomposer {
             temperature: None,
             top_p: None,
             sampling_seed: None,
+            stop_sequences: vec![],
         };
         let completion = self
             .provider

@@ -160,6 +160,7 @@ pub async fn extract(provider: &dyn Provider, window: &AttributedWindow) -> Resu
         temperature: Some(0.0),
         top_p: None,
         sampling_seed: Some(seed_from_window(window)),
+        stop_sequences: vec![],
     };
     let completion = provider
         .complete(req)

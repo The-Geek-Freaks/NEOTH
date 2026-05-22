@@ -162,6 +162,34 @@ impl SamplingConfig {
     }
 }
 
+/// L-13 stop-sequence scan over the current decoded body.
+/// Returns `Some(truncated_text)` when any stop sequence appears
+/// in `body`; the returned text is `body` truncated to JUST
+/// BEFORE the earliest stop position (stop string itself
+/// excluded). Returns `None` when no stop sequence has hit yet.
+///
+/// Pure function — caller drives the loop break on `Some`.
+pub fn check_stop_sequences(body: &str, stop_sequences: &[String]) -> Option<String> {
+    if stop_sequences.is_empty() {
+        return None;
+    }
+    // Find the EARLIEST stop hit so a longer stop_sequence
+    // appearing later doesn't trump an earlier short one.
+    let mut earliest: Option<usize> = None;
+    for stop in stop_sequences {
+        if stop.is_empty() {
+            continue;
+        }
+        if let Some(pos) = body.find(stop.as_str()) {
+            earliest = match earliest {
+                None => Some(pos),
+                Some(cur) => Some(cur.min(pos)),
+            };
+        }
+    }
+    earliest.map(|pos| body[..pos].to_string())
+}
+
 impl LocalQwenAdapter {
     /// Construct an adapter and ensure model artifacts are present locally.
     /// Idempotent: re-runs check cache and skip download if files exist.
@@ -789,6 +817,11 @@ fn run_forward(
     let mut all_tokens = input_ids;
     let mut new_tokens: Vec<u32> = Vec::with_capacity(max_new_tokens);
 
+    // L-13: precompute whether any stop sequence is set so we
+    // only pay the decode + scan cost when needed.
+    let stop_active = !req.stop_sequences.is_empty();
+    let mut early_text: Option<String> = None;
+
     for step in 0..max_new_tokens {
         let (context, seqlen_offset) = if step == 0 {
             (&all_tokens[..], 0)
@@ -806,13 +839,38 @@ fn run_forward(
         }
         all_tokens.push(next);
         new_tokens.push(next);
+
+        // L-13 stop-sequence check. Decode every-N-tokens to
+        // amortise the tokenizer cost on long generations.
+        // N=4 keeps the latency hit under ~1ms per check on a
+        // typical Qwen3 vocabulary.
+        if stop_active && new_tokens.len() % 4 == 0 {
+            let body = loaded_model
+                .tokenizer
+                .decode(&new_tokens, true)
+                .map_err(|e| anyhow::anyhow!("decode tokens for stop-check: {e}"))?;
+            if let Some(truncated) = check_stop_sequences(&body, &req.stop_sequences) {
+                early_text = Some(truncated);
+                break;
+            }
+        }
     }
 
     // ── 4. Decode + return. ───────────────────────────────────────────────
-    let text = loaded_model
-        .tokenizer
-        .decode(&new_tokens, true)
-        .map_err(|e| anyhow::anyhow!("decode tokens: {e}"))?;
+    // When L-13 fired, the early-truncated text already excludes
+    // the stop sequence; otherwise decode the full token tail.
+    let text = match early_text {
+        Some(t) => t,
+        None => {
+            let body = loaded_model
+                .tokenizer
+                .decode(&new_tokens, true)
+                .map_err(|e| anyhow::anyhow!("decode tokens: {e}"))?;
+            // Final-pass stop-sequence check in case the stop
+            // hit on the last (non-multiple-of-4) step.
+            check_stop_sequences(&body, &req.stop_sequences).unwrap_or(body)
+        }
+    };
     Ok(Completion {
         text,
         model: req.model.clone().unwrap_or_else(|| repo.to_string()),
@@ -918,6 +976,63 @@ pub fn default_cache_dir(repo: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── L-13 stop-sequence helper ───────────────────────────────
+
+    #[test]
+    fn check_stop_empty_list_returns_none() {
+        assert!(check_stop_sequences("hello world", &[]).is_none());
+        // Empty stop strings inside the list are also no-ops.
+        let stops = vec![String::new(), String::new()];
+        assert!(check_stop_sequences("hello world", &stops).is_none());
+    }
+
+    #[test]
+    fn check_stop_returns_truncated_text_at_earliest_hit() {
+        let stops = vec!["</s>".to_string()];
+        let body = "the answer is 42</s>and some trailing junk";
+        let got = check_stop_sequences(body, &stops).unwrap();
+        assert_eq!(got, "the answer is 42");
+        assert!(!got.contains("</s>"), "stop string excluded from output");
+    }
+
+    #[test]
+    fn check_stop_picks_earliest_of_multiple_stops() {
+        // If multiple stop strings match, the EARLIEST position
+        // wins regardless of which stop_sequence comes first
+        // in the list.
+        let stops = vec!["END".to_string(), "STOP".to_string()];
+        let body = "hello STOP world END trailing";
+        let got = check_stop_sequences(body, &stops).unwrap();
+        assert_eq!(got, "hello ");
+    }
+
+    #[test]
+    fn check_stop_returns_none_when_no_stop_in_body() {
+        let stops = vec!["</s>".to_string(), "STOP".to_string()];
+        assert!(check_stop_sequences("normal output", &stops).is_none());
+    }
+
+    #[test]
+    fn check_stop_handles_stop_at_string_start() {
+        // Stop at position 0 → empty truncation. Edge case
+        // that operators might trigger by passing a stop
+        // sequence that's also the prompt-echo prefix.
+        let stops = vec!["X".to_string()];
+        let got = check_stop_sequences("Xanything", &stops).unwrap();
+        assert_eq!(got, "");
+    }
+
+    #[test]
+    fn check_stop_handles_unicode_boundary_correctly() {
+        // String::find returns a byte offset, and slicing on a
+        // non-char-boundary panics. Pin that multibyte content
+        // BEFORE the stop sequence doesn't trip the slice.
+        let stops = vec!["</done>".to_string()];
+        let body = "café Ω</done>more";
+        let got = check_stop_sequences(body, &stops).unwrap();
+        assert_eq!(got, "café Ω");
+    }
 
     #[test]
     fn human_bytes_renders_each_scale() {

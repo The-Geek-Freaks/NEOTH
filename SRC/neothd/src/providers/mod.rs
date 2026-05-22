@@ -75,6 +75,18 @@ pub struct Request {
     pub top_p: Option<f32>,
     /// RNG seed for reproducible sampling.
     pub sampling_seed: Option<u64>,
+    /// L-13 (Session 19, 2026-05-21): stop sequences. When the
+    /// decoded body reaches one of these substrings, generation
+    /// halts + the output is truncated to the position BEFORE
+    /// the stop sequence (the stop string itself is NOT
+    /// included in the returned text). Empty = no stop check.
+    ///
+    /// Today only `local_qwen` honours this — cloud providers
+    /// already implement stop sequences natively + the value
+    /// flows through their API parameters when wired
+    /// (per-adapter pickup follows the same pattern as
+    /// `temperature` / `top_p`).
+    pub stop_sequences: Vec<String>,
 }
 
 /// One delta during a streaming response. `delta` is incremental new text
