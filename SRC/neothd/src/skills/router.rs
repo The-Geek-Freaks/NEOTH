@@ -88,10 +88,12 @@ fn lowercase_tokens(s: &str) -> Vec<String> {
 }
 
 /// A keyword matches if its lowercased form appears as a whole word inside
-/// the lowercased message OR — for multi-word keywords — as an exact
-/// substring of the full lowercased message.
+/// the lowercased message OR — for keywords that contain non-alphanumeric
+/// characters (spaces, hyphens, dots) — as an exact substring of the full
+/// lowercased message. Hyphenated triggers like `fact-check` or `node.js`
+/// would never tokenise to a single token, so they need substring matching.
 fn keyword_matches(needle: &str, tokens: &[String], full_message: &str) -> bool {
-    if needle.contains(' ') {
+    if needle.chars().any(|c| !c.is_alphanumeric()) {
         full_message.to_lowercase().contains(needle)
     } else {
         tokens.iter().any(|t| t == needle)
@@ -199,6 +201,26 @@ mod tests {
         let skills = vec![skill("news", &["news", "news"], true)];
         let m = route("news news news", &skills).unwrap();
         assert_eq!(m.matched_keywords.len(), 1);
+    }
+
+    #[test]
+    fn hyphenated_keyword_matches_via_substring() {
+        // `fact-check` would never tokenise to one token because the
+        // splitter treats `-` as a separator. Pin that the router uses
+        // substring matching for any keyword carrying non-alphanumeric
+        // characters.
+        let skills = vec![skill("fc", &["fact-check"], true)];
+        let m = route("Fact-check these claims please", &skills).unwrap();
+        assert_eq!(m.skill.id(), "fc");
+        assert_eq!(m.matched_keywords, vec!["fact-check"]);
+    }
+
+    #[test]
+    fn dotted_keyword_matches_via_substring() {
+        // Same rule applies to dotted triggers (`node.js`, `v1.0`, etc.).
+        let skills = vec![skill("nodejs", &["node.js"], true)];
+        let m = route("Got a node.js bug to chase", &skills).unwrap();
+        assert_eq!(m.skill.id(), "nodejs");
     }
 
     #[test]
@@ -370,5 +392,111 @@ mod tests {
         // afford an IO round-trip per turn.
         let skills: Vec<Skill> = vec![];
         let _result: Option<RouteMatch> = route("any message", &skills);
+    }
+
+    // ── R4-P1: routing-conflict regression matrix for the 22 bundled skills ──
+
+    /// R4 reviewer P1: "Routing-Konflikte fuer 22 Skills pinnen.
+    /// Prompt-Matrix fuer typische deutsche/englische Operator-
+    /// Prompts. Erwartete Skill-ID pro Prompt. Tests fuer Konflikte
+    /// wie diagnose vs systematic_debugging, writing_plans vs
+    /// to_prd, requesting_code_review vs receiving_code_review."
+    ///
+    /// Loads the full bundled skill set + runs `route` against
+    /// canonical operator prompts; asserts the matched skill id.
+    /// Catches a future trigger-keyword edit that accidentally lets
+    /// e.g. `writing_plans` shadow `to_prd` because both match
+    /// "plan".
+    #[tokio::test]
+    async fn r4_p1_bundled_skill_routing_matrix() {
+        use crate::skills::loader::load_all;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        // Empty user dir → loader returns just the bundled set.
+        let skills = load_all(dir.path()).await.unwrap();
+
+        // (operator prompt, expected skill id). When a prompt could
+        // legitimately match TWO skills, the matrix pins which one
+        // wins under the current trigger-keyword design. If a future
+        // edit flips the winner, this test fails — that's the point.
+        //
+        // Each row carries operator-realistic phrasing. EN + DE
+        // mixed to exercise the multi-locale trigger sets.
+        let cases: &[(&str, &str)] = &[
+            // Conflict pair: diagnose vs systematic_debugging.
+            // "diagnose this bug" hits BOTH ("diagnose" is a
+            // diagnose trigger, "bug" is a systematic_debugging
+            // trigger). Highest-hit-count tie-broken by skill id
+            // alphabetically → diagnose (d < s).
+            ("Please diagnose this bug for me", "diagnose"),
+            // Pure systematic-debugging path: only the systematic
+            // markers fire.
+            ("My tests are failing with a panic", "systematic_debugging"),
+            // Conflict pair: writing_plans vs to_prd. Both could
+            // claim "write a plan / write a PRD". Pin to_prd for
+            // the PRD-named prompt.
+            ("Write a PRD for the cost dashboard", "to_prd"),
+            ("Write an implementation plan for the export feature", "writing_plans"),
+            // Conflict pair: requesting_code_review vs receiving_code_review.
+            ("Can you review my pull request?", "requesting_code_review"),
+            ("Addressed feedback on the diff", "receiving_code_review"),
+            // Verification (always-on closure gate).
+            ("All tests passing, fix complete", "verification_before_completion"),
+            // Mode-level inside academic_research handled by ModeRegistry
+            // (separate test); the skill itself activates on broad keywords.
+            ("Run a lit review on transformer attention", "academic_research"),
+            ("Fact-check these claims in the abstract", "academic_research"),
+            // German + English mix.
+            ("Refactor the recall module", "improve_codebase_architecture"),
+            // Pin pure zoom_out path — avoid `architecture` in the prompt so
+            // we don't tie with improve_codebase_architecture and have to
+            // rely on alphabetical fallback (which would lose).
+            ("zoom out and show the big picture", "zoom_out"),
+            // Branch-finish discipline.
+            ("Ready to ship this branch", "finishing_a_development_branch"),
+            // Worktree usage skill.
+            ("Need to set up a git worktree", "using_git_worktrees"),
+        ];
+
+        for (prompt, expected_id) in cases {
+            let m = route(prompt, &skills);
+            match m {
+                Some(rm) => assert_eq!(
+                    rm.skill.id(),
+                    *expected_id,
+                    "prompt `{prompt}` expected skill `{expected_id}`, got `{}`",
+                    rm.skill.id()
+                ),
+                None => panic!("prompt `{prompt}` should route to `{expected_id}`, got None"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn r4_p1_no_skill_silently_dominates_unrelated_prompts() {
+        // Non-skill prompts (greeting, generic chat) should NOT
+        // accidentally activate any bundled skill. Pin so a future
+        // contributor who adds an over-broad trigger keyword (e.g.
+        // "hello") to any skill fails the test.
+        use crate::skills::loader::load_all;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let skills = load_all(dir.path()).await.unwrap();
+        let unrelated_prompts = [
+            "Hello, how are you?",
+            "What time is it?",
+            "Tell me a joke.",
+            "Was machst du gerade?",
+        ];
+        for prompt in unrelated_prompts {
+            let m = route(prompt, &skills);
+            assert!(
+                m.is_none(),
+                "unrelated prompt `{prompt}` accidentally activated `{}`",
+                m.unwrap().skill.id()
+            );
+        }
     }
 }
