@@ -195,22 +195,72 @@ pub async fn run_chat_with(
     // ── Skill router (Phase 27 R-16) ──────────────────────────────────────
     // Keyword-scan the prompt against installed skills. If a skill activates,
     // append its system_prompt to combined_system so the skill's instructions
-    // win over both operator rules and the user-supplied --system. Two-stage
-    // re-rank (Qwen3-Q8 embedding) hooks in once Day-14b inference lands.
+    // win over both operator rules and the user-supplied --system.
+    //
+    // QM-3 + QM-23 integration (2026-05-22 Session 20): BEFORE the broad
+    // skill-route, check the ModeRegistry built from the loaded skill set.
+    // Modes carry narrower trigger_phrases ("fact-check these claims" /
+    // "do a lit review") that beat the parent skill's broader keywords.
+    // When a mode hits, the layered system prompt becomes:
+    //   <skill base system_prompt> + "\n\n" + <mode system_prompt_delta>
+    // Operator-readable: the mode's narrower context overlays the skill's
+    // base context. When no mode hits, fall back to the broad
+    // `skills::route` Stage-1 keyword scan (today's behaviour).
+    //
+    // Two-stage re-rank (Qwen3-Q8 embedding) hooks in once Day-14b inference
+    // lands.
     let installed_skills = skills_res.unwrap_or_default();
-    let skill_match = crate::skills::route(&prompt, &installed_skills);
-    let combined_system = match (&skill_match, combined_system) {
-        (Some(m), Some(sys)) => Some(format!("{sys}\n\n{}", m.skill.system_prompt())),
-        (Some(m), None) => Some(m.skill.system_prompt().to_string()),
-        (None, sys) => sys,
-    };
-    if let Some(m) = &skill_match {
+    let mode_registry = crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
+        .unwrap_or_default();
+    let mode_hit = mode_registry.match_trigger(&prompt);
+    let (combined_system, skill_match) = if let Some(resolved) = mode_hit {
+        // Find the parent skill so we can layer the base prompt + delta.
+        let parent = installed_skills
+            .iter()
+            .find(|s| s.id() == resolved.skill_id);
         info!(
-            skill = m.skill.id(),
-            matched_keywords = ?m.matched_keywords,
-            "skill activated"
+            mode = %resolved.mode.id,
+            skill = %resolved.skill_id,
+            spectrum = %resolved.mode.spectrum.as_str(),
+            oversight = %resolved.mode.oversight.as_str(),
+            "mode activated via ModeRegistry"
         );
-    }
+        let mode_layer = match parent {
+            Some(p) if !resolved.mode.system_prompt_delta.is_empty() => {
+                format!("{}\n\n{}", p.system_prompt(), resolved.mode.system_prompt_delta)
+            }
+            Some(p) => p.system_prompt().to_string(),
+            None => resolved.mode.system_prompt_delta.clone(),
+        };
+        let merged = match combined_system {
+            Some(sys) if !mode_layer.is_empty() => Some(format!("{sys}\n\n{mode_layer}")),
+            Some(sys) => Some(sys),
+            None if !mode_layer.is_empty() => Some(mode_layer),
+            None => None,
+        };
+        // No skill_match for the downstream review-gate / WAL frame —
+        // mode activation is its own audit path. The skill router's
+        // `SkillMatch` shape doesn't carry mode metadata, so we leave
+        // it None and let downstream code see "no skill activated"
+        // even though a mode did. Review-gate dispatching via /agent
+        // is the explicit operator path; modes don't trigger it.
+        (merged, None)
+    } else {
+        let skill_match = crate::skills::route(&prompt, &installed_skills);
+        let merged = match (&skill_match, combined_system) {
+            (Some(m), Some(sys)) => Some(format!("{sys}\n\n{}", m.skill.system_prompt())),
+            (Some(m), None) => Some(m.skill.system_prompt().to_string()),
+            (None, sys) => sys,
+        };
+        if let Some(m) = &skill_match {
+            info!(
+                skill = m.skill.id(),
+                matched_keywords = ?m.matched_keywords,
+                "skill activated"
+            );
+        }
+        (merged, skill_match)
+    };
 
     // ── MCP tool catalogue injection (Step 1 of autonomous routing) ───────
     // Each enabled MCP server is queried for its tools/list, descriptions
