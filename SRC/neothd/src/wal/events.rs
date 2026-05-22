@@ -689,10 +689,26 @@ pub const EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED: u8 = 0xE4;
 /// Payload (JSON): `{peer_id, capabilities, ts_unix}`.
 pub const EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED: u8 = 0xE5;
 
-// `0xE6` + `0xE7` — reserved for future cluster events
-// (orchestrator election, peer-load class crossing thresholds).
-// Not yet emitted; placeholder so the band reservation is
-// stable for future commits.
+/// `0xE6 CLUSTER_PEER_CONFIRMED` — operator ran `neoth cluster
+/// confirm` and the peer was written into `~/.neoth/cluster.yaml`.
+/// Distinct from `CONNECTED` (0xE0): confirm is the operator's
+/// pairing consent (Phase 4 ratified per architect), connect is
+/// the transport-handshake (Phase 6 gossip).
+///
+/// Payload (JSON): `{pub_key_hex, instance_label, addr,
+/// discovered_via, autonomy_level, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_PEER_CONFIRMED: u8 = 0xE6;
+
+/// `0xE7 CLUSTER_PEER_REVOKED` — operator ran `neoth cluster
+/// revoke` and the peer was removed from cluster.yaml. Future
+/// announces from this peer will surface as `PENDING_CONSENT`
+/// in the doctor until re-confirmed.
+///
+/// Payload (JSON): `{pub_key_hex, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_PEER_REVOKED: u8 = 0xE7;
+
+// Cluster band 0xE0..=0xE7 fully assigned (R-7 + Phase 4 pairing).
+// Further cluster lifecycle events need a new reserved band.
 
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
@@ -950,6 +966,10 @@ const _: () = {
         || EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED > 0xE7) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED < 0xE0
         || EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_CONFIRMED < 0xE0
+        || EVENT_TYPE_CLUSTER_PEER_CONFIRMED > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_REVOKED < 0xE0
+        || EVENT_TYPE_CLUSTER_PEER_REVOKED > 0xE7) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially

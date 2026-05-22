@@ -52,6 +52,11 @@ pub mod mdns;
 /// pay zero cost.
 pub mod tailscale;
 
+/// Q2-ratified `announce_on_untrusted_wifi: false` policy + SSID
+/// allowlist. Decides whether the Phase 2 mDNS announcer should
+/// run on the current network.
+pub mod policy;
+
 /// R-7 heartbeat wire protocol — per Chorus chat
 /// `019E4A48975F25C0BD9F8B96BC085C94`. CBOR frames, u32 LE
 /// length-prefix, 5s ± 20% jittered cadence, protocol-version
