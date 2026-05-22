@@ -25,6 +25,7 @@ pub mod claim_guard;
 pub mod delta;
 pub mod extension_registry;
 pub mod extract;
+pub mod fact_check;
 pub mod lookup;
 pub mod redaction;
 pub mod runner;
