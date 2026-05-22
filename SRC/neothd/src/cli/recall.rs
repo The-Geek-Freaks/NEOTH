@@ -40,6 +40,23 @@ pub struct RecallArgs {
     #[arg(long)]
     pub no_index_pass: bool,
 
+    /// R-02 Phase 2: include dream-pipeline matches at the top of
+    /// the result set. Scans `~/.neoth/dreams/*.jsonl` over the
+    /// last `--dreams-lookback-days` days and prepends up to
+    /// `--dreams-max-hits` dream rows matching the query.
+    #[arg(long)]
+    pub include_dreams: bool,
+
+    /// How many days back to scan for matching dreams. Honoured
+    /// only when `--include-dreams` is set.
+    #[arg(long, default_value = "7")]
+    pub dreams_lookback_days: u32,
+
+    /// Max dream rows to prepend. Honoured only when
+    /// `--include-dreams` is set.
+    #[arg(long, default_value = "5")]
+    pub dreams_max_hits: usize,
+
     /// Cross-modal similarity query — compute the CLIP embedding of the
     /// image at this path, then return the top-N cached embeddings by
     /// cosine similarity. Bypasses the text recall pipeline entirely.
@@ -194,8 +211,47 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         }
     }
 
+    // R-02 Phase 2: optionally prepend dream-pipeline matches.
+    // Dreams render to stdout BEFORE the episode rows so an
+    // operator's "what happened this week" lands on the
+    // compressed dream summaries first.
+    if args.include_dreams {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let dreams = crate::daemon::dreaming::seed_with_dreams(
+            &home,
+            &args.query,
+            args.dreams_lookback_days,
+            args.dreams_max_hits,
+        );
+        render_dreams(&dreams);
+    }
+
     render(&rows, args.output, &args.query);
     Ok(())
+}
+
+/// Render the dream rows ahead of the episode hits. Compact one-line
+/// format so the output stays scannable.
+fn render_dreams(dreams: &[crate::daemon::dreaming::Dream]) {
+    if dreams.is_empty() {
+        return;
+    }
+    println!("── dreams ──");
+    for d in dreams {
+        println!(
+            "[{day}] {label}: {summary}",
+            day = d.day,
+            label = d.theme_label,
+            summary = if d.summary.chars().count() > 160 {
+                let mut s: String = d.summary.chars().take(160).collect();
+                s.push('…');
+                s
+            } else {
+                d.summary.clone()
+            },
+        );
+    }
+    println!("── episodes ──");
 }
 
 /// Sort recall hits by composite ranking score, descending. Stable order so
@@ -703,6 +759,9 @@ mod tests {
             similar_to_text: None,
             similar_kind: "image".to_string(),
             citation_check: None,
+            include_dreams: false,
+            dreams_lookback_days: 7,
+            dreams_max_hits: 5,
             output: crate::cli::OutputFormat::Table,
         };
         // The render goes to stdout in test; here we just need run_recall
@@ -881,6 +940,9 @@ mod tests {
             similar_to_text: None,
             similar_kind: "image".to_string(),
             citation_check: None,
+            include_dreams: false,
+            dreams_lookback_days: 7,
+            dreams_max_hits: 5,
             output: crate::cli::OutputFormat::Json,
         };
         let err = run_recall(args).await.unwrap_err();
@@ -905,6 +967,9 @@ mod tests {
             similar_to_text: Some("sunset".to_string()),
             similar_kind: "image".to_string(),
             citation_check: None,
+            include_dreams: false,
+            dreams_lookback_days: 7,
+            dreams_max_hits: 5,
             output: crate::cli::OutputFormat::Json,
         };
         let err = run_recall(args).await.unwrap_err();
@@ -929,6 +994,9 @@ mod tests {
             similar_to_text: None,
             similar_kind: "image".to_string(),
             citation_check: None,
+            include_dreams: false,
+            dreams_lookback_days: 7,
+            dreams_max_hits: 5,
             output: crate::cli::OutputFormat::Json,
         };
         let err = run_recall(args).await.unwrap_err();

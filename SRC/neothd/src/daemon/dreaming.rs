@@ -161,6 +161,61 @@ pub fn load_dreams_for_day(home: &Path, day: &str) -> Vec<Dream> {
     out
 }
 
+/// R-02 Phase 2: load every dream from the last `lookback_days`
+/// days, filter to those whose theme_label OR summary OR tags
+/// contain `query` (case-insensitive substring), and return up to
+/// `max_hits`. Sorted by `composed_ts_unix` descending so the
+/// newest dreams surface first — the recall layer prepends these
+/// rows BEFORE episode hits so an operator's "what happened
+/// yesterday" question reaches yesterday's dreams first.
+pub fn seed_with_dreams(
+    home: &Path,
+    query: &str,
+    lookback_days: u32,
+    max_hits: usize,
+) -> Vec<Dream> {
+    let q = query.to_lowercase();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let mut all = Vec::new();
+    for back in 0..lookback_days as i64 {
+        let ts = now - back * 86_400;
+        let day = format_date_utc(ts);
+        for dream in load_dreams_for_day(home, &day) {
+            let hay = format!(
+                "{} {} {}",
+                dream.theme_label.to_lowercase(),
+                dream.summary.to_lowercase(),
+                dream.tags.join(" ").to_lowercase(),
+            );
+            if q.is_empty() || hay.contains(&q) {
+                all.push(dream);
+            }
+        }
+    }
+    all.sort_by(|a, b| b.composed_ts_unix.cmp(&a.composed_ts_unix));
+    all.truncate(max_hits);
+    all
+}
+
+fn format_date_utc(ts_unix: i64) -> String {
+    // Same Howard Hinnant civil-from-days algorithm as usage_log.
+    let days = ts_unix.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let yy = if m <= 2 { y + 1 } else { y };
+    format!("{yy:04}-{m:02}-{d:02}")
+}
+
 /// Char-boundary-safe truncation. Same shape as the helpers in
 /// usage_log + skills::router so a future audit finds them
 /// together.
@@ -270,6 +325,73 @@ mod tests {
         assert!(d.summary.contains("…"));
         // Stored event_ids stay full fidelity.
         assert_eq!(d.event_ids, vec![1]);
+    }
+
+    #[test]
+    fn seed_with_dreams_empty_when_no_files() {
+        let dir = tempdir().unwrap();
+        let hits = seed_with_dreams(dir.path(), "anything", 7, 10);
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn seed_with_dreams_empty_query_returns_all_recent() {
+        let dir = tempdir().unwrap();
+        // Write a few dreams for today.
+        let day = format_date_utc(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        );
+        for (i, label) in ["alpha", "beta", "gamma"].iter().enumerate() {
+            let mut d = compose_dream(&day, label, &[]);
+            d.composed_ts_unix = (i as i64) * 10;
+            append_dream(dir.path(), &d).unwrap();
+        }
+        let hits = seed_with_dreams(dir.path(), "", 7, 10);
+        assert_eq!(hits.len(), 3);
+        // Newest first.
+        assert_eq!(hits[0].theme_label, "gamma");
+        assert_eq!(hits[2].theme_label, "alpha");
+    }
+
+    #[test]
+    fn seed_with_dreams_filters_by_substring_in_theme_or_summary() {
+        let dir = tempdir().unwrap();
+        let day = format_date_utc(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        );
+        let mut a = compose_dream(&day, "auth_bug", &[]);
+        a.tags.push("debug".into());
+        append_dream(dir.path(), &a).unwrap();
+        let b = compose_dream(&day, "vacation_plan", &[]);
+        append_dream(dir.path(), &b).unwrap();
+        let auth = seed_with_dreams(dir.path(), "auth", 7, 10);
+        assert_eq!(auth.len(), 1);
+        assert_eq!(auth[0].theme_label, "auth_bug");
+        let debug = seed_with_dreams(dir.path(), "debug", 7, 10);
+        assert_eq!(debug.len(), 1, "tag substring also matches");
+    }
+
+    #[test]
+    fn seed_with_dreams_respects_max_hits() {
+        let dir = tempdir().unwrap();
+        let day = format_date_utc(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64,
+        );
+        for i in 0..10 {
+            let d = compose_dream(&day, &format!("entry_{i}"), &[]);
+            append_dream(dir.path(), &d).unwrap();
+        }
+        let hits = seed_with_dreams(dir.path(), "entry", 7, 3);
+        assert_eq!(hits.len(), 3);
     }
 
     #[test]
