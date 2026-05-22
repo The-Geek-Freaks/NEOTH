@@ -21,6 +21,7 @@ pub mod claude_tmux;
 pub mod clip_engine;
 pub mod context_guards;
 pub mod cost;
+pub mod embed;
 pub mod gemini_api;
 pub mod http_client;
 pub mod known_endpoints;
