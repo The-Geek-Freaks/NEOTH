@@ -159,6 +159,48 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             ON code_map_symbols(name);
         CREATE INDEX IF NOT EXISTS idx_code_map_files_path
             ON code_map_files(root, path);
+
+        -- K-Repo-Map FTS5 (Session 19, 2026-05-21) — fuzzy + prefix-
+        -- match symbol lookup. Shadows code_map_symbols.name with
+        -- the `unicode61` tokenizer so the operator can find
+        -- `extract_symbols` with `extract*` or `symbols` + so a
+        -- multi-token query like `cluster heart` returns
+        -- `cluster::heartbeat::*`. Exact-match path stays on the
+        -- btree index above (faster + simpler than MATCH for the
+        -- known-name case).
+        CREATE VIRTUAL TABLE IF NOT EXISTS code_map_symbols_fts
+            USING fts5(
+                name,
+                kind,
+                content='code_map_symbols',
+                content_rowid='id',
+                tokenize='unicode61 separators ''_-.'''
+            );
+
+        -- INSERT/DELETE triggers keep FTS5 in sync with the base
+        -- table. UPDATE on code_map_symbols isn't expected today
+        -- (persist_map deletes + re-inserts), but the trigger
+        -- handles it defensively.
+        CREATE TRIGGER IF NOT EXISTS code_map_symbols_fts_insert
+            AFTER INSERT ON code_map_symbols
+        BEGIN
+            INSERT INTO code_map_symbols_fts(rowid, name, kind)
+            VALUES (new.id, new.name, new.kind);
+        END;
+        CREATE TRIGGER IF NOT EXISTS code_map_symbols_fts_delete
+            AFTER DELETE ON code_map_symbols
+        BEGIN
+            INSERT INTO code_map_symbols_fts(code_map_symbols_fts, rowid, name, kind)
+            VALUES ('delete', old.id, old.name, old.kind);
+        END;
+        CREATE TRIGGER IF NOT EXISTS code_map_symbols_fts_update
+            AFTER UPDATE ON code_map_symbols
+        BEGIN
+            INSERT INTO code_map_symbols_fts(code_map_symbols_fts, rowid, name, kind)
+            VALUES ('delete', old.id, old.name, old.kind);
+            INSERT INTO code_map_symbols_fts(rowid, name, kind)
+            VALUES (new.id, new.name, new.kind);
+        END;
         "#,
     )
     .context("apply code_map schema")?;
@@ -420,6 +462,108 @@ pub fn search_symbol(conn: &Connection, symbol_name: &str) -> Result<Vec<SymbolH
     Ok(rows)
 }
 
+/// K-Repo-Map FTS5 fuzzy search (Session 19, 2026-05-21).
+/// Matches symbol names against the FTS5 virtual table with the
+/// `unicode61` tokenizer + `_-.` separators. Operator queries:
+///
+///   - `extract*` — prefix match (returns extract_symbols,
+///     extract_response, etc).
+///   - `cluster heart` — multi-token AND (returns
+///     cluster::heartbeat::*).
+///   - `"send_hello"` — quoted exact phrase (escapes operator-
+///     supplied `_`/`-` so the FTS5 query syntax doesn't bind
+///     them as operators).
+///
+/// Sanitises the query against the documented FTS5 syntax — bare
+/// strings get wrapped in quotes when they contain non-token
+/// characters; explicit `*` suffix is preserved. Returns rows
+/// ordered by `bm25(code_map_symbols_fts)` ascending (smaller =
+/// closer match).
+///
+/// Result `SymbolHit` is the same struct as
+/// [`search_symbol`] — exact + fuzzy paths produce
+/// interchangeable hits so the CLI renderer doesn't branch.
+pub fn search_symbol_fuzzy(conn: &Connection, query: &str) -> Result<Vec<SymbolHit>> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    // FTS5 query syntax — protect against operator-supplied
+    // tokens that double as FTS5 syntax characters. We trust:
+    //   - trailing `*` (prefix-match)
+    //   - whitespace separating tokens
+    // Everything else gets quoted as a phrase to neuter
+    // syntax injection (` AND `, `:`, `(`, `)`).
+    let fts_query = build_fts_query(trimmed);
+    let mut stmt = conn
+        .prepare(
+            "SELECT f.root, f.path, s.kind, s.line \
+             FROM code_map_symbols_fts fts \
+             JOIN code_map_symbols s ON s.id = fts.rowid \
+             JOIN code_map_files f ON f.id = s.file_id \
+             WHERE code_map_symbols_fts MATCH ?1 \
+             ORDER BY bm25(code_map_symbols_fts), f.root, f.path, s.line \
+             LIMIT 200",
+        )
+        .context("prepare fuzzy symbol search SELECT")?;
+    let rows: Vec<SymbolHit> = stmt
+        .query_map(rusqlite::params![fts_query], |row| {
+            Ok(SymbolHit {
+                root: row.get::<_, String>(0)?,
+                path: row.get::<_, String>(1)?,
+                kind: row.get::<_, String>(2)?,
+                line: row.get::<_, i64>(3)? as u32,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect fuzzy symbol-search rows")?;
+    Ok(rows)
+}
+
+/// Sanitise an operator-supplied FTS5 query. Returns a string
+/// safe to pass to `MATCH`. Bare tokens stay bare (so prefix
+/// `extract*` works). Tokens containing FTS5 metacharacters or
+/// punctuation get wrapped in double quotes (FTS5 phrase
+/// syntax). Pure — testable.
+fn build_fts_query(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 8);
+    let mut first = true;
+    for tok in input.split_whitespace() {
+        if !first {
+            out.push(' ');
+        }
+        first = false;
+        // Preserve trailing `*` for prefix matching.
+        let (core, suffix) = if let Some(stripped) = tok.strip_suffix('*') {
+            (stripped, "*")
+        } else {
+            (tok, "")
+        };
+        if core.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            // Bare token — FTS5 parses it directly.
+            out.push_str(core);
+            out.push_str(suffix);
+        } else {
+            // Wrap as a phrase. Escape embedded `"` per FTS5
+            // syntax (double-quote-doubling).
+            out.push('"');
+            for ch in core.chars() {
+                if ch == '"' {
+                    out.push_str("\"\"");
+                } else {
+                    out.push(ch);
+                }
+            }
+            out.push('"');
+            // Trailing `*` after a quoted phrase is also valid
+            // FTS5 syntax (prefix on the last token of the
+            // phrase).
+            out.push_str(suffix);
+        }
+    }
+    out
+}
+
 /// One row returned from `search_symbol`. Flat fields (no `RepoFile`)
 /// because the CLI just needs to render a "file:line — kind" line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -643,6 +787,124 @@ mod tests {
         let _ = persist_map(&mut conn, &sample_map("/repo/a")).unwrap();
         let hits = search_symbol(&conn, "nonexistent_fn").unwrap();
         assert!(hits.is_empty());
+    }
+
+    // ── K-Repo-Map FTS5 fuzzy search ────────────────────────────────
+
+    fn fts_sample_map(root: &str) -> RepoMap {
+        RepoMap {
+            root: root.to_string(),
+            files: vec![
+                RepoFile {
+                    path: "src/extract.rs".into(),
+                    language: Language::Rust,
+                    bytes: 100,
+                    loc: 10,
+                    symbols: vec![
+                        Symbol {
+                            name: "extract_symbols".into(),
+                            kind: SymbolKind::Function,
+                            line: 5,
+                        },
+                        Symbol {
+                            name: "extract_response".into(),
+                            kind: SymbolKind::Function,
+                            line: 25,
+                        },
+                    ],
+                },
+                RepoFile {
+                    path: "src/cluster.rs".into(),
+                    language: Language::Rust,
+                    bytes: 100,
+                    loc: 10,
+                    symbols: vec![Symbol {
+                        name: "cluster_heartbeat".into(),
+                        kind: SymbolKind::Function,
+                        line: 1,
+                    }],
+                },
+            ],
+            report: ScanReport::default(),
+        }
+    }
+
+    #[test]
+    fn search_symbol_fuzzy_returns_empty_on_empty_query() {
+        let (_dir, conn) = temp_db();
+        assert!(search_symbol_fuzzy(&conn, "").unwrap().is_empty());
+        assert!(search_symbol_fuzzy(&conn, "   ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn search_symbol_fuzzy_returns_empty_when_no_match() {
+        let (_dir, mut conn) = temp_db();
+        let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
+        let hits = search_symbol_fuzzy(&conn, "totally_absent").unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn search_symbol_fuzzy_matches_prefix_with_star_suffix() {
+        let (_dir, mut conn) = temp_db();
+        let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
+        let hits = search_symbol_fuzzy(&conn, "extract*").unwrap();
+        // Both `extract_symbols` and `extract_response` match the
+        // prefix.
+        assert_eq!(hits.len(), 2, "got {hits:?}");
+        let names: Vec<&str> = hits.iter().map(|h| h.path.as_str()).collect();
+        // Both live in the same file in this fixture.
+        assert!(names.iter().all(|p| *p == "src/extract.rs"));
+    }
+
+    #[test]
+    fn search_symbol_fuzzy_matches_tokenizer_separator_split() {
+        // The unicode61 tokenizer with `_` as a separator splits
+        // `extract_symbols` into tokens `extract` + `symbols`. A
+        // bare query `symbols` matches the second token.
+        let (_dir, mut conn) = temp_db();
+        let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
+        let hits = search_symbol_fuzzy(&conn, "symbols").unwrap();
+        assert!(
+            hits.iter().any(|h| h.path == "src/extract.rs"),
+            "tokenizer split must surface extract_symbols on 'symbols' query: {hits:?}"
+        );
+    }
+
+    #[test]
+    fn search_symbol_fuzzy_matches_multi_token_and() {
+        // Two-token AND query: only `cluster_heartbeat` has
+        // BOTH `cluster` AND `heartbeat` tokens.
+        let (_dir, mut conn) = temp_db();
+        let _ = persist_map(&mut conn, &fts_sample_map("/r")).unwrap();
+        let hits = search_symbol_fuzzy(&conn, "cluster heartbeat").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].path, "src/cluster.rs");
+    }
+
+    #[test]
+    fn build_fts_query_passes_bare_alphanumeric_tokens_unchanged() {
+        assert_eq!(build_fts_query("extract"), "extract");
+        assert_eq!(build_fts_query("Cluster_Heartbeat"), "Cluster_Heartbeat");
+        assert_eq!(build_fts_query("foo bar"), "foo bar");
+    }
+
+    #[test]
+    fn build_fts_query_preserves_trailing_star() {
+        assert_eq!(build_fts_query("extract*"), "extract*");
+        // Trailing star on second token still preserved.
+        assert_eq!(build_fts_query("foo bar*"), "foo bar*");
+    }
+
+    #[test]
+    fn build_fts_query_quotes_tokens_with_metachars() {
+        // FTS5 operator chars (:, (, ), AND) inside a token
+        // get phrase-quoted so they can't be parsed as
+        // syntax. Pin via known cases.
+        assert_eq!(build_fts_query("a:b"), "\"a:b\"");
+        assert_eq!(build_fts_query("foo(bar)"), "\"foo(bar)\"");
+        // `"` inside a token gets doubled per FTS5 syntax.
+        assert_eq!(build_fts_query("she\"s"), "\"she\"\"s\"");
     }
 
     #[test]

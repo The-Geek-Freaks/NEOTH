@@ -2502,7 +2502,7 @@ cargo test -p neothd providers::claude     ✅ 46/46 green incl. 9 new ClaudeBac
 - [ ] **K-Sec-1..5** MCP sanitizer extension (tool names + schema fields) / Windows VirtualLock / webhook body cap + rate limit / HMAC key DPAPI wrap / encrypt before_state credentials snapshots — Security agent's 5 picks.
 - [ ] **K-Perf-1..5** Council early-exit FuturesUnordered / WAL fire-and-forget for stream chunks / spawn_blocking + LIMIT recall / parallel resource load in run_chat_with / shared long-lived WAL writer in serve — Performance agent's 5 picks.
 - [ ] **K-Refusal** R-01..R-09 Refusal-Recovery pipeline (R-09 classifier → R-01 state machine → R-05 LOWKEY retry → R-07 catalogue → R-08 WAL payloads).
-- [ ] **K-Repo-Map (NEW)** Tree-sitter file walker + FTS5 chunk index + multi-file context assembly — Competitive agent #1 finding, no PROGRESS item exists, biggest visible UX gap vs Aider/Cursor/Plandex. New spec needed.
+- [x] **K-Repo-Map** Tree-sitter file walker + FTS5 chunk index + multi-file context assembly — voll voll closed Session 19 (2026-05-21). Shipped layers: (1) `code_map::walker` — file walker honouring `.gitignore`/`.ignore`/`.neothignore`, language classification, LOC + bytes per file, structured `RepoMap` output. (2) `code_map::symbols` — `extract_symbols(text, language) -> Vec<Symbol>` per-language extractor (Rust/Python/TypeScript/Go/etc). (3) `code_map::persist` — SQLite store with `code_map_files` + `code_map_symbols` tables + btree indexes + atomic re-persist via DELETE-CASCADE. (4) `code_map::persist::search_symbol(name)` — exact-match symbol lookup via btree. (5) `code_map::persist::search_symbol_fuzzy(query)` — NEW Session 19: FTS5 virtual table `code_map_symbols_fts` shadowing `name` + `kind` columns via `unicode61` tokenizer + `_-.` separators. INSERT/UPDATE/DELETE triggers keep FTS5 in sync. Operator queries: `extract*` (prefix), `cluster heart` (multi-token AND tokenized to `cluster::heartbeat::*`), `"send_hello"` (quoted phrase). `build_fts_query` sanitizes operator input — bare alphanumeric tokens pass through, metachars get phrase-quoted (FTS5 syntax injection blocked). 8 new tests cover empty query, no-match, prefix-match, tokenizer-separator-split, multi-token AND, bare-passthrough, star-preservation, metachar quoting. (6) `code_map::recall::relevant_files_for_prompt` + `render_context_block` — multi-file context assembly with `auto_context_max_files` knob on FreedomConfig. Closes biggest UX gap vs Aider/Cursor.
 
 ### Test + lint status
 
@@ -2605,7 +2605,7 @@ Verifying-before-fixing saved ~80 LOC of unnecessary code.
 - [ ] **K-Wire-3** Factor enrichment shared chat↔channels — Architect agent's #1 pick. ~80 LOC + multiple test surface updates. Deferred to next session as a focused refactor.
 - [ ] **K-Validate-ZeroEv** Profile injection-resistance (validate.rs zero-evidence-id bypass) — Alex flagged "privacy ned first" so deprioritised per his guidance.
 - [ ] **R-01..R-09** Refusal-Recovery LOWKEY pipeline — Planner agent's Sprint 1 pick. 4-session arc. Future session(s).
-- [ ] **K-Repo-Map** Tree-sitter file walker + multi-file context — Competitive agent's #1 pick. 3-4 session arc, no PROGRESS item yet. Future spec.
+- [x] **K-Repo-Map** Tree-sitter file walker + multi-file context — voll voll closed Session 19 (2026-05-21). Walker + symbols + persist + FTS5 fuzzy search + recall all live. See detailed entry above in this PROGRESS file.
 
 ### Test + lint status
 
