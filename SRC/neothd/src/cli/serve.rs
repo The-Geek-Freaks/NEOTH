@@ -498,10 +498,53 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
         });
         channel_tasks.push(task);
-        info!("Telegram channel spawned");
+        info!(channel = "telegram", status = "LIVE", "channel: spawned (polling loop)");
     } else if config.telegram_token.is_some() && shared_provider.is_none() {
-        warn!("Telegram token configured but provider unavailable; channel not started");
+        warn!(
+            channel = "telegram",
+            status = "CONFIGURED-NOT-STARTED",
+            "Telegram token configured but provider unavailable; channel not started"
+        );
     }
+
+    // ── R4-P1 honest channel-bootstrap status logging ─────────────────────
+    //
+    // Per `PLAN/REEVALUATION_GESAMT_2026-05-22_R4.md` P1: every channel
+    // gets an explicit log line at boot so `neoth doctor channels`'s
+    // honest classification matches what `neoth serve` actually did.
+    // No silent failures, no "looks like everything started but
+    // half the channels are scaffolds".
+    //
+    // Implementation matches the R2-P0-2 doctor classification:
+    //   LIVE = adapter has live inbound + serve spawns it
+    //   OUTBOUND-ONLY = send_text works, no inbound receive loop
+    //   CONFIGURED-NOT-STARTED = full inbound code exists but serve
+    //                            does not yet bootstrap it
+    //   absent = no credentials configured (silent)
+    let creds = crate::config::credentials::Credentials::load_or_default(
+        &crate::config::credentials::default_path(),
+    )
+    .unwrap_or_default();
+    if creds.slack_bot_token.is_some() || creds.slack_app_token.is_some() {
+        warn!(
+            channel = "slack",
+            status = "OUTBOUND-ONLY",
+            "Slack credentials configured but socket-mode receive loop not yet wired \
+             into serve. send_text via chat.postMessage works; inbound receive ships \
+             in a follow-up commit. Run `neoth doctor channels` for full status."
+        );
+    }
+    if creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some() {
+        warn!(
+            channel = "whatsapp",
+            status = "OUTBOUND-ONLY",
+            "WhatsApp credentials configured but webhook receiver not yet wired into \
+             serve. send_text via Graph API works; webhook listener ships in a \
+             follow-up commit. Run `neoth doctor channels` for full status."
+        );
+    }
+    // Discord + Keet have no credential fields in credentials.yaml yet
+    // — when they land, the same explicit-log pattern fires.
 
     // ── 5b-tris. Obsidian vault auto-sync (R-5 follow-up) ──────────────────
     //
