@@ -954,10 +954,11 @@ fn safe_username(name: &str) -> bool {
 }
 
 /// Wall-clock HH:MM:SS for chat bubble timestamps. Pure GUI display —
-/// the daemon will eventually own the canonical timestamp when the
-/// provider dispatch wiring lands; this string is just so the
-/// operator sees something next to their bubble during the in-process
-/// stub-send.
+/// the daemon owns the canonical PROVIDER_REQUEST timestamp in the
+/// WAL; this string just gives the operator a local read-receipt
+/// next to their bubble. R2-P0-1 (2026-05-22): chat_via_subprocess
+/// dispatches to `neothd chat` so the bubble round-trip now hits
+/// the real provider + WAL + permission gates.
 fn format_now_hms() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1245,61 +1246,212 @@ fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
 /// `neothd chat` from a terminal — that's the R2 done-criterion.
 fn chat_via_subprocess(message: &str) -> std::result::Result<String, String> {
     let Some(bin) = which_neothd() else {
-        return Err(
-            "Chat unavailable — `neothd` binary not on PATH.\n\
-             Install the daemon first (the release tarball ships both \
-             `neothd-gui` and `neothd` side-by-side; from source, \
-             `cargo install --path ../neothd`)."
-                .to_string(),
-        );
+        return Err(BINARY_MISSING_MESSAGE.to_string());
     };
-    let output = spawn_neothd_plain(&bin).arg("chat").arg(message).output();
+    chat_via_subprocess_with(&bin, message)
+}
+
+/// R4-P1 test-injection entry point. Same logic as
+/// [`chat_via_subprocess`] but the caller pins the binary path —
+/// lets tests run with a synthetic fake-neothd binary on disk
+/// instead of relying on the real daemon being installed. The
+/// production path forwards from `chat_via_subprocess` after
+/// `which_neothd` resolves; tests pass tempdir-staged `bin.sh` /
+/// `bin.cmd` scripts that emit fixture stdout/stderr.
+pub fn chat_via_subprocess_with(
+    bin: &std::path::Path,
+    message: &str,
+) -> std::result::Result<String, String> {
+    let output = spawn_neothd_plain(bin).arg("chat").arg(message).output();
     match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            // `neothd chat` prints the reply on stdout; trim trailing
-            // newlines so the chat bubble doesn't render an empty line
-            // at the bottom. Preserve internal newlines (code blocks /
-            // lists need them).
-            let reply = stdout.trim_end_matches(['\n', '\r']).to_string();
-            if reply.is_empty() {
-                Err(
-                    "Provider returned an empty reply. Check `neoth doctor` + \
-                     `~/.neoth/freedom.yaml` provider settings."
-                        .to_string(),
-                )
-            } else {
-                Ok(reply)
-            }
-        }
-        Ok(out) => {
-            let stderr = String::from_utf8_lossy(&out.stderr);
-            let trimmed = stderr.trim();
-            if trimmed.is_empty() {
-                Err(format!(
-                    "`neothd chat` exited {} with no diagnostic. Run from \
-                     a terminal to capture the failure context.",
-                    out.status
-                ))
-            } else {
-                // Cap at ~600 chars so a stack-traceful Rust panic
-                // doesn't blow the chat bubble. Operators reading the
-                // full failure run `neothd chat` from a shell anyway.
-                let snippet = if trimmed.len() > 600 {
-                    format!("{}…", &trimmed[..600])
-                } else {
-                    trimmed.to_string()
-                };
-                Err(format!(
-                    "Chat failed (exit {}):\n{}",
-                    out.status, snippet
-                ))
-            }
-        }
+        Ok(out) => shape_chat_output(out.status.success(), &out.stdout, &out.stderr, out.status.code()),
         Err(e) => Err(format!(
             "Chat subprocess could not start: {e}\n\
              Verify `neothd --version` works from a terminal."
         )),
+    }
+}
+
+/// R4-P1 pure result-shaping helper. Decouples the four-outcome
+/// decision tree (success-with-reply / success-but-empty / non-zero-
+/// exit-with-stderr / non-zero-exit-no-stderr) from the real subprocess
+/// so tests pin the contract without an actual spawn.
+pub fn shape_chat_output(
+    success: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+    code: Option<i32>,
+) -> std::result::Result<String, String> {
+    if success {
+        let s = String::from_utf8_lossy(stdout);
+        let reply = s.trim_end_matches(['\n', '\r']).to_string();
+        if reply.is_empty() {
+            return Err(
+                "Provider returned an empty reply. Check `neoth doctor` + \
+                 `~/.neoth/freedom.yaml` provider settings."
+                    .to_string(),
+            );
+        }
+        return Ok(reply);
+    }
+    let stderr_str = String::from_utf8_lossy(stderr);
+    let trimmed = stderr_str.trim();
+    let exit_label = code
+        .map(|c| format!("exit {c}"))
+        .unwrap_or_else(|| "exit ?".to_string());
+    if trimmed.is_empty() {
+        Err(format!(
+            "`neothd chat` exited {exit_label} with no diagnostic. Run from \
+             a terminal to capture the failure context."
+        ))
+    } else {
+        // Cap at ~600 chars so a stack-traceful Rust panic doesn't blow
+        // the chat bubble. Operators reading the full failure run
+        // `neothd chat` from a shell anyway.
+        let snippet = if trimmed.len() > 600 {
+            // Char-boundary-safe truncation for UTF-8 stderr bytes.
+            let chars: Vec<char> = trimmed.chars().collect();
+            let cap = chars.iter().take(599).collect::<String>();
+            format!("{cap}…")
+        } else {
+            trimmed.to_string()
+        };
+        Err(format!("Chat failed ({exit_label}):\n{snippet}"))
+    }
+}
+
+/// R4-P1 operator-readable diagnostic for the binary-missing path.
+/// Pulled to a const so tests can pin the exact string.
+pub const BINARY_MISSING_MESSAGE: &str =
+    "Chat unavailable — `neothd` binary not on PATH.\n\
+     Install the daemon first (the release tarball ships both \
+     `neothd-gui` and `neothd` side-by-side; from source, \
+     `cargo install --path ../neothd`).";
+
+#[cfg(test)]
+mod chat_subprocess_tests {
+    use super::*;
+
+    #[test]
+    fn shape_chat_output_happy_path_returns_trimmed_stdout() {
+        // Reply with trailing newlines (every `neothd chat` adds one);
+        // shape_chat_output trims the tail but preserves internal
+        // newlines for code blocks / lists.
+        let result = shape_chat_output(
+            true,
+            b"The answer is 42.\nLine two.\n\n",
+            b"",
+            Some(0),
+        );
+        assert_eq!(result, Ok("The answer is 42.\nLine two.".to_string()));
+    }
+
+    #[test]
+    fn shape_chat_output_empty_stdout_is_error_with_doctor_hint() {
+        let result = shape_chat_output(true, b"", b"", Some(0));
+        match result {
+            Err(msg) => {
+                assert!(msg.contains("empty reply"));
+                assert!(msg.contains("neoth doctor"));
+            }
+            Ok(_) => panic!("empty stdout must error"),
+        }
+    }
+
+    #[test]
+    fn shape_chat_output_nonzero_with_stderr_surfaces_diagnostic() {
+        let result = shape_chat_output(
+            false,
+            b"",
+            b"Error: no provider configured. Run `neoth init` first.",
+            Some(1),
+        );
+        match result {
+            Err(msg) => {
+                assert!(msg.contains("exit 1"));
+                assert!(msg.contains("no provider configured"));
+                assert!(msg.contains("Chat failed"));
+            }
+            Ok(_) => panic!("non-zero exit must error"),
+        }
+    }
+
+    #[test]
+    fn shape_chat_output_nonzero_no_stderr_points_at_terminal() {
+        let result = shape_chat_output(false, b"", b"", Some(137));
+        match result {
+            Err(msg) => {
+                assert!(msg.contains("exit 137"));
+                assert!(msg.contains("no diagnostic"));
+                assert!(msg.contains("terminal"));
+            }
+            Ok(_) => panic!("non-zero exit must error"),
+        }
+    }
+
+    #[test]
+    fn shape_chat_output_truncates_long_stderr_to_600_chars() {
+        let long_stderr = "X".repeat(5000);
+        let result = shape_chat_output(false, b"", long_stderr.as_bytes(), Some(1));
+        match result {
+            Err(msg) => {
+                // Total error message includes prefix + 599 chars of
+                // stderr + ellipsis. Bound at ~650 to allow prefix.
+                assert!(msg.len() < 700, "msg too long: {} chars", msg.len());
+                assert!(msg.contains("…"));
+            }
+            Ok(_) => panic!("non-zero must error"),
+        }
+    }
+
+    #[test]
+    fn shape_chat_output_handles_utf8_multibyte_stderr_truncation() {
+        // 1000 em-dashes (3 bytes each in utf-8) — truncation must
+        // not split a multi-byte char.
+        let long_stderr = "—".repeat(1000);
+        let result = shape_chat_output(false, b"", long_stderr.as_bytes(), Some(2));
+        match result {
+            Err(msg) => {
+                // The message must be valid utf-8 (would panic on the
+                // older `&str[..600]` byte-slice path).
+                assert!(msg.is_ascii() || msg.chars().count() > 100);
+                assert!(msg.contains("…"));
+            }
+            Ok(_) => panic!("non-zero must error"),
+        }
+    }
+
+    #[test]
+    fn shape_chat_output_handles_none_exit_code() {
+        // Process killed by signal: status.code() returns None.
+        let result = shape_chat_output(false, b"", b"killed", None);
+        match result {
+            Err(msg) => assert!(msg.contains("exit ?")),
+            Ok(_) => panic!("killed must error"),
+        }
+    }
+
+    #[test]
+    fn binary_missing_message_carries_install_pointer() {
+        // Operator-readable diagnostic for the no-binary path. Pin
+        // the install pointers so a future refactor doesn't drop them.
+        assert!(BINARY_MISSING_MESSAGE.contains("neothd"));
+        assert!(BINARY_MISSING_MESSAGE.contains("PATH"));
+        assert!(BINARY_MISSING_MESSAGE.contains("release tarball")
+            || BINARY_MISSING_MESSAGE.contains("cargo install"));
+    }
+
+    #[test]
+    fn chat_via_subprocess_with_returns_error_when_bin_does_not_exist() {
+        // Bin at a path that doesn't exist on disk → subprocess
+        // spawn errors with NotFound. Pin the operator-readable
+        // "could not start" diagnostic.
+        let nonexistent =
+            std::path::PathBuf::from("/this/path/does/not/exist/neothd_test_fake");
+        let result = chat_via_subprocess_with(&nonexistent, "hello");
+        assert!(result.is_err());
+        let msg = result.unwrap_err();
+        assert!(msg.contains("could not start") || msg.contains("Chat subprocess"));
     }
 }
 
