@@ -71,6 +71,31 @@ pub fn gate_discover(
     }
 }
 
+/// Load `cluster.listen_port` from freedom.yaml. Falls back to
+/// [`super::tailscale::DEFAULT_NEOTH_LISTEN_PORT`] (49737) when
+/// missing, unparseable, zero, or out-of-range for `u16`. The
+/// port drives both the mDNS announcer (`MdnsIdentity.listen_port`)
+/// AND the Tailscale TCP-probe enumerator so the value MUST stay
+/// consistent across both surfaces — that's why the reader lives
+/// in one place. Reader is **read-only**; operators flip the port
+/// by editing freedom.yaml directly (single-instance config, no
+/// CLI surface yet).
+pub fn load_listen_port_from_freedom(freedom_path: &std::path::Path) -> u16 {
+    let default = super::tailscale::DEFAULT_NEOTH_LISTEN_PORT;
+    let Ok(body) = std::fs::read_to_string(freedom_path) else {
+        return default;
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return default;
+    };
+    root.get("cluster")
+        .and_then(|c| c.get("listen_port"))
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u16::try_from(n).ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(default)
+}
+
 /// Load `cluster.mdns.enabled` + `cluster.policy` from
 /// `freedom.yaml`. Best-effort: missing file / unparseable YAML
 /// / absent keys all collapse to the safe defaults:
@@ -569,6 +594,128 @@ mod tests {
             policy.trusted_ssids,
             vec!["home-wifi".to_string(), "home-wifi-5g".to_string()]
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── load_listen_port_from_freedom (Bite #4) ───────────────────
+
+    #[test]
+    fn load_listen_port_returns_default_when_freedom_missing() {
+        let tmp = std::env::temp_dir().join(format!(
+            "neoth-listen-port-missing-{}",
+            std::process::id()
+        ));
+        assert_eq!(
+            load_listen_port_from_freedom(&tmp),
+            super::super::tailscale::DEFAULT_NEOTH_LISTEN_PORT
+        );
+    }
+
+    #[test]
+    fn load_listen_port_returns_default_when_unparseable() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-listen-port-unparse-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        std::fs::write(&path, "::: garbage :::").unwrap();
+        assert_eq!(
+            load_listen_port_from_freedom(&path),
+            super::super::tailscale::DEFAULT_NEOTH_LISTEN_PORT
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_listen_port_returns_default_when_cluster_section_absent() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-listen-port-noclu-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        std::fs::write(&path, "operator_id: alice\n").unwrap();
+        assert_eq!(
+            load_listen_port_from_freedom(&path),
+            super::super::tailscale::DEFAULT_NEOTH_LISTEN_PORT
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_listen_port_reads_typed_u16() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-listen-port-typed-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        std::fs::write(&path, "cluster:\n  listen_port: 4242\n").unwrap();
+        assert_eq!(load_listen_port_from_freedom(&path), 4242);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_listen_port_rejects_out_of_range_value() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-listen-port-oor-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        // 70000 > u16::MAX → fall back to default.
+        std::fs::write(&path, "cluster:\n  listen_port: 70000\n").unwrap();
+        assert_eq!(
+            load_listen_port_from_freedom(&path),
+            super::super::tailscale::DEFAULT_NEOTH_LISTEN_PORT
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_listen_port_rejects_zero() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-listen-port-zero-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        // 0 is a valid u16 but not a real port → fall back to default.
+        std::fs::write(&path, "cluster:\n  listen_port: 0\n").unwrap();
+        assert_eq!(
+            load_listen_port_from_freedom(&path),
+            super::super::tailscale::DEFAULT_NEOTH_LISTEN_PORT
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_listen_port_rejects_wrong_type() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-listen-port-wrongtype-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        std::fs::write(&path, "cluster:\n  listen_port: \"abc\"\n").unwrap();
+        assert_eq!(
+            load_listen_port_from_freedom(&path),
+            super::super::tailscale::DEFAULT_NEOTH_LISTEN_PORT
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_listen_port_accepts_max_u16() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoth-listen-port-max-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("freedom.yaml");
+        std::fs::write(&path, "cluster:\n  listen_port: 65535\n").unwrap();
+        assert_eq!(load_listen_port_from_freedom(&path), 65535);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

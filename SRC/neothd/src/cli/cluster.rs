@@ -362,7 +362,10 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
     // Phase 3 — Tailscale magic-DNS enumeration. Runs in parallel
     // with the mDNS scan above; soft-fails when Tailscale CLI is
     // missing so non-tailnet operators pay zero cost.
-    let ts_port = crate::cluster::tailscale::DEFAULT_NEOTH_LISTEN_PORT;
+    // Listen port comes from `freedom.yaml::cluster.listen_port`
+    // (operator-tweakable) with `DEFAULT_NEOTH_LISTEN_PORT` (49737)
+    // as the fallback.
+    let ts_port = crate::cluster::policy::load_listen_port_from_freedom(&freedom_path);
     let ts_candidates = match crate::cluster::tailscale::enumerate(ts_port).await {
         Ok(c) => c,
         Err(e) => {
