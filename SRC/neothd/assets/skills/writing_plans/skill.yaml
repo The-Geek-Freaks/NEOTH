@@ -1,0 +1,88 @@
+id: writing_plans
+description: |
+  Plan-writing discipline: produces a bite-sized checkbox-task plan
+  with header template + "no placeholders" invariant + self-review
+  pass. Catches the failure mode where a plan ships with TBD-filled
+  rows that look complete on paper but block the implementer.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/writing-plans` (2026-05-22
+# Session 20 — QM-24). YAML layer; the CORE Rust SP-C2 plan-writer
+# integration into NEOTH's kanban (`idx_kanban_*` rows) ships
+# separately as `src/workflows/plan_writer.rs`.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - planning
+  - kanban
+  - quality
+  - ported
+
+trigger_keywords:
+  - "write a plan"
+  - "write the plan"
+  - "plan this"
+  - "plan the implementation"
+  - "implementation plan"
+  - "plan schreiben"
+  - "umsetzungsplan"
+  - "rollout plan"
+  - "execution plan"
+
+system_prompt: |
+  Plan authoring discipline (auto-installed). Produce a plan that
+  looks like this:
+
+  ```
+  # <Feature name>
+
+  **Source:** <PRD link / brainstorming output / issue id>
+  **Owner:** <operator | sub-agent | TBD with operator name>
+  **Scope:** <one line>
+  **Out-of-scope:** <one line>
+
+  ## Tasks
+
+  - [ ] T-01 — <imperative verb> <observable outcome>
+    - Acceptance: <pass condition 1>; <condition 2>
+    - Evidence: <test name / output line>
+    - Size: S | M | L
+  - [ ] T-02 — ...
+  ```
+
+  ## Iron Law
+
+  NO PLACEHOLDER TEXT IN THE PLAN.
+
+  If you can't fill in a field, the plan isn't ready. Specifically:
+    - "TBD" → name the operator who decides, or remove the field
+    - "TODO: implement X" → that's a task, write it as one
+    - "see issue #..." with no link → write the link or remove
+    - "approximately" / "around N" → use a concrete number or note
+      "estimated by <method>"
+
+  Placeholders look like progress; they ARE drift. The plan must
+  read as if implementation could start on the next line.
+
+  ## Self-review pass
+
+  Before declaring the plan done, walk it once more and ask:
+    1. Does every task produce an observable outcome? (no
+       "investigate"-style tasks)
+    2. Does every task have at least one acceptance criterion?
+    3. Does every task have evidence requirement?
+    4. Is the largest task L-sized? If bigger, split.
+    5. Does any task depend on another not yet in the list? Add the
+       dependency.
+    6. Does the plan say what's OUT-of-scope as loudly as what's
+       in-scope?
+
+  ## Composing with kanban
+
+  Plan tasks emit to `idx_kanban_*` rows via `neoth code task add`
+  (when the bulk-add CLI lands). Each row carries the task_id,
+  acceptance criteria, evidence requirements, and size. The
+  `triage` skill moves rows through the lifecycle thereafter.
+
+tool_allowlist: []
+enabled: true

@@ -1,0 +1,94 @@
+id: dispatching_parallel_agents
+description: |
+  Decision discipline for fanning work across multiple sub-agents:
+  when to parallelise, when to keep sequential, how to integrate
+  results. Catches the failure mode where "let's do it in parallel"
+  costs more than sequential because the sub-agents step on each
+  other.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/dispatching-parallel-agents`
+# (2026-05-22 Session 20 — QM-24). Pairs with the existing
+# sub_agents::review (two-stage review gate) and QM-5 NEXUS handoff
+# schema. The CORE Rust controller that ACTUALLY dispatches in
+# parallel (`src/sub_agents/parallel.rs`, QM-16 1d) ships separately.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - sub-agents
+  - parallel
+  - dispatch
+  - ported
+
+trigger_keywords:
+  - "in parallel"
+  - "fan out"
+  - "parallel agents"
+  - "multiple agents"
+  - "split across agents"
+  - "parallelisieren"
+  - "concurrent"
+  - "spawn agents"
+  - "fanout"
+
+system_prompt: |
+  Parallel-dispatch discipline (auto-installed). Before fanning work
+  across multiple sub-agents, run the decision tree. Parallel is NOT
+  the default — sequential with checkpoints is the default, because
+  sequential makes regressions cheap to find.
+
+  ## Iron Law
+
+  PARALLELISE ONLY WHEN THE TASKS ARE INDEPENDENT.
+
+  Two tasks are independent when:
+    - Neither task's output is the other's input
+    - They don't touch the same files
+    - They don't share a stateful resource (the same SQLite row, the
+      same WAL frame band, the same kanban id)
+    - The combined output is integrable by a deterministic merge,
+      not by judgment
+
+  When ANY of those fails, sequential is faster + safer.
+
+  ## Decision tree
+
+  1. **Domain split possible?** If the work decomposes into
+     independent domains (frontend / backend / docs), parallelise.
+     Otherwise sequential.
+  2. **Latency hot path?** If sequential takes >5min and parallel
+     would take <2min, the latency win justifies the integration
+     cost. If sequential takes <30s, parallel is overhead.
+  3. **Integration story clear?** Name HOW the parallel outputs get
+     merged. If the answer is "we'll figure it out", you're not
+     ready to parallelise.
+
+  ## Per-fanout protocol
+
+  When you do parallelise:
+
+  1. Spawn each sub-agent with a SubAgentRequest (QM-5 schema)
+     carrying explicit `success_criteria` + `evidence_required`.
+  2. Each sub-agent operates in its own worktree (NEOTH's
+     `coding::worktree` primitive) so concurrent file edits don't
+     collide.
+  3. Wait for ALL to return before integrating. Don't pipeline
+     "agent A finishes, integrate, then wait for B" — that loses
+     the parallel win.
+  4. Integration is a single sequential merge driven by a
+     designated reviewer sub-agent (typically `code-reviewer` or
+     `session-summarizer` QM-14).
+
+  ## Failure modes to reject
+
+  - "We'll dispatch three agents on the same task and pick the best
+    output" — that's a council debate, not parallel dispatch.
+    Different shape, different cost model. Route through
+    `council::orchestrator` instead.
+  - "Sub-agent A writes the schema, B writes the API on top" —
+    that's sequential dressed up as parallel. B can't start until
+    A finishes; dispatching them concurrently just wastes A's
+    output during B's idle wait.
+
+tool_allowlist: []
+enabled: true

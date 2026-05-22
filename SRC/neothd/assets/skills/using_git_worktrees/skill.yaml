@@ -1,0 +1,87 @@
+id: using_git_worktrees
+description: |
+  Operator-facing guide for git worktrees: when to use them, when to
+  prefer branches-in-place, how to recover from a half-applied
+  worktree. NEOTH's `coding::worktree` module already uses worktrees
+  for sub-agent isolation — this skill teaches the operator the
+  matching mental model.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/using-git-worktrees`
+# (2026-05-22 Session 20 — QM-24). Companion documentation for the
+# `coding::worktree` Rust primitive that already ships.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - git
+  - workflow
+  - sub-agents
+  - ported
+
+trigger_keywords:
+  - "worktree"
+  - "worktrees"
+  - "git worktree"
+  - "parallel branches"
+  - "isolated branch"
+  - "multiple branches"
+  - "arbeitsbaum"
+  - "git arbeitsbaum"
+
+system_prompt: |
+  Git-worktree guide (auto-installed). Worktrees give you N parallel
+  checkouts of the same repo, each at a different branch, sharing the
+  `.git/` history database. Use them when you need to be in TWO
+  branches at once without stashing.
+
+  ## When to use a worktree
+
+  - **Parallel sub-agent dispatch**: NEOTH's coding workflow already
+    does this via `coding::worktree` — each sub-agent gets its own
+    worktree so concurrent file edits don't collide.
+  - **Long-running experiment**: you want to test a refactor without
+    blocking your main work. Worktree the experiment branch.
+  - **Cherry-pick prep**: pull a candidate commit into a worktree,
+    test it in isolation, then `git format-patch` for review.
+
+  ## When to NOT use a worktree
+
+  - **Quick branch switch**: `git switch` is faster than creating a
+    new worktree, and you don't need parallel checkouts.
+  - **Small change**: if you'd be done in 10min, branch-in-place is
+    simpler.
+  - **You don't yet have a clean tree on `main`**: worktrees inherit
+    uncommitted state in shared `.git/`, so finish or stash first.
+
+  ## Lifecycle
+
+  1. `git worktree add <path> <branch>` — create
+  2. Work in the worktree path normally — it has its own working tree
+  3. `git worktree remove <path>` — clean up when done
+  4. `git worktree prune` — clear out worktree entries whose paths
+     were deleted by hand (the `.git/worktrees/<name>/` metadata is
+     left behind otherwise)
+
+  ## Failure recovery
+
+  - **"fatal: <path> is already locked"** — another worktree (or
+    a crashed process) holds the lock. Run `git worktree list` to
+    confirm the worktree still has a directory on disk; if not,
+    `git worktree remove --force <path>` reclaims the slot.
+  - **Worktree directory deleted but `git worktree list` still
+    shows it** — `git worktree prune` cleans up.
+  - **You committed to the wrong worktree** — `git worktree list`
+    shows which worktree is at which branch; rebase/move the commit
+    as you would in a single-worktree repo.
+
+  ## NEOTH-specific notes
+
+  - `coding::worktree::WorktreeHandle` is the Rust primitive sub-
+    agents use. Operators rarely invoke worktrees directly; the
+    daemon manages them.
+  - The `coding::dispatcher::dispatch_session_with_apply` flow
+    creates a worktree per sub-agent task; on success the diff
+    merges back to main, on failure the worktree gets cleaned up.
+
+tool_allowlist: []
+enabled: true

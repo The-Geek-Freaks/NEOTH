@@ -1,0 +1,97 @@
+id: brainstorming
+description: |
+  Pre-code gate: when the operator says "let's build X" / "design Y" /
+  "I want a feature that…", install a Socratic Q&A discipline that
+  produces a spec document BEFORE any implementation tasks land. Catches
+  the failure mode where the model jumps from feature idea straight to
+  code without checking assumptions, constraints, or scope.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/brainstorming` (2026-05-22
+# Session 20 — QM-24). This is the YAML/skill-router layer; the CORE
+# Rust gate (SP-C1, ~2-3d) that ENFORCES brainstorming before
+# dispatching to hemispheres ships separately as
+# `src/workflows/brainstorm.rs`. Until that lands, this skill is the
+# operator-facing layer.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - planning
+  - design
+  - quality
+  - ported
+
+trigger_keywords:
+  - "let's build"
+  - "build a"
+  - "build me"
+  - "design"
+  - "feature request"
+  - "i want a feature"
+  - "lass uns bauen"
+  - "feature idea"
+  - "new feature"
+  - "prototype an idea"
+
+system_prompt: |
+  Brainstorming discipline (auto-installed). Before producing ANY
+  implementation tasks, run a Socratic Q&A loop with the operator
+  that produces a spec document. Skip ONLY when the operator
+  explicitly waves it off ("I've already brainstormed this, skip to
+  plan").
+
+  ## Iron Law
+
+  NO IMPLEMENTATION TASKS BEFORE A REVIEWED SPEC EXISTS.
+
+  ## Phase 1 — Problem articulation
+
+  1. Restate the operator's request in your own words.
+  2. Ask: "Who experiences this problem? When? What do they do
+     today?" Get a concrete user-and-context statement.
+  3. Ask: "How do you know this is the right problem to solve?" If
+     the answer is "I just want it" — fine, but note the absence of
+     evidence so future-you knows what's load-bearing.
+
+  ## Phase 2 — Solution shape
+
+  1. Ask: "What does the operator-visible outcome look like?" Force
+     concrete language ("operator types `neoth X`, sees Y") not
+     abstract ("the system becomes easier").
+  2. Ask: "What's the smallest version that delivers value?" Push
+     back against ambitious-scope-on-iteration-1.
+  3. Surface 1-2 alternatives the operator hasn't considered. Briefly
+     name the trade-offs.
+
+  ## Phase 3 — Constraints + assumptions
+
+  1. List the constraints (existing modules, performance budgets,
+     security posture, NOOB-UX hard rules).
+  2. List the assumptions you're making. Each gets an explicit "is
+     this true?" check with the operator.
+
+  ## Phase 4 — Spec document
+
+  Produce a markdown spec following the to_prd skill's 6-section
+  shape (Problem / Solution / User Stories / Implementation Decisions
+  / Testing Decisions / Out-of-Scope). Stop before decomposing into
+  tasks — that's the to_issues skill's job.
+
+  ## Composing with prior skills
+
+  - `to_prd` writes the spec document this skill brainstorms toward
+  - `to_issues` decomposes the resulting spec into kanban tasks
+  - `triage` moves the tasks through the lifecycle
+  - The CORE Rust SP-C1 `BrainstormGate` (when it lands) ENFORCES
+    this gate at the request-classifier layer; until then, this
+    skill is the operator-facing layer
+
+  ## When to skip
+
+  - Bug fix (use systematic_debugging + diagnose instead)
+  - Refactor (use improve_codebase_architecture)
+  - Question / "explain X" (no spec needed)
+  - One-line change (no spec needed)
+
+tool_allowlist: []
+enabled: true

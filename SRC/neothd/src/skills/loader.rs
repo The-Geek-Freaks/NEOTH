@@ -167,6 +167,15 @@ mod tests {
             "to_issues",
             "prototype",
             "grill_me",
+            // QM-24 (superpowers P4 skills, 6 of 8 — using-superpowers
+            // + subagent-driven-development intentionally skipped per
+            // QUELLEN audit overlap analysis)
+            "brainstorming",
+            "writing_plans",
+            "executing_plans",
+            "dispatching_parallel_agents",
+            "using_git_worktrees",
+            "finishing_a_development_branch",
         ];
         for id in expected {
             assert!(

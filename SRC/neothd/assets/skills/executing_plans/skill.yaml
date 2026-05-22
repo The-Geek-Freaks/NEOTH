@@ -1,0 +1,87 @@
+id: executing_plans
+description: |
+  Plan-execution discipline for solo-operator mode: walk tasks
+  sequentially, checkpoint after each, never skip ahead. Pairs with
+  `writing_plans` (which writes the plan this skill executes).
+  Fallback path when sub-agent dispatch isn't used.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/executing-plans` (2026-05-22
+# Session 20 — QM-24). Operators running NEOTH in solo-CLI mode
+# without the sub-agent dispatcher use this skill to enforce one-at-
+# a-time task execution.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - planning
+  - execution
+  - kanban
+  - ported
+
+trigger_keywords:
+  - "execute the plan"
+  - "work through the plan"
+  - "start implementation"
+  - "begin tasks"
+  - "go through tasks"
+  - "plan ausführen"
+  - "umsetzen"
+  - "abarbeiten"
+  - "implement the plan"
+
+system_prompt: |
+  Plan execution discipline (auto-installed). Walk the plan one task
+  at a time. No skipping ahead. No bundling.
+
+  ## Iron Law
+
+  COMPLETE ONE TASK FULLY (CODE + TESTS + EVIDENCE) BEFORE STARTING
+  THE NEXT.
+
+  Bundling tasks looks like progress; it's drift. A bundled "I'll do
+  T-04 + T-05 + T-06 together" loses the per-task checkpoint that
+  would have caught a regression in T-04 before it polluted T-05.
+
+  ## Per-task loop
+
+  For each task in declaration order:
+
+  1. **Announce**: name the task_id + the acceptance criteria.
+  2. **Implement**: write the smallest change that satisfies the
+     criteria. Apply `systematic_debugging` if a fix isn't obvious,
+     `test_driven_development` if it's a new feature.
+  3. **Verify**: run the evidence command. Quote the passing output
+     line. (Composes with `verification_before_completion`.)
+  4. **Checkpoint**: mark the task done in the plan + commit if
+     applicable. Don't move on if any acceptance criterion is
+     unsatisfied — surface the gap and pause.
+  5. **Re-read the next task**: requirements may have shifted as
+     you learned things in the previous task. Update the plan if
+     needed.
+
+  ## When to pause and ask the operator
+
+  - A task's acceptance criteria turn out to be wrong or impossible
+  - You discover a dependency the plan didn't list
+  - An adjacent area needs touching that wasn't in scope
+  - You'd be cleaning up code outside the task's surface
+
+  Don't power through these silently — the plan exists so the
+  operator can intervene cheaply BEFORE the next task starts.
+
+  ## When the plan is wrong
+
+  Either the plan or your execution has drifted. Stop. Re-read the
+  plan, re-read your last few commits, name the divergence in one
+  sentence, ask the operator to ratify either updating the plan or
+  rewinding the diff.
+
+  ## Composing with prior skills
+
+  - `writing_plans` wrote the plan
+  - `verification_before_completion` enforces the evidence step
+  - `triage` keeps task states in sync (`needs-info` if blocked,
+    `ready-for-human` if outside daemon scope)
+
+tool_allowlist: []
+enabled: true

@@ -1,0 +1,93 @@
+id: finishing_a_development_branch
+description: |
+  Operator-facing checklist for finishing a development branch: verify
+  tests, choose merge/PR/keep/discard, clean up worktree, archive the
+  session. Catches the failure mode where a "done" branch sits
+  half-finished because the operator forgot one of the closure steps.
+version: "0.1.0"
+
+# Ported from obra/superpowers `skills/finishing-a-development-branch`
+# (2026-05-22 Session 20 — QM-24). The safety guard (refuse to merge
+# if tests fail) is the separate SP-H2 / `--verify-tests` flag in
+# `neoth finish` (when shipped); this skill is the operator-facing
+# UX layer.
+author: ported from obra/superpowers
+homepage: https://github.com/obra/superpowers
+tags:
+  - git
+  - workflow
+  - shipping
+  - ported
+
+trigger_keywords:
+  - "finish the branch"
+  - "wrap up this branch"
+  - "merge this branch"
+  - "branch fertig"
+  - "ready to ship"
+  - "ship this branch"
+  - "abschließen"
+  - "close out branch"
+  - "branch closure"
+
+system_prompt: |
+  Branch-finishing checklist (auto-installed). When the operator says
+  "this branch is done" / "let's ship", walk the checklist before
+  proposing the merge. No step is optional.
+
+  ## Iron Law
+
+  TESTS GREEN BEFORE ANY MERGE PROPOSAL.
+
+  No exceptions. Even for "tiny" changes — tiny changes are exactly
+  the ones whose regression surfaces a week later.
+
+  ## Checklist
+
+  1. **`cargo test -p <crate>`** (or the project's equivalent) —
+     quote the passing line. (Composes with
+     `verification_before_completion`.)
+  2. **`cargo clippy --tests -- -D warnings`** — clippy clean.
+  3. **`cargo fmt --check`** — no format drift.
+  4. **`git status`** — working tree clean OR explicitly staged.
+  5. **`git log <main>..HEAD --oneline`** — confirm the commit
+     history is what you intended; squash if there are noise
+     commits the operator doesn't want in main's history.
+  6. **PROGRESS.md updated** — composes with QM-14 session-
+     summarizer's audit: every shipped item gets its `[x]` flip.
+
+  ## Choose the closure path
+
+  After the checklist passes, ask the operator which closure path
+  they want:
+
+  - **Merge to main** — fast-forward / squash / merge-commit.
+    Default for solo-operator mode.
+  - **PR for review** — push the branch + open a PR via `gh pr
+    create`. Default for team mode.
+  - **Keep the branch** — work continues, just want to checkpoint
+    the test-green state. Tag it.
+  - **Discard** — the branch was an exploration that didn't pan
+    out. `git branch -D <name>` after confirming with the operator.
+
+  ## Post-closure cleanup
+
+  - If the branch lived in a worktree: `git worktree remove <path>`
+    (composes with `using_git_worktrees`).
+  - If there was a kanban task tied to the branch: move to `done`
+    with the commit hash as evidence (composes with `triage`).
+  - Archive the session: NEOTH's `SESSION_ARCHIVE` WAL frame +
+    PROGRESS.md update form the audit record.
+
+  ## When the checklist fails
+
+  - **Tests red**: stop. Do NOT propose merge. Either fix the
+    failure here OR rewind the merge step and treat this as work-
+    in-progress.
+  - **Clippy/fmt failures**: fix and re-run the checklist. They're
+    not optional.
+  - **PROGRESS.md missing entries**: that's the QM-14 session-
+     summarizer's reason-to-exist. Run it; it surfaces the gaps.
+
+tool_allowlist: []
+enabled: true
