@@ -146,15 +146,25 @@ pub async fn run_chat_with(
         .await
         .context("write PROVIDER_REQUEST WAL frame")?;
 
-    // ── Operator context (Phase 25 R-14) ──────────────────────────────────
-    // Assemble ~/.neoth/NEOTH.md + project + rules + memory. Prepend to the
-    // operator-supplied system prompt so per-call --system overrides win
-    // tie-breaks. Empty when no operator-md exists yet.
+    // ── Operator context + skills load — K-Perf-4 parallel resource load ──
+    // Both reads hit the filesystem and are mutually independent: operator_md
+    // assembles ~/.neoth/NEOTH.md + project + rules + memory, skills walks
+    // `<home>/skills/`. Running them sequentially was ~2× the wall time on
+    // cold caches (each ~5-20ms). tokio::join! drives them concurrently
+    // through the same runtime worker — the FS reads pipeline OS-side
+    // without extra threads. Per Performance agent's K-Perf-4 pick.
+    //
+    // The skill router (line below) consumes installed_skills, so loading
+    // it BEFORE the system-prompt assembly is mandatory — the parallel
+    // load just shaves the serial cost off the front edge.
     let home = FreedomConfig::default_neoth_home();
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
-    let blocks = crate::memory::operator_md::assemble(&home, &cwd)
-        .await
-        .unwrap_or_default();
+    let skills_dir = home.join("skills");
+    let (blocks_res, skills_res) = tokio::join!(
+        crate::memory::operator_md::assemble(&home, &cwd),
+        crate::skills::load_all(&skills_dir),
+    );
+    let blocks = blocks_res.unwrap_or_default();
     let operator_context = if blocks.is_empty() {
         None
     } else {
@@ -187,10 +197,7 @@ pub async fn run_chat_with(
     // append its system_prompt to combined_system so the skill's instructions
     // win over both operator rules and the user-supplied --system. Two-stage
     // re-rank (Qwen3-Q8 embedding) hooks in once Day-14b inference lands.
-    let skills_dir = home.join("skills");
-    let installed_skills = crate::skills::load_all(&skills_dir)
-        .await
-        .unwrap_or_default();
+    let installed_skills = skills_res.unwrap_or_default();
     let skill_match = crate::skills::route(&prompt, &installed_skills);
     let combined_system = match (&skill_match, combined_system) {
         (Some(m), Some(sys)) => Some(format!("{sys}\n\n{}", m.skill.system_prompt())),
