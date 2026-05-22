@@ -68,6 +68,7 @@ pub mod tour;
 pub mod tts;
 pub mod tweaks;
 pub mod update;
+pub mod usage;
 pub mod verify;
 pub mod wal;
 
@@ -509,6 +510,12 @@ pub enum Commands {
     /// See `PLAN/SPEC_hemisphere_provider_selection.md`.
     Hemispheres(hemispheres::HemispheresArgs),
 
+    /// QM-9 Phase 1: render the persisted usage log as a human-readable
+    /// or JSON rollup. Aggregates the last 24h by default; `--days N`
+    /// widens the window; `--since-unix … --until-unix …` pins an
+    /// explicit range. Source files: `~/.neoth/usage/YYYY-MM-DD.jsonl`.
+    Usage(usage::UsageArgs),
+
     /// LLM provider catalogue (C-1 Session 13). `list` enumerates all
     /// supported `InferenceProvider` variants + their implementation
     /// status + the OpenAI-compatible endpoint examples that the
@@ -815,6 +822,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 );
             }
         },
+        Commands::Usage(args) => {
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            usage::run(&home, args)?;
+        }
         Commands::Channel { action } => {
             let _ = action;
             anyhow::bail!(
