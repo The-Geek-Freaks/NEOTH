@@ -22,6 +22,7 @@
 
 pub mod builtins;
 pub mod loader;
+pub mod parallel;
 pub mod review;
 pub mod schema;
 
