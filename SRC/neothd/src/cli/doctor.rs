@@ -372,6 +372,24 @@ const CHECK_DOCS: &[CheckDoc] = &[
               `council.max_calls_per_user_message` (default 15) lower.",
     },
     CheckDoc {
+        name: "circuit breakers",
+        purpose: "QM-10 Phase 1 visibility surface. When Phase 2 lands \
+                  + the `BreakerRegistry` is reachable from the doctor \
+                  context, this check renders every registered breaker's \
+                  state (closed/half_open/open) + consecutive failures + \
+                  seconds-in-open. Today reports Pass with an honest \
+                  'primitive shipped, runtime exposure pending' note.",
+        common_failures: "An adapter flaps (rate limit / regional outage / \
+                          expired token) but the breaker doesn't surface \
+                          here yet. Use `tail -f ~/.neoth/usage/<today>.jsonl \
+                          | jq 'select(.ok == false)'` for now to see \
+                          per-provider error rate.",
+        fix: "QM-10 Phase 2 wires the BreakerRegistry into ProviderAdapter \
+              dispatch + exposes the registry snapshot here. Until then, \
+              configure `council.daily_usd_cap` to budget your spend + \
+              watch `neoth usage --days 1` for sudden cost spikes.",
+    },
+    CheckDoc {
         name: "tmux for claude-cli",
         purpose: "NOOB-UX-6 AIO-compliance probe. claude-cli's working \
                   backend is the tmux warm-session path \
@@ -585,7 +603,27 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_node_toolchain(home),
         check_tmux_for_claude_cli(home),
         check_usage_today(home),
+        check_circuit_breakers(home),
     ]
+}
+
+/// QM-10 Phase 1 doctor surface: render the registered circuit-
+/// breaker states. v0.1.x: there's no persisted breaker state across
+/// daemon restarts, so this check only has content when a long-running
+/// daemon's `BreakerRegistry` is exposed to the doctor via the
+/// runtime sidecar (deferred — out of scope here). For now the
+/// check is always Pass with an honest "no live registry attached"
+/// detail, which matches the rest of the v0.1 daemon-restart story.
+/// When the runtime registry is wired (Phase 2), this detail flips
+/// to render every registered breaker's state + cooldown.
+fn check_circuit_breakers(_home: &Path) -> CheckOutcome {
+    CheckOutcome {
+        name: "circuit breakers",
+        status: CheckStatus::Pass,
+        detail:
+            "primitive shipped, registry runtime exposure pending (QM-10 Phase 2 wire-in)"
+                .to_string(),
+    }
 }
 
 /// QM-9 Phase 1 doctor surface: aggregate the last 24h of
@@ -1783,12 +1821,21 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_two() {
+    fn check_docs_listed_count_pinned_at_twenty_three() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
-        // coverage) is caught. Bumped to 22 in Session 20 for
-        // `usage today` (QM-9 Phase 1 spend-visibility surface).
-        assert_eq!(CHECK_DOCS.len(), 22);
+        // coverage) is caught. Bumped to 23 in Session 20 for
+        // `circuit breakers` (QM-10 Phase 1 visibility surface).
+        assert_eq!(CHECK_DOCS.len(), 23);
+    }
+
+    #[test]
+    fn check_circuit_breakers_passes_until_runtime_wireup() {
+        let dir = tempdir().unwrap();
+        let outcome = check_circuit_breakers(dir.path());
+        assert_eq!(outcome.name, "circuit breakers");
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("Phase 2"));
     }
 
     #[test]
@@ -2041,9 +2088,10 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 22 checks: 19 pre-Session-20 + node toolchain + tmux for
-        // claude-cli (NOOB-UX-6 AIO probes) + usage today (QM-9 Phase 1).
-        assert_eq!(outs.len(), 22);
+        // 23 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // claude-cli (NOOB-UX-6 AIO probes) + usage today (QM-9 Phase 1)
+        // + circuit breakers (QM-10 Phase 1 visibility).
+        assert_eq!(outs.len(), 23);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
