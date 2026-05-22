@@ -4,6 +4,8 @@
 
 pub mod builder;
 pub mod compaction;
+#[cfg(windows)]
+pub mod dpapi;
 pub mod error;
 pub mod events;
 pub mod frame;

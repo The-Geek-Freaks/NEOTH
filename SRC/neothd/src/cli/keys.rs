@@ -294,12 +294,28 @@ mod tests {
         run_keys(args).await.unwrap();
 
         // New key written at the same path, with different bytes.
+        // K-Sec-4 (2026-05-22): on Windows the new key is DPAPI-wrapped
+        // on disk, so `read(path)` returns the wrapped envelope (>= 32B,
+        // typically ~280B). The LOGICAL key bytes are recovered via
+        // `compaction::load_or_init_key`. On unix the on-disk size
+        // stays exactly 32. Pin both shapes.
         assert!(key_path.exists(), "new key must exist at original path");
-        let new_bytes = std::fs::read(&key_path).unwrap();
-        assert_eq!(new_bytes.len(), 32);
+        let on_disk = std::fs::read(&key_path).unwrap();
+        #[cfg(unix)]
+        assert_eq!(on_disk.len(), 32, "unix on-disk key stays plaintext 32B");
+        #[cfg(windows)]
         assert!(
-            new_bytes != vec![0x42u8; 32],
-            "rotation must change the key bytes",
+            on_disk.len() >= 32,
+            "windows on-disk key is DPAPI-wrapped or plaintext fallback; got {} bytes",
+            on_disk.len()
+        );
+        // The logical key (after DPAPI unwrap on Windows) must differ
+        // from the seeded legacy 32 bytes — that's the rotation contract.
+        let logical = crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        assert_eq!(logical.len(), 32, "logical key length must be 32 bytes");
+        assert!(
+            logical != vec![0x42u8; 32],
+            "rotation must change the logical key bytes",
         );
 
         // Exactly one archive file present.

@@ -136,18 +136,27 @@ pub struct MarkerPayload {
 
 /// Read the operator's HMAC key from `path`. Generates a fresh 32-byte
 /// random key on first call and writes it mode 0600 (unix) / icacls
-/// grant:r owner (Windows).
+/// grant:r owner (Windows) + DPAPI-wrapped per-user on Windows when
+/// available (K-Sec-4).
+///
+/// On Windows, when an existing key file lacks the `NEOTH_DPAPIv1`
+/// magic header (legacy plaintext from pre-K-Sec-4 installs), the bytes
+/// are returned as-is so existing markers verify; the next [`rotate`]
+/// or fresh-key path re-writes the file in wrapped form. This keeps
+/// upgrades zero-downtime for operators with an existing
+/// `~/.neoth/wal/hmac.key`.
 pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
     if path.exists() {
         let body =
             std::fs::read(path).with_context(|| format!("read HMAC key {}", path.display()))?;
-        if body.len() < 16 {
+        let key_bytes = maybe_unwrap_dpapi(&body, path)?;
+        if key_bytes.len() < 16 {
             anyhow::bail!(
                 "HMAC key at {} is shorter than 16 bytes; refuse to use weak key",
                 path.display()
             );
         }
-        return Ok(body);
+        return Ok(key_bytes);
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -163,6 +172,24 @@ pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
 
     write_key_securely(path, &key)?;
     Ok(key)
+}
+
+/// On Windows: if the file is DPAPI-wrapped, unwrap. Otherwise return
+/// the bytes unchanged (legacy plaintext path). Linux: always return
+/// unchanged.
+#[cfg(windows)]
+fn maybe_unwrap_dpapi(body: &[u8], path: &Path) -> Result<Vec<u8>> {
+    if crate::wal::dpapi::is_wrapped(body) {
+        crate::wal::dpapi::unprotect(body)
+            .with_context(|| format!("DPAPI-unwrap HMAC key at {}", path.display()))
+    } else {
+        Ok(body.to_vec())
+    }
+}
+
+#[cfg(not(windows))]
+fn maybe_unwrap_dpapi(body: &[u8], _path: &Path) -> Result<Vec<u8>> {
+    Ok(body.to_vec())
 }
 
 #[cfg(unix)]
@@ -184,7 +211,24 @@ fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
 
 #[cfg(windows)]
 fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
-    std::fs::write(path, key).with_context(|| format!("write HMAC key at {}", path.display()))?;
+    // K-Sec-4: DPAPI-wrap before writing so a copy of the file is
+    // useless outside the current Windows user account. If DPAPI is
+    // unavailable (no user session, SYSTEM context, …) log a warning
+    // and fall back to plaintext + DACL — the file stays as protected
+    // as it was pre-K-Sec-4 instead of failing key generation.
+    let payload = match crate::wal::dpapi::protect(key) {
+        Ok(wrapped) => wrapped,
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "DPAPI wrap unavailable; writing HMAC key plaintext with DACL fallback"
+            );
+            key.to_vec()
+        }
+    };
+    std::fs::write(path, &payload)
+        .with_context(|| format!("write HMAC key at {}", path.display()))?;
     if let Err(e) = crate::wal::win_acl::restrict_to_owner(path) {
         tracing::warn!(
             path = %path.display(),
@@ -324,6 +368,48 @@ mod tests {
         std::fs::write(&path, b"short").unwrap();
         let r = load_or_init_key(&path);
         assert!(r.is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn load_or_init_passes_through_legacy_plaintext_key() {
+        // Backward-compat: an existing pre-K-Sec-4 install holds a 32-
+        // byte plaintext key. `load_or_init_key` must return those
+        // bytes verbatim so existing markers continue to verify.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        let legacy = vec![0x42u8; 32];
+        std::fs::write(&path, &legacy).unwrap();
+
+        let loaded = load_or_init_key(&path).unwrap();
+        assert_eq!(loaded, legacy, "legacy plaintext key must roundtrip unchanged");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fresh_key_is_dpapi_wrapped_on_disk() {
+        // K-Sec-4 contract: a freshly-generated key is wrapped on disk.
+        // We can't compare the wrapped bytes to anything (DPAPI is
+        // non-deterministic) — pin (a) the on-disk bytes carry the
+        // NEOTH_DPAPIv1 magic OR (b) DPAPI was unavailable and we
+        // fell back to plaintext. Either is a tested branch.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        let key = load_or_init_key(&path).unwrap();
+        assert_eq!(key.len(), 32);
+
+        let on_disk = std::fs::read(&path).unwrap();
+        let wrapped = crate::wal::dpapi::is_wrapped(&on_disk);
+        let plaintext_fallback = on_disk == key;
+        assert!(
+            wrapped || plaintext_fallback,
+            "on-disk key must be either DPAPI-wrapped or the plaintext fallback"
+        );
+
+        // Second call must return the same logical key regardless of
+        // whether DPAPI was used.
+        let key2 = load_or_init_key(&path).unwrap();
+        assert_eq!(key, key2);
     }
 
     #[cfg(unix)]

@@ -301,7 +301,9 @@ libc        = "0.2"
 # feature footprint (Win32_System_Memory only) keeps the dep size
 # under control. K-Sec-2 / 2026-05-17.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation"] }
+# Win32_System_Memory: K-Sec-2 VirtualLock for SecretString (2026-05-17).
+# Win32_Security_Cryptography: K-Sec-4 DPAPI wrap for HMAC key (2026-05-22).
+windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [dev-dependencies]
 tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }

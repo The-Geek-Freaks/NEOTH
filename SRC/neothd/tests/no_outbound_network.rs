@@ -37,6 +37,12 @@
 //!                                    configured channel adapter that
 //!                                    intentionally dials Discord's API
 //!                                    endpoint (`discord.com/api/v10`).
+//!   - `src/channels/discord_gateway_loop.rs`
+//!                                  — outbound Discord Gateway WSS dialer;
+//!                                    same category as `slack_socket.rs`.
+//!                                    Operator-configured channel adapter
+//!                                    that dials Discord's gateway URL after
+//!                                    `gateway.json` discovery.
 //!
 //! Adding a new allowed path means editing both the codebase AND this
 //! file, which makes the audit trail loud.
@@ -53,6 +59,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/channels/webhook_listener.rs",
     "src/channels/slack_socket.rs",
     "src/channels/discord.rs",
+    "src/channels/discord_gateway_loop.rs",
     "src/transport/",
 ];
 
