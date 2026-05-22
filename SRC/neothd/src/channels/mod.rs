@@ -19,6 +19,7 @@ pub mod discord_gateway_loop;
 pub mod formatter;
 pub mod keet;
 pub mod keet_crypto;
+pub mod keet_dht;
 pub mod rate_limit;
 pub mod slack;
 pub mod slack_api;
