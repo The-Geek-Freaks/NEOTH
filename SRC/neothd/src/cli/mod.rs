@@ -64,6 +64,7 @@ pub mod skills;
 pub mod slack;
 pub mod slash;
 pub mod status;
+pub mod tour;
 pub mod tts;
 pub mod tweaks;
 pub mod update;
@@ -223,6 +224,13 @@ pub enum Commands {
     ///
     /// Pure read-only; no network, no mutation.
     Privacy(privacy::PrivacyArgs),
+
+    /// NOOB-UX-5 first-launch tour. `neoth tour` walks the operator
+    /// through chat / memory / consent / privacy-audit / where-to-go.
+    ///
+    /// `--step <id>` jumps to a single stop (`chat` / `memory` /
+    /// `consent` / `audit` / `next`).
+    Tour(tour::TourArgs),
 
     /// Manage hard-stored ground-truth facts (Phase 28c R-24).
     ///
@@ -613,6 +621,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Privacy(mut args) => {
             args.output = global_output;
             privacy::run_privacy(args).await?;
+        }
+        Commands::Tour(mut args) => {
+            args.output = global_output;
+            tour::run_tour(args)?;
         }
         Commands::Groundtruth(mut args) => {
             args.output = global_output;
