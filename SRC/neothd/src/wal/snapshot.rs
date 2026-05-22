@@ -173,13 +173,23 @@ pub async fn emit_snapshot(
 ///     this kind).
 ///   - When true + before_state exceeds `max_snapshot_bytes` → no-op
 ///     with a tracing::warn that surfaces the skip to the operator.
-///   - Otherwise → emit the frame + return `Ok(Some(offset))`.
+///   - Otherwise → run [`redact_before_state_if_credential_bearing`]
+///     so secret-shape values get replaced with `[REDACTED:<kind>]`
+///     markers BEFORE the bytes hit the WAL, then emit the frame.
 ///
 /// `Ok(None)` is the most common outcome (operator default captures
 /// only config_write + channel_send; everything else skips), so the
 /// caller pattern is: `let _ = emit_if_policy_allows(...)?;` then run
 /// the mutation. Failures inside the WAL appender bubble up so the
 /// mutation gets aborted before any actual change.
+///
+/// K-Sec-5 (2026-05-22): for credential-bearing kinds (`ConfigWrite`,
+/// `FileWrite`) we route `before_state` through the secret-shape
+/// regex pass in [`crate::security::redact::redact_text`] before
+/// hex-encoding it into the frame. Operator running `neoth rollback
+/// apply` against a credential snapshot gets the redacted form back
+/// — credentials should always be re-prompted, never restored from
+/// audit history.
 pub async fn emit_if_policy_allows(
     writer: &WalWriterHandle,
     rollback: &crate::config::RollbackConfig,
@@ -202,12 +212,46 @@ pub async fn emit_if_policy_allows(
         );
         return Ok(None);
     }
-    let mut snap = PreMutationSnapshot::new(kind, target, before_state, now_unix);
+    let redacted = redact_before_state_if_credential_bearing(kind, before_state);
+    let mut snap = PreMutationSnapshot::new(kind, target, &redacted, now_unix);
     if let Some(n) = note {
         snap = snap.with_note(n);
     }
     let offset = emit_snapshot(writer, &snap).await?;
     Ok(Some(offset))
+}
+
+/// K-Sec-5: redact secret-shape substrings from `before_state` for the
+/// `MutationKind` variants that commonly carry credentials. Other
+/// variants pass through unchanged so binary file-write snapshots /
+/// SQL row dumps keep their original bytes.
+///
+/// Returns a `Cow` so the no-redaction path doesn't allocate. Pure
+/// function; safe to call before locks / async boundaries.
+pub fn redact_before_state_if_credential_bearing<'a>(
+    kind: MutationKind,
+    before_state: &'a [u8],
+) -> std::borrow::Cow<'a, [u8]> {
+    use std::borrow::Cow;
+    let should_redact = matches!(
+        kind,
+        MutationKind::ConfigWrite | MutationKind::FileWrite | MutationKind::Other
+    );
+    if !should_redact {
+        return Cow::Borrowed(before_state);
+    }
+    let Ok(text) = std::str::from_utf8(before_state) else {
+        // Non-UTF-8 bytes (binary file write) — can't run the regex
+        // pass, leave as-is. Operators capturing a binary file via
+        // `neoth rollback apply` already accept the file bytes are
+        // opaque from the WAL's POV.
+        return Cow::Borrowed(before_state);
+    };
+    let (redacted, changed) = crate::security::redact::redact_if_secret(text);
+    if !changed {
+        return Cow::Borrowed(before_state);
+    }
+    Cow::Owned(redacted.into_bytes())
 }
 
 /// Stable wire-name for a `MutationKind`. Mirrors the `serde(rename_all =
@@ -429,6 +473,157 @@ mod tests {
 
         drop(writer);
         let _ = join.await;
+    }
+
+    #[test]
+    fn k_sec_5_redacts_openai_key_in_config_write_before_state() {
+        // freedom.yaml carrying a legacy single-file install with
+        // `provider_key: sk-abc123...`. The before_state captured for
+        // the WAL must NOT contain the literal key bytes.
+        let yaml = b"operator_id: alex\nprovider_key: sk-abc1234567890abcdefxyz\n";
+        let out = redact_before_state_if_credential_bearing(MutationKind::ConfigWrite, yaml);
+        let s = std::str::from_utf8(&out).unwrap();
+        assert!(
+            !s.contains("sk-abc1234567890abcdefxyz"),
+            "secret-shape openai key must be redacted from ConfigWrite before_state"
+        );
+        assert!(
+            s.contains("[REDACTED:openai_key]"),
+            "redaction marker must be present: {s}"
+        );
+        // Non-secret fields stay intact.
+        assert!(s.contains("operator_id: alex"));
+    }
+
+    #[test]
+    fn k_sec_5_redacts_anthropic_key_in_file_write_before_state() {
+        let body = b"some text\nANTHROPIC=sk-ant-api03_xxxxxxxxxxxxxxxxxxxx\nmore";
+        let out = redact_before_state_if_credential_bearing(MutationKind::FileWrite, body);
+        let s = std::str::from_utf8(&out).unwrap();
+        assert!(
+            !s.contains("sk-ant-api03_xxxxxxxxxxxxxxxxxxxx"),
+            "anthropic key must be redacted"
+        );
+        assert!(s.contains("[REDACTED:anthropic_key]"));
+    }
+
+    #[test]
+    fn k_sec_5_leaves_non_secret_bytes_alone() {
+        // A regular file write that doesn't contain a secret pattern
+        // must return the original bytes unchanged (and the Cow stays
+        // borrowed — no allocation).
+        let bytes = b"hello world\nno secrets here";
+        let out = redact_before_state_if_credential_bearing(MutationKind::FileWrite, bytes);
+        assert!(matches!(out, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(&*out, bytes);
+    }
+
+    #[test]
+    fn k_sec_5_skips_redaction_for_non_credential_kinds() {
+        // ChannelSend, McpToolInvoke, SqlMutation snapshots are not
+        // typically credential-bearing — the before_state is e.g. a
+        // prior outbound message id or a SQL row's JSON dump. Skip
+        // the regex pass to avoid surprising redactions in
+        // domain-specific bytes that happen to match a secret shape.
+        let pretend_secret = b"sk-ant-api03_xxxxxxxxxxxxxxxxxxxx";
+        let out = redact_before_state_if_credential_bearing(
+            MutationKind::ChannelSend,
+            pretend_secret,
+        );
+        assert_eq!(
+            &*out, pretend_secret,
+            "ChannelSend must NOT trigger redaction"
+        );
+        let out = redact_before_state_if_credential_bearing(
+            MutationKind::SqlMutation,
+            pretend_secret,
+        );
+        assert_eq!(
+            &*out, pretend_secret,
+            "SqlMutation must NOT trigger redaction"
+        );
+        let out = redact_before_state_if_credential_bearing(
+            MutationKind::McpToolInvoke,
+            pretend_secret,
+        );
+        assert_eq!(
+            &*out, pretend_secret,
+            "McpToolInvoke must NOT trigger redaction"
+        );
+    }
+
+    #[test]
+    fn k_sec_5_passes_through_non_utf8_bytes_unchanged() {
+        // Binary file content (e.g. PNG header) must not trigger a
+        // panic in the regex pass — `redact_before_state_if_credential_bearing`
+        // bails to Cow::Borrowed when the bytes don't parse as UTF-8.
+        let bin = vec![0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0xFD, 0xFC];
+        let out = redact_before_state_if_credential_bearing(MutationKind::FileWrite, &bin);
+        assert_eq!(&*out, bin.as_slice());
+    }
+
+    #[tokio::test]
+    async fn k_sec_5_redacts_in_full_emit_if_policy_allows_pipeline() {
+        // End-to-end: a ConfigWrite snapshot containing a real
+        // openai-shape key lands a frame with REDACTED bytes (not
+        // the literal secret) in the WAL.
+        use crate::config::RollbackConfig;
+        use crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("sec5.wal");
+        let (writer, join) = spawn(seg.clone()).unwrap();
+        let policy = RollbackConfig::default();
+
+        let yaml = b"operator_id: alex\nprovider_key: sk-abc1234567890leakedxyz\n";
+        let _ = emit_if_policy_allows(
+            &writer,
+            &policy,
+            MutationKind::ConfigWrite,
+            "~/.neoth/freedom.yaml",
+            yaml,
+            1_700_000_000,
+            None,
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        let _ = join.await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        // Brute-force string search across the entire on-disk segment —
+        // if the literal secret leaks ANYWHERE (frame body, hex encoding,
+        // ...), the test must catch it. xxhash hex of the literal could
+        // collide in pathological cases but is vanishingly unlikely.
+        let leaked = bytes.windows(20).any(|w| w == b"sk-abc1234567890leak");
+        assert!(
+            !leaked,
+            "literal secret leaked into WAL bytes — K-Sec-5 redaction failed"
+        );
+
+        // And confirm the frame carries the redaction marker.
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut payload_text = None;
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode frame");
+            if frame.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
+                let p: PreMutationSnapshot =
+                    serde_json::from_slice(frame.payload).unwrap();
+                payload_text =
+                    Some(String::from_utf8_lossy(&p.before_state_bytes().unwrap()).into_owned());
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        let pt = payload_text.expect("snapshot frame must be present");
+        assert!(
+            pt.contains("[REDACTED:openai_key]"),
+            "redaction marker must be in before_state: {pt}"
+        );
     }
 
     #[test]
