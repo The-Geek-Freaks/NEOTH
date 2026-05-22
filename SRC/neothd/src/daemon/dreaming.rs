@@ -229,6 +229,120 @@ fn truncate_safe(s: &str, max_chars: usize) -> String {
     }
 }
 
+// ── Day-14b Phase 4: R-02 dreaming episodic clustering ───────────────
+
+/// Embed a slice of events via the operator's `EmbedProvider`.
+/// Returns one L2-normalised vector per event (in input order).
+/// Individual failures bubble up as `Err` — the caller short-
+/// circuits the dreaming pass + falls back to deterministic theme
+/// labels (today's `compose_dream` shape) per the L-07 safe-default.
+pub async fn embed_events(
+    events: &[EventRef],
+    provider: &dyn crate::providers::embed::EmbedProvider,
+) -> anyhow::Result<Vec<Vec<f32>>> {
+    use crate::providers::embed::EmbedRequest;
+    let mut out = Vec::with_capacity(events.len());
+    for ev in events {
+        let resp = provider
+            .embed(EmbedRequest::new(ev.preview.clone()))
+            .await?;
+        out.push(resp.vector);
+    }
+    Ok(out)
+}
+
+/// Cosine threshold above which two event embeddings are considered
+/// to belong to the same theme cluster. 0.55 is a deliberate compromise:
+///   - Lower than the skill router's 0.72 (event previews are
+///     short + noisy; tighter threshold over-fragments themes)
+///   - Higher than 0.5 (the "random pair" baseline for natural-language
+///     embeddings on Qwen2.5 — anything below this is noise)
+/// Operators tune via `freedom.yaml::dreaming.cluster_threshold` once
+/// the wizard step ships (Phase 4b).
+pub const DREAMING_CLUSTER_THRESHOLD: f32 = 0.55;
+
+/// Single-linkage agglomerative clustering on event embeddings.
+///
+/// Input: parallel slices — `events[i]` ↔ `embeddings[i]`. Output:
+/// groups of event indices, where each group represents one theme
+/// cluster. The first event in each group is the cluster seed; every
+/// subsequent event in the group has cosine ≥ threshold to at least
+/// one already-included event (single-linkage).
+///
+/// Empty input → empty output. Mismatched slice lengths → empty output
+/// (defensive — caller bug, but the dreaming pass shouldn't panic on
+/// a stale snapshot).
+///
+/// Pure function — no I/O. The actual cosine math lives in
+/// `providers::embed::cosine`. Single-pass `O(N²)` — fine for the
+/// 50-500 events/day workload R-02 expects; if dreaming ever runs
+/// on >5k events we'd swap to HNSW or an LSH approximation.
+pub fn cluster_events_by_cosine(
+    events: &[EventRef],
+    embeddings: &[Vec<f32>],
+    threshold: f32,
+) -> Vec<Vec<usize>> {
+    if events.is_empty() || events.len() != embeddings.len() {
+        return Vec::new();
+    }
+    let n = events.len();
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    for i in 0..n {
+        let mut placed = false;
+        for group in groups.iter_mut() {
+            // Single-linkage: i joins the group if it crosses
+            // threshold to ANY existing member.
+            let hits_any = group.iter().any(|&j| {
+                crate::providers::embed::cosine(&embeddings[i], &embeddings[j]) >= threshold
+            });
+            if hits_any {
+                group.push(i);
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            groups.push(vec![i]);
+        }
+    }
+    groups
+}
+
+/// Orchestrator: embed every event, cluster by cosine, compose one
+/// Dream per cluster. The theme_label is a stable string derived
+/// from the cluster's first event id; Phase 4b will replace this
+/// with an LLM-summarised motif (once the daemon has a chat
+/// `Provider` wired alongside the `EmbedProvider`).
+///
+/// Returns `Err` when any embed call fails — the dreaming task in
+/// `daemon/dreaming_task.rs` (Phase 4c) catches this + falls back to
+/// the deterministic `compose_dream` path so the operator still
+/// gets a dream entry per day even when local inference is down.
+pub async fn compose_dreams_with_embeddings(
+    day: &str,
+    events: &[EventRef],
+    provider: &dyn crate::providers::embed::EmbedProvider,
+    threshold: f32,
+) -> anyhow::Result<Vec<Dream>> {
+    if events.is_empty() {
+        return Ok(Vec::new());
+    }
+    let embeddings = embed_events(events, provider).await?;
+    let groups = cluster_events_by_cosine(events, &embeddings, threshold);
+    let mut dreams = Vec::with_capacity(groups.len());
+    for (idx, group) in groups.iter().enumerate() {
+        let cluster_events: Vec<EventRef> =
+            group.iter().map(|&i| events[i].clone()).collect();
+        let seed_id = cluster_events
+            .first()
+            .map(|e| e.id)
+            .unwrap_or(0);
+        let theme_label = format!("cluster-{idx}-seed-{seed_id}");
+        dreams.push(compose_dream(day, &theme_label, &cluster_events));
+    }
+    Ok(dreams)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,5 +521,176 @@ mod tests {
         let json = serde_json::to_string(&d).unwrap();
         let back: Dream = serde_json::from_str(&json).unwrap();
         assert_eq!(d, back);
+    }
+
+    // ── Phase 4 — episodic clustering ────────────────────────────────
+
+    fn cluster_ev(id: i64, preview: &str) -> EventRef {
+        EventRef {
+            id,
+            ts_unix: id, // doesn't matter for cluster math
+            preview: preview.to_string(),
+        }
+    }
+
+    /// Toy embed provider: first-word keyword → unit vector at slot.
+    /// "weather" → 0, "news" → 1, "code" → 2, else → 3.
+    struct DreamSlotMock;
+
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for DreamSlotMock {
+        fn name(&self) -> &'static str {
+            "dream_slot_mock"
+        }
+        fn default_dim(&self) -> usize {
+            4
+        }
+        async fn embed(
+            &self,
+            req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            let slot = match req.text.split_whitespace().next().unwrap_or("") {
+                "weather" => 0,
+                "news" => 1,
+                "code" => 2,
+                _ => 3,
+            };
+            let mut v = vec![0.0f32; 4];
+            v[slot] = 1.0;
+            Ok(crate::providers::embed::EmbedResponse {
+                vector: v,
+                model: "dream_slot_mock".into(),
+                latency: std::time::Duration::from_micros(1),
+            })
+        }
+    }
+
+    #[test]
+    fn cluster_events_empty_input_returns_empty() {
+        let groups = cluster_events_by_cosine(&[], &[], 0.5);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn cluster_events_mismatched_lengths_returns_empty() {
+        // Defensive — caller bug shouldn't panic the dreaming task.
+        let events = vec![cluster_ev(1, "x")];
+        let embeddings: Vec<Vec<f32>> = vec![];
+        assert!(cluster_events_by_cosine(&events, &embeddings, 0.5).is_empty());
+    }
+
+    #[test]
+    fn cluster_events_groups_identical_embeddings() {
+        let events = vec![cluster_ev(1, "a"), cluster_ev(2, "b"), cluster_ev(3, "c")];
+        // All three at slot 0 → one cluster of size 3.
+        let mut e0 = vec![0.0f32; 4];
+        e0[0] = 1.0;
+        let embeddings = vec![e0.clone(), e0.clone(), e0];
+        let groups = cluster_events_by_cosine(&events, &embeddings, 0.5);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0], vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn cluster_events_splits_orthogonal_embeddings() {
+        let events = vec![cluster_ev(1, "a"), cluster_ev(2, "b"), cluster_ev(3, "c")];
+        // Three orthogonal unit vectors → three clusters of size 1.
+        let embeddings = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+            vec![0.0, 0.0, 1.0, 0.0],
+        ];
+        let groups = cluster_events_by_cosine(&events, &embeddings, 0.5);
+        assert_eq!(groups.len(), 3);
+        for g in &groups {
+            assert_eq!(g.len(), 1);
+        }
+    }
+
+    #[test]
+    fn cluster_events_single_linkage_chains_through_existing() {
+        // A at slot 0, B at slot 0 (joins A), C orthogonal to A and B
+        // (new cluster). Single-linkage: B joins because it crosses
+        // threshold to A; C does NOT join even though it shares the
+        // group lookup with B because cos(C, A) = cos(C, B) = 0.
+        let events = vec![cluster_ev(1, "a"), cluster_ev(2, "b"), cluster_ev(3, "c")];
+        let embeddings = vec![
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![1.0, 0.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0, 0.0],
+        ];
+        let groups = cluster_events_by_cosine(&events, &embeddings, 0.5);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0], vec![0, 1]);
+        assert_eq!(groups[1], vec![2]);
+    }
+
+    #[test]
+    fn cluster_threshold_constant_pinned() {
+        assert_eq!(DREAMING_CLUSTER_THRESHOLD, 0.55);
+    }
+
+    #[tokio::test]
+    async fn embed_events_roundtrips_via_provider() {
+        let events = vec![cluster_ev(1, "weather today"), cluster_ev(2, "news headlines")];
+        let vectors = embed_events(&events, &DreamSlotMock).await.unwrap();
+        assert_eq!(vectors.len(), 2);
+        assert_eq!(vectors[0][0], 1.0); // weather slot
+        assert_eq!(vectors[1][1], 1.0); // news slot
+    }
+
+    #[tokio::test]
+    async fn embed_events_propagates_provider_errors() {
+        struct FailingEmbed;
+        #[async_trait::async_trait]
+        impl crate::providers::embed::EmbedProvider for FailingEmbed {
+            fn name(&self) -> &'static str {
+                "failing"
+            }
+            fn default_dim(&self) -> usize {
+                4
+            }
+            async fn embed(
+                &self,
+                _req: crate::providers::embed::EmbedRequest,
+            ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+                anyhow::bail!("provider unavailable")
+            }
+        }
+        let events = vec![cluster_ev(1, "x")];
+        assert!(embed_events(&events, &FailingEmbed).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn compose_dreams_with_embeddings_one_per_cluster() {
+        let day = "2026-05-23";
+        // 2 weather events + 1 news event → 2 clusters → 2 dreams.
+        let events = vec![
+            cluster_ev(1, "weather forecast for monday"),
+            cluster_ev(2, "weather pattern shifting"),
+            cluster_ev(3, "news from berlin"),
+        ];
+        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, 0.5)
+            .await
+            .unwrap();
+        assert_eq!(dreams.len(), 2);
+        // First cluster carries 2 events (the two weather ones).
+        let weather_dream = dreams.iter().find(|d| d.event_ids.contains(&1)).unwrap();
+        assert!(weather_dream.event_ids.contains(&2));
+        assert!(!weather_dream.event_ids.contains(&3));
+        // Second cluster carries the lone news event.
+        let news_dream = dreams.iter().find(|d| d.event_ids.contains(&3)).unwrap();
+        assert_eq!(news_dream.event_ids, vec![3]);
+        // Theme labels are stable + reference the cluster seed.
+        assert!(weather_dream.theme_label.contains("seed-1"));
+        assert!(news_dream.theme_label.contains("seed-3"));
+    }
+
+    #[tokio::test]
+    async fn compose_dreams_empty_input_returns_empty() {
+        let dreams = compose_dreams_with_embeddings("2026-05-23", &[], &DreamSlotMock, 0.5)
+            .await
+            .unwrap();
+        assert!(dreams.is_empty());
     }
 }
