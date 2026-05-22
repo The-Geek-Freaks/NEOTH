@@ -97,8 +97,9 @@ pub struct CloudConfig {
     ///     connector reads/writes that folder directly via
     ///     OpenDAL services-fs (R-8 Session 19); the vendor's
     ///     desktop client handles upstream sync.
+    ///
     /// Forward-compat: future per-provider tunables (chunk size,
-    ///   rate limit, etc.) land here without changing the trait.
+    /// rate limit, etc.) land here without changing the trait.
     #[serde(default)]
     pub connector_options: Option<std::collections::HashMap<String, String>>,
 }

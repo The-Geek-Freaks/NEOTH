@@ -51,7 +51,9 @@ use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use super::schema::{SubAgentRequest, SubAgentResult};
-use crate::council::quality_score::{FailureItem, QaVerdict};
+use crate::council::quality_score::QaVerdict;
+#[cfg(test)]
+use crate::council::quality_score::FailureItem;
 
 /// QM-16: trait the caller implements so the dispatcher can run an
 /// arbitrary worker (coding worker, reviewer sub-agent, evidence

@@ -242,18 +242,10 @@ pub struct FreedomConfig {
 /// Future: per-plugin allowlist (`plugins.wasm.allow = ["hello",
 /// "morning-news"]`) — restricts which plugin IDs the
 /// discovery sweep accepts.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PluginsConfig {
     #[serde(default)]
     pub wasm: WasmPluginsConfig,
-}
-
-impl Default for PluginsConfig {
-    fn default() -> Self {
-        Self {
-            wasm: WasmPluginsConfig::default(),
-        }
-    }
 }
 
 /// WASM plugin host runtime gate. Field-level struct (not a

@@ -689,10 +689,10 @@ pub const EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED: u8 = 0xE4;
 /// Payload (JSON): `{peer_id, capabilities, ts_unix}`.
 pub const EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED: u8 = 0xE5;
 
-/// `0xE6` + `0xE7` — reserved for future cluster events
-/// (orchestrator election, peer-load class crossing thresholds).
-/// Not yet emitted; placeholder so the band reservation is
-/// stable for future commits.
+// `0xE6` + `0xE7` — reserved for future cluster events
+// (orchestrator election, peer-load class crossing thresholds).
+// Not yet emitted; placeholder so the band reservation is
+// stable for future commits.
 
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".

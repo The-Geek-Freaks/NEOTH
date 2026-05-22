@@ -349,7 +349,7 @@ mod tests {
         );
         // Build a registry just from this one skill — must succeed
         // (no duplicate ids within the skill).
-        let registry = ModeRegistry::from_skills(&[academic.clone()]).unwrap();
+        let registry = ModeRegistry::from_skills(std::slice::from_ref(academic)).unwrap();
         assert_eq!(registry.len(), 15);
 
         // Sample a known mode and verify its shape.

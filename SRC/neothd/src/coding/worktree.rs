@@ -1,7 +1,7 @@
 //! Pick #6 Phase 4 — task-scoped git worktree helpers.
 //!
-//! Per Chorus chat `019E49EAC4EACB805644D020B8F74A03` (codex-cli
-//! + gemini-cli both picked Strategy B). Full verdict in
+//! Per Chorus chat `019E49EAC4EACB805644D020B8F74A03` (codex-cli +
+//! gemini-cli both picked Strategy B). Full verdict in
 //! `PLAN/CHORUS_pick6_phase4_VERDICT.md`.
 //!
 //! ## Why per-task worktree (not direct apply, not stash)

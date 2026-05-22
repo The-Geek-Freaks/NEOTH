@@ -214,10 +214,9 @@ fn local_peer_id() -> String {
 /// SecretStream is message-framed by Noise (each `write` is
 /// one ciphertext, each `read` returns the next plaintext or
 /// `None` on EOF), so this function bypasses the
-/// length-prefix layer in [`super::heartbeat::write_framed`]
-/// + [`read_framed`] — those exist for the
-/// `tokio::io::duplex` test path and any future non-Noise
-/// transport.
+/// length-prefix layer in [`super::heartbeat::write_framed`] +
+/// [`read_framed`] — those exist for the `tokio::io::duplex`
+/// test path and any future non-Noise transport.
 async fn handle_peeroxide_connection(
     mut conn: peeroxide::SwarmConnection,
     cluster_name: String,
