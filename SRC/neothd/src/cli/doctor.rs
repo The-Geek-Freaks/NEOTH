@@ -284,6 +284,30 @@ const CHECK_DOCS: &[CheckDoc] = &[
               `touch` the file to reset the age clock once the new \
               token is in.",
     },
+    CheckDoc {
+        name: "wasm plugins",
+        purpose: "NOOB-UX-3 effective state of the WASM plugin host. \
+                  Reports one of three states: `compiled-in + enabled` \
+                  (release feature on, freedom.yaml says enabled), \
+                  `compiled-in but disabled by config` (operator flipped \
+                  `freedom.yaml::plugins.wasm.enabled: false`), or \
+                  `not compiled in` (slim daemon build without the \
+                  `wasm-plugin-host` cargo feature). Surfaces the gap \
+                  between build-time + runtime gates so an operator \
+                  who set `enabled: true` but runs a slim build sees \
+                  the mismatch immediately.",
+        common_failures: "Operator expects plugins to work on a slim \
+                         build (cargo feature not compiled in); \
+                         operator's freedom.yaml has `enabled: false` \
+                         but the wizard step7b explanation isn't fresh \
+                         in memory.",
+        fix: "Slim build → rebuild with `--features wasm-plugin-host` \
+              or install the release tarball (cargo-dist flips the \
+              feature ON). Disabled-by-config → edit \
+              `~/.neoth/freedom.yaml` and flip \
+              `plugins:\\n  wasm:\\n    enabled: true`, then \
+              restart the daemon.",
+    },
 ];
 
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
@@ -472,6 +496,7 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_agents_dir(home),
         check_profile_extensions(home),
         check_mcp_servers(home),
+        check_wasm_plugins(home),
     ]
 }
 
@@ -1197,6 +1222,47 @@ fn check_mcp_servers(home: &Path) -> CheckOutcome {
     }
 }
 
+/// NOOB-UX-3 doctor surface — report the effective state of the
+/// WASM plugin host so an operator who expected plugins to be
+/// live sees the mismatch (slim build vs. operator-disabled).
+fn check_wasm_plugins(home: &Path) -> CheckOutcome {
+    use crate::config::FreedomConfig;
+    let compiled_in = cfg!(feature = "wasm-plugin-host");
+    let cfg_enabled = FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+        .map(|c| c.plugins.wasm.enabled)
+        .unwrap_or(true);
+    let (status, detail) = match (compiled_in, cfg_enabled) {
+        (true, true) => (
+            CheckStatus::Pass,
+            "compiled-in + enabled by config — operator-loadable plugins are live".to_string(),
+        ),
+        (true, false) => (
+            CheckStatus::Warn,
+            "compiled-in but DISABLED by config (freedom.yaml::plugins.wasm.enabled = false). \
+             Hook actions of kind Plugin{..} will degrade to Allow. \
+             Flip the config to enable, or rebuild without `--features wasm-plugin-host` if \
+             intentional."
+                .to_string(),
+        ),
+        (false, true) => (
+            CheckStatus::Warn,
+            "not compiled in (slim daemon build); freedom.yaml has plugins.wasm.enabled=true \
+             but the cargo `wasm-plugin-host` feature is OFF. Operator expecting plugins should \
+             rebuild with `--features wasm-plugin-host` or install the release tarball."
+                .to_string(),
+        ),
+        (false, false) => (
+            CheckStatus::Pass,
+            "not compiled in (slim daemon) AND config disabled — coherent slim state".to_string(),
+        ),
+    };
+    CheckOutcome {
+        name: "wasm plugins",
+        status,
+        detail,
+    }
+}
+
 /// Warn when free disk on `~/.neoth/`'s partition is below the full
 /// model-cache footprint. Operators who haven't pulled CLIP / whisper /
 /// Qwen yet see a heads-up before the download stalls at 70%.
@@ -1335,11 +1401,12 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_seventeen() {
+    fn check_docs_listed_count_pinned_at_eighteen() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
-        // coverage) is caught.
-        assert_eq!(CHECK_DOCS.len(), 17);
+        // coverage) is caught. Bumped to 18 in Session 19 for
+        // `wasm plugins` (NOOB-UX-3 effective-state doctor surface).
+        assert_eq!(CHECK_DOCS.len(), 18);
     }
 
     #[tokio::test]
@@ -1447,10 +1514,11 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 17 checks (freedom, credentials, credentials age, views.db, wal,
+        // 18 checks (freedom, credentials, credentials age, views.db, wal,
         // hmac, quota, policy, tweaks, model caches, hysteria, cloud archive,
-        // disk space, hooks, agents, profile_extensions, mcp servers).
-        assert_eq!(outs.len(), 17);
+        // disk space, hooks, agents, profile_extensions, mcp servers,
+        // wasm plugins — Session 19 NOOB-UX-3 addition).
+        assert_eq!(outs.len(), 18);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

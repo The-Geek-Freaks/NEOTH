@@ -1634,7 +1634,7 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [ ] **P-06** Block-B profile injection ≥ 0.6 confidence gate (P2 Day 50) — see CH-09
 - [ ] **P-07** Block-C recall ranking profile_relevance_bonus (P2) — see CH-10
 - [ ] **P-08** Briefing emit (cron-driven proactive) (P2)
-- [ ] **P-09** Profile guard M1 timestamp normalisation (chrono date-parser + window anchor)
+- [x] **P-09** Profile guard M1 timestamp normalisation — shipped (verified Session 19). `profile::timestamp_check` module ships `TimestampPolicy { window_oldest_unix, window_newest_unix, padding_days }` with `from_window(&AttributedWindow, padding_days) -> Option<Self>` derivation + `allows(ts_unix) -> bool` window check. `first_out_of_window_field(&ProfileDelta, &policy) -> Option<&str>` walks claims, parses ISO-8601 yyyy-mm-dd via chrono inside `first_iso_date_in_value`, returns the offending claim field name on first hit. Wired into `claim_guard::guard_claims` per spec. Tests cover both the in-window happy path + out-of-window rejection.
 - [ ] **P-10** PROFILE_BASELINE_SNAPSHOT event (A3 fix, P3 Day 65) — code in 0xB5
 - [ ] **P-11** Jarvis seed migration from HIPPOCAMPUS_CORE.md (P3 Day 65) — emit PROFILE_DELTA confidence 0.7
 - [ ] **P-12** Phase 4 Hebbian tuning + drift detection anchor (P4)
@@ -2243,7 +2243,7 @@ Concrete UX work (each is its own pick):
 - [ ] **NOOB-UX-2** Glossary screen in the wizard — one screen up-front
   that defines "plugin", "channel", "council", "provider", "WAL",
   "autonomy level". Operator reads it once, never needs to grep docs.
-- [~] **NOOB-UX-3** `freedom.yaml::plugins.wasm.enabled` runtime toggle — runtime gate shipped Session 19 (2026-05-21). New `PluginsConfig { wasm: WasmPluginsConfig { enabled: bool } }` on FreedomConfig with default-ON (`default_wasm_plugins_enabled()` honours the neoth-features-default-on hard rule). `cli::serve::run_serve` Step 1a checks `config.plugins.wasm.enabled` before calling `bootstrap_plugin_invoker` — when false, an info log fires + the daemon skips discovery + invoker registration entirely (hook-engine `Plugin` actions degrade to Allow same as a slim build). 4 new tests pin default-true, absent-block inherits default, operator override round-trips, snake_case wire form. Wizard step for opt-out + doctor "effective state" check remain as follow-ups.
+- [x] **NOOB-UX-3** `freedom.yaml::plugins.wasm.enabled` runtime toggle — voll voll closed Session 19 (2026-05-21). Three layers: (1) `PluginsConfig { wasm: WasmPluginsConfig { enabled: bool } }` on FreedomConfig with default-ON per the neoth-features-default-on hard rule + 4 config tests. (2) `cli::serve::run_serve` Step 1a consults `config.plugins.wasm.enabled` before calling `bootstrap_plugin_invoker` — when false, info log fires + discovery + invoker registration skipped (hook-engine `Plugin{..}` actions degrade to Allow same as slim build). (3) `check_wasm_plugins` doctor diagnostic reports the four state combos as a `CheckOutcome` (compiled-in + enabled = Pass; compiled-in + disabled = Warn; not-compiled-in + enabled-by-config = Warn with rebuild hint; not-compiled-in + disabled = coherent slim Pass). CHECK_DOCS entry "wasm plugins" pins operator-readable purpose / common failures / fix steps. Count-pinned tests bumped 17 → 18. Wizard opt-out step remains the only follow-up.
 - [ ] **NOOB-UX-4** Recommended-defaults audit — every wizard step
   reviewed against "would a non-developer pick this correctly without
   external docs?". Failing steps get a remediation pass.
