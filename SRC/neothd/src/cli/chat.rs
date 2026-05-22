@@ -1795,9 +1795,23 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         &self,
         prompt: &str,
     ) -> std::result::Result<crate::council::orchestrator::CompletionRecord, String> {
+        // QM-10 Phase 2.5: council debate path also consults the
+        // breaker. Open breakers reject the hemisphere call so the
+        // council dispatcher counts a budget unit against a doomed
+        // provider only when the breaker says it's worth trying.
+        let provider_name = self.provider.name();
+        let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+            Ok(p) => Some(p),
+            Err(berr) => {
+                return Err(format!(
+                    "provider `{provider_name}`: {berr}"
+                ));
+            }
+        };
         let mut req = self.base_req.clone();
         req.prompt = prompt.to_string();
-        self.provider
+        let result = self
+            .provider
             .complete(req)
             .await
             .map(|c| crate::council::orchestrator::CompletionRecord {
@@ -1805,7 +1819,13 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 input_tokens: c.input_tokens,
                 output_tokens: c.output_tokens,
             })
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string());
+        match (&result, permit) {
+            (Ok(_), Some(p)) => p.record_success(),
+            (Err(_), Some(p)) => p.record_failure(),
+            _ => {}
+        }
+        result
     }
     /// E-2 Phase 2 (Session 13) — recursive sub-council override.
     /// Pick #19 (Session 14 F6) — budget-aware path. Delegates to
@@ -2923,7 +2943,27 @@ pub(crate) async fn run_mcp_dispatch_loop(
             let mut req = self.base.clone();
             req.prompt = prompt.to_string();
             let provider = self.provider;
-            Box::pin(async move { provider.complete(req).await.map(|c| c.text) })
+            // QM-10 Phase 2.5: streaming MCP-loop also consults the
+            // breaker. Each tool-call iteration is a fresh provider
+            // dispatch — a breaker that flipped Open between
+            // iterations rejects the next round instead of burning
+            // budget on doomed calls inside a long tool chain.
+            let provider_name = provider.name();
+            Box::pin(async move {
+                let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
+                    Ok(p) => Some(p),
+                    Err(berr) => {
+                        return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
+                    }
+                };
+                let result = provider.complete(req).await.map(|c| c.text);
+                match (&result, permit) {
+                    (Ok(_), Some(p)) => p.record_success(),
+                    (Err(_), Some(p)) => p.record_failure(),
+                    _ => {}
+                }
+                result
+            })
         }
     }
     let initial_prompt = base_req.prompt.clone();
