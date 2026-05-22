@@ -149,19 +149,24 @@ mod tests {
         }
         let skills = load_all(&skills_dir).await.unwrap();
         let expected = [
-            // QM-21 (superpowers P1)
+            // QM-21 (superpowers P1) — 6 skills
             "receiving_code_review",
             "requesting_code_review",
             "systematic_debugging",
             "test_driven_development",
             "verification_before_completion",
             "writing_skills",
-            // QM-22 (mattpocock engineering subset — 4/9 shipped this
-            // turn, remaining 5 follow in QM-22 batch B)
+            // QM-22 batch A (mattpocock engineering, 4 skills)
             "diagnose",
             "grill_with_docs",
             "triage",
             "zoom_out",
+            // QM-22 batch B (mattpocock engineering, 5 skills)
+            "improve_codebase_architecture",
+            "to_prd",
+            "to_issues",
+            "prototype",
+            "grill_me",
         ];
         for id in expected {
             assert!(

@@ -1,0 +1,79 @@
+id: improve_codebase_architecture
+description: |
+  Codebase architecture improvement discipline — deep-module / shallow-
+  module / seam vocabulary applied to refactor and "improve this code"
+  requests. Catches the failure mode where a refactor moves complexity
+  around without reducing it (shallow modules wrap shallow modules).
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/improve-codebase-architecture`
+# (2026-05-22 Session 20 — QM-22 batch B).
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - architecture
+  - refactor
+  - quality
+  - ported
+
+trigger_keywords:
+  - "refactor"
+  - "improve codebase"
+  - "improve architecture"
+  - "clean up this"
+  - "simplify this"
+  - "architecture"
+  - "deep module"
+  - "shallow module"
+  - "seam"
+  - "umstrukturieren"
+  - "architektur verbessern"
+
+system_prompt: |
+  Architecture improvement discipline (auto-installed). When the
+  operator asks for a refactor / cleanup / "improve this", evaluate
+  in the deep-module vocabulary before proposing any change.
+
+  ## Deep vs shallow
+
+  - **Deep module**: small interface, large functionality behind it.
+    Callers see one well-named function; the module hides complexity.
+    Example: `wal::writer::append(header, payload)`.
+  - **Shallow module**: large interface, little hidden behind it.
+    Callers must understand the internals to use it. Example: 5
+    public helper functions that thinly wrap a third-party API.
+
+  Refactor goal: convert shallow modules into deep ones. Refactor
+  failure: rearrange shallow modules into different shallow modules.
+
+  ## Seams
+
+  A seam is a place in the code where you can change behaviour
+  without editing the call sites. Trait boundaries are seams. Public
+  function signatures are seams. Module boundaries are not seams
+  unless they cross a `pub` line.
+
+  When a refactor needs new flexibility, install it at a seam. When
+  there's no seam, the refactor either creates one (an `impl Trait` /
+  `Box<dyn>` boundary) or it's not actually a refactor.
+
+  ## Red flags
+
+  - "Just rename this function" → not architecture; cosmetic
+  - "Move this file to a new module" → cosmetic unless the module
+    boundary becomes a seam
+  - "Extract this 5-line helper" → noise, not depth
+  - "Add a `Builder` to a simple struct" → shallow interface
+    expansion, not depth
+
+  ## Surfacing the assessment
+
+  Before proposing a refactor, name:
+  1. Which module is currently shallow and why
+  2. Which seam the refactor will install or use
+  3. What the operator sees AFTER (one well-named entry point instead
+     of N scattered helpers)
+  4. What new tests cover the seam (the seam is now a contract)
+
+tool_allowlist: []
+enabled: true

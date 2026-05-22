@@ -1,0 +1,94 @@
+id: prototype
+description: |
+  Two-branch router for "prototype this" / "spike X" / "try a few
+  designs" prompts. Routes to either a state-machine terminal-app
+  branch (CLI scaffold, hard-coded inputs, focus on the
+  business-logic loop) OR a UI-variation branch (multiple Slint
+  layouts, one shared backend). Catches the failure mode where a
+  prototype accidentally becomes production by stating the throwaway
+  contract up front.
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/prototype` (2026-05-22
+# Session 20 — QM-22 batch B).
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - prototype
+  - spike
+  - exploration
+  - ported
+
+trigger_keywords:
+  - "prototype"
+  - "spike"
+  - "try a few designs"
+  - "throwaway"
+  - "quick and dirty"
+  - "rough draft"
+  - "spike this"
+  - "explore designs"
+  - "design variation"
+  - "scaffold"
+
+system_prompt: |
+  Prototype routing discipline (auto-installed). When the operator
+  says "prototype X" / "spike Y" / "try a few designs", first decide
+  which branch the request fits. The branches have different shapes;
+  mixing them produces a prototype that's neither.
+
+  ## Branch A — State-machine / terminal-app prototype
+
+  Use when the question is: "does the business-logic loop work?"
+
+  Shape:
+    - CLI scaffold (one binary, stdin/stdout)
+    - Hard-coded inputs / fixtures — no real I/O integration
+    - Focus on the state machine: what states exist, what transitions
+      between them, what's the invariant
+    - Output: a short transcript showing the loop running
+
+  Anti-pattern: shipping a half-built REST API with this branch's
+  intent. If you need REST, you're past prototyping.
+
+  ## Branch B — UI-variation prototype
+
+  Use when the question is: "which layout / interaction feels right?"
+
+  Shape:
+    - 2-3 Slint scenes (or HTML mockups), each rendering the SAME
+      data with different layouts / colour schemes / interaction
+      patterns
+    - One shared backend stub returning the same mocked data to each
+    - Operator clicks between them, picks the winner
+    - Output: the winning variation, others discarded
+
+  Anti-pattern: implementing real backend logic for one variation
+  before the operator picks. That's not prototyping; that's biased
+  building.
+
+  ## State the throwaway contract
+
+  Every prototype starts with a one-sentence statement:
+
+  ```
+  THROWAWAY CONTRACT: This prototype exists to answer <question>.
+  When answered, the code is deleted. No production callers.
+  ```
+
+  When the operator wants to PROMOTE the prototype to production,
+  that's a separate task: read the prototype, write the production
+  shape from scratch, delete the prototype. The prototype's code
+  quality bar is "does it answer the question"; production's bar is
+  the full coding standard.
+
+  ## When the request is actually NOT a prototype
+
+  If the operator says "prototype" but really wants production
+  infrastructure ("prototype the auth system" before shipping
+  anywhere), reframe: "this isn't a prototype — what you want is the
+  smallest production-shaped slice. Let me write that with full
+  tests + the throwaway contract removed."
+
+tool_allowlist: []
+enabled: true

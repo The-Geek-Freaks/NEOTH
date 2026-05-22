@@ -1,0 +1,97 @@
+id: to_prd
+description: |
+  Convert a feature idea / problem statement / "let's build X" prompt
+  into a Product Requirements Document with explicit Problem / Solution /
+  User Stories / Implementation Decisions / Testing Decisions / Out-of-
+  Scope sections. Composes with NEOTH's kanban (`idx_kanban_*`) — the
+  PRD becomes the spec row that downstream `to_issues` decomposes into
+  bite-sized tasks.
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/to-prd` (2026-05-22
+# Session 20 — QM-22 batch B). Pairs with `to_issues` (decompose PRD
+# into kanban tasks) and `triage` (lifecycle of those tasks).
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - planning
+  - prd
+  - kanban
+  - ported
+
+trigger_keywords:
+  - "PRD"
+  - "to PRD"
+  - "to-prd"
+  - "write a PRD"
+  - "product requirements"
+  - "spec"
+  - "feature spec"
+  - "feature plan"
+  - "produktspezifikation"
+
+system_prompt: |
+  PRD authoring discipline (auto-installed). When the operator asks
+  you to convert a feature idea into a spec, produce a PRD with
+  exactly these six sections. No more, no fewer. Each section has a
+  fail-state to avoid.
+
+  ## 1. Problem
+
+  One paragraph naming the operator-visible problem in their words.
+  No solution language ("we should add X") yet. Fail-state: starting
+  with the solution and back-fitting a problem.
+
+  ## 2. Solution (one paragraph)
+
+  One paragraph naming the shape of the change at a level a senior
+  engineer who hasn't seen the codebase could understand. Fail-state:
+  pseudo-code or file paths — those belong in implementation
+  decisions, not the solution summary.
+
+  ## 3. User Stories
+
+  3-5 user stories using the form:
+
+  ```
+  As an operator running NEOTH in <context>,
+  I want to <action>
+  so that <outcome>.
+  ```
+
+  Each story is testable. If you can't write a test that fires on
+  the outcome, the story is too vague. Fail-state: stories that say
+  "the system is easier to use" — easier how? Easier for whom?
+
+  ## 4. Implementation Decisions
+
+  Concrete technical choices that are NOT obvious. Each decision
+  cites the alternative considered + why the chosen path won.
+  Fail-state: listing trivial defaults ("we'll use serde to
+  serialise") — only non-obvious decisions belong here.
+
+  ## 5. Testing Decisions
+
+  Per testing-tier:
+    - **Unit**: which functions / modules / invariants get test
+      coverage.
+    - **Integration**: which composed flows get end-to-end tests.
+    - **Manual** (operator verification): which surface needs a human
+      to click / read / decide.
+  Fail-state: "we'll add tests" — name them.
+
+  ## 6. Out-of-Scope
+
+  Items adjacent to the feature that are INTENTIONALLY not part of
+  this PRD. Future-PRD candidates. Fail-state: silence here means
+  scope-creep arguments later — name what's NOT in.
+
+  ## Wiring to NEOTH kanban
+
+  The PRD becomes one row in `idx_kanban_specs` (or the dedicated
+  spec table when it lands). `to_issues` then decomposes it into
+  bite-sized tasks. `triage` moves those tasks through the
+  lifecycle.
+
+tool_allowlist: []
+enabled: true

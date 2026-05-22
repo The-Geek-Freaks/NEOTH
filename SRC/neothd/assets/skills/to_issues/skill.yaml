@@ -1,0 +1,91 @@
+id: to_issues
+description: |
+  Decompose a PRD (or operator-provided feature description) into
+  vertical-slice "tracer bullet" kanban tasks. Each task is small
+  enough to ship in one session, end-to-end through the stack, with
+  explicit acceptance criteria. Replaces hand-rolled `neoth code plan`
+  drafts; emits directly to NEOTH's `idx_kanban_*` rows.
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/to-issues` (2026-05-22
+# Session 20 — QM-22 batch B). Sibling of `to_prd` (which authors the
+# upstream artifact this skill decomposes).
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - planning
+  - kanban
+  - decomposition
+  - ported
+
+trigger_keywords:
+  - "to issues"
+  - "to-issues"
+  - "decompose"
+  - "break down"
+  - "vertical slice"
+  - "tracer bullet"
+  - "task breakdown"
+  - "split into tasks"
+  - "aufteilen in tasks"
+  - "task decomposition"
+
+system_prompt: |
+  Issue decomposition discipline (auto-installed). Given a PRD or
+  feature description, produce a list of kanban tasks each shippable
+  in one focused session. Apply tracer-bullet doctrine: every task
+  delivers a vertical slice across the stack — never "set up the
+  schema" then later "build the UI on top".
+
+  ## Iron Law
+
+  EVERY TASK PRODUCES AN OBSERVABLE END-TO-END OUTCOME.
+
+  A task that only builds infrastructure without shipping operator-
+  visible behaviour is not a tracer bullet; it's groundwork. Bundle
+  groundwork into the smallest task that USES it.
+
+  ## Task shape (one per row)
+
+  ```
+  TITLE: <imperative verb> <observable outcome>
+  ACCEPTANCE:
+    - <concrete pass condition 1, e.g. "neoth provider test claude_cli
+       returns OK in < 5s">
+    - <pass condition 2>
+    - <pass condition 3 if needed; cap at 5>
+  EVIDENCE REQUIRED:
+    - <test name or output line proving the criteria are met>
+  SIZE: <S | M | L>  (S = 1-3h, M = half-day, L = full day; >L = split)
+  ```
+
+  ## Anti-patterns
+
+  - **"Set up the schema for X"** alone → not vertical. Combine with
+    the first feature using that schema.
+  - **"Refactor Y"** with no operator-visible outcome → not a tracer
+    bullet. Either ship the feature the refactor enables in the same
+    task, or it's groundwork to bundle.
+  - **"Write tests for Z"** as its own task → tests ride with the
+    feature task. A separate "write tests" row signals the original
+    task wasn't actually complete.
+  - **"Investigate <thing>"** with no decision deliverable → use
+    `triage` skill instead; this is a planning artifact, not a kanban
+    task.
+
+  ## Output shape
+
+  Emit tasks as a Markdown checklist. The operator pipes the output
+  to `neoth code task add` (when the bulk-add CLI lands) or copies
+  into `views.db::idx_kanban_*` rows. Each task's `task_id` is
+  generated downstream.
+
+  ## Composing with prior skills
+
+  - `to_prd` authors the upstream PRD this skill decomposes
+  - `triage` moves the resulting tasks through the lifecycle
+  - `verification_before_completion` enforces the EVIDENCE REQUIRED
+    field at task-close time
+
+tool_allowlist: []
+enabled: true
