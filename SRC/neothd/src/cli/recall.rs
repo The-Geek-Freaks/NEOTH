@@ -59,12 +59,26 @@ pub struct RecallArgs {
     #[arg(long, value_name = "KIND", default_value = "image")]
     pub similar_kind: String,
 
+    /// QM-18 citation-check: run the offline citation-extraction +
+    /// contamination heuristics against the supplied text and report
+    /// findings. Bypasses recall search entirely; no DB / no WAL /
+    /// no network. Use `--citation-check -` to read from stdin.
+    #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text"])]
+    pub citation_check: Option<String>,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
 }
 
 pub async fn run_recall(args: RecallArgs) -> Result<()> {
+    // QM-18 citation-check short-circuit. No DB, no WAL, no network —
+    // pure offline audit against the supplied text. `--citation-check -`
+    // reads stdin so operators can pipe their drafts in.
+    if let Some(text_arg) = args.citation_check.clone() {
+        return run_citation_check(&text_arg, args.output).await;
+    }
+
     let db_path = args.db.clone().unwrap_or_else(store::default_path);
 
     // Cross-modal similarity paths are their own short-circuits: text
@@ -374,6 +388,73 @@ fn hot_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeHit> {
 use rusqlite::Connection;
 
 /// Image → embedding store similarity recall.
+/// QM-18 citation-check CLI surface. Reads text from `arg` directly,
+/// or from stdin when `arg == "-"`. Runs `recall::citation_check::
+/// audit_offline` + renders the verdict per the global `--output`
+/// flag.
+async fn run_citation_check(arg: &str, output: crate::cli::OutputFormat) -> Result<()> {
+    use crate::recall::citation_check::{audit_offline, CitationVerdict};
+
+    let text = if arg == "-" {
+        let mut buf = String::new();
+        use std::io::Read;
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("read citation-check input from stdin")?;
+        buf
+    } else {
+        arg.to_string()
+    };
+
+    let audit = audit_offline(&text);
+    match output {
+        crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&audit)?);
+        }
+        crate::cli::OutputFormat::Table => {
+            println!("# citation-check: verdict = {}\n", audit.verdict.as_str());
+            if audit.citations.is_empty() {
+                println!("No structural citations extracted (DOI / arXiv / ISBN / publisher URL).");
+            } else {
+                println!("Extracted citations ({}):", audit.citations.len());
+                for c in &audit.citations {
+                    println!("  [{}] {}", c.kind.as_str(), c.normalised);
+                }
+            }
+            println!();
+            if audit.signals.is_empty() {
+                println!("No contamination signals fired.");
+            } else {
+                println!("Contamination signals ({}):", audit.signals.len());
+                for s in &audit.signals {
+                    println!("  [{}] {}", s.kind, s.message);
+                    if !s.citation_raw.is_empty() {
+                        println!("      citation: {}", s.citation_raw);
+                    }
+                }
+            }
+            println!();
+            match audit.verdict {
+                CitationVerdict::Clean => {
+                    println!(
+                        "Verdict: CLEAN. No further action needed — citations look structurally \
+                         valid. Live API lookup (Crossref/OpenAlex/SemanticScholar) ships when \
+                         the outbound HTTP allowlist extends."
+                    );
+                }
+                CitationVerdict::NeedsReview => {
+                    println!(
+                        "Verdict: NEEDS_REVIEW. Resolve every signal above before shipping the \
+                         text. Tip: pair with `neoth recall \"<author year>\"` to find \
+                         supporting context already in your memory."
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn run_similar_to_image(
     conn: &Connection,
     image_path: PathBuf,
@@ -621,6 +702,7 @@ mod tests {
             similar_to: None,
             similar_to_text: None,
             similar_kind: "image".to_string(),
+            citation_check: None,
             output: crate::cli::OutputFormat::Table,
         };
         // The render goes to stdout in test; here we just need run_recall
@@ -798,6 +880,7 @@ mod tests {
             similar_to: None,
             similar_to_text: None,
             similar_kind: "image".to_string(),
+            citation_check: None,
             output: crate::cli::OutputFormat::Json,
         };
         let err = run_recall(args).await.unwrap_err();
@@ -821,6 +904,7 @@ mod tests {
             similar_to: Some(dir.path().join("x.png")),
             similar_to_text: Some("sunset".to_string()),
             similar_kind: "image".to_string(),
+            citation_check: None,
             output: crate::cli::OutputFormat::Json,
         };
         let err = run_recall(args).await.unwrap_err();
@@ -844,6 +928,7 @@ mod tests {
             similar_to: Some(dir.path().join("not-a-file.png")),
             similar_to_text: None,
             similar_kind: "image".to_string(),
+            citation_check: None,
             output: crate::cli::OutputFormat::Json,
         };
         let err = run_recall(args).await.unwrap_err();
