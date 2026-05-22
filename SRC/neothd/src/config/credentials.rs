@@ -48,6 +48,10 @@ pub struct Credentials {
     /// WhatsApp webhook verify-token — used by the Meta server when it
     /// confirms the operator's webhook endpoint.
     pub whatsapp_verify_token: Option<SecretString>,
+    /// Meta app secret used to compute `X-Hub-Signature-256` for inbound
+    /// WhatsApp webhooks. Required to start the Meta webhook listener;
+    /// `send_text` still works without it.
+    pub whatsapp_app_secret: Option<SecretString>,
     /// Slack bot user OAuth token (`xoxb-...`). Required by both
     /// socket-mode and webhook modes.
     pub slack_bot_token: Option<SecretString>,
@@ -122,6 +126,7 @@ impl Credentials {
             whatsapp_token,
             whatsapp_phone_id,
             whatsapp_verify_token,
+            whatsapp_app_secret,
             slack_bot_token,
             slack_app_token,
         } = self;
@@ -130,6 +135,7 @@ impl Credentials {
             && whatsapp_token.is_none()
             && whatsapp_phone_id.is_none()
             && whatsapp_verify_token.is_none()
+            && whatsapp_app_secret.is_none()
             && slack_bot_token.is_none()
             && slack_app_token.is_none()
     }

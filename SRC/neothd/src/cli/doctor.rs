@@ -1334,21 +1334,41 @@ fn check_channels_wiring(home: &Path) -> CheckOutcome {
             "polling loop spawned by serve; send + receive both real",
         ));
     }
-    if creds.slack_bot_token.is_some() || creds.slack_app_token.is_some() {
-        rows.push((
+    match (
+        creds.slack_bot_token.is_some(),
+        creds.slack_app_token.is_some(),
+    ) {
+        (true, true) => rows.push((
             "slack",
-            "OUTBOUND-ONLY",
-            "send_text via chat.postMessage works; socket-mode receive loop \
-             not yet spawned by serve",
-        ));
+            "LIVE",
+            "socket-mode WS loop spawned by serve; send + receive both real",
+        )),
+        (true, false) | (false, true) => rows.push((
+            "slack",
+            "CONFIGURED-NOT-STARTED",
+            "socket mode needs BOTH bot_token (xoxb-) and app_token (xapp-); \
+             only one supplied — send_text still works",
+        )),
+        (false, false) => {}
     }
     if creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some() {
-        rows.push((
-            "whatsapp",
-            "OUTBOUND-ONLY",
-            "send_text via Graph API works; webhook listener not yet wired \
-             into serve (channels::WhatsAppChannel::run bails)",
-        ));
+        let inbound_ready = creds.whatsapp_verify_token.is_some()
+            && creds.whatsapp_app_secret.is_some()
+            && creds.whatsapp_phone_id.is_some();
+        if inbound_ready {
+            rows.push((
+                "whatsapp",
+                "LIVE",
+                "Meta webhook listener spawned by serve; send + receive both real",
+            ));
+        } else {
+            rows.push((
+                "whatsapp",
+                "OUTBOUND-ONLY",
+                "send_text via Graph API works; inbound needs whatsapp_verify_token + \
+                 whatsapp_app_secret + whatsapp_phone_id in credentials.yaml",
+            ));
+        }
     }
     // Discord + Keet have no credentials.yaml fields yet, so they only
     // surface here when their config moves to credentials.yaml. Note
@@ -1680,12 +1700,10 @@ mod tests {
     }
 
     #[test]
-    fn r2_p0_2_channels_wiring_warn_when_slack_configured() {
-        // Operator configured Slack expecting bidirectional chat. The
-        // doctor must Warn so the gap surfaces during install
-        // verification (matches R2 P0-2 done-criterion: "neoth doctor
-        // channels muss 'outbound-only' / 'live' / 'scaffold' sauber
-        // trennen").
+    fn r2_p0_2_channels_wiring_warn_when_slack_partial() {
+        // Only bot_token supplied — socket mode also needs app_token.
+        // Doctor surfaces this as CONFIGURED-NOT-STARTED so operators
+        // who pasted only one token see the gap.
         let dir = tempdir().unwrap();
         std::fs::write(
             dir.path().join("credentials.yaml"),
@@ -1695,11 +1713,28 @@ mod tests {
         let outcome = check_channels_wiring(dir.path());
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("slack"));
-        assert!(outcome.detail.contains("OUTBOUND-ONLY"));
+        assert!(outcome.detail.contains("CONFIGURED-NOT-STARTED"));
     }
 
     #[test]
-    fn r2_p0_2_channels_wiring_warn_when_whatsapp_configured() {
+    fn slack_inbound_live_when_both_tokens_present() {
+        // Post-inbound-wire: BOTH bot + app tokens present → LIVE.
+        // The serve loop spawns the socket-mode receive loop in this
+        // configuration.
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "slack_bot_token: \"xoxb-test-token\"\nslack_app_token: \"xapp-test-token\"\n",
+        )
+        .unwrap();
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("slack: LIVE"));
+    }
+
+    #[test]
+    fn r2_p0_2_channels_wiring_warn_when_whatsapp_outbound_only() {
+        // Token + phone-id but no verify-token / app-secret → outbound only.
         let dir = tempdir().unwrap();
         std::fs::write(
             dir.path().join("credentials.yaml"),
@@ -1710,6 +1745,22 @@ mod tests {
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("whatsapp"));
         assert!(outcome.detail.contains("OUTBOUND-ONLY"));
+    }
+
+    #[test]
+    fn whatsapp_inbound_live_when_full_meta_secrets_present() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("credentials.yaml"),
+            "whatsapp_token: \"test-wa-token\"\n\
+             whatsapp_phone_id: \"123456789\"\n\
+             whatsapp_verify_token: \"verify-tok\"\n\
+             whatsapp_app_secret: \"meta-app-secret\"\n",
+        )
+        .unwrap();
+        let outcome = check_channels_wiring(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("whatsapp: LIVE"));
     }
 
     #[test]
@@ -1726,7 +1777,7 @@ mod tests {
         let outcome = check_channels_wiring(dir.path());
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("telegram: LIVE"));
-        assert!(outcome.detail.contains("slack: OUTBOUND-ONLY"));
+        assert!(outcome.detail.contains("slack: CONFIGURED-NOT-STARTED"));
     }
 
     #[test]

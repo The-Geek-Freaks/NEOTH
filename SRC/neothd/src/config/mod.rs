@@ -86,6 +86,11 @@ pub struct FreedomConfig {
     pub telegram_token: Option<SecretString>,
     #[serde(default)]
     pub telegram_user_id: Option<u64>,
+    /// Local bind port for the WhatsApp / Meta webhook listener. Defaults
+    /// to `None` (listener uses 8443). The listener always binds to
+    /// `127.0.0.1` — TLS terminates at the operator's reverse proxy.
+    #[serde(default)]
+    pub whatsapp_webhook_port: Option<u16>,
     /// Operator-chosen autonomy level — Phase 28b R-23.
     /// Defaults to `Standard` (least surprise: writes inside ~/.neoth/ are
     /// allowed, every shell exec confirms). Old freedom.yaml files without

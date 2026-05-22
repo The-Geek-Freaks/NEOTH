@@ -525,24 +525,130 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         &crate::config::credentials::default_path(),
     )
     .unwrap_or_default();
-    if creds.slack_bot_token.is_some() || creds.slack_app_token.is_some() {
-        warn!(
-            channel = "slack",
-            status = "OUTBOUND-ONLY",
-            "Slack credentials configured but socket-mode receive loop not yet wired \
-             into serve. send_text via chat.postMessage works; inbound receive ships \
-             in a follow-up commit. Run `neoth doctor channels` for full status."
-        );
+    // Slack socket-mode inbound — spawns the WebSocket receive loop when
+    // both bot + app tokens are configured. Requires a provider so the
+    // pipeline can answer; otherwise log CONFIGURED-NOT-STARTED.
+    match (
+        creds.slack_bot_token.clone(),
+        creds.slack_app_token.clone(),
+        shared_provider.as_ref(),
+    ) {
+        (Some(bot), Some(app), Some(provider)) => {
+            let handler: PipelineHandler = build_pipeline_handler(PipelineHandlerDeps {
+                provider: provider.clone(),
+                writer: writer.clone(),
+                operator_id: config.operator_id.clone(),
+                autonomy: config.autonomy,
+                meter: provider_meter.clone(),
+                rate_limiter: Arc::clone(&rate_limiter),
+                segment_path: segment_path.clone(),
+                profile_config: config.profile.clone(),
+                reload_controller: Arc::clone(&reload_controller),
+                views_conn: shared_views_conn.clone(),
+            });
+            let channel = crate::channels::slack::SlackChannel::new(bot, app);
+            let task = tokio::spawn(async move {
+                if let Err(e) = channel.run(handler).await {
+                    tracing::error!(error = %e, "Slack channel task exited with error");
+                }
+            });
+            channel_tasks.push(task);
+            info!(
+                channel = "slack",
+                status = "LIVE",
+                "channel: spawned (socket-mode WS loop)"
+            );
+        }
+        (Some(_), None, _) | (None, Some(_), _) => {
+            warn!(
+                channel = "slack",
+                status = "CONFIGURED-NOT-STARTED",
+                "Slack needs BOTH bot_token (xoxb-) and app_token (xapp-) for socket mode; \
+                 only one supplied — receive loop not started. send_text still works."
+            );
+        }
+        (Some(_), Some(_), None) => {
+            warn!(
+                channel = "slack",
+                status = "CONFIGURED-NOT-STARTED",
+                "Slack tokens configured but provider unavailable; channel not started"
+            );
+        }
+        (None, None, _) => {}
     }
-    if creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some() {
-        warn!(
-            channel = "whatsapp",
-            status = "OUTBOUND-ONLY",
-            "WhatsApp credentials configured but webhook receiver not yet wired into \
-             serve. send_text via Graph API works; webhook listener ships in a \
-             follow-up commit. Run `neoth doctor channels` for full status."
-        );
-    }
+
+    // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
+    // verify-token + app-secret + provider are all present. Listens on
+    // 127.0.0.1:<whatsapp_webhook_port> (default 8443); the operator's
+    // reverse proxy terminates TLS and forwards `/webhook` here.
+    let whatsapp_inbound_started = match (
+        creds.whatsapp_token.clone(),
+        creds.whatsapp_phone_id.clone(),
+        creds.whatsapp_verify_token.clone(),
+        creds.whatsapp_app_secret.clone(),
+        shared_provider.as_ref(),
+    ) {
+        (Some(_token), Some(_phone), Some(verify), Some(secret), Some(provider)) => {
+            let handler: PipelineHandler = build_pipeline_handler(PipelineHandlerDeps {
+                provider: provider.clone(),
+                writer: writer.clone(),
+                operator_id: config.operator_id.clone(),
+                autonomy: config.autonomy,
+                meter: provider_meter.clone(),
+                rate_limiter: Arc::clone(&rate_limiter),
+                segment_path: segment_path.clone(),
+                profile_config: config.profile.clone(),
+                reload_controller: Arc::clone(&reload_controller),
+                views_conn: shared_views_conn.clone(),
+            });
+            let port = config.whatsapp_webhook_port.unwrap_or(8443);
+            let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
+                .parse()
+                .expect("static bind addr parses");
+            let listener_cfg = crate::channels::webhook_listener::WebhookListenerConfig {
+                meta_app_secret: secret.expose().as_bytes().to_vec(),
+                meta_verify_token: verify.expose().to_string(),
+                slack_signing_secret: Vec::new(),
+                pipeline: handler,
+                max_concurrent_connections: None,
+            };
+            let task = tokio::spawn(async move {
+                let shutdown = std::future::pending::<()>();
+                if let Err(e) =
+                    crate::channels::webhook_listener::serve(bind, listener_cfg, shutdown).await
+                {
+                    tracing::error!(error = %e, "WhatsApp webhook listener exited with error");
+                }
+            });
+            channel_tasks.push(task);
+            info!(
+                channel = "whatsapp",
+                status = "LIVE",
+                port = port,
+                "channel: spawned (Meta webhook listener on 127.0.0.1)"
+            );
+            true
+        }
+        (Some(_), _, _, _, None) => {
+            warn!(
+                channel = "whatsapp",
+                status = "CONFIGURED-NOT-STARTED",
+                "WhatsApp credentials configured but provider unavailable; channel not started"
+            );
+            false
+        }
+        (Some(_), _, _, _, _) => {
+            warn!(
+                channel = "whatsapp",
+                status = "OUTBOUND-ONLY",
+                "WhatsApp send_text works but inbound needs whatsapp_verify_token + \
+                 whatsapp_app_secret in credentials.yaml. Listener not started."
+            );
+            false
+        }
+        _ => false,
+    };
+    let _ = whatsapp_inbound_started;
     // Discord + Keet have no credential fields in credentials.yaml yet
     // — when they land, the same explicit-log pattern fires.
 
