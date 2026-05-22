@@ -180,6 +180,45 @@ pub fn is_live(_provider: Provider) -> bool {
     true
 }
 
+/// R2-P2-1 honesty surface (2026-05-22 Session 20). Classifies a
+/// CloudConfig as one of:
+///
+/// - `LocalMirror` — `connector_options.local_root` is set; the
+///   operator's desktop client (Dropbox / OneDrive / GDrive) owns
+///   OAuth + upstream sync, NEOTH reads/writes the local mirror.
+///   This is what NEOTH actually ships today.
+/// - `StubFallback` — provider is configured but no `local_root`
+///   pointer; runtime calls bail with the deferred message. README
+///   must NOT advertise this as a live connector.
+///
+/// Used by `cli::doctor::check_cloud_archive_dest` to render
+/// honest status instead of the prior "Pass when configured"
+/// flattening. Pure function; no I/O.
+pub fn connector_mode_of(cfg: &CloudConfig) -> ConnectorMode {
+    if local_mirror_root(cfg).is_some() {
+        ConnectorMode::LocalMirror
+    } else {
+        ConnectorMode::StubFallback
+    }
+}
+
+/// R2-P2-1: surfaceable classification for `cli doctor` / GUI
+/// settings render. Operator-readable wire form via [`ConnectorMode::as_str`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConnectorMode {
+    LocalMirror,
+    StubFallback,
+}
+
+impl ConnectorMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConnectorMode::LocalMirror => "local-mirror",
+            ConnectorMode::StubFallback => "stub-fallback",
+        }
+    }
+}
+
 /// Live connector against a local filesystem root, powered by
 /// OpenDAL services-fs. The R-8 Phase-3 dep block lifted in
 /// Session 19 (2026-05-21) — opendal 0.56 ships pure-Rust without
@@ -226,18 +265,21 @@ impl CloudConnector for LocalFsConnector {
                 .op
                 .stat(&path)
                 .with_context(|| format!("opendal stat {path}"))?;
+            // R2-P2-1 (2026-05-22 Session 20): populate modified_unix
+            // from opendal's `last_modified` instead of dumping 0.
+            // Reviewer flagged "modified_unix is im LocalFsConnector
+            // aktuell immer 0" — the dedupe path was falling back to
+            // size+path because of it. Now the LocalFsConnector
+            // surfaces the actual mtime, matching what `stat()`
+            // returns from the OS.
+            let modified_unix = stat
+                .last_modified()
+                .map(|t| t.into_inner().as_second())
+                .unwrap_or(0);
             out.push(CloudFile {
                 path,
                 size_bytes: stat.content_length(),
-                // OpenDAL's `Timestamp` is its own wrapper without a
-                // direct `.timestamp()` method on every version; pull
-                // the unix-seconds via Display ("YYYY-MM-DDTHH:MM:SSZ")
-                // → chrono parse when needed. v0.1 wire skips the
-                // exact timestamp and reports 0 for first iteration —
-                // dedupe path falls back to size+path. Wired
-                // properly when the ingest path actually consumes
-                // modified_unix.
-                modified_unix: 0,
+                modified_unix,
                 provider: self.provider,
             });
         }
@@ -546,5 +588,95 @@ sources:
         let conn = connector_for(&cfg).unwrap();
         let err = conn.list("/").unwrap_err().to_string();
         assert!(err.contains("OpenDAL"), "stub fired: {err}");
+    }
+
+    // ── R2-P2-1 modified_unix + connector_mode tests ─────────────────────
+
+    #[tokio::test]
+    async fn r2_p2_1_modified_unix_populated_from_local_fs_mtime() {
+        // Pre-fix the LocalFsConnector dumped modified_unix=0. Now it
+        // pulls the actual mtime from OpenDAL via jiff::Timestamp.
+        // Operators relying on size+mtime dedupe get the real signal.
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let err = tokio::task::spawn_blocking(move || -> Result<i64> {
+            let dir = tempfile::tempdir().unwrap();
+            let file_path = dir.path().join("fixture.txt");
+            std::fs::write(&file_path, b"hello").unwrap();
+            let mut opts = std::collections::HashMap::new();
+            opts.insert(
+                "local_root".to_string(),
+                dir.path().to_string_lossy().into_owned(),
+            );
+            let cfg = CloudConfig {
+                provider: Provider::Dropbox,
+                oauth_token: "n/a".into(),
+                root_path: "/".into(),
+                label: None,
+                connector_options: Some(opts),
+            };
+            let conn = connector_for(&cfg).unwrap();
+            let entries = conn.list("/").unwrap();
+            let fixture = entries
+                .into_iter()
+                .find(|e| e.path.ends_with("fixture.txt"))
+                .expect("fixture in listing");
+            Ok(fixture.modified_unix)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            err > 0,
+            "R2-P2-1: modified_unix must be populated, got {err}"
+        );
+        // Sanity: should be within ~1h of "now" since we just wrote it
+        // (allows for slow CI clocks).
+        let diff = (err - now_unix).unsigned_abs();
+        assert!(
+            diff < 3600,
+            "R2-P2-1: modified_unix {err} too far from now {now_unix}"
+        );
+    }
+
+    #[test]
+    fn r2_p2_1_connector_mode_classifies_local_mirror_vs_stub() {
+        // Operator pointed at desktop-client synced folder →
+        // LocalMirror. Operator configured the row but didn't set
+        // local_root → StubFallback. Honest classification feeds the
+        // doctor + GUI settings render.
+        let with_root = CloudConfig {
+            provider: Provider::Dropbox,
+            oauth_token: "x".into(),
+            root_path: "/".into(),
+            label: None,
+            connector_options: Some({
+                let mut m = std::collections::HashMap::new();
+                m.insert("local_root".to_string(), "/tmp/mirror".to_string());
+                m
+            }),
+        };
+        assert_eq!(connector_mode_of(&with_root), ConnectorMode::LocalMirror);
+        assert_eq!(
+            connector_mode_of(&with_root).as_str(),
+            "local-mirror"
+        );
+
+        let without_root = CloudConfig {
+            provider: Provider::Gmail,
+            oauth_token: "x".into(),
+            root_path: "/".into(),
+            label: None,
+            connector_options: None,
+        };
+        assert_eq!(connector_mode_of(&without_root), ConnectorMode::StubFallback);
+        assert_eq!(
+            connector_mode_of(&without_root).as_str(),
+            "stub-fallback"
+        );
     }
 }
