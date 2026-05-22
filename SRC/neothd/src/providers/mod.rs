@@ -30,6 +30,7 @@ pub mod local_qwen;
 pub mod meter;
 pub mod model_roles;
 pub mod openai_api;
+pub mod ouro;
 pub mod quota;
 pub mod singleflight;
 pub mod tmux_session;
