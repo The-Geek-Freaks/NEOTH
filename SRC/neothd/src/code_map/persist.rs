@@ -160,6 +160,27 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_code_map_files_path
             ON code_map_files(root, path);
 
+        -- QM-2 Phase 2 (2026-05-22) — call-graph edges. One row per
+        -- (from_file, from_symbol) → to_name edge produced by the
+        -- CallGraph builder. Persisted so recall can render call
+        -- relationships without rebuilding the in-memory graph on
+        -- every prompt. Schema v1 only stores Calls edges; the
+        -- `kind` column is present for forward-compat with the
+        -- References variant.
+        CREATE TABLE IF NOT EXISTS code_map_edges (
+            id          INTEGER PRIMARY KEY,
+            root        TEXT NOT NULL,
+            from_file   TEXT NOT NULL,
+            from_symbol TEXT NOT NULL,
+            to_name     TEXT NOT NULL,
+            kind        TEXT NOT NULL,
+            FOREIGN KEY(root) REFERENCES code_map_roots(root) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_code_map_edges_to_name
+            ON code_map_edges(to_name);
+        CREATE INDEX IF NOT EXISTS idx_code_map_edges_source
+            ON code_map_edges(from_file, from_symbol);
+
         -- K-Repo-Map FTS5 (Session 19, 2026-05-21) — fuzzy + prefix-
         -- match symbol lookup. Shadows code_map_symbols.name with
         -- the `unicode61` tokenizer so the operator can find
@@ -309,6 +330,85 @@ pub fn persist_map(conn: &mut Connection, map: &RepoMap) -> Result<PersistStats>
         symbols_inserted,
         prior_files_replaced: prior_files as usize,
     })
+}
+
+/// QM-2 Phase 2: persist call-graph edges for `root`. Drops every
+/// prior edge under that root (cascade via `code_map_roots` is the
+/// safety net) + inserts the supplied set. Caller owns the
+/// `CallGraph::build` invocation upstream — this fn just stores.
+///
+/// Idempotent: re-running with the same edges produces the same
+/// row count (per the upstream DELETE).
+pub fn persist_edges(
+    conn: &mut Connection,
+    root: &str,
+    edges: &[crate::code_map::graph::CodeEdge],
+) -> Result<usize> {
+    let tx = conn.transaction().context("open persist_edges tx")?;
+    tx.execute(
+        "DELETE FROM code_map_edges WHERE root = ?1",
+        rusqlite::params![root],
+    )
+    .context("clear prior edges for root")?;
+    let mut inserted = 0usize;
+    {
+        let mut stmt = tx
+            .prepare(
+                "INSERT INTO code_map_edges (root, from_file, from_symbol, to_name, kind) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+            )
+            .context("prepare edge insert")?;
+        for edge in edges {
+            stmt.execute(rusqlite::params![
+                root,
+                edge.from_file,
+                edge.from_symbol,
+                edge.to_name,
+                edge.kind.as_str(),
+            ])
+            .context("insert edge row")?;
+            inserted += 1;
+        }
+    }
+    tx.commit().context("commit persist_edges tx")?;
+    Ok(inserted)
+}
+
+/// QM-2 Phase 2: load edges for `root`. Empty Vec when none stored.
+pub fn load_edges(
+    conn: &Connection,
+    root: &str,
+) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \
+             WHERE root = ?1 ORDER BY from_file, from_symbol, to_name",
+        )
+        .context("prepare load_edges stmt")?;
+    let mut out = Vec::new();
+    let rows = stmt
+        .query_map(rusqlite::params![root], |row| {
+            let from_file: String = row.get(0)?;
+            let from_symbol: String = row.get(1)?;
+            let to_name: String = row.get(2)?;
+            let kind_str: String = row.get(3)?;
+            let kind = match kind_str.as_str() {
+                "calls" => crate::code_map::graph::EdgeKind::Calls,
+                "references" => crate::code_map::graph::EdgeKind::References,
+                _ => crate::code_map::graph::EdgeKind::Calls,
+            };
+            Ok(crate::code_map::graph::CodeEdge {
+                from_file,
+                from_symbol,
+                to_name,
+                kind,
+            })
+        })
+        .context("query edges")?;
+    for r in rows {
+        out.push(r.context("read edge row")?);
+    }
+    Ok(out)
 }
 
 /// Tuple shape returned by the `code_map_roots` row query. Named so
@@ -664,6 +764,59 @@ mod tests {
                 truncated_at: None,
             },
         }
+    }
+
+    #[test]
+    fn qm2_phase2_edges_persist_roundtrip() {
+        let (_dir, mut conn) = temp_db();
+        // Need a root row first because edges FK into code_map_roots.
+        let map = sample_map("/repo/a");
+        persist_map(&mut conn, &map).unwrap();
+        let edges = vec![
+            crate::code_map::graph::CodeEdge {
+                from_file: "src/a.rs".into(),
+                from_symbol: "caller".into(),
+                to_name: "callee".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            },
+            crate::code_map::graph::CodeEdge {
+                from_file: "src/b.rs".into(),
+                from_symbol: "other".into(),
+                to_name: "callee".into(),
+                kind: crate::code_map::graph::EdgeKind::Calls,
+            },
+        ];
+        let n = persist_edges(&mut conn, "/repo/a", &edges).unwrap();
+        assert_eq!(n, 2);
+        let loaded = load_edges(&conn, "/repo/a").unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.iter().any(|e| e.from_file == "src/a.rs"));
+        assert!(loaded.iter().any(|e| e.from_file == "src/b.rs"));
+    }
+
+    #[test]
+    fn qm2_phase2_edges_idempotent_replace() {
+        let (_dir, mut conn) = temp_db();
+        let map = sample_map("/repo/a");
+        persist_map(&mut conn, &map).unwrap();
+        let edges = vec![crate::code_map::graph::CodeEdge {
+            from_file: "x.rs".into(),
+            from_symbol: "a".into(),
+            to_name: "b".into(),
+            kind: crate::code_map::graph::EdgeKind::Calls,
+        }];
+        persist_edges(&mut conn, "/repo/a", &edges).unwrap();
+        // Second run replaces — still 1 row.
+        persist_edges(&mut conn, "/repo/a", &edges).unwrap();
+        let loaded = load_edges(&conn, "/repo/a").unwrap();
+        assert_eq!(loaded.len(), 1);
+    }
+
+    #[test]
+    fn qm2_phase2_load_edges_unknown_root_returns_empty() {
+        let (_dir, conn) = temp_db();
+        let loaded = load_edges(&conn, "/never/seen").unwrap();
+        assert!(loaded.is_empty());
     }
 
     #[test]

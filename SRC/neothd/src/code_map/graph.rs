@@ -120,17 +120,21 @@ impl CallGraph {
         }
         // Build edges: for each file, segment the source into per-symbol
         // bodies (line-bounded by the next symbol's declaration line)
-        // and scan each body for "<name>(" patterns.
+        // and scan each body for "<name>(" patterns. Phase 2 strips
+        // C-family comments + string literals before the scan so
+        // identifiers in commentary or sample-data strings don't
+        // produce false-positive edges.
         for f in files {
             let mut symbols_sorted = f.symbols.clone();
             symbols_sorted.sort_by_key(|s| s.line);
+            let stripped_source = strip_comments_and_strings_c_family(&f.source);
             for (i, s) in symbols_sorted.iter().enumerate() {
                 let start_line = s.line as usize;
                 let end_line = symbols_sorted
                     .get(i + 1)
                     .map(|n| n.line as usize)
-                    .unwrap_or_else(|| f.source.lines().count() + 1);
-                let body = file_slice(&f.source, start_line, end_line);
+                    .unwrap_or_else(|| stripped_source.lines().count() + 1);
+                let body = file_slice(&stripped_source, start_line, end_line);
                 for name in &all_names {
                     // Skip self-edges — a fn that calls itself isn't a
                     // graph traversal anchor v0.1 cares about.
@@ -275,6 +279,105 @@ fn file_slice(src: &str, start_line: usize, end_line: usize) -> String {
         .take(end_line.saturating_sub(start_line))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// QM-2 Phase 2: strip comments + string literals from `src` so the
+/// regex callsite scan doesn't fire on identifiers that appear in
+/// natural-language commentary or sample-data strings. Pure C-family
+/// rules (`//` to EOL + `/* … */` block + `"…"` + `'…'`) cover
+/// Rust / C / C++ / JS / TS / Go / Java / Kotlin / Swift / Scala.
+/// Python / Shell / Ruby (`#`-comments + triple-quoted strings) are
+/// the v0.2 follow-up; Python sources today still get false
+/// positives but the regex extractor only marks a small set of
+/// files as Python anyway.
+///
+/// Pure function — tested in isolation. Quotation chars + comment
+/// markers themselves remain in the output so line numbering is
+/// preserved across the strip (one byte → one space).
+pub fn strip_comments_and_strings_c_family(src: &str) -> String {
+    let bytes = src.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        let next = bytes.get(i + 1).copied();
+        // // line comment
+        if c == b'/' && next == Some(b'/') {
+            out.push(b'/');
+            out.push(b'/');
+            i += 2;
+            while i < bytes.len() && bytes[i] != b'\n' {
+                if bytes[i].is_ascii_whitespace() {
+                    out.push(bytes[i]);
+                } else {
+                    out.push(b' ');
+                }
+                i += 1;
+            }
+            continue;
+        }
+        // /* block comment */
+        if c == b'/' && next == Some(b'*') {
+            out.push(b'/');
+            out.push(b'*');
+            i += 2;
+            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                if bytes[i] == b'\n' {
+                    out.push(b'\n');
+                } else {
+                    out.push(b' ');
+                }
+                i += 1;
+            }
+            // Emit the closing */ if we found it.
+            if i + 1 < bytes.len() {
+                out.push(b'*');
+                out.push(b'/');
+                i += 2;
+            }
+            continue;
+        }
+        // "..." string literal (also covers Rust raw strings well
+        // enough — r"…" treats the `r` as code which is fine since
+        // identifiers around it stay intact).
+        if c == b'"' {
+            out.push(b'"');
+            i += 1;
+            while i < bytes.len() && bytes[i] != b'"' {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    // Skip escaped quote so \" doesn't end the literal.
+                    out.push(b' ');
+                    out.push(b' ');
+                    i += 2;
+                    continue;
+                }
+                if bytes[i] == b'\n' {
+                    out.push(b'\n');
+                } else {
+                    out.push(b' ');
+                }
+                i += 1;
+            }
+            if i < bytes.len() {
+                out.push(b'"');
+                i += 1;
+            }
+            continue;
+        }
+        // '…' char literal (or Rust lifetime — keep one char so
+        // lifetimes don't get neutered; only nuke the multi-char
+        // form where it's clearly a literal).
+        if c == b'\'' && bytes.get(i + 2) == Some(&b'\'') {
+            out.push(b'\'');
+            out.push(b' ');
+            out.push(b'\'');
+            i += 3;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| src.to_string())
 }
 
 /// True when `body` contains `<name>(` as a callsite. Word-boundary
@@ -443,11 +546,6 @@ fn recursive() {
 
     #[test]
     fn substring_match_in_other_identifier_does_not_create_edge() {
-        // v0.1 regex limitation: comments + strings are NOT stripped
-        // before scanning, so a comment containing "foo()" would create
-        // a false-positive edge. This test pins ONLY the word-boundary
-        // behaviour (myfoo() is not a foo() call) on a comment-free
-        // body. AST-based comment stripping is Phase 2.
         let src = r#"
 fn foo() {}
 fn caller() {
@@ -462,6 +560,71 @@ fn myfoo() {}
             .filter(|e| e.from_symbol == "caller" && e.to_name == "foo")
             .collect();
         assert!(to_foo.is_empty(), "myfoo() shouldn't count as a foo() call");
+    }
+
+    #[test]
+    fn comment_with_foo_call_no_longer_creates_false_positive() {
+        // QM-2 Phase 2 fix: C-family comments are stripped before
+        // the callsite scan, so "// foo()" in a comment no longer
+        // produces an edge.
+        let src = r#"
+fn foo() {}
+fn caller() {
+    // This comment mentions foo() but doesn't call it.
+}
+"#;
+        let g = CallGraph::build(&[rust_file("a.rs", src)]);
+        let to_foo: Vec<_> = g
+            .edges()
+            .iter()
+            .filter(|e| e.from_symbol == "caller" && e.to_name == "foo")
+            .collect();
+        assert!(
+            to_foo.is_empty(),
+            "comment-only foo() reference should not create an edge"
+        );
+    }
+
+    #[test]
+    fn string_literal_with_foo_call_no_longer_creates_false_positive() {
+        let src = r#"
+fn foo() {}
+fn caller() {
+    let _msg = "this string contains foo() but isn't a call";
+}
+"#;
+        let g = CallGraph::build(&[rust_file("a.rs", src)]);
+        let to_foo: Vec<_> = g
+            .edges()
+            .iter()
+            .filter(|e| e.from_symbol == "caller" && e.to_name == "foo")
+            .collect();
+        assert!(
+            to_foo.is_empty(),
+            "string-literal foo() reference should not create an edge"
+        );
+    }
+
+    #[test]
+    fn strip_comments_preserves_line_numbers() {
+        // Stripping must preserve newlines so line-bound body
+        // segmentation stays correct.
+        let src = "fn a() {\n// comment\n}\nfn b() {}\n";
+        let stripped = strip_comments_and_strings_c_family(src);
+        assert_eq!(src.lines().count(), stripped.lines().count());
+        // Function names + braces survive.
+        assert!(stripped.contains("fn a"));
+        assert!(stripped.contains("fn b"));
+    }
+
+    #[test]
+    fn strip_comments_block_comment_with_internal_newlines() {
+        let src = "fn a() { /* line1\n   line2\n   line3 */ }\n";
+        let stripped = strip_comments_and_strings_c_family(src);
+        assert_eq!(src.lines().count(), stripped.lines().count());
+        assert!(stripped.contains("fn a"));
+        // Body of the block comment is neutered — line1 word gone.
+        assert!(!stripped.contains("line1"));
     }
 
     #[test]
