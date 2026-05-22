@@ -29,6 +29,7 @@ pub mod events;
 pub mod export;
 pub mod fetch;
 pub mod github;
+pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
 pub mod hardware;
@@ -204,6 +205,15 @@ pub enum Commands {
     /// Subcommands: `list`, `show <id>`, `match "<text>"`. Composes with
     /// QM-3 ModeRegistry foundation + QM-23 academic modes.
     Mode(mode::ModeArgs),
+
+    /// NOOB-UX-2 glossary screen. `neoth glossary` prints the
+    /// operator-readable cheat sheet for NEOTH-specific terms
+    /// (plugin / channel / council / provider / WAL / autonomy /
+    /// hemisphere / skill / mode / groundtruth / profile).
+    ///
+    /// `--term <name>` filters to a single term by case-insensitive
+    /// substring match.
+    Glossary(glossary::GlossaryArgs),
 
     /// Manage hard-stored ground-truth facts (Phase 28c R-24).
     ///
@@ -586,6 +596,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Mode(mut args) => {
             args.output = global_output;
             mode::run_mode(args).await?;
+        }
+        Commands::Glossary(mut args) => {
+            args.output = global_output;
+            glossary::run_glossary(args)?;
         }
         Commands::Groundtruth(mut args) => {
             args.output = global_output;
