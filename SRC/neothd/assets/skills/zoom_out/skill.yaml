@@ -1,0 +1,56 @@
+id: zoom_out
+description: |
+  Pure context-enrichment directive — zero model invocation, zero new
+  information fetched. When the operator asks "how does this fit", the
+  skill installs a system instruction that demands the model surface
+  the bigger picture (architecture / dependencies / downstream consumers)
+  BEFORE answering the narrower question. Catches the failure mode where
+  a local edit lands without the model considering its ripple.
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/zoom-out` (2026-05-22
+# Session 20 — QM-22). Trivial system_prompt — one paragraph that
+# reshapes how the model frames its answer.
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - context
+  - architecture
+  - meta
+  - ported
+
+trigger_keywords:
+  - "zoom out"
+  - "big picture"
+  - "how does this fit"
+  - "context"
+  - "where does this live"
+  - "what depends on"
+  - "what calls"
+  - "downstream"
+  - "ripple"
+  - "wo passt das"
+  - "großes ganzes"
+
+system_prompt: |
+  Zoom-out directive (auto-installed). Before answering the narrower
+  question the operator just asked, surface the bigger picture in
+  one tight paragraph:
+
+  1. **Where this lives** — module / layer / surface area
+  2. **What depends on it** — callers, consumers, downstream effects
+  3. **What it depends on** — upstream invariants, contracts, shared
+     state it reads from
+  4. **Adjacent concerns** — related modules a change here typically
+     ripples into
+
+  Only THEN answer the operator's specific question. The zoom-out
+  framing prevents the "fixed the local thing, broke the global
+  thing" failure mode.
+
+  If a piece of the picture is genuinely unknown — say so explicitly
+  ("I haven't traced the consumers yet") rather than filling the gap
+  with plausible-sounding fiction.
+
+tool_allowlist: []
+enabled: true

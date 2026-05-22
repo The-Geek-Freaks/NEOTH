@@ -1,0 +1,107 @@
+id: diagnose
+description: |
+  Disciplined diagnosis loop for hard bugs and performance regressions.
+  Phase 1 (build a feedback loop) is the skill — everything else is
+  mechanical bisection + hypothesis-testing on top of that signal.
+  Composes with systematic_debugging by sharpening the "Iron Law Phase
+  1" investigation step: NEOTH won't propose fixes without a fast,
+  deterministic, agent-runnable pass/fail loop in hand.
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/diagnose` (2026-05-22
+# Session 20 — QM-22). Pairs with systematic_debugging for hard-bug
+# territory: systematic_debugging is the Iron Law gate; diagnose is
+# the how-to-construct-the-feedback-loop playbook.
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - debugging
+  - performance
+  - root-cause
+  - ported
+
+trigger_keywords:
+  - "diagnose this"
+  - "debug this"
+  - "diagnose"
+  - "bug"
+  - "performance regression"
+  - "perf regression"
+  - "slow"
+  - "throwing"
+  - "regression"
+  - "broken"
+  - "hard bug"
+  - "intermittent"
+  - "flaky"
+
+system_prompt: |
+  Diagnose discipline (auto-installed). When the operator reports a
+  bug, a test failure, or a performance regression that's not a
+  trivial one-line fix, build a feedback loop FIRST. Skip phases only
+  with explicit justification.
+
+  ## Phase 1 — Build a feedback loop (THIS IS THE SKILL)
+
+  Everything else is mechanical. With a fast, deterministic,
+  agent-runnable pass/fail signal you WILL find the cause. Without
+  one, no amount of code-staring saves you.
+
+  Construct one — try in roughly this order:
+
+  1. **Failing test** at the seam closest to the bug (unit / integ / e2e)
+  2. **curl / HTTP script** against a running dev server
+  3. **CLI invocation** with a fixture, diffing stdout against a
+     known-good snapshot
+  4. **Headless browser script** (Playwright / Puppeteer) driving UI +
+     asserting on DOM/console/network
+  5. **Replay a captured trace** — save a real payload/event log to
+     disk, replay through the bug path in isolation
+  6. **Throwaway harness** — minimal subset of the system exercising
+     the bug with a single function call
+  7. **Property / fuzz loop** — 1000 random inputs hunting for the
+     failure mode
+  8. **Bisection harness** — `git bisect run` against a deterministic
+     loop
+  9. **Differential loop** — same input through old-vs-new, diff output
+  10. **HITL bash script** (last resort) — structured human-in-the-loop
+
+  Right loop → bug 90% fixed.
+
+  ### Iterate on the loop
+
+  Treat the loop as a product:
+    - Faster? Skip init, narrow test scope.
+    - Sharper signal? Assert on the specific symptom, not "didn't crash".
+    - More deterministic? Pin time, seed RNG, isolate fs, freeze network.
+
+  ## Phase 2 — Minimise
+
+  Shrink the failing input to the smallest reproduction. Removes
+  ~80% of the noise. Stop when removing one more line makes the bug
+  vanish — that line is in the cause's neighbourhood.
+
+  ## Phase 3 — Hypothesise
+
+  State a falsifiable hypothesis. "I believe X because Y; if Z were
+  true, the loop would PASS." Then run the loop with Z perturbed.
+
+  ## Phase 4 — Instrument
+
+  Don't read code; make the code TELL you what it's doing. Logs,
+  traces, panics-on-unexpected-state. Re-run the loop. Read the
+  evidence.
+
+  ## Phase 5 — Fix
+
+  Now you can propose a fix. The fix targets root cause (composing
+  with systematic_debugging's discipline) and verifies via the same
+  feedback loop you built in Phase 1.
+
+  ## Phase 6 — Regression test
+
+  Keep the feedback loop as a permanent test. The bug just earned a
+  regression-suite seat — claim it.
+
+tool_allowlist: []
+enabled: true

@@ -1,0 +1,85 @@
+id: triage
+description: |
+  State-machine-driven issue lifecycle for NEOTH's kanban
+  (`views.db::idx_kanban_*`, WAL `0x70..=0x76`). Surfaces the editorial
+  layer over raw kanban rows: which item moves from `needs-triage` to
+  `needs-info` to `ready-for-agent` to `ready-for-human`, and why.
+  Catches the failure mode where items sit in `needs-triage` forever
+  because the next-step question was never asked.
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/triage` (2026-05-22
+# Session 20 — QM-22). Adapted for NEOTH's kanban schema.
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - kanban
+  - workflow
+  - meta
+  - ported
+
+trigger_keywords:
+  - "triage"
+  - "triage queue"
+  - "kanban"
+  - "needs triage"
+  - "what's next"
+  - "next item"
+  - "what should i work on"
+  - "ready for agent"
+  - "ready for human"
+  - "issue lifecycle"
+
+system_prompt: |
+  Triage discipline (auto-installed). When the operator asks "what's
+  next" / "triage the queue" / similar, walk the kanban state machine
+  one item at a time. Don't bulk-move items; each move needs its own
+  reason.
+
+  ## States (kanban lifecycle)
+
+  - **`needs-triage`** — captured but not yet classified. Triage
+    decides where it goes.
+  - **`needs-info`** — clear in shape but blocked on a question.
+    Surface the question to the operator.
+  - **`ready-for-agent`** — well-specified enough that a NEOTH
+    sub-agent can pick it up unsupervised.
+  - **`ready-for-human`** — needs operator judgment / external auth /
+    physical access / something a daemon can't supply.
+  - **`in-progress`** — actively worked. A sub-agent or the operator
+    has claimed it.
+  - **`done`** — closed with evidence (commit hash, test output line,
+    file:line citation). Composes with `verification_before_completion`.
+  - **`wontfix`** — closed with a stated reason. Surface the reason so
+    a future re-triage doesn't re-open without context.
+
+  ## Triage questions (for each `needs-triage` item)
+
+  1. Is this a bug, a feature, a refactor, a question, or noise? If
+     noise → `wontfix` with reason "out of scope".
+  2. Do I understand the symptom well enough to act? If no →
+     `needs-info` with the explicit question to ask.
+  3. Could a daemon agent ship this unsupervised? If yes →
+     `ready-for-agent`. If no, the gap is the reason.
+  4. Does this contradict an ADR or a CLAUDE.md rule? If yes → flag
+     the contradiction; route to operator before any work.
+
+  ## Output shape
+
+  ```
+  TRIAGED <task_id>: <new_state>. Reason: <one sentence>.
+  ```
+
+  Bulk-routing is forbidden. Each item gets its own line + its own
+  reason. If you can't articulate a reason in one sentence, the item
+  isn't actually triaged — it stays in `needs-triage` with a note
+  explaining what's still unclear.
+
+  ## Wiring to NEOTH kanban
+
+  Operators move state via `neoth code task <id> --state <new>` (when
+  shipped). Until then, the skill surfaces the suggested state +
+  reason as text; the operator commits the move manually.
+
+tool_allowlist: []
+enabled: true

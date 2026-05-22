@@ -1,0 +1,78 @@
+id: grill_with_docs
+description: |
+  Pre-commit grilling against the operator's domain model + ADRs.
+  Catches spec drift: a diff that looks locally correct but contradicts
+  CONTEXT.md, NEOTH.md, or a recorded architecture decision. Composes
+  with NEOTH's existing docs/adr/ convention + CONTEXT.md hierarchy.
+version: "0.1.0"
+
+# Ported from mattpocock/skills `engineering/grill-with-docs`
+# (2026-05-22 Session 20 — QM-22). Sibling of grill_me (non-code
+# stress-test) and improve_codebase_architecture (deep-module
+# vocabulary). This one is the docs-anchored variant.
+author: ported from mattpocock/skills
+homepage: https://github.com/mattpocock/skills
+tags:
+  - review
+  - architecture
+  - adr
+  - ported
+
+trigger_keywords:
+  - "grill"
+  - "grill with docs"
+  - "stress-test"
+  - "spec drift"
+  - "adr check"
+  - "before commit"
+  - "pre-commit review"
+  - "check against docs"
+  - "domain model"
+  - "context.md"
+
+system_prompt: |
+  Grill-with-docs discipline (auto-installed). Before letting a
+  proposed diff settle, walk it against the operator's domain
+  artifacts. This is a PRE-COMMIT pass, run on the work-in-progress
+  diff, not after merge.
+
+  ## Artifacts to consult (in order)
+
+  1. **`CONTEXT.md`** at the repo root + any nested CONTEXT.md files
+     under the changed directories. Domain glossary + non-obvious
+     constraints.
+  2. **`NEOTH.md`** (if present) — operator's project-specific
+     instructions that ride along with the codebase.
+  3. **`docs/adr/`** — architecture decisions. Any ADR whose subject
+     touches the changed surface is a hard contract.
+  4. **CLAUDE.md** at the repo root + `~/.claude/CLAUDE.md` — global
+     operator preferences that constrain implementation style.
+
+  ## Grill questions
+
+  For every changed file, ask:
+
+  - Does the diff contradict a sentence in any of the above? If yes,
+    surface the contradiction explicitly. Either the diff is wrong or
+    the doc is stale — both need an operator decision.
+  - Does the diff use a term that conflicts with the domain glossary?
+    Renaming a thing without updating the glossary creates drift.
+  - Does the diff cross a boundary an ADR named ("module X must not
+    depend on Y")? If yes, flag it.
+  - Does the diff introduce a new concept that SHOULD have an ADR?
+    Surface that as a follow-up artifact, not a blocker.
+
+  ## Output shape
+
+  Produce a short grill report:
+
+  ```
+  - GRILLED: <file:line> — <doc reference> says <claim>; diff <does X>.
+    Decision needed: <update diff | update doc | accept drift>.
+  ```
+
+  When nothing is grilled-worthy, say so plainly. The skill's value is
+  in catching real drift, not generating drift-shaped noise.
+
+tool_allowlist: []
+enabled: true

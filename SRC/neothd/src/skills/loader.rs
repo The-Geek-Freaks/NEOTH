@@ -149,12 +149,19 @@ mod tests {
         }
         let skills = load_all(&skills_dir).await.unwrap();
         let expected = [
+            // QM-21 (superpowers P1)
             "receiving_code_review",
             "requesting_code_review",
             "systematic_debugging",
             "test_driven_development",
             "verification_before_completion",
             "writing_skills",
+            // QM-22 (mattpocock engineering subset — 4/9 shipped this
+            // turn, remaining 5 follow in QM-22 batch B)
+            "diagnose",
+            "grill_with_docs",
+            "triage",
+            "zoom_out",
         ];
         for id in expected {
             assert!(
