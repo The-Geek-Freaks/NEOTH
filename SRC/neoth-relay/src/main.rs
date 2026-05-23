@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
 use tokio::sync::Mutex;
 use tracing::info;
 
+mod hysteria;
 mod relay;
 mod serve;
 
