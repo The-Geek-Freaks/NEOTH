@@ -32,6 +32,7 @@ pub mod lookup;
 pub mod presets;
 pub mod redaction;
 pub mod runner;
+pub mod self_dev;
 pub mod temporal_guard;
 pub mod timestamp_check;
 pub mod types;
