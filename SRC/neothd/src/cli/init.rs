@@ -2363,6 +2363,35 @@ mod tests {
         assert!(validate_operator_id("has@sym").is_err());
     }
 
+    /// NOOB-UX-4 drift guard — every interactive wizard prompt
+    /// (`dialoguer::Confirm/Select/Input`) MUST have an operator-
+    /// readable `(recommended)` / `recommended` marker explaining
+    /// the default choice. The full editorial pass needs real
+    /// fresh-OS install testing, but this test pins the coverage
+    /// ratio so a future refactor that drops a marker surfaces.
+    /// Failure mode: a wizard prompt without a `(recommended)`
+    /// tag forces a non-developer operator to guess.
+    #[test]
+    fn noob_ux_4_wizard_prompts_keep_recommended_markers() {
+        let src = include_str!("init.rs");
+        let prompt_count = src.matches("dialoguer::Confirm").count()
+            + src.matches("dialoguer::Select").count()
+            + src.matches("dialoguer::Input").count();
+        let recommended_count = src.matches("recommended").count();
+        assert!(
+            prompt_count >= 1,
+            "wizard prompt count went to zero — surface check"
+        );
+        assert!(
+            recommended_count >= prompt_count,
+            "NOOB-UX-4 drift: {} wizard prompts, {} 'recommended' markers — \
+             every interactive prompt needs at least one recommended-default \
+             hint for non-developer operators",
+            prompt_count,
+            recommended_count
+        );
+    }
+
     #[test]
     fn recommended_provider_matches_spec_table() {
         use crate::config::inference::InferenceProvider as I;
