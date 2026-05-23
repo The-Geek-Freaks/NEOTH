@@ -604,6 +604,90 @@ fn truncate_at_idle_prompt(text: &str) -> &str {
     &text[..last_safe_end]
 }
 
+/// B-6 Item 3i — strip ANSI escape sequences in-place (CSI + OSC +
+/// the bare ESC byte). `tmux capture-pane` without `-e` already
+/// drops most ANSI, but operator setups using `-e` for colour-aware
+/// capture or non-tmux interactive captures need this. Pure-string,
+/// no regex dep; handles:
+///   - CSI: `ESC [ params final` (params: `0-?`, final: `@-~`)
+///   - OSC: `ESC ] params BEL` or `ESC ] params ESC \\` (string term)
+///   - Bare ESC characters that snuck in alone (drop them).
+/// Reference: ECMA-48 §5.4 + xterm Control Sequences.
+pub fn strip_ansi_sequences(input: &str) -> String {
+    const ESC: char = '\u{1b}';
+    const BEL: char = '\u{07}';
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != ESC {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some(&'[') => {
+                chars.next();
+                while let Some(&p) = chars.peek() {
+                    if ('\u{40}'..='\u{7e}').contains(&p) {
+                        chars.next();
+                        break;
+                    }
+                    chars.next();
+                }
+            }
+            Some(&']') => {
+                chars.next();
+                while let Some(&p) = chars.peek() {
+                    if p == BEL {
+                        chars.next();
+                        break;
+                    }
+                    if p == ESC {
+                        chars.next();
+                        if let Some(&q) = chars.peek() {
+                            if q == '\\' {
+                                chars.next();
+                                break;
+                            }
+                        }
+                        break;
+                    }
+                    chars.next();
+                }
+            }
+            _ => {
+                // Bare ESC or unknown introducer — drop ESC, leave
+                // the next char in place.
+            }
+        }
+    }
+    out
+}
+
+/// B-6 Item 3j — merge a base `system` block with an additional
+/// `--append-system-prompt` payload. The two strings come from
+/// distinct sources (operator's `freedom.yaml::providers.system_prompt`
+/// vs a per-call `Request::system_addendum`) and must compose without
+/// either overwriting the other.
+///
+/// Contract:
+///   - Either side empty/whitespace-only → return the other verbatim.
+///   - Both present → join with a single blank line (Markdown-friendly
+///     paragraph break) so a downstream renderer keeps both blocks
+///     visually distinct.
+///   - Order is preserved: base block comes first; the append block
+///     is appended below. Tested + drift-guarded so a future swap
+///     doesn't silently change operator behaviour.
+pub fn merge_system_prompts(base: &str, append: &str) -> String {
+    let base_trim = base.trim();
+    let append_trim = append.trim();
+    match (base_trim.is_empty(), append_trim.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => append_trim.to_string(),
+        (false, true) => base_trim.to_string(),
+        (false, false) => format!("{base_trim}\n\n{append_trim}"),
+    }
+}
+
 fn is_noise_line(line: &str) -> bool {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -890,5 +974,99 @@ mod tests {
         assert_eq!(HARD_TIMEOUT_SECS, 300);
         assert_eq!(STABLE_CONFIRM_DELAY_MS, 2000);
         assert_eq!(POLL_INTERVAL_MS, 500);
+    }
+
+    // ── B-6 Item 3i — ANSI strip tests ───────────────────────────
+
+    #[test]
+    fn b6_3i_strips_csi_color_sequence() {
+        // SGR colour reset: ESC [ 0 m → drops entirely.
+        let input = "\u{1b}[31mred text\u{1b}[0m normal";
+        assert_eq!(strip_ansi_sequences(input), "red text normal");
+    }
+
+    #[test]
+    fn b6_3i_strips_csi_cursor_move() {
+        // Cursor positioning: ESC [ 12 ; 5 H → drops.
+        let input = "before\u{1b}[12;5Hafter";
+        assert_eq!(strip_ansi_sequences(input), "beforeafter");
+    }
+
+    #[test]
+    fn b6_3i_strips_osc_with_bel_terminator() {
+        // Set window title: ESC ] 0 ; title BEL → drops entirely.
+        let input = "x\u{1b}]0;my title\u{07}y";
+        assert_eq!(strip_ansi_sequences(input), "xy");
+    }
+
+    #[test]
+    fn b6_3i_strips_osc_with_st_terminator() {
+        // OSC with ST terminator: ESC ] params ESC \\
+        let input = "a\u{1b}]52;c;XYZ\u{1b}\\b";
+        assert_eq!(strip_ansi_sequences(input), "ab");
+    }
+
+    #[test]
+    fn b6_3i_drops_bare_esc() {
+        // Bare ESC byte (no introducer): drop the ESC, keep what
+        // follows untouched.
+        let input = "x\u{1b}y";
+        assert_eq!(strip_ansi_sequences(input), "xy");
+    }
+
+    #[test]
+    fn b6_3i_preserves_non_ansi_content() {
+        let input = "plain text\nwith newlines\tand tabs";
+        assert_eq!(strip_ansi_sequences(input), input);
+    }
+
+    #[test]
+    fn b6_3i_strips_multiple_sequences_in_one_string() {
+        let input = "\u{1b}[1mbold\u{1b}[0m \u{1b}[32mgreen\u{1b}[0m end";
+        assert_eq!(strip_ansi_sequences(input), "bold green end");
+    }
+
+    // ── B-6 Item 3j — system-prompt conflict merge tests ─────────
+
+    #[test]
+    fn b6_3j_merge_returns_base_when_append_empty() {
+        let merged = merge_system_prompts("You are NEOTH.", "");
+        assert_eq!(merged, "You are NEOTH.");
+    }
+
+    #[test]
+    fn b6_3j_merge_returns_append_when_base_empty() {
+        let merged = merge_system_prompts("", "Be concise.");
+        assert_eq!(merged, "Be concise.");
+    }
+
+    #[test]
+    fn b6_3j_merge_joins_with_paragraph_break() {
+        let merged = merge_system_prompts("You are NEOTH.", "Be concise.");
+        assert_eq!(merged, "You are NEOTH.\n\nBe concise.");
+    }
+
+    #[test]
+    fn b6_3j_merge_handles_both_empty() {
+        assert_eq!(merge_system_prompts("", ""), "");
+        assert_eq!(merge_system_prompts("   ", "\n\n"), "");
+    }
+
+    #[test]
+    fn b6_3j_merge_trims_surrounding_whitespace_per_side() {
+        // Either side may arrive with trailing newlines (operator
+        // wrote heredoc) or leading spaces — normalize before join.
+        let merged = merge_system_prompts("  base  \n", "\n\nappend\n");
+        assert_eq!(merged, "base\n\nappend");
+    }
+
+    #[test]
+    fn b6_3j_merge_preserves_order_base_before_append() {
+        // Drift guard — flipping the order changes operator semantics
+        // (a permission rule in base could be overridden by append).
+        let merged = merge_system_prompts("BASE_RULE", "APPEND_RULE");
+        let base_idx = merged.find("BASE_RULE").unwrap();
+        let append_idx = merged.find("APPEND_RULE").unwrap();
+        assert!(base_idx < append_idx);
     }
 }
