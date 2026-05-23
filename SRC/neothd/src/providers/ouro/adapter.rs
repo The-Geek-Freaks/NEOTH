@@ -50,8 +50,53 @@ pub const OURO_DOWNLOAD_MIN_FREE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Lazy-loaded model state cached behind a mutex (same pattern as
 /// `local_qwen::LoadedModel`).
+/// O-5c — model variant the adapter cached. Dispatch via the
+/// enum so each Provider/EmbedProvider call routes to the right
+/// forward path without re-reading `quant_mode`.
+enum LoadedOuroModel {
+    Native(OuroModel),
+    Quantized(super::quantized_forward::QuantizedOuroModel),
+}
+
+impl LoadedOuroModel {
+    fn forward(&mut self, input_ids: &candle_core::Tensor, seqlen_offset: usize) -> anyhow::Result<candle_core::Tensor> {
+        match self {
+            Self::Native(m) => m.forward(input_ids, seqlen_offset),
+            Self::Quantized(m) => m.forward(input_ids, seqlen_offset),
+        }
+    }
+
+    fn embed(&mut self, input_ids: &candle_core::Tensor) -> anyhow::Result<Vec<f32>> {
+        match self {
+            Self::Native(m) => m.embed(input_ids),
+            Self::Quantized(m) => m.embed(input_ids),
+        }
+    }
+
+    fn clear_kv_cache(&mut self) {
+        match self {
+            Self::Native(m) => m.clear_kv_cache(),
+            Self::Quantized(m) => m.clear_kv_cache(),
+        }
+    }
+
+    fn hidden_size(&self) -> usize {
+        match self {
+            Self::Native(m) => m.hidden_size(),
+            Self::Quantized(m) => m.hidden_size(),
+        }
+    }
+
+    fn loop_steps(&self) -> usize {
+        match self {
+            Self::Native(m) => m.loop_steps(),
+            Self::Quantized(m) => m.loop_steps(),
+        }
+    }
+}
+
 struct LoadedOuro {
-    model: OuroModel,
+    model: LoadedOuroModel,
     tokenizer: tokenizers::Tokenizer,
     eos_id: Option<u32>,
 }
@@ -275,18 +320,10 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         return Ok(());
     }
     let started = Instant::now();
-    // O-5a — quant mode gate. The operator-knob is plumbed end-to-end
-    // but the QTensor forward-pass swap defers to O-5b. Until then,
-    // any non-None mode falls through to native load with an
-    // operator-visible tracing-warn so the freedom.yaml setting
-    // doesn't silently disagree with runtime behaviour.
-    if adapter.quant_mode != OuroQuantMode::None && !adapter.quant_mode.is_quant_active() {
-        tracing::warn!(
-            requested = %adapter.quant_mode.as_str(),
-            "Ouro quant mode `{}` requested but deferred to O-5b; falling back to native BF16/F32",
-            adapter.quant_mode.as_str()
-        );
-    }
+    // O-5c — quant mode dispatch. None → native OuroModel.
+    // Q8 → parallel QuantizedOuroModel via the swap that lands
+    // below. The defer-warn from O-5a/b is gone since
+    // `is_quant_active()` now flips true for Q8.
     eprintln!(
         "→ loading Ouro weights from {} (first call only, quant={})",
         adapter.weights_path.display(),
@@ -308,18 +345,30 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
                 format!("mmap safetensors {}", adapter.weights_path.display())
             })?
     };
-    let model = OuroModel::new(&config, vb).context("build OuroModel")?;
+    // O-5c — dispatch on operator's quant_mode. Q8 → parallel
+    // QuantizedOuroModel (Q8 matmuls inside attention + MLP);
+    // None → native OuroModel (BF16/F32 forward pass).
+    let model = if adapter.quant_mode.is_quant_active() {
+        let m = super::quantized_forward::QuantizedOuroModel::new(&config, vb)
+            .context("build QuantizedOuroModel (Q8 path)")?;
+        LoadedOuroModel::Quantized(m)
+    } else {
+        let m = OuroModel::new(&config, vb).context("build OuroModel")?;
+        LoadedOuroModel::Native(m)
+    };
     let eos_id = resolve_eos_id(&tokenizer);
     info!(
         repo = %adapter.repo,
         device = ?device,
         eos = ?eos_id,
         loop_steps = model.loop_steps(),
+        quant_mode = %adapter.quant_mode.as_str(),
         "local_ouro: model loaded into cache",
     );
     eprintln!(
-        "✓ Ouro weights loaded in {:.1}s",
-        started.elapsed().as_secs_f32()
+        "✓ Ouro weights loaded in {:.1}s (quant={})",
+        started.elapsed().as_secs_f32(),
+        adapter.quant_mode.as_str()
     );
     *slot = Some(LoadedOuro {
         model,

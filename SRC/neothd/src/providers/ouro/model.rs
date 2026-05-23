@@ -58,11 +58,11 @@ impl OuroQuantMode {
     }
 
     /// True ⇔ caller should perform the QTensor swap during model
-    /// load. O-5a always returns false (Q8 path deferred); O-5b
-    /// flips Q8 to true when the parallel quantized model lands.
+    /// load. O-5a/b shipped the helpers; O-5c lands the
+    /// parallel `QuantizedOuroModel` + adapter dispatch so Q8 now
+    /// flips to true. `None` stays false (native path).
     pub fn is_quant_active(self) -> bool {
-        // O-5a: always false. O-5b will flip the Q8 arm.
-        false
+        matches!(self, Self::Q8)
     }
 }
 
@@ -415,13 +415,13 @@ mod tests {
     }
 
     #[test]
-    fn is_quant_active_always_false_in_o5a() {
-        // O-5a ships the operator knob; O-5b flips Q8 to true
-        // once the QTensor forward-pass swap lands. Pin the
-        // contract bidirectionally so O-5b can't quietly forget
-        // to update is_quant_active.
+    fn is_quant_active_matches_q8_after_o5c() {
+        // O-5a/b shipped helpers with Q8 deferred; O-5c flipped
+        // Q8 to true now that the QuantizedOuroModel parallel
+        // path lands. Pin both arms bidirectionally so future
+        // additions (e.g. Q4) need an explicit decision.
         assert!(!OuroQuantMode::None.is_quant_active());
-        assert!(!OuroQuantMode::Q8.is_quant_active());
+        assert!(OuroQuantMode::Q8.is_quant_active(), "O-5c flips Q8 = true");
     }
 
     #[test]
