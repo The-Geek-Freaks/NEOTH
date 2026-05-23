@@ -387,6 +387,7 @@ mod tests {
             mention_kind: None,
             channel_ts_unix: 1_700_000_000,
             raw_ts_ms: None,
+            human_uuid: None,
         }
     }
 

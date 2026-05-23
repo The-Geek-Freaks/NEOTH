@@ -405,6 +405,7 @@ async fn forward_message(
         mention_kind: None,
         channel_ts_unix: now_unix_secs(),
         raw_ts_ms: None,
+        human_uuid: None,
     };
     let _ = msg.message_id; // unused field in current InboundMessage shape
     match handler(inbound).await {

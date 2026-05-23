@@ -204,6 +204,7 @@ async fn handle_one_message(
             .map(|d| d.as_secs())
             .unwrap_or(0),
         raw_ts_ms: Some(msg.date.timestamp() * 1000),
+        human_uuid: None,
     };
 
     match handler(inbound).await {

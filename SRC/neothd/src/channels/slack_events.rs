@@ -171,6 +171,7 @@ pub fn decode_frame(raw: &str) -> DecodedFrame {
                 mention_kind: None,
                 channel_ts_unix: secs,
                 raw_ts_ms: Some(ms),
+                human_uuid: None,
             };
             DecodedFrame::Message {
                 envelope_id: envelope.envelope_id,

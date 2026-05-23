@@ -194,6 +194,7 @@ pub fn decode_payload(raw: &str) -> DecodedWebhook {
                     mention_kind: None,
                     channel_ts_unix: ts_unix,
                     raw_ts_ms: Some((ts_unix as i64) * 1000),
+                    human_uuid: None,
                 });
             }
         }

@@ -170,6 +170,14 @@ pub struct InboundMessage {
     /// Optional because not every channel exposes it; absence means "use
     /// channel_ts_unix instead".
     pub raw_ts_ms: Option<i64>,
+    /// C-13 (Session 21) — cross-channel `human_uuid`. Populated by
+    /// the future `idx_human_identity` resolver (C-12) when the same
+    /// operator appears on multiple channels under different
+    /// `sender_id`s. `None` for adapters that haven't been wired into
+    /// the resolver yet — downstream code must tolerate either path.
+    /// Stable UUID v7 string when present so WAL replay can sort by
+    /// time-of-first-link.
+    pub human_uuid: Option<String>,
 }
 
 /// What the daemon decided to send back. The channel adapter renders this
@@ -238,6 +246,126 @@ pub trait Channel: Send + Sync {
         Err(ChannelError::NotSupported {
             feature: "send_media",
         })
+    }
+
+    // ── C-10 (Session 21) — extended trait surface ─────────────────
+    //
+    // Five methods reserved by `SPEC_channels.md` for the second-
+    // production-adapter milestone. Default impls return
+    // `NotSupported` so the existing v0.1 adapters (Telegram /
+    // WhatsApp / Slack) keep compiling unchanged. When the second
+    // adapter lands + needs one of these surfaces, the daemon's
+    // channel-spawn loop will surface a clean "feature deferred"
+    // diagnostic instead of a panic.
+
+    /// Spawn the inbound-message receive loop as a long-running
+    /// task. Default impl is a no-op error so adapters that haven't
+    /// implemented it surface clearly. The legacy `run(handler)`
+    /// path stays the canonical entry point; this method is the
+    /// future-proofed split for adapters that want to expose the
+    /// receive loop independent of the handler.
+    async fn spawn_receive_loop(
+        &self,
+        _handler: PipelineHandler,
+    ) -> std::result::Result<tokio::task::JoinHandle<()>, ChannelError> {
+        Err(ChannelError::NotSupported {
+            feature: "spawn_receive_loop",
+        })
+    }
+
+    /// Acknowledge receipt of an inbound message. Some platforms
+    /// (e.g. WhatsApp Business, Discord interactions) require an
+    /// explicit ACK before the platform considers delivery
+    /// complete. Default `NotSupported` for adapters where ACK is
+    /// implicit (Telegram getUpdates / Slack events poll).
+    async fn ack_received(
+        &self,
+        _chat_id: &str,
+        _message_id: &MessageId,
+    ) -> std::result::Result<(), ChannelError> {
+        Err(ChannelError::NotSupported {
+            feature: "ack_received",
+        })
+    }
+
+    /// Fetch chat metadata (title, member count, topic) for a chat
+    /// the bot is in. Used by the future `neoth channels show
+    /// <id>` operator surface + by the cross-channel identity
+    /// resolver to enrich `InboundMessage::sender_display`.
+    async fn get_chat_meta(&self, _chat_id: &str) -> std::result::Result<ChatMeta, ChannelError> {
+        Err(ChannelError::NotSupported {
+            feature: "get_chat_meta",
+        })
+    }
+
+    /// Send a transient "typing…" / "uploading photo…" indicator
+    /// so the operator on the other end sees activity before the
+    /// reply lands. Telegram sendChatAction / Slack typing event /
+    /// WhatsApp presence update all map here.
+    async fn send_action_indicator(
+        &self,
+        _chat_id: &str,
+        _action: ChatAction,
+    ) -> std::result::Result<(), ChannelError> {
+        Err(ChannelError::NotSupported {
+            feature: "send_action_indicator",
+        })
+    }
+
+    /// Edit an outbound message after it was sent (Telegram
+    /// editMessageText, Slack chat.update). Used by streaming
+    /// preview + post-reply correction paths. Default `NotSupported`
+    /// for adapters without an edit API (most webhooks).
+    async fn edit_message(
+        &self,
+        _chat_id: &str,
+        _message_id: &MessageId,
+        _new_text: &str,
+    ) -> std::result::Result<(), ChannelError> {
+        Err(ChannelError::NotSupported {
+            feature: "edit_message",
+        })
+    }
+}
+
+/// C-10 — minimal chat metadata returned by `Channel::get_chat_meta`.
+/// Vendor-specific fields stay in `extra` so the resolver doesn't
+/// have to bump the struct shape every time a platform adds a field.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ChatMeta {
+    pub chat_id: String,
+    pub title: Option<String>,
+    pub member_count: Option<u32>,
+    pub topic: Option<String>,
+    /// Vendor-specific extras as opaque key/value strings.
+    pub extra: std::collections::BTreeMap<String, String>,
+}
+
+/// C-10 — typing-style indicator the platform displays to the
+/// other side. Pinned exhaustively per the platforms NEOTH
+/// currently knows about; adding a new action needs an entry here
+/// + per-adapter mapping (Telegram chat-action / Slack typing /
+/// WhatsApp presence).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ChatAction {
+    /// "typing…" — operator should expect a text reply soon.
+    Typing,
+    /// "uploading photo…" / "sending image…"
+    UploadingPhoto,
+    /// "uploading document…" / "sending file…"
+    UploadingDocument,
+    /// "recording voice message…"
+    RecordingVoice,
+}
+
+impl ChatAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Typing => "typing",
+            Self::UploadingPhoto => "uploading_photo",
+            Self::UploadingDocument => "uploading_document",
+            Self::RecordingVoice => "recording_voice",
+        }
     }
 }
 
@@ -466,6 +594,142 @@ mod tests {
                 feature: "send_media"
             }
         ));
+    }
+
+    // ── C-10 default impls (Session 21) ──────────────────────────
+
+    #[tokio::test]
+    async fn default_spawn_receive_loop_returns_not_supported() {
+        let c = NoopChannel;
+        let handler: PipelineHandler = Box::new(|_inbound| Box::pin(async { Ok(None) }));
+        let err = c.spawn_receive_loop(handler).await.unwrap_err();
+        assert!(matches!(
+            err,
+            ChannelError::NotSupported {
+                feature: "spawn_receive_loop"
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_ack_received_returns_not_supported() {
+        let c = NoopChannel;
+        let err = c
+            .ack_received("x", &MessageId("m-1".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ChannelError::NotSupported {
+                feature: "ack_received"
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_get_chat_meta_returns_not_supported() {
+        let c = NoopChannel;
+        let err = c.get_chat_meta("x").await.unwrap_err();
+        assert!(matches!(
+            err,
+            ChannelError::NotSupported {
+                feature: "get_chat_meta"
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_send_action_indicator_returns_not_supported() {
+        let c = NoopChannel;
+        let err = c
+            .send_action_indicator("x", ChatAction::Typing)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ChannelError::NotSupported {
+                feature: "send_action_indicator"
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_edit_message_returns_not_supported() {
+        let c = NoopChannel;
+        let err = c
+            .edit_message("x", &MessageId("m-1".into()), "new")
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            ChannelError::NotSupported {
+                feature: "edit_message"
+            }
+        ));
+    }
+
+    #[test]
+    fn chat_action_as_str_pinned() {
+        assert_eq!(ChatAction::Typing.as_str(), "typing");
+        assert_eq!(ChatAction::UploadingPhoto.as_str(), "uploading_photo");
+        assert_eq!(ChatAction::UploadingDocument.as_str(), "uploading_document");
+        assert_eq!(ChatAction::RecordingVoice.as_str(), "recording_voice");
+    }
+
+    #[test]
+    fn chat_meta_default_is_empty() {
+        let m = ChatMeta::default();
+        assert!(m.chat_id.is_empty());
+        assert!(m.title.is_none());
+        assert!(m.member_count.is_none());
+        assert!(m.topic.is_none());
+        assert!(m.extra.is_empty());
+    }
+
+    // ── C-13 human_uuid field (Session 21) ────────────────────────
+
+    #[test]
+    fn inbound_message_human_uuid_defaults_to_none_in_struct_literal() {
+        // Drift guard — a future refactor that defaults human_uuid
+        // to Some(something) would shape resolver behaviour without
+        // operator awareness.
+        let msg = InboundMessage {
+            channel: ChannelKind::Telegram,
+            chat_id: "c".into(),
+            thread_id: None,
+            sender_id: "s".into(),
+            sender_display: None,
+            text: None,
+            media: None,
+            reply_to: None,
+            mention_kind: None,
+            channel_ts_unix: 0,
+            raw_ts_ms: None,
+            human_uuid: None,
+        };
+        assert!(msg.human_uuid.is_none());
+    }
+
+    #[test]
+    fn inbound_message_human_uuid_round_trips_when_present() {
+        let msg = InboundMessage {
+            channel: ChannelKind::Telegram,
+            chat_id: "c".into(),
+            thread_id: None,
+            sender_id: "s".into(),
+            sender_display: None,
+            text: None,
+            media: None,
+            reply_to: None,
+            mention_kind: None,
+            channel_ts_unix: 0,
+            raw_ts_ms: None,
+            human_uuid: Some("01902f3a-1234-7000-8000-abcdef012345".into()),
+        };
+        assert_eq!(
+            msg.human_uuid.as_deref(),
+            Some("01902f3a-1234-7000-8000-abcdef012345")
+        );
     }
 
     /// A3-tail mock that returns a fixed MessageId on send_text so

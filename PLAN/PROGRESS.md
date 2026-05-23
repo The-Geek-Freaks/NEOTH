@@ -1748,10 +1748,10 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [ ] **C-07** iMessage adapter (P2)
 - [ ] **C-08** LINE adapter (P2)
 - [ ] **C-09** Matrix adapter (P2)
-- [ ] **C-10** Channel trait methods `spawn_receive_loop` / `ack_received` / `get_chat_meta` / `send_action_indicator` / `edit_message` (P2+; trigger: second production adapter)
+- [x] **C-10** Channel trait methods `spawn_receive_loop` / `ack_received` / `get_chat_meta` / `send_action_indicator` / `edit_message` (P2+) — **Default `NotSupported` impls shipped Session 21.** Five new `async fn` methods added to `pub trait Channel` in `channels/mod.rs` each returning `ChannelError::NotSupported { feature: "..." }` so existing v0.1 adapters (Telegram/WhatsApp/Slack/Discord) keep compiling unchanged. New `ChatMeta { chat_id, title, member_count, topic, extra: BTreeMap<String,String> }` returned by `get_chat_meta` (vendor extras land in opaque `extra` map so struct shape stays stable). New `ChatAction::{Typing,UploadingPhoto,UploadingDocument,RecordingVoice}` enum with `as_str()` per platform mapping. 7 new tests pin each default surface + ChatAction wire form + ChatMeta default-empty.
 - [ ] **C-11** `send_proactive()` impl (P3+)
-- [ ] **C-12** `LiveDelivery` struct + `idx_human_identity` view (P2+)
-- [ ] **C-13** Cross-channel `human_uuid` in InboundMessage (P2+)
+- [~] **C-12** `LiveDelivery` struct + `idx_human_identity` view (P2+) — deferred. The InboundMessage carrier-field landed via C-13; the `LiveDelivery` struct + SQLite view migration is multi-day infra (touches schema + indexer + recall surface) and ships in a focused C-12 session.
+- [x] **C-13** Cross-channel `human_uuid` in InboundMessage (P2+) — **Shipped Session 21.** New `human_uuid: Option<String>` field on `InboundMessage` (UUID v7 string format when set; `None` for adapters not wired into the future C-12 resolver). Every existing construction site (discord_gateway_loop / slack_events / slack_socket / telegram / whatsapp_webhook) updated to set `None` so the C-12 resolver can populate later without touching the adapter code. 2 new tests pin default-None drift guard + round-trip-when-present. 316 channels tests stay green.
 - [ ] **C-14** Per-messenger formatting rules F-1..F-4 (P2) — Formatter trait + 5 channel impls
 - [ ] **C-15** Telegram live-test with real bot token (pre-v0.1) — Codex item #6
 - [ ] **C-16** `proactive: enabled` freedom.yaml field (P3+)
