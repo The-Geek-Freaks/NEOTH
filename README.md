@@ -93,7 +93,7 @@ YAML is optional. The engine is not.
     </td>
     <td width="33%">
       <strong>Pro-grade underneath</strong><br>
-      Rust single binary, WAL-backed memory, local models, provider routing, plugins, audits, and cluster pairing.
+      Rust core, optional Slint GUI, WAL-backed memory, local models, provider routing, plugins, audits, and cluster pairing.
     </td>
     <td width="33%">
       <strong>One loyal buddy</strong><br>
@@ -149,6 +149,10 @@ Think private-Jarvis energy without black-box lock-in: context-aware, loyal to t
 | You want privacy proof | You trust a black box. | Run `neoth privacy audit` and inspect destinations, evidence, memory, and plugin capabilities. |
 
 ### What makes it different
+
+NEOTH is one buddy with many doors: the same memory, permissions, and redactions follow the operator across tools.
+
+<img src=".github/assets/neoth-readme-surfaces.svg" alt="NEOTH buddy surfaces across CLI, GUI, chat apps, Obsidian, coding sessions, local models, plugins, and private mesh" width="100%">
 
 <table>
   <tr>
@@ -326,24 +330,21 @@ Different projects optimize for different jobs. NEOTH is the one shaped around a
 
 Legend: `&#10003;` strong / native, `&#9680;` partial / adjacent, `&#8722;` not the focus in local sources, `preview` exists but should not be oversold.
 
-| Capability | NEOTH v1.1 | Hermes | OpenHuman | OpenClaw |
+| Capability | NEOTH | Hermes | OpenHuman | OpenClaw |
 | :-- | :--: | :--: | :--: | :--: |
-| Loyal personal buddy for normal users **and** pros | &#10003; | &#9680; workflow-first | &#9680; desktop-first | &#9680; gateway-first |
-| GUI-first setup without mandatory YAML | &#10003; | &#8722; | &#9680; | &#8722; |
-| Local profile extraction with no silent cloud fallback | &#10003; | &#9680; self-hosted | &#9680; local memory + broker | &#9680; allowlists |
-| Evidence, confidence, redaction, request-destination audit | &#10003; | &#9680; | &#9680; | &#9680; |
-| Three role-bound hemispheres plus council/dissent | &#10003; | &#9680; fast/deep routing | &#8722; | &#9680; multi-agent gateway |
-| Six memory layers plus six brain-region views | &#10003; | &#9680; persistent memory | &#9680; memory tree | &#9680; context/memory SDK |
-| Native coding canvas + Kanban + dispatch + review promotion | &#10003; | &#10003; Kanban predecessor | &#9680; coder tools | &#9680; canvas + agents |
-| Obsidian as inspectable surface while WAL stays authoritative | &#10003; | &#9680; markdown notes | &#10003; strongest Obsidian UX | &#9680; wiki/skill bridge |
-| LAN/Tailscale private mesh | &#10003; | &#8722; | &#8722; | &#9680; Tailscale nodes |
-| Hysteria relay path for hard networks | &#10003; advanced | &#8722; | &#8722; | &#8722; |
-| Keet / peer-to-peer channel path | &#10003; preview | &#8722; | &#8722; | &#8722; |
-| Consent-gated memory cluster semantics | &#10003; | &#8722; | &#8722; | &#9680; gateway nodes |
-| Single Rust binary shape | &#10003; | &#8722; Python/web | &#8722; Tauri/pnpm | &#8722; Node/TS |
-| WASM plugin sandbox with caps and hostcall allowlist | &#10003; | &#9680; skills | &#9680; approval/tools | &#9680; sandboxed surfaces |
+| Daily buddy for normal users **and** pro operators | &#10003; loyal DAU + operator stack | &#9680; workflow-agent first | &#9680; desktop-assistant first | &#9680; gateway first |
+| Loyalty/privacy contract: permissioned memory, redaction, auditability | &#10003; | &#9680; self-hosted memory | &#9680; local memory + backend-brokered integrations | &#9680; gateway allowlists/security knobs |
+| Local profile extraction with no silent cloud fallback | &#10003; Qwen/Ouro path | &#9680; profile/memory files | &#9680; profile learning + local Memory Tree | &#9680; memory/plugin-adjacent |
+| Three role-bound hemispheres plus council/dissent | &#10003; | &#9680; agent orchestration | &#8722; | &#9680; multi-agent routing |
+| Six memory layers plus six brain-region views | &#10003; | &#9680; persistent/layered memory | &#9680; Memory Tree | &#9680; memory plugin/context surface |
+| Coding canvas + Kanban + dispatch + review promotion tied to memory | &#10003; | &#10003; Kanban/workflow precedent | &#9680; coder tools | &#9680; Live Canvas + agents |
+| Obsidian / human-inspectable memory | &#10003; WAL authoritative, vault inspectable | &#9680; Markdown memory files | &#10003; strongest Obsidian/Memory Tree UX | &#9680; wiki/skill bridge |
+| Private mesh/channel story: LAN/mDNS, Tailscale, Hysteria, Keet | &#9680; mDNS/Hysteria pieces, Keet preview | &#9680; Tailscale access | &#8722; | &#9680; Bonjour/Tailscale nodes |
+| Consent-gated memory cluster semantics | &#9680; explicit architecture/primitives | &#8722; | &#8722; | &#9680; gateway/node pairing |
+| Deployment shape | &#10003; Rust core + optional Rust/Slint GUI | &#8722; Python/web/Docker style | &#9680; Tauri + Rust sidecar + pnpm app | &#8722; Node/TypeScript gateway |
+| Plugin sandbox | &#10003; WASM caps + hostcall allowlist | &#9680; skills/extensions | &#10003; QuickJS skill sandbox | &#10003; Docker/SSH/OpenShell sandbox + plugin API |
 
-Short version: Hermes is the coding/Kanban precedent, OpenHuman is the Obsidian/auto-fetch precedent, OpenClaw is the gateway/canvas/channel precedent, and NEOTH combines the useful parts into a local-first, brain-regioned, council-governed operator runtime.
+Short version: Hermes is the Kanban/workflow precedent, OpenHuman is the Obsidian/auto-fetch precedent, and OpenClaw is the gateway/channel/canvas precedent. NEOTH's defensible advantage is the combination: loyal DAU-friendly buddy positioning, local profile learning with audit/redaction, three-hemisphere council, brain-region memory model, native coding workflow, and cluster-ready private mesh in a Rust-first operator runtime.
 
 <br>
 
@@ -516,7 +517,7 @@ NEOTH should fit into the knowledge system and network you already trust, not fo
 | **Tailscale / WireGuard** | Private device mesh for laptop, workstation, home server, and travel machines. |
 | **Hysteria relay** | Advanced path for hard networks where direct pairing is unreliable. |
 | **Keet** | Peer-to-peer chat/channel path for users who want less platform gravity. |
-| **Cluster pairing** | Multiple NEOTH nodes sharing operator-approved state without manual copy-paste. |
+| **Cluster pairing** | Cluster-ready NEOTH nodes prepared for operator-approved state exchange without manual copy-paste. |
 
 Pairing is consent-gated. A peer with the right key still needs approval before it joins your memory cluster.
 
