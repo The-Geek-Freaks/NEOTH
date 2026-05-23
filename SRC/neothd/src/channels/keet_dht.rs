@@ -139,6 +139,28 @@ impl BootstrapEndpoint {
             BootstrapEndpoint::Addr(a) => a.to_string(),
         }
     }
+
+    /// R-2 Phase 3 helper for the UDP dialer (`keet_udp`). For
+    /// `Addr` variants the conversion is infallible; for `Host`
+    /// variants we run a blocking DNS resolution via
+    /// `std::net::ToSocketAddrs` + pick the first IPv4 result
+    /// (Hyperswarm v0.1 is IPv4-only; v6 lands in the follow-up
+    /// once the protocol decoder differentiates the AF).
+    pub fn socket_addr(&self) -> anyhow::Result<SocketAddr> {
+        use std::net::ToSocketAddrs;
+        match self {
+            BootstrapEndpoint::Addr(a) => Ok(*a),
+            BootstrapEndpoint::Host(s) => {
+                // BootstrapEndpoint::Host carries a "name:port"
+                // string per the HYPERSWARM_BOOTSTRAP_HOSTS shape.
+                let mut iter = s.to_socket_addrs().map_err(|e| {
+                    anyhow::anyhow!("resolve bootstrap host `{s}`: {e}")
+                })?;
+                iter.find(|a| a.is_ipv4()).or_else(|| s.to_socket_addrs().ok().and_then(|mut i| i.next()))
+                    .ok_or_else(|| anyhow::anyhow!("bootstrap host `{s}` resolved to no addrs"))
+            }
+        }
+    }
 }
 
 /// Compose the bootstrap list the dialer will use. Operator

@@ -20,6 +20,7 @@ pub mod formatter;
 pub mod keet;
 pub mod keet_crypto;
 pub mod keet_dht;
+pub mod keet_udp;
 pub mod rate_limit;
 pub mod slack;
 pub mod slack_api;

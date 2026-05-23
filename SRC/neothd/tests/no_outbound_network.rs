@@ -72,6 +72,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/channels/slack_socket.rs",
     "src/channels/discord.rs",
     "src/channels/discord_gateway_loop.rs",
+    "src/channels/keet_udp.rs",
     "src/cluster/",
     "src/transport/",
 ];
