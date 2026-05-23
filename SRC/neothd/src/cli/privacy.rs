@@ -63,9 +63,7 @@ pub async fn run_privacy(args: PrivacyArgs) -> Result<()> {
                 }
                 println!();
             }
-            println!(
-                "Run `neoth glossary --term <name>` for any term above you don't recognise."
-            );
+            println!("Run `neoth glossary --term <name>` for any term above you don't recognise.");
         }
     }
     Ok(())
@@ -74,10 +72,7 @@ pub async fn run_privacy(args: PrivacyArgs) -> Result<()> {
 /// L-08 pure-function audit. Takes the loaded config + creds and
 /// returns the list of findings. Pure so it's straightforward to
 /// test against synthetic configs.
-pub fn audit_posture(
-    cfg: &FreedomConfig,
-    creds: &Credentials,
-) -> Vec<PrivacyFinding> {
+pub fn audit_posture(cfg: &FreedomConfig, creds: &Credentials) -> Vec<PrivacyFinding> {
     let mut out = Vec::new();
 
     // ── Provider ──────────────────────────────────────────────────────
@@ -98,7 +93,11 @@ pub fn audit_posture(
         status: format!(
             "Default provider: `{}` ({})",
             provider,
-            if cloud_provider { "CLOUD" } else { "LOCAL ONLY" }
+            if cloud_provider {
+                "CLOUD"
+            } else {
+                "LOCAL ONLY"
+            }
         ),
         detail: if cloud_provider {
             format!(
@@ -148,9 +147,8 @@ pub fn audit_posture(
         out.push(PrivacyFinding {
             category: "cloud-fallback",
             severity: "warn",
-            status:
-                "Profile-learn cloud fallback: ENABLED (L-07 `allow_cloud_fallback: true`)"
-                    .to_string(),
+            status: "Profile-learn cloud fallback: ENABLED (L-07 `allow_cloud_fallback: true`)"
+                .to_string(),
             detail: "When the configured `learn_provider` is unavailable (local weights \
                      missing / hardware issue), NEOTH falls back to your main provider — \
                      which posts the prompt to a cloud endpoint. Flip to false to fail \
@@ -197,8 +195,7 @@ pub fn audit_posture(
     out.push(PrivacyFinding {
         category: "audit-trail",
         severity: "info",
-        status: "WAL at `~/.neoth/wal/*.wal` records every action (HMAC-SHA256 sealed)"
-            .into(),
+        status: "WAL at `~/.neoth/wal/*.wal` records every action (HMAC-SHA256 sealed)".into(),
         detail: "Operator-private — file mode 0600 on unix, owner-only DACL on Windows. \
                  `neoth wal show` to inspect. Credentials in `PRE_MUTATION_SNAPSHOT` \
                  frames are redacted (K-Sec-5) — `provider_key: sk-...` becomes \
@@ -228,7 +225,11 @@ mod tests {
     use crate::config::credentials::Credentials;
     use crate::secret::SecretString;
 
-    fn cfg_with(provider: &str, learn_enabled: bool, learn_provider: Option<&str>) -> FreedomConfig {
+    fn cfg_with(
+        provider: &str,
+        learn_enabled: bool,
+        learn_provider: Option<&str>,
+    ) -> FreedomConfig {
         use crate::cli::init::ProviderKind;
         let mut cfg = FreedomConfig::default();
         cfg.provider_kind = Some(match provider {

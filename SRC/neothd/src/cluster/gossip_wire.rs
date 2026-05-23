@@ -40,9 +40,7 @@ use super::gossip::GossipTag;
 /// `cluster::registry::PairedPeer::pub_key_hex`. Newtype keeps the
 /// VC API typesafe so peer_id strings don't get accidentally swapped
 /// for cluster_key strings (different namespace).
-#[derive(
-    Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash,
-)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[serde(transparent)]
 pub struct PeerId(pub String);
 
@@ -117,8 +115,7 @@ impl VectorClock {
         // Walk the union of peer-ids; missing keys count as 0.
         let mut lhs_dominates_any = false;
         let mut rhs_dominates_any = false;
-        let mut peers: std::collections::BTreeSet<&PeerId> =
-            std::collections::BTreeSet::new();
+        let mut peers: std::collections::BTreeSet<&PeerId> = std::collections::BTreeSet::new();
         peers.extend(self.clocks.keys());
         peers.extend(other.clocks.keys());
         for peer in peers {
@@ -198,7 +195,9 @@ impl GossipFrame {
         }
         if let Some(last) = last_seen_seq {
             if self.event_seq <= last {
-                return GossipAcceptance::DroppedDuplicate { last_seen_seq: last };
+                return GossipAcceptance::DroppedDuplicate {
+                    last_seen_seq: last,
+                };
             }
         }
         GossipAcceptance::Accept
@@ -278,10 +277,7 @@ mod tests {
 
     #[test]
     fn vc_compare_equal_clocks() {
-        assert_eq!(
-            vc(&[("a", 1)]).compare(&vc(&[("a", 1)])),
-            VcOrdering::Equal
-        );
+        assert_eq!(vc(&[("a", 1)]).compare(&vc(&[("a", 1)])), VcOrdering::Equal);
         assert_eq!(
             VectorClock::new().compare(&VectorClock::new()),
             VcOrdering::Equal

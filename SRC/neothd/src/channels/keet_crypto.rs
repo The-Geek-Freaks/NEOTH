@@ -119,10 +119,7 @@ pub enum KeetCryptoError {
 /// tab / trailing-whitespace paste artifacts so the same words
 /// always produce the same bytes.
 pub fn canonicalize(phrase: &str) -> String {
-    phrase
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    phrase.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// 32-byte entropy branch — feeds an ed25519 secret-seed when the
@@ -206,8 +203,7 @@ pub fn hmac_sha256(key: &[u8], data: &[u8], out: &mut [u8; 32]) {
 mod tests {
     use super::*;
 
-    const SAMPLE_PHRASE: &str =
-        "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
+    const SAMPLE_PHRASE: &str = "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
          kilo lima mike november oscar papa quebec romeo sierra tango \
          uniform victor whiskey xray";
 

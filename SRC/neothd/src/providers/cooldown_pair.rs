@@ -225,13 +225,22 @@ mod tests {
 
     #[test]
     fn cooldown_per_class_matches_pinned_table() {
-        assert_eq!(cooldown_for_class(RetryClass::Auth), Duration::from_secs(3_600));
+        assert_eq!(
+            cooldown_for_class(RetryClass::Auth),
+            Duration::from_secs(3_600)
+        );
         assert_eq!(
             cooldown_for_class(RetryClass::SessionCollision),
             Duration::from_secs(5)
         );
-        assert_eq!(cooldown_for_class(RetryClass::EmptyStdout), Duration::from_secs(10));
-        assert_eq!(cooldown_for_class(RetryClass::Transient), Duration::from_secs(60));
+        assert_eq!(
+            cooldown_for_class(RetryClass::EmptyStdout),
+            Duration::from_secs(10)
+        );
+        assert_eq!(
+            cooldown_for_class(RetryClass::Transient),
+            Duration::from_secs(60)
+        );
     }
 
     #[test]

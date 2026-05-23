@@ -16,12 +16,12 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use candle_core::{DType, Device, Module, Tensor, D};
-use candle_nn::{rms_norm, Embedding, RmsNorm, VarBuilder};
+use candle_core::{D, DType, Device, Module, Tensor};
+use candle_nn::{Embedding, RmsNorm, VarBuilder, rms_norm};
 use candle_transformers::quantized_nn::Linear as QuantizedLinear;
 
 use super::model::OuroConfig;
-use super::quantized_layers::{load_quantized_linear_no_bias, QuantizedOuroLayer};
+use super::quantized_layers::{QuantizedOuroLayer, load_quantized_linear_no_bias};
 use super::rope::OuroRoPE;
 
 /// Top-level Ouro LoopLM with Q8-quantized layer stack.
@@ -177,9 +177,7 @@ impl QuantizedOuroModel {
         seqlen_offset: usize,
     ) -> Result<Tensor> {
         let mask: Vec<f32> = (0..tgt_len)
-            .flat_map(|i| {
-                (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 })
-            })
+            .flat_map(|i| (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 }))
             .collect();
         let mask = Tensor::from_slice(&mask, (tgt_len, tgt_len), &self.device)
             .context("causal mask: build tensor")?;

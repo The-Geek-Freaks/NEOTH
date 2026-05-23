@@ -19,7 +19,7 @@ use rusqlite::Connection;
 
 use super::store;
 use super::types::{KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus};
-use super::validate::{validate_patch_shape, PatchValidation};
+use super::validate::{PatchValidation, validate_patch_shape};
 
 /// Why a REVIEW task was NOT auto-promoted. Used by the CLI surface
 /// (`neoth kanban review <task>`) to tell the operator what's

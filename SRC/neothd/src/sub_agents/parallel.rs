@@ -51,9 +51,9 @@ use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use super::schema::{SubAgentRequest, SubAgentResult};
-use crate::council::quality_score::QaVerdict;
 #[cfg(test)]
 use crate::council::quality_score::FailureItem;
+use crate::council::quality_score::QaVerdict;
 
 /// QM-16: trait the caller implements so the dispatcher can run an
 /// arbitrary worker (coding worker, reviewer sub-agent, evidence
@@ -163,10 +163,7 @@ where
             let _permit = match sem.acquire_owned().await {
                 Ok(p) => p,
                 Err(e) => {
-                    return (
-                        idx,
-                        Err(anyhow::anyhow!("semaphore closed: {e}")),
-                    );
+                    return (idx, Err(anyhow::anyhow!("semaphore closed: {e}")));
                 }
             };
             let req_id = req.task_id.clone();
@@ -201,9 +198,7 @@ where
                 // workers should catch their own panics).
                 warn!(error = %e, "parallel dispatch task panicked");
                 if let Some(slot) = indexed.iter_mut().find(|s| s.is_none()) {
-                    *slot = Some(Err(anyhow::anyhow!(
-                        "parallel dispatch task panicked: {e}"
-                    )));
+                    *slot = Some(Err(anyhow::anyhow!("parallel dispatch task panicked: {e}")));
                 }
             }
         }

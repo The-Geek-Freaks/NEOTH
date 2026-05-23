@@ -382,7 +382,10 @@ mod tests {
         std::fs::write(&path, &legacy).unwrap();
 
         let loaded = load_or_init_key(&path).unwrap();
-        assert_eq!(loaded, legacy, "legacy plaintext key must roundtrip unchanged");
+        assert_eq!(
+            loaded, legacy,
+            "legacy plaintext key must roundtrip unchanged"
+        );
     }
 
     #[cfg(windows)]

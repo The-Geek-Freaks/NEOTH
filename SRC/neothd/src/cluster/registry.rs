@@ -87,7 +87,9 @@ pub fn save(home: &Path, reg: &ClusterRegistry) -> Result<()> {
     }
     // Sort before write so on-disk order is stable across runs.
     let mut sorted = reg.clone();
-    sorted.peers.sort_by(|a, b| a.pub_key_hex.cmp(&b.pub_key_hex));
+    sorted
+        .peers
+        .sort_by(|a, b| a.pub_key_hex.cmp(&b.pub_key_hex));
     let tmp = path.with_extension("yaml.tmp");
     let body = serde_yaml::to_string(&sorted).with_context(|| "serialize cluster registry")?;
     std::fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;

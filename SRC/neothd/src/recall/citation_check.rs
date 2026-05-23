@@ -121,7 +121,10 @@ static ARXIV_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 static ISBN_RE: LazyLock<Regex> = LazyLock::new(|| {
     // ISBN-13 (978/979) + ISBN-10. ISBN-10 last digit can be X.
-    Regex::new(r"(?i)\bisbn[:\s-]*((?:97[89][-\s]?)?\d{1,5}[-\s]?\d{1,7}[-\s]?\d{1,7}[-\s]?[\dX])\b").unwrap()
+    Regex::new(
+        r"(?i)\bisbn[:\s-]*((?:97[89][-\s]?)?\d{1,5}[-\s]?\d{1,7}[-\s]?\d{1,7}[-\s]?[\dX])\b",
+    )
+    .unwrap()
 });
 static PUBLISHER_URL_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Match URLs to known scholarly hosts.
@@ -134,7 +137,10 @@ static AUTHOR_YEAR_RE: LazyLock<Regex> = LazyLock::new(|| {
     // "Smith 2020" / "Smith et al. 2020" / "Smith and Jones 2020"
     // shapes. Used to count narrative citations to compare against
     // the structural citation count.
-    Regex::new(r"\b([A-Z][a-z]{2,})(?:\s+et\s+al\.?|\s+and\s+[A-Z][a-z]+)?\s+\(?((?:19|20)\d{2})\)?").unwrap()
+    Regex::new(
+        r"\b([A-Z][a-z]{2,})(?:\s+et\s+al\.?|\s+and\s+[A-Z][a-z]+)?\s+\(?((?:19|20)\d{2})\)?",
+    )
+    .unwrap()
 });
 
 /// QM-18: extract every citation-shaped token from `text`. Sorted by
@@ -170,7 +176,10 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
     for cap in ISBN_RE.captures_iter(text) {
         let raw = cap.get(0).map(|m| m.as_str()).unwrap_or("");
         let id = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let stripped: String = id.chars().filter(|c| c.is_ascii_digit() || *c == 'X' || *c == 'x').collect();
+        let stripped: String = id
+            .chars()
+            .filter(|c| c.is_ascii_digit() || *c == 'X' || *c == 'x')
+            .collect();
         if stripped.len() == 10 || stripped.len() == 13 {
             out.insert(Citation {
                 kind: CitationKind::Isbn,
@@ -189,9 +198,7 @@ pub fn extract_citations(text: &str) -> Vec<Citation> {
     }
 
     let mut sorted: Vec<Citation> = out.into_iter().collect();
-    sorted.sort_by(|a, b| {
-        (a.kind.as_str(), &a.normalised).cmp(&(b.kind.as_str(), &b.normalised))
-    });
+    sorted.sort_by(|a, b| (a.kind.as_str(), &a.normalised).cmp(&(b.kind.as_str(), &b.normalised)));
     sorted
 }
 
@@ -304,9 +311,17 @@ mod tests {
         // Verify each shape independently to avoid HashSet dedup
         // collapsing two different raw forms with the same normalised id.
         let cites1 = extract_citations("See arXiv:2401.12345");
-        assert!(cites1.iter().any(|c| c.kind == CitationKind::Arxiv && c.normalised == "2401.12345"));
+        assert!(
+            cites1
+                .iter()
+                .any(|c| c.kind == CitationKind::Arxiv && c.normalised == "2401.12345")
+        );
         let cites2 = extract_citations("See arxiv.org/abs/2305.00001v2");
-        assert!(cites2.iter().any(|c| c.kind == CitationKind::Arxiv && c.normalised == "2305.00001v2"));
+        assert!(
+            cites2
+                .iter()
+                .any(|c| c.kind == CitationKind::Arxiv && c.normalised == "2305.00001v2")
+        );
     }
 
     #[test]
@@ -333,7 +348,10 @@ mod tests {
     fn extract_dedupes_identical_normalised_ids() {
         let text = "DOI: 10.1038/x and again DOI:10.1038/X — same id.";
         let cites = extract_citations(text);
-        let dois: Vec<&Citation> = cites.iter().filter(|c| c.kind == CitationKind::Doi).collect();
+        let dois: Vec<&Citation> = cites
+            .iter()
+            .filter(|c| c.kind == CitationKind::Doi)
+            .collect();
         // HashSet dedupes by (kind, raw, normalised) tuple, so two
         // different raw forms with the SAME normalised id can still
         // appear as two entries. The point of normalisation is
@@ -358,10 +376,12 @@ mod tests {
                     independently confirmed this. Brown 2022 disagreed.";
         let audit = audit_offline(text);
         assert_eq!(audit.verdict, CitationVerdict::NeedsReview);
-        assert!(audit
-            .signals
-            .iter()
-            .any(|s| s.kind == "unanchored_narrative_citations"));
+        assert!(
+            audit
+                .signals
+                .iter()
+                .any(|s| s.kind == "unanchored_narrative_citations")
+        );
     }
 
     #[test]
@@ -370,20 +390,24 @@ mod tests {
         let text = "Per Smith 2020 (10.1145/aaa.bbb) and Jones 2021 \
                     (10.1145/ccc.ddd) the effect persists.";
         let audit = audit_offline(text);
-        assert!(audit
-            .signals
-            .iter()
-            .all(|s| s.kind != "unanchored_narrative_citations"));
+        assert!(
+            audit
+                .signals
+                .iter()
+                .all(|s| s.kind != "unanchored_narrative_citations")
+        );
     }
 
     #[test]
     fn audit_flags_suspicious_future_year() {
         let text = "Per Smith 2099, the effect will persist.";
         let audit = audit_offline(text);
-        assert!(audit
-            .signals
-            .iter()
-            .any(|s| s.kind == "suspicious_future_year"));
+        assert!(
+            audit
+                .signals
+                .iter()
+                .any(|s| s.kind == "suspicious_future_year")
+        );
         assert_eq!(audit.verdict, CitationVerdict::NeedsReview);
     }
 
@@ -395,10 +419,12 @@ mod tests {
         let audit = audit_offline(&text);
         // Note: this MAY flag as unanchored (no DOI given), but
         // MUST NOT flag suspicious_future_year.
-        assert!(audit
-            .signals
-            .iter()
-            .all(|s| s.kind != "suspicious_future_year"));
+        assert!(
+            audit
+                .signals
+                .iter()
+                .all(|s| s.kind != "suspicious_future_year")
+        );
     }
 
     #[test]

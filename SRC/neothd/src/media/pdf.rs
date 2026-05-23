@@ -272,7 +272,10 @@ mod tests {
         assert!(m.title.is_none());
         assert!(m.author.is_none());
         assert!(m.page_count.is_none());
-        assert!(!m.has_form_fields, "v1 has_form_fields defaults to false (M-1b adds detection)");
+        assert!(
+            !m.has_form_fields,
+            "v1 has_form_fields defaults to false (M-1b adds detection)"
+        );
     }
 
     #[test]

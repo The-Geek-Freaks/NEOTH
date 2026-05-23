@@ -235,12 +235,8 @@ mod tests {
 
     #[test]
     fn forwarded_serde_round_trips() {
-        let original = ClusterRequestForwardedPayload::new(
-            "req-X",
-            "peer-Y",
-            ForwardReason::Affinity,
-            42,
-        );
+        let original =
+            ClusterRequestForwardedPayload::new("req-X", "peer-Y", ForwardReason::Affinity, 42);
         let bytes = original.to_bytes();
         let back: ClusterRequestForwardedPayload = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(back, original);

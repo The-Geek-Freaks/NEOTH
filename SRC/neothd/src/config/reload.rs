@@ -545,8 +545,11 @@ mod tests {
         assert!(!ctrl.should_reload().unwrap(), "no drift right after new()");
         // Write different content + larger size — the size
         // diff is the reliable cross-FS signal.
-        std::fs::write(&path, "operator_id: alice\nrole: developer\nlanguage_primary: en\n")
-            .unwrap();
+        std::fs::write(
+            &path,
+            "operator_id: alice\nrole: developer\nlanguage_primary: en\n",
+        )
+        .unwrap();
         assert!(ctrl.should_reload().unwrap(), "drift after content change");
         // After a should_reload call returning true, the
         // cache updates → next call is false.

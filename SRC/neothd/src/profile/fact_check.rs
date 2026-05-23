@@ -187,8 +187,14 @@ pub fn classify_confidence(proposition: &str) -> (Confidence, &'static str) {
         ("everyone", "absolutism: 'everyone' over-generalises"),
         ("nobody", "absolutism: 'nobody' over-generalises"),
         ("will inevitably", "slippery-slope: predicted inevitability"),
-        ("leads directly to", "slippery-slope: causal chain claimed without evidence"),
-        ("countless examples", "gish-gallop: vague mass-evidence claim"),
+        (
+            "leads directly to",
+            "slippery-slope: causal chain claimed without evidence",
+        ),
+        (
+            "countless examples",
+            "gish-gallop: vague mass-evidence claim",
+        ),
         ("you'd be a fool", "ad-hominem framing"),
         ("anyone who disagrees", "ad-hominem framing"),
     ];
@@ -206,7 +212,10 @@ pub fn classify_confidence(proposition: &str) -> (Confidence, &'static str) {
         ("personally", "hedge: 'personally' marks speaker opinion"),
         ("seems to me", "hedge: 'seems to me' marks speaker opinion"),
         ("ich denke", "hedge (DE): 'ich denke' marks speaker opinion"),
-        ("meiner meinung", "hedge (DE): 'meiner meinung' marks speaker opinion"),
+        (
+            "meiner meinung",
+            "hedge (DE): 'meiner meinung' marks speaker opinion",
+        ),
     ];
     for (pat, why) in opinion_patterns {
         if lower.contains(pat) {
@@ -231,12 +240,14 @@ pub fn classify_confidence(proposition: &str) -> (Confidence, &'static str) {
         .split(|c: char| !c.is_ascii_digit())
         .any(|s| s.len() == 4 && s.starts_with(|c: char| c == '1' || c == '2'))
     {
-        return (Confidence::Verifiable, "temporal anchor: 4-digit year present");
+        return (
+            Confidence::Verifiable,
+            "temporal anchor: 4-digit year present",
+        );
     }
     // Number with unit-shape suffix
     let unit_words = [
-        "percent", "%", "kg", "mg", "km", "miles", "meters", "users", "people", "deaths",
-        "cases",
+        "percent", "%", "kg", "mg", "km", "miles", "meters", "users", "people", "deaths", "cases",
     ];
     if proposition
         .split_whitespace()
@@ -327,8 +338,7 @@ mod tests {
 
     #[test]
     fn classify_suspect_on_slippery_slope() {
-        let (c, _) =
-            classify_confidence("Allowing X will inevitably lead to society collapse.");
+        let (c, _) = classify_confidence("Allowing X will inevitably lead to society collapse.");
         assert_eq!(c, Confidence::Suspect);
     }
 
@@ -347,8 +357,7 @@ mod tests {
 
     #[test]
     fn classify_verifiable_on_year_anchor() {
-        let (c, why) =
-            classify_confidence("The reactor went online in 1986 at Chernobyl.");
+        let (c, why) = classify_confidence("The reactor went online in 1986 at Chernobyl.");
         assert_eq!(c, Confidence::Verifiable);
         assert!(why.contains("temporal anchor"));
     }
@@ -403,9 +412,7 @@ mod tests {
 
     #[test]
     fn assess_needs_revision_when_any_suspect() {
-        let report = assess(
-            "The project shipped in 2024. Everyone agrees it was the right call.",
-        );
+        let report = assess("The project shipped in 2024. Everyone agrees it was the right call.");
         assert_eq!(report.verdict, Verdict::NeedsRevision);
         assert_eq!(report.count(Confidence::Suspect), 1);
     }

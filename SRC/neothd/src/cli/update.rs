@@ -59,12 +59,12 @@ pub async fn run_update(args: UpdateArgs) -> Result<()> {
         // V03-09 daemon self-check + optional apply path. Default
         // repo is the published public release; operators on a
         // fork override via --self-repo.
-        let repo = args
-            .self_repo
-            .as_deref()
-            .unwrap_or("The-Geek-Freaks/NEOTH");
+        let repo = args.self_repo.as_deref().unwrap_or("The-Geek-Freaks/NEOTH");
         if args.apply {
-            info!(repo = repo, "neoth update --self --apply: full Phase 2b flow");
+            info!(
+                repo = repo,
+                "neoth update --self --apply: full Phase 2b flow"
+            );
             return run_self_apply(repo, args.output).await;
         }
         info!(repo = repo, "neoth update --self: checking GitHub release");
@@ -176,10 +176,7 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn render_self_apply(
-    applied: &crate::updater::self_update::UpdateApplied,
-    output: OutputFormat,
-) {
+fn render_self_apply(applied: &crate::updater::self_update::UpdateApplied, output: OutputFormat) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(

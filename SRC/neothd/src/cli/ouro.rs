@@ -136,8 +136,8 @@ async fn run_fetch(checkpoint_override: Option<&str>) -> Result<()> {
     // is the auto-download path. We never call complete()/embed() so
     // no model load happens; the goal is JUST to pull the weights
     // into the local cache.
-    let _adapter = crate::providers::ouro::adapter::LocalOuroAdapter::new(Some(repo.clone()))
-        .await?;
+    let _adapter =
+        crate::providers::ouro::adapter::LocalOuroAdapter::new(Some(repo.clone())).await?;
     println!(
         "✓ Ouro checkpoint `{repo}` cached in {:.1}s. Activate via:\n  \
          neoth init --force --provider local_ouro --provider-model {repo}",
@@ -217,9 +217,7 @@ fn run_status(output: &OutputFormat) -> Result<()> {
     let configured_model = cfg
         .as_ref()
         .and_then(|c| c.provider_model.clone())
-        .unwrap_or_else(|| {
-            crate::providers::ouro::adapter::DEFAULT_OURO_REPO.to_string()
-        });
+        .unwrap_or_else(|| crate::providers::ouro::adapter::DEFAULT_OURO_REPO.to_string());
     let accelerator_override = cfg
         .as_ref()
         .and_then(|c| c.inference.accelerator_override.clone())
@@ -293,7 +291,10 @@ mod tests {
         // a third entry per size without a matching pair would
         // surface a UX inconsistency in `neoth ouro list`.
         for size in &["1.4B", "2.6B"] {
-            let count = OURO_CHECKPOINTS.iter().filter(|c| c.params == *size).count();
+            let count = OURO_CHECKPOINTS
+                .iter()
+                .filter(|c| c.params == *size)
+                .count();
             assert_eq!(count, 2, "size {size} should have base + thinking");
             let thinking_count = OURO_CHECKPOINTS
                 .iter()
@@ -380,7 +381,9 @@ mod tests {
     async fn run_fetch_rejects_unknown_checkpoint() {
         // Operator-typo or third-party HF repo MUST bail fast with
         // the actionable hint pointing at `neoth ouro list`.
-        let err = run_fetch(Some("operator-typo/non-existent")).await.unwrap_err();
+        let err = run_fetch(Some("operator-typo/non-existent"))
+            .await
+            .unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("unknown Ouro checkpoint"));
         assert!(msg.contains("neoth ouro list"));

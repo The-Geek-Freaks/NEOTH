@@ -110,18 +110,16 @@ pub fn check_retrospective_arithmetic(text: &str) -> Vec<TemporalFinding> {
     if markers.iter().any(|m| lower.contains(m)) {
         // Confirm there's a 4-digit year anchor — otherwise it's
         // just narrative not arithmetic.
-        let has_year = text.split(|c: char| !c.is_ascii_digit()).any(|s| {
-            s.len() == 4
-                && s.starts_with(|c: char| c == '1' || c == '2')
-        });
+        let has_year = text
+            .split(|c: char| !c.is_ascii_digit())
+            .any(|s| s.len() == 4 && s.starts_with(|c: char| c == '1' || c == '2'));
         if has_year {
             let snippet = truncate_for_citation(text);
             out.push(TemporalFinding {
                 kind: "retrospective_arithmetic".to_string(),
-                message:
-                    "Retrospective year arithmetic detected. Verify the anchor year — \
+                message: "Retrospective year arithmetic detected. Verify the anchor year — \
                      LLMs often get the math right but the anchor wrong."
-                        .to_string(),
+                    .to_string(),
                 citation: snippet,
             });
         }
@@ -161,7 +159,7 @@ pub fn check_causal_inversion(text: &str) -> Vec<TemporalFinding> {
                      '{sequence_marker}'. Verify cause/effect order is correct."
                 ),
                 citation: snippet,
-                });
+            });
             return out; // one finding per text is plenty for the operator
         }
     }
@@ -193,17 +191,17 @@ pub fn check_deictic_unanchored(text: &str) -> Vec<TemporalFinding> {
         return out;
     }
     // If an explicit anchor date is present, no need to flag.
-    let has_anchor = text.split(|c: char| !c.is_ascii_digit()).any(|s| {
-        s.len() == 4 && s.starts_with(|c: char| c == '1' || c == '2')
-    }) || lower.contains("as of ")
+    let has_anchor = text
+        .split(|c: char| !c.is_ascii_digit())
+        .any(|s| s.len() == 4 && s.starts_with(|c: char| c == '1' || c == '2'))
+        || lower.contains("as of ")
         || lower.contains("stand:");
     if !has_anchor {
         out.push(TemporalFinding {
             kind: "deictic_unanchored".to_string(),
-            message:
-                "Deictic time marker without a reference date. Anchor with 'as of <date>' \
+            message: "Deictic time marker without a reference date. Anchor with 'as of <date>' \
                  so the text doesn't silently age out of correctness."
-                    .to_string(),
+                .to_string(),
             citation: truncate_for_citation(text),
         });
     }
@@ -283,17 +281,15 @@ mod tests {
     #[test]
     fn causal_inversion_skips_normal_causality() {
         // Has "caused" but no "happened first" — normal sequence.
-        let findings = check_causal_inversion(
-            "The storm caused widespread damage. Repairs took months.",
-        );
+        let findings =
+            check_causal_inversion("The storm caused widespread damage. Repairs took months.");
         assert!(findings.is_empty());
     }
 
     #[test]
     fn deictic_unanchored_fires_on_currently_without_year() {
-        let findings = check_deictic_unanchored(
-            "Currently, the project is in beta. The team is small.",
-        );
+        let findings =
+            check_deictic_unanchored("Currently, the project is in beta. The team is small.");
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].kind, "deictic_unanchored");
     }
@@ -301,17 +297,14 @@ mod tests {
     #[test]
     fn deictic_unanchored_skips_when_anchor_year_present() {
         // "as of 2026" anchors the deictic marker → no flag.
-        let findings = check_deictic_unanchored(
-            "Currently (as of 2026-05), the project is in beta.",
-        );
+        let findings =
+            check_deictic_unanchored("Currently (as of 2026-05), the project is in beta.");
         assert!(findings.is_empty());
     }
 
     #[test]
     fn deictic_unanchored_skips_when_year_anchor_inline() {
-        let findings = check_deictic_unanchored(
-            "In 2026 the project is currently in beta.",
-        );
+        let findings = check_deictic_unanchored("In 2026 the project is currently in beta.");
         assert!(findings.is_empty());
     }
 
@@ -379,9 +372,7 @@ mod tests {
 
     #[test]
     fn report_round_trips_through_json() {
-        let report = check(
-            "In 1986, the reactor was 13 years old. Currently it's still closed.",
-        );
+        let report = check("In 1986, the reactor was 13 years old. Currently it's still closed.");
         let json = serde_json::to_string(&report).unwrap();
         let back: TemporalReport = serde_json::from_str(&json).unwrap();
         assert_eq!(report, back);

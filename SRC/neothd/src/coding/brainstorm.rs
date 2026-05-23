@@ -134,9 +134,16 @@ pub fn evaluate(prompt: &str) -> Decision {
     let has_impl_verb = ["implement", "add", "build", "write", "create", "fix "]
         .iter()
         .any(|v| lower.contains(v));
-    let is_question = ["explain ", "what is", "what does", "how does", "why does", "?"]
-        .iter()
-        .any(|m| lower.contains(m))
+    let is_question = [
+        "explain ",
+        "what is",
+        "what does",
+        "how does",
+        "why does",
+        "?",
+    ]
+    .iter()
+    .any(|m| lower.contains(m))
         && !has_impl_verb;
     if is_question {
         return Decision::Skip {
@@ -155,7 +162,9 @@ pub fn evaluate(prompt: &str) -> Decision {
             reason: "refactor — no new behaviour, no spec needed (verify tests stay green)".into(),
         };
     }
-    let bugfix_markers = ["fix ", "bug", "broken", "fails", "failing", "panic", "crash", "kaputt"];
+    let bugfix_markers = [
+        "fix ", "bug", "broken", "fails", "failing", "panic", "crash", "kaputt",
+    ];
     if bugfix_markers.iter().any(|m| lower.contains(m)) {
         return Decision::Skip {
             reason: "bug fix — no spec needed; write the regression test first".into(),
@@ -172,12 +181,11 @@ pub fn evaluate(prompt: &str) -> Decision {
     }
 
     Decision::NeedsBrainstorm {
-        rationale:
-            "Feature-shaped request without an attached spec. Run the brainstorming skill \
+        rationale: "Feature-shaped request without an attached spec. Run the brainstorming skill \
              (`/skill brainstorming`) or paste a spec with the six section headers: \
              ## Problem, ## Solution, ## User Stories, ## Implementation Decisions, \
              ## Testing Decisions, ## Out-of-Scope."
-                .into(),
+            .into(),
     }
 }
 
@@ -240,10 +248,7 @@ pub fn parse_spec(text: &str) -> anyhow::Result<BrainstormSpec> {
             continue;
         }
         if let Some(h) = current_header {
-            sections
-                .entry(h)
-                .or_default()
-                .push_str(raw_line);
+            sections.entry(h).or_default().push_str(raw_line);
             sections.get_mut(h).unwrap().push('\n');
         }
     }
@@ -355,7 +360,10 @@ mod tests {
         // "How does X work AND can you implement Y" — has both
         // markers; implementation verb wins → NeedsBrainstorm.
         let d = evaluate("How does the WAL writer work and can you implement a usage dashboard?");
-        assert!(!d.is_skip(), "implementation verb must override question-skip");
+        assert!(
+            !d.is_skip(),
+            "implementation verb must override question-skip"
+        );
     }
 
     #[test]
@@ -402,7 +410,10 @@ just one section
         let r = parse_spec(text);
         assert!(r.is_err());
         let err = r.unwrap_err().to_string();
-        assert!(err.contains("solution"), "error must name first missing: {err}");
+        assert!(
+            err.contains("solution"),
+            "error must name first missing: {err}"
+        );
     }
 
     #[test]
@@ -459,7 +470,10 @@ Add a usage dashboard.
 - >30d view.
 ";
         let d = evaluate(text);
-        assert!(d.is_spec_ready(), "complete spec must produce SpecReady; got {d:?}");
+        assert!(
+            d.is_spec_ready(),
+            "complete spec must produce SpecReady; got {d:?}"
+        );
     }
 
     #[test]

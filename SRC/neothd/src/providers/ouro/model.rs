@@ -35,9 +35,7 @@ pub const MAX_TOTAL_UT_STEPS: usize = 8;
 /// `Q8` falls through to `None` with a `tracing::warn!` so
 /// operators who opt in see "Q8 deferred; running BF16 this boot"
 /// instead of silent disagreement between config + behaviour.
-#[derive(
-    Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq,
-)]
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OuroQuantMode {
     /// Load weights at native precision (no quantisation).
@@ -155,9 +153,7 @@ impl OuroConfig {
         }
         if let Some(t) = clamped.early_exit_threshold {
             if !(0.0..=1.0).contains(&t) {
-                anyhow::bail!(
-                    "Ouro config: early_exit_threshold must be in [0.0, 1.0], got {t}"
-                );
+                anyhow::bail!("Ouro config: early_exit_threshold must be in [0.0, 1.0], got {t}");
             }
         }
         Ok(clamped)
@@ -274,31 +270,27 @@ mod tests {
 
     #[test]
     fn parses_config_without_total_ut_uses_default() {
-        let cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(None)).expect("parse config");
+        let cfg: OuroConfig = serde_json::from_str(&fixture_config(None)).expect("parse config");
         assert_eq!(cfg.total_ut_steps, DEFAULT_TOTAL_UT_STEPS);
     }
 
     #[test]
     fn head_dim_derived_from_hidden_size_and_heads() {
-        let cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         // 2048 / 16 = 128
         assert_eq!(cfg.head_dim(), 128);
     }
 
     #[test]
     fn validate_rejects_zero_heads() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.num_attention_heads = 0;
         assert!(cfg.validate().is_err());
     }
 
     #[test]
     fn validate_rejects_indivisible_hidden_size() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.num_attention_heads = 17; // 2048 % 17 != 0
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("divisible"));
@@ -306,24 +298,21 @@ mod tests {
 
     #[test]
     fn validate_rejects_zero_layers() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.num_hidden_layers = 0;
         assert!(cfg.validate().is_err());
     }
 
     #[test]
     fn validate_rejects_zero_vocab() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.vocab_size = 0;
         assert!(cfg.validate().is_err());
     }
 
     #[test]
     fn validate_rejects_non_ouro_model_type() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.model_type = Some("qwen2".to_string());
         let err = cfg.validate().unwrap_err();
         assert!(err.to_string().contains("not `ouro`"));
@@ -331,8 +320,7 @@ mod tests {
 
     #[test]
     fn validate_accepts_absent_model_type() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.model_type = None;
         // Older HF dumps lack model_type — don't punish that.
         assert!(cfg.validate().is_ok());
@@ -340,8 +328,7 @@ mod tests {
 
     #[test]
     fn validate_clamps_zero_total_ut_to_default() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.total_ut_steps = 0;
         let v = cfg.validate().unwrap();
         assert_eq!(v.total_ut_steps, DEFAULT_TOTAL_UT_STEPS);
@@ -349,8 +336,7 @@ mod tests {
 
     #[test]
     fn validate_clamps_excessive_total_ut_to_ceiling() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.total_ut_steps = 99;
         let v = cfg.validate().unwrap();
         assert_eq!(v.total_ut_steps, MAX_TOTAL_UT_STEPS);
@@ -358,8 +344,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_early_exit_threshold_out_of_range() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.early_exit_threshold = Some(1.5);
         assert!(cfg.validate().is_err());
         cfg.early_exit_threshold = Some(-0.1);
@@ -368,8 +353,7 @@ mod tests {
 
     #[test]
     fn ouro_construct_holds_validated_config_and_layer_count() {
-        let cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         let model = Ouro::new(cfg).unwrap();
         assert_eq!(model.num_layers(), 24);
         assert_eq!(model.loop_steps(), 4);
@@ -378,8 +362,7 @@ mod tests {
 
     #[test]
     fn ouro_construct_propagates_validation_failure() {
-        let mut cfg: OuroConfig =
-            serde_json::from_str(&fixture_config(Some("4"))).unwrap();
+        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
         cfg.vocab_size = 0;
         assert!(Ouro::new(cfg).is_err());
     }
@@ -411,7 +394,10 @@ mod tests {
             assert_eq!(mode, back);
         }
         // Wire shape — snake_case literal.
-        assert_eq!(serde_yaml::to_string(&OuroQuantMode::Q8).unwrap().trim(), "q8");
+        assert_eq!(
+            serde_yaml::to_string(&OuroQuantMode::Q8).unwrap().trim(),
+            "q8"
+        );
     }
 
     #[test]

@@ -104,9 +104,7 @@ pub enum ClusterAction {
         interactive_timeout: u64,
     },
     /// Remove a confirmed peer by pub_key OR unique prefix.
-    Revoke {
-        pub_key: String,
-    },
+    Revoke { pub_key: String },
     /// Enable cluster auto-discovery (writes
     /// `freedom.yaml::cluster.mdns.enabled = true`).
     Enable,
@@ -125,9 +123,7 @@ pub fn validate_pub_key_hex(s: &str) -> Result<()> {
         );
     }
     if !s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')) {
-        anyhow::bail!(
-            "pub_key must be lowercase hex [0-9a-f]; got a char outside that range"
-        );
+        anyhow::bail!("pub_key must be lowercase hex [0-9a-f]; got a char outside that range");
     }
     Ok(())
 }
@@ -150,20 +146,12 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
                 run_confirm_interactive(interactive_timeout, &via).await
             } else {
                 let pub_key = pub_key.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "missing positional pub_key (or pass --interactive)"
-                    )
+                    anyhow::anyhow!("missing positional pub_key (or pass --interactive)")
                 })?;
-                let label = label.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "missing --label (or pass --interactive)"
-                    )
-                })?;
-                let addr = addr.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "missing --addr (or pass --interactive)"
-                    )
-                })?;
+                let label = label
+                    .ok_or_else(|| anyhow::anyhow!("missing --label (or pass --interactive)"))?;
+                let addr =
+                    addr.ok_or_else(|| anyhow::anyhow!("missing --addr (or pass --interactive)"))?;
                 run_confirm(&pub_key, &label, &addr, &via)
             }
         }
@@ -189,8 +177,7 @@ pub struct DiscoveredPeer {
 /// present (discover prints a table, confirm --interactive
 /// renders a numbered list).
 async fn discover_scan(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>> {
-    let daemon = mdns_sd::ServiceDaemon::new()
-        .map_err(|e| anyhow::anyhow!("mdns daemon: {e}"))?;
+    let daemon = mdns_sd::ServiceDaemon::new().map_err(|e| anyhow::anyhow!("mdns daemon: {e}"))?;
     let receiver = daemon
         .browse(crate::cluster::mdns::DEFAULT_SERVICE_TYPE)
         .map_err(|e| anyhow::anyhow!("mdns browse: {e}"))?;
@@ -203,11 +190,7 @@ async fn discover_scan(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>> {
             break;
         }
         let remaining = deadline - now;
-        match tokio::time::timeout(remaining, async {
-            receiver.recv_async().await.ok()
-        })
-        .await
-        {
+        match tokio::time::timeout(remaining, async { receiver.recv_async().await.ok() }).await {
             Ok(Some(event)) => {
                 if let mdns_sd::ServiceEvent::ServiceResolved(info) = event {
                     let txt: std::collections::HashMap<String, String> = info
@@ -285,17 +268,13 @@ pub fn parse_pick(input: &str, peer_count: usize) -> Result<usize> {
         anyhow::bail!("0 is not a valid pick — picker is 1-indexed");
     }
     if n > peer_count {
-        anyhow::bail!(
-            "pick {n} is out of range (only {peer_count} peer(s) shown)"
-        );
+        anyhow::bail!("pick {n} is out of range (only {peer_count} peer(s) shown)");
     }
     Ok(n - 1)
 }
 
 async fn run_confirm_interactive(timeout_secs: u64, via: &str) -> Result<()> {
-    println!(
-        "interactive confirm: scanning for NEOTH peers for {timeout_secs}s…"
-    );
+    println!("interactive confirm: scanning for NEOTH peers for {timeout_secs}s…");
     let peers = discover_scan(timeout_secs).await?;
     if peers.is_empty() {
         println!("{}", render_picker(&peers));
@@ -324,14 +303,9 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
     // first; `--force` bypasses the gate for operators who want
     // the listen-only scan anyway.
     let freedom_path = FreedomConfig::default_neoth_home().join("freedom.yaml");
-    let (mdns_enabled, policy) =
-        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+    let (mdns_enabled, policy) = crate::cluster::policy::load_policy_from_freedom(&freedom_path);
     let ssid = crate::cluster::policy::current_ssid();
-    let gate = crate::cluster::policy::gate_discover(
-        mdns_enabled,
-        &policy,
-        ssid.as_deref(),
-    );
+    let gate = crate::cluster::policy::gate_discover(mdns_enabled, &policy, ssid.as_deref());
     match gate {
         crate::cluster::policy::DiscoverGate::Proceed => {
             let ssid_label = ssid
@@ -421,10 +395,7 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
 /// `DiscoverGate::SkipWith(reason)` path. Each `NoReason`
 /// variant maps to a one-line cause + an actionable command
 /// the operator can run to flip the verdict to `Proceed`.
-fn print_skip_with_fix(
-    reason: crate::cluster::policy::NoReason,
-    ssid: Option<&str>,
-) {
+fn print_skip_with_fix(reason: crate::cluster::policy::NoReason, ssid: Option<&str>) {
     use crate::cluster::policy::NoReason;
     match reason {
         NoReason::Disabled => {
@@ -498,9 +469,7 @@ fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> 
     let via_enum = match via.trim().to_ascii_lowercase().as_str() {
         "mdns" => crate::cluster::discovery::DiscoveryVia::Mdns,
         "tailscale" => crate::cluster::discovery::DiscoveryVia::Tailscale,
-        "hysteria_relay" | "hysteria" => {
-            crate::cluster::discovery::DiscoveryVia::HysteriaRelay
-        }
+        "hysteria_relay" | "hysteria" => crate::cluster::discovery::DiscoveryVia::HysteriaRelay,
         "manual" | "" => crate::cluster::discovery::DiscoveryVia::Manual,
         other => anyhow::bail!(
             "unknown discovered_via `{}` — use mdns/tailscale/hysteria_relay/manual",
@@ -538,7 +507,10 @@ fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> 
         tracing::warn!(error = %e, "cluster confirm sidecar write failed (non-fatal)");
     }
     let key_short = &pub_key_norm[..16.min(pub_key_norm.len())];
-    println!("confirmed peer `{label}` ({key_short}) via {via_enum_str}", via_enum_str = via_enum.as_str());
+    println!(
+        "confirmed peer `{label}` ({key_short}) via {via_enum_str}",
+        via_enum_str = via_enum.as_str()
+    );
     Ok(())
 }
 

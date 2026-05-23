@@ -64,8 +64,9 @@ impl OuroRoPE {
         k: &Tensor,
         seqlen_offset: usize,
     ) -> Result<(Tensor, Tensor)> {
-        let (_b_sz, _h, seq_len, _n_embd) =
-            q.dims4().context("RoPE: q must be rank-4 [b, h, seq, head_dim]")?;
+        let (_b_sz, _h, seq_len, _n_embd) = q
+            .dims4()
+            .context("RoPE: q must be rank-4 [b, h, seq, head_dim]")?;
         let cos = self
             .cos
             .narrow(0, seqlen_offset, seq_len)
@@ -76,10 +77,10 @@ impl OuroRoPE {
             .context("RoPE: narrow sin table")?;
         let q_contig = q.contiguous().context("RoPE: q.contiguous()")?;
         let k_contig = k.contiguous().context("RoPE: k.contiguous()")?;
-        let q_embed = candle_nn::rotary_emb::rope(&q_contig, &cos, &sin)
-            .context("RoPE: apply to q")?;
-        let k_embed = candle_nn::rotary_emb::rope(&k_contig, &cos, &sin)
-            .context("RoPE: apply to k")?;
+        let q_embed =
+            candle_nn::rotary_emb::rope(&q_contig, &cos, &sin).context("RoPE: apply to q")?;
+        let k_embed =
+            candle_nn::rotary_emb::rope(&k_contig, &cos, &sin).context("RoPE: apply to k")?;
         Ok((q_embed, k_embed))
     }
 }

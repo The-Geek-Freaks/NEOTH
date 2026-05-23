@@ -34,10 +34,7 @@ pub enum CompileOutcome {
     },
     /// Compilation failed — operator-facing error message included
     /// so `neoth plugins list` can render the cause without re-running.
-    Failed {
-        plugin_id: String,
-        error: String,
-    },
+    Failed { plugin_id: String, error: String },
 }
 
 impl CompileOutcome {
@@ -114,7 +111,10 @@ pub enum InvocationStage {
 /// Convenience constructor for the common "did not reach the plugin"
 /// failure shape. The CLI uses this when a plugin is rejected by
 /// pre-flight compile.
-pub fn skip_due_to_compile(plugin_id: impl Into<String>, error: impl Into<String>) -> InvocationOutcome {
+pub fn skip_due_to_compile(
+    plugin_id: impl Into<String>,
+    error: impl Into<String>,
+) -> InvocationOutcome {
     InvocationOutcome {
         plugin_id: plugin_id.into(),
         stage: InvocationStage::SkippedDueToCompileFailure,
@@ -448,10 +448,8 @@ mod tests {
     #[test]
     fn compiled_invoker_is_empty_when_no_compiled_outcomes() {
         let engine = Arc::new(NeothEngine::new().expect("engine"));
-        let linker = Arc::new(
-            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
-                .expect("linker"),
-        );
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
         let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &[], linker);
         assert!(inv.is_empty());
         assert_eq!(inv.len(), 0);
@@ -462,10 +460,8 @@ mod tests {
         // Two compile passes, only one succeeds. The invoker holds
         // exactly the Compiled module — Failed entries silently drop.
         let engine = Arc::new(NeothEngine::new().expect("engine"));
-        let linker = Arc::new(
-            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
-                .expect("linker"),
-        );
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
         let module = engine
             .compile_from_bytes(&minimal_wasm())
             .expect("minimal must compile");
@@ -492,10 +488,8 @@ mod tests {
         // diagnose a typo in `~/.neoth/hooks.toml`.
         use crate::hooks::dispatcher::PluginInvoker;
         let engine = Arc::new(NeothEngine::new().expect("engine"));
-        let linker = Arc::new(
-            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
-                .expect("linker"),
-        );
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
         let module = engine
             .compile_from_bytes(&minimal_wasm())
             .expect("minimal must compile");
@@ -506,7 +500,10 @@ mod tests {
         let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
         let err = inv.invoke("ghost").unwrap_err().to_string();
         assert!(err.contains("ghost"), "error must name unknown id: {err}");
-        assert!(err.contains("alpha"), "error must list registered ids: {err}");
+        assert!(
+            err.contains("alpha"),
+            "error must list registered ids: {err}"
+        );
     }
 
     #[test]
@@ -517,10 +514,8 @@ mod tests {
         // warn (+ continues without blocking the operator turn).
         use crate::hooks::dispatcher::PluginInvoker;
         let engine = Arc::new(NeothEngine::new().expect("engine"));
-        let linker = Arc::new(
-            crate::wasm_plugin::hostcalls::build_linker(engine.raw())
-                .expect("linker"),
-        );
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
         let module = engine
             .compile_from_bytes(&minimal_wasm())
             .expect("minimal must compile");
@@ -530,7 +525,10 @@ mod tests {
         }];
         let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
         let err = inv.invoke("alpha").unwrap_err().to_string();
-        assert!(err.contains("neoth_run"), "error names missing export: {err}");
+        assert!(
+            err.contains("neoth_run"),
+            "error names missing export: {err}"
+        );
     }
 
     #[test]

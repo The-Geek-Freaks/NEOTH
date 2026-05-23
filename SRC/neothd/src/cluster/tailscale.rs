@@ -113,10 +113,7 @@ pub async fn fetch_status() -> Result<Option<TailscaleStatus>> {
 /// Filter a parsed status into candidate peers. Each peer gets one
 /// candidate per Tailscale IP — typically a single 100.x.y.z address.
 /// `port` is the NEOTH listen port to compose into the SocketAddr.
-pub fn candidates_from_status(
-    status: &TailscaleStatus,
-    port: u16,
-) -> Vec<TailscaleCandidate> {
+pub fn candidates_from_status(status: &TailscaleStatus, port: u16) -> Vec<TailscaleCandidate> {
     let mut out = Vec::new();
     for peer in status.peers.values() {
         for ip in &peer.tailscale_ips {

@@ -868,8 +868,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_REINFORCE < 0x01 || EVENT_TYPE_REINFORCE > 0x0F) as usize];
     let _ = [(); 1][(EVENT_TYPE_BOOT < 0x10 || EVENT_TYPE_BOOT > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SHUTDOWN < 0x10 || EVENT_TYPE_SHUTDOWN > 0x1F) as usize];
-    let _ = [(); 1]
-        [(EVENT_TYPE_INSTALLER_RAN < 0x10 || EVENT_TYPE_INSTALLER_RAN > 0x1F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_INSTALLER_RAN < 0x10 || EVENT_TYPE_INSTALLER_RAN > 0x1F) as usize];
     let _ = [(); 1][(EVENT_TYPE_UPDATE_RAN < 0x10 || EVENT_TYPE_UPDATE_RAN > 0x1F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_SEGMENT_ROLLOVER < 0x10 || EVENT_TYPE_SEGMENT_ROLLOVER > 0x1F) as usize];
@@ -1012,12 +1011,11 @@ const _: () = {
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0
         || EVENT_TYPE_CONFIG_RELOAD_REJECTED > 0xDF) as usize];
-    let _ = [(); 1][(EVENT_TYPE_SELF_UPDATE_APPLIED < 0xD0
-        || EVENT_TYPE_SELF_UPDATE_APPLIED > 0xDF) as usize];
     let _ = [(); 1]
-        [(EVENT_TYPE_PATCH_APPLIED < 0xD0 || EVENT_TYPE_PATCH_APPLIED > 0xDF) as usize];
-    let _ = [(); 1][(EVENT_TYPE_PATCH_APPLY_FAILED < 0xD0
-        || EVENT_TYPE_PATCH_APPLY_FAILED > 0xDF) as usize];
+        [(EVENT_TYPE_SELF_UPDATE_APPLIED < 0xD0 || EVENT_TYPE_SELF_UPDATE_APPLIED > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PATCH_APPLIED < 0xD0 || EVENT_TYPE_PATCH_APPLIED > 0xDF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_PATCH_APPLY_FAILED < 0xD0 || EVENT_TYPE_PATCH_APPLY_FAILED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xE7).
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_CONNECTED < 0xE0
         || EVENT_TYPE_CLUSTER_PEER_CONNECTED > 0xE7) as usize];
@@ -1172,10 +1170,19 @@ mod tests {
             ("PATCH_APPLIED", EVENT_TYPE_PATCH_APPLIED),
             ("PATCH_APPLY_FAILED", EVENT_TYPE_PATCH_APPLY_FAILED),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
-            ("CLUSTER_PEER_DISCONNECTED", EVENT_TYPE_CLUSTER_PEER_DISCONNECTED),
+            (
+                "CLUSTER_PEER_DISCONNECTED",
+                EVENT_TYPE_CLUSTER_PEER_DISCONNECTED,
+            ),
             ("CLUSTER_PEER_REJECTED", EVENT_TYPE_CLUSTER_PEER_REJECTED),
-            ("CLUSTER_HEARTBEAT_FIRST", EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST),
-            ("CLUSTER_PEER_HEALTH_CHANGED", EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED),
+            (
+                "CLUSTER_HEARTBEAT_FIRST",
+                EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST,
+            ),
+            (
+                "CLUSTER_PEER_HEALTH_CHANGED",
+                EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED,
+            ),
             (
                 "CLUSTER_CAPABILITIES_CHANGED",
                 EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED,

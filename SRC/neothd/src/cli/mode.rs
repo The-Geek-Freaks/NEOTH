@@ -157,10 +157,7 @@ fn match_mode(registry: &ModeRegistry, text: &str, output: OutputFormat) {
                 println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
             }
             OutputFormat::Table => {
-                println!(
-                    "match: {} (skill: {})",
-                    resolved.mode.id, resolved.skill_id
-                );
+                println!("match: {} (skill: {})", resolved.mode.id, resolved.skill_id);
                 println!("  spectrum:  {}", resolved.mode.spectrum.as_str());
                 println!("  oversight: {}", resolved.mode.oversight.as_str());
             }
@@ -224,7 +221,10 @@ mod tests {
                 None => std::env::remove_var("NEOTH_HOME"),
             }
         }
-        assert!(result.is_ok(), "list must not error on empty dir: {result:?}");
+        assert!(
+            result.is_ok(),
+            "list must not error on empty dir: {result:?}"
+        );
     }
 
     #[tokio::test]

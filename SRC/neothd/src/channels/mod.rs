@@ -546,11 +546,7 @@ mod tests {
         let segments_in_dir: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .ends_with(".wal")
-            })
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".wal"))
             .collect();
         assert_eq!(
             segments_in_dir.len(),
@@ -592,16 +588,10 @@ mod tests {
         let dir = tempdir().unwrap();
         let (writer, join) = wal_spawn(dir.path().join("e.wal")).unwrap();
         let rb = crate::config::RollbackConfig::default();
-        let err = send_text_with_snapshot_using(
-            &ErrCh,
-            &writer,
-            &rb,
-            ChannelKind::Telegram,
-            "123",
-            "hi",
-        )
-        .await
-        .unwrap_err();
+        let err =
+            send_text_with_snapshot_using(&ErrCh, &writer, &rb, ChannelKind::Telegram, "123", "hi")
+                .await
+                .unwrap_err();
         assert!(matches!(err, ChannelError::Transport(_)));
         drop(writer);
         let _ = join.await;

@@ -243,9 +243,8 @@ impl PeerLoadRegistry {
     /// Returns the number of peers evicted so callers can log.
     pub fn prune_stale(&mut self, now: Instant, max_age: std::time::Duration) -> usize {
         let before = self.peers.len();
-        self.peers.retain(|_id, load| {
-            now.saturating_duration_since(load.last_observed) <= max_age
-        });
+        self.peers
+            .retain(|_id, load| now.saturating_duration_since(load.last_observed) <= max_age);
         before - self.peers.len()
     }
 

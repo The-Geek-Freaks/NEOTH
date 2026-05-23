@@ -375,10 +375,7 @@ pub fn persist_edges(
 }
 
 /// QM-2 Phase 2: load edges for `root`. Empty Vec when none stored.
-pub fn load_edges(
-    conn: &Connection,
-    root: &str,
-) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
+pub fn load_edges(conn: &Connection, root: &str) -> Result<Vec<crate::code_map::graph::CodeEdge>> {
     let mut stmt = conn
         .prepare(
             "SELECT from_file, from_symbol, to_name, kind FROM code_map_edges \

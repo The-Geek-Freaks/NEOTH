@@ -22,8 +22,8 @@ use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
 use crate::daemon::dreaming::{
-    append_dream, compose_dream, compose_dreams_with_embeddings, EventRef,
-    DREAMING_CLUSTER_THRESHOLD,
+    DREAMING_CLUSTER_THRESHOLD, EventRef, append_dream, compose_dream,
+    compose_dreams_with_embeddings,
 };
 use crate::providers::embed::EmbedProvider;
 
@@ -156,13 +156,8 @@ pub async fn run_one_pass(
     }
 
     let (dreams, path_taken) = if let Some(provider) = embed_provider {
-        match compose_dreams_with_embeddings(
-            &day,
-            &events,
-            provider,
-            DREAMING_CLUSTER_THRESHOLD,
-        )
-        .await
+        match compose_dreams_with_embeddings(&day, &events, provider, DREAMING_CLUSTER_THRESHOLD)
+            .await
         {
             Ok(d) => (d, DreamingPath::Embedding),
             Err(e) => {
@@ -203,11 +198,7 @@ pub async fn run_one_pass(
 /// dream get a coherent narrative, not a random subset). Missing
 /// `views.db` → empty Vec (fresh-install daemon hasn't indexed
 /// anything yet).
-fn gather_window_events(
-    home: &Path,
-    window: Duration,
-    max_events: usize,
-) -> Result<Vec<EventRef>> {
+fn gather_window_events(home: &Path, window: Duration, max_events: usize) -> Result<Vec<EventRef>> {
     let db_path = home.join("views.db");
     if !db_path.exists() {
         return Ok(Vec::new());
@@ -223,15 +214,12 @@ fn gather_window_events(
         "SELECT event_id, ts_ns, text FROM idx_episode \
          WHERE ts_ns >= ?1 ORDER BY ts_ns ASC LIMIT ?2",
     )?;
-    let rows = stmt.query_map(
-        rusqlite::params![cutoff_ns, max_events as i64],
-        |row| {
-            let id: i64 = row.get(0)?;
-            let ts_ns: i64 = row.get(1)?;
-            let text: String = row.get(2)?;
-            Ok((id, ts_ns, text))
-        },
-    )?;
+    let rows = stmt.query_map(rusqlite::params![cutoff_ns, max_events as i64], |row| {
+        let id: i64 = row.get(0)?;
+        let ts_ns: i64 = row.get(1)?;
+        let text: String = row.get(2)?;
+        Ok((id, ts_ns, text))
+    })?;
     let mut out = Vec::new();
     for r in rows {
         let (id, ts_ns, text) = r?;
@@ -357,8 +345,10 @@ mod tests {
         let n = now_ns();
         seed_views_db(
             dir.path(),
-            &[(1, n - 3600 * 1_000_000_000, "first event"),
-              (2, n - 1800 * 1_000_000_000, "second event")],
+            &[
+                (1, n - 3600 * 1_000_000_000, "first event"),
+                (2, n - 1800 * 1_000_000_000, "second event"),
+            ],
         );
         let report = run_one_pass(dir.path(), None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS)
             .await
@@ -375,15 +365,21 @@ mod tests {
         let n = now_ns();
         seed_views_db(
             dir.path(),
-            &[(1, n - 3600 * 1_000_000_000, "first event"),
-              (2, n - 1800 * 1_000_000_000, "second event"),
-              (3, n - 900 * 1_000_000_000, "third event")],
+            &[
+                (1, n - 3600 * 1_000_000_000, "first event"),
+                (2, n - 1800 * 1_000_000_000, "second event"),
+                (3, n - 900 * 1_000_000_000, "third event"),
+            ],
         );
         let provider = AlwaysWeatherEmbed;
-        let report =
-            run_one_pass(dir.path(), Some(&provider), DEFAULT_WINDOW, DEFAULT_MAX_EVENTS)
-                .await
-                .unwrap();
+        let report = run_one_pass(
+            dir.path(),
+            Some(&provider),
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+        )
+        .await
+        .unwrap();
         assert_eq!(report.events_considered, 3);
         // AlwaysWeather collapses everything to one cluster → 1 dream.
         assert_eq!(report.dreams_written, 1);
@@ -394,15 +390,16 @@ mod tests {
     async fn one_pass_falls_back_to_deterministic_when_embed_fails() {
         let dir = tempdir().unwrap();
         let n = now_ns();
-        seed_views_db(
-            dir.path(),
-            &[(1, n - 3600 * 1_000_000_000, "first event")],
-        );
+        seed_views_db(dir.path(), &[(1, n - 3600 * 1_000_000_000, "first event")]);
         let provider = FailingEmbed;
-        let report =
-            run_one_pass(dir.path(), Some(&provider), DEFAULT_WINDOW, DEFAULT_MAX_EVENTS)
-                .await
-                .unwrap();
+        let report = run_one_pass(
+            dir.path(),
+            Some(&provider),
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+        )
+        .await
+        .unwrap();
         assert_eq!(report.events_considered, 1);
         assert_eq!(report.dreams_written, 1);
         assert_eq!(
@@ -421,7 +418,9 @@ mod tests {
             .collect();
         let rows_ref: Vec<_> = rows.iter().map(|(a, b, c)| (*a, *b, *c)).collect();
         seed_views_db(dir.path(), &rows_ref);
-        let report = run_one_pass(dir.path(), None, DEFAULT_WINDOW, 3).await.unwrap();
+        let report = run_one_pass(dir.path(), None, DEFAULT_WINDOW, 3)
+            .await
+            .unwrap();
         assert_eq!(report.events_considered, 3, "truncate at max_events=3");
     }
 
@@ -432,14 +431,23 @@ mod tests {
         // One event inside the 1-hour test window, one outside.
         seed_views_db(
             dir.path(),
-            &[(1, n - 60 * 1_000_000_000, "inside"),     // 60s ago
-              (2, n - 3600 * 1_000_000_000 * 24, "outside")], // 24h ago
+            &[
+                (1, n - 60 * 1_000_000_000, "inside"), // 60s ago
+                (2, n - 3600 * 1_000_000_000 * 24, "outside"),
+            ], // 24h ago
         );
-        let report =
-            run_one_pass(dir.path(), None, Duration::from_secs(1800), DEFAULT_MAX_EVENTS)
-                .await
-                .unwrap();
-        assert_eq!(report.events_considered, 1, "window excludes the 24h-ago row");
+        let report = run_one_pass(
+            dir.path(),
+            None,
+            Duration::from_secs(1800),
+            DEFAULT_MAX_EVENTS,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            report.events_considered, 1,
+            "window excludes the 24h-ago row"
+        );
     }
 
     #[tokio::test]

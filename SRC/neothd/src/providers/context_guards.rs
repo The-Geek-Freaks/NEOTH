@@ -131,7 +131,10 @@ mod tests {
         // The operator's block MUST appear AFTER the preamble.
         let preamble_pos = merged.find("## Core principles").unwrap();
         let sys_pos = merged.find(operator_sys).unwrap();
-        assert!(preamble_pos < sys_pos, "preamble must precede operator system");
+        assert!(
+            preamble_pos < sys_pos,
+            "preamble must precede operator system"
+        );
     }
 
     #[test]

@@ -202,13 +202,13 @@ async fn run_dispatch_phase(
     session_id: crate::coding::types::KanbanSessionId,
     apply_repo: Option<PathBuf>,
 ) -> Result<()> {
-    use std::sync::Arc;
     use crate::coding::dispatcher::{
-        dispatch_session, dispatch_session_with_apply, DispatchApplyConfig, DispatchBudget,
-        HemisphereWorkerSet,
+        DispatchApplyConfig, DispatchBudget, HemisphereWorkerSet, dispatch_session,
+        dispatch_session_with_apply,
     };
     use crate::coding::provider_worker::ProviderWorker;
     use crate::coding::types::Hemisphere;
+    use std::sync::Arc;
 
     let runtime = tokio::runtime::Handle::current();
     let patch_root = FreedomConfig::default_neoth_home();
@@ -222,7 +222,11 @@ async fn run_dispatch_phase(
     for (role, hemi, name) in [
         (HemisphereRole::Left, Hemisphere::Left, "left"),
         (HemisphereRole::Right, Hemisphere::Right, "right"),
-        (HemisphereRole::Cerebellum, Hemisphere::Cerebellum, "cerebellum"),
+        (
+            HemisphereRole::Cerebellum,
+            Hemisphere::Cerebellum,
+            "cerebellum",
+        ),
     ] {
         match providers::from_config_for_role(cfg, role).await {
             Ok(p) => {
@@ -233,12 +237,8 @@ async fn run_dispatch_phase(
                 // hemisphere/provider pair surfaced verbatim.
                 let label: &'static str =
                     Box::leak(format!("{name}/{provider_name}").into_boxed_str());
-                let worker = ProviderWorker::new(
-                    label,
-                    Arc::from(p),
-                    patch_root.clone(),
-                    runtime.clone(),
-                );
+                let worker =
+                    ProviderWorker::new(label, Arc::from(p), patch_root.clone(), runtime.clone());
                 workers.bind(hemi, Box::new(worker));
                 println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
             }
@@ -265,9 +265,7 @@ async fn run_dispatch_phase(
         if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
             apply_cfg = apply_cfg
                 .with_test_cmd(cmd)
-                .with_test_timeout(std::time::Duration::from_secs(
-                    cfg.coding.test_timeout_secs,
-                ));
+                .with_test_timeout(std::time::Duration::from_secs(cfg.coding.test_timeout_secs));
             println!(
                 "dispatch: --apply set; patches land in <{}>/.neoth-task-<id>/, \
                  tests via `{cmd}` (timeout {}s)",

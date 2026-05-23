@@ -145,30 +145,34 @@ fn main() -> Result<()> {
     // invoke_from_event_loop.
     window.set_usage_summary("Loading usage…".into());
     let weak_usage = window.as_weak();
-    std::thread::spawn(move || loop {
-        let summary = probe_usage_via_subprocess();
-        let weak = weak_usage.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_usage_summary(summary.into());
-            }
-        });
-        std::thread::sleep(USAGE_REFRESH_INTERVAL);
+    std::thread::spawn(move || {
+        loop {
+            let summary = probe_usage_via_subprocess();
+            let weak = weak_usage.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_usage_summary(summary.into());
+                }
+            });
+            std::thread::sleep(USAGE_REFRESH_INTERVAL);
+        }
     });
 
     // QM-8 Phase 2: preset list probe — same refresh-loop shape as
     // usage. Lighter cadence (5min) since presets change rarely.
     window.set_preset_summary("Loading presets…".into());
     let weak_preset = window.as_weak();
-    std::thread::spawn(move || loop {
-        let summary = probe_preset_summary_via_subprocess();
-        let weak = weak_preset.clone();
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(w) = weak.upgrade() {
-                w.set_preset_summary(summary.into());
-            }
-        });
-        std::thread::sleep(PRESET_REFRESH_INTERVAL);
+    std::thread::spawn(move || {
+        loop {
+            let summary = probe_preset_summary_via_subprocess();
+            let weak = weak_preset.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = weak.upgrade() {
+                    w.set_preset_summary(summary.into());
+                }
+            });
+            std::thread::sleep(PRESET_REFRESH_INTERVAL);
+        }
     });
 
     // G-2 first-launch detection: if `~/.neoth/freedom.yaml` already
@@ -218,13 +222,10 @@ fn main() -> Result<()> {
         // their current cluster state (not Q4 defaults) when they
         // click the Cluster tab. Lossless reader — doesn't touch
         // unrelated fields.
-        let cluster_state =
-            load_cluster_settings(&neoth_dir.join("freedom.yaml"));
+        let cluster_state = load_cluster_settings(&neoth_dir.join("freedom.yaml"));
         window.set_cluster_mdns_enabled(cluster_state.mdns_enabled);
         window.set_cluster_listen_port(cluster_state.listen_port as i32);
-        window.set_cluster_trusted_ssids_summary(
-            cluster_state.trusted_ssids_summary.into(),
-        );
+        window.set_cluster_trusted_ssids_summary(cluster_state.trusted_ssids_summary.into());
 
         window.set_status_line(
             format!(
@@ -643,7 +644,9 @@ fn main() -> Result<()> {
                     stderr = %String::from_utf8_lossy(&o.stderr).trim(),
                     "kanban comment failed"
                 ),
-                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban comment could not start"),
+                Err(e) => {
+                    tracing::warn!(task_id = %id, error = %e, "kanban comment could not start")
+                }
             }
         });
     });
@@ -672,7 +675,9 @@ fn main() -> Result<()> {
                     stderr = %String::from_utf8_lossy(&o.stderr).trim(),
                     "kanban assign failed"
                 ),
-                Err(e) => tracing::warn!(task_id = %id, error = %e, "kanban assign could not start"),
+                Err(e) => {
+                    tracing::warn!(task_id = %id, error = %e, "kanban assign could not start")
+                }
             }
         });
     });
@@ -702,9 +707,10 @@ fn main() -> Result<()> {
             w.set_kanban_selected_description("".into());
             // Clear stale comments while the subprocess fetch runs so
             // the operator never sees a previous task's thread.
-            w.set_kanban_selected_comments(slint::ModelRc::new(slint::VecModel::from(
-                Vec::<KanbanCommentRow>::new(),
-            )));
+            w.set_kanban_selected_comments(slint::ModelRc::new(slint::VecModel::from(Vec::<
+                KanbanCommentRow,
+            >::new(
+            ))));
         }
         // Background fetch of comments via `neoth kanban task <id>
         // --output json`. Empty on subprocess error — operator still
@@ -776,20 +782,19 @@ fn main() -> Result<()> {
         if let Some(w) = weak_cluster.upgrade() {
             match result {
                 Ok(_) => {
-                    info!(enabled, "cluster: mdns.enabled rewritten + reload sentinel dropped");
+                    info!(
+                        enabled,
+                        "cluster: mdns.enabled rewritten + reload sentinel dropped"
+                    );
                     let verb = if enabled { "enabled" } else { "disabled" };
                     w.set_status_line(
-                        format!(
-                            "Cluster auto-discovery {verb}. Daemon reloading within 2s."
-                        )
-                        .into(),
+                        format!("Cluster auto-discovery {verb}. Daemon reloading within 2s.")
+                            .into(),
                     );
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "cluster: mdns toggle failed");
-                    w.set_status_line(
-                        format!("Cluster toggle failed: {e}").into(),
-                    );
+                    w.set_status_line(format!("Cluster toggle failed: {e}").into());
                 }
             }
         }
@@ -961,9 +966,11 @@ fn write_freedom_yaml(state: &WizardSnapshot, neoth_dir: &Path) -> Result<PathBu
     if state.enable_telegram {
         channels.push("telegram".to_string());
     }
-    let cluster = state.cluster_discovery_disabled.then_some(ClusterYamlBlock {
-        mdns: ClusterMdnsYamlBlock { enabled: false },
-    });
+    let cluster = state
+        .cluster_discovery_disabled
+        .then_some(ClusterYamlBlock {
+            mdns: ClusterMdnsYamlBlock { enabled: false },
+        });
     let yaml = MinimalFreedomYaml {
         operator_id: state.operator_id.clone(),
         provider_kind: state.provider_kind.clone(),
@@ -1070,16 +1077,14 @@ fn load_cluster_settings(path: &Path) -> ClusterSettingsSnapshot {
 /// `.tmp` + rename.
 fn set_cluster_mdns_enabled_in_freedom(path: &Path, enabled: bool) -> Result<()> {
     let body = if path.exists() {
-        std::fs::read_to_string(path)
-            .with_context(|| format!("read {}", path.display()))?
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
     } else {
         String::new()
     };
     let mut root: serde_yaml::Value = if body.trim().is_empty() {
         serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
     } else {
-        serde_yaml::from_str(&body)
-            .with_context(|| format!("parse {}", path.display()))?
+        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?
     };
     let map = match &mut root {
         serde_yaml::Value::Mapping(m) => m,
@@ -1103,8 +1108,8 @@ fn set_cluster_mdns_enabled_in_freedom(path: &Path, enabled: bool) -> Result<()>
     );
     cluster_map.insert(mdns_key, serde_yaml::Value::Mapping(mdns_map));
     map.insert(cluster_key, serde_yaml::Value::Mapping(cluster_map));
-    let serialised = serde_yaml::to_string(&root)
-        .context("serialise freedom.yaml after cluster mdns toggle")?;
+    let serialised =
+        serde_yaml::to_string(&root).context("serialise freedom.yaml after cluster mdns toggle")?;
     write_mode_0600(path, serialised.as_bytes())
 }
 
@@ -1498,7 +1503,12 @@ pub fn chat_via_subprocess_with(
 ) -> std::result::Result<String, String> {
     let output = spawn_neothd_plain(bin).arg("chat").arg(message).output();
     match output {
-        Ok(out) => shape_chat_output(out.status.success(), &out.stdout, &out.stderr, out.status.code()),
+        Ok(out) => shape_chat_output(
+            out.status.success(),
+            &out.stdout,
+            &out.stderr,
+            out.status.code(),
+        ),
         Err(e) => Err(format!(
             "Chat subprocess could not start: {e}\n\
              Verify `neothd --version` works from a terminal."
@@ -1520,11 +1530,9 @@ pub fn shape_chat_output(
         let s = String::from_utf8_lossy(stdout);
         let reply = s.trim_end_matches(['\n', '\r']).to_string();
         if reply.is_empty() {
-            return Err(
-                "Provider returned an empty reply. Check `neoth doctor` + \
+            return Err("Provider returned an empty reply. Check `neoth doctor` + \
                  `~/.neoth/freedom.yaml` provider settings."
-                    .to_string(),
-            );
+                .to_string());
         }
         return Ok(reply);
     }
@@ -1556,8 +1564,7 @@ pub fn shape_chat_output(
 
 /// R4-P1 operator-readable diagnostic for the binary-missing path.
 /// Pulled to a const so tests can pin the exact string.
-pub const BINARY_MISSING_MESSAGE: &str =
-    "Chat unavailable — `neothd` binary not on PATH.\n\
+pub const BINARY_MISSING_MESSAGE: &str = "Chat unavailable — `neothd` binary not on PATH.\n\
      Install the daemon first (the release tarball ships both \
      `neothd-gui` and `neothd` side-by-side; from source, \
      `cargo install --path ../neothd`).";
@@ -1582,12 +1589,7 @@ mod chat_subprocess_tests {
         // Reply with trailing newlines (every `neothd chat` adds one);
         // shape_chat_output trims the tail but preserves internal
         // newlines for code blocks / lists.
-        let result = shape_chat_output(
-            true,
-            b"The answer is 42.\nLine two.\n\n",
-            b"",
-            Some(0),
-        );
+        let result = shape_chat_output(true, b"The answer is 42.\nLine two.\n\n", b"", Some(0));
         assert_eq!(result, Ok("The answer is 42.\nLine two.".to_string()));
     }
 
@@ -1682,8 +1684,10 @@ mod chat_subprocess_tests {
         // the install pointers so a future refactor doesn't drop them.
         assert!(BINARY_MISSING_MESSAGE.contains("neothd"));
         assert!(BINARY_MISSING_MESSAGE.contains("PATH"));
-        assert!(BINARY_MISSING_MESSAGE.contains("release tarball")
-            || BINARY_MISSING_MESSAGE.contains("cargo install"));
+        assert!(
+            BINARY_MISSING_MESSAGE.contains("release tarball")
+                || BINARY_MISSING_MESSAGE.contains("cargo install")
+        );
     }
 
     // ── QM-9 Phase 2 dashboard probe tests ──────────────────────────────
@@ -1799,8 +1803,7 @@ mod chat_subprocess_tests {
         // Bin at a path that doesn't exist on disk → subprocess
         // spawn errors with NotFound. Pin the operator-readable
         // "could not start" diagnostic.
-        let nonexistent =
-            std::path::PathBuf::from("/this/path/does/not/exist/neothd_test_fake");
+        let nonexistent = std::path::PathBuf::from("/this/path/does/not/exist/neothd_test_fake");
         let result = chat_via_subprocess_with(&nonexistent, "hello");
         assert!(result.is_err());
         let msg = result.unwrap_err();
@@ -2229,7 +2232,10 @@ mod tests {
         let path = dir.path().join("freedom.yaml");
         std::fs::write(&path, "cluster:\n  listen_port: 70000\n").unwrap();
         let snap = load_cluster_settings(&path);
-        assert_eq!(snap.listen_port, 49737, "out-of-range falls back to default");
+        assert_eq!(
+            snap.listen_port, 49737,
+            "out-of-range falls back to default"
+        );
     }
 
     #[test]

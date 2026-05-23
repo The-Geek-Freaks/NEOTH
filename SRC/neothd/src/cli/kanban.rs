@@ -282,11 +282,7 @@ fn run_show(conn: &Connection, session_id: KanbanSessionId, output: OutputFormat
     Ok(())
 }
 
-fn run_task_detail(
-    conn: &Connection,
-    task_id: KanbanTaskId,
-    output: OutputFormat,
-) -> Result<()> {
+fn run_task_detail(conn: &Connection, task_id: KanbanTaskId, output: OutputFormat) -> Result<()> {
     let task = select_one_task(conn, task_id)?;
     let comments = store::list_comments_for_task(conn, task_id)?;
 
@@ -949,8 +945,7 @@ mod tests {
         // not in the operator's UI.
         let (_dir, conn) = fresh_db();
         let s = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
-        let t =
-            store::insert_task(&conn, s, 10, "Sample", Some("desc"), "ui", None).unwrap();
+        let t = store::insert_task(&conn, s, 10, "Sample", Some("desc"), "ui", None).unwrap();
         store::insert_comment(&conn, t, 20, "operator", "looks good").unwrap();
         store::insert_comment(&conn, t, 30, "left", "test added").unwrap();
 

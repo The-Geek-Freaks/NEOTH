@@ -428,7 +428,7 @@ fn apply_patch_via_worktree(
     // prompted via `--apply` (operator-confirmed once,
     // dispatcher trusts that signal for the session).
     if let Some(level) = cfg.autonomy {
-        use crate::permissions::{evaluate, Action, Decision};
+        use crate::permissions::{Action, Decision, evaluate};
         let action = Action::PatchApplyToRepo {
             repo_root: cfg.repo_root.clone(),
             task_id: task.task_id.raw() as u64,
@@ -453,7 +453,12 @@ fn apply_patch_via_worktree(
     }
 
     let wt_path = crate::coding::worktree::create_task_worktree(&cfg.repo_root, task.task_id)
-        .map_err(|e| format!("worktree create failed for task {}: {e}", task.task_id.raw()))?;
+        .map_err(|e| {
+            format!(
+                "worktree create failed for task {}: {e}",
+                task.task_id.raw()
+            )
+        })?;
 
     // Per Chorus verdict Q1b: refuse on dirty. The worktree was
     // just created from HEAD so it should be clean — this is a
@@ -488,11 +493,7 @@ fn apply_patch_via_worktree(
             // non-zero exit routes through the retry-policy
             // path the same way a git apply rejection does.
             let result = if let Some(cmd) = cfg.test_cmd.as_deref() {
-                match crate::coding::worktree::run_test_cmd(
-                    &worktree_path,
-                    cmd,
-                    cfg.test_timeout,
-                ) {
+                match crate::coding::worktree::run_test_cmd(&worktree_path, cmd, cfg.test_timeout) {
                     Ok(crate::coding::worktree::TestOutcome::Passed) => {
                         info!(
                             task_id = task.task_id.raw(),
@@ -501,16 +502,20 @@ fn apply_patch_via_worktree(
                         );
                         Ok(())
                     }
-                    Ok(crate::coding::worktree::TestOutcome::Failed { reason }) => {
-                        Err(("tests", format!(
+                    Ok(crate::coding::worktree::TestOutcome::Failed { reason }) => Err((
+                        "tests",
+                        format!(
                             "tests failed in worktree for task {} ({cmd}): {reason}",
                             task.task_id.raw()
-                        )))
-                    }
-                    Err(e) => Err(("tests", format!(
-                        "test-command spawn failed for task {} ({cmd}): {e}",
-                        task.task_id.raw()
-                    ))),
+                        ),
+                    )),
+                    Err(e) => Err((
+                        "tests",
+                        format!(
+                            "test-command spawn failed for task {} ({cmd}): {e}",
+                            task.task_id.raw()
+                        ),
+                    )),
                 }
             } else {
                 Ok(())
@@ -543,13 +548,7 @@ fn apply_patch_via_worktree(
                 "git apply rejected patch for task {}: {stderr}",
                 task.task_id.raw()
             );
-            emit_patch_apply_failed_wal(
-                cfg.wal_writer.as_deref(),
-                task,
-                &wt_path,
-                "apply",
-                &msg,
-            );
+            emit_patch_apply_failed_wal(cfg.wal_writer.as_deref(), task, &wt_path, "apply", &msg);
             Err(msg)
         }
         Err(e) => {
@@ -592,10 +591,7 @@ fn emit_patch_applied_wal(
     })
     .to_string()
     .into_bytes();
-    let header = crate::wal::make_header(
-        crate::wal::events::EVENT_TYPE_PATCH_APPLIED,
-        &payload,
-    );
+    let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_PATCH_APPLIED, &payload);
     if let Err(e) = writer.try_append_sync(header, payload) {
         tracing::warn!(
             task_id = task.task_id.raw(),
@@ -629,10 +625,8 @@ fn emit_patch_apply_failed_wal(
     })
     .to_string()
     .into_bytes();
-    let header = crate::wal::make_header(
-        crate::wal::events::EVENT_TYPE_PATCH_APPLY_FAILED,
-        &payload,
-    );
+    let header =
+        crate::wal::make_header(crate::wal::events::EVENT_TYPE_PATCH_APPLY_FAILED, &payload);
     if let Err(e) = writer.try_append_sync(header, payload) {
         tracing::warn!(
             task_id = task.task_id.raw(),
@@ -720,12 +714,8 @@ fn handle_retryable_failure(
         // the operator sees what the failed attempt produced even
         // before the next try.
         if let Some(o) = partial_outcome {
-            let _ = store::attach_task_artifact(
-                conn,
-                task.task_id,
-                Some(&o.patch_path),
-                Some(o.tests),
-            );
+            let _ =
+                store::attach_task_artifact(conn, task.task_id, Some(&o.patch_path), Some(o.tests));
         }
         // Back to Backlog for the next dispatch loop iteration.
         store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns)
@@ -1025,15 +1015,32 @@ mod tests {
     /// points somewhere apply_patch_in_worktree can branch off.
     fn init_repo(dir: &std::path::Path) -> std::io::Result<()> {
         use std::process::Command;
-        Command::new("git").arg("-C").arg(dir).args(["init", "-q"]).status()?;
-        Command::new("git").arg("-C").arg(dir)
-            .args(["config", "user.email", "ph4-test@example.com"]).status()?;
-        Command::new("git").arg("-C").arg(dir)
-            .args(["config", "user.name", "ph4-test"]).status()?;
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["init", "-q"])
+            .status()?;
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["config", "user.email", "ph4-test@example.com"])
+            .status()?;
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["config", "user.name", "ph4-test"])
+            .status()?;
         std::fs::write(dir.join("README.md"), "initial\n")?;
-        Command::new("git").arg("-C").arg(dir).args(["add", "README.md"]).status()?;
-        Command::new("git").arg("-C").arg(dir)
-            .args(["commit", "-q", "-m", "init"]).status()?;
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["add", "README.md"])
+            .status()?;
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["commit", "-q", "-m", "init"])
+            .status()?;
         Ok(())
     }
 
@@ -1351,8 +1358,8 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo)
-            .with_wal_writer(std::sync::Arc::clone(&writer));
+        let apply_cfg =
+            DispatchApplyConfig::new(&repo).with_wal_writer(std::sync::Arc::clone(&writer));
 
         // The dispatcher itself is sync; spawn_blocking keeps
         // the inner sync path off the runtime thread.
@@ -1464,8 +1471,8 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo)
-            .with_autonomy(crate::permissions::AutonomyLevel::Full);
+        let apply_cfg =
+            DispatchApplyConfig::new(&repo).with_autonomy(crate::permissions::AutonomyLevel::Full);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -1475,7 +1482,10 @@ mod tests {
         )
         .expect("dispatch full");
 
-        assert_eq!(outcome.tasks_completed, 1, "full → confirm → allow → complete");
+        assert_eq!(
+            outcome.tasks_completed, 1,
+            "full → confirm → allow → complete"
+        );
 
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);

@@ -398,10 +398,7 @@ pub mod persist {
     /// Snapshot every registered breaker into the state file.
     /// Atomic write via `.tmp` + rename. Best-effort I/O — caller
     /// decides whether to warn-and-continue on error.
-    pub fn snapshot_to_disk(
-        home: &Path,
-        registry: &BreakerRegistry,
-    ) -> std::io::Result<usize> {
+    pub fn snapshot_to_disk(home: &Path, registry: &BreakerRegistry) -> std::io::Result<usize> {
         fs::create_dir_all(dir(home))?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -551,10 +548,7 @@ impl BreakerRegistry {
     /// future `/metrics` exporter.
     pub fn snapshot_all(&self) -> Vec<(String, BreakerSnapshot)> {
         let g = self.breakers.lock().unwrap_or_else(|p| p.into_inner());
-        let mut out: Vec<_> = g
-            .iter()
-            .map(|(k, v)| (k.clone(), v.snapshot()))
-            .collect();
+        let mut out: Vec<_> = g.iter().map(|(k, v)| (k.clone(), v.snapshot())).collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }

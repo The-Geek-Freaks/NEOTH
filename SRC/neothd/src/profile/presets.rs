@@ -204,11 +204,7 @@ pub fn apply_preset(preset: ProfilePreset) -> PresetData {
 /// `EVENT_TYPE_PROFILE_PRESET_APPLIED` (0x1B) WAL frame. `source`
 /// ∈ `"wizard" | "cli" | "gui"` so the WAL replay shows WHERE the
 /// operator applied the preset from.
-pub fn build_preset_applied_payload(
-    preset: ProfilePreset,
-    source: &str,
-    ts_unix: i64,
-) -> Vec<u8> {
+pub fn build_preset_applied_payload(preset: ProfilePreset, source: &str, ts_unix: i64) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "preset_name": preset.as_str(),
         "source": source,
@@ -249,7 +245,10 @@ mod tests {
     #[test]
     fn preset_parse_is_case_insensitive() {
         assert_eq!(ProfilePreset::parse("LOWKEY"), Some(ProfilePreset::Lowkey));
-        assert_eq!(ProfilePreset::parse("  Tutor  "), Some(ProfilePreset::Tutor));
+        assert_eq!(
+            ProfilePreset::parse("  Tutor  "),
+            Some(ProfilePreset::Tutor)
+        );
     }
 
     #[test]
@@ -264,7 +263,11 @@ mod tests {
             ProfilePreset::ALL.iter().map(|p| p.description()).collect();
         assert_eq!(descs.len(), 5);
         for p in ProfilePreset::ALL {
-            assert!(p.description().len() <= 220, "{} description too long", p.as_str());
+            assert!(
+                p.description().len() <= 220,
+                "{} description too long",
+                p.as_str()
+            );
         }
     }
 
@@ -272,7 +275,12 @@ mod tests {
     fn lowkey_marked_recommended_in_description() {
         // Drift guard — losing the (recommended) tag would silently
         // change the wizard default for non-developer operators.
-        assert!(ProfilePreset::Lowkey.description().to_lowercase().contains("recommended"));
+        assert!(
+            ProfilePreset::Lowkey
+                .description()
+                .to_lowercase()
+                .contains("recommended")
+        );
     }
 
     // ── apply_preset ────────────────────────────────────────────

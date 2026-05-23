@@ -243,12 +243,7 @@ mod tests {
         // Per the WAL event 0x12 spec: payload MUST carry cli_name +
         // version + login_state + ts_unix. Pin so a future refactor
         // that drops one of the fields surfaces here.
-        let payload = build_installer_ran_payload(
-            "claude",
-            "1.2.3",
-            "logged_in",
-            1_700_000_000,
-        );
+        let payload = build_installer_ran_payload("claude", "1.2.3", "logged_in", 1_700_000_000);
         let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(v["cli_name"].as_str(), Some("claude"));
         assert_eq!(v["version"].as_str(), Some("1.2.3"));
@@ -262,12 +257,7 @@ mod tests {
         // a future addition that changes the binary name doesn't slip
         // a non-utf-8 name through.
         for kind in ALL {
-            let payload = build_installer_ran_payload(
-                kind.binary,
-                "0.0.0",
-                "pending",
-                0,
-            );
+            let payload = build_installer_ran_payload(kind.binary, "0.0.0", "pending", 0);
             let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
             assert_eq!(v["cli_name"].as_str(), Some(kind.binary));
         }
@@ -280,17 +270,22 @@ mod tests {
         // live on every CI runner so we pin the SHAPE (distinct
         // binaries + npm-package scope) here; the real network call
         // is verified by `npm_version_returns_some_or_none` above.
-        let pkgs: std::collections::HashSet<&str> =
-            ALL.iter().map(|c| c.npm_package).collect();
+        let pkgs: std::collections::HashSet<&str> = ALL.iter().map(|c| c.npm_package).collect();
         assert_eq!(pkgs.len(), 3, "all 3 CLIs have distinct npm packages");
 
         // Pin the scoped-package format pattern so a npm rename
         // breaks at test time, not at first operator install.
         for c in ALL {
-            assert!(c.npm_package.starts_with('@'),
-                "{} should use scoped npm pkg name", c.display);
-            assert!(c.npm_package.contains('/'),
-                "{} npm pkg should be `@scope/name` shape", c.display);
+            assert!(
+                c.npm_package.starts_with('@'),
+                "{} should use scoped npm pkg name",
+                c.display
+            );
+            assert!(
+                c.npm_package.contains('/'),
+                "{} npm pkg should be `@scope/name` shape",
+                c.display
+            );
         }
     }
 }

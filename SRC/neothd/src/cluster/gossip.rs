@@ -166,11 +166,7 @@ impl ReplayBudget {
 ///     event type / band)
 ///
 /// Returns `true` ⇔ replicate to peers.
-pub fn should_replicate(
-    tag: GossipTag,
-    policy: &GossipPolicy,
-    is_raw_ingress: bool,
-) -> bool {
+pub fn should_replicate(tag: GossipTag, policy: &GossipPolicy, is_raw_ingress: bool) -> bool {
     if !tag.is_replicable() {
         return false;
     }

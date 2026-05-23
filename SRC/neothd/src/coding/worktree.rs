@@ -198,10 +198,7 @@ pub fn apply_patch_in_worktree(worktree: &Path, patch: &Path) -> Result<PatchApp
 /// `force` is true.
 pub fn cleanup_worktree(repo_root: &Path, worktree: &Path, force: bool) -> Result<()> {
     let mut cmd = Command::new("git");
-    cmd.arg("-C")
-        .arg(repo_root)
-        .arg("worktree")
-        .arg("remove");
+    cmd.arg("-C").arg(repo_root).arg("worktree").arg("remove");
     if force {
         cmd.arg("--force");
     }
@@ -409,8 +406,8 @@ fn write_test_log(
 /// `neoth rollback`. Returns lowercase hex.
 pub fn patch_hash(patch: &Path) -> Result<String> {
     use sha2::{Digest, Sha256};
-    let bytes = std::fs::read(patch)
-        .with_context(|| format!("read patch {} for hash", patch.display()))?;
+    let bytes =
+        std::fs::read(patch).with_context(|| format!("read patch {} for hash", patch.display()))?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
     let digest = hasher.finalize();
@@ -477,8 +474,7 @@ mod tests {
 
     #[test]
     fn worktree_path_for_lives_next_to_repo_root() {
-        let path =
-            worktree_path_for(Path::new("/home/alice/code/proj"), KanbanTaskId(42));
+        let path = worktree_path_for(Path::new("/home/alice/code/proj"), KanbanTaskId(42));
         assert_eq!(path, PathBuf::from("/home/alice/code/.neoth-task-42"));
     }
 
@@ -509,7 +505,10 @@ mod tests {
         let p = write_patch(dir.path(), "diff --git a/x b/x\n");
         let h = patch_hash(&p).unwrap();
         assert_eq!(h.len(), 64);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            h.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
         // Identical input → identical hash.
         let h2 = patch_hash(&p).unwrap();
         assert_eq!(h, h2);
@@ -623,18 +622,24 @@ mod tests {
     #[test]
     fn run_test_cmd_reports_passed_on_zero_exit() {
         let dir = tempdir().unwrap();
-        let outcome =
-            run_test_cmd(dir.path(), &always_pass_cmd(), std::time::Duration::from_secs(10))
-                .expect("spawn");
+        let outcome = run_test_cmd(
+            dir.path(),
+            &always_pass_cmd(),
+            std::time::Duration::from_secs(10),
+        )
+        .expect("spawn");
         assert!(outcome.is_passed(), "got {outcome:?}");
     }
 
     #[test]
     fn run_test_cmd_reports_failed_on_nonzero_exit() {
         let dir = tempdir().unwrap();
-        let outcome =
-            run_test_cmd(dir.path(), &always_fail_cmd(), std::time::Duration::from_secs(10))
-                .expect("spawn");
+        let outcome = run_test_cmd(
+            dir.path(),
+            &always_fail_cmd(),
+            std::time::Duration::from_secs(10),
+        )
+        .expect("spawn");
         assert!(!outcome.is_passed());
         if let TestOutcome::Failed { reason } = outcome {
             assert!(!reason.is_empty(), "diagnostic must be non-empty");
@@ -653,9 +658,12 @@ mod tests {
     #[test]
     fn run_test_cmd_writes_test_output_log_on_pass() {
         let dir = tempdir().unwrap();
-        let outcome =
-            run_test_cmd(dir.path(), &always_pass_cmd(), std::time::Duration::from_secs(10))
-                .expect("spawn");
+        let outcome = run_test_cmd(
+            dir.path(),
+            &always_pass_cmd(),
+            std::time::Duration::from_secs(10),
+        )
+        .expect("spawn");
         assert!(outcome.is_passed());
         let log = dir.path().join(".neoth-test-output.log");
         assert!(log.exists(), "test log must exist after pass");
@@ -695,7 +703,10 @@ mod tests {
         )
         .unwrap_err()
         .to_string();
-        assert!(err.contains("spawn") || err.contains("not found"), "got: {err}");
+        assert!(
+            err.contains("spawn") || err.contains("not found"),
+            "got: {err}"
+        );
     }
 
     #[test]

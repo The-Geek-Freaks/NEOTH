@@ -492,7 +492,10 @@ sources:
 
     fn cfg_with_local_root(provider: Provider, root: &std::path::Path) -> CloudConfig {
         let mut opts = std::collections::HashMap::new();
-        opts.insert("local_root".to_string(), root.to_string_lossy().into_owned());
+        opts.insert(
+            "local_root".to_string(),
+            root.to_string_lossy().into_owned(),
+        );
         CloudConfig {
             provider,
             oauth_token: String::new(),
@@ -516,7 +519,10 @@ sources:
         let entries = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<CloudFile>> {
             let cfg = {
                 let mut opts = std::collections::HashMap::new();
-                opts.insert("local_root".to_string(), root.to_string_lossy().into_owned());
+                opts.insert(
+                    "local_root".to_string(),
+                    root.to_string_lossy().into_owned(),
+                );
                 CloudConfig {
                     provider: Provider::Dropbox,
                     oauth_token: String::new(),
@@ -555,7 +561,10 @@ sources:
         let err = tokio::task::spawn_blocking(move || {
             let cfg = {
                 let mut opts = std::collections::HashMap::new();
-                opts.insert("local_root".to_string(), root.to_string_lossy().into_owned());
+                opts.insert(
+                    "local_root".to_string(),
+                    root.to_string_lossy().into_owned(),
+                );
                 CloudConfig {
                     provider: Provider::OneDrive,
                     oauth_token: String::new(),
@@ -662,10 +671,7 @@ sources:
             }),
         };
         assert_eq!(connector_mode_of(&with_root), ConnectorMode::LocalMirror);
-        assert_eq!(
-            connector_mode_of(&with_root).as_str(),
-            "local-mirror"
-        );
+        assert_eq!(connector_mode_of(&with_root).as_str(), "local-mirror");
 
         let without_root = CloudConfig {
             provider: Provider::Gmail,
@@ -674,10 +680,10 @@ sources:
             label: None,
             connector_options: None,
         };
-        assert_eq!(connector_mode_of(&without_root), ConnectorMode::StubFallback);
         assert_eq!(
-            connector_mode_of(&without_root).as_str(),
-            "stub-fallback"
+            connector_mode_of(&without_root),
+            ConnectorMode::StubFallback
         );
+        assert_eq!(connector_mode_of(&without_root).as_str(), "stub-fallback");
     }
 }

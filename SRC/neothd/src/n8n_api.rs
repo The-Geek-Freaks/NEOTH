@@ -354,12 +354,8 @@ mod tests {
 
     #[test]
     fn n8n_request_payload_carries_required_fields() {
-        let bytes = build_n8n_request_payload(
-            "/api/recall",
-            "127.0.0.1",
-            "req-7f3a",
-            1_700_000_000,
-        );
+        let bytes =
+            build_n8n_request_payload("/api/recall", "127.0.0.1", "req-7f3a", 1_700_000_000);
         let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(v["endpoint"], "/api/recall");
         assert_eq!(v["source_ip"], "127.0.0.1");

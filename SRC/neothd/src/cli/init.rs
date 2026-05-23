@@ -1738,9 +1738,7 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
             state.auto_update.auto_apply = apply;
             println!(
                 "  [7b/8] auto_update: enabled={} auto_apply={} channel={}",
-                state.auto_update.enabled,
-                state.auto_update.auto_apply,
-                state.auto_update.channel,
+                state.auto_update.enabled, state.auto_update.auto_apply, state.auto_update.channel,
             );
         } else {
             // Explicit "no" — make sure both flags are false even

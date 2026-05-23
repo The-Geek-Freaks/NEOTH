@@ -293,7 +293,11 @@ impl LocalQwenAdapter {
         // L-14 disk-space pre-flight. Bypassable via env var for
         // CI / sandbox scenarios where the OS-reported free space
         // is unreliable (tmpfs, overlayfs, etc).
-        if std::env::var("NEOTH_QWEN_SKIP_DISK_PREFLIGHT").ok().as_deref() != Some("1") {
+        if std::env::var("NEOTH_QWEN_SKIP_DISK_PREFLIGHT")
+            .ok()
+            .as_deref()
+            != Some("1")
+        {
             preflight_disk_space(&self.cache_dir, QWEN_DOWNLOAD_MIN_FREE_BYTES)
                 .context("disk-space pre-flight before Qwen download")?;
         }
@@ -1315,7 +1319,9 @@ mod tests {
         // the env-var bypass + names the available + required
         // sizes.
         let dir = std::env::temp_dir();
-        let err = preflight_disk_space(&dir, 1u64 << 60).unwrap_err().to_string();
+        let err = preflight_disk_space(&dir, 1u64 << 60)
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("NEOTH_QWEN_SKIP_DISK_PREFLIGHT")
                 || err.contains("no matching mount point"),
@@ -1717,6 +1723,9 @@ mod tests {
             .await
             .expect("second embed");
         let cos = crate::providers::embed::cosine(&resp.vector, &resp2.vector);
-        assert!(cos < 0.99, "distinct prompts should yield cos < 0.99, got {cos}");
+        assert!(
+            cos < 0.99,
+            "distinct prompts should yield cos < 0.99, got {cos}"
+        );
     }
 }

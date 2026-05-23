@@ -62,8 +62,8 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
 use super::heartbeat::{
-    self, FrameBody, FrameKind, HeartbeatBody, HelloBody, WireFrame, PROTOCOL_NAME,
-    PROTOCOL_VERSION,
+    self, FrameBody, FrameKind, HeartbeatBody, HelloBody, PROTOCOL_NAME, PROTOCOL_VERSION,
+    WireFrame,
 };
 use super::{PeerId, PeerLoad, PeerLoadRegistry};
 use crate::wal::writer::WalWriterHandle;
@@ -247,8 +247,7 @@ async fn handle_peeroxide_connection(
             capabilities_schema_version: 1,
         }),
     };
-    let our_hello_bytes =
-        heartbeat::encode_frame(&our_hello).context("encode our Hello")?;
+    let our_hello_bytes = heartbeat::encode_frame(&our_hello).context("encode our Hello")?;
     stream
         .write(&our_hello_bytes)
         .await
@@ -291,10 +290,7 @@ async fn handle_peeroxide_connection(
             &peer_frame.peer_id,
             &format!("peer first frame was {:?}, expected Hello", peer_frame.kind),
         );
-        anyhow::bail!(
-            "peer first frame was {:?}, expected Hello",
-            peer_frame.kind
-        );
+        anyhow::bail!("peer first frame was {:?}, expected Hello", peer_frame.kind);
     }
     let peer_id = peer_frame.peer_id.clone();
     let mut peer_capabilities: Vec<String> = match peer_frame.body {
@@ -312,9 +308,7 @@ async fn handle_peeroxide_connection(
                 emit_peer_rejected_wal(
                     wal_writer.as_deref(),
                     &peer_id,
-                    &format!(
-                        "cluster_name_hash mismatch for local cluster `{cluster_name}`"
-                    ),
+                    &format!("cluster_name_hash mismatch for local cluster `{cluster_name}`"),
                 );
                 anyhow::bail!(
                     "peer cluster_name_hash does not match local cluster `{cluster_name}`"
@@ -458,7 +452,11 @@ fn emit_peer_connected_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_CONNECTED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_PEER_CONNECTED,
+        payload,
+    );
 }
 
 fn emit_peer_disconnected_wal(
@@ -476,14 +474,14 @@ fn emit_peer_disconnected_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_DISCONNECTED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_PEER_DISCONNECTED,
+        payload,
+    );
 }
 
-fn emit_peer_rejected_wal(
-    writer: Option<&WalWriterHandle>,
-    peer_id_claim: &str,
-    reason: &str,
-) {
+fn emit_peer_rejected_wal(writer: Option<&WalWriterHandle>, peer_id_claim: &str, reason: &str) {
     let Some(w) = writer else { return };
     let payload = serde_json::json!({
         "peer_id_claim": peer_id_claim,
@@ -492,14 +490,14 @@ fn emit_peer_rejected_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_REJECTED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_PEER_REJECTED,
+        payload,
+    );
 }
 
-fn emit_heartbeat_first_wal(
-    writer: Option<&WalWriterHandle>,
-    peer_id: &str,
-    body: &HeartbeatBody,
-) {
+fn emit_heartbeat_first_wal(writer: Option<&WalWriterHandle>, peer_id: &str, body: &HeartbeatBody) {
     let Some(w) = writer else { return };
     let payload = serde_json::json!({
         "peer_id": peer_id,
@@ -510,7 +508,11 @@ fn emit_heartbeat_first_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST,
+        payload,
+    );
 }
 
 fn emit_peer_health_changed_wal(
@@ -530,7 +532,11 @@ fn emit_peer_health_changed_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED,
+        payload,
+    );
 }
 
 fn emit_capabilities_changed_wal(
@@ -546,7 +552,11 @@ fn emit_capabilities_changed_wal(
     })
     .to_string()
     .into_bytes();
-    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED, payload);
+    fire_wal(
+        w,
+        crate::wal::events::EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED,
+        payload,
+    );
 }
 
 fn fire_wal(writer: &WalWriterHandle, event_type: u8, payload: Vec<u8>) {
@@ -618,10 +628,7 @@ pub async fn receive_hello<R: AsyncRead + Unpin>(
         .await
         .context("read peer Hello frame")?;
     if frame.kind != FrameKind::Hello {
-        anyhow::bail!(
-            "peer first frame was {:?}, expected Hello",
-            frame.kind
-        );
+        anyhow::bail!("peer first frame was {:?}, expected Hello", frame.kind);
     }
     let FrameBody::Hello(body) = frame.body else {
         anyhow::bail!("peer Hello kind/body mismatch — frame.body is not Hello");
@@ -799,7 +806,7 @@ mod tests {
 
     use super::super::heartbeat::{
         CapabilityUpdateBody, FrameBody, FrameKind, GoodbyeBody, HeartbeatBody, HelloBody,
-        WireFrame, PROTOCOL_NAME, PROTOCOL_VERSION,
+        PROTOCOL_NAME, PROTOCOL_VERSION, WireFrame,
     };
     use std::time::Duration;
 
@@ -995,7 +1002,9 @@ mod tests {
                 peer_id: "peer-Q".into(),
                 body: FrameBody::Goodbye(GoodbyeBody { reason: None }),
             };
-            heartbeat::write_framed(&mut sender, &goodbye).await.unwrap();
+            heartbeat::write_framed(&mut sender, &goodbye)
+                .await
+                .unwrap();
         });
 
         let loop_result = tokio::time::timeout(

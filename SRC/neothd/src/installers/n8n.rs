@@ -55,9 +55,7 @@ impl InstallStrategy {
     /// can skip n8n entirely.
     pub fn description(self) -> &'static str {
         match self {
-            Self::Docker => {
-                "Run n8n as a Docker container (recommended: isolated, easy upgrade)"
-            }
+            Self::Docker => "Run n8n as a Docker container (recommended: isolated, easy upgrade)",
             Self::Npm => "Install n8n globally via npm (fallback: needs Node.js)",
         }
     }
@@ -136,11 +134,7 @@ async fn cli_version(binary: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Outcome of a live n8n HTTP probe. Operator-readable so the
@@ -276,7 +270,10 @@ mod tests {
     fn probe_outcome_as_str_pinned() {
         assert_eq!(N8nProbeOutcome::Reachable.as_str(), "reachable");
         assert_eq!(N8nProbeOutcome::PortClosed.as_str(), "port_closed");
-        assert_eq!(N8nProbeOutcome::PortOpenNoHttp.as_str(), "port_open_no_http");
+        assert_eq!(
+            N8nProbeOutcome::PortOpenNoHttp.as_str(),
+            "port_open_no_http"
+        );
         assert_eq!(N8nProbeOutcome::Timeout.as_str(), "timeout");
     }
 

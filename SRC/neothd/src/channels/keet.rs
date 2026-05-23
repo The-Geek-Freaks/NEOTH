@@ -55,7 +55,10 @@ impl KeetChannel {
         // Render 16 hex chars from each so the operator can scan
         // both anchors at a glance.
         let topic_hex: String = topic.0[..8].iter().map(|b| format!("{b:02x}")).collect();
-        let disc_hex: String = discovery.0[..8].iter().map(|b| format!("{b:02x}")).collect();
+        let disc_hex: String = discovery.0[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
         Some(format!("topic:{topic_hex}… disc:{disc_hex}…"))
     }
 }
@@ -76,7 +79,10 @@ pub enum SeedValidation {
     InvalidCharacter { bad_word_index: usize },
     /// One or more words are too short / too long for a plausible
     /// BIP39-style entry (3-8 chars). Likely an operator typo.
-    SuspiciousWordLength { bad_word_index: usize, length: usize },
+    SuspiciousWordLength {
+        bad_word_index: usize,
+        length: usize,
+    },
 }
 
 impl SeedValidation {
@@ -213,10 +219,9 @@ mod tests {
         // 24 lowercase 4-6 letter words. Not a real Keet phrase
         // (no checksum guarantee) but shape-valid for the validator.
         let words = [
-            "abandon", "ability", "able", "about", "above", "absent",
-            "absorb", "abstract", "absurd", "abuse", "access", "accident",
-            "account", "accuse", "achieve", "acid", "acoustic", "acquire",
-            "across", "act", "action", "actor", "actress", "actual",
+            "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract",
+            "absurd", "abuse", "access", "accident", "account", "accuse", "achieve", "acid",
+            "acoustic", "acquire", "across", "act", "action", "actor", "actress", "actual",
         ];
         words.join(" ")
     }
@@ -251,8 +256,7 @@ mod tests {
     #[test]
     fn validate_seed_rejects_uppercase_letters() {
         // Operator copied from a doc that title-cased the phrase.
-        let mut words: Vec<String> =
-            good_phrase().split_whitespace().map(String::from).collect();
+        let mut words: Vec<String> = good_phrase().split_whitespace().map(String::from).collect();
         words[5] = "AbSORB".into();
         let v = validate_seed_phrase(&words.join(" "));
         assert_eq!(v, SeedValidation::InvalidCharacter { bad_word_index: 5 });
@@ -260,8 +264,7 @@ mod tests {
 
     #[test]
     fn validate_seed_rejects_digits_or_punctuation() {
-        let mut words: Vec<String> =
-            good_phrase().split_whitespace().map(String::from).collect();
+        let mut words: Vec<String> = good_phrase().split_whitespace().map(String::from).collect();
         words[10] = "acc3ss".into();
         let v = validate_seed_phrase(&words.join(" "));
         assert_eq!(v, SeedValidation::InvalidCharacter { bad_word_index: 10 });
@@ -269,8 +272,7 @@ mod tests {
 
     #[test]
     fn validate_seed_rejects_too_short_word() {
-        let mut words: Vec<String> =
-            good_phrase().split_whitespace().map(String::from).collect();
+        let mut words: Vec<String> = good_phrase().split_whitespace().map(String::from).collect();
         words[3] = "ab".into(); // 2 chars — implausible
         let v = validate_seed_phrase(&words.join(" "));
         assert_eq!(
@@ -284,13 +286,15 @@ mod tests {
 
     #[test]
     fn validate_seed_rejects_too_long_word() {
-        let mut words: Vec<String> =
-            good_phrase().split_whitespace().map(String::from).collect();
+        let mut words: Vec<String> = good_phrase().split_whitespace().map(String::from).collect();
         words[7] = "supercalifragilistic".into();
         let v = validate_seed_phrase(&words.join(" "));
         assert!(matches!(
             v,
-            SeedValidation::SuspiciousWordLength { bad_word_index: 7, .. }
+            SeedValidation::SuspiciousWordLength {
+                bad_word_index: 7,
+                ..
+            }
         ));
     }
 

@@ -57,9 +57,7 @@ pub const DPAPI_MAGIC: &[u8] = b"NEOTH_DPAPIv1\n";
 /// debugging but never into a user-visible WAL frame.
 pub fn protect(plaintext: &[u8]) -> Result<Vec<u8>> {
     use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Security::Cryptography::{
-        CryptProtectData, CRYPT_INTEGER_BLOB,
-    };
+    use windows_sys::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CryptProtectData};
 
     let in_blob = CRYPT_INTEGER_BLOB {
         cbData: plaintext.len() as u32,
@@ -88,9 +86,7 @@ pub fn protect(plaintext: &[u8]) -> Result<Vec<u8>> {
         anyhow::bail!("CryptProtectData failed: GetLastError={err}");
     }
 
-    let slice = unsafe {
-        std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize)
-    };
+    let slice = unsafe { std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize) };
     let mut out = Vec::with_capacity(DPAPI_MAGIC.len() + slice.len());
     out.extend_from_slice(DPAPI_MAGIC);
     out.extend_from_slice(slice);
@@ -109,9 +105,7 @@ pub fn protect(plaintext: &[u8]) -> Result<Vec<u8>> {
 /// blob (wrong user account, corrupted blob, master key roll).
 pub fn unprotect(wrapped: &[u8]) -> Result<Vec<u8>> {
     use windows_sys::Win32::Foundation::LocalFree;
-    use windows_sys::Win32::Security::Cryptography::{
-        CryptUnprotectData, CRYPT_INTEGER_BLOB,
-    };
+    use windows_sys::Win32::Security::Cryptography::{CRYPT_INTEGER_BLOB, CryptUnprotectData};
 
     if !is_wrapped(wrapped) {
         anyhow::bail!("input lacks NEOTH_DPAPIv1 magic header");
@@ -147,9 +141,7 @@ pub fn unprotect(wrapped: &[u8]) -> Result<Vec<u8>> {
         );
     }
 
-    let slice = unsafe {
-        std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize)
-    };
+    let slice = unsafe { std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize) };
     let plaintext = slice.to_vec();
     // SAFETY: OS contract requires LocalFree on success.
     unsafe { LocalFree(out_blob.pbData as _) };

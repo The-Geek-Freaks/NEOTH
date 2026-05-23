@@ -57,14 +57,20 @@ impl PeerRoster {
 
     pub fn register(&mut self, reg: RelayRegistration) -> RegistrationOutcome {
         if reg.cluster_key_hex.len() != 64
-            || !reg.cluster_key_hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+            || !reg
+                .cluster_key_hex
+                .chars()
+                .all(|c| matches!(c, '0'..='9' | 'a'..='f'))
         {
             return RegistrationOutcome::Malformed {
                 reason: "cluster_key_hex must be 64 lowercase-hex chars",
             };
         }
         if reg.peer_pub_key_hex.len() != 64
-            || !reg.peer_pub_key_hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+            || !reg
+                .peer_pub_key_hex
+                .chars()
+                .all(|c| matches!(c, '0'..='9' | 'a'..='f'))
         {
             return RegistrationOutcome::Malformed {
                 reason: "peer_pub_key_hex must be 64 lowercase-hex chars",
@@ -80,10 +86,7 @@ impl PeerRoster {
                 reason: "listen_port must be > 0",
             };
         }
-        let bucket = self
-            .buckets
-            .entry(reg.cluster_key_hex.clone())
-            .or_default();
+        let bucket = self.buckets.entry(reg.cluster_key_hex.clone()).or_default();
         if let Some(existing) = bucket
             .iter_mut()
             .find(|r| r.peer_pub_key_hex == reg.peer_pub_key_hex)

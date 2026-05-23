@@ -221,9 +221,15 @@ pub fn apply_preset_to_freedom_yaml(home: &Path, preset: &Preset) -> Result<Appl
     }
     if let Some(depth) = preset.max_recursion_depth {
         ensure_council_block(mapping);
-        set_nested(mapping, "council", "max_recursion_depth", &mut report, |m, k| {
-            insert_value(m, k, serde_yaml::Value::from(depth));
-        });
+        set_nested(
+            mapping,
+            "council",
+            "max_recursion_depth",
+            &mut report,
+            |m, k| {
+                insert_value(m, k, serde_yaml::Value::from(depth));
+            },
+        );
     }
     if let Some(calls) = preset.max_calls_per_user_message {
         ensure_council_block(mapping);
@@ -370,7 +376,8 @@ mod tests {
     fn save_then_load_roundtrip() {
         let dir = tempdir().unwrap();
         let mut file = PresetFile::default();
-        file.presets.insert("cloud-heavy".into(), cloud_heavy_preset());
+        file.presets
+            .insert("cloud-heavy".into(), cloud_heavy_preset());
         file.active = Some("cloud-heavy".into());
         save(dir.path(), &file).unwrap();
         let loaded = load(dir.path()).unwrap();
@@ -418,7 +425,10 @@ mod tests {
         assert!(remove(dir.path(), "p").unwrap());
         let f = load(dir.path()).unwrap();
         assert!(f.presets.is_empty());
-        assert!(f.active.is_none(), "active must clear when its preset is removed");
+        assert!(
+            f.active.is_none(),
+            "active must clear when its preset is removed"
+        );
         // Removing again is Ok(false).
         assert!(!remove(dir.path(), "p").unwrap());
     }
@@ -483,10 +493,16 @@ mod tests {
         upsert(dir.path(), "test", preset).unwrap();
         let report = apply(dir.path(), "test").unwrap();
         assert!(report.preset_applied);
-        assert!(report.fields_changed.contains(&"usage_currency".to_string()));
-        assert!(report
-            .fields_changed
-            .contains(&"council.daily_usd_cap".to_string()));
+        assert!(
+            report
+                .fields_changed
+                .contains(&"usage_currency".to_string())
+        );
+        assert!(
+            report
+                .fields_changed
+                .contains(&"council.daily_usd_cap".to_string())
+        );
         let body = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
         assert!(body.contains("usage_currency: EUR"));
         assert!(body.contains("daily_usd_cap: 7.5"));
@@ -525,10 +541,16 @@ mod tests {
             ..Default::default()
         };
         let report = apply_preset_to_freedom_yaml(dir.path(), &preset).unwrap();
-        assert!(report.fields_changed.contains(&"inference.left".to_string()));
-        assert!(report
-            .fields_changed
-            .contains(&"inference.right".to_string()));
+        assert!(
+            report
+                .fields_changed
+                .contains(&"inference.left".to_string())
+        );
+        assert!(
+            report
+                .fields_changed
+                .contains(&"inference.right".to_string())
+        );
         let body = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
         assert!(body.contains("inference:"));
         assert!(body.contains("openai_api"));

@@ -99,9 +99,13 @@ pub struct Plan {
 pub enum PlanValidationError {
     #[error("placeholder text in {field}: {token}")]
     Placeholder { field: String, token: String },
-    #[error("task {task_id}: acceptance criteria list is empty — every task needs at least one pass condition")]
+    #[error(
+        "task {task_id}: acceptance criteria list is empty — every task needs at least one pass condition"
+    )]
     EmptyAcceptance { task_id: String },
-    #[error("task {task_id}: evidence requirement list is empty — every task needs at least one verifiable artefact")]
+    #[error(
+        "task {task_id}: evidence requirement list is empty — every task needs at least one verifiable artefact"
+    )]
     EmptyEvidence { task_id: String },
     #[error("task {task_id} title is empty — every task needs an imperative-verb title")]
     EmptyTitle { task_id: String },

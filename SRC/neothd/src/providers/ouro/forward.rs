@@ -28,8 +28,10 @@
 //! the deferral when the field is set.
 
 use anyhow::{Context, Result};
-use candle_core::{DType, Device, IndexOp, Module, Tensor, D};
-use candle_nn::{linear_no_bias, ops::softmax_last_dim, rms_norm, Embedding, Linear, RmsNorm, VarBuilder};
+use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
+use candle_nn::{
+    Embedding, Linear, RmsNorm, VarBuilder, linear_no_bias, ops::softmax_last_dim, rms_norm,
+};
 use std::sync::Arc;
 
 use super::layers::OuroLayer;
@@ -188,13 +190,10 @@ impl OuroModel {
             for layer in self.layers.iter_mut() {
                 h = layer
                     .forward(&h, attention_mask.as_ref(), seqlen_offset)
-                    .with_context(|| {
-                        format!("OuroModel: layer forward in loop {loop_idx}")
-                    })?;
+                    .with_context(|| format!("OuroModel: layer forward in loop {loop_idx}"))?;
             }
         }
-        h.apply(&self.final_norm)
-            .context("OuroModel: final_norm")
+        h.apply(&self.final_norm).context("OuroModel: final_norm")
     }
 
     fn causal_attention_mask(
@@ -206,9 +205,7 @@ impl OuroModel {
         // Strict upper-triangle mask — `i < j` positions get
         // -inf so the softmax can only attend to past tokens.
         let mask: Vec<f32> = (0..tgt_len)
-            .flat_map(|i| {
-                (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 })
-            })
+            .flat_map(|i| (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 }))
             .collect();
         let mask = Tensor::from_slice(&mask, (tgt_len, tgt_len), &self.device)
             .context("causal mask: build tensor")?;

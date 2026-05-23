@@ -24,11 +24,11 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use tracing::info;
 
-use crate::providers::embed::{l2_normalize, EmbedProvider, EmbedRequest, EmbedResponse};
+use crate::providers::embed::{EmbedProvider, EmbedRequest, EmbedResponse, l2_normalize};
 use crate::providers::local_qwen::{
+    CONFIG_FILE, MAX_NEW_TOKENS_CEILING, SAFETENSORS_FILE, SamplingConfig, TOKENIZER_FILE,
     build_chatml_prompt, default_cache_dir, device_for, preflight_disk_space, resolve_eos_id,
-    sample_token, SamplingConfig, CONFIG_FILE, MAX_NEW_TOKENS_CEILING, SAFETENSORS_FILE,
-    TOKENIZER_FILE,
+    sample_token,
 };
 use crate::providers::{ChunkStream, Completion, Provider, Request};
 
@@ -59,7 +59,11 @@ enum LoadedOuroModel {
 }
 
 impl LoadedOuroModel {
-    fn forward(&mut self, input_ids: &candle_core::Tensor, seqlen_offset: usize) -> anyhow::Result<candle_core::Tensor> {
+    fn forward(
+        &mut self,
+        input_ids: &candle_core::Tensor,
+        seqlen_offset: usize,
+    ) -> anyhow::Result<candle_core::Tensor> {
         match self {
             Self::Native(m) => m.forward(input_ids, seqlen_offset),
             Self::Quantized(m) => m.forward(input_ids, seqlen_offset),
@@ -233,7 +237,11 @@ impl LocalOuroAdapter {
             info!(repo = %self.repo, cache = %self.cache_dir.display(), "Ouro artifacts already cached");
             return Ok(());
         }
-        if std::env::var("NEOTH_OURO_SKIP_DISK_PREFLIGHT").ok().as_deref() != Some("1") {
+        if std::env::var("NEOTH_OURO_SKIP_DISK_PREFLIGHT")
+            .ok()
+            .as_deref()
+            != Some("1")
+        {
             preflight_disk_space(&self.cache_dir, OURO_DOWNLOAD_MIN_FREE_BYTES)
                 .context("disk-space pre-flight before Ouro download")?;
         }
@@ -341,9 +349,7 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
     // SAFETY: weights file is operator-owned + opened R/O.
     let vb = unsafe {
         VarBuilder::from_mmaped_safetensors(&[&adapter.weights_path], dtype, &device)
-            .with_context(|| {
-                format!("mmap safetensors {}", adapter.weights_path.display())
-            })?
+            .with_context(|| format!("mmap safetensors {}", adapter.weights_path.display()))?
     };
     // O-5c — dispatch on operator's quant_mode. Q8 → parallel
     // QuantizedOuroModel (Q8 matmuls inside attention + MLP);
@@ -422,8 +428,7 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
         .context("Ouro: prompt forward")?
         .squeeze(0)
         .context("Ouro: drop batch from prompt logits")?;
-    let mut next = sample_token(&logits, sampling)
-        .context("Ouro: sample from prompt logits")?;
+    let mut next = sample_token(&logits, sampling).context("Ouro: sample from prompt logits")?;
     new_tokens.push(next);
 
     // Generation loop.
@@ -908,10 +913,7 @@ mod tests {
             }
         }
         assert!(chunks >= 1, "stream must emit ≥1 chunk");
-        assert!(
-            got_done,
-            "stream must terminate with a chunk marked done"
-        );
+        assert!(got_done, "stream must terminate with a chunk marked done");
     }
 
     #[tokio::test]

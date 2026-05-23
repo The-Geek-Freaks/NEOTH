@@ -196,11 +196,7 @@ async fn cli_version(binary: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 #[cfg(test)]
@@ -209,9 +205,15 @@ mod tests {
 
     #[test]
     fn install_path_as_str_pinned() {
-        assert_eq!(ObsidianInstallPath::WingetWindows.as_str(), "winget_windows");
+        assert_eq!(
+            ObsidianInstallPath::WingetWindows.as_str(),
+            "winget_windows"
+        );
         assert_eq!(ObsidianInstallPath::BrewMacos.as_str(), "brew_macos");
-        assert_eq!(ObsidianInstallPath::AppImageLinux.as_str(), "appimage_linux");
+        assert_eq!(
+            ObsidianInstallPath::AppImageLinux.as_str(),
+            "appimage_linux"
+        );
         assert_eq!(
             ObsidianInstallPath::AlreadyInstalled.as_str(),
             "already_installed"
@@ -316,7 +318,9 @@ mod tests {
         let v = check_brew_available().await;
         if cfg!(target_os = "macos") {
             if let Some(s) = v {
-                assert!(s.to_lowercase().contains("homebrew") || s.chars().any(|c| c.is_ascii_digit()));
+                assert!(
+                    s.to_lowercase().contains("homebrew") || s.chars().any(|c| c.is_ascii_digit())
+                );
             }
         } else {
             assert!(v.is_none(), "non-macOS must report no brew");

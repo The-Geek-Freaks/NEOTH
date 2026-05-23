@@ -214,26 +214,22 @@ pub fn encode_frame(frame: &WireFrame) -> Result<Vec<u8>> {
 /// validating semantic invariants via [`validate_heartbeat`]
 /// when the body is Heartbeat.
 pub fn decode_frame(bytes: &[u8]) -> Result<WireFrame> {
-    let frame: WireFrame =
-        ciborium::from_reader(bytes).context("cbor decode WireFrame")?;
+    let frame: WireFrame = ciborium::from_reader(bytes).context("cbor decode WireFrame")?;
     Ok(frame)
 }
 
 /// Write a length-prefixed CBOR frame to any `AsyncWrite`.
 /// Prefix is u32 LE; payload length is rejected when it
 /// exceeds [`MAX_FRAME_BYTES`].
-pub async fn write_framed<W: AsyncWriteExt + Unpin>(
-    sink: &mut W,
-    frame: &WireFrame,
-) -> Result<()> {
+pub async fn write_framed<W: AsyncWriteExt + Unpin>(sink: &mut W, frame: &WireFrame) -> Result<()> {
     let bytes = encode_frame(frame)?;
     let len = u32::try_from(bytes.len()).context("frame too large for u32 length-prefix")?;
     if len > MAX_FRAME_BYTES {
-        anyhow::bail!(
-            "frame size {len} exceeds MAX_FRAME_BYTES {MAX_FRAME_BYTES}"
-        );
+        anyhow::bail!("frame size {len} exceeds MAX_FRAME_BYTES {MAX_FRAME_BYTES}");
     }
-    sink.write_all(&len.to_le_bytes()).await.context("write len-prefix")?;
+    sink.write_all(&len.to_le_bytes())
+        .await
+        .context("write len-prefix")?;
     sink.write_all(&bytes).await.context("write frame body")?;
     sink.flush().await.context("flush frame")?;
     Ok(())
@@ -251,9 +247,7 @@ pub async fn read_framed<R: AsyncReadExt + Unpin>(source: &mut R) -> Result<Wire
         .context("read frame len-prefix")?;
     let len = u32::from_le_bytes(len_buf);
     if len > MAX_FRAME_BYTES {
-        anyhow::bail!(
-            "incoming frame size {len} exceeds MAX_FRAME_BYTES {MAX_FRAME_BYTES}"
-        );
+        anyhow::bail!("incoming frame size {len} exceeds MAX_FRAME_BYTES {MAX_FRAME_BYTES}");
     }
     let mut buf = vec![0u8; len as usize];
     source
@@ -269,10 +263,16 @@ pub async fn read_framed<R: AsyncReadExt + Unpin>(source: &mut R) -> Result<Wire
 /// pick; reject at the wire boundary.
 pub fn validate_heartbeat(body: &HeartbeatBody) -> Result<()> {
     if !body.tokens_per_sec.is_finite() {
-        anyhow::bail!("heartbeat tokens_per_sec is not finite: {}", body.tokens_per_sec);
+        anyhow::bail!(
+            "heartbeat tokens_per_sec is not finite: {}",
+            body.tokens_per_sec
+        );
     }
     if body.tokens_per_sec.is_sign_negative() {
-        anyhow::bail!("heartbeat tokens_per_sec is negative: {}", body.tokens_per_sec);
+        anyhow::bail!(
+            "heartbeat tokens_per_sec is negative: {}",
+            body.tokens_per_sec
+        );
     }
     // Sanity cap: a single peer reporting > 1 million tokens/sec
     // is almost certainly buggy or hostile.
@@ -516,7 +516,9 @@ mod tests {
     #[test]
     fn validate_capabilities_caps_count_and_string_len() {
         let too_many = CapabilityUpdateBody {
-            capabilities: (0..(MAX_CAPABILITIES + 1)).map(|i| format!("c{i}")).collect(),
+            capabilities: (0..(MAX_CAPABILITIES + 1))
+                .map(|i| format!("c{i}"))
+                .collect(),
         };
         assert!(validate_capabilities(&too_many).is_err());
 

@@ -122,17 +122,23 @@ mod tests {
 
     #[test]
     fn validate_accepts_canonical_lowercase_uuid() {
-        assert!(validate_session_uuid("1b4e28ba-2fa1-11d2-883f-0016d3cca427"));
+        assert!(validate_session_uuid(
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca427"
+        ));
     }
 
     #[test]
     fn validate_accepts_canonical_uppercase_uuid() {
-        assert!(validate_session_uuid("1B4E28BA-2FA1-11D2-883F-0016D3CCA427"));
+        assert!(validate_session_uuid(
+            "1B4E28BA-2FA1-11D2-883F-0016D3CCA427"
+        ));
     }
 
     #[test]
     fn validate_accepts_mixed_case_uuid() {
-        assert!(validate_session_uuid("1b4e28BA-2fa1-11D2-883f-0016D3cca427"));
+        assert!(validate_session_uuid(
+            "1b4e28BA-2fa1-11D2-883f-0016D3cca427"
+        ));
     }
 
     #[test]
@@ -146,19 +152,27 @@ mod tests {
 
     #[test]
     fn validate_rejects_missing_dashes() {
-        assert!(!validate_session_uuid("1b4e28ba2fa111d2883f0016d3cca427000"));
+        assert!(!validate_session_uuid(
+            "1b4e28ba2fa111d2883f0016d3cca427000"
+        ));
     }
 
     #[test]
     fn validate_rejects_non_hex_chars() {
-        assert!(!validate_session_uuid("1b4e28ba-2fa1-11d2-883f-0016d3cca42g"));
-        assert!(!validate_session_uuid("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"));
+        assert!(!validate_session_uuid(
+            "1b4e28ba-2fa1-11d2-883f-0016d3cca42g"
+        ));
+        assert!(!validate_session_uuid(
+            "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+        ));
     }
 
     #[test]
     fn validate_rejects_dashes_at_wrong_positions() {
         // 9 chars before first dash (off by one).
-        assert!(!validate_session_uuid("1b4e28ba2-fa1-11d2-883f-0016d3cca427"));
+        assert!(!validate_session_uuid(
+            "1b4e28ba2-fa1-11d2-883f-0016d3cca427"
+        ));
     }
 
     // ── strip_dead_resume_args ──────────────────────────────────

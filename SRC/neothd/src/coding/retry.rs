@@ -162,12 +162,18 @@ mod tests {
     fn strategy_for_attempt_walks_three_tiers() {
         assert_eq!(RetryStrategy::for_attempt(0), RetryStrategy::SplitFile);
         assert_eq!(RetryStrategy::for_attempt(1), RetryStrategy::SplitFile);
-        assert_eq!(RetryStrategy::for_attempt(2), RetryStrategy::OneErrorAtATime);
+        assert_eq!(
+            RetryStrategy::for_attempt(2),
+            RetryStrategy::OneErrorAtATime
+        );
         assert_eq!(RetryStrategy::for_attempt(3), RetryStrategy::RewriteSection);
         // Past ceiling, the dispatcher transitions to Blocked
         // instead of asking — but the function stays defined for
         // safety (returns the most-aggressive strategy).
-        assert_eq!(RetryStrategy::for_attempt(99), RetryStrategy::RewriteSection);
+        assert_eq!(
+            RetryStrategy::for_attempt(99),
+            RetryStrategy::RewriteSection
+        );
     }
 
     #[test]
@@ -178,10 +184,7 @@ mod tests {
             RetryStrategy::OneErrorAtATime.as_str(),
             "one_error_at_a_time"
         );
-        assert_eq!(
-            RetryStrategy::RewriteSection.as_str(),
-            "rewrite_section"
-        );
+        assert_eq!(RetryStrategy::RewriteSection.as_str(), "rewrite_section");
     }
 
     #[test]

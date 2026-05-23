@@ -147,9 +147,7 @@ impl ModeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::skills::schema::{
-        ModeEntry, OutputContract, Oversight, SkillManifest, Spectrum,
-    };
+    use crate::skills::schema::{ModeEntry, OutputContract, Oversight, SkillManifest, Spectrum};
     use std::path::PathBuf;
 
     fn make_skill(id: &str, modes: Vec<ModeEntry>) -> Skill {
@@ -239,14 +237,8 @@ mod tests {
         // Two different skills both claim the same mode id —
         // config-time error, daemon must refuse to boot the
         // ambiguous registry.
-        let s1 = make_skill(
-            "skill-a",
-            vec![make_mode("dup", &["a"], Oversight::Low)],
-        );
-        let s2 = make_skill(
-            "skill-b",
-            vec![make_mode("dup", &["b"], Oversight::Low)],
-        );
+        let s1 = make_skill("skill-a", vec![make_mode("dup", &["a"], Oversight::Low)]);
+        let s2 = make_skill("skill-b", vec![make_mode("dup", &["b"], Oversight::Low)]);
         let r = ModeRegistry::from_skills(&[s1, s2]);
         assert!(r.is_err(), "duplicate mode id must error");
         let err = r.unwrap_err().to_string();
@@ -291,7 +283,11 @@ mod tests {
     fn match_trigger_returns_none_for_no_match() {
         let s1 = make_skill(
             "deep-research",
-            vec![make_mode("lit-review", &["literature review"], Oversight::High)],
+            vec![make_mode(
+                "lit-review",
+                &["literature review"],
+                Oversight::High,
+            )],
         );
         let r = ModeRegistry::from_skills(&[s1]).unwrap();
         let hit = r.match_trigger("Tell me a joke");

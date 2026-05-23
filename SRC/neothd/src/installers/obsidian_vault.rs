@@ -139,9 +139,11 @@ pub fn render_daily_row(event: &MaterialiseEvent) -> String {
 /// Render the full daily-note document: frontmatter block + a list
 /// of rendered rows. Caller writes the result into
 /// `<vault>/Daily/YYYY-MM-DD.md`.
-pub fn render_daily_note(frontmatter: &DailyNoteFrontmatter, events: &[MaterialiseEvent]) -> Result<String> {
-    let fm_yaml = serde_yaml::to_string(frontmatter)
-        .context("serialise daily-note frontmatter")?;
+pub fn render_daily_note(
+    frontmatter: &DailyNoteFrontmatter,
+    events: &[MaterialiseEvent],
+) -> Result<String> {
+    let fm_yaml = serde_yaml::to_string(frontmatter).context("serialise daily-note frontmatter")?;
     let mut out = String::with_capacity(fm_yaml.len() + events.len() * 80 + 32);
     out.push_str("---\n");
     out.push_str(&fm_yaml);
@@ -263,7 +265,11 @@ mod tests {
     fn every_bootstrap_plugin_explains_why_in_one_line() {
         for p in BOOTSTRAP_PLUGINS {
             assert!(!p.why.is_empty(), "{} missing why", p.community_id);
-            assert!(p.why.len() <= 220, "{} why too long for picker", p.community_id);
+            assert!(
+                p.why.len() <= 220,
+                "{} why too long for picker",
+                p.community_id
+            );
         }
     }
 

@@ -167,8 +167,10 @@ fn build_task_prompt(task: &KanbanTask) -> String {
     out.push_str("\nRespond in two parts:\n");
     out.push_str("1. A unified-diff patch in a ```diff fenced block.\n");
     out.push_str("2. A one-line summary on a line that starts with `SUMMARY:`.\n");
-    out.push_str("\nIf the task does not require a code change, omit the diff block \
-                  and write `SUMMARY: no change required — <reason>` on its own line.\n");
+    out.push_str(
+        "\nIf the task does not require a code change, omit the diff block \
+                  and write `SUMMARY: no change required — <reason>` on its own line.\n",
+    );
     out
 }
 

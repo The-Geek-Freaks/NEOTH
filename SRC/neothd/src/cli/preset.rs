@@ -19,26 +19,18 @@ pub enum PresetAction {
     /// List every saved preset + the active one (if any).
     List,
     /// Show one preset's full body as YAML.
-    Show {
-        name: String,
-    },
+    Show { name: String },
     /// Remove a preset entry (idempotent — missing name is Ok).
-    Delete {
-        name: String,
-    },
+    Delete { name: String },
     /// Mark a preset as the active bundle. Future loads apply it.
-    Activate {
-        name: String,
-    },
+    Activate { name: String },
     /// Clear the active marker without deleting any preset.
     Deactivate,
     /// QM-8 Phase 1.5: merge a preset's values INTO `freedom.yaml`.
     /// Atomic write — survives a mid-write crash via `.tmp` + rename.
     /// Fields the preset doesn't set are left untouched in
     /// `freedom.yaml`, so manual edits between switches survive.
-    Apply {
-        name: String,
-    },
+    Apply { name: String },
 }
 
 pub fn run(home: &Path, args: PresetArgs) -> Result<()> {
@@ -57,7 +49,10 @@ fn run_apply(home: &Path, name: &str) -> Result<()> {
     if report.fields_changed.is_empty() {
         println!("applied preset `{name}` (no changes — preset was empty)");
     } else {
-        println!("applied preset `{name}` ({} fields):", report.fields_changed.len());
+        println!(
+            "applied preset `{name}` ({} fields):",
+            report.fields_changed.len()
+        );
         for f in &report.fields_changed {
             println!("  • {f}");
         }
@@ -120,7 +115,7 @@ fn run_deactivate(home: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::presets::{upsert, Preset};
+    use crate::config::presets::{Preset, upsert};
     use tempfile::tempdir;
 
     #[test]

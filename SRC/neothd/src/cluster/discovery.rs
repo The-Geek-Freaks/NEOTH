@@ -177,12 +177,7 @@ pub fn sign_announce(
 /// Constant-time check via XOR-accumulate to defend against
 /// timing oracles.
 pub fn verify_announce(key: &ClusterKey, packet: &ClusterAnnouncePacket) -> bool {
-    let expected = sign_announce(
-        key,
-        &packet.instance_label,
-        &packet.pub_key,
-        &packet.addr,
-    );
+    let expected = sign_announce(key, &packet.instance_label, &packet.pub_key, &packet.addr);
     let mut diff = 0u8;
     for (a, b) in expected.iter().zip(packet.auth.iter()) {
         diff |= a ^ b;
@@ -194,8 +189,7 @@ pub fn verify_announce(key: &ClusterKey, packet: &ClusterAnnouncePacket) -> bool
 mod tests {
     use super::*;
 
-    const PHRASE: &str =
-        "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
+    const PHRASE: &str = "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
          kilo lima mike november oscar papa quebec romeo sierra tango \
          uniform victor whiskey xray";
 

@@ -328,7 +328,9 @@ mod tests {
 
     #[test]
     fn parse_url_bails_without_at_separator() {
-        let err = parse_hysteria_url("just-a-host:443").unwrap_err().to_string();
+        let err = parse_hysteria_url("just-a-host:443")
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("@"));
     }
 

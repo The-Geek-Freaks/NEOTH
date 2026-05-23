@@ -203,7 +203,9 @@ mod tests {
         // Pin one specific bundled id so a future drift surfaces
         // (verification_before_completion has shipped since 2026-05-14).
         assert!(
-            skills.iter().any(|s| s.manifest.id == "verification_before_completion"),
+            skills
+                .iter()
+                .any(|s| s.manifest.id == "verification_before_completion"),
             "verification_before_completion must be in the bundled set"
         );
     }
@@ -383,7 +385,10 @@ system_prompt: |
         )
         .await;
         let skills = load_all(dir.path()).await.unwrap();
-        let s = skills.iter().find(|s| s.id() == "x").expect("user skill loaded");
+        let s = skills
+            .iter()
+            .find(|s| s.id() == "x")
+            .expect("user skill loaded");
         assert_eq!(s.trigger_keywords(), &["news", "briefing"]);
     }
 
@@ -400,8 +405,18 @@ system_prompt: |
     #[tokio::test]
     async fn sorts_skills_by_id() {
         let dir = tempdir().unwrap();
-        write_manifest(dir.path(), "zeta-user-test", "id: zeta-user-test\ndescription: z\nsystem_prompt: ok\n").await;
-        write_manifest(dir.path(), "aaa-user-test", "id: aaa-user-test\ndescription: a\nsystem_prompt: ok\n").await;
+        write_manifest(
+            dir.path(),
+            "zeta-user-test",
+            "id: zeta-user-test\ndescription: z\nsystem_prompt: ok\n",
+        )
+        .await;
+        write_manifest(
+            dir.path(),
+            "aaa-user-test",
+            "id: aaa-user-test\ndescription: a\nsystem_prompt: ok\n",
+        )
+        .await;
         let skills = load_all(dir.path()).await.unwrap();
         // Bundled skills mix in; pin that aaa- comes before zeta- and
         // both surface in the merged set.

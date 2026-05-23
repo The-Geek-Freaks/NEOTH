@@ -113,15 +113,13 @@ pub async fn score_dissent_via_embedding(
     texts: &[&str],
     provider: &dyn crate::providers::embed::EmbedProvider,
 ) -> anyhow::Result<DissentScore> {
-    use crate::providers::embed::{cosine, EmbedRequest};
+    use crate::providers::embed::{EmbedRequest, cosine};
     if texts.len() < 2 {
         return Ok(DissentScore(0.0));
     }
     let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
     for text in texts {
-        let resp = provider
-            .embed(EmbedRequest::new(text.to_string()))
-            .await?;
+        let resp = provider.embed(EmbedRequest::new(text.to_string())).await?;
         vectors.push(resp.vector);
     }
     let mut sum = 0.0_f32;
@@ -265,8 +263,14 @@ mod tests {
     async fn embedding_dissent_zero_for_identical_texts() {
         let provider = SlotMockEmbed { dim: 4 };
         let texts = ["yes confirmed", "yes confirmed"];
-        let s = score_dissent_via_embedding(&texts, &provider).await.unwrap();
-        assert!((s.0).abs() < 1e-6, "identical texts: dissent ≈ 0.0, got {}", s.0);
+        let s = score_dissent_via_embedding(&texts, &provider)
+            .await
+            .unwrap();
+        assert!(
+            (s.0).abs() < 1e-6,
+            "identical texts: dissent ≈ 0.0, got {}",
+            s.0
+        );
         assert!(s.is_consensus());
     }
 
@@ -298,9 +302,15 @@ mod tests {
     async fn embedding_dissent_one_for_orthogonal_texts() {
         let provider = SlotMockEmbed { dim: 4 };
         let texts = ["yes confirmed", "no rejected"];
-        let s = score_dissent_via_embedding(&texts, &provider).await.unwrap();
+        let s = score_dissent_via_embedding(&texts, &provider)
+            .await
+            .unwrap();
         // Slot 0 vs slot 1 are orthogonal → cos = 0 → distance = 1.
-        assert!((s.0 - 1.0).abs() < 1e-6, "orthogonal: dissent ≈ 1.0, got {}", s.0);
+        assert!(
+            (s.0 - 1.0).abs() < 1e-6,
+            "orthogonal: dissent ≈ 1.0, got {}",
+            s.0
+        );
         assert!(s.is_strong_dissent());
     }
 
@@ -321,7 +331,9 @@ mod tests {
         // (A,B) = 0.0, (A,C) = 1.0, (B,C) = 1.0. Average = 2/3.
         let provider = SlotMockEmbed { dim: 4 };
         let texts = ["yes one", "yes two", "no three"];
-        let s = score_dissent_via_embedding(&texts, &provider).await.unwrap();
+        let s = score_dissent_via_embedding(&texts, &provider)
+            .await
+            .unwrap();
         let expected = 2.0 / 3.0;
         assert!(
             (s.0 - expected).abs() < 1e-5,

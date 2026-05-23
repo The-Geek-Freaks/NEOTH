@@ -26,7 +26,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use candle_core::{Module, Tensor};
 use candle_nn::{
-    linear_no_bias, ops::softmax_last_dim, rms_norm, Activation, Linear, RmsNorm, VarBuilder,
+    Activation, Linear, RmsNorm, VarBuilder, linear_no_bias, ops::softmax_last_dim, rms_norm,
 };
 
 use super::model::OuroConfig;
@@ -49,8 +49,8 @@ impl OuroMLP {
         let intermediate_sz = cfg.intermediate_size;
         let gate_proj = linear_no_bias(hidden_sz, intermediate_sz, vb.pp("gate_proj"))
             .context("MLP: gate_proj")?;
-        let up_proj = linear_no_bias(hidden_sz, intermediate_sz, vb.pp("up_proj"))
-            .context("MLP: up_proj")?;
+        let up_proj =
+            linear_no_bias(hidden_sz, intermediate_sz, vb.pp("up_proj")).context("MLP: up_proj")?;
         let down_proj = linear_no_bias(intermediate_sz, hidden_sz, vb.pp("down_proj"))
             .context("MLP: down_proj")?;
         Ok(Self {
@@ -122,11 +122,22 @@ impl OuroAttention {
         attention_mask: Option<&Tensor>,
         seqlen_offset: usize,
     ) -> Result<Tensor> {
-        let (b_sz, q_len, _) = xs.dims3().context("Attention: input must be [b, seq, hidden]")?;
+        let (b_sz, q_len, _) = xs
+            .dims3()
+            .context("Attention: input must be [b, seq, hidden]")?;
 
-        let query_states = self.q_proj.forward(xs).context("Attention: q_proj forward")?;
-        let key_states = self.k_proj.forward(xs).context("Attention: k_proj forward")?;
-        let value_states = self.v_proj.forward(xs).context("Attention: v_proj forward")?;
+        let query_states = self
+            .q_proj
+            .forward(xs)
+            .context("Attention: q_proj forward")?;
+        let key_states = self
+            .k_proj
+            .forward(xs)
+            .context("Attention: k_proj forward")?;
+        let value_states = self
+            .v_proj
+            .forward(xs)
+            .context("Attention: v_proj forward")?;
 
         // Reshape into [b, heads, seq, head_dim] for attention math.
         let query_states = query_states
@@ -145,9 +156,9 @@ impl OuroAttention {
             .transpose(1, 2)
             .context("Attention: transpose v")?;
 
-        let (query_states, key_states) = self
-            .rotary_emb
-            .apply_rotary_emb_qkv(&query_states, &key_states, seqlen_offset)?;
+        let (query_states, key_states) =
+            self.rotary_emb
+                .apply_rotary_emb_qkv(&query_states, &key_states, seqlen_offset)?;
 
         // KV-cache append. Cache is cleared between recurrent loops
         // by `OuroAttention::clear_kv_cache` (called from
@@ -169,15 +180,14 @@ impl OuroAttention {
         // but candle materialises the expanded tensor anyway —
         // pure waste, see Risk 3 in O-1b architecture plan).
         let key_states = key_states.contiguous().context("Attention: K contiguous")?;
-        let value_states = value_states.contiguous().context("Attention: V contiguous")?;
+        let value_states = value_states
+            .contiguous()
+            .context("Attention: V contiguous")?;
 
         let attn_output = {
             let scale = 1f64 / f64::sqrt(self.head_dim as f64);
             let kt = key_states.transpose(2, 3).context("Attention: K^T")?;
-            let attn_weights = (query_states
-                .matmul(&kt)
-                .context("Attention: QK^T")?
-                * scale)
+            let attn_weights = (query_states.matmul(&kt).context("Attention: QK^T")? * scale)
                 .context("Attention: scale QK^T")?;
             let attn_weights = match attention_mask {
                 None => attn_weights,
@@ -185,8 +195,7 @@ impl OuroAttention {
                     .broadcast_add(mask)
                     .context("Attention: add causal mask")?,
             };
-            let attn_weights =
-                softmax_last_dim(&attn_weights).context("Attention: softmax")?;
+            let attn_weights = softmax_last_dim(&attn_weights).context("Attention: softmax")?;
             attn_weights
                 .matmul(&value_states)
                 .context("Attention: attn @ V")?
@@ -255,13 +264,19 @@ impl OuroLayer {
         seqlen_offset: usize,
     ) -> Result<Tensor> {
         let r1 = xs;
-        let h1 = self.norm_pre.forward(xs).context("Layer: norm_pre forward")?;
+        let h1 = self
+            .norm_pre
+            .forward(xs)
+            .context("Layer: norm_pre forward")?;
         let attn = self
             .self_attn
             .forward(&h1, attention_mask, seqlen_offset)
             .context("Layer: attn forward")?;
         let r2 = (r1 + attn).context("Layer: residual_1 add")?;
-        let h2 = self.norm_mid.forward(&r2).context("Layer: norm_mid forward")?;
+        let h2 = self
+            .norm_mid
+            .forward(&r2)
+            .context("Layer: norm_mid forward")?;
         let mlp = self.mlp.forward(&h2).context("Layer: mlp forward")?;
         let mlp_out = self
             .norm_post
@@ -370,8 +385,7 @@ mod tests {
         let cfg = tiny_cfg();
         let rope = OuroRoPE::new(DType::F32, &cfg, &dev).expect("rope");
         let vb = synthetic_vb(&dev);
-        let mut attn = OuroAttention::new(rope, &cfg, vb.pp("self_attn"))
-            .expect("build attention");
+        let mut attn = OuroAttention::new(rope, &cfg, vb.pp("self_attn")).expect("build attention");
         let xs = Tensor::zeros((1, 4, cfg.hidden_size), DType::F32, &dev).unwrap();
         let out = attn.forward(&xs, None, 0).expect("attention forward");
         assert_eq!(out.dims(), &[1, 4, cfg.hidden_size]);
@@ -383,8 +397,7 @@ mod tests {
         let cfg = tiny_cfg();
         let rope = OuroRoPE::new(DType::F32, &cfg, &dev).expect("rope");
         let vb = synthetic_vb(&dev);
-        let mut attn = OuroAttention::new(rope, &cfg, vb.pp("self_attn"))
-            .expect("build attention");
+        let mut attn = OuroAttention::new(rope, &cfg, vb.pp("self_attn")).expect("build attention");
         let xs = Tensor::zeros((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
         let _ = attn.forward(&xs, None, 0).unwrap();
         assert!(attn.kv_cache.is_some(), "first forward must populate cache");

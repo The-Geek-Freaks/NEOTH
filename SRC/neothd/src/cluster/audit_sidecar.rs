@@ -83,7 +83,9 @@ pub fn write_sidecar(
 ) -> Result<PathBuf> {
     let dir = sidecar_dir(home);
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
-    let dur = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let dur = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let now = dur.as_secs() as i64;
     // Nano-precision timestamp in the filename so close-spaced
     // writes (operator typing fast, scripted confirm via for-
@@ -91,12 +93,7 @@ pub fn write_sidecar(
     // under lexicographic sort. `as_nanos()` returns u128 — pad
     // to 38 digits so every filename sorts correctly.
     let nanos = dur.as_nanos();
-    let name = format!(
-        "cluster_{}_{}_{:038}.json",
-        kind.as_str(),
-        now,
-        nanos
-    );
+    let name = format!("cluster_{}_{}_{:038}.json", kind.as_str(), now, nanos);
     let path = dir.join(&name);
     let body = ClusterAuditSidecar {
         kind,
@@ -107,7 +104,8 @@ pub fn write_sidecar(
     let tmp = path.with_extension("json.tmp");
     let body_bytes = serde_json::to_vec(&body).context("serialise sidecar")?;
     fs::write(&tmp, &body_bytes).with_context(|| format!("write {}", tmp.display()))?;
-    fs::rename(&tmp, &path).with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
+    fs::rename(&tmp, &path)
+        .with_context(|| format!("rename {} → {}", tmp.display(), path.display()))?;
     Ok(path)
 }
 
@@ -206,9 +204,7 @@ mod tests {
         let any_tmp = std::fs::read_dir(sidecar_dir(dir.path()))
             .unwrap()
             .filter_map(|e| e.ok())
-            .any(|e| {
-                e.path().extension().and_then(|x| x.to_str()) == Some("tmp")
-            });
+            .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("tmp"));
         assert!(!any_tmp, "no .tmp file should be left after atomic write");
     }
 

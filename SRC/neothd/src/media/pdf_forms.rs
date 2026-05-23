@@ -91,7 +91,7 @@ pub use stub::{embed_signature, read_form_fields, set_text_field};
 #[cfg(feature = "pdf-forms")]
 mod real {
     use super::*;
-    use anyhow::{anyhow, Context};
+    use anyhow::{Context, anyhow};
 
     /// Read every AcroForm field. Returns the typed view per
     /// PdfFormField. v0.1 ignores radio-group sibling links;
@@ -129,18 +129,17 @@ mod real {
     ) -> Result<Vec<u8>> {
         let bytes = asset_bytes(asset)?;
         let field_name = field_name.to_string();
-        tokio::task::spawn_blocking(move || {
-            embed_blocking(&bytes, &field_name, &png_bytes)
-        })
-        .await
-        .map_err(|e| anyhow!("join error: {e}"))?
+        tokio::task::spawn_blocking(move || embed_blocking(&bytes, &field_name, &png_bytes))
+            .await
+            .map_err(|e| anyhow!("join error: {e}"))?
     }
 
     fn asset_bytes(asset: &Asset) -> Result<Vec<u8>> {
         match asset {
             Asset::Bytes { data, .. } => Ok(data.clone()),
-            Asset::Path { path, .. } => std::fs::read(path)
-                .with_context(|| format!("read {}", path.display())),
+            Asset::Path { path, .. } => {
+                std::fs::read(path).with_context(|| format!("read {}", path.display()))
+            }
         }
     }
 
@@ -280,8 +279,14 @@ mod tests {
         let msg = err.to_string();
         // Operator must see WHY + the rebuild flag + the text-only fallback.
         assert!(msg.contains("pdf-forms"), "missing feature flag: {msg}");
-        assert!(msg.contains("rebuild") || msg.contains("Rebuild"), "missing rebuild pointer: {msg}");
-        assert!(msg.contains("neoth ingest pdf"), "missing fallback pointer: {msg}");
+        assert!(
+            msg.contains("rebuild") || msg.contains("Rebuild"),
+            "missing rebuild pointer: {msg}"
+        );
+        assert!(
+            msg.contains("neoth ingest pdf"),
+            "missing fallback pointer: {msg}"
+        );
     }
 
     #[cfg(not(feature = "pdf-forms"))]

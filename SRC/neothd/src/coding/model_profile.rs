@@ -147,7 +147,11 @@ impl ModelProfile {
             self.matched_key.unwrap_or("unknown"),
             self.context_length,
             self.max_output,
-            if self.supports_tool_calling { "yes" } else { "no" },
+            if self.supports_tool_calling {
+                "yes"
+            } else {
+                "no"
+            },
             self.tool_format.as_str()
         )
     }
@@ -268,7 +272,12 @@ const KNOWN_PROFILES: &[ProfileEntry] = &[
 /// `gemma-4-e4b`, not `gemma-4`.
 static LONGEST_KEYS_FIRST: LazyLock<Vec<usize>> = LazyLock::new(|| {
     let mut idx: Vec<usize> = (0..KNOWN_PROFILES.len()).collect();
-    idx.sort_by(|&a, &b| KNOWN_PROFILES[b].key.len().cmp(&KNOWN_PROFILES[a].key.len()));
+    idx.sort_by(|&a, &b| {
+        KNOWN_PROFILES[b]
+            .key
+            .len()
+            .cmp(&KNOWN_PROFILES[a].key.len())
+    });
     idx
 });
 
@@ -443,10 +452,7 @@ mod tests {
         assert!(p_deepseek.needs_two_stage_router(), "16k must trigger");
 
         let p_qwen3 = match_profile("qwen3").expect("must match");
-        assert!(
-            !p_qwen3.needs_two_stage_router(),
-            "32k must NOT trigger"
-        );
+        assert!(!p_qwen3.needs_two_stage_router(), "32k must NOT trigger");
     }
 
     #[test]

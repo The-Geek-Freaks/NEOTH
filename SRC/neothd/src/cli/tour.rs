@@ -103,10 +103,7 @@ pub fn run_tour(args: TourArgs) -> Result<()> {
             if filtered.is_empty() {
                 eprintln!(
                     "no tour stop with id `{id}`. Available: {}",
-                    TOUR.iter()
-                        .map(|s| s.id)
-                        .collect::<Vec<_>>()
-                        .join(" / ")
+                    TOUR.iter().map(|s| s.id).collect::<Vec<_>>().join(" / ")
                 );
                 return Ok(());
             }

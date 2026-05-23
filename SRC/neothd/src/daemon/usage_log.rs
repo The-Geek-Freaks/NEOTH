@@ -205,7 +205,8 @@ pub fn aggregate(home: &Path, since_unix: i64, until_unix: i64) -> UsageRollup {
         };
         roll.per_provider.push(totals);
     }
-    roll.per_provider.sort_by(|a, b| a.provider.cmp(&b.provider));
+    roll.per_provider
+        .sort_by(|a, b| a.provider.cmp(&b.provider));
     roll
 }
 

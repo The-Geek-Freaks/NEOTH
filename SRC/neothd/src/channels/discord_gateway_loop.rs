@@ -70,15 +70,15 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::{protocol::CloseFrame, Message},
+    tungstenite::{Message, protocol::CloseFrame},
 };
 use tracing::{debug, info, warn};
 
 use crate::channels::discord_gateway::{
-    build_heartbeat_payload, classify_envelope, current_seq, current_session_id, intents as intent_flags,
-    is_terminal_close, opcode, record_seq, record_session_id, reset_seq, reset_session_id,
-    should_resume_after_close, GatewayAction, GatewayEnvelope, GatewayPhase, IdentifyProperties,
-    ReconnectTracker, GATEWAY_WSS_URL,
+    GATEWAY_WSS_URL, GatewayAction, GatewayEnvelope, GatewayPhase, IdentifyProperties,
+    ReconnectTracker, build_heartbeat_payload, classify_envelope, current_seq, current_session_id,
+    intents as intent_flags, is_terminal_close, opcode, record_seq, record_session_id, reset_seq,
+    reset_session_id, should_resume_after_close,
 };
 use crate::channels::{OutboundMessage, PipelineHandler};
 use crate::secret::SecretString;
@@ -479,7 +479,11 @@ pub fn build_identify_frame(bot_token: &SecretString, intents: u32) -> String {
 /// one site.
 pub fn build_resume_frame(bot_token: &SecretString, session_id: &str, seq: i64) -> String {
     let token = bot_token.expose();
-    let seq_value: Value = if seq < 0 { Value::Null } else { Value::from(seq) };
+    let seq_value: Value = if seq < 0 {
+        Value::Null
+    } else {
+        Value::from(seq)
+    };
     let body = serde_json::json!({
         "op": opcode::RESUME,
         "d": {
@@ -513,15 +517,8 @@ pub fn parse_message_create(d: &Value) -> Option<ParsedMessageCreate> {
     let channel_id = d.get("channel_id")?.as_str()?.to_string();
     let message_id = d.get("id")?.as_str()?.to_string();
     let author = d.get("author")?;
-    let author_username = author
-        .get("username")?
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-    let author_is_bot = author
-        .get("bot")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let author_username = author.get("username")?.as_str().unwrap_or("").to_string();
+    let author_is_bot = author.get("bot").and_then(|v| v.as_bool()).unwrap_or(false);
     let content = d
         .get("content")
         .and_then(|v| v.as_str())
@@ -564,10 +561,12 @@ mod tests {
             parsed["d"]["intents"].as_u64().unwrap() as u32,
             intent_flags::NEOTH_DEFAULT
         );
-        assert!(parsed["d"]["properties"]["$browser"]
-            .as_str()
-            .unwrap()
-            .contains("neoth"));
+        assert!(
+            parsed["d"]["properties"]["$browser"]
+                .as_str()
+                .unwrap()
+                .contains("neoth")
+        );
     }
 
     #[test]
@@ -610,10 +609,7 @@ mod tests {
     #[test]
     fn parse_session_id_from_ready_extracts() {
         let d = json!({ "session_id": "abc-123", "user": {} });
-        assert_eq!(
-            parse_session_id_from_ready(&d),
-            Some("abc-123".to_string())
-        );
+        assert_eq!(parse_session_id_from_ready(&d), Some("abc-123".to_string()));
     }
 
     #[test]

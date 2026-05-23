@@ -1015,11 +1015,7 @@ mod tests {
             CouncilVoice::IncidentResponder,
             CouncilVoice::EvidenceCollector,
         ] {
-            assert!(
-                !v.description().is_empty(),
-                "{:?} missing description",
-                v
-            );
+            assert!(!v.description().is_empty(), "{:?} missing description", v);
             assert!(
                 v.system_prompt_fragment().len() > 50,
                 "{:?} system prompt fragment too short",
@@ -1028,8 +1024,7 @@ mod tests {
             assert!(
                 v.system_prompt_fragment()
                     .to_lowercase()
-                    .contains(v.as_str().replace('_', "")
-                        .to_lowercase().as_str())
+                    .contains(v.as_str().replace('_', "").to_lowercase().as_str())
                     || v.system_prompt_fragment().contains("Voice:"),
                 "{:?} system prompt should announce itself",
                 v

@@ -81,10 +81,7 @@ pub fn current_version() -> &'static str {
 /// comparison runs on the major.minor.patch triple only.
 pub fn parse_semver(s: &str) -> Result<(u32, u32, u32)> {
     let trimmed = s.trim().trim_start_matches(['v', 'V']);
-    let core = trimmed
-        .split(['-', '+'])
-        .next()
-        .unwrap_or(trimmed);
+    let core = trimmed.split(['-', '+']).next().unwrap_or(trimmed);
     let parts: Vec<&str> = core.split('.').collect();
     if parts.len() != 3 {
         anyhow::bail!("expected major.minor.patch, got {s:?}");
@@ -142,10 +139,7 @@ pub async fn fetch_latest_release(owner_repo: &str) -> Result<LatestRelease> {
             },
         );
     }
-    let release: LatestRelease = resp
-        .json()
-        .await
-        .context("parse GitHub release JSON")?;
+    let release: LatestRelease = resp.json().await.context("parse GitHub release JSON")?;
     Ok(release)
 }
 
@@ -346,15 +340,16 @@ pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Res
             break;
         }
     }
-    let index = chosen.ok_or_else(|| {
-        anyhow::anyhow!("zip archive missing expected member `{want}`")
-    })?;
-    let mut entry = archive.by_index(index).context("re-open chosen zip entry")?;
+    let index =
+        chosen.ok_or_else(|| anyhow::anyhow!("zip archive missing expected member `{want}`"))?;
+    let mut entry = archive
+        .by_index(index)
+        .context("re-open chosen zip entry")?;
     std::fs::create_dir_all(out_dir)
         .with_context(|| format!("create out_dir {}", out_dir.display()))?;
     let dest = out_dir.join(&want);
-    let mut out = std::fs::File::create(&dest)
-        .with_context(|| format!("create {}", dest.display()))?;
+    let mut out =
+        std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
     std::io::copy(&mut entry, &mut out).context("copy zip body to disk")?;
     Ok(dest)
 }
@@ -362,26 +357,17 @@ pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Res
 /// Extract a `.tar.xz` archive's `<binary>` member to `out_dir`.
 /// Pure-Rust pipeline: lzma-rs decompresses xz → tar reads the
 /// resulting tarball. No system liblzma linkage.
-pub fn extract_tar_xz_binary(
-    tar_xz_bytes: &[u8],
-    out_dir: &Path,
-    binary: &str,
-) -> Result<PathBuf> {
+pub fn extract_tar_xz_binary(tar_xz_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
     use std::io::Cursor;
     let mut decompressed: Vec<u8> = Vec::with_capacity(tar_xz_bytes.len() * 3);
     let mut reader = Cursor::new(tar_xz_bytes);
-    lzma_rs::xz_decompress(&mut reader, &mut decompressed)
-        .context("xz decompress tarball")?;
+    lzma_rs::xz_decompress(&mut reader, &mut decompressed).context("xz decompress tarball")?;
     extract_tar_binary_from_bytes(&decompressed, out_dir, binary)
 }
 
 /// Extract a `.tar.gz` archive. Mirrors [`extract_tar_xz_binary`]
 /// but pipes through flate2 instead of lzma-rs.
-pub fn extract_tar_gz_binary(
-    tar_gz_bytes: &[u8],
-    out_dir: &Path,
-    binary: &str,
-) -> Result<PathBuf> {
+pub fn extract_tar_gz_binary(tar_gz_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
     use flate2::read::GzDecoder;
     use std::io::Read;
     let mut gz = GzDecoder::new(tar_gz_bytes);
@@ -393,11 +379,7 @@ pub fn extract_tar_gz_binary(
 
 /// Walk a raw tar byte stream looking for the binary member.
 /// Shared between the xz + gz paths.
-fn extract_tar_binary_from_bytes(
-    raw_tar: &[u8],
-    out_dir: &Path,
-    binary: &str,
-) -> Result<PathBuf> {
+fn extract_tar_binary_from_bytes(raw_tar: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
     use std::io::Cursor;
     let want = binary_filename_for_host(binary);
     let mut archive = tar::Archive::new(Cursor::new(raw_tar));
@@ -406,10 +388,7 @@ fn extract_tar_binary_from_bytes(
     let dest = out_dir.join(&want);
     for entry in archive.entries().context("iterate tar entries")? {
         let mut entry = entry.context("read tar entry")?;
-        let path_in_tar = entry
-            .path()
-            .context("read tar entry path")?
-            .into_owned();
+        let path_in_tar = entry.path().context("read tar entry path")?.into_owned();
         let name = path_in_tar
             .file_name()
             .and_then(|n| n.to_str())
@@ -458,11 +437,7 @@ pub fn atomic_replace_binary(new_path: &Path, target_path: &Path) -> Result<Path
     let bak_path = backup_path_for(target_path, now_ms);
     if target_path.exists() {
         std::fs::rename(target_path, &bak_path).with_context(|| {
-            format!(
-                "rename {} → {}",
-                target_path.display(),
-                bak_path.display()
-            )
+            format!("rename {} → {}", target_path.display(), bak_path.display())
         })?;
     }
     if let Err(e) = std::fs::rename(new_path, target_path) {
@@ -540,9 +515,7 @@ pub fn verify_sha256_bytes(bytes: &[u8], expected_hex: &str) -> Result<()> {
     let actual_hex = hex_encode(&actual);
     let expected = expected_hex.to_ascii_lowercase();
     if actual_hex != expected {
-        anyhow::bail!(
-            "sha256 mismatch: expected {expected}, got {actual_hex}"
-        );
+        anyhow::bail!("sha256 mismatch: expected {expected}, got {actual_hex}");
     }
     Ok(())
 }
@@ -587,8 +560,7 @@ pub fn apply_downloaded(
     binary: &str,
     install_dir: &Path,
 ) -> Result<PathBuf> {
-    let expected = parse_sha256_companion(companion_text)
-        .context("parse sha256 companion")?;
+    let expected = parse_sha256_companion(companion_text).context("parse sha256 companion")?;
     verify_sha256_bytes(asset_bytes, &expected).context("verify asset sha256")?;
 
     // Stage the extracted binary in a tempdir that lives next to
@@ -665,13 +637,7 @@ pub async fn apply_update(
         .context("read binary asset body")?;
 
     let format = archive_format_for_target(target_triple);
-    let backup = apply_downloaded(
-        &asset_bytes,
-        &companion_text,
-        format,
-        binary,
-        install_dir,
-    )?;
+    let backup = apply_downloaded(&asset_bytes, &companion_text, format, binary, install_dir)?;
 
     Ok(UpdateApplied {
         from_version: current_version().to_string(),
@@ -979,17 +945,14 @@ mod tests {
             fake_asset("neoth-x86_64-pc-windows-msvc.zip.sha256"),
         ];
         let release = fake_release(assets);
-        let resolved =
-            resolve_update_assets(&release, "x86_64-pc-windows-msvc", "neoth").unwrap();
+        let resolved = resolve_update_assets(&release, "x86_64-pc-windows-msvc", "neoth").unwrap();
         assert_eq!(resolved.binary.name, "neoth-x86_64-pc-windows-msvc.zip");
         assert!(resolved.sha256.is_some());
     }
 
     #[test]
     fn resolve_update_assets_errors_when_target_unmatched() {
-        let release = fake_release(vec![fake_asset(
-            "neoth-x86_64-unknown-linux-gnu.tar.xz",
-        )]);
+        let release = fake_release(vec![fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz")]);
         let err = resolve_update_assets(&release, "x86_64-pc-windows-msvc", "neoth")
             .unwrap_err()
             .to_string();
@@ -1010,8 +973,7 @@ mod tests {
             fake_asset("neoth-x86_64-apple-darwin.tar.xz.sha256"),
         ];
         let release = fake_release(assets);
-        let resolved =
-            resolve_update_assets(&release, "x86_64-apple-darwin", "neoth").unwrap();
+        let resolved = resolve_update_assets(&release, "x86_64-apple-darwin", "neoth").unwrap();
         assert!(resolved.sha256.is_some());
     }
 
@@ -1021,8 +983,7 @@ mod tests {
         // refuse the update.
         let assets = vec![fake_asset("neoth-x86_64-apple-darwin.tar.xz")];
         let release = fake_release(assets);
-        let resolved =
-            resolve_update_assets(&release, "x86_64-apple-darwin", "neoth").unwrap();
+        let resolved = resolve_update_assets(&release, "x86_64-apple-darwin", "neoth").unwrap();
         assert!(resolved.sha256.is_none());
     }
 
@@ -1065,7 +1026,10 @@ mod tests {
         // would otherwise self-verify.
         let truncated = &ZERO_BYTES_DIGEST[..63];
         let err = parse_sha256_companion(truncated).unwrap_err().to_string();
-        assert!(err.contains("64"), "diagnostic must name expected length: {err}");
+        assert!(
+            err.contains("64"),
+            "diagnostic must name expected length: {err}"
+        );
     }
 
     #[test]
@@ -1101,7 +1065,10 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains(ZERO_BYTES_DIGEST), "must name expected: {err}");
-        assert!(err.contains("sha256 mismatch"), "must label as mismatch: {err}");
+        assert!(
+            err.contains("sha256 mismatch"),
+            "must label as mismatch: {err}"
+        );
     }
 
     #[test]
@@ -1117,7 +1084,10 @@ mod tests {
         let hex = hex_encode(&bytes);
         assert_eq!(hex.len(), 64);
         assert_eq!(&hex[..4], "0001");
-        assert!(hex.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            hex.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     // ── Phase 2b extractor + atomic-replace coverage ────────────────
@@ -1143,8 +1113,8 @@ mod tests {
     /// Build an in-memory `.tar.gz` archive containing one
     /// member with the requested name + body.
     fn make_tar_gz_with_member(name: &str, body: &[u8]) -> Vec<u8> {
-        use flate2::write::GzEncoder;
         use flate2::Compression;
+        use flate2::write::GzEncoder;
         use std::io::Write;
         let mut tar_bytes: Vec<u8> = Vec::new();
         {
@@ -1197,7 +1167,10 @@ mod tests {
         let err = extract_zip_binary(&zip_bytes, dir.path(), "neoth")
             .unwrap_err()
             .to_string();
-        assert!(err.contains("missing"), "diagnostic must say missing: {err}");
+        assert!(
+            err.contains("missing"),
+            "diagnostic must say missing: {err}"
+        );
     }
 
     #[test]
@@ -1240,10 +1213,7 @@ mod tests {
     #[test]
     fn backup_path_for_appends_unix_ms_suffix() {
         let bak = backup_path_for(Path::new("/usr/local/bin/neoth"), 1_716_000_000_000);
-        assert_eq!(
-            bak,
-            PathBuf::from("/usr/local/bin/neoth.bak.1716000000000")
-        );
+        assert_eq!(bak, PathBuf::from("/usr/local/bin/neoth.bak.1716000000000"));
     }
 
     #[test]
@@ -1295,7 +1265,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(std::fs::read(&target).unwrap(), b"shiny-new-daemon");
-        assert!(backup.exists(), "old binary preserved at {}", backup.display());
+        assert!(
+            backup.exists(),
+            "old binary preserved at {}",
+            backup.display()
+        );
         assert_eq!(std::fs::read(&backup).unwrap(), b"old-daemon");
     }
 

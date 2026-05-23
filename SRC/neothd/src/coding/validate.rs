@@ -116,7 +116,6 @@ static EMPTY_REASONS: LazyLock<Vec<String>> =
     LazyLock::new(|| vec!["patch text was empty or whitespace-only".to_string()]);
 
 impl PatchValidation {
-
     /// Render the reasons into the diagnostic-text shape the
     /// retry hint expects. Caller usually appends this to a
     /// strategy hint like "The previous attempt had these
@@ -226,11 +225,12 @@ pub fn validate_patch_shape(text: &str) -> PatchValidation {
 
     if matches!(
         last_meaningful_line_kind,
-        LineKind::DiffGitHeader | LineKind::MinusHeader | LineKind::PlusHeader | LineKind::HunkHeader
+        LineKind::DiffGitHeader
+            | LineKind::MinusHeader
+            | LineKind::PlusHeader
+            | LineKind::HunkHeader
     ) {
-        reasons.push(
-            "patch ends on a header line — body is missing or truncated".to_string(),
-        );
+        reasons.push("patch ends on a header line — body is missing or truncated".to_string());
     }
 
     // Dedupe + cap. Insertion order preserved.
@@ -467,10 +467,7 @@ diff --git a/src/lib.rs b/src/lib.rs
 
     #[test]
     fn classify_line_recognises_each_marker_kind() {
-        assert_eq!(
-            classify_line("diff --git a/x b/x"),
-            LineKind::DiffGitHeader
-        );
+        assert_eq!(classify_line("diff --git a/x b/x"), LineKind::DiffGitHeader);
         assert_eq!(classify_line("--- a/x"), LineKind::MinusHeader);
         assert_eq!(classify_line("+++ b/x"), LineKind::PlusHeader);
         assert_eq!(classify_line("@@ -1 +1 @@"), LineKind::HunkHeader);

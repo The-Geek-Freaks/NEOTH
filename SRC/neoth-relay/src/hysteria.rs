@@ -24,7 +24,7 @@
 //! correctly. v2 (post-O-7 Hysteria-embedded build) flips
 //! `connect_via_hysteria` from `bail` to a real implementation.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 /// Operator-supplied Hysteria sidecar config metadata. v1 reads
@@ -75,7 +75,11 @@ impl HysteriaTransportConfig {
         }
         format!(
             "Hysteria sidecar: listen={} → forward_to={} auth_scheme={}{}",
-            if self.listen.is_empty() { "(unset)" } else { &self.listen },
+            if self.listen.is_empty() {
+                "(unset)"
+            } else {
+                &self.listen
+            },
             if self.forward_to.is_empty() {
                 "(unset)"
             } else {
@@ -168,8 +172,7 @@ pub fn connect_via_hysteria(_cfg: &HysteriaTransportConfig) -> Result<()> {
 /// HW-1 — operator-facing "Why tunnel?" copy. One paragraph, three
 /// concrete threats, decline-friendly framing. Slint pulls this
 /// verbatim so a copy edit lands in one place.
-pub const WHY_TUNNEL_COPY: &str =
-    "A Hysteria tunnel hides which servers NEOTH talks to and \
+pub const WHY_TUNNEL_COPY: &str = "A Hysteria tunnel hides which servers NEOTH talks to and \
      when from anyone watching the network between you and the \
      relay. Three concrete cases it defends against: (1) a coffee-\
      shop network operator profiling your cluster pairings; (2) \
@@ -223,9 +226,7 @@ impl HysteriaOnboardingPath {
                 "I already run Hysteria; let me paste my forward-to + auth \
                  scheme so the relay records it correctly"
             }
-            Self::Skip => {
-                "Skip Hysteria for now — relay runs plain TCP behind --bind"
-            }
+            Self::Skip => "Skip Hysteria for now — relay runs plain TCP behind --bind",
         }
     }
 }
@@ -300,7 +301,8 @@ impl HealthCheckOutcome {
                 format!("Hysteria forward_to refused TCP connect: {reason}")
             }
             Self::Timeout => {
-                "Hysteria forward_to didn't respond inside 3s (sidecar down? wrong port?)".to_string()
+                "Hysteria forward_to didn't respond inside 3s (sidecar down? wrong port?)"
+                    .to_string()
             }
         }
     }
@@ -465,7 +467,10 @@ mod tests {
     #[test]
     fn hw2_onboarding_path_wire_form_pinned() {
         assert_eq!(HysteriaOnboardingPath::SelfHost.as_str(), "self_host");
-        assert_eq!(HysteriaOnboardingPath::BringExisting.as_str(), "bring_existing");
+        assert_eq!(
+            HysteriaOnboardingPath::BringExisting.as_str(),
+            "bring_existing"
+        );
         assert_eq!(HysteriaOnboardingPath::Skip.as_str(), "skip");
     }
 

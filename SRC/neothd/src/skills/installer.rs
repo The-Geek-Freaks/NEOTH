@@ -120,23 +120,16 @@ pub fn install_from_local(
         );
     }
 
-    std::fs::create_dir_all(target_skills_dir).with_context(|| {
-        format!("create skills dir at {}", target_skills_dir.display())
-    })?;
+    std::fs::create_dir_all(target_skills_dir)
+        .with_context(|| format!("create skills dir at {}", target_skills_dir.display()))?;
 
     if replacing {
-        std::fs::remove_dir_all(&target_dir).with_context(|| {
-            format!("remove prior install at {}", target_dir.display())
-        })?;
+        std::fs::remove_dir_all(&target_dir)
+            .with_context(|| format!("remove prior install at {}", target_dir.display()))?;
     }
 
-    copy_dir_recursive(source_dir, &target_dir).with_context(|| {
-        format!(
-            "copy {} → {}",
-            source_dir.display(),
-            target_dir.display()
-        )
-    })?;
+    copy_dir_recursive(source_dir, &target_dir)
+        .with_context(|| format!("copy {} → {}", source_dir.display(), target_dir.display()))?;
 
     Ok(InstallReport {
         id: manifest.id,
@@ -153,8 +146,7 @@ pub fn uninstall(target_skills_dir: &Path, id: &str) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
-    std::fs::remove_dir_all(&path)
-        .with_context(|| format!("remove {}", path.display()))?;
+    std::fs::remove_dir_all(&path).with_context(|| format!("remove {}", path.display()))?;
     Ok(true)
 }
 
@@ -219,11 +211,8 @@ pub fn list_installed(target_skills_dir: &Path) -> Vec<InstalledEntry> {
 /// Recursive directory copy. Pure-stdlib so no extra crate dep — the
 /// install path doesn't need fancy progress / parallelism.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
-    std::fs::create_dir_all(dst)
-        .with_context(|| format!("create {}", dst.display()))?;
-    for entry in std::fs::read_dir(src)
-        .with_context(|| format!("read_dir {}", src.display()))?
-    {
+    std::fs::create_dir_all(dst).with_context(|| format!("create {}", dst.display()))?;
+    for entry in std::fs::read_dir(src).with_context(|| format!("read_dir {}", src.display()))? {
         let entry = entry?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
@@ -268,8 +257,7 @@ mod tests {
         let src = staging.path().join("my_skill_source");
         write_skill(&src, "my_skill", &good_yaml("my_skill"));
 
-        let report =
-            install_from_local(&src, dest.path(), false).expect("install must succeed");
+        let report = install_from_local(&src, dest.path(), false).expect("install must succeed");
         assert_eq!(report.id, "my_skill");
         assert!(!report.replaced_existing);
         assert!(report.installed_at.exists());
@@ -320,8 +308,7 @@ mod tests {
 
         let report = install_from_local(&src_v2, dest.path(), true).unwrap();
         assert!(report.replaced_existing);
-        let version =
-            std::fs::read_to_string(report.installed_at.join("VERSION")).unwrap();
+        let version = std::fs::read_to_string(report.installed_at.join("VERSION")).unwrap();
         assert_eq!(version, "v2");
     }
 

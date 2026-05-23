@@ -492,7 +492,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
         });
         channel_tasks.push(task);
-        info!(channel = "telegram", status = "LIVE", "channel: spawned (polling loop)");
+        info!(
+            channel = "telegram",
+            status = "LIVE",
+            "channel: spawned (polling loop)"
+        );
     } else if config.telegram_token.is_some() && shared_provider.is_none() {
         warn!(
             channel = "telegram",
@@ -694,13 +698,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // not. Errors log + retry next tick; never crashes the daemon.
     let dreaming_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
         if config.dreaming.enabled {
-            let embed_provider =
-                crate::providers::embed_provider_from_config(&config).await;
+            let embed_provider = crate::providers::embed_provider_from_config(&config).await;
             Some(crate::cli::dreaming_task::spawn(
                 crate::config::FreedomConfig::default_neoth_home(),
                 embed_provider,
-                config.dreaming.interval_secs.map(std::time::Duration::from_secs),
-                config.dreaming.window_secs.map(std::time::Duration::from_secs),
+                config
+                    .dreaming
+                    .interval_secs
+                    .map(std::time::Duration::from_secs),
+                config
+                    .dreaming
+                    .window_secs
+                    .map(std::time::Duration::from_secs),
                 config.dreaming.max_events,
             ))
         } else {
@@ -861,14 +870,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 };
                 for (path, sidecar) in pending {
                     let event_type = sidecar.kind.wal_event_type();
-                    let body =
-                        crate::cluster::audit_sidecar::build_wal_frame_body(&sidecar);
+                    let body = crate::cluster::audit_sidecar::build_wal_frame_body(&sidecar);
                     let header = crate::wal::HeaderBuilder::new(event_type, &body).build();
                     match writer_for_audit.append(header, body).await {
                         Ok(_) => {
-                            if let Err(e) =
-                                crate::cluster::audit_sidecar::remove_sidecar(&path)
-                            {
+                            if let Err(e) = crate::cluster::audit_sidecar::remove_sidecar(&path) {
                                 warn!(
                                     error = %e,
                                     path = %path.display(),
@@ -877,7 +883,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             } else {
                                 info!(
                                     kind = sidecar.kind.as_str(),
-                                    pub_key_prefix = &sidecar.pub_key_hex[..16.min(sidecar.pub_key_hex.len())],
+                                    pub_key_prefix =
+                                        &sidecar.pub_key_hex[..16.min(sidecar.pub_key_hex.len())],
                                     "cluster audit frame appended to WAL"
                                 );
                             }
@@ -2684,7 +2691,11 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
         }
     };
     let outcomes = crate::wasm_plugin::dispatch::compile_all_discovered(&engine, &report);
-    let failed: Vec<&str> = outcomes.iter().filter(|o| !o.is_ok()).map(|o| o.plugin_id()).collect();
+    let failed: Vec<&str> = outcomes
+        .iter()
+        .filter(|o| !o.is_ok())
+        .map(|o| o.plugin_id())
+        .collect();
     if !failed.is_empty() {
         warn!(
             failed_plugins = ?failed,
@@ -2702,7 +2713,10 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
     let count = invoker.len();
     let arc: Arc<dyn crate::hooks::dispatcher::PluginInvoker> = Arc::new(invoker);
     if crate::hooks::dispatcher::register_global_invoker(arc) {
-        info!(plugins = count, "plugin invoker registered; hook actions Plugin{{..}} are live");
+        info!(
+            plugins = count,
+            "plugin invoker registered; hook actions Plugin{{..}} are live"
+        );
     } else {
         warn!(
             "plugin invoker already registered earlier in this process — \

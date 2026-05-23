@@ -153,10 +153,11 @@ impl BootstrapEndpoint {
             BootstrapEndpoint::Host(s) => {
                 // BootstrapEndpoint::Host carries a "name:port"
                 // string per the HYPERSWARM_BOOTSTRAP_HOSTS shape.
-                let mut iter = s.to_socket_addrs().map_err(|e| {
-                    anyhow::anyhow!("resolve bootstrap host `{s}`: {e}")
-                })?;
-                iter.find(|a| a.is_ipv4()).or_else(|| s.to_socket_addrs().ok().and_then(|mut i| i.next()))
+                let mut iter = s
+                    .to_socket_addrs()
+                    .map_err(|e| anyhow::anyhow!("resolve bootstrap host `{s}`: {e}"))?;
+                iter.find(|a| a.is_ipv4())
+                    .or_else(|| s.to_socket_addrs().ok().and_then(|mut i| i.next()))
                     .ok_or_else(|| anyhow::anyhow!("bootstrap host `{s}` resolved to no addrs"))
             }
         }
@@ -211,8 +212,7 @@ pub fn packet_discovery_key(packet: &AnnouncePacket) -> DiscoveryKey {
 mod tests {
     use super::*;
 
-    const SAMPLE_PHRASE: &str =
-        "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
+    const SAMPLE_PHRASE: &str = "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
          kilo lima mike november oscar papa quebec romeo sierra tango \
          uniform victor whiskey xray";
 
@@ -228,7 +228,10 @@ mod tests {
         assert!(HYPERSWARM_BOOTSTRAP_HOSTS.len() >= 3);
         for host in HYPERSWARM_BOOTSTRAP_HOSTS {
             assert!(host.contains(':'), "expected host:port form: {host}");
-            assert!(host.contains("hyperdht"), "expected hyperdht subdomain: {host}");
+            assert!(
+                host.contains("hyperdht"),
+                "expected hyperdht subdomain: {host}"
+            );
         }
     }
 
@@ -303,7 +306,10 @@ mod tests {
         let pkt = build_announce(topic, 4242);
         assert_eq!(pkt.listen_port, 4242);
         assert_eq!(pkt.peer_id, [0u8; 32]);
-        assert_eq!(pkt.discovery_key, super::super::keet_crypto::discovery_key(topic).0);
+        assert_eq!(
+            pkt.discovery_key,
+            super::super::keet_crypto::discovery_key(topic).0
+        );
     }
 
     #[test]

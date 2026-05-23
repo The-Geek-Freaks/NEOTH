@@ -157,10 +157,7 @@ pub async fn route_stage2_embedding<'a>(
     if message.trim().is_empty() || skills.is_empty() {
         return None;
     }
-    let msg_resp = match embed_provider
-        .embed(EmbedRequest::new(message))
-        .await
-    {
+    let msg_resp = match embed_provider.embed(EmbedRequest::new(message)).await {
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(
@@ -181,7 +178,10 @@ pub async fn route_stage2_embedding<'a>(
         if desc.trim().is_empty() {
             continue;
         }
-        match embed_provider.embed(EmbedRequest::new(desc.to_string())).await {
+        match embed_provider
+            .embed(EmbedRequest::new(desc.to_string()))
+            .await
+        {
             Ok(r) => {
                 skill_embeddings.insert(skill.id().to_string(), r.vector);
             }
@@ -443,9 +443,27 @@ mod tests {
         // RouteMatch isn't PartialEq; compare via the observable
         // fields (skill id + matched_keywords + embedding_score).
         let triplet = (
-            a.as_ref().map(|m| (m.skill.id().to_string(), m.matched_keywords.clone(), m.embedding_score)),
-            b.as_ref().map(|m| (m.skill.id().to_string(), m.matched_keywords.clone(), m.embedding_score)),
-            c.as_ref().map(|m| (m.skill.id().to_string(), m.matched_keywords.clone(), m.embedding_score)),
+            a.as_ref().map(|m| {
+                (
+                    m.skill.id().to_string(),
+                    m.matched_keywords.clone(),
+                    m.embedding_score,
+                )
+            }),
+            b.as_ref().map(|m| {
+                (
+                    m.skill.id().to_string(),
+                    m.matched_keywords.clone(),
+                    m.embedding_score,
+                )
+            }),
+            c.as_ref().map(|m| {
+                (
+                    m.skill.id().to_string(),
+                    m.matched_keywords.clone(),
+                    m.embedding_score,
+                )
+            }),
         );
         assert_eq!(triplet.0, triplet.1, "first vs second call");
         assert_eq!(triplet.1, triplet.2, "second vs third call");
@@ -554,24 +572,42 @@ mod tests {
             // claim "write a plan / write a PRD". Pin to_prd for
             // the PRD-named prompt.
             ("Write a PRD for the cost dashboard", "to_prd"),
-            ("Write an implementation plan for the export feature", "writing_plans"),
+            (
+                "Write an implementation plan for the export feature",
+                "writing_plans",
+            ),
             // Conflict pair: requesting_code_review vs receiving_code_review.
             ("Can you review my pull request?", "requesting_code_review"),
             ("Addressed feedback on the diff", "receiving_code_review"),
             // Verification (always-on closure gate).
-            ("All tests passing, fix complete", "verification_before_completion"),
+            (
+                "All tests passing, fix complete",
+                "verification_before_completion",
+            ),
             // Mode-level inside academic_research handled by ModeRegistry
             // (separate test); the skill itself activates on broad keywords.
-            ("Run a lit review on transformer attention", "academic_research"),
-            ("Fact-check these claims in the abstract", "academic_research"),
+            (
+                "Run a lit review on transformer attention",
+                "academic_research",
+            ),
+            (
+                "Fact-check these claims in the abstract",
+                "academic_research",
+            ),
             // German + English mix.
-            ("Refactor the recall module", "improve_codebase_architecture"),
+            (
+                "Refactor the recall module",
+                "improve_codebase_architecture",
+            ),
             // Pin pure zoom_out path — avoid `architecture` in the prompt so
             // we don't tie with improve_codebase_architecture and have to
             // rely on alphabetical fallback (which would lose).
             ("zoom out and show the big picture", "zoom_out"),
             // Branch-finish discipline.
-            ("Ready to ship this branch", "finishing_a_development_branch"),
+            (
+                "Ready to ship this branch",
+                "finishing_a_development_branch",
+            ),
             // Worktree usage skill.
             ("Need to set up a git worktree", "using_git_worktrees"),
         ];
@@ -781,7 +817,11 @@ mod tests {
             dim: 4,
             rules: vec![("weather", 0)],
         };
-        assert!(route_stage2_embedding("", &skills, &provider).await.is_none());
+        assert!(
+            route_stage2_embedding("", &skills, &provider)
+                .await
+                .is_none()
+        );
         assert!(
             route_stage2_embedding("   ", &skills, &provider)
                 .await
@@ -823,10 +863,16 @@ mod tests {
         // `<= threshold` without thinking about it.
         let skills = vec![skill("a", &["foo"], true)];
         let msg = vec![1.0f32, 0.0];
-        let skill_emb = vec![EMBEDDING_THRESHOLD, (1.0 - EMBEDDING_THRESHOLD * EMBEDDING_THRESHOLD).sqrt()];
+        let skill_emb = vec![
+            EMBEDDING_THRESHOLD,
+            (1.0 - EMBEDDING_THRESHOLD * EMBEDDING_THRESHOLD).sqrt(),
+        ];
         // Sanity: skill_emb is already unit-length.
         let len_sq: f32 = skill_emb.iter().map(|x| x * x).sum();
-        assert!((len_sq - 1.0).abs() < 1e-6, "test setup: skill_emb must be unit");
+        assert!(
+            (len_sq - 1.0).abs() < 1e-6,
+            "test setup: skill_emb must be unit"
+        );
         // Sanity: cos(msg, skill_emb) == EMBEDDING_THRESHOLD exactly.
         let cos = crate::providers::embed::cosine(&msg, &skill_emb);
         assert!(
@@ -836,7 +882,10 @@ mod tests {
         let mut embs = std::collections::HashMap::new();
         embs.insert("a".to_string(), skill_emb);
         let pick = cosine_rerank(&msg, &skills, &embs);
-        assert!(pick.is_some(), "score at exact threshold MUST pass (inclusive)");
+        assert!(
+            pick.is_some(),
+            "score at exact threshold MUST pass (inclusive)"
+        );
         let (winner, score) = pick.unwrap();
         assert_eq!(winner.id(), "a");
         assert!((score - EMBEDDING_THRESHOLD).abs() < 1e-6);

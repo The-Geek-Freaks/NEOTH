@@ -47,27 +47,12 @@ impl QuantizedOuroMLP {
         let hidden_sz = cfg.hidden_size;
         let intermediate_sz = cfg.intermediate_size;
 
-        let gate = load_quantized_linear_no_bias(
-            &vb,
-            "gate_proj",
-            intermediate_sz,
-            hidden_sz,
-        )
-        .context("QuantizedOuroMLP: gate_proj")?;
-        let up = load_quantized_linear_no_bias(
-            &vb,
-            "up_proj",
-            intermediate_sz,
-            hidden_sz,
-        )
-        .context("QuantizedOuroMLP: up_proj")?;
-        let down = load_quantized_linear_no_bias(
-            &vb,
-            "down_proj",
-            hidden_sz,
-            intermediate_sz,
-        )
-        .context("QuantizedOuroMLP: down_proj")?;
+        let gate = load_quantized_linear_no_bias(&vb, "gate_proj", intermediate_sz, hidden_sz)
+            .context("QuantizedOuroMLP: gate_proj")?;
+        let up = load_quantized_linear_no_bias(&vb, "up_proj", intermediate_sz, hidden_sz)
+            .context("QuantizedOuroMLP: up_proj")?;
+        let down = load_quantized_linear_no_bias(&vb, "down_proj", hidden_sz, intermediate_sz)
+            .context("QuantizedOuroMLP: down_proj")?;
         Ok(Self {
             gate_proj: gate,
             up_proj: up,
@@ -108,8 +93,8 @@ pub fn load_quantized_linear_no_bias(
         .pp(name)
         .get((out_dim, in_dim), "weight")
         .with_context(|| format!("load weight `{name}.weight` shape ({out_dim}, {in_dim})"))?;
-    let qweight = quantize_tensor_q8(&weight)
-        .with_context(|| format!("quantize `{name}.weight` to Q8"))?;
+    let qweight =
+        quantize_tensor_q8(&weight).with_context(|| format!("quantize `{name}.weight` to Q8"))?;
     quantized_linear_from_tensor(qweight, None)
         .with_context(|| format!("wrap `{name}` as QuantizedLinear"))
 }
@@ -142,11 +127,7 @@ pub struct QuantizedOuroAttention {
 }
 
 impl QuantizedOuroAttention {
-    pub fn new(
-        rotary_emb: Arc<OuroRoPE>,
-        cfg: &OuroConfig,
-        vb: VarBuilder,
-    ) -> Result<Self> {
+    pub fn new(rotary_emb: Arc<OuroRoPE>, cfg: &OuroConfig, vb: VarBuilder) -> Result<Self> {
         let hidden_sz = cfg.hidden_size;
         let num_heads = cfg.num_attention_heads;
         let head_dim = cfg.head_dim();
@@ -202,7 +183,9 @@ impl QuantizedOuroAttention {
             .transpose(1, 2)
             .context("Attention: transpose v")?;
 
-        let (q, k) = self.rotary_emb.apply_rotary_emb_qkv(&q, &k, seqlen_offset)?;
+        let (q, k) = self
+            .rotary_emb
+            .apply_rotary_emb_qkv(&q, &k, seqlen_offset)?;
 
         let (k, v) = match &self.kv_cache {
             None => (k, v),
@@ -219,8 +202,8 @@ impl QuantizedOuroAttention {
 
         let scale = 1f64 / f64::sqrt(self.head_dim as f64);
         let kt = k.transpose(2, 3).context("Attention: K^T")?;
-        let attn = (q.matmul(&kt).context("Attention: QK^T")? * scale)
-            .context("Attention: scale QK^T")?;
+        let attn =
+            (q.matmul(&kt).context("Attention: QK^T")? * scale).context("Attention: scale QK^T")?;
         let attn = match attention_mask {
             None => attn,
             Some(mask) => attn.broadcast_add(mask).context("Attention: add mask")?,
@@ -246,7 +229,7 @@ impl QuantizedOuroAttention {
 // native F32 (tiny: `hidden_size` floats per norm), only the
 // Linear projections inside attention + MLP go Q8.
 
-use candle_nn::{rms_norm, RmsNorm};
+use candle_nn::{RmsNorm, rms_norm};
 
 /// One Ouro decoder layer with Q8-quantized attention + MLP, native
 /// RMSNorms.
@@ -260,11 +243,7 @@ pub struct QuantizedOuroLayer {
 }
 
 impl QuantizedOuroLayer {
-    pub fn new(
-        rotary_emb: Arc<OuroRoPE>,
-        cfg: &OuroConfig,
-        vb: VarBuilder,
-    ) -> Result<Self> {
+    pub fn new(rotary_emb: Arc<OuroRoPE>, cfg: &OuroConfig, vb: VarBuilder) -> Result<Self> {
         let self_attn = QuantizedOuroAttention::new(rotary_emb, cfg, vb.pp("self_attn"))?;
         let mlp = QuantizedOuroMLP::new(cfg, vb.pp("mlp"))?;
         let norm_pre = rms_norm(cfg.hidden_size, cfg.rms_norm_eps, vb.pp("norm_pre"))

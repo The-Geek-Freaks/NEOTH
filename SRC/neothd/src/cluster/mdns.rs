@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn verify_with_cluster_key_accepts_legit_packet() {
-        use super::super::discovery::{cluster_key, sign_announce, ClusterAnnouncePacket};
+        use super::super::discovery::{ClusterAnnouncePacket, cluster_key, sign_announce};
         let key = cluster_key("alpha bravo charlie delta").unwrap();
         let pub_key = [0xabu8; 32];
         let addr: std::net::SocketAddr = "192.0.2.1:4242".parse().unwrap();
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn verify_with_cluster_key_rejects_wrong_key() {
-        use super::super::discovery::{cluster_key, sign_announce, ClusterAnnouncePacket};
+        use super::super::discovery::{ClusterAnnouncePacket, cluster_key, sign_announce};
         let key_a = cluster_key("phrase a").unwrap();
         let key_b = cluster_key("phrase b").unwrap();
         let pub_key = [0x12u8; 32];

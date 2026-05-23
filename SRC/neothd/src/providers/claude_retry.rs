@@ -166,11 +166,7 @@ pub fn backoff_for_attempt(decision: &RetryDecision, attempt: u32) -> Duration {
     }
     let factor = 1u64 << attempt.min(8);
     let scaled = decision.initial_backoff.saturating_mul(factor as u32);
-    if scaled > CAP {
-        CAP
-    } else {
-        scaled
-    }
+    if scaled > CAP { CAP } else { scaled }
 }
 
 fn has_auth_signal(s: &str) -> bool {
@@ -216,7 +212,12 @@ fn is_empty_stdout_signal(signal: &FailureSignal<'_>) -> bool {
 mod tests {
     use super::*;
 
-    fn sig(exit: Option<i32>, stdout: &'static str, stderr: &'static str, err: &'static str) -> FailureSignal<'static> {
+    fn sig(
+        exit: Option<i32>,
+        stdout: &'static str,
+        stderr: &'static str,
+        err: &'static str,
+    ) -> FailureSignal<'static> {
         FailureSignal {
             exit_code: exit,
             stdout,
@@ -229,7 +230,12 @@ mod tests {
 
     #[test]
     fn classifies_oauth_message_as_auth() {
-        let s = sig(Some(1), "", "Please run `claude /login` to authenticate", "");
+        let s = sig(
+            Some(1),
+            "",
+            "Please run `claude /login` to authenticate",
+            "",
+        );
         assert_eq!(classify_failure(&s), RetryClass::Auth);
     }
 

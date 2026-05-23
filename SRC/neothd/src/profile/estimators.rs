@@ -92,10 +92,7 @@ pub fn estimate_cadence(samples: &[ObservedTurn]) -> CadenceEstimate {
     }
     let mut sorted_ts: Vec<i64> = samples.iter().map(|t| t.ts_unix).collect();
     sorted_ts.sort_unstable();
-    let mut gaps: Vec<i64> = sorted_ts
-        .windows(2)
-        .map(|w| (w[1] - w[0]).max(0))
-        .collect();
+    let mut gaps: Vec<i64> = sorted_ts.windows(2).map(|w| (w[1] - w[0]).max(0)).collect();
     if gaps.is_empty() {
         return CadenceEstimate::default();
     }
@@ -171,17 +168,50 @@ pub struct TopicEstimate {
 /// keyword fragments — case-insensitive substring match). Adding
 /// a topic needs an entry here + a test pin.
 pub const TOPIC_TAXONOMY: &[(&str, &[&str])] = &[
-    ("code", &["function", "rust", "python", "fn ", "def ", "class ", "import ", "// ", "pub fn"]),
-    ("research", &["paper", "study", "explain", "what is", "how does", "history of"]),
-    ("planning", &["roadmap", "milestone", "next steps", "deadline", "schedule"]),
-    ("security", &["vulnerability", "exploit", "pentest", "cve", "owasp", "attack"]),
-    ("writing", &["draft", "rewrite", "summarise", "summarize", "polish"]),
-    ("personal", &["i feel", "i think", "my day", "should i", "i'm"]),
+    (
+        "code",
+        &[
+            "function", "rust", "python", "fn ", "def ", "class ", "import ", "// ", "pub fn",
+        ],
+    ),
+    (
+        "research",
+        &[
+            "paper",
+            "study",
+            "explain",
+            "what is",
+            "how does",
+            "history of",
+        ],
+    ),
+    (
+        "planning",
+        &["roadmap", "milestone", "next steps", "deadline", "schedule"],
+    ),
+    (
+        "security",
+        &[
+            "vulnerability",
+            "exploit",
+            "pentest",
+            "cve",
+            "owasp",
+            "attack",
+        ],
+    ),
+    (
+        "writing",
+        &["draft", "rewrite", "summarise", "summarize", "polish"],
+    ),
+    (
+        "personal",
+        &["i feel", "i think", "my day", "should i", "i'm"],
+    ),
 ];
 
 pub fn estimate_topic(samples: &[ObservedTurn]) -> TopicEstimate {
-    let mut counts: std::collections::HashMap<&'static str, u32> =
-        std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<&'static str, u32> = std::collections::HashMap::new();
     for t in samples {
         let lower = t.text.to_lowercase();
         for (topic, fragments) in TOPIC_TAXONOMY {
@@ -217,13 +247,21 @@ pub struct ToneEstimate {
 }
 
 const CASUAL_FRAGMENTS: &[&str] = &[
-    "don't", "it's", "i'm", "you're", "we're", "can't", "won't", "gonna", "wanna",
-    "lol", "btw", "tbh", "imo", "fwiw", "ish",
+    "don't", "it's", "i'm", "you're", "we're", "can't", "won't", "gonna", "wanna", "lol", "btw",
+    "tbh", "imo", "fwiw", "ish",
 ];
 
 const FORMAL_FRAGMENTS: &[&str] = &[
-    "however", "therefore", "furthermore", "moreover", "nevertheless",
-    "consequently", "notwithstanding", "hereby", "thereof", "thusly",
+    "however",
+    "therefore",
+    "furthermore",
+    "moreover",
+    "nevertheless",
+    "consequently",
+    "notwithstanding",
+    "hereby",
+    "thereof",
+    "thusly",
 ];
 
 pub fn estimate_tone(samples: &[ObservedTurn]) -> ToneEstimate {
@@ -316,8 +354,8 @@ mod tests {
     #[test]
     fn temporal_peak_picks_max_bucket() {
         let samples = vec![
-            turn(1_700_000_000, "x"), // hour 22
-            turn(1_700_000_000, "y"), // hour 22
+            turn(1_700_000_000, "x"),        // hour 22
+            turn(1_700_000_000, "y"),        // hour 22
             turn(1_700_000_000 + 7200, "z"), // hour 0 (next day)
         ];
         let e = estimate_temporal(&samples);
@@ -338,12 +376,7 @@ mod tests {
 
     #[test]
     fn cadence_mean_matches_uniform_gaps() {
-        let samples = vec![
-            turn(0, "a"),
-            turn(60, "b"),
-            turn(120, "c"),
-            turn(180, "d"),
-        ];
+        let samples = vec![turn(0, "a"), turn(60, "b"), turn(120, "c"), turn(180, "d")];
         let e = estimate_cadence(&samples);
         assert!((e.mean_gap_secs - 60.0).abs() < f64::EPSILON);
         assert_eq!(e.median_gap_secs, 60.0);
@@ -383,9 +416,7 @@ mod tests {
         // 10 samples with lengths 1..=10. Index math:
         // p10 = lens[(10 * 0.1) as usize] = lens[1] = 2 (sorted asc)
         // p90 = lens[(10 * 0.9) as usize] = lens[9] = 10
-        let samples: Vec<ObservedTurn> = (1..=10)
-            .map(|n| turn(0, &"a".repeat(n)))
-            .collect();
+        let samples: Vec<ObservedTurn> = (1..=10).map(|n| turn(0, &"a".repeat(n))).collect();
         let e = estimate_length(&samples);
         assert_eq!(e.p10_chars, 2);
         assert_eq!(e.p90_chars, 10);
@@ -412,8 +443,13 @@ mod tests {
     #[test]
     fn topic_taxonomy_has_required_entries() {
         let names: Vec<&str> = TOPIC_TAXONOMY.iter().map(|(n, _)| *n).collect();
-        for required in ["code", "research", "planning", "security", "writing", "personal"] {
-            assert!(names.contains(&required), "missing taxonomy topic: {required}");
+        for required in [
+            "code", "research", "planning", "security", "writing", "personal",
+        ] {
+            assert!(
+                names.contains(&required),
+                "missing taxonomy topic: {required}"
+            );
         }
     }
 

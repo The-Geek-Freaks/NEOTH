@@ -331,12 +331,8 @@ pub async fn compose_dreams_with_embeddings(
     let groups = cluster_events_by_cosine(events, &embeddings, threshold);
     let mut dreams = Vec::with_capacity(groups.len());
     for (idx, group) in groups.iter().enumerate() {
-        let cluster_events: Vec<EventRef> =
-            group.iter().map(|&i| events[i].clone()).collect();
-        let seed_id = cluster_events
-            .first()
-            .map(|e| e.id)
-            .unwrap_or(0);
+        let cluster_events: Vec<EventRef> = group.iter().map(|&i| events[i].clone()).collect();
+        let seed_id = cluster_events.first().map(|e| e.id).unwrap_or(0);
         let theme_label = format!("cluster-{idx}-seed-{seed_id}");
         dreams.push(compose_dream(day, &theme_label, &cluster_events));
     }
@@ -632,7 +628,10 @@ mod tests {
 
     #[tokio::test]
     async fn embed_events_roundtrips_via_provider() {
-        let events = vec![cluster_ev(1, "weather today"), cluster_ev(2, "news headlines")];
+        let events = vec![
+            cluster_ev(1, "weather today"),
+            cluster_ev(2, "news headlines"),
+        ];
         let vectors = embed_events(&events, &DreamSlotMock).await.unwrap();
         assert_eq!(vectors.len(), 2);
         assert_eq!(vectors[0][0], 1.0); // weather slot

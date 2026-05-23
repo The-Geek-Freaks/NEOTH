@@ -684,8 +684,7 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
 /// announcer is silenced by SSID gating.
 fn check_cluster_mdns_announcer(home: &Path) -> CheckOutcome {
     let freedom_path = home.join("freedom.yaml");
-    let (mdns_enabled, policy) =
-        crate::cluster::policy::load_policy_from_freedom(&freedom_path);
+    let (mdns_enabled, policy) = crate::cluster::policy::load_policy_from_freedom(&freedom_path);
     let ssid = crate::cluster::policy::current_ssid();
     let peer_count = crate::cluster::registry::load(home)
         .map(|r| r.peers.len())
@@ -713,15 +712,13 @@ fn evaluate_announcer_state(
     current_ssid: Option<&str>,
     paired_peers: usize,
 ) -> CheckOutcome {
-    use crate::cluster::policy::{gate_discover, DiscoverGate, NoReason};
+    use crate::cluster::policy::{DiscoverGate, NoReason, gate_discover};
     let name = "cluster mDNS announcer";
     match gate_discover(mdns_enabled, policy, current_ssid) {
         DiscoverGate::Proceed => {
             let ssid_label = current_ssid
                 .map(|s| format!("SSID `{s}`"))
-                .unwrap_or_else(|| {
-                    "any-network (announce_on_untrusted_wifi = true)".to_string()
-                });
+                .unwrap_or_else(|| "any-network (announce_on_untrusted_wifi = true)".to_string());
             CheckOutcome {
                 name,
                 status: CheckStatus::Pass,
@@ -764,8 +761,7 @@ fn evaluate_announcer_state(
                 CheckOutcome {
                     name,
                     status: CheckStatus::Pass,
-                    detail: "announcer silent — no SSID (wired/VPN) + no paired peers"
-                        .to_string(),
+                    detail: "announcer silent — no SSID (wired/VPN) + no paired peers".to_string(),
                 }
             } else {
                 CheckOutcome {
@@ -1003,12 +999,11 @@ fn check_usage_today(home: &Path) -> CheckOutcome {
         pct_of_cap,
         cap_rendered,
     );
-    let status =
-        if cap_usd > 0.0 && (roll.total_cost_usd >= cap_usd || pct_of_cap >= 80.0) {
-            CheckStatus::Warn
-        } else {
-            CheckStatus::Pass
-        };
+    let status = if cap_usd > 0.0 && (roll.total_cost_usd >= cap_usd || pct_of_cap >= 80.0) {
+        CheckStatus::Warn
+    } else {
+        CheckStatus::Pass
+    };
     CheckOutcome {
         name: "usage today",
         status,
@@ -2244,24 +2239,15 @@ mod tests {
 
     #[test]
     fn mdns_announcer_pass_when_disabled() {
-        let outcome = evaluate_announcer_state(
-            false,
-            &open_announce_policy(),
-            Some("anything"),
-            0,
-        );
+        let outcome = evaluate_announcer_state(false, &open_announce_policy(), Some("anything"), 0);
         assert_eq!(outcome.status, CheckStatus::Pass);
         assert!(outcome.detail.contains("disabled"));
     }
 
     #[test]
     fn mdns_announcer_pass_when_proceed_with_ssid() {
-        let outcome = evaluate_announcer_state(
-            true,
-            &strict_announce_policy(),
-            Some("home-wifi"),
-            2,
-        );
+        let outcome =
+            evaluate_announcer_state(true, &strict_announce_policy(), Some("home-wifi"), 2);
         assert_eq!(outcome.status, CheckStatus::Pass);
         assert!(outcome.detail.contains("home-wifi"));
         assert!(outcome.detail.contains("2 paired"));
@@ -2269,12 +2255,7 @@ mod tests {
 
     #[test]
     fn mdns_announcer_pass_when_open_policy_any_network() {
-        let outcome = evaluate_announcer_state(
-            true,
-            &open_announce_policy(),
-            None,
-            0,
-        );
+        let outcome = evaluate_announcer_state(true, &open_announce_policy(), None, 0);
         assert_eq!(outcome.status, CheckStatus::Pass);
         // Open policy → SsidUnknown path collapses to Proceed via gate;
         // detail uses the any-network label.
@@ -2283,12 +2264,8 @@ mod tests {
 
     #[test]
     fn mdns_announcer_pass_when_untrusted_ssid_but_no_peers() {
-        let outcome = evaluate_announcer_state(
-            true,
-            &strict_announce_policy(),
-            Some("coffee-shop"),
-            0,
-        );
+        let outcome =
+            evaluate_announcer_state(true, &strict_announce_policy(), Some("coffee-shop"), 0);
         assert_eq!(outcome.status, CheckStatus::Pass);
         assert!(outcome.detail.contains("single-instance"));
         assert!(outcome.detail.contains("coffee-shop"));
@@ -2296,12 +2273,8 @@ mod tests {
 
     #[test]
     fn mdns_announcer_warn_when_untrusted_ssid_with_peers() {
-        let outcome = evaluate_announcer_state(
-            true,
-            &strict_announce_policy(),
-            Some("coffee-shop"),
-            3,
-        );
+        let outcome =
+            evaluate_announcer_state(true, &strict_announce_policy(), Some("coffee-shop"), 3);
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("coffee-shop"));
         assert!(outcome.detail.contains("3 paired"));
@@ -2310,24 +2283,14 @@ mod tests {
 
     #[test]
     fn mdns_announcer_pass_when_ssid_unknown_and_no_peers() {
-        let outcome = evaluate_announcer_state(
-            true,
-            &strict_announce_policy(),
-            None,
-            0,
-        );
+        let outcome = evaluate_announcer_state(true, &strict_announce_policy(), None, 0);
         assert_eq!(outcome.status, CheckStatus::Pass);
         assert!(outcome.detail.contains("no paired peers"));
     }
 
     #[test]
     fn mdns_announcer_warn_when_ssid_unknown_with_peers() {
-        let outcome = evaluate_announcer_state(
-            true,
-            &strict_announce_policy(),
-            None,
-            1,
-        );
+        let outcome = evaluate_announcer_state(true, &strict_announce_policy(), None, 1);
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("wired"));
         assert!(outcome.detail.contains("1 paired"));
@@ -2357,7 +2320,7 @@ mod tests {
 
     #[test]
     fn channel_flapping_pass_when_below_threshold() {
-        use crate::daemon::usage_log::{append, UsageEvent};
+        use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2386,7 +2349,7 @@ mod tests {
 
     #[test]
     fn channel_flapping_warns_when_above_threshold() {
-        use crate::daemon::usage_log::{append, UsageEvent};
+        use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2425,7 +2388,7 @@ mod tests {
 
     #[test]
     fn channel_flapping_skips_low_sample_providers() {
-        use crate::daemon::usage_log::{append, UsageEvent};
+        use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -2478,7 +2441,7 @@ mod tests {
 
     #[test]
     fn check_usage_today_warns_when_cost_crosses_cap() {
-        use crate::daemon::usage_log::{append, UsageEvent};
+        use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         std::fs::write(
             dir.path().join("freedom.yaml"),
@@ -2510,7 +2473,7 @@ mod tests {
 
     #[test]
     fn check_usage_today_warns_at_80_pct_of_cap() {
-        use crate::daemon::usage_log::{append, UsageEvent};
+        use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         std::fs::write(
             dir.path().join("freedom.yaml"),
@@ -2602,13 +2565,19 @@ mod tests {
         assert!(!freedom_uses_node_cli_provider(dir.path()));
         assert!(!freedom_uses_claude_cli(dir.path()));
         // Different provider → false.
-        std::fs::write(dir.path().join("freedom.yaml"), "provider_kind: local_qwen\n")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "provider_kind: local_qwen\n",
+        )
+        .unwrap();
         assert!(!freedom_uses_node_cli_provider(dir.path()));
         assert!(!freedom_uses_claude_cli(dir.path()));
         // Gemini CLI → node-backed yes, claude-cli no.
-        std::fs::write(dir.path().join("freedom.yaml"), "provider_kind: gemini_cli\n")
-            .unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "provider_kind: gemini_cli\n",
+        )
+        .unwrap();
         assert!(freedom_uses_node_cli_provider(dir.path()));
         assert!(!freedom_uses_claude_cli(dir.path()));
     }
@@ -2739,7 +2708,8 @@ mod tests {
         assert_eq!(outcome.name, "channels wiring");
         assert_eq!(outcome.status, CheckStatus::Pass);
         assert!(
-            outcome.detail.contains("CLI-only") || outcome.detail.contains("no channel credentials"),
+            outcome.detail.contains("CLI-only")
+                || outcome.detail.contains("no channel credentials"),
             "detail must explain the no-credentials state: {}",
             outcome.detail
         );

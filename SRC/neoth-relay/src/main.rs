@@ -23,12 +23,16 @@ mod relay;
 mod serve;
 
 use hysteria::{
-    check_hysteria_listener, HealthCheckOutcome, HysteriaOnboardingPath, HysteriaTransportConfig,
-    WHY_TUNNEL_COPY,
+    HealthCheckOutcome, HysteriaOnboardingPath, HysteriaTransportConfig, WHY_TUNNEL_COPY,
+    check_hysteria_listener,
 };
 
 #[derive(Parser, Debug)]
-#[command(name = "neoth-relay", version, about = "NEOTH relay daemon — Cluster Phase 5")]
+#[command(
+    name = "neoth-relay",
+    version,
+    about = "NEOTH relay daemon — Cluster Phase 5"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -125,7 +129,10 @@ async fn main() -> Result<()> {
             serve::serve(addr, roster).await
         }
         Command::Status { hysteria_config } => {
-            println!("neoth-relay {} — Cluster Phase 5", env!("CARGO_PKG_VERSION"));
+            println!(
+                "neoth-relay {} — Cluster Phase 5",
+                env!("CARGO_PKG_VERSION")
+            );
             println!("ready to bind via `neoth-relay serve --bind <addr>`");
             println!(
                 "defaults: max_peers_per_key={} (ceiling {})",
@@ -280,12 +287,7 @@ mod tests {
             Command::Doctor { hysteria_config } => assert!(hysteria_config.is_none()),
             _ => panic!("expected Doctor"),
         }
-        let cli = Cli::parse_from([
-            "neoth-relay",
-            "doctor",
-            "--hysteria-config",
-            "/tmp/h.yaml",
-        ]);
+        let cli = Cli::parse_from(["neoth-relay", "doctor", "--hysteria-config", "/tmp/h.yaml"]);
         match cli.command {
             Command::Doctor { hysteria_config } => {
                 assert!(hysteria_config.is_some());
@@ -299,7 +301,8 @@ mod tests {
         // Pin the parser's wire contract against a representative
         // operator YAML — drift here would silently change the
         // doctor + status surfaces in subtle ways.
-        let yaml = "listen: ':443'\nforward_to: '127.0.0.1:8443'\nauth_scheme: 'password'\nnote: 'op-x'\n";
+        let yaml =
+            "listen: ':443'\nforward_to: '127.0.0.1:8443'\nauth_scheme: 'password'\nnote: 'op-x'\n";
         let f = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(f.path(), yaml).unwrap();
         let cfg = load_hysteria_config(f.path()).unwrap();

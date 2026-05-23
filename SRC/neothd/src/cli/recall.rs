@@ -157,34 +157,35 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // async await point while in scope.
     let query = args.query.clone();
     let limit = args.limit;
-    let (rows, conn) = tokio::task::spawn_blocking(move || -> Result<(Vec<EpisodeHit>, Connection)> {
-        let hot = match recall_fts(&conn, &query, limit) {
-            Ok(hits) if !hits.is_empty() => hits,
-            Ok(_) => recall_like(&conn, &query, limit)?,
-            Err(e) => {
-                tracing::debug!(error = %e, "FTS5 match failed, falling back to LIKE");
-                recall_like(&conn, &query, limit)?
-            }
-        };
-        let warm = recall_warm_like(&conn, &query, limit)?;
-        let cold = recall_cold_like(&conn, &query, limit)?;
-        let gt_rows = recall_groundtruth_like(&conn, &query, limit)?;
+    let (rows, conn) =
+        tokio::task::spawn_blocking(move || -> Result<(Vec<EpisodeHit>, Connection)> {
+            let hot = match recall_fts(&conn, &query, limit) {
+                Ok(hits) if !hits.is_empty() => hits,
+                Ok(_) => recall_like(&conn, &query, limit)?,
+                Err(e) => {
+                    tracing::debug!(error = %e, "FTS5 match failed, falling back to LIKE");
+                    recall_like(&conn, &query, limit)?
+                }
+            };
+            let warm = recall_warm_like(&conn, &query, limit)?;
+            let cold = recall_cold_like(&conn, &query, limit)?;
+            let gt_rows = recall_groundtruth_like(&conn, &query, limit)?;
 
-        let mut episodic: Vec<EpisodeHit> =
-            Vec::with_capacity(hot.len() + warm.len() + cold.len());
-        episodic.extend(hot);
-        episodic.extend(warm);
-        episodic.extend(cold);
-        rank_in_place(&mut episodic, now_ns);
+            let mut episodic: Vec<EpisodeHit> =
+                Vec::with_capacity(hot.len() + warm.len() + cold.len());
+            episodic.extend(hot);
+            episodic.extend(warm);
+            episodic.extend(cold);
+            rank_in_place(&mut episodic, now_ns);
 
-        let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + episodic.len());
-        rows.extend(gt_rows);
-        rows.extend(episodic);
-        rows.truncate(limit);
-        Ok((rows, conn))
-    })
-    .await
-    .context("recall query task panicked")??;
+            let mut rows: Vec<EpisodeHit> = Vec::with_capacity(gt_rows.len() + episodic.len());
+            rows.extend(gt_rows);
+            rows.extend(episodic);
+            rows.truncate(limit);
+            Ok((rows, conn))
+        })
+        .await
+        .context("recall query task panicked")??;
 
     // Phase 28a R-22 MT-3: Hebbian reinforce on hot-tier hits.
     // Warm/cold rows live in different tables; reinforcement for those
@@ -449,7 +450,7 @@ use rusqlite::Connection;
 /// audit_offline` + renders the verdict per the global `--output`
 /// flag.
 async fn run_citation_check(arg: &str, output: crate::cli::OutputFormat) -> Result<()> {
-    use crate::recall::citation_check::{audit_offline, CitationVerdict};
+    use crate::recall::citation_check::{CitationVerdict, audit_offline};
 
     let text = if arg == "-" {
         let mut buf = String::new();

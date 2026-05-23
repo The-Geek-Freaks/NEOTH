@@ -100,8 +100,7 @@ pub fn built_in_agents() -> Vec<SubAgent> {
                  shipped work."
                     .into(),
             model: None,
-            system:
-                "You are NEOTH's session-end auditor. Your job is to enforce the HARD RULE \
+            system: "You are NEOTH's session-end auditor. Your job is to enforce the HARD RULE \
                  \"every shipped item must update PROGRESS.md in the same turn\". Given the \
                  list of WAL events emitted this session (PROVIDER_REQUEST/RESPONSE pairs, \
                  0x70-0x76 coding-workflow frames, 0x21/0x22 effect-adapter calls), cross-check \
@@ -113,7 +112,7 @@ pub fn built_in_agents() -> Vec<SubAgent> {
                  doc-only entries, or could be drift). Be specific: cite the commit hash + \
                  PROGRESS line number for each finding. Do NOT propose fixes — the operator \
                  ratifies before any PROGRESS edits land."
-                    .into(),
+                .into(),
             tools: vec!["recall".into(), "ctx_search".into()],
             enabled: true,
         },

@@ -89,7 +89,11 @@ impl FileInput {
     /// Convenience constructor that defaults `comment_family` to
     /// C-family. Tests using inline source literals don't need to
     /// know the strip variant exists.
-    pub fn c_family(file_path: impl Into<String>, source: impl Into<String>, symbols: Vec<Symbol>) -> Self {
+    pub fn c_family(
+        file_path: impl Into<String>,
+        source: impl Into<String>,
+        symbols: Vec<Symbol>,
+    ) -> Self {
         Self {
             file_path: file_path.into(),
             source: source.into(),
@@ -260,12 +264,7 @@ impl CallGraph {
     /// BFS forward: every symbol name that the scope (file_path,
     /// source_symbol) (transitively) reaches within `max_depth`
     /// hops. The source itself is not included.
-    pub fn callees_of(
-        &self,
-        file_path: &str,
-        source: &str,
-        max_depth: usize,
-    ) -> Vec<CalleeEntry> {
+    pub fn callees_of(&self, file_path: &str, source: &str, max_depth: usize) -> Vec<CalleeEntry> {
         if max_depth == 0 {
             return Vec::new();
         }
@@ -291,11 +290,7 @@ impl CallGraph {
                     // Walk into every def of that name (cross-file).
                     if let Some(defs) = self.defs_by_name.get(&edge.to_name) {
                         for def in defs {
-                            q.push_back((
-                                def.file_path.clone(),
-                                edge.to_name.clone(),
-                                depth + 1,
-                            ));
+                            q.push_back((def.file_path.clone(), edge.to_name.clone(), depth + 1));
                         }
                     }
                 }
@@ -444,16 +439,13 @@ pub fn strip_comments_and_strings_hash_family(src: &str) -> String {
     while i < bytes.len() {
         let c = bytes[i];
         // Triple-quoted strings — """ … """ or ''' … '''.
-        if (c == b'"' || c == b'\'')
-            && bytes.get(i + 1) == Some(&c)
-            && bytes.get(i + 2) == Some(&c)
+        if (c == b'"' || c == b'\'') && bytes.get(i + 1) == Some(&c) && bytes.get(i + 2) == Some(&c)
         {
             out.push(c);
             out.push(c);
             out.push(c);
             i += 3;
-            while i + 2 < bytes.len()
-                && !(bytes[i] == c && bytes[i + 1] == c && bytes[i + 2] == c)
+            while i + 2 < bytes.len() && !(bytes[i] == c && bytes[i + 1] == c && bytes[i + 2] == c)
             {
                 if bytes[i] == b'\n' {
                     out.push(b'\n');
@@ -605,10 +597,11 @@ fn caller() {
             rust_file("lib.rs", lib_src),
             rust_file("caller.rs", caller_src),
         ]);
-        assert!(g
-            .edges()
-            .iter()
-            .any(|e| e.from_file == "caller.rs" && e.to_name == "helper"));
+        assert!(
+            g.edges()
+                .iter()
+                .any(|e| e.from_file == "caller.rs" && e.to_name == "helper")
+        );
     }
 
     #[test]
@@ -679,10 +672,11 @@ fn recursive() {
         let g = CallGraph::build(&[rust_file("a.rs", src)]);
         // Self-call should NOT show up — recursive() calling recursive()
         // is meaningless for graph traversal.
-        assert!(g
-            .edges()
-            .iter()
-            .all(|e| !(e.from_symbol == "recursive" && e.to_name == "recursive")));
+        assert!(
+            g.edges()
+                .iter()
+                .all(|e| !(e.from_symbol == "recursive" && e.to_name == "recursive"))
+        );
     }
 
     #[test]
@@ -770,7 +764,8 @@ fn caller() {
 
     #[test]
     fn strip_hash_family_removes_triple_quoted_docstring() {
-        let src = "def foo():\n    \"\"\"docstring mentions foo() but isn't a call\"\"\"\n    pass\n";
+        let src =
+            "def foo():\n    \"\"\"docstring mentions foo() but isn't a call\"\"\"\n    pass\n";
         let stripped = strip_comments_and_strings_hash_family(src);
         assert!(stripped.contains("def foo"));
         assert!(!stripped.contains("docstring mentions"));
@@ -846,7 +841,7 @@ def caller():
         assert!(!is_called("Foobar()", "foo"));
         assert!(!is_called("foo_bar()", "foo"));
         assert!(!is_called("", "foo"));
-        assert!(!is_called("foo", "foo"));  // no trailing (
+        assert!(!is_called("foo", "foo")); // no trailing (
     }
 
     #[test]

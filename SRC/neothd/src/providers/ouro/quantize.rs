@@ -33,8 +33,8 @@
 //! against each Linear's loaded weight to build the parallel model.
 
 use anyhow::{Context, Result};
-use candle_core::quantized::{GgmlDType, QTensor};
 use candle_core::Tensor;
+use candle_core::quantized::{GgmlDType, QTensor};
 use candle_transformers::quantized_nn::Linear as QuantizedLinear;
 
 /// The shipping Q8 format — `Q8_0` is the standard GGUF block
@@ -60,8 +60,7 @@ pub const Q8_BLOCK_SIZE: usize = 32;
 /// device matches input device — operators with a CUDA-resident
 /// model stay on CUDA after quantize.
 pub fn quantize_tensor_q8(tensor: &Tensor) -> Result<QTensor> {
-    QTensor::quantize(tensor, SHIPPING_Q8_DTYPE)
-        .context("quantize_tensor_q8: QTensor::quantize")
+    QTensor::quantize(tensor, SHIPPING_Q8_DTYPE).context("quantize_tensor_q8: QTensor::quantize")
 }
 
 /// Construct a `quantized_nn::Linear` from a manually-quantized
@@ -187,8 +186,7 @@ mod tests {
         // module — O-5c integration), just the construction path.
         let weight_f32 = tiny_f32_tensor(8, 64);
         let qweight = quantize_tensor_q8(&weight_f32).expect("quantize");
-        let _linear =
-            quantized_linear_from_tensor(qweight, None).expect("Linear from arc");
+        let _linear = quantized_linear_from_tensor(qweight, None).expect("Linear from arc");
     }
 
     #[test]

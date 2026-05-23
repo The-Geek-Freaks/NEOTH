@@ -254,7 +254,10 @@ mod tests {
         let provider: &dyn EmbedProvider = &MockEmbed;
         assert_eq!(provider.name(), "mock");
         assert_eq!(provider.default_dim(), 4);
-        let resp = provider.embed(EmbedRequest::new("hello world")).await.unwrap();
+        let resp = provider
+            .embed(EmbedRequest::new("hello world"))
+            .await
+            .unwrap();
         assert_eq!(resp.dim(), 4);
         let len_sq: f32 = resp.vector.iter().map(|x| x * x).sum();
         assert!(

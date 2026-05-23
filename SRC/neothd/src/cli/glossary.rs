@@ -193,10 +193,7 @@ mod tests {
         let terms: Vec<&str> = GLOSSARY.iter().map(|e| e.term).collect();
         let mut sorted = terms.clone();
         sorted.sort();
-        assert_eq!(
-            terms, sorted,
-            "GLOSSARY must be alphabetical by term"
-        );
+        assert_eq!(terms, sorted, "GLOSSARY must be alphabetical by term");
     }
 
     #[test]
@@ -226,12 +223,7 @@ mod tests {
         // channel / council / provider / WAL / autonomy. Pin so a
         // future cleanup that drops one fails here.
         let required = [
-            "plugin",
-            "channel",
-            "council",
-            "provider",
-            "wal",
-            "autonomy",
+            "plugin", "channel", "council", "provider", "wal", "autonomy",
         ];
         for term in required {
             assert!(

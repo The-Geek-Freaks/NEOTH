@@ -137,7 +137,9 @@ pub fn propose_adjustments(
     // ── length-driven verbosity adjustment ──────────────────────
     if profile.length.sample_count >= 20 {
         // Operator writes long prompts → expect detailed replies.
-        if profile.length.median_chars >= 200 && current_preset.verbosity != super::presets::Verbosity::Detailed {
+        if profile.length.median_chars >= 200
+            && current_preset.verbosity != super::presets::Verbosity::Detailed
+        {
             out.push(SelfDevProposal {
                 id: stable_id("adjust_verbosity", "detailed-from-length"),
                 kind: ProposalKind::AdjustVerbosity,
@@ -228,7 +230,7 @@ mod tests {
     use crate::profile::estimators::{
         CadenceEstimate, LengthEstimate, TemporalEstimate, ToneEstimate, TopicEstimate,
     };
-    use crate::profile::presets::{apply_preset, Verbosity};
+    use crate::profile::presets::{Verbosity, apply_preset};
 
     fn empty_profile() -> BehaviouralProfile {
         BehaviouralProfile::default()
@@ -282,12 +284,18 @@ mod tests {
 
     #[test]
     fn stable_id_deterministic_for_same_inputs() {
-        assert_eq!(stable_id("switch_preset", "x"), stable_id("switch_preset", "x"));
+        assert_eq!(
+            stable_id("switch_preset", "x"),
+            stable_id("switch_preset", "x")
+        );
     }
 
     #[test]
     fn stable_id_differs_for_different_inputs() {
-        assert_ne!(stable_id("switch_preset", "x"), stable_id("switch_preset", "y"));
+        assert_ne!(
+            stable_id("switch_preset", "x"),
+            stable_id("switch_preset", "y")
+        );
         assert_ne!(stable_id("a", "x"), stable_id("b", "x"));
     }
 
@@ -339,9 +347,7 @@ mod tests {
         let profile = profile_with_tone(-0.9, 5);
         let current = apply_preset(ProfilePreset::Lowkey);
         let props = propose_adjustments(&profile, &current);
-        assert!(props
-            .iter()
-            .all(|p| p.kind != ProposalKind::SwitchPreset));
+        assert!(props.iter().all(|p| p.kind != ProposalKind::SwitchPreset));
     }
 
     #[test]
@@ -350,9 +356,7 @@ mod tests {
         let profile = profile_with_tone(-0.8, 50);
         let current = apply_preset(ProfilePreset::Formal);
         let props = propose_adjustments(&profile, &current);
-        assert!(props
-            .iter()
-            .all(|p| p.kind != ProposalKind::SwitchPreset));
+        assert!(props.iter().all(|p| p.kind != ProposalKind::SwitchPreset));
     }
 
     // ── length-driven verbosity ─────────────────────────────────
@@ -387,9 +391,11 @@ mod tests {
         // Lowkey is already Terse — no need to propose.
         let current = apply_preset(ProfilePreset::Lowkey);
         let props = propose_adjustments(&profile, &current);
-        assert!(props
-            .iter()
-            .all(|p| p.kind != ProposalKind::AdjustVerbosity));
+        assert!(
+            props
+                .iter()
+                .all(|p| p.kind != ProposalKind::AdjustVerbosity)
+        );
     }
 
     // ── temporal-driven briefing ────────────────────────────────
@@ -419,9 +425,11 @@ mod tests {
         let profile = empty_profile();
         let current = apply_preset(ProfilePreset::Lowkey);
         let props = propose_adjustments(&profile, &current);
-        assert!(props
-            .iter()
-            .all(|p| p.kind != ProposalKind::AdjustBriefingSchedule));
+        assert!(
+            props
+                .iter()
+                .all(|p| p.kind != ProposalKind::AdjustBriefingSchedule)
+        );
     }
 
     // ── topic-driven extension ──────────────────────────────────

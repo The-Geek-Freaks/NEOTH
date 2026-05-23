@@ -152,14 +152,20 @@ impl PeerRoster {
         // Defensive validation — the relay surface MUST stay safe
         // against malformed inputs from compromised/rogue clients.
         if reg.cluster_key_hex.len() != 64
-            || !reg.cluster_key_hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+            || !reg
+                .cluster_key_hex
+                .chars()
+                .all(|c| matches!(c, '0'..='9' | 'a'..='f'))
         {
             return RegistrationOutcome::Malformed {
                 reason: "cluster_key_hex must be 64 lowercase-hex chars",
             };
         }
         if reg.peer_pub_key_hex.len() != 64
-            || !reg.peer_pub_key_hex.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+            || !reg
+                .peer_pub_key_hex
+                .chars()
+                .all(|c| matches!(c, '0'..='9' | 'a'..='f'))
         {
             return RegistrationOutcome::Malformed {
                 reason: "peer_pub_key_hex must be 64 lowercase-hex chars",
@@ -175,10 +181,7 @@ impl PeerRoster {
                 reason: "listen_port must be > 0",
             };
         }
-        let bucket = self
-            .buckets
-            .entry(reg.cluster_key_hex.clone())
-            .or_default();
+        let bucket = self.buckets.entry(reg.cluster_key_hex.clone()).or_default();
         // Refresh path — pub_key already present in bucket.
         if let Some(existing) = bucket
             .iter_mut()
@@ -277,7 +280,10 @@ mod tests {
         cfg.endpoint = "relay.example.org:443".into();
         assert!(cfg.is_configured());
         cfg.endpoint = "   ".into();
-        assert!(!cfg.is_configured(), "whitespace-only endpoint is unconfigured");
+        assert!(
+            !cfg.is_configured(),
+            "whitespace-only endpoint is unconfigured"
+        );
     }
 
     #[test]
@@ -416,7 +422,10 @@ mod tests {
         roster.register(registration(&hex64(0xaa), &hex64(0x01), 1, 1));
         assert!(roster.unregister(&hex64(0xaa), &hex64(0x01)));
         assert_eq!(roster.count_for(&hex64(0xaa)), 0);
-        assert!(!roster.buckets.contains_key(&hex64(0xaa)), "empty bucket dropped");
+        assert!(
+            !roster.buckets.contains_key(&hex64(0xaa)),
+            "empty bucket dropped"
+        );
     }
 
     #[test]

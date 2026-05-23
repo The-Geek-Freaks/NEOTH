@@ -266,9 +266,7 @@ mod tests {
             from: "right".into(),
             to: "cerebellum".into(),
             task_id: "T-42".into(),
-            verdict: QaVerdict::pass_with_evidence(vec![
-                "1450 tests pass".into(),
-            ]),
+            verdict: QaVerdict::pass_with_evidence(vec!["1450 tests pass".into()]),
             evidence: vec!["cargo test output: 1450 / 0".into()],
             next_agent: Some("evidence_collector".into()),
             ts_unix: 1_700_000_500,

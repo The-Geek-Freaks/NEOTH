@@ -156,19 +156,13 @@ mod tests {
     fn recommend_android_returns_fadcam_regardless_of_host_os() {
         // Operator paired Android device sends is_android=true even
         // when the daemon runs on Linux desktop. FadCam wins.
-        assert_eq!(
-            recommend_for_host(true),
-            FacCamFamilyOption::FadcamAndroid
-        );
+        assert_eq!(recommend_for_host(true), FacCamFamilyOption::FadcamAndroid);
     }
 
     #[test]
     fn recommend_desktop_picks_obs_on_supported_oss() {
         let r = recommend_for_host(false);
-        if cfg!(target_os = "linux")
-            || cfg!(target_os = "windows")
-            || cfg!(target_os = "macos")
-        {
+        if cfg!(target_os = "linux") || cfg!(target_os = "windows") || cfg!(target_os = "macos") {
             assert_eq!(r, FacCamFamilyOption::ObsVirtualCameraDesktop);
         }
     }

@@ -33,7 +33,7 @@
 use std::io::{Read, Write};
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 
 /// PTY dimensions. Defaults match a sensible wide terminal so
 /// `claude`'s ANSI reflow doesn't truncate lines on first paint.
@@ -109,7 +109,7 @@ pub use stub::PtySession;
 #[cfg(feature = "pty-subprocess")]
 mod real {
     use super::*;
-    use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtyPair};
+    use portable_pty::{CommandBuilder, MasterPty, PtyPair, native_pty_system};
     use std::sync::{Arc, Mutex};
 
     /// PTY-backed subprocess. Holds the master end + the child handle.
@@ -180,9 +180,7 @@ mod real {
             writer
                 .write_all(bytes)
                 .map_err(|e| anyhow!("pty write: {e}"))?;
-            writer
-                .flush()
-                .map_err(|e| anyhow!("pty flush: {e}"))?;
+            writer.flush().map_err(|e| anyhow!("pty flush: {e}"))?;
             Ok(())
         }
 
@@ -389,13 +387,13 @@ mod tests {
         let session = match PtySession::spawn(echo_cmd) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!(
-                    "skipping live PTY test — spawn failed (likely no PTY on CI): {e}"
-                );
+                eprintln!("skipping live PTY test — spawn failed (likely no PTY on CI): {e}");
                 return;
             }
         };
-        let bytes = session.read_until(Duration::from_secs(3)).unwrap_or_default();
+        let bytes = session
+            .read_until(Duration::from_secs(3))
+            .unwrap_or_default();
         let text = String::from_utf8_lossy(&bytes);
         assert!(
             text.contains("hello"),

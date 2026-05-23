@@ -100,13 +100,15 @@ pub use dispatcher::{DispatchBudget, DispatchOutcome, HemisphereWorkerSet, dispa
 // actually drive real LLM calls. Q1 patch-safety verdict still
 // pending; this commit only stores patches, doesn't apply them.
 #[allow(unused_imports)]
-pub use provider_worker::{ProviderWorker, ParsedCompletion, parse_completion_text, patch_path_for};
+pub use provider_worker::{
+    ParsedCompletion, ProviderWorker, parse_completion_text, patch_path_for,
+};
 // Pick #6 Phase 4-pre (2026-05-21): WorkerRetryPolicy ported from
 // smallcode's governor — per-task state machine between InProgress
 // and Blocked so stuck workers get re-queued with a strategy hint
 // before giving up. Per `PLAN/SMALLCODE_INTEGRATION_PLAN_2026-05-21.md`.
 #[allow(unused_imports)]
-pub use retry::{RetryStrategy, WorkerRetryPolicy, DEFAULT_MAX_ATTEMPTS};
+pub use retry::{DEFAULT_MAX_ATTEMPTS, RetryStrategy, WorkerRetryPolicy};
 // Smallcode port #2 (2026-05-21): per-model capability profiles —
 // `ModelProfile` + `ToolFormat` table + fuzzy matcher. Drives
 // tool-call formatting (port #3's 2-stage router gates off
@@ -114,9 +116,7 @@ pub use retry::{RetryStrategy, WorkerRetryPolicy, DEFAULT_MAX_ATTEMPTS};
 // in `neoth code` debug output. Re-exported pending wire-in by
 // `provider_worker::ProviderWorker::execute`.
 #[allow(unused_imports)]
-pub use model_profile::{
-    get_profile, match_profile, ModelProfile, ToolFormat,
-};
+pub use model_profile::{ModelProfile, ToolFormat, get_profile, match_profile};
 // Pick #9 (2026-05-20): LLM second-opinion classifier for the
 // Ambiguous bucket — re-uses the Cerebellum DecomposerLlm trait.
 #[allow(unused_imports)]

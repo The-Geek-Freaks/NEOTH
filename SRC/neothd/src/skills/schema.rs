@@ -254,7 +254,11 @@ modes:
 
     #[test]
     fn qm_3_spectrum_round_trips_serde() {
-        for s in [Spectrum::Fidelity, Spectrum::Balanced, Spectrum::Originality] {
+        for s in [
+            Spectrum::Fidelity,
+            Spectrum::Balanced,
+            Spectrum::Originality,
+        ] {
             let json = serde_json::to_string(&s).unwrap();
             let back: Spectrum = serde_json::from_str(&json).unwrap();
             assert_eq!(s, back);

@@ -98,7 +98,7 @@ impl Channel for DiscordChannel {
     /// the receive loop is live as of 2026-05-21.
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
         use crate::channels::discord_gateway_loop::{
-            default_intents, run_gateway_loop, OutboundSender,
+            OutboundSender, default_intents, run_gateway_loop,
         };
 
         let http = self.http.clone();
@@ -203,32 +203,32 @@ async fn post_one_chunk(
         .map_err(|e| ChannelError::Transport(format!("discord POST {url}: {e}")))?;
 
     let status = response.status();
-        if status.as_u16() == 429 {
-            let retry_after_secs = response
-                .headers()
-                .get("retry-after")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<f64>().ok())
-                .map(|n| n.ceil() as u64)
-                .unwrap_or(1);
-            return Err(ChannelError::RateLimited { retry_after_secs });
-        }
-        if status.as_u16() == 401 || status.as_u16() == 403 {
-            let body_text = response.text().await.unwrap_or_default();
-            return Err(ChannelError::Auth(format!(
-                "discord HTTP {}: {}",
-                status.as_u16(),
-                body_text.trim()
-            )));
-        }
-        if !status.is_success() {
-            let body_text = response.text().await.unwrap_or_default();
-            return Err(ChannelError::Transport(format!(
-                "discord HTTP {}: {}",
-                status.as_u16(),
-                body_text.trim()
-            )));
-        }
+    if status.as_u16() == 429 {
+        let retry_after_secs = response
+            .headers()
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<f64>().ok())
+            .map(|n| n.ceil() as u64)
+            .unwrap_or(1);
+        return Err(ChannelError::RateLimited { retry_after_secs });
+    }
+    if status.as_u16() == 401 || status.as_u16() == 403 {
+        let body_text = response.text().await.unwrap_or_default();
+        return Err(ChannelError::Auth(format!(
+            "discord HTTP {}: {}",
+            status.as_u16(),
+            body_text.trim()
+        )));
+    }
+    if !status.is_success() {
+        let body_text = response.text().await.unwrap_or_default();
+        return Err(ChannelError::Transport(format!(
+            "discord HTTP {}: {}",
+            status.as_u16(),
+            body_text.trim()
+        )));
+    }
     let parsed: MessageCreateResponse = response
         .json()
         .await

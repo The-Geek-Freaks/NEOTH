@@ -1110,10 +1110,7 @@ mod tests {
         );
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.profile.learn_enabled);
-        assert_eq!(
-            cfg.profile.learn_provider.as_deref(),
-            Some("openai_api")
-        );
+        assert_eq!(cfg.profile.learn_provider.as_deref(), Some("openai_api"));
         assert!(cfg.profile.allow_cloud_fallback);
     }
 

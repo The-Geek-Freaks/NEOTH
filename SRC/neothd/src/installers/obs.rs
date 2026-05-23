@@ -85,7 +85,12 @@ pub fn install_command(path: ObsInstallPath) -> Vec<String> {
             "--accept-package-agreements".into(),
         ],
         ObsInstallPath::BrewMacos => {
-            vec!["brew".into(), "install".into(), "--cask".into(), "obs".into()]
+            vec![
+                "brew".into(),
+                "install".into(),
+                "--cask".into(),
+                "obs".into(),
+            ]
         }
         ObsInstallPath::PackageManagerLinux => vec![
             "echo".into(),
@@ -166,11 +171,7 @@ async fn cli_version(binary: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Build the headless-launch command-line that exposes obs-websocket
@@ -208,7 +209,10 @@ mod tests {
             ObsInstallPath::PackageManagerLinux.as_str(),
             "package_manager_linux"
         );
-        assert_eq!(ObsInstallPath::AlreadyInstalled.as_str(), "already_installed");
+        assert_eq!(
+            ObsInstallPath::AlreadyInstalled.as_str(),
+            "already_installed"
+        );
     }
 
     #[test]

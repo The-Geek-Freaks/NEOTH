@@ -149,9 +149,7 @@ pub fn run_stage_with_plugins(
                                 );
                                 return Ok(StageOutcome::Block {
                                     name: hook.name.clone(),
-                                    reason: format!(
-                                        "required plugin `{plugin_id}` failed: {e}"
-                                    ),
+                                    reason: format!("required plugin `{plugin_id}` failed: {e}"),
                                 });
                             }
                             tracing::warn!(
@@ -296,7 +294,11 @@ mod tests {
         let invoker = CountingInvoker {
             calls: std::sync::Mutex::new(Vec::new()),
         };
-        let hooks = vec![plugin_hook("audit-plugin", HookStage::PreProviderCall, "hello")];
+        let hooks = vec![plugin_hook(
+            "audit-plugin",
+            HookStage::PreProviderCall,
+            "hello",
+        )];
         let outcome = run_stage_with_plugins(
             HookStage::PreProviderCall,
             "operator body",
@@ -500,9 +502,7 @@ mod tests {
                     "block reason must name the unavailable-invoker cause: {reason}"
                 );
             }
-            other => panic!(
-                "required plugin without invoker must Block, got: {other:?}"
-            ),
+            other => panic!("required plugin without invoker must Block, got: {other:?}"),
         }
     }
 
@@ -551,9 +551,7 @@ mod tests {
                 assert_eq!(body, "operator body");
                 assert_eq!(hits, vec!["telemetry-only"]);
             }
-            other => panic!(
-                "optional plugin without invoker must Continue, got: {other:?}"
-            ),
+            other => panic!("optional plugin without invoker must Continue, got: {other:?}"),
         }
     }
 
@@ -581,9 +579,7 @@ mod tests {
                 assert_eq!(body, "operator body");
                 assert_eq!(hits, vec!["safety-gate"]);
             }
-            other => panic!(
-                "happy-path required plugin must Continue, got: {other:?}"
-            ),
+            other => panic!("happy-path required plugin must Continue, got: {other:?}"),
         }
         assert_eq!(invoker.calls.lock().unwrap().len(), 1);
     }

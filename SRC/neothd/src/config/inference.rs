@@ -1355,8 +1355,7 @@ model: claude-opus-4-7
         // Operator-readable copy must mention reasoning + license
         // so the wizard's stub-vs-real classification stays auditable.
         assert!(
-            desc.to_lowercase().contains("reasoning")
-                || desc.to_lowercase().contains("thinking"),
+            desc.to_lowercase().contains("reasoning") || desc.to_lowercase().contains("thinking"),
             "description should mention reasoning/thinking; got: {desc}"
         );
         assert!(desc.contains("Apache-2.0"));

@@ -30,10 +30,7 @@ pub async fn serve(addr: SocketAddr, roster: Arc<Mutex<PeerRoster>>) -> Result<(
         .with_context(|| format!("bind {addr}"))?;
     info!(bind = %addr, "neoth-relay listening");
     loop {
-        let (mut socket, peer_addr) = listener
-            .accept()
-            .await
-            .context("TcpListener::accept")?;
+        let (mut socket, peer_addr) = listener.accept().await.context("TcpListener::accept")?;
         let roster = Arc::clone(&roster);
         tokio::spawn(async move {
             if let Err(e) = handle_one(&mut socket, peer_addr, roster).await {
@@ -86,11 +83,16 @@ pub async fn route(request_text: &str, roster: &Arc<Mutex<PeerRoster>>) -> Strin
         ("POST", "/register") => handle_register(body, roster).await,
         ("POST", "/unregister") => handle_unregister(query, roster).await,
         ("GET", "/status") => handle_status(roster).await,
-        _ => http_response(404, "application/json", &serde_json::json!({
-            "error": "not_found",
-            "method": method,
-            "path": path,
-        }).to_string()),
+        _ => http_response(
+            404,
+            "application/json",
+            &serde_json::json!({
+                "error": "not_found",
+                "method": method,
+                "path": path,
+            })
+            .to_string(),
+        ),
     }
 }
 
@@ -112,14 +114,8 @@ async fn handle_register(body: &str, roster: &Arc<Mutex<PeerRoster>>) -> String 
     let mut r = roster.lock().await;
     let outcome = r.register(reg);
     let (status, body) = match &outcome {
-        RegistrationOutcome::Registered => (
-            200,
-            serde_json::json!({ "outcome": "registered" }),
-        ),
-        RegistrationOutcome::Refreshed => (
-            200,
-            serde_json::json!({ "outcome": "refreshed" }),
-        ),
+        RegistrationOutcome::Registered => (200, serde_json::json!({ "outcome": "registered" })),
+        RegistrationOutcome::Refreshed => (200, serde_json::json!({ "outcome": "refreshed" })),
         RegistrationOutcome::RejectedAtCap { cap } => (
             429,
             serde_json::json!({ "outcome": "rejected_at_cap", "cap": cap }),

@@ -198,9 +198,9 @@ impl Gate {
                             Ok(Some(false)) => {
                                 Decision::Deny(format!("operator denied via channel: {reason}"))
                             }
-                            Ok(None) => Decision::Deny(format!(
-                                "channel unavailable for confirm; {reason}"
-                            )),
+                            Ok(None) => {
+                                Decision::Deny(format!("channel unavailable for confirm; {reason}"))
+                            }
                             Err(_) => Decision::Deny(format!(
                                 "channel-confirm timed out after {}s; {reason}",
                                 timeout.as_secs()

@@ -99,8 +99,7 @@ pub fn evaluate(prompt: &str) -> TddPreflight {
         WorkKind::Refactor => (
             false,
             REFACTOR_CHECKLIST.to_string(),
-            "TDD pre-flight (refactor): tests stay GREEN throughout. No new behaviour."
-                .to_string(),
+            "TDD pre-flight (refactor): tests stay GREEN throughout. No new behaviour.".to_string(),
         ),
         WorkKind::Question => (
             true,

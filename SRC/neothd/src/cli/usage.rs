@@ -11,8 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use clap::Args;
 
-use crate::daemon::usage_log::{aggregate, UsageRollup};
-use crate::providers::cost::{convert_from_usd, format_amount, Currency};
+use crate::daemon::usage_log::{UsageRollup, aggregate};
+use crate::providers::cost::{Currency, convert_from_usd, format_amount};
 
 /// CLI args for `neoth usage`.
 #[derive(Args, Debug, Clone)]
@@ -181,7 +181,7 @@ fn print_table(roll: &UsageRollup, currency: Currency) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::daemon::usage_log::{append, UsageEvent};
+    use crate::daemon::usage_log::{UsageEvent, append};
     use tempfile::tempdir;
 
     #[test]
@@ -230,24 +230,13 @@ mod tests {
             Currency::Usd,
         )
         .unwrap();
-        run_usage_range(
-            dir.path(),
-            0,
-            i64::MAX,
-            UsageFormat::Table,
-            Currency::Gbp,
-        )
-        .unwrap();
+        run_usage_range(dir.path(), 0, i64::MAX, UsageFormat::Table, Currency::Gbp).unwrap();
     }
 
     #[test]
     fn resolve_currency_flag_wins_over_freedom_yaml() {
         let dir = tempdir().unwrap();
-        std::fs::write(
-            dir.path().join("freedom.yaml"),
-            "usage_currency: EUR\n",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("freedom.yaml"), "usage_currency: EUR\n").unwrap();
         assert_eq!(resolve_currency(dir.path(), Some("GBP")), Currency::Gbp);
         assert_eq!(resolve_currency(dir.path(), None), Currency::Eur);
         assert_eq!(resolve_currency(dir.path(), Some("invalid")), Currency::Eur);

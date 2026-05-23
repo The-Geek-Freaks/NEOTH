@@ -11,13 +11,13 @@ pub mod clock_floor;
 pub mod export;
 pub mod hardware;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
+pub mod dreaming;
 pub mod healthz;
 pub mod isolation;
 pub mod observability;
 pub mod pidfile;
 pub mod quota;
 pub mod rate_limit;
-pub mod dreaming;
 pub mod usage_log;
 // Telemetry static-enforcement lives at `tests/no_outbound_network.rs` —
 // runs on every `cargo test` and blocks PRs. No daemon-side module needed.

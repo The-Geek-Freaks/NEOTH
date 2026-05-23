@@ -247,7 +247,7 @@ pub fn should_resume_after_close(code: u16) -> bool {
         | 4011  // sharding required
         | 4012  // invalid API version
         | 4013  // invalid intents
-        | 4014  // disallowed intents
+        | 4014 // disallowed intents
     )
 }
 

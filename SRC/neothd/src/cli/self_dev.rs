@@ -25,8 +25,8 @@ use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 
 use crate::profile::estimators::BehaviouralProfile;
-use crate::profile::presets::{apply_preset, ProfilePreset};
-use crate::profile::self_dev::{propose_adjustments, SelfDevProposal};
+use crate::profile::presets::{ProfilePreset, apply_preset};
+use crate::profile::self_dev::{SelfDevProposal, propose_adjustments};
 use crate::wal::events::{
     EVENT_TYPE_SELF_DEV_ACCEPTED, EVENT_TYPE_SELF_DEV_DECLINED, EVENT_TYPE_SELF_DEV_PROPOSED,
 };
@@ -133,11 +133,7 @@ pub fn save_store(home: &Path, store: &ProposalStore) -> Result<()> {
 /// Operator entrypoint — no WAL writer required (CLI may run without
 /// a live daemon). Pass `Some(writer)` when invoked from inside the
 /// running daemon to also emit the matching WAL frames.
-pub async fn run(
-    home: &Path,
-    args: SelfDevArgs,
-    writer: Option<&WalWriterHandle>,
-) -> Result<()> {
+pub async fn run(home: &Path, args: SelfDevArgs, writer: Option<&WalWriterHandle>) -> Result<()> {
     match args.action {
         SelfDevAction::Review { min_confidence } => run_review(home, min_confidence),
         SelfDevAction::Accept { id } => run_accept(home, &id, writer).await,
@@ -177,11 +173,7 @@ fn run_review(home: &Path, min_confidence: f64) -> Result<()> {
     Ok(())
 }
 
-async fn run_accept(
-    home: &Path,
-    id: &str,
-    writer: Option<&WalWriterHandle>,
-) -> Result<()> {
+async fn run_accept(home: &Path, id: &str, writer: Option<&WalWriterHandle>) -> Result<()> {
     let mut store = load_store(home)?;
     let entry = store
         .entries
@@ -257,8 +249,8 @@ async fn run_propose(
     current_preset_name: &str,
     writer: Option<&WalWriterHandle>,
 ) -> Result<()> {
-    let bytes = std::fs::read(from_profile)
-        .with_context(|| format!("read {}", from_profile.display()))?;
+    let bytes =
+        std::fs::read(from_profile).with_context(|| format!("read {}", from_profile.display()))?;
     let profile: BehaviouralProfile = serde_json::from_slice(&bytes)
         .with_context(|| format!("parse BehaviouralProfile from {}", from_profile.display()))?;
     let current = match ProfilePreset::parse(current_preset_name) {
@@ -305,24 +297,18 @@ async fn emit_proposed(
     ts_unix: i64,
 ) -> Result<()> {
     let payload = proposal.to_proposed_payload(ts_unix);
-    let header =
-        crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_PROPOSED, &payload).build();
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_PROPOSED, &payload).build();
     writer.append(header, payload).await?;
     Ok(())
 }
 
-async fn emit_accepted(
-    writer: &WalWriterHandle,
-    id: &str,
-    ts_unix: i64,
-) -> Result<()> {
+async fn emit_accepted(writer: &WalWriterHandle, id: &str, ts_unix: i64) -> Result<()> {
     let payload = serde_json::to_vec(&serde_json::json!({
         "proposal_id": id,
         "ts_unix": ts_unix,
     }))
     .unwrap_or_default();
-    let header =
-        crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_ACCEPTED, &payload).build();
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_ACCEPTED, &payload).build();
     writer.append(header, payload).await?;
     Ok(())
 }
@@ -339,8 +325,7 @@ async fn emit_declined(
         "ts_unix": ts_unix,
     }))
     .unwrap_or_default();
-    let header =
-        crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_DECLINED, &payload).build();
+    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_SELF_DEV_DECLINED, &payload).build();
     writer.append(header, payload).await?;
     Ok(())
 }
@@ -567,10 +552,11 @@ mod tests {
         run(dir.path(), args, None).await.unwrap();
         let back = load_store(dir.path()).unwrap();
         assert!(!back.entries.is_empty());
-        assert!(back
-            .entries
-            .iter()
-            .all(|e| e.status == ProposalStatus::Pending));
+        assert!(
+            back.entries
+                .iter()
+                .all(|e| e.status == ProposalStatus::Pending)
+        );
     }
 
     #[tokio::test]

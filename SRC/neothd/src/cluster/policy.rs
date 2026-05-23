@@ -109,9 +109,7 @@ pub fn load_listen_port_from_freedom(freedom_path: &std::path::Path) -> u16 {
 /// Reader is **read-only**; never writes. Callers that need to
 /// flip `mdns.enabled` go through `cli::cluster::run_toggle`
 /// which uses the same raw YAML shape.
-pub fn load_policy_from_freedom(
-    freedom_path: &std::path::Path,
-) -> (bool, AnnouncePolicy) {
+pub fn load_policy_from_freedom(freedom_path: &std::path::Path) -> (bool, AnnouncePolicy) {
     let Ok(body) = std::fs::read_to_string(freedom_path) else {
         return (true, AnnouncePolicy::default());
     };
@@ -175,9 +173,7 @@ pub fn evaluate(
     }
     match current_ssid {
         None => ShouldAnnounce::No(NoReason::SsidUnknown),
-        Some(ssid) if policy.trusted_ssids.iter().any(|s| s == ssid) => {
-            ShouldAnnounce::Yes
-        }
+        Some(ssid) if policy.trusted_ssids.iter().any(|s| s == ssid) => ShouldAnnounce::Yes,
         Some(_) => ShouldAnnounce::No(NoReason::UntrustedSsid),
     }
 }
@@ -203,7 +199,13 @@ pub fn current_ssid() -> Option<String> {
     {
         ssid_via_iwgetid()
     }
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux", target_os = "freebsd", target_os = "openbsd")))]
+    #[cfg(not(any(
+        target_os = "windows",
+        target_os = "macos",
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "openbsd"
+    )))]
     {
         None
     }
@@ -253,11 +255,7 @@ fn ssid_via_iwgetid() -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    if s.is_empty() { None } else { Some(s) }
 }
 
 /// Parse the "SSID :" line from `netsh wlan show interfaces`
@@ -269,16 +267,14 @@ pub fn parse_netsh_ssid(stdout: &str) -> Option<String> {
     for line in stdout.lines() {
         let trimmed = line.trim();
         // Look for an exact "SSID" prefix (avoid matching "BSSID").
-        let after_label = trimmed
-            .strip_prefix("SSID")
-            .filter(|rest| {
-                // First char after "SSID" must be space or colon —
-                // BSSID would have 'I' here.
-                rest.chars()
-                    .next()
-                    .map(|c| c == ' ' || c == ':')
-                    .unwrap_or(false)
-            });
+        let after_label = trimmed.strip_prefix("SSID").filter(|rest| {
+            // First char after "SSID" must be space or colon —
+            // BSSID would have 'I' here.
+            rest.chars()
+                .next()
+                .map(|c| c == ' ' || c == ':')
+                .unwrap_or(false)
+        });
         let Some(rest) = after_label else { continue };
         if let Some((_, value)) = rest.split_once(':') {
             let ssid = value.trim();
@@ -417,10 +413,7 @@ mod tests {
                       SSID                   : home-wifi\n\
                       BSSID                  : 11:22:33:44:55:66\n\
                       Network type           : Infrastructure\n";
-        assert_eq!(
-            parse_netsh_ssid(stdout),
-            Some("home-wifi".to_string())
-        );
+        assert_eq!(parse_netsh_ssid(stdout), Some("home-wifi".to_string()));
     }
 
     #[test]
@@ -533,22 +526,21 @@ mod tests {
 
     #[test]
     fn load_policy_returns_defaults_when_freedom_missing() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth-policy-load-missing-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth-policy-load-missing-{}", std::process::id()));
         // Path that definitely doesn't exist.
         let (enabled, policy) = load_policy_from_freedom(&tmp);
-        assert!(enabled, "Q4-ratified default: mdns enabled when freedom.yaml missing");
+        assert!(
+            enabled,
+            "Q4-ratified default: mdns enabled when freedom.yaml missing"
+        );
         assert_eq!(policy, AnnouncePolicy::default());
     }
 
     #[test]
     fn load_policy_returns_defaults_when_freedom_unparseable() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-policy-load-unparse-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-policy-load-unparse-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         std::fs::write(&path, "::: not valid yaml :::").unwrap();
@@ -560,10 +552,8 @@ mod tests {
 
     #[test]
     fn load_policy_returns_defaults_when_cluster_section_absent() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-policy-load-noclu-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-policy-load-noclu-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         std::fs::write(&path, "operator_id: alice\n").unwrap();
@@ -575,10 +565,8 @@ mod tests {
 
     #[test]
     fn load_policy_reads_strict_block_with_trusted_ssids() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-policy-load-strict-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-policy-load-strict-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         let yaml = "cluster:\n  \
@@ -601,10 +589,8 @@ mod tests {
 
     #[test]
     fn load_listen_port_returns_default_when_freedom_missing() {
-        let tmp = std::env::temp_dir().join(format!(
-            "neoth-listen-port-missing-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("neoth-listen-port-missing-{}", std::process::id()));
         assert_eq!(
             load_listen_port_from_freedom(&tmp),
             super::super::tailscale::DEFAULT_NEOTH_LISTEN_PORT
@@ -613,10 +599,8 @@ mod tests {
 
     #[test]
     fn load_listen_port_returns_default_when_unparseable() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-listen-port-unparse-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-listen-port-unparse-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         std::fs::write(&path, "::: garbage :::").unwrap();
@@ -629,10 +613,8 @@ mod tests {
 
     #[test]
     fn load_listen_port_returns_default_when_cluster_section_absent() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-listen-port-noclu-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-listen-port-noclu-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         std::fs::write(&path, "operator_id: alice\n").unwrap();
@@ -645,10 +627,8 @@ mod tests {
 
     #[test]
     fn load_listen_port_reads_typed_u16() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-listen-port-typed-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-listen-port-typed-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         std::fs::write(&path, "cluster:\n  listen_port: 4242\n").unwrap();
@@ -658,10 +638,8 @@ mod tests {
 
     #[test]
     fn load_listen_port_rejects_out_of_range_value() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-listen-port-oor-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-listen-port-oor-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         // 70000 > u16::MAX → fall back to default.
@@ -675,10 +653,8 @@ mod tests {
 
     #[test]
     fn load_listen_port_rejects_zero() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-listen-port-zero-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-listen-port-zero-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         // 0 is a valid u16 but not a real port → fall back to default.
@@ -708,10 +684,8 @@ mod tests {
 
     #[test]
     fn load_listen_port_accepts_max_u16() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-listen-port-max-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-listen-port-max-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         std::fs::write(&path, "cluster:\n  listen_port: 65535\n").unwrap();
@@ -721,10 +695,8 @@ mod tests {
 
     #[test]
     fn load_policy_reads_open_block() {
-        let dir = std::env::temp_dir().join(format!(
-            "neoth-policy-load-open-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("neoth-policy-load-open-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("freedom.yaml");
         let yaml = "cluster:\n  \

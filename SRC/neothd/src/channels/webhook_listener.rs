@@ -299,8 +299,12 @@ async fn handle_request(
     let path = req.uri().path().to_string();
     let webhook_req = translate(req).await?;
     match path.as_str() {
-        "/webhook" => handle_meta(cfg, webhook_req).await.map_err(HandleError::Other),
-        "/slack/events" => handle_slack(cfg, webhook_req).await.map_err(HandleError::Other),
+        "/webhook" => handle_meta(cfg, webhook_req)
+            .await
+            .map_err(HandleError::Other),
+        "/slack/events" => handle_slack(cfg, webhook_req)
+            .await
+            .map_err(HandleError::Other),
         _ => Ok(plain_response(StatusCode::NOT_FOUND, "not found")),
     }
 }
@@ -406,7 +410,9 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
     let _ = ChannelKind::WhatsAppBusiness; // silence unused-import lint until adapter wires here
 }
 
-async fn translate(req: HyperRequest<IncomingBody>) -> std::result::Result<WebhookRequest, HandleError> {
+async fn translate(
+    req: HyperRequest<IncomingBody>,
+) -> std::result::Result<WebhookRequest, HandleError> {
     let method = match *req.method() {
         Method::GET => HttpMethod::Get,
         Method::POST => HttpMethod::Post,
@@ -754,12 +760,17 @@ mod tests {
         // for ANY 429 response. The reverse case (no 429 anywhere
         // across 8 concurrent requests against a cap of 1) would
         // mean the semaphore isn't enforcing.
-        let url = format!("http://{host}/webhook?hub.mode=subscribe&hub.verify_token=v&hub.challenge=x");
+        let url =
+            format!("http://{host}/webhook?hub.mode=subscribe&hub.verify_token=v&hub.challenge=x");
         let mut handles = Vec::new();
         for _ in 0..8 {
             let u = url.clone();
             handles.push(tokio::spawn(async move {
-                reqwest::Client::new().get(&u).send().await.map(|r| r.status())
+                reqwest::Client::new()
+                    .get(&u)
+                    .send()
+                    .await
+                    .map(|r| r.status())
             }));
         }
         let mut saw_429 = false;

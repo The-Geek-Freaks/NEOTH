@@ -170,11 +170,7 @@ impl ModelRoleTable {
     }
 
     /// Builder — register a provider's roles.
-    pub fn with_provider(
-        mut self,
-        provider_id: impl Into<String>,
-        roles: ProviderRoles,
-    ) -> Self {
+    pub fn with_provider(mut self, provider_id: impl Into<String>, roles: ProviderRoles) -> Self {
         self.providers.insert(provider_id.into(), roles);
         self
     }

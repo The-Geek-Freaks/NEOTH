@@ -156,9 +156,10 @@ impl DhtUdpDialer {
                 Ok(peer) => match self.send_to(payload, peer).await {
                     Ok(DialOutcome::SendTimeout) => DialOutcome::SendTimeout,
                     Ok(DialOutcome::Io(e)) => DialOutcome::Io(e),
-                    Ok(_) => self.recv_one().await.unwrap_or_else(|e| {
-                        DialOutcome::Io(format!("recv error: {e}"))
-                    }),
+                    Ok(_) => self
+                        .recv_one()
+                        .await
+                        .unwrap_or_else(|e| DialOutcome::Io(format!("recv error: {e}"))),
                     Err(e) => DialOutcome::Io(e.to_string()),
                 },
                 Err(e) => DialOutcome::Io(format!("resolve {bs:?}: {e}")),
@@ -181,7 +182,7 @@ impl DhtUdpDialer {
 /// Decode side lives in [`decode_lookup_payload`] for the
 /// `LookupResponse` parsing path the protocol decoder will use.
 pub fn encode_lookup_payload(packet: &LookupPacket) -> Result<Vec<u8>> {
-    use crate::channels::keet_bencode::{encode, BencodeValue};
+    use crate::channels::keet_bencode::{BencodeValue, encode};
     use std::collections::BTreeMap;
     let mut map: BTreeMap<Vec<u8>, BencodeValue> = BTreeMap::new();
     map.insert(
@@ -199,30 +200,24 @@ pub fn encode_lookup_payload(packet: &LookupPacket) -> Result<Vec<u8>> {
 /// back into a `LookupPacket`. Returns `Err` on wrong shape (missing
 /// fields, wrong-length byte strings, non-dict top level) so the
 /// receiver can drop malformed datagrams cleanly.
-pub fn decode_lookup_payload(
-    bytes: &[u8],
-) -> Result<crate::channels::keet_dht::LookupPacket> {
-    use crate::channels::keet_bencode::{decode, BencodeValue};
+pub fn decode_lookup_payload(bytes: &[u8]) -> Result<crate::channels::keet_dht::LookupPacket> {
+    use crate::channels::keet_bencode::{BencodeValue, decode};
     use crate::channels::keet_dht::LookupPacket;
     let value = decode(bytes).context("decode_lookup_payload: bencode parse")?;
     let map = match value {
         BencodeValue::Dict(m) => m,
-        other => anyhow::bail!(
-            "decode_lookup_payload: top-level must be dict, got {other:?}"
-        ),
+        other => anyhow::bail!("decode_lookup_payload: top-level must be dict, got {other:?}"),
     };
     let discovery_key_bytes = match map.get(b"discovery_key" as &[u8]) {
         Some(BencodeValue::Bytes(b)) => b,
-        Some(other) => anyhow::bail!(
-            "decode_lookup_payload: discovery_key must be Bytes, got {other:?}"
-        ),
+        Some(other) => {
+            anyhow::bail!("decode_lookup_payload: discovery_key must be Bytes, got {other:?}")
+        }
         None => anyhow::bail!("decode_lookup_payload: missing discovery_key"),
     };
     let peer_id_bytes = match map.get(b"peer_id" as &[u8]) {
         Some(BencodeValue::Bytes(b)) => b,
-        Some(other) => anyhow::bail!(
-            "decode_lookup_payload: peer_id must be Bytes, got {other:?}"
-        ),
+        Some(other) => anyhow::bail!("decode_lookup_payload: peer_id must be Bytes, got {other:?}"),
         None => anyhow::bail!("decode_lookup_payload: missing peer_id"),
     };
     if discovery_key_bytes.len() != 32 {
@@ -268,24 +263,20 @@ mod tests {
 
     #[tokio::test]
     async fn bind_with_custom_timeouts() {
-        let d = DhtUdpDialer::bind_with_timeouts(
-            Duration::from_millis(50),
-            Duration::from_millis(75),
-        )
-        .await
-        .expect("bind");
+        let d =
+            DhtUdpDialer::bind_with_timeouts(Duration::from_millis(50), Duration::from_millis(75))
+                .await
+                .expect("bind");
         assert_eq!(d.dial_timeout, Duration::from_millis(50));
         assert_eq!(d.recv_timeout, Duration::from_millis(75));
     }
 
     #[tokio::test]
     async fn recv_one_times_out_when_no_traffic() {
-        let dialer = DhtUdpDialer::bind_with_timeouts(
-            Duration::from_millis(10),
-            Duration::from_millis(50),
-        )
-        .await
-        .expect("bind");
+        let dialer =
+            DhtUdpDialer::bind_with_timeouts(Duration::from_millis(10), Duration::from_millis(50))
+                .await
+                .expect("bind");
         let outcome = dialer.recv_one().await.expect("recv result");
         assert!(matches!(outcome, DialOutcome::RecvTimeout));
     }
@@ -308,13 +299,11 @@ mod tests {
 
         // Server side: confirm the payload arrived.
         let mut buf = vec![0u8; MAX_DATAGRAM_BYTES];
-        let (n, _peer) = tokio::time::timeout(
-            Duration::from_millis(200),
-            server.recv_from(&mut buf),
-        )
-        .await
-        .expect("recv-from must complete within 200ms")
-        .expect("recv ok");
+        let (n, _peer) =
+            tokio::time::timeout(Duration::from_millis(200), server.recv_from(&mut buf))
+                .await
+                .expect("recv-from must complete within 200ms")
+                .expect("recv ok");
         assert_eq!(&buf[..n], payload);
     }
 
@@ -390,17 +379,14 @@ mod tests {
     fn decode_lookup_payload_rejects_wrong_length_keys() {
         // 16-byte discovery_key (should be 32). Build a valid
         // bencode dict by hand.
-        use crate::channels::keet_bencode::{encode, BencodeValue};
+        use crate::channels::keet_bencode::{BencodeValue, encode};
         use std::collections::BTreeMap;
         let mut map: BTreeMap<Vec<u8>, BencodeValue> = BTreeMap::new();
         map.insert(
             b"discovery_key".to_vec(),
             BencodeValue::Bytes(vec![0xaa; 16]),
         );
-        map.insert(
-            b"peer_id".to_vec(),
-            BencodeValue::Bytes(vec![0xbb; 32]),
-        );
+        map.insert(b"peer_id".to_vec(), BencodeValue::Bytes(vec![0xbb; 32]));
         let bytes = encode(&BencodeValue::Dict(map));
         let err = decode_lookup_payload(&bytes).unwrap_err();
         assert!(
@@ -411,14 +397,11 @@ mod tests {
 
     #[test]
     fn decode_lookup_payload_rejects_missing_field() {
-        use crate::channels::keet_bencode::{encode, BencodeValue};
+        use crate::channels::keet_bencode::{BencodeValue, encode};
         use std::collections::BTreeMap;
         let mut map: BTreeMap<Vec<u8>, BencodeValue> = BTreeMap::new();
         // Only peer_id, no discovery_key.
-        map.insert(
-            b"peer_id".to_vec(),
-            BencodeValue::Bytes(vec![0xbb; 32]),
-        );
+        map.insert(b"peer_id".to_vec(), BencodeValue::Bytes(vec![0xbb; 32]));
         let bytes = encode(&BencodeValue::Dict(map));
         let err = decode_lookup_payload(&bytes).unwrap_err();
         assert!(err.to_string().contains("discovery_key"));

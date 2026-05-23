@@ -526,26 +526,20 @@ mod tests {
         // the regex pass to avoid surprising redactions in
         // domain-specific bytes that happen to match a secret shape.
         let pretend_secret = b"sk-ant-api03_xxxxxxxxxxxxxxxxxxxx";
-        let out = redact_before_state_if_credential_bearing(
-            MutationKind::ChannelSend,
-            pretend_secret,
-        );
+        let out =
+            redact_before_state_if_credential_bearing(MutationKind::ChannelSend, pretend_secret);
         assert_eq!(
             &*out, pretend_secret,
             "ChannelSend must NOT trigger redaction"
         );
-        let out = redact_before_state_if_credential_bearing(
-            MutationKind::SqlMutation,
-            pretend_secret,
-        );
+        let out =
+            redact_before_state_if_credential_bearing(MutationKind::SqlMutation, pretend_secret);
         assert_eq!(
             &*out, pretend_secret,
             "SqlMutation must NOT trigger redaction"
         );
-        let out = redact_before_state_if_credential_bearing(
-            MutationKind::McpToolInvoke,
-            pretend_secret,
-        );
+        let out =
+            redact_before_state_if_credential_bearing(MutationKind::McpToolInvoke, pretend_secret);
         assert_eq!(
             &*out, pretend_secret,
             "McpToolInvoke must NOT trigger redaction"
@@ -611,8 +605,7 @@ mod tests {
         while !cursor.is_empty() {
             let frame = decode_frame(cursor).expect("decode frame");
             if frame.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
-                let p: PreMutationSnapshot =
-                    serde_json::from_slice(frame.payload).unwrap();
+                let p: PreMutationSnapshot = serde_json::from_slice(frame.payload).unwrap();
                 payload_text =
                     Some(String::from_utf8_lossy(&p.before_state_bytes().unwrap()).into_owned());
                 break;

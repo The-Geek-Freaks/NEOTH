@@ -17,7 +17,7 @@
 
 use std::collections::BTreeMap;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 
 /// One bencode value. Tree-recursive — every node is one of four
 /// kinds matching the BEP-3 wire shape exactly.
@@ -206,7 +206,11 @@ fn decode_dict(input: &[u8], mut at: usize) -> Result<(BencodeValue, usize)> {
 }
 
 fn find_byte(input: &[u8], from: usize, b: u8) -> Option<usize> {
-    input.iter().skip(from).position(|x| *x == b).map(|p| p + from)
+    input
+        .iter()
+        .skip(from)
+        .position(|x| *x == b)
+        .map(|p| p + from)
 }
 
 #[cfg(test)]
@@ -336,7 +340,10 @@ mod tests {
         let v = dict_of(&[
             (
                 "nodes",
-                BencodeValue::List(vec![BencodeValue::from_str("n1"), BencodeValue::from_str("n2")]),
+                BencodeValue::List(vec![
+                    BencodeValue::from_str("n1"),
+                    BencodeValue::from_str("n2"),
+                ]),
             ),
             (
                 "opts",
@@ -380,10 +387,7 @@ mod tests {
 
     #[test]
     fn decode_accepts_single_zero_integer() {
-        assert_eq!(
-            decode(b"i0e").unwrap(),
-            BencodeValue::Integer(0)
-        );
+        assert_eq!(decode(b"i0e").unwrap(), BencodeValue::Integer(0));
     }
 
     #[test]

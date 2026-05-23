@@ -227,7 +227,11 @@ pub async fn run_chat_with(
         );
         let mode_layer = match parent {
             Some(p) if !resolved.mode.system_prompt_delta.is_empty() => {
-                format!("{}\n\n{}", p.system_prompt(), resolved.mode.system_prompt_delta)
+                format!(
+                    "{}\n\n{}",
+                    p.system_prompt(),
+                    resolved.mode.system_prompt_delta
+                )
             }
             Some(p) => p.system_prompt().to_string(),
             None => resolved.mode.system_prompt_delta.clone(),
@@ -635,9 +639,7 @@ pub async fn run_chat_with(
             Err(berr) => {
                 drop(writer);
                 let _ = writer_join.await;
-                return Err(anyhow::anyhow!(
-                    "provider `{provider_name}`: {berr}"
-                ));
+                return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
             }
         };
         let stream_call_started = std::time::Instant::now();
@@ -1136,9 +1138,7 @@ pub async fn run_chat_with(
                     );
                     drop(writer);
                     let _ = writer_join.await;
-                    return Err(anyhow::anyhow!(
-                        "provider `{provider_name}`: {berr}"
-                    ));
+                    return Err(anyhow::anyhow!("provider `{provider_name}`: {berr}"));
                 }
             };
             let call_started = std::time::Instant::now();
@@ -1375,11 +1375,9 @@ pub async fn run_chat_with(
                 // `apply_karpathy_preamble` no-ops when the
                 // preamble is already present so this is
                 // safe under any sequencing.
-                system: Some(
-                    crate::providers::context_guards::apply_karpathy_preamble(
-                        final_system.as_deref(),
-                    ),
-                ),
+                system: Some(crate::providers::context_guards::apply_karpathy_preamble(
+                    final_system.as_deref(),
+                )),
                 model: Some(model_used.clone()),
                 ..Default::default()
             };
@@ -1890,9 +1888,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         let permit = match crate::providers::circuit_breaker::acquire_for(provider_name) {
             Ok(p) => Some(p),
             Err(berr) => {
-                return Err(format!(
-                    "provider `{provider_name}`: {berr}"
-                ));
+                return Err(format!("provider `{provider_name}`: {berr}"));
             }
         };
         let mut req = self.base_req.clone();

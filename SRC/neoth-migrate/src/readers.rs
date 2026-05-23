@@ -168,11 +168,7 @@ fn scan_one(name: &'static str, path_tpl: &str, kind: StoreKind, home: &Path) ->
 // count) + sample = dataset names. Real row-reads land when the
 // Phase-3 dep block lets us pull `lance`.
 
-fn scan_lance_inventory(
-    name: &'static str,
-    path: &std::path::Path,
-    kind: StoreKind,
-) -> StoreScan {
+fn scan_lance_inventory(name: &'static str, path: &std::path::Path, kind: StoreKind) -> StoreScan {
     let kind_str = kind.as_str().to_string();
     let path_str = path.display().to_string();
     let mut datasets: Vec<String> = Vec::new();
@@ -199,9 +195,7 @@ fn scan_lance_inventory(
         // A Lance dataset is conventionally `<name>.lance/` with a
         // `_versions/` subdirectory inside. Use the latter as the
         // tell so we don't false-positive on operator-named dirs.
-        if p.extension().and_then(|s| s.to_str()) == Some("lance")
-            && p.join("_versions").is_dir()
-        {
+        if p.extension().and_then(|s| s.to_str()) == Some("lance") && p.join("_versions").is_dir() {
             if let Some(n) = p.file_name().and_then(|s| s.to_str()) {
                 datasets.push(n.to_string());
             }
@@ -227,11 +221,7 @@ fn scan_lance_inventory(
 // dir check is enough for the github-backup case `STORES` points
 // at). Real commit/blob walking lands with the `git2` Phase-3 dep.
 
-fn scan_git_inventory(
-    name: &'static str,
-    path: &std::path::Path,
-    kind: StoreKind,
-) -> StoreScan {
+fn scan_git_inventory(name: &'static str, path: &std::path::Path, kind: StoreKind) -> StoreScan {
     let kind_str = kind.as_str().to_string();
     let path_str = path.display().to_string();
     let mut repos: Vec<String> = Vec::new();
@@ -828,10 +818,8 @@ mod tests {
         // report stays bounded.
         let tmp = tempdir().unwrap();
         for i in 0..7 {
-            std::fs::create_dir_all(
-                tmp.path().join(format!("dataset-{i}.lance/_versions")),
-            )
-            .unwrap();
+            std::fs::create_dir_all(tmp.path().join(format!("dataset-{i}.lance/_versions")))
+                .unwrap();
         }
         let scan = scan_lance_inventory("test", tmp.path(), StoreKind::LanceArrow);
         assert_eq!(scan.row_count, 7);
