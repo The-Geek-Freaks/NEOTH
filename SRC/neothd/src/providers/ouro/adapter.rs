@@ -633,27 +633,53 @@ mod tests {
         assert!(adapter.loop_steps_hint().is_none());
     }
 
-    #[tokio::test]
-    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
-    async fn local_ouro_complete_against_cached_weights() {
-        use crate::providers::Request;
-        let Ok(path) = std::env::var("NEOTH_OURO_TEST_REPO_PATH") else {
-            eprintln!("skipping: NEOTH_OURO_TEST_REPO_PATH not set");
-            return;
-        };
+    // ── Ouro O-6: real-weights integration suite ─────────────────────
+    //
+    // Every test in this section gated by NEOTH_OURO_TEST_REPO_PATH —
+    // operator points at a cache dir with tokenizer.json + config.json
+    // + model.safetensors from any of the 4 published Ouro checkpoints.
+    // Run via: `cargo test -p neothd --bin neothd -- --ignored ouro`.
+    //
+    // CI without weights stays green because every test log-skips
+    // when the env var or required files are missing.
+
+    fn ouro_weights_cache() -> Option<PathBuf> {
+        let path = std::env::var("NEOTH_OURO_TEST_REPO_PATH").ok()?;
         let cache = PathBuf::from(path);
-        assert!(cache.join(TOKENIZER_FILE).exists());
-        assert!(cache.join(CONFIG_FILE).exists());
-        assert!(cache.join(SAFETENSORS_FILE).exists());
-        let adapter = LocalOuroAdapter::new_with_paths(
-            "test/ouro-real",
+        if cache.join(TOKENIZER_FILE).exists()
+            && cache.join(CONFIG_FILE).exists()
+            && cache.join(SAFETENSORS_FILE).exists()
+        {
+            Some(cache)
+        } else {
+            eprintln!(
+                "skipping: NEOTH_OURO_TEST_REPO_PATH set but cache is \
+                 incomplete (need {TOKENIZER_FILE} + {CONFIG_FILE} + \
+                 {SAFETENSORS_FILE})"
+            );
+            None
+        }
+    }
+
+    fn build_integration_adapter(cache: PathBuf) -> LocalOuroAdapter {
+        LocalOuroAdapter::new_with_paths(
+            "ouro-integration-suite",
             cache,
             None,
             SamplingConfig::default(),
             Some(16),
-        );
+        )
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_complete_against_cached_weights() {
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
         let req = Request {
-            prompt: "Capital of France?".into(),
+            prompt: "What is the capital of France?".into(),
             system: None,
             model: None,
             temperature: None,
@@ -662,6 +688,152 @@ mod tests {
             stop_sequences: Vec::new(),
         };
         let resp = adapter.complete(req).await.expect("Ouro completion");
-        assert!(!resp.text.is_empty(), "Ouro reply must not be empty");
+        assert!(!resp.text.is_empty(), "completion must produce text");
+        assert!(
+            resp.output_tokens.unwrap_or(0) > 0,
+            "output_tokens must be reported"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_embed_returns_l2_normalised_vector_of_expected_dim() {
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
+        let dim = adapter.embed_dim_hint();
+        let resp = adapter
+            .embed(EmbedRequest::new("hello world"))
+            .await
+            .expect("Ouro embed");
+        assert_eq!(
+            resp.vector.len(),
+            dim,
+            "embed dim must match embed_dim_hint"
+        );
+        let len_sq: f32 = resp.vector.iter().map(|x| x * x).sum();
+        assert!(
+            (len_sq - 1.0).abs() < 1e-3,
+            "L2 norm must be ≈ 1.0, got len² = {len_sq}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_embed_distinct_prompts_have_cos_below_threshold() {
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
+        let r1 = adapter
+            .embed(EmbedRequest::new("the weather is sunny today"))
+            .await
+            .expect("first embed");
+        let r2 = adapter
+            .embed(EmbedRequest::new("the kernel panicked on boot"))
+            .await
+            .expect("second embed");
+        let c = crate::providers::embed::cosine(&r1.vector, &r2.vector);
+        assert!(
+            c < 0.99,
+            "distinct semantic prompts must score cos < 0.99, got {c}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_embed_identical_prompts_have_cos_one() {
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
+        let r1 = adapter
+            .embed(EmbedRequest::new("identical input prompt"))
+            .await
+            .expect("first embed");
+        let r2 = adapter
+            .embed(EmbedRequest::new("identical input prompt"))
+            .await
+            .expect("second embed");
+        let c = crate::providers::embed::cosine(&r1.vector, &r2.vector);
+        assert!(
+            (c - 1.0).abs() < 1e-3,
+            "identical prompts must score cos ≈ 1.0, got {c}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_stream_emits_at_least_one_chunk_with_done() {
+        use futures_util::StreamExt;
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
+        let req = Request {
+            prompt: "Hi".into(),
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            stop_sequences: Vec::new(),
+        };
+        let mut stream = adapter.stream(req).await.expect("Ouro stream");
+        let mut chunks = 0;
+        let mut got_done = false;
+        while let Some(chunk_result) = stream.next().await {
+            let chunk = chunk_result.expect("stream chunk");
+            chunks += 1;
+            if chunk.done {
+                got_done = true;
+            }
+        }
+        assert!(chunks >= 1, "stream must emit ≥1 chunk");
+        assert!(
+            got_done,
+            "stream must terminate with a chunk marked done"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_loop_steps_hint_populated_after_first_call() {
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
+        // Cold cache → None.
+        assert!(adapter.loop_steps_hint().is_none());
+        // Trigger model load via one embed call.
+        let _ = adapter
+            .embed(EmbedRequest::new("warm-up"))
+            .await
+            .expect("warm-up embed");
+        // Now hot — hint should reflect the model's total_ut_steps.
+        let hint = adapter
+            .loop_steps_hint()
+            .expect("loop_steps_hint must populate after model load");
+        assert!(
+            (1..=8).contains(&hint),
+            "loop_steps in [1, MAX_TOTAL_UT_STEPS=8], got {hint}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_trait_dispatch_round_trip_via_embed_provider_dyn() {
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
+        let e: &dyn EmbedProvider = &adapter;
+        assert_eq!(e.name(), "local_ouro");
+        let resp = e
+            .embed(EmbedRequest::new("trait dispatch round trip"))
+            .await
+            .expect("trait dispatch embed");
+        assert_eq!(resp.vector.len(), e.default_dim());
     }
 }
