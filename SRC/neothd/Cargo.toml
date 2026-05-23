@@ -49,6 +49,13 @@ wasm-plugin-host = ["dep:wasmtime"]
 qwen-cuda  = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 qwen-metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 
+# B-6 Item 3f (Session 21) — PTY stealth for the claude_cli subprocess
+# backend. When tmux is unavailable (Windows-without-tmux) and the
+# operator wants interactive Claude (not `--print`), the PTY-subprocess
+# backend keeps the CLI from entering CI-detection mode. Default OFF;
+# release binaries flip ON via cargo-dist on platforms with PTY support.
+pty-subprocess = ["dep:portable-pty"]
+
 [dependencies]
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
@@ -309,6 +316,18 @@ libc        = "0.2"
 # Win32_System_Memory: K-Sec-2 VirtualLock for SecretString (2026-05-17).
 # Win32_Security_Cryptography: K-Sec-4 DPAPI wrap for HMAC key (2026-05-22).
 windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography"] }
+
+# B-6 Item 3f (Session 21) — PTY stealth for interactive subprocess.
+# `portable-pty` is the cross-platform PTY crate WezTerm uses (Wez Furlong).
+# It abstracts Windows ConPTY (Win10+) + Linux pty + macOS pty behind one
+# trait. NEOTH uses it for the subprocess backend of `claude` when tmux is
+# absent and we still need a real PTY so the CLI doesn't enter CI-detection
+# mode + render non-interactive output. Optional feature so the default
+# release artefact does not ship the dep unless the operator opts into the
+# PTY-subprocess backend.
+[dependencies.portable-pty]
+version = "0.8"
+optional = true
 
 [dev-dependencies]
 tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thread", "fs", "io-util", "sync", "time"] }
