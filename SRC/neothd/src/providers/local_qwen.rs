@@ -417,7 +417,7 @@ impl Provider for LocalQwenAdapter {
 /// Pick the candle Device for the given accelerator. Falls back to CPU
 /// when the requested backend's cargo feature is not enabled. Operator
 /// always gets *something* runnable.
-fn device_for(accel: Option<Accelerator>) -> candle_core::Device {
+pub(crate) fn device_for(accel: Option<Accelerator>) -> candle_core::Device {
     use candle_core::Device;
     match accel {
         Some(Accelerator::Cuda) => {
@@ -483,7 +483,7 @@ fn device_for(accel: Option<Accelerator>) -> candle_core::Device {
 /// Render the prompt + system message into Qwen2's ChatML template.
 /// `<|im_start|>` / `<|im_end|>` are Qwen2-Instruct's role markers; the
 /// trailing `<|im_start|>assistant\n` cues the model to produce the reply.
-fn build_chatml_prompt(system: Option<&str>, user: &str) -> String {
+pub(crate) fn build_chatml_prompt(system: Option<&str>, user: &str) -> String {
     let mut s = String::new();
     if let Some(sys) = system {
         if !sys.is_empty() {
@@ -501,7 +501,7 @@ fn build_chatml_prompt(system: Option<&str>, user: &str) -> String {
 
 /// Resolve the model's EOS token id from the tokenizer's special tokens.
 /// Returns the first match against the Qwen / generic-LLM EOS conventions.
-fn resolve_eos_id(tokenizer: &tokenizers::Tokenizer) -> Option<u32> {
+pub(crate) fn resolve_eos_id(tokenizer: &tokenizers::Tokenizer) -> Option<u32> {
     for candidate in ["<|im_end|>", "<|endoftext|>", "<|eot_id|>"] {
         if let Some(id) = tokenizer.token_to_id(candidate) {
             return Some(id);
@@ -513,7 +513,7 @@ fn resolve_eos_id(tokenizer: &tokenizers::Tokenizer) -> Option<u32> {
 /// Top-p (nucleus) sampling with temperature. Greedy when temperature ≈ 0.
 /// `seed: None` draws fresh randomness per call; otherwise the call is
 /// reproducible.
-fn sample_token(logits: &candle_core::Tensor, sampling: SamplingConfig) -> Result<u32> {
+pub(crate) fn sample_token(logits: &candle_core::Tensor, sampling: SamplingConfig) -> Result<u32> {
     if sampling.temperature <= 1e-6 {
         // Greedy: identical to the Phase-2-minimal argmax path.
         return Ok(logits.argmax(0)?.to_scalar::<u32>()?);

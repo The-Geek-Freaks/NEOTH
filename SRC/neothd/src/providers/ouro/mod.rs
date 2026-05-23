@@ -31,6 +31,7 @@
 //! (integration tests) follow in subsequent sessions per
 //! `PLAN/SPEC_ouro_thinking_provider_2026-05-23.md`.
 
+pub mod adapter;
 pub mod forward;
 pub mod layers;
 pub mod model;
