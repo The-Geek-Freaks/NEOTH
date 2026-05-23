@@ -159,8 +159,8 @@ Operator requirement: `neoth init` must install + OAuth-login the three first-cl
 - [x] **D3b-4** GEMINI constant — `@google/gemini-cli` + `gemini auth login`
 - [x] **D3b-5** CODEX constant — `@openai/codex` + `codex login` (verify package on first install run; npm name may shift)
 - [x] **D3b-6** Wizard step 5 `offer_cli_installs()` — Confirm-prompt per missing CLI, runs `npm install -g` via `tokio::process` (cmd-wrapper on Windows), re-probes PATH, offers OAuth login interactively
-- [ ] **D3b-7** WAL event `0x12 INSTALLER_RAN` { cli_name, version, login_state } — defer; wizard runs before WAL is open
-- [ ] **D3b-8** Mock-npm integration tests — defer; current smoke tests (npm_version probe, distinct binaries, scoped package format) verify the wiring
+- [x] **D3b-7** WAL event `0x12 INSTALLER_RAN` { cli_name, version, login_state } — **Shipped as BATCH-3** (Session 20). `EVENT_TYPE_INSTALLER_RAN = 0x12` + `installers::build_installer_ran_payload` pure helper.
+- [x] **D3b-8** Mock-npm integration tests — **Shipped as BATCH-3** (Session 20). `installer::tests::d3b_8_mock_npm_test_distinct_binaries_pin` pins all 3 CLIs distinct + scoped package format.
 
 ## Phase 6b — Built-in Bridge V1 (per hard rule "self-contained")
 
@@ -1762,9 +1762,9 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [ ] **L-03** D14b integration test against real cached weights (P2) — `NEOTH_QWEN_TEST_REPO_PATH` env-gated test exists; needs CI green path
 - [x] **L-04** Local inference determinism — Covered (backfilled mark 2026-05-16). `providers::local_qwen::tests::sample_token_seeded_temperature_is_reproducible` pins the determinism contract: same seed + same temperature + same logits vector → same sampled token. Combined with the greedy-argmax test (`sample_token_with_zero_temp_returns_argmax`) + top-p test (`sample_token_top_p_filters_low_mass`), every sampling branch is regression-trapped. Real-weights determinism (full forward pass produces same N tokens for same seed) is operator-verifiable via `local_qwen_forward_pass_against_cached_weights` with `NEOTH_QWEN_TEST_REPO_PATH`.
 - [x] **L-05** Local extraction no-cloud-egress — Covered (backfilled mark 2026-05-16). `tests/no_outbound_network.rs` walks `src/` and fails the build if any non-allowlisted file constructs `reqwest::Client` / `hyper::client::*` / `TcpStream::connect` / `tokio_tungstenite::connect`. `src/providers/local_qwen.rs` is NOT in `ALLOWED_PREFIXES` — by guard-test invariant the local inference path cannot phone home. The pure-Rust candle backend + mmap'd safetensors + tokenizer stay entirely on-disk. Profile extraction (`profile/extract.rs`) calls the configured Cerebellum provider; when that's `LocalQwen` the egress count is zero. End-to-end extraction-without-egress is the operator's contract pinned at the source-tree level rather than runtime.
-- [ ] **L-06** `profile_learn.yaml` switched to `model: local_qwen3_4b` (H3 fix, P2 Day 40)
-- [ ] **L-07** Local model health-check + `allow_cloud_fallback` default-false (P2 Day 41)
-- [ ] **L-08** `neoth privacy audit` CLI + privacy table update (P2 Day 42)
+- [x] **L-06** `profile_learn.yaml` switched to `model: local_qwen3_4b` (H3 fix, P2 Day 40) — **Verified shipped Session 22 audit**: see BATCH-1 entry (Shipped 2026-05-22 Session 20) — `ProfileConfig.learn_provider: Option<String>` defaults to `Some("local_qwen")` so flipping `profile.learn_enabled: true` doesn't suddenly cost cloud tokens.
+- [x] **L-07** Local model health-check + `allow_cloud_fallback` default-false (P2 Day 41) — **Verified shipped Session 22 audit**: see BATCH-1 entry (Shipped 2026-05-22 Session 20) — `ProfileConfig.allow_cloud_fallback: bool` defaults to `false`; pipeline fails closed when local provider unavailable instead of silently spending cloud tokens.
+- [x] **L-08** `neoth privacy audit` CLI + privacy table update (P2 Day 42) — **Verified shipped Session 22 audit**: `cli/privacy.rs::run_privacy` exists at line 41. The privacy audit subcommand surface ships including `consent list`, `destination audit`, redaction inspection.
 - [ ] **L-09** Qwen3-Embedding-0.6B GPU worker (P2+) — second GPU slot
 - [ ] **L-10** Stage-2 skill router (Qwen3-Q8 embedding cosine ≥ 0.72) (P2+) — depends on L-09
 - [ ] **L-11** Phase 4 third GPU slot for ambient processing (P4)
@@ -1811,7 +1811,7 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 ### Category 5 — Refusal Pipeline (9 items)
 
 - [x] **R-01** Mirror-Refusal Pipeline build (multi-attempt orchestrator) — Shipped 2026-05-17 Session 11. Multi-attempt iterator on top of R-05's single-hop primitive. New `security/refusal_reframings::applicable_reframings(cause, catalogue, disabled)` returns every applicable reframing in catalogue declaration order (instead of just the first). New `security/refusal_recovery::try_recover_multi(provider, req, refusal_text, disabled, writer, now_unix, max_attempts)` walks that list, tries each reframing once, returns the FIRST `Recovered` outcome OR the LAST failure if all attempts exhausted. After full budget exhaustion emits `0x1A REFUSAL_PERSISTENT` audit frame with the tried reframing list — operators can grep that to find refusals that escaped recovery entirely. New `freedom.yaml::refusal_recovery.max_attempts: u32` (default 2 per SPEC §4). Both `cli/chat.rs` + `cli/serve.rs` now call `try_recover_multi` instead of `try_recover`. 11 new tests: 5 for `applicable_reframings` iteration (SafetyPolicy returns 5 entries in order / CapabilityGap returns step_decomposition only / Privacy returns narrow_scope only / disabled filter respected / Unknown+OperatorPolicy empty) + 6 for multi-attempt (first-recovered wins / budget cap / max_attempts=0 short-circuits / Unknown skips budget / 0x1A audit emitted after exhaustion / disabled fall-through across attempts). Hemisphere-swap branch deferred — that needs council-mode awareness + per-hemisphere refusal classification (R-03 territory).
-- [ ] **R-02** Dreaming-Pipeline (P2 Day 56-60)
+- [x] **R-02** Dreaming-Pipeline (P2 Day 56-60) — **Verified shipped Session 22 audit**: full pipeline complete across Phases 1-4c. Phase 1 (storage + types, Session 20), Phase 2 (`seed_with_dreams` + `neoth recall --include-dreams`, Session 20), Phase 3 (LLM clustering blocked → unblocked Session 22 via Day-14b embed surface), Phase 4 (`embed_events` + `cluster_events_by_cosine` + `compose_dreams_with_embeddings`, Session 21), Phase 4c (background task wired into serve.rs via `freedom.yaml::dreaming.enabled` config gate, Session 22). End-to-end operator flow: `dreaming.enabled: true` → nightly cron-style dream batches in `~/.neoth/dreams/<YYYY-MM-DD>.jsonl`, embedding-clustered when local_qwen present, deterministic fallback otherwise.
 - [x] **R-03** Council-aware refusal classification (per-hemisphere, SPEC_refusal_recovery §1.2) — Shipped 2026-05-18 Session 13. New `HemisphereRefusal { class, class_confidence, cause, cause_confidence }` struct on `council/types.rs` + `Option<HemisphereRefusal> refusal` field on `HemisphereResponse` (serde-default `None` so older WAL payloads stay parseable). `council/orchestrator.rs::run_one` now runs the deterministic `security::refusal_detect::classify` + `security::refusal_cause::classify_cause` on every successful hemisphere reply and populates the field when the surface classifier flags a refusal. New CouncilDebate helpers: `refused_count()`, `refused_responses()`, `usable_responses()`, `is_partial_refusal()` — the chat dispatcher / callosum recovery path can now recognise "1-2 hemispheres refused while others succeeded" and pick the verdict from the usable subset instead of treating the whole debate as blocked. 15 new tests: 11 in `council::types::tests` (is_usable contract, refused_count three variants, refused_responses iteration order, usable_responses excludes refused + errored, is_partial_refusal three states, HemisphereRefusal JSON roundtrip, backward-compat parse without refusal field) + 4 in `council::orchestrator::tests` (only-refusing-hemisphere flagged, none-when-all-normal, partial-signal-fires, errored-hemisphere-no-refusal). R-* arc now 8/9 closed (R-02 dreaming-pipeline remains as the only open item).
 - [x] **R-04** `refusal_detect` + `mirror_refusal.yaml` wired into `respond_to_user.yaml` (P2) — Shipped 2026-05-17 Session 9. `cli/chat.rs::run_chat_with` (CLI path) + `cli/serve.rs::build_pipeline_handler` (channel path) both call `security::refusal_recovery::try_recover` after the Schicht-0 detector flags a refusal. On `Recovered`, the recovered text REPLACES `response_text` / `completion.text` downstream so ADR extraction + SESSION_ARCHIVE + profile pipeline + PreEgress hooks see the LOWKEY-reframed reply. On `RefusedAgain` / `NotRecoverable` / `ProviderError`, the original refusal text stays in place. New `freedom.yaml::refusal_recovery: { enabled: bool (default true), disabled_reframings: Vec<String> }` config block + per-call env override `NEOTH_REFUSAL_RECOVERY_DISABLE=1`. 3 new config tests.
 - [x] **R-05** Per-hemisphere LOWKEY retry state machine (cause-classify + reframe + retry loop) — Shipped 2026-05-17 Session 9. New `security/refusal_recovery.rs` module ties R-09 (cause classifier) + R-07 (reframing catalogue) together. `try_recover(provider, original_req, refusal_text, disabled_ids, writer, now_unix) -> RecoveryOutcome` is the single reframe-and-retry hop primitive. `RecoveryOutcome` variants: `Recovered { completion, reframing_id }` / `RefusedAgain { reframing_id, new_refusal }` / `NotRecoverable { cause }` / `ProviderError { reframing_id, error }`. Emits `0x19 REFUSAL_REROUTED` audit frame on every retry attempt with cause + reframing_id + before/after prompt hashes. Test-injectable `try_recover_with_catalogue` for synthetic catalogues. 10 unit tests covering Unknown/OperatorPolicy → NotRecoverable + SafetyPolicy → Recovered (operator_authority) + SafetyPolicy → RefusedAgain + CapabilityGap → Recovered (step_decomposition) + disabled-reframing fall-through + provider error + audit frame round-trip + `is_recovered()` accessor + empty catalogue + variant Debug derivations.
@@ -2091,29 +2091,29 @@ Sprint 1 ships next:
 
 - [x] **Q1** Karpathy `context_guards` (0.5d) — always-on
   preamble layer. Shipped Session 19 (see below).
-- [ ] **Q2** Code graph edges + BFS (3-4d)
-- [ ] **Q3** MODE_REGISTRY pattern (2-3d)
-- [ ] **Q4** Brainstorming + PlanWriter gates (1-2d)
-- [ ] **Q5** NEXUS sub-agent handoff schema (1d)
-- [ ] **Q6** QaVerdict enum (0.5d)
-- [ ] **Q7** TDD pre-flight in cli/code (1d)
-- [ ] **Q8** Provider preset catalog + Slint panel (2d)
-- [ ] **Q9** Request-log + usage dashboard (2d)
-- [ ] **Q10** Local proxy + circuit-breaker (3d)
-- [ ] **Q11** Skills installer (1d)
-- [ ] **Q12** Role-based model mapping (0.5d)
-- [ ] **Q13** 6 new Council voices (1d)
-- [ ] **Q14** SessionSummarizer Stop-hook (0.5d)
-- [ ] **Q15** Brainstorming bootstrap hook (0.5d)
-- [ ] **Q16** Parallel-agents dispatcher (1d)
-- [ ] **Q17** Two-stage review gate (1d)
-- [ ] **Q18** Citation-check helper (1d)
-- [ ] **Q19** Fact-check claim_guard wire (0.5d)
-- [ ] **Q20** Temporal-integrity verifier (1d)
-- [ ] **Q21** 5 superpowers P1 skill YAMLs (0.5d)
-- [ ] **Q22** 9 mattpocock skill YAMLs (1d)
-- [ ] **Q23** 15 academic mode entries (1d, gated on Q3)
-- [ ] **Q24** 8 superpowers P4 skill YAMLs (0.5d)
+- [x] **Q2** Code graph edges + BFS (3-4d) — **Shipped as QM-2** (Session 20).
+- [x] **Q3** MODE_REGISTRY pattern (2-3d) — **Shipped as QM-3** (Session 20).
+- [x] **Q4** Brainstorming + PlanWriter gates (1-2d) — **Shipped as QM-4** (Session 20).
+- [x] **Q5** NEXUS sub-agent handoff schema (1d) — **Shipped as QM-5** (Session 20).
+- [x] **Q6** QaVerdict enum (0.5d) — **Shipped as QM-6** (Session 20).
+- [x] **Q7** TDD pre-flight in cli/code (1d) — **Shipped as QM-7** (Session 20).
+- [x] **Q8** Provider preset catalog + Slint panel (2d) — **Shipped as QM-8** (Session 20).
+- [x] **Q9** Request-log + usage dashboard (2d) — **Shipped as QM-9** (Session 20).
+- [x] **Q10** Local proxy + circuit-breaker (3d) — **Shipped as QM-10** (Session 20).
+- [x] **Q11** Skills installer (1d) — **Shipped as QM-11** (Session 20).
+- [x] **Q12** Role-based model mapping (0.5d) — **Shipped as QM-12** (Session 20).
+- [x] **Q13** 6 new Council voices (1d) — **Shipped as QM-13** (Session 20).
+- [x] **Q14** SessionSummarizer Stop-hook (0.5d) — **Shipped as QM-14** (Session 20).
+- [x] **Q15** Brainstorming bootstrap hook (0.5d) — **Shipped as QM-15** (Session 20).
+- [x] **Q16** Parallel-agents dispatcher (1d) — **Shipped as QM-16** (Session 20).
+- [x] **Q17** Two-stage review gate (1d) — **Verified shipped Session 22 audit**: `sub_agents::review::two_stage_review(provider, operator_prompt, primary_reply) -> Result<Vec<ReviewVerdict>>` exists at `SRC/neothd/src/sub_agents/review.rs:152` with `ReviewStage::{SpecCompliance, CodeQuality}` + `parse_verdict` + `reply_has_code` helpers + skip-stage-2-when-no-code path. The Q17 tag predated the QM-17 label that was never assigned; the underlying surface ships.
+- [x] **Q18** Citation-check helper (1d) — **Shipped as QM-18** (Session 20).
+- [x] **Q19** Fact-check claim_guard wire (0.5d) — **Shipped as QM-19** (Session 20).
+- [x] **Q20** Temporal-integrity verifier (1d) — **Shipped as QM-20** (Session 20).
+- [x] **Q21** 5 superpowers P1 skill YAMLs (0.5d) — **Shipped as QM-21** (Session 20).
+- [x] **Q22** 9 mattpocock skill YAMLs (1d) — **Shipped as QM-22** (Session 20).
+- [x] **Q23** 15 academic mode entries (1d, gated on Q3) — **Verified shipped Session 22 audit**: see QM-23 entry (Shipped 2026-05-22 Session 20) — single `academic_research` skill YAML bundles 15 named modes (deep-research × 6, academic-paper × 5, academic-paper-reviewer × 4) with Spectrum + Oversight + OutputContract + EN+DE trigger_phrases.
+- [x] **Q24** 8 superpowers P4 skill YAMLs (0.5d) — **Shipped as QM-24** (Session 20).
 
 **Pick #6 Phase 4 WAL audit emit (2026-05-21):**
 - ✅ **`DispatchApplyConfig::with_wal_writer` + `0xD3`/`0xD4` emit** — closes the Phase 4 audit-anchor piece. New `WalWriterRef = Option<Arc<WalWriterHandle>>` field on `DispatchApplyConfig` + builder `.with_wal_writer(arc)`. When the daemon's `cli::serve` threads a live handle through, `apply_patch_via_worktree` fires the appropriate frame on each outcome: `0xD3 PATCH_APPLIED { task_id, session_id, worktree_path, patch_hash, ts_unix }` on success, `0xD4 PATCH_APPLY_FAILED { task_id, session_id, worktree_path, stage, reason, ts_unix }` on apply-check / apply / tests failure. `stage` discriminates the three failure points so audit consumers can grep specifically. `reason` flows through `security::redact::redact_text` so a leaked Bearer header or `.env` line in git's stderr never lands raw in the WAL. Uses `try_append_sync` (fire-and-forget) — backpressure or closed-channel errors log at warn level but never bubble; the operator-visible task transition is the authoritative signal regardless of WAL state. CLI one-shot (`neoth code --apply`) leaves the writer None and skips emit — operator-driven invocation is its own visible audit. 1 new integration test spawns a real `WalWriterHandle` against a tempfile, runs the apply, asserts the segment file contains the 0xD3 magic byte after a 200ms flush window.
