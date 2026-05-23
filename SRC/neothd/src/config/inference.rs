@@ -246,6 +246,14 @@ pub struct InferenceTopology {
     /// a misconfigured 99999 cannot exhaust RAM / latency budget.
     #[serde(default)]
     pub max_new_tokens: Option<u32>,
+    /// Ouro O-5a (Session 22): post-load weight quantisation mode for
+    /// `LocalOuroAdapter`. Default `None` (load native BF16/F32 from
+    /// safetensors). `Q8` is the operator opt-in for ~50% peak-memory
+    /// reduction at the cost of ~30-60 s extra cold-start; O-5a wires
+    /// the knob, O-5b ships the QTensor forward-pass swap (until then
+    /// `Q8` falls through to `None` with a tracing-warn).
+    #[serde(default)]
+    pub ouro_quant_mode: crate::providers::ouro::model::OuroQuantMode,
     /// Fallback slot used when `mode = single` or when a hemisphere is
     /// not explicitly configured.
     #[serde(default)]

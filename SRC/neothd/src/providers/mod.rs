@@ -361,7 +361,8 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 local_qwen::SamplingConfig::default(),
                 config.inference.max_new_tokens,
             )
-            .await?;
+            .await?
+            .with_quant_mode(config.inference.ouro_quant_mode);
             Ok(Box::new(adapter))
         }
         ProviderKind::AwsBedrock => {
@@ -469,7 +470,9 @@ pub async fn embed_provider_from_config(
             )
             .await
             {
-                Ok(adapter) => Some(std::sync::Arc::new(adapter)),
+                Ok(adapter) => Some(std::sync::Arc::new(
+                    adapter.with_quant_mode(config.inference.ouro_quant_mode),
+                )),
                 Err(e) => {
                     tracing::warn!(
                         error = %e,

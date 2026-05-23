@@ -21,6 +21,51 @@ pub const DEFAULT_TOTAL_UT_STEPS: usize = 4;
 /// `OuroConfig::validate` clamps + warns.
 pub const MAX_TOTAL_UT_STEPS: usize = 8;
 
+/// Operator-pickable Ouro weight-quantisation mode (O-5 surface).
+///
+/// `None` ⇒ load weights as BF16 / F32 per the safetensors header
+/// (default; no extra compute at load). `Q8` ⇒ post-load
+/// quantisation to 8-bit via `candle_core::quantized::QTensor`,
+/// ≈ 50% peak memory reduction at the cost of ~30-60 s extra
+/// cold-start.
+///
+/// **v1 shipping note**: the config knob is plumbed + tested today
+/// (O-5a); the actual QTensor forward-pass swap lands in **O-5b**
+/// once the parallel quantized model code lands. Until then,
+/// `Q8` falls through to `None` with a `tracing::warn!` so
+/// operators who opt in see "Q8 deferred; running BF16 this boot"
+/// instead of silent disagreement between config + behaviour.
+#[derive(
+    Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum OuroQuantMode {
+    /// Load weights at native precision (no quantisation).
+    #[default]
+    None,
+    /// 8-bit quantisation post-load. v1 falls back to None until
+    /// O-5b ships the QTensor forward-pass swap.
+    Q8,
+}
+
+impl OuroQuantMode {
+    /// Stable wire form for log lines + operator status surface.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Q8 => "q8",
+        }
+    }
+
+    /// True ⇔ caller should perform the QTensor swap during model
+    /// load. O-5a always returns false (Q8 path deferred); O-5b
+    /// flips Q8 to true when the parallel quantized model lands.
+    pub fn is_quant_active(self) -> bool {
+        // O-5a: always false. O-5b will flip the Q8 arm.
+        false
+    }
+}
+
 /// On-disk Ouro config (matches HF `ByteDance/Ouro-*` `config.json`).
 ///
 /// Fields without `#[serde(default)]` are required — a missing field
@@ -343,5 +388,47 @@ mod tests {
     fn constants_pinned() {
         assert_eq!(DEFAULT_TOTAL_UT_STEPS, 4);
         assert_eq!(MAX_TOTAL_UT_STEPS, 8);
+    }
+
+    // ── O-5a — Q8 quantisation config knob ────────────────────────
+
+    #[test]
+    fn quant_mode_default_is_none() {
+        assert_eq!(OuroQuantMode::default(), OuroQuantMode::None);
+    }
+
+    #[test]
+    fn quant_mode_wire_form_pinned() {
+        assert_eq!(OuroQuantMode::None.as_str(), "none");
+        assert_eq!(OuroQuantMode::Q8.as_str(), "q8");
+    }
+
+    #[test]
+    fn quant_mode_serde_round_trip_snake_case() {
+        for mode in [OuroQuantMode::None, OuroQuantMode::Q8] {
+            let yaml = serde_yaml::to_string(&mode).unwrap();
+            let back: OuroQuantMode = serde_yaml::from_str(&yaml).unwrap();
+            assert_eq!(mode, back);
+        }
+        // Wire shape — snake_case literal.
+        assert_eq!(serde_yaml::to_string(&OuroQuantMode::Q8).unwrap().trim(), "q8");
+    }
+
+    #[test]
+    fn is_quant_active_always_false_in_o5a() {
+        // O-5a ships the operator knob; O-5b flips Q8 to true
+        // once the QTensor forward-pass swap lands. Pin the
+        // contract bidirectionally so O-5b can't quietly forget
+        // to update is_quant_active.
+        assert!(!OuroQuantMode::None.is_quant_active());
+        assert!(!OuroQuantMode::Q8.is_quant_active());
+    }
+
+    #[test]
+    fn quant_mode_yaml_accepts_canonical_lowercase() {
+        let parsed: OuroQuantMode = serde_yaml::from_str("none").unwrap();
+        assert_eq!(parsed, OuroQuantMode::None);
+        let parsed: OuroQuantMode = serde_yaml::from_str("q8").unwrap();
+        assert_eq!(parsed, OuroQuantMode::Q8);
     }
 }

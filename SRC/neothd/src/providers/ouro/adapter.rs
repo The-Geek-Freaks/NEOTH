@@ -33,7 +33,7 @@ use crate::providers::local_qwen::{
 use crate::providers::{ChunkStream, Completion, Provider, Request};
 
 use super::forward::OuroModel;
-use super::model::OuroConfig;
+use super::model::{OuroConfig, OuroQuantMode};
 
 /// Default HuggingFace repo. Operator overrides via `freedom.yaml::
 /// provider_model` once the O-3 config wiring lands.
@@ -69,6 +69,10 @@ pub struct LocalOuroAdapter {
     accelerator: Option<crate::daemon::accelerator::Accelerator>,
     sampling: SamplingConfig,
     max_new_tokens: u32,
+    /// O-5a — operator-picked quant mode. `None` (default) loads
+    /// native BF16/F32. `Q8` is wired but falls through to None at
+    /// load time until O-5b ships the QTensor forward-pass swap.
+    quant_mode: OuroQuantMode,
     loaded: Arc<Mutex<Option<LoadedOuro>>>,
 }
 
@@ -102,10 +106,28 @@ impl LocalOuroAdapter {
             accelerator,
             sampling,
             max_new_tokens: clamp_max_new_tokens(max_new_tokens),
+            quant_mode: OuroQuantMode::default(),
             loaded: Arc::new(Mutex::new(None)),
         };
         adapter.ensure_artifacts().await?;
         Ok(adapter)
+    }
+
+    /// O-5a — operator-picked quant mode override. Returns a new
+    /// adapter (builder-style) so the existing construction sites
+    /// don't need to change. `Q8` is accepted today + plumbed
+    /// through `ensure_ouro_loaded` but falls through to native
+    /// load with a tracing-warn until O-5b lands.
+    pub fn with_quant_mode(mut self, mode: OuroQuantMode) -> Self {
+        self.quant_mode = mode;
+        self
+    }
+
+    /// Read-only view of the configured quant mode — operator
+    /// status surface (`neoth ouro status` once O-5a wires it) reads
+    /// via this.
+    pub fn quant_mode(&self) -> OuroQuantMode {
+        self.quant_mode
     }
 
     /// Pre-downloaded artifacts constructor — used by tests + the
@@ -128,6 +150,7 @@ impl LocalOuroAdapter {
             accelerator,
             sampling,
             max_new_tokens: clamp_max_new_tokens(max_new_tokens),
+            quant_mode: OuroQuantMode::default(),
             loaded: Arc::new(Mutex::new(None)),
         }
     }
@@ -252,9 +275,22 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         return Ok(());
     }
     let started = Instant::now();
+    // O-5a — quant mode gate. The operator-knob is plumbed end-to-end
+    // but the QTensor forward-pass swap defers to O-5b. Until then,
+    // any non-None mode falls through to native load with an
+    // operator-visible tracing-warn so the freedom.yaml setting
+    // doesn't silently disagree with runtime behaviour.
+    if adapter.quant_mode != OuroQuantMode::None && !adapter.quant_mode.is_quant_active() {
+        tracing::warn!(
+            requested = %adapter.quant_mode.as_str(),
+            "Ouro quant mode `{}` requested but deferred to O-5b; falling back to native BF16/F32",
+            adapter.quant_mode.as_str()
+        );
+    }
     eprintln!(
-        "→ loading Ouro weights from {} (first call only)",
-        adapter.weights_path.display()
+        "→ loading Ouro weights from {} (first call only, quant={})",
+        adapter.weights_path.display(),
+        adapter.quant_mode.as_str()
     );
     let device = device_for(adapter.accelerator);
     let dtype = DType::F32;
@@ -402,6 +438,7 @@ impl Provider for LocalOuroAdapter {
             sampling: self.sampling,
             max_new_tokens: self.max_new_tokens,
             accelerator: self.accelerator,
+            quant_mode: self.quant_mode,
             loaded: Arc::clone(&self.loaded),
             tokenizer_path: self.tokenizer_path.clone(),
             config_path: self.config_path.clone(),
@@ -419,6 +456,7 @@ impl Provider for LocalOuroAdapter {
                 accelerator: adapter_handle.accelerator,
                 sampling: adapter_handle.sampling,
                 max_new_tokens: adapter_handle.max_new_tokens,
+                quant_mode: adapter_handle.quant_mode,
                 loaded: adapter_handle.loaded,
             };
             run_ouro_forward(&adapter, &req_clone)
@@ -456,6 +494,7 @@ struct AdapterHandle {
     accelerator: Option<crate::daemon::accelerator::Accelerator>,
     sampling: SamplingConfig,
     max_new_tokens: u32,
+    quant_mode: OuroQuantMode,
     loaded: Arc<Mutex<Option<LoadedOuro>>>,
 }
 
@@ -476,6 +515,7 @@ impl EmbedProvider for LocalOuroAdapter {
             sampling: self.sampling,
             max_new_tokens: self.max_new_tokens,
             accelerator: self.accelerator,
+            quant_mode: self.quant_mode,
             loaded: Arc::clone(&self.loaded),
             tokenizer_path: self.tokenizer_path.clone(),
             config_path: self.config_path.clone(),
@@ -493,6 +533,7 @@ impl EmbedProvider for LocalOuroAdapter {
                 accelerator: adapter_handle.accelerator,
                 sampling: adapter_handle.sampling,
                 max_new_tokens: adapter_handle.max_new_tokens,
+                quant_mode: adapter_handle.quant_mode,
                 loaded: adapter_handle.loaded,
             };
             ensure_ouro_loaded(&adapter)?;
@@ -631,6 +672,33 @@ mod tests {
         let dir = tempdir().unwrap();
         let adapter = synthetic_adapter_with_config(dir.path().to_path_buf());
         assert!(adapter.loop_steps_hint().is_none());
+    }
+
+    #[test]
+    fn quant_mode_defaults_to_none() {
+        let dir = tempdir().unwrap();
+        let adapter = synthetic_adapter_with_config(dir.path().to_path_buf());
+        assert_eq!(adapter.quant_mode(), OuroQuantMode::None);
+    }
+
+    #[test]
+    fn with_quant_mode_builder_overrides_default() {
+        let dir = tempdir().unwrap();
+        let adapter = synthetic_adapter_with_config(dir.path().to_path_buf())
+            .with_quant_mode(OuroQuantMode::Q8);
+        assert_eq!(adapter.quant_mode(), OuroQuantMode::Q8);
+    }
+
+    #[test]
+    fn with_quant_mode_preserves_other_fields() {
+        // Building-style override must not lose repo / paths /
+        // accelerator / sampling / max_new_tokens. Smoke that the
+        // moved fields round-trip.
+        let dir = tempdir().unwrap();
+        let adapter = synthetic_adapter_with_config(dir.path().to_path_buf())
+            .with_quant_mode(OuroQuantMode::Q8);
+        assert_eq!(adapter.repo, "test/ouro");
+        assert_eq!(adapter.quant_mode(), OuroQuantMode::Q8);
     }
 
     // ── Ouro O-6: real-weights integration suite ─────────────────────
