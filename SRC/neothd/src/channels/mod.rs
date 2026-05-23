@@ -18,6 +18,7 @@ pub mod discord_gateway;
 pub mod discord_gateway_loop;
 pub mod formatter;
 pub mod keet;
+pub mod keet_bencode;
 pub mod keet_crypto;
 pub mod keet_dht;
 pub mod keet_udp;
