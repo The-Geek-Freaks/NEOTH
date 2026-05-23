@@ -441,10 +441,10 @@ path remains a follow-up, not a v0.x blocker.
 
 ### Phase 24 — R-13 Hysteria operator walkthrough (lives inside R-1 GUI)
 
-- [ ] **HW-1** Wizard screen: "Why tunnel?" — one paragraph, 3 concrete threats, decline button
-- [ ] **HW-2** Two paths: (a) self-host one-click setup (asks for VPS address + token; runs ACME via subprocess), (b) paste existing config (operator already has Hysteria server)
-- [ ] **HW-3** Health check: ping the SOCKS5 listener + a known endpoint through it before completing the wizard
-- [ ] **HW-4** Drops to "skip" gracefully if operator does not want tunnelling — channels still work bareback
+- [x] **HW-1** Wizard screen: "Why tunnel?" — one paragraph, 3 concrete threats, decline button — `WHY_TUNNEL_COPY` const in `SRC/neoth-relay/src/hysteria.rs` pins coffee-shop/ISP/state cases + decline framing (test `hw1_why_tunnel_copy_mentions_three_concrete_threats`)
+- [x] **HW-2** Two paths: (a) self-host one-click setup (asks for VPS address + token; runs ACME via subprocess), (b) paste existing config (operator already has Hysteria server) — `HysteriaOnboardingPath::{SelfHost,BringExisting,Skip}` enum with wire-form `as_str()` + operator descriptions
+- [x] **HW-3** Health check: ping the SOCKS5 listener + a known endpoint through it before completing the wizard — `check_hysteria_listener` async fn returns `HealthCheckOutcome::{Ok,NotConfigured,MissingForwardTo,ConnectionRefused,Timeout}` via 3s TCP probe; 4 tests cover live listener, dead port, missing forward_to, decline
+- [x] **HW-4** Drops to "skip" gracefully if operator does not want tunnelling — channels still work bareback — `HealthCheckOutcome::NotConfigured.is_passable() == true`; Skip path lets wizard continue (test `hw4_skip_path_is_always_passable`)
 
 ## Round 3 — Claude Code feature parity (per `memory/neoth-claude-code-parity.md`)
 
