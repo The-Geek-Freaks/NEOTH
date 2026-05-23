@@ -13,6 +13,24 @@ pub const SEGMENT_HEADER_LEN: usize = 60;
 pub const SEGMENT_FORMAT_VERSION: u32 = 1;
 pub const SEGMENT_HEADER_CRC_COVERED: usize = 56;
 
+/// CT-10 (Session 21) — reserved segment-flag bit values for the
+/// v1.2 wire-format bump that adds a per-segment `flags: u8` field
+/// (today's `SegmentHeader` has no flags slot; v1.2 will append it
+/// after `header_crc32c` + bump `SEGMENT_FORMAT_VERSION` to 2).
+///
+/// These constants reserve bit-values NOW so v1.2 can land without
+/// re-shuffling existing flag definitions. Operator-facing
+/// `neoth doctor wal` will surface flagged segments via the
+/// human-readable name strings below.
+///
+/// **NOT YET HONOURED.** Today's reader/writer treats every segment
+/// as flag-less. The constants are pure data reservation; the
+/// drift-guard test below pins the bit-values so a future v1.2
+/// developer can't accidentally re-use one for a different feature.
+pub const SEGMENT_FLAG_COMPRESSED: u8 = 0x01;
+pub const SEGMENT_FLAG_SEALED: u8 = 0x02;
+pub const SEGMENT_FLAG_DEFERRED_REPLICATION: u8 = 0x04;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SegmentHeader {
     pub magic: [u8; 8],
@@ -183,5 +201,30 @@ mod tests {
         let b = SegmentHeader::new(7, 5, 42, 1_700_000_000_000_000_000, [9u8; 16]);
         assert_eq!(a.header_crc32c, b.header_crc32c);
         assert_ne!(a.header_crc32c, 0);
+    }
+
+    // ── CT-10 v1.2 flag-bit reservations ───────────────────────
+
+    #[test]
+    fn segment_flag_bit_values_pinned_and_distinct() {
+        // Drift guard — a v1.2 developer re-using one of these bits
+        // for a different feature would silently corrupt existing
+        // segments. Pin both the values AND mutual distinctness.
+        assert_eq!(SEGMENT_FLAG_COMPRESSED, 0x01);
+        assert_eq!(SEGMENT_FLAG_SEALED, 0x02);
+        assert_eq!(SEGMENT_FLAG_DEFERRED_REPLICATION, 0x04);
+        // Distinct bits — bitwise OR of all three uses every reserved
+        // bit exactly once.
+        assert_eq!(
+            SEGMENT_FLAG_COMPRESSED | SEGMENT_FLAG_SEALED | SEGMENT_FLAG_DEFERRED_REPLICATION,
+            0x07
+        );
+        // No overlap.
+        assert_eq!(SEGMENT_FLAG_COMPRESSED & SEGMENT_FLAG_SEALED, 0);
+        assert_eq!(
+            SEGMENT_FLAG_COMPRESSED & SEGMENT_FLAG_DEFERRED_REPLICATION,
+            0
+        );
+        assert_eq!(SEGMENT_FLAG_SEALED & SEGMENT_FLAG_DEFERRED_REPLICATION, 0);
     }
 }
