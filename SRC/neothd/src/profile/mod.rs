@@ -21,6 +21,7 @@
 //! no provider calls, no LLM, no I/O outside the SQLite reader.
 
 pub mod apply;
+pub mod baseline_snapshot;
 pub mod briefing_policy;
 pub mod claim_guard;
 pub mod delta;
@@ -28,6 +29,7 @@ pub mod estimators;
 pub mod extension_registry;
 pub mod extract;
 pub mod fact_check;
+pub mod injection;
 pub mod lookup;
 pub mod presets;
 pub mod redaction;
