@@ -65,6 +65,12 @@ pub enum InferenceProvider {
     /// NEOTH v0.1 ships the variant + provider-list surface + consent
     /// gate; actual `AzureOpenAiAdapter` ships in C-4 Phase 2.
     AzureOpenAi,
+    /// Ouro O-2 (Session 22) — local Ouro thinking-models via the
+    /// `LocalOuroAdapter` shipped in O-1b. Looped decoder-only transformer
+    /// from ByteDance Seed (Apache-2.0). Honours `accelerator_override`
+    /// like LocalQwen; default checkpoint `ByteDance/Ouro-1.4B-Thinking`
+    /// (~3 GB BF16, noob-safe on ≥4 GB VRAM).
+    LocalOuro,
 }
 
 impl InferenceProvider {
@@ -78,6 +84,7 @@ impl InferenceProvider {
             InferenceProvider::LocalQwen => "local_qwen",
             InferenceProvider::AwsBedrock => "aws_bedrock",
             InferenceProvider::AzureOpenAi => "azure_openai",
+            InferenceProvider::LocalOuro => "local_ouro",
         }
     }
 
@@ -98,6 +105,9 @@ impl InferenceProvider {
             InferenceProvider::AzureOpenAi => {
                 "Azure OpenAI Service (api-key header + api-version query + deployment-as-model)"
             }
+            InferenceProvider::LocalOuro => {
+                "Local Ouro thinking-models via candle (ByteDance LoopLM, Apache-2.0; 4× compute, explicit reasoning prose)"
+            }
         }
     }
 
@@ -111,6 +121,7 @@ impl InferenceProvider {
             "local_qwen" | "qwen" | "local" => Some(Self::LocalQwen),
             "aws_bedrock" | "bedrock" => Some(Self::AwsBedrock),
             "azure_openai" | "azure" => Some(Self::AzureOpenAi),
+            "local_ouro" | "ouro" => Some(Self::LocalOuro),
             _ => None,
         }
     }
@@ -154,6 +165,7 @@ impl InferenceProvider {
             InferenceProvider::LocalQwen => ProviderKind::LocalQwen,
             InferenceProvider::AwsBedrock => ProviderKind::AwsBedrock,
             InferenceProvider::AzureOpenAi => ProviderKind::AzureOpenAi,
+            InferenceProvider::LocalOuro => ProviderKind::LocalOuro,
         }
     }
 }
@@ -1293,5 +1305,71 @@ model: claude-opus-4-7
         let yaml = serde_yaml::to_string(&topo).unwrap();
         let back: InferenceTopology = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(back.profile_provider, Some(InferenceProvider::LocalQwen));
+    }
+
+    // ── Ouro O-2: LocalOuro InferenceProvider wiring ──────────────────
+
+    #[test]
+    fn local_ouro_provider_as_str_pinned() {
+        assert_eq!(InferenceProvider::LocalOuro.as_str(), "local_ouro");
+    }
+
+    #[test]
+    fn local_ouro_from_str_accepts_canonical_and_short_form() {
+        assert_eq!(
+            InferenceProvider::from_str("local_ouro"),
+            Some(InferenceProvider::LocalOuro)
+        );
+        assert_eq!(
+            InferenceProvider::from_str("ouro"),
+            Some(InferenceProvider::LocalOuro)
+        );
+        // Case-insensitive — `from_str` lowercases first.
+        assert_eq!(
+            InferenceProvider::from_str("OURO"),
+            Some(InferenceProvider::LocalOuro)
+        );
+    }
+
+    #[test]
+    fn local_ouro_to_provider_kind_maps_to_local_ouro_variant() {
+        use crate::cli::init::ProviderKind;
+        assert_eq!(
+            InferenceProvider::LocalOuro.to_provider_kind(),
+            ProviderKind::LocalOuro
+        );
+    }
+
+    #[test]
+    fn local_ouro_description_mentions_thinking_and_apache() {
+        let desc = InferenceProvider::LocalOuro.description();
+        assert!(desc.to_lowercase().contains("ouro"));
+        // Operator-readable copy must mention reasoning + license
+        // so the wizard's stub-vs-real classification stays auditable.
+        assert!(
+            desc.to_lowercase().contains("reasoning")
+                || desc.to_lowercase().contains("thinking"),
+            "description should mention reasoning/thinking; got: {desc}"
+        );
+        assert!(desc.contains("Apache-2.0"));
+    }
+
+    #[test]
+    fn local_ouro_is_implemented_returns_true() {
+        assert!(
+            InferenceProvider::LocalOuro.is_implemented(),
+            "O-1b shipped the full LocalOuroAdapter — is_implemented must be true"
+        );
+    }
+
+    #[test]
+    fn local_ouro_round_trips_via_yaml_in_inference_topology() {
+        let topo = InferenceTopology {
+            embedding_provider: Some(InferenceProvider::LocalOuro),
+            ..InferenceTopology::default()
+        };
+        let yaml = serde_yaml::to_string(&topo).unwrap();
+        let back: InferenceTopology = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(back.embedding_provider, Some(InferenceProvider::LocalOuro));
     }
 }

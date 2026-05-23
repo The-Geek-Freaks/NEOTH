@@ -46,6 +46,7 @@ pub fn slug(kind: ProviderKind) -> &'static str {
         ProviderKind::GeminiApi => "gemini_api",
         ProviderKind::OpenaiCompat => "openai_compat",
         ProviderKind::LocalQwen => "local_qwen",
+        ProviderKind::LocalOuro => "local_ouro",
         ProviderKind::AwsBedrock => "aws_bedrock",
         ProviderKind::AzureOpenAi => "azure_openai",
         ProviderKind::Skip => "skip",
@@ -59,6 +60,7 @@ pub fn kind_from_slug(s: &str) -> Option<ProviderKind> {
         "gemini_api" => Some(ProviderKind::GeminiApi),
         "openai_compat" => Some(ProviderKind::OpenaiCompat),
         "local_qwen" => Some(ProviderKind::LocalQwen),
+        "local_ouro" => Some(ProviderKind::LocalOuro),
         "aws_bedrock" => Some(ProviderKind::AwsBedrock),
         "azure_openai" => Some(ProviderKind::AzureOpenAi),
         "skip" => Some(ProviderKind::Skip),
@@ -75,6 +77,7 @@ fn cloud_label(kind: ProviderKind) -> &'static str {
         ProviderKind::AwsBedrock => "AWS Bedrock (region + IAM credential chain)",
         ProviderKind::AzureOpenAi => "Azure OpenAI (api-version + deployment name)",
         ProviderKind::LocalQwen => "local Qwen (no remote network)",
+        ProviderKind::LocalOuro => "local Ouro thinking-models (no remote network)",
         ProviderKind::Skip => "no provider",
     }
 }

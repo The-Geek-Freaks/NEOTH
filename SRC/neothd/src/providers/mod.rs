@@ -341,6 +341,29 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
             .await?;
             Ok(Box::new(adapter))
         }
+        ProviderKind::LocalOuro => {
+            // Ouro O-2 (Session 22) — `LocalOuroAdapter` mirrors the Qwen
+            // shape: hf-hub auto-download on first call (~3 GB BF16,
+            // `ByteDance/Ouro-1.4B-Thinking` default), reuses
+            // `local_qwen::sample_token` for the generation loop. Operator
+            // overrides the checkpoint via `freedom.yaml::provider_model`
+            // (e.g. set to `ByteDance/Ouro-2.6B-Thinking` for the larger
+            // variant).
+            let repo = config.provider_model.clone();
+            let accelerator = config
+                .inference
+                .accelerator_override
+                .as_deref()
+                .and_then(crate::daemon::accelerator::Accelerator::from_str);
+            let adapter = ouro::adapter::LocalOuroAdapter::new_with_options(
+                repo,
+                accelerator,
+                local_qwen::SamplingConfig::default(),
+                config.inference.max_new_tokens,
+            )
+            .await?;
+            Ok(Box::new(adapter))
+        }
         ProviderKind::AwsBedrock => {
             // C-3 Phase 2 (Session 14) — hand-rolled SigV4 against
             // `bedrock-runtime.<region>.amazonaws.com/model/<id>/converse`.
@@ -429,6 +452,33 @@ pub async fn embed_provider_from_config(
 ) -> Option<std::sync::Arc<dyn crate::providers::embed::EmbedProvider>> {
     let provider_kind = config.inference.embedding_provider?;
     match provider_kind {
+        crate::config::inference::InferenceProvider::LocalOuro => {
+            let repo = config.provider_model.clone();
+            let accelerator = config
+                .inference
+                .accelerator_override
+                .as_deref()
+                .and_then(crate::daemon::accelerator::Accelerator::from_str);
+            let sampling = crate::providers::local_qwen::SamplingConfig::default();
+            let max_new_tokens = config.inference.max_new_tokens;
+            match crate::providers::ouro::adapter::LocalOuroAdapter::new_with_options(
+                repo,
+                accelerator,
+                sampling,
+                max_new_tokens,
+            )
+            .await
+            {
+                Ok(adapter) => Some(std::sync::Arc::new(adapter)),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "embed_provider_from_config: local_ouro build failed; Stage-2 disabled"
+                    );
+                    None
+                }
+            }
+        }
         crate::config::inference::InferenceProvider::LocalQwen => {
             let repo = config.provider_model.clone();
             let accelerator = config

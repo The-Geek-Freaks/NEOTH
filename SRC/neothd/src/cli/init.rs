@@ -30,6 +30,13 @@ pub enum ProviderKind {
     /// Runs entirely on operator hardware — used for profile extraction
     /// (sensitive operator history never reaches a cloud vendor).
     LocalQwen,
+    /// Local Ouro thinking-models inference (ByteDance LoopLM,
+    /// `ByteDance/Ouro-1.4B-Thinking` default). ~3 GB disk + first-load
+    /// download via hf-hub. Looped-transformer reasoning runs entirely
+    /// on operator hardware — Apache-2.0, novel architecture, ~4× compute
+    /// per token vs Qwen but explicit reasoning prose in the -Thinking
+    /// variants.
+    LocalOuro,
     /// AWS Bedrock Runtime (C-3 Session 13). Stub variant: Phase 1
     /// ships the surface + consent gate; Phase 2 ships the SigV4 adapter.
     AwsBedrock,
@@ -605,6 +612,25 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                      CPU-only by default — pick CUDA/Metal in step 5b if you \
                      have a GPU. `neoth chat --temperature 0.7 --top-p 0.9` \
                      enables nucleus sampling; the default is greedy/argmax."
+                );
+            }
+        }
+        ProviderKind::LocalOuro => {
+            // Ouro O-3: same hf-hub flow as LocalQwen. Default checkpoint
+            // (when provider_model is None) is `ByteDance/Ouro-1.4B-Thinking`
+            // — operator overrides with `--provider-model
+            // ByteDance/Ouro-2.6B-Thinking` for the larger variant.
+            state.provider_model = args.provider_model.clone();
+            if interactive {
+                println!(
+                    "  local_ouro runs ByteDance Ouro LoopLM thinking-models \
+                     locally via candle. First-run downloads ~3 GB of weights \
+                     into ~/.neoth/models/. Looped-transformer architecture \
+                     applies 24 layers 4× per token (~4× compute vs Qwen) but \
+                     emits explicit reasoning prose in the -Thinking variants. \
+                     Default checkpoint: ByteDance/Ouro-1.4B-Thinking. \
+                     Apache-2.0; CPU-only by default — pick CUDA/Metal in step \
+                     5b if you have a GPU."
                 );
             }
         }
@@ -1303,7 +1329,10 @@ fn catalog_key_for_provider_kind(kind: ProviderKind) -> Option<&'static str> {
         ProviderKind::OpenaiCompat => "openai_compat",
         ProviderKind::GeminiApi => "gemini_api",
         ProviderKind::AwsBedrock => "aws_bedrock",
-        ProviderKind::LocalQwen | ProviderKind::AzureOpenAi | ProviderKind::Skip => return None,
+        ProviderKind::LocalQwen
+        | ProviderKind::LocalOuro
+        | ProviderKind::AzureOpenAi
+        | ProviderKind::Skip => return None,
     })
 }
 
@@ -1352,7 +1381,7 @@ fn catalog_key_for_provider(
         I::AwsBedrock => "aws_bedrock",
         // Local Qwen + AzureOpenAi don't have a model-catalog source
         // today — fall through to bundled defaults.
-        I::LocalQwen | I::AzureOpenAi => return None,
+        I::LocalQwen | I::LocalOuro | I::AzureOpenAi => return None,
     })
 }
 
@@ -1507,6 +1536,7 @@ fn provider_kind_to_inference(
         ProviderKind::OpenaiCompat => I::OpenAiCompat,
         ProviderKind::GeminiApi => I::Gemini,
         ProviderKind::LocalQwen => I::LocalQwen,
+        ProviderKind::LocalOuro => I::LocalOuro,
         ProviderKind::AwsBedrock => I::AwsBedrock,
         ProviderKind::AzureOpenAi => I::AzureOpenAi,
         ProviderKind::Skip => I::ClaudeCli, // unreachable in practice
@@ -1749,6 +1779,7 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
         Some(ProviderKind::GeminiApi) => "gemini_api",
         Some(ProviderKind::OpenaiCompat) => "openai_compat",
         Some(ProviderKind::LocalQwen) => "local_qwen",
+        Some(ProviderKind::LocalOuro) => "local_ouro",
         Some(ProviderKind::AwsBedrock) => "aws_bedrock",
         Some(ProviderKind::AzureOpenAi) => "azure_openai",
         Some(ProviderKind::Skip) | None => "(none)",
