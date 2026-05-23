@@ -22,6 +22,8 @@ use tracing::{info, warn};
 pub mod n8n;
 pub mod n8n_workflows;
 pub mod oauth_pkce;
+pub mod obsidian;
+pub mod obsidian_vault;
 
 /// One of the three CLIs NEOTH knows how to install.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

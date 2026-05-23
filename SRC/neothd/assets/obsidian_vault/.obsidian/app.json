@@ -1,0 +1,10 @@
+{
+  "promptDelete": true,
+  "alwaysUpdateLinks": true,
+  "newFileLocation": "folder",
+  "newFileFolderPath": "Daily",
+  "useMarkdownLinks": false,
+  "showInlineTitle": true,
+  "showLineNumber": true,
+  "spellcheck": false
+}
