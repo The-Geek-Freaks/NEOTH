@@ -173,12 +173,78 @@ impl DhtUdpDialer {
 }
 
 /// Serialise a `LookupPacket` to the wire-bytes Hyperswarm expects.
-/// v0.1 ships JSON framing for operator-readable hex-dumps; the
-/// real Hyperswarm DHT uses a bencode-like binary framing — the
-/// follow-up bite swaps the encoder when the protocol decoder
-/// lands without touching the UDP-dialer surface.
+/// Real BEP-3 bencode (`channels::keet_bencode`) — discovery_key +
+/// peer_id are 32-byte ed25519 keys, emitted as `Bytes(...)`,
+/// inside a dict with byte-sorted keys.
+///
+/// Wire shape (after sort): `d13:discovery_key32:<32-bytes>7:peer_id32:<32-bytes>e`.
+/// Decode side lives in [`decode_lookup_payload`] for the
+/// `LookupResponse` parsing path the protocol decoder will use.
 pub fn encode_lookup_payload(packet: &LookupPacket) -> Result<Vec<u8>> {
-    serde_json::to_vec(packet).context("encode_lookup_payload: serialise LookupPacket")
+    use crate::channels::keet_bencode::{encode, BencodeValue};
+    use std::collections::BTreeMap;
+    let mut map: BTreeMap<Vec<u8>, BencodeValue> = BTreeMap::new();
+    map.insert(
+        b"discovery_key".to_vec(),
+        BencodeValue::Bytes(packet.discovery_key.to_vec()),
+    );
+    map.insert(
+        b"peer_id".to_vec(),
+        BencodeValue::Bytes(packet.peer_id.to_vec()),
+    );
+    Ok(encode(&BencodeValue::Dict(map)))
+}
+
+/// Inverse of [`encode_lookup_payload`] — parses a bencode dict
+/// back into a `LookupPacket`. Returns `Err` on wrong shape (missing
+/// fields, wrong-length byte strings, non-dict top level) so the
+/// receiver can drop malformed datagrams cleanly.
+pub fn decode_lookup_payload(
+    bytes: &[u8],
+) -> Result<crate::channels::keet_dht::LookupPacket> {
+    use crate::channels::keet_bencode::{decode, BencodeValue};
+    use crate::channels::keet_dht::LookupPacket;
+    let value = decode(bytes).context("decode_lookup_payload: bencode parse")?;
+    let map = match value {
+        BencodeValue::Dict(m) => m,
+        other => anyhow::bail!(
+            "decode_lookup_payload: top-level must be dict, got {other:?}"
+        ),
+    };
+    let discovery_key_bytes = match map.get(b"discovery_key" as &[u8]) {
+        Some(BencodeValue::Bytes(b)) => b,
+        Some(other) => anyhow::bail!(
+            "decode_lookup_payload: discovery_key must be Bytes, got {other:?}"
+        ),
+        None => anyhow::bail!("decode_lookup_payload: missing discovery_key"),
+    };
+    let peer_id_bytes = match map.get(b"peer_id" as &[u8]) {
+        Some(BencodeValue::Bytes(b)) => b,
+        Some(other) => anyhow::bail!(
+            "decode_lookup_payload: peer_id must be Bytes, got {other:?}"
+        ),
+        None => anyhow::bail!("decode_lookup_payload: missing peer_id"),
+    };
+    if discovery_key_bytes.len() != 32 {
+        anyhow::bail!(
+            "decode_lookup_payload: discovery_key must be 32 bytes, got {}",
+            discovery_key_bytes.len()
+        );
+    }
+    if peer_id_bytes.len() != 32 {
+        anyhow::bail!(
+            "decode_lookup_payload: peer_id must be 32 bytes, got {}",
+            peer_id_bytes.len()
+        );
+    }
+    let mut dk = [0u8; 32];
+    let mut pid = [0u8; 32];
+    dk.copy_from_slice(discovery_key_bytes);
+    pid.copy_from_slice(peer_id_bytes);
+    Ok(LookupPacket {
+        discovery_key: dk,
+        peer_id: pid,
+    })
 }
 
 #[cfg(test)]
@@ -292,14 +358,77 @@ mod tests {
     }
 
     #[test]
-    fn encode_lookup_payload_round_trips_topic() {
+    fn encode_lookup_payload_emits_bencode_dict() {
         let packet = build_lookup(fixture_topic());
         let bytes = encode_lookup_payload(&packet).expect("encode");
         assert!(!bytes.is_empty(), "non-empty payload");
-        // JSON framing in v0.1 — parses cleanly.
-        let parsed: LookupPacket =
-            serde_json::from_slice(&bytes).expect("decode");
+        // Real BEP-3 — first byte MUST be 'd' (dict).
+        assert_eq!(bytes[0], b'd', "top-level must be bencode dict");
+        // Last byte MUST be 'e' (dict terminator).
+        assert_eq!(*bytes.last().unwrap(), b'e');
+        // Wire form contains the two 32-byte field length prefixes.
+        assert!(bytes.windows(3).any(|w| w == b"32:"));
+    }
+
+    #[test]
+    fn encode_decode_lookup_payload_round_trips_via_bencode() {
+        let packet = build_lookup(fixture_topic());
+        let bytes = encode_lookup_payload(&packet).expect("encode");
+        let parsed = decode_lookup_payload(&bytes).expect("decode");
         assert_eq!(parsed.discovery_key, packet.discovery_key);
+        assert_eq!(parsed.peer_id, packet.peer_id);
+    }
+
+    #[test]
+    fn decode_lookup_payload_rejects_garbage_bytes() {
+        // Not bencode at all.
+        let err = decode_lookup_payload(b"definitely not bencode").unwrap_err();
+        assert!(err.to_string().contains("bencode"));
+    }
+
+    #[test]
+    fn decode_lookup_payload_rejects_wrong_length_keys() {
+        // 16-byte discovery_key (should be 32). Build a valid
+        // bencode dict by hand.
+        use crate::channels::keet_bencode::{encode, BencodeValue};
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<Vec<u8>, BencodeValue> = BTreeMap::new();
+        map.insert(
+            b"discovery_key".to_vec(),
+            BencodeValue::Bytes(vec![0xaa; 16]),
+        );
+        map.insert(
+            b"peer_id".to_vec(),
+            BencodeValue::Bytes(vec![0xbb; 32]),
+        );
+        let bytes = encode(&BencodeValue::Dict(map));
+        let err = decode_lookup_payload(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("32 bytes"),
+            "expected 32-byte length check, got: {err}"
+        );
+    }
+
+    #[test]
+    fn decode_lookup_payload_rejects_missing_field() {
+        use crate::channels::keet_bencode::{encode, BencodeValue};
+        use std::collections::BTreeMap;
+        let mut map: BTreeMap<Vec<u8>, BencodeValue> = BTreeMap::new();
+        // Only peer_id, no discovery_key.
+        map.insert(
+            b"peer_id".to_vec(),
+            BencodeValue::Bytes(vec![0xbb; 32]),
+        );
+        let bytes = encode(&BencodeValue::Dict(map));
+        let err = decode_lookup_payload(&bytes).unwrap_err();
+        assert!(err.to_string().contains("discovery_key"));
+    }
+
+    #[test]
+    fn decode_lookup_payload_rejects_non_dict_top_level() {
+        // Bencode integer at the top — not a dict.
+        let err = decode_lookup_payload(b"i42e").unwrap_err();
+        assert!(err.to_string().contains("dict"));
     }
 
     #[test]
