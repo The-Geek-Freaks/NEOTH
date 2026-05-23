@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 520" width="1280" height="520" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH one buddy across CLI GUI chat apps Obsidian coding and private mesh">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="46%" r="75%">
+      <stop offset="0%" stop-color="#202020"/>
+      <stop offset="100%" stop-color="#070707"/>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge>
+        <feMergeNode in="b"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
+      .title { font-size: 28px; font-weight: 300; letter-spacing: 6px; fill: #fff; }
+      .label { font-size: 12px; letter-spacing: 1.7px; }
+      .small { font-size: 10px; letter-spacing: 1px; fill: #d8d8d8; opacity: .8; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="520" rx="36" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1278" height="518" rx="36" fill="none" stroke="#fff" stroke-opacity=".08"/>
+  <text x="640" y="54" class="sans title" text-anchor="middle">ONE BUDDY, EVERY SURFACE</text>
+  <text x="640" y="84" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" text-anchor="middle" opacity=".78">SAME PROFILE - SAME RULES - SAME AUDIT TRAIL</text>
+
+  <circle cx="640" cy="260" r="98" fill="#fff" opacity=".045" stroke="#fff" stroke-opacity=".16" filter="url(#glow)"/>
+  <text x="640" y="245" class="sans" font-size="50" font-weight="100" letter-spacing="16" fill="#fff" text-anchor="middle">NEOTH</text>
+  <text x="640" y="284" class="mono label" fill="#00ff80" text-anchor="middle">BUDDY RUNTIME</text>
+  <text x="640" y="308" class="mono small" fill="#d8d8d8" text-anchor="middle">memory + policy + redaction</text>
+
+  <g stroke-opacity=".32" fill="none">
+    <path d="M640,162 L640,112" stroke="#00ff80"/>
+    <path d="M708,190 L842,136" stroke="#05d5ff"/>
+    <path d="M738,260 L1034,260" stroke="#ff2a6d"/>
+    <path d="M708,330 L842,384" stroke="#05d5ff"/>
+    <path d="M640,358 L640,408" stroke="#00ff80"/>
+    <path d="M572,330 L438,384" stroke="#05d5ff"/>
+    <path d="M542,260 L246,260" stroke="#ff2a6d"/>
+    <path d="M572,190 L438,136" stroke="#05d5ff"/>
+  </g>
+
+  <g class="mono" text-anchor="middle">
+    <rect x="532" y="102" width="216" height="64" rx="15" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".28"/>
+    <text x="640" y="128" class="label" fill="#00ff80">CLI + SSH</text>
+    <text x="640" y="150" class="small">fast control plane</text>
+
+    <rect x="820" y="108" width="220" height="64" rx="15" fill="#05d5ff" opacity=".075" stroke="#05d5ff" stroke-opacity=".28"/>
+    <text x="930" y="134" class="label" fill="#05d5ff">GUI</text>
+    <text x="930" y="156" class="small">daily home base</text>
+
+    <rect x="1000" y="228" width="220" height="64" rx="15" fill="#ff2a6d" opacity=".075" stroke="#ff2a6d" stroke-opacity=".28"/>
+    <text x="1110" y="254" class="label" fill="#ff2a6d">CHAT APPS</text>
+    <text x="1110" y="276" class="small">Telegram, Slack, Keet</text>
+
+    <rect x="820" y="348" width="220" height="64" rx="15" fill="#05d5ff" opacity=".075" stroke="#05d5ff" stroke-opacity=".28"/>
+    <text x="930" y="374" class="label" fill="#05d5ff">CODING</text>
+    <text x="930" y="396" class="small">canvas + Kanban</text>
+
+    <rect x="532" y="400" width="216" height="64" rx="15" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".28"/>
+    <text x="640" y="426" class="label" fill="#00ff80">LOCAL MODELS</text>
+    <text x="640" y="448" class="small">Qwen + Ouro</text>
+
+    <rect x="240" y="348" width="220" height="64" rx="15" fill="#05d5ff" opacity=".075" stroke="#05d5ff" stroke-opacity=".28"/>
+    <text x="350" y="374" class="label" fill="#05d5ff">OBSIDIAN</text>
+    <text x="350" y="396" class="small">inspectable vault</text>
+
+    <rect x="60" y="228" width="220" height="64" rx="15" fill="#ff2a6d" opacity=".075" stroke="#ff2a6d" stroke-opacity=".28"/>
+    <text x="170" y="254" class="label" fill="#ff2a6d">PRIVATE MESH</text>
+    <text x="170" y="276" class="small">LAN, Tailnet, relay</text>
+
+    <rect x="240" y="108" width="220" height="64" rx="15" fill="#05d5ff" opacity=".075" stroke="#05d5ff" stroke-opacity=".28"/>
+    <text x="350" y="134" class="label" fill="#05d5ff">PLUGINS</text>
+    <text x="350" y="156" class="small">skills + WASM caps</text>
+  </g>
+
+  <text x="640" y="494" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" opacity=".72" text-anchor="middle">remember once -> recall anywhere -> redact centrally</text>
+</svg>
