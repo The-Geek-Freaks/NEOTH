@@ -51,6 +51,7 @@ pub mod obsidian;
 pub mod obsidian_sync_task;
 pub mod ouro;
 pub mod permissions;
+pub mod plugin;
 pub mod preset;
 pub mod privacy;
 pub mod profile;
@@ -561,6 +562,13 @@ pub enum Commands {
         #[command(subcommand)]
         action: ChannelAction,
     },
+
+    /// D-102 (Session 21) — WASM plugin activation management. Newly
+    /// discovered plugins default to PENDING and don't auto-instantiate
+    /// until the operator opts in. `list` shows discovered plugins +
+    /// their state, `enable <id>` flips to Active, `disable <id>` to
+    /// Disabled, `pending` lists only the Pending entries.
+    Plugin(plugin::PluginArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -878,6 +886,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                  enable Telegram. Other channels (Keet/WhatsApp/Slack) \
                  ship in Round-2."
             );
+        }
+        Commands::Plugin(mut args) => {
+            args.output = global_output;
+            plugin::run_plugin(args).await?;
         }
     }
     Ok(())

@@ -2701,7 +2701,7 @@ pub(crate) async fn handle_media_attachment(
 fn bootstrap_plugin_invoker(home: &std::path::Path) {
     use std::sync::Arc;
     let plugins_root = home.join("plugins");
-    let report = crate::wasm_plugin::discovery::discover(&plugins_root);
+    let mut report = crate::wasm_plugin::discovery::discover(&plugins_root);
     if report.is_empty() {
         // No plugins dir or zero entries — operator hasn't installed
         // anything. Skip silently; the next run_serve will re-scan.
@@ -2712,6 +2712,73 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
             warn!(error = %e, "plugin discovery rejected entry");
         }
     }
+
+    // D-102 (Session 21, 6/6 agent panel): default-inactive. Only plugins
+    // whose `freedom.yaml::plugins.wasm.activations[id]` is `Active`
+    // reach the engine. Unknown ids and `Pending` ids fall through to
+    // the operator-visible bootstrap-skipped log line — they show up in
+    // `neoth plugin list` so flipping them on is one command away.
+    let activations: std::collections::BTreeMap<
+        String,
+        crate::wasm_plugin::discovery::PluginActivation,
+    > = match FreedomConfig::load_from_default_path() {
+        Ok(cfg) => cfg.plugins.wasm.activations.clone(),
+        Err(e) => {
+            warn!(
+                error = %e,
+                "freedom.yaml load failed during plugin activation gate; \
+                 treating ALL discovered plugins as Pending (none auto-instantiate)"
+            );
+            std::collections::BTreeMap::new()
+        }
+    };
+    // home is reserved for future per-home credential lookup; suppress
+    // unused-var on the v0.1 path that goes through the default-path
+    // loader.
+    let _ = home;
+
+    let pre_filter = report.loaded.len();
+    let mut skipped_pending: Vec<String> = Vec::new();
+    let mut skipped_disabled: Vec<String> = Vec::new();
+    report.loaded.retain(|p| {
+        let state = activations
+            .get(&p.manifest.id)
+            .copied()
+            .unwrap_or_default();
+        match state {
+            crate::wasm_plugin::discovery::PluginActivation::Active => true,
+            crate::wasm_plugin::discovery::PluginActivation::Pending => {
+                skipped_pending.push(p.manifest.id.clone());
+                false
+            }
+            crate::wasm_plugin::discovery::PluginActivation::Disabled => {
+                skipped_disabled.push(p.manifest.id.clone());
+                false
+            }
+        }
+    });
+    if !skipped_pending.is_empty() {
+        info!(
+            pending = ?skipped_pending,
+            "plugins discovered but PENDING operator activation — \
+             run `neoth plugin enable <id>` to opt them in"
+        );
+    }
+    if !skipped_disabled.is_empty() {
+        info!(
+            disabled = ?skipped_disabled,
+            "plugins discovered but operator-DISABLED — skipped"
+        );
+    }
+    if report.loaded.is_empty() {
+        info!(
+            scanned = pre_filter,
+            "plugin discovery complete; zero plugins are currently Active. \
+             Use `neoth plugin list` to inspect, `neoth plugin enable <id>` to activate."
+        );
+        return;
+    }
+
     let engine = match crate::wasm_plugin::engine::NeothEngine::new() {
         Ok(e) => Arc::new(e),
         Err(e) => {

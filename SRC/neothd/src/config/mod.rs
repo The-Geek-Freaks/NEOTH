@@ -333,6 +333,23 @@ pub struct WasmPluginsConfig {
     /// invoker bootstrap.
     #[serde(default = "default_wasm_plugins_enabled")]
     pub enabled: bool,
+    /// D-102 (Session 21, 2026-05-23, 6/6 agent panel) — per-plugin
+    /// operator activation. Keyed by manifest id. Newly discovered
+    /// ids default to [`PluginActivation::Pending`] and are NOT
+    /// instantiated until the operator runs `neoth plugin enable
+    /// <id>` (or accepts them via the first-run wizard multiselect).
+    ///
+    /// Why default-inactive: wasmtime sandbox is strong but the
+    /// hostcall surface (channel send, fs, WAL) is the attack
+    /// vector — auto-instantiating an unknown `.wasm` bypasses the
+    /// consent gate every other auto-discovery path in NEOTH
+    /// (channels, providers, skills) already respects. Matches the
+    /// conservative defaults n8n + Obsidian already use.
+    #[serde(default)]
+    pub activations: std::collections::BTreeMap<
+        String,
+        crate::wasm_plugin::discovery::PluginActivation,
+    >,
 }
 
 fn default_wasm_plugins_enabled() -> bool {
@@ -340,6 +357,13 @@ fn default_wasm_plugins_enabled() -> bool {
     // hard rule for shipped release binaries. Operators on a
     // slim build (no wasm-plugin-host feature) see no effect
     // either way.
+    //
+    // NOTE: D-102 (Session 21) — `enabled: true` only governs whether
+    // the HOST is live. Each individual plugin still requires the
+    // operator to flip its `activations[id]` to `Active` before it
+    // runs. Default-on host + default-inactive plugins is the
+    // intentional combination: zero-friction for operators who never
+    // install any plugins; explicit consent for those who do.
     true
 }
 
@@ -347,6 +371,7 @@ impl Default for WasmPluginsConfig {
     fn default() -> Self {
         Self {
             enabled: default_wasm_plugins_enabled(),
+            activations: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -1389,7 +1414,10 @@ mod tests {
         let cfg = FreedomConfig {
             operator_id: Some("alice".to_string()),
             plugins: PluginsConfig {
-                wasm: WasmPluginsConfig { enabled: false },
+                wasm: WasmPluginsConfig {
+                    enabled: false,
+                    activations: std::collections::BTreeMap::new(),
+                },
             },
             ..Default::default()
         };

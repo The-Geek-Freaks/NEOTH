@@ -33,6 +33,58 @@ pub struct DiscoveredPlugin {
     pub wasm_bytes: Vec<u8>,
 }
 
+/// D-102 (Session 21, 2026-05-23, 6/6 agent panel) — per-plugin operator
+/// activation state. Persisted in `freedom.yaml::plugins.wasm.activations`
+/// keyed by manifest id. Newly-discovered ids default to [`Pending`]:
+/// the daemon does not instantiate them until the operator explicitly
+/// opts in via `neoth plugin enable <id>` or the first-run wizard
+/// multiselect.
+///
+/// The state machine:
+/// ```text
+///   first discovery → Pending
+///   `neoth plugin enable <id>`   → Pending|Disabled → Active
+///   `neoth plugin disable <id>`  → Pending|Active   → Disabled
+///   manifest id missing from disk → entry persisted; ignored on next boot
+/// ```
+///
+/// Only `Active` plugins reach the compile + invoker bootstrap. `Pending`
+/// + `Disabled` are skipped, but the operator sees them in
+/// `neoth plugin list` so they're not invisible.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PluginActivation {
+    /// Newly discovered, operator hasn't decided. Default for any id
+    /// not in `freedom.yaml::plugins.wasm.activations`.
+    Pending,
+    /// Operator opted in — the bootstrap compiles + registers.
+    Active,
+    /// Operator opted out — the bootstrap skips, the entry stays in
+    /// `plugin list` so flipping back is one command away.
+    Disabled,
+}
+
+impl PluginActivation {
+    /// Bootstrap gate: only `Active` plugins instantiate.
+    pub fn is_active(self) -> bool {
+        matches!(self, PluginActivation::Active)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PluginActivation::Pending => "pending",
+            PluginActivation::Active => "active",
+            PluginActivation::Disabled => "disabled",
+        }
+    }
+}
+
+impl Default for PluginActivation {
+    fn default() -> Self {
+        PluginActivation::Pending
+    }
+}
+
 /// What went wrong for one plugin subdirectory. Operator-readable;
 /// the WAL `PLUGIN_REJECTED` (0xC3) frame carries the same shape.
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
