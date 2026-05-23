@@ -28,6 +28,7 @@ pub mod oauth_pkce;
 pub mod obs;
 pub mod obsidian;
 pub mod obsidian_vault;
+pub mod pears;
 pub mod tmux;
 
 /// One of the three CLIs NEOTH knows how to install.

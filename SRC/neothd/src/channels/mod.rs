@@ -23,6 +23,7 @@ pub mod keet_crypto;
 pub mod keet_dht;
 pub mod keet_udp;
 pub mod keet_wal;
+pub mod pears_bridge;
 pub mod rate_limit;
 pub mod slack;
 pub mod slack_api;
