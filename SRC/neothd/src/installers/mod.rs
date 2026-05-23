@@ -19,9 +19,11 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod faccam_family;
 pub mod n8n;
 pub mod n8n_workflows;
 pub mod oauth_pkce;
+pub mod obs;
 pub mod obsidian;
 pub mod obsidian_vault;
 
