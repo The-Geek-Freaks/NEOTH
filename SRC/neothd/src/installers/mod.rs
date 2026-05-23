@@ -19,6 +19,8 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod oauth_pkce;
+
 /// One of the three CLIs NEOTH knows how to install.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CliKind {
