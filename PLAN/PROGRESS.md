@@ -1738,8 +1738,8 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 
 ### Category 1 — Channels (16 items)
 
-- [ ] **C-01** WhatsApp Business Cloud API full impl (P2) — webhook handler + token validation; scaffold shipped
-- [ ] **C-02** Slack Socket Mode full impl (P2) — event loop; scaffold shipped
+- [x] **C-01** WhatsApp Business Cloud API full impl (P2) — **Verified shipped Session 22 audit**: CH-WHATSAPP-OUT (Graph API send) + CH-WHATSAPP-INBOUND-DECODER (Meta envelope parser) + R2-P0-2 follow-up (LIVE webhook listener on 127.0.0.1:8443 with X-Hub-Signature-256 verification + full Meta credential set) all shipped Sessions 16-20.
+- [x] **C-02** Slack Socket Mode full impl (P2) — **Verified shipped Session 22 audit**: CH-SLACK-INBOUND-DECODER (socket-mode envelope parser) + CH-SLACK-OUT + R2-P0-2 follow-up (LIVE socket loop via `SlackChannel::run` when both `slack_bot_token` + `slack_app_token` present) all shipped Sessions 16-20.
 - [ ] **C-03** Keet adapter K-1..K-5 (P2+) — impl choice: Rust port vs Pears HTTP bridge
 - [ ] **C-04** Keet wizard default channel (P2+) — depends on C-03
 - [ ] **C-05** Discord adapter (P2)
@@ -1860,7 +1860,9 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [ ] **E-05** Veronica hot-standby Day 85 (P3) — see CT-06
 - [ ] **E-06** Phase 3 migration of 12 Jarvis stores — `neoth migrate import` (P3 Day 63)
 - [ ] **E-07** Re-embed pipeline for migrated events (P3 Day 64)
-- [ ] **E-08** Public import format spec `docs/import-format.md` (pre-v1.0) — D-006
+- [x] **E-08** Public import format spec `docs/import-format.md` (pre-v1.0) — D-006 — **Shipped 2026-05-23 Session 22**. New `docs/import-format.md` (9 sections, ~250 lines) — pre-v1.0 normative spec for operator-curated `.import.jsonl` files the `neoth-migrate import` binary consumes. Documents top-level shape (source_kind / source_ref / imported_at_unix / events / operator_id / notes), per-event fields (ts_unix / kind / text / channel_hint / operator_role / importance / embedding / tags), source-kind → WAL-event-type table (6 source kinds → 7 distinct WAL event types `0x20..=0x2F`), pre-flight validation matrix (10 error codes — FileNotFound, InvalidUtf8, MalformedLine, EmptyText, InvalidTimestamp, UnknownSourceKind, KindNotAllowed, ImportanceOutOfRange, EmbeddingDimMismatch), audit-frame guarantees (MIGRATE_RAN `0x14` + conditional PROFILE_BASELINE_SNAPSHOT `0x1B`), reverse-path export contract (round-trip semantic-identical via `neoth-migrate export`), v1.x wire-stability guarantee (additive serde-default only; breaking changes require major-version bump + upgrade path), operator quick-start (Python one-liner + dry-run + real-import + verify), positioning vs the Day-65 `jarvis-import` binary. Pins atomicity (all-or-nothing per file — caller fixes every pre-flight failure before any frame emits).
+
+
 - [ ] **E-09** Absolute-quality floor eval (H7 second fix, P3 Day 77)
 - [ ] **E-10** `neoth-plugin-sdk` crate on crates.io (Day-15)
 - [ ] **E-11** Windows DACL `SetNamedSecurityInfoW` on WAL segments (v0.5) — D-008
