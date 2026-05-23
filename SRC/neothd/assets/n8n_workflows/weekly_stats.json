@@ -1,0 +1,112 @@
+{
+  "name": "NEOTH Weekly Stats",
+  "description": "Every Sunday at 18:00 local time, pulls the week's NEOTH activity stats (chats / consent denials / memory tier transitions / cost) + drops a markdown report into the operator's archive folder + sends a short summary via the configured channel.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule (Sun 18:00)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "0 18 * * 0" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "stats",
+      "name": "NEOTH stats (this week)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [200, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/stats",
+        "method": "GET",
+        "qs": "window=7d",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "report",
+      "name": "Format markdown report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [400, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/provider/call",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "Render a 12-line weekly NEOTH report from the stats JSON below. Sections: chats by provider, consent denials, memory tier transitions, total cost, top-3 most-used skills.\n\nStats:\n{{$json}}"
+            },
+            { "name": "provider", "value": "default" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "write",
+      "name": "Write to archive",
+      "type": "n8n-nodes-base.writeBinaryFile",
+      "typeVersion": 1,
+      "position": [600, -100],
+      "parameters": {
+        "fileName": "{{$env.NEOTH_ARCHIVE_DIR}}/weekly-stats-{{$now.format('yyyy-MM-dd')}}.md",
+        "options": {}
+      }
+    },
+    {
+      "id": "send",
+      "name": "Send summary via channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 100],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/channel/send",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "channel", "value": "telegram" },
+            { "name": "text", "value": "Weekly stats archived. Highlights:\n\n{{$json.completion}}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule (Sun 18:00)": { "main": [[{ "node": "NEOTH stats (this week)", "type": "main", "index": 0 }]] },
+    "NEOTH stats (this week)": { "main": [[{ "node": "Format markdown report", "type": "main", "index": 0 }]] },
+    "Format markdown report": {
+      "main": [[
+        { "node": "Write to archive", "type": "main", "index": 0 },
+        { "node": "Send summary via channel", "type": "main", "index": 0 }
+      ]]
+    }
+  },
+  "tags": [{ "name": "neoth-bootstrap" }]
+}

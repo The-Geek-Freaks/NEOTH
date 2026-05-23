@@ -1,0 +1,103 @@
+{
+  "name": "NEOTH Morning Brief",
+  "description": "Every weekday at 07:30 local time, generates a personalised morning brief: weather + calendar + 3 most-important open NEOTH threads. Sends via the operator's preferred channel.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule (07:30 weekdays)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "cronExpression", "expression": "30 7 * * 1-5" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "recall_threads",
+      "name": "NEOTH Recall (open threads)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [200, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/recall",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "query", "value": "open question OR unanswered" },
+            { "name": "tier", "value": "warm" },
+            { "name": "limit", "value": "3" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "compose",
+      "name": "Compose brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [400, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/provider/call",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "Compose a 4-line morning brief. Include: 1) one motivating intent for the day, 2) the 3 most important open NEOTH threads from below, 3) recommended first task. Keep it tight.\n\nOpen threads:\n{{$json.recall_results}}"
+            },
+            { "name": "provider", "value": "default" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "send",
+      "name": "Send via NEOTH channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/channel/send",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "channel", "value": "telegram" },
+            { "name": "text", "value": "Morning Brief:\n\n{{$json.completion}}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule (07:30 weekdays)": { "main": [[{ "node": "NEOTH Recall (open threads)", "type": "main", "index": 0 }]] },
+    "NEOTH Recall (open threads)": { "main": [[{ "node": "Compose brief", "type": "main", "index": 0 }]] },
+    "Compose brief": { "main": [[{ "node": "Send via NEOTH channel", "type": "main", "index": 0 }]] }
+  },
+  "tags": [{ "name": "neoth-bootstrap" }]
+}

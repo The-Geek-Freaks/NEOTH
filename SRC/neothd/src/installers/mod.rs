@@ -19,6 +19,8 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod n8n;
+pub mod n8n_workflows;
 pub mod oauth_pkce;
 
 /// One of the three CLIs NEOTH knows how to install.

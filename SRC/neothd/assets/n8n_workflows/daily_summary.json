@@ -1,0 +1,101 @@
+{
+  "name": "NEOTH Daily Summary",
+  "description": "Every evening at 21:00 local time, pulls the day's NEOTH activity from the localhost API + sends a summary via the configured channel (default Telegram). Operator edits the schedule + channel in the n8n UI after import.",
+  "active": false,
+  "nodes": [
+    {
+      "id": "schedule",
+      "name": "Schedule (21:00 local)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "hours", "hoursInterval": 24 }]
+        }
+      }
+    },
+    {
+      "id": "recall",
+      "name": "NEOTH Recall (today)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [200, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/recall",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "query", "value": "today's activity" },
+            { "name": "tier", "value": "hot" },
+            { "name": "limit", "value": "20" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "summarize",
+      "name": "NEOTH Provider Call (summarise)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [400, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/provider/call",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "Summarise today's NEOTH activity in 5 bullet points. Highlight any consent denials and unanswered questions.\n\n{{$json.recall_results}}"
+            },
+            { "name": "provider", "value": "default" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "send",
+      "name": "Send via NEOTH channel",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [600, 0],
+      "parameters": {
+        "url": "http://127.0.0.1:9744/api/channel/send",
+        "method": "POST",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            { "name": "channel", "value": "telegram" },
+            { "name": "text", "value": "Daily Summary:\n\n{{$json.completion}}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer {{$env.NEOTH_API_TOKEN}}" }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule (21:00 local)": { "main": [[{ "node": "NEOTH Recall (today)", "type": "main", "index": 0 }]] },
+    "NEOTH Recall (today)": { "main": [[{ "node": "NEOTH Provider Call (summarise)", "type": "main", "index": 0 }]] },
+    "NEOTH Provider Call (summarise)": { "main": [[{ "node": "Send via NEOTH channel", "type": "main", "index": 0 }]] }
+  },
+  "tags": [{ "name": "neoth-bootstrap" }]
+}
