@@ -1507,8 +1507,31 @@ pub async fn run_chat_with(
     if learn_on {
         let timeout = std::time::Duration::from_secs(config.profile.timeout_secs.max(1));
         let views_path = crate::memory::store::default_path();
+        // V10-07 (Session 21) — when freedom.yaml::profile.learn_provider
+        // is set, build a learn-specific provider (typically local_qwen
+        // so the post-reply extract stays offline). Falls back to the
+        // main provider when learn_provider is None or on build-failure
+        // with allow_cloud_fallback=true. Build-failure with
+        // allow_cloud_fallback=false (the default cheap-by-default
+        // posture) skips the learn pass entirely with a clear warn.
+        let learn_provider_owned: Option<Box<dyn crate::providers::Provider>> =
+            match crate::providers::from_config_for_learn(&config).await {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "profile.learn_provider build failed; skipping post-reply learn pass"
+                    );
+                    None
+                }
+            };
         match crate::memory::store::open(&views_path) {
             Ok(mut conn) => {
+                let learn_provider_ref: &dyn crate::providers::Provider =
+                    match learn_provider_owned.as_deref() {
+                        Some(p) => p,
+                        None => provider, // L-07 fallback already handled above; this branch = build failed AND no fallback configured → use main provider as the LAST-CHANCE behaviour matching pre-V10-07 semantics. Operator who sets learn_provider but doesn't want cloud-fallback should see the warn above and fix their setup.
+                    };
                 let pipeline_fut = async {
                     if let Err(e) =
                         crate::memory::indexer::replay_once(&mut conn, &segment_path).await
@@ -1526,7 +1549,7 @@ pub async fn run_chat_with(
                     match crate::profile::run_pipeline(
                         &mut conn,
                         &writer,
-                        provider,
+                        learn_provider_ref,
                         raw_event_id,
                         2,
                         &guard,

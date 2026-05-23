@@ -231,6 +231,69 @@ pub async fn from_config_for_sub_role(
     from_config(&synthetic).await
 }
 
+/// V10-07 (Session 21) — construct the provider the post-reply
+/// profile-extract pipeline runs against. Reads
+/// `config.profile.learn_provider` (L-06, shipped Session 20) and
+/// builds the matching adapter; honours
+/// `config.profile.allow_cloud_fallback` (L-07) when the chosen
+/// learn-provider build fails (e.g. local_qwen weights missing).
+///
+/// Resolution order:
+///   1. `profile.learn_provider == Some(name)` → build a synthetic
+///      FreedomConfig view with that provider + delegate to
+///      [`from_config`]. Same trick as
+///      [`from_config_for_role`] for hemisphere slots.
+///   2. `profile.learn_provider == None` → fall through to
+///      [`from_config`] (uses the operator's main provider — the
+///      legacy v0.1 behaviour).
+///   3. Step 1 fails AND `profile.allow_cloud_fallback == true`
+///      → log a warn + fall back to [`from_config`]. This is the
+///      operator's explicit opt-in to "spend cloud tokens for
+///      profile extract when local doesn't work today".
+///   4. Step 1 fails AND `allow_cloud_fallback == false` → propagate
+///      the error so the caller can decide to skip the learn pass
+///      (default cheap-by-default posture).
+pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    let Some(learn_name) = config.profile.learn_provider.as_deref() else {
+        // No explicit learn provider — use the main one.
+        return from_config(config).await;
+    };
+    // ProviderKind derives serde rename_all="snake_case" so the
+    // YAML scalar form parses directly. Saves an explicit from_slug
+    // impl just for this one site.
+    let parsed: Option<crate::cli::init::ProviderKind> = serde_yaml::from_str(learn_name).ok();
+    let Some(kind) = parsed else {
+        // Unknown name — surface a clear error so the operator fixes
+        // freedom.yaml instead of silently sliding to cloud.
+        return Err(anyhow::anyhow!(
+            "freedom.yaml::profile.learn_provider = `{learn_name}` is not a recognised provider \
+             slug. Valid: local_qwen, claude_cli, gemini_cli, codex, openai_api, openai_compat, \
+             gemini_api, anthropic_api, aws_bedrock, azure_openai. Edit + re-run `neoth reload`."
+        ));
+    };
+    let mut synthetic = config.clone();
+    synthetic.provider_kind = Some(kind);
+    // Per-learn-provider model overrides aren't in scope today; the
+    // operator's main-provider model carries over (local_qwen ignores
+    // it; cloud providers use the same default they'd use elsewhere).
+    match from_config(&synthetic).await {
+        Ok(p) => Ok(p),
+        Err(e) if config.profile.allow_cloud_fallback => {
+            tracing::warn!(
+                error = %e,
+                learn_provider = learn_name,
+                "profile.learn_provider build failed; allow_cloud_fallback=true → falling back to main provider"
+            );
+            from_config(config).await
+        }
+        Err(e) => Err(e.context(format!(
+            "profile.learn_provider `{learn_name}` build failed AND allow_cloud_fallback=false; \
+             set allow_cloud_fallback=true to spend main-provider tokens, or fix the local \
+             provider setup"
+        ))),
+    }
+}
+
 /// Construct the provider configured in `~/.neoth/freedom.yaml`.
 ///
 /// Async because `LocalQwen` may need to download model artifacts from HF
@@ -644,5 +707,78 @@ mod tests {
         let role_err = err_or_panic(from_config_for_role(&cfg, HemisphereRole::Left).await);
         assert!(single_err.to_string().contains("no provider configured"));
         assert!(role_err.to_string().contains("no provider configured"));
+    }
+
+    // ── V10-07 from_config_for_learn (Session 21) ──────────────
+
+    #[tokio::test]
+    async fn from_config_for_learn_unknown_slug_returns_actionable_error() {
+        let mut cfg = base_config();
+        cfg.profile.learn_provider = Some("bogus_provider_name".into());
+        let err = err_or_panic(from_config_for_learn(&cfg).await);
+        let msg = err.to_string();
+        assert!(msg.contains("bogus_provider_name"));
+        assert!(msg.contains("not a recognised provider slug"));
+        assert!(msg.contains("local_qwen"));
+    }
+
+    #[tokio::test]
+    async fn from_config_for_learn_none_falls_through_to_main_provider() {
+        // Operator hasn't set a learn_provider → uses main provider.
+        // Main provider is ClaudeCli which constructs cleanly (binary
+        // probe deferred to first call).
+        let mut cfg = base_config();
+        cfg.profile.learn_provider = None;
+        // Don't care about the result type — only that the dispatch
+        // routed through from_config(config) verbatim.
+        let result = from_config_for_learn(&cfg).await;
+        let main_result = from_config(&cfg).await;
+        assert_eq!(result.is_ok(), main_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn from_config_for_learn_explicit_slug_picks_synthetic_kind() {
+        // Operator sets learn_provider = local_qwen → from_config_for_learn
+        // builds a synthetic FreedomConfig with that kind. Operator's
+        // main provider stays ClaudeCli.
+        let mut cfg = base_config();
+        cfg.profile.learn_provider = Some("local_qwen".into());
+        // We can't easily verify the OWNED provider type without
+        // downcasting; instead, verify it constructs SOMETHING (or
+        // fails with a known LocalQwen-specific error like "weights
+        // not found"). Build failures are L-07 territory — those
+        // get an actionable error from the bail path.
+        let result = from_config_for_learn(&cfg).await;
+        // Either succeeds (weights cached) or fails with a clear
+        // local_qwen-related message — NOT a generic provider error.
+        if let Err(e) = result {
+            let s = e.to_string().to_lowercase();
+            assert!(
+                s.contains("local_qwen")
+                    || s.contains("qwen")
+                    || s.contains("weights")
+                    || s.contains("model"),
+                "expected local-qwen-related error, got: {e}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn from_config_for_learn_fallback_message_mentions_allow_cloud_fallback() {
+        let mut cfg = base_config();
+        cfg.profile.learn_provider = Some("local_qwen".into());
+        cfg.profile.allow_cloud_fallback = false;
+        // If LocalQwen build fails (weights missing on this host),
+        // the wrapped error message MUST mention allow_cloud_fallback
+        // so the operator knows how to recover.
+        if let Err(e) = from_config_for_learn(&cfg).await {
+            let s = e.to_string();
+            assert!(
+                s.contains("allow_cloud_fallback") || s.contains("local_qwen"),
+                "expected diagnostic to mention allow_cloud_fallback or local_qwen, got: {s}"
+            );
+        }
+        // Success case (weights cached + GPU works) is fine — no
+        // assertion needed; the gate is the error message.
     }
 }
