@@ -903,6 +903,26 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     };
     info!("cluster audit sidecar ingester spawned (5s tick)");
 
+    // ── Self-dev outbox drain (P-04 follow-on, Session 21) ────────────────
+    // CLI commands `neoth self-dev accept/decline/propose` run
+    // without an in-process WAL writer (daemon owns the segment
+    // exclusively). They enqueue pending events in
+    // `~/.neoth/self_dev/pending_events.jsonl`; this task drains
+    // every DRAIN_INTERVAL (5s default) + emits real
+    // EVENT_TYPE_SELF_DEV_{PROPOSED,ACCEPTED,DECLINED} frames into
+    // the WAL. Closes the public-blocker gap "CLI without writer
+    // warns 'no WAL frame'" — the WAL frames now DO land,
+    // asynchronously through the daemon.
+    let self_dev_outbox_task: tokio::task::JoinHandle<()> = {
+        let writer_for_self_dev = writer.clone();
+        let home = FreedomConfig::default_neoth_home();
+        crate::cli::self_dev_outbox::spawn_drain_task(home, writer_for_self_dev)
+    };
+    info!(
+        tick_secs = crate::cli::self_dev_outbox::DRAIN_INTERVAL.as_secs(),
+        "self-dev outbox drain task spawned"
+    );
+
     // ── QM-10 Phase 3 breaker state restore ────────────────────────────────
     // Replay the failure counters from the prior daemon run so a
     // flapping provider that built up failure history before
@@ -1135,6 +1155,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // audit frame, the WAL writer dedupes by frame hash).
     cluster_audit_task.abort();
     let _ = cluster_audit_task.await;
+
+    // Final-drain the self-dev outbox BEFORE aborting the task so
+    // CLI events queued in the last 5s land in the WAL instead of
+    // waiting for the next daemon start.
+    {
+        let home = FreedomConfig::default_neoth_home();
+        match crate::cli::self_dev_outbox::drain_once(&home, &writer).await {
+            Ok(0) => {}
+            Ok(n) => info!(emitted = n, "self-dev outbox final-drained on shutdown"),
+            Err(e) => {
+                warn!(error = %e, "self-dev outbox final-drain failed (events retained for next start)")
+            }
+        }
+    }
+    self_dev_outbox_task.abort();
+    let _ = self_dev_outbox_task.await;
 
     // Abort the indexer next. It may have been mid-pass; the next `neoth serve`
     // start picks up from `wal_cursor`.

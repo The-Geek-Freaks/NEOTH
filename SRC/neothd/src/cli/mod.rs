@@ -63,6 +63,7 @@ pub mod rollback;
 pub mod schema;
 pub mod search;
 pub mod self_dev;
+pub mod self_dev_outbox;
 pub mod serve;
 pub mod skills;
 pub mod slack;

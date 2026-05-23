@@ -199,7 +199,14 @@ async fn run_accept(home: &Path, id: &str, writer: Option<&WalWriterHandle>) -> 
         emit_accepted(w, id, ts).await?;
         println!("  (WAL frame 0x1D SELF_DEV_ACCEPTED emitted)");
     } else {
-        eprintln!("  warning: no live daemon — accept recorded locally only, no WAL frame");
+        // No in-process writer (CLI invocation). Enqueue for the
+        // daemon's drain task so the WAL frame STILL lands.
+        super::self_dev_outbox::enqueue(
+            home,
+            &super::self_dev_outbox::PendingEvent::accepted(id, ts),
+        )
+        .await?;
+        println!("  (queued for daemon WAL emit — lands within 5s on the live daemon)");
     }
     Ok(())
 }
@@ -238,7 +245,12 @@ async fn run_decline(
         emit_declined(w, id, reason, ts).await?;
         println!("  (WAL frame 0x1E SELF_DEV_DECLINED emitted)");
     } else {
-        eprintln!("  warning: no live daemon — decline recorded locally only, no WAL frame");
+        super::self_dev_outbox::enqueue(
+            home,
+            &super::self_dev_outbox::PendingEvent::declined(id, reason, ts),
+        )
+        .await?;
+        println!("  (queued for daemon WAL emit — lands within 5s on the live daemon)");
     }
     Ok(())
 }
@@ -278,6 +290,12 @@ async fn run_propose(
         added += 1;
         if let Some(w) = writer {
             emit_proposed(w, p, ts).await?;
+        } else {
+            super::self_dev_outbox::enqueue(
+                home,
+                &super::self_dev_outbox::PendingEvent::proposed(p.clone(), ts),
+            )
+            .await?;
         }
     }
     save_store(home, &store)?;
@@ -285,7 +303,9 @@ async fn run_propose(
     if writer.is_some() {
         println!("  (one WAL frame 0x1C SELF_DEV_PROPOSED per new proposal)");
     } else {
-        eprintln!("  warning: no live daemon — proposals recorded locally only, no WAL frames");
+        println!(
+            "  (queued for daemon WAL emit — {added} frame(s) land within 5s on the live daemon)"
+        );
     }
     println!("review via `neoth self-dev review`");
     Ok(())
