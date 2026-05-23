@@ -76,6 +76,15 @@ pub mod heartbeat;
 /// per `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
 pub mod gossip;
 
+/// Phase 6 wire protocol primitives — VectorClock (Lamport 1978),
+/// GossipFrame envelope, GossipAcceptance receiver-side decision
+/// composing the existing GossipTag + ReplayBudget + per-origin
+/// dedup. Real transport (Hysteria relay or direct peer connection)
+/// + JSONL append-stream + BudgetToken Raft consensus land in
+/// multi-week follow-ups per
+/// `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
+pub mod gossip_wire;
+
 /// Phase 5 Hysteria-shared relay registration primitives — operator-
 /// configured `RelayConfig` (endpoint + 5-peer-per-key cap),
 /// `RelayRegistration` wire shape, `PeerRoster` in-memory store with
