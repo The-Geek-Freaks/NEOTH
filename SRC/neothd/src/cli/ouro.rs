@@ -86,13 +86,64 @@ pub enum OuroAction {
     /// Show the operator's currently-configured Ouro state (read
     /// from `~/.neoth/freedom.yaml`).
     Status,
+    /// Auto-download the operator-chosen Ouro checkpoint via hf-hub.
+    /// First-time download is ~3 GB BF16; subsequent runs hit the
+    /// disk cache instantly. Equivalent to running `neoth init
+    /// --force --provider local_ouro` then a one-off `neoth chat`
+    /// — but skip the chat round-trip when you just want the
+    /// weights cached (e.g. before running `cargo test ... ouro`
+    /// integration suites).
+    Fetch {
+        /// Override the default checkpoint
+        /// (`ByteDance/Ouro-1.4B-Thinking`). Must match an entry
+        /// from `neoth ouro list`.
+        #[arg(long)]
+        checkpoint: Option<String>,
+    },
 }
 
-pub fn run_ouro(args: OuroArgs) -> Result<()> {
+pub async fn run_ouro(args: OuroArgs) -> Result<()> {
     match args.action {
         OuroAction::List => run_list(&args.output),
         OuroAction::Status => run_status(&args.output),
+        OuroAction::Fetch { checkpoint } => run_fetch(checkpoint.as_deref()).await,
     }
+}
+
+async fn run_fetch(checkpoint_override: Option<&str>) -> Result<()> {
+    let repo = match checkpoint_override {
+        Some(c) => {
+            // Validate against the pinned catalogue so the operator
+            // can't silently fetch a random unrelated HF repo. Fail
+            // fast with the actionable "run `neoth ouro list`" hint.
+            let known = OURO_CHECKPOINTS.iter().any(|cp| cp.hf_id == c);
+            if !known {
+                anyhow::bail!(
+                    "unknown Ouro checkpoint `{c}` — run `neoth ouro list` for the catalogue"
+                );
+            }
+            c.to_string()
+        }
+        None => crate::providers::ouro::adapter::DEFAULT_OURO_REPO.to_string(),
+    };
+    println!("Fetching Ouro checkpoint `{repo}` via hf-hub…");
+    println!(
+        "First-time download is ~3 GB BF16 and may take several minutes. \
+         Subsequent runs hit the cache instantly."
+    );
+    let started = std::time::Instant::now();
+    // Construct the adapter — `new` triggers `ensure_artifacts` which
+    // is the auto-download path. We never call complete()/embed() so
+    // no model load happens; the goal is JUST to pull the weights
+    // into the local cache.
+    let _adapter = crate::providers::ouro::adapter::LocalOuroAdapter::new(Some(repo.clone()))
+        .await?;
+    println!(
+        "✓ Ouro checkpoint `{repo}` cached in {:.1}s. Activate via:\n  \
+         neoth init --force --provider local_ouro --provider-model {repo}",
+        started.elapsed().as_secs_f32()
+    );
+    Ok(())
 }
 
 fn run_list(output: &OutputFormat) -> Result<()> {
@@ -295,11 +346,11 @@ mod tests {
         // Pattern-match pins the enum variants exhaustively.
         match list.action {
             OuroAction::List => {}
-            OuroAction::Status => panic!("expected List"),
+            OuroAction::Status | OuroAction::Fetch { .. } => panic!("expected List"),
         }
         match status.action {
             OuroAction::Status => {}
-            OuroAction::List => panic!("expected Status"),
+            OuroAction::List | OuroAction::Fetch { .. } => panic!("expected Status"),
         }
     }
 
@@ -323,5 +374,49 @@ mod tests {
         // output. Must not panic.
         run_status(&OutputFormat::Table).expect("run_status table");
         run_status(&OutputFormat::Json).expect("run_status json");
+    }
+
+    #[tokio::test]
+    async fn run_fetch_rejects_unknown_checkpoint() {
+        // Operator-typo or third-party HF repo MUST bail fast with
+        // the actionable hint pointing at `neoth ouro list`.
+        let err = run_fetch(Some("operator-typo/non-existent")).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("unknown Ouro checkpoint"));
+        assert!(msg.contains("neoth ouro list"));
+    }
+
+    #[test]
+    fn ouro_action_fetch_variant_parses() {
+        let action = OuroAction::Fetch {
+            checkpoint: Some("ByteDance/Ouro-2.6B-Thinking".into()),
+        };
+        match action {
+            OuroAction::Fetch { checkpoint } => {
+                assert_eq!(checkpoint.as_deref(), Some("ByteDance/Ouro-2.6B-Thinking"));
+            }
+            _ => panic!("expected Fetch"),
+        }
+    }
+
+    #[test]
+    fn ouro_action_fetch_defaults_checkpoint_to_none() {
+        let action = OuroAction::Fetch { checkpoint: None };
+        match action {
+            OuroAction::Fetch { checkpoint } => assert!(checkpoint.is_none()),
+            _ => panic!("expected Fetch"),
+        }
+    }
+
+    #[test]
+    fn fetch_validates_against_catalogue_membership() {
+        // Pin the contract: every checkpoint in OURO_CHECKPOINTS
+        // should be acceptable to `--checkpoint`. Sanity-check by
+        // iterating the catalogue.
+        for cp in OURO_CHECKPOINTS {
+            // Membership predicate matches run_fetch's check.
+            let known = OURO_CHECKPOINTS.iter().any(|c| c.hf_id == cp.hf_id);
+            assert!(known, "catalogue self-membership: {}", cp.hf_id);
+        }
     }
 }

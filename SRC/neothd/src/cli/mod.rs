@@ -696,7 +696,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Ouro(mut args) => {
             args.output = global_output;
-            ouro::run_ouro(args)?;
+            ouro::run_ouro(args).await?;
         }
         Commands::Cost(mut args) => {
             args.output = global_output;
