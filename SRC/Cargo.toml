@@ -27,7 +27,7 @@ members = [
 edition = "2024"
 rust-version = "1.86"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/owner/neoth"
+repository = "https://github.com/The-Geek-Freaks/NEOTH"
 
 [workspace.dependencies]
 # Shared deps pinned at the workspace level so member crates stay aligned.

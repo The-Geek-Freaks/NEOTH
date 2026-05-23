@@ -13,7 +13,7 @@ repository.workspace   = true
 # plugin host (V10-04) ships and there's >1 external plugin author,
 # this graduates to `0.1.0` proper.
 readme        = "README.md"
-homepage      = "https://github.com/owner/neoth"
+homepage      = "https://github.com/The-Geek-Freaks/NEOTH"
 documentation = "https://docs.rs/neoth-plugin-sdk"
 keywords      = ["neoth", "plugin", "sdk", "skill", "permission"]
 categories    = ["api-bindings", "development-tools"]
