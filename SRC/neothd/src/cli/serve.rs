@@ -684,6 +684,29 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             None
         };
 
+    // ── 5b-pent. R-02 Phase 4c — dreaming nightly task ─────────────────────
+    //
+    // Off by default. When freedom.yaml::dreaming.enabled = true,
+    // composes one batch of dreams per interval (default 24h) over a
+    // 24h window. Uses `compose_dreams_with_embeddings` when an
+    // `inference.embedding_provider` is wired + buildable; falls back
+    // to deterministic `compose_dream` per L-07 safe-default when
+    // not. Errors log + retry next tick; never crashes the daemon.
+    let dreaming_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
+        if config.dreaming.enabled {
+            let embed_provider =
+                crate::providers::embed_provider_from_config(&config).await;
+            Some(crate::cli::dreaming_task::spawn(
+                crate::config::FreedomConfig::default_neoth_home(),
+                embed_provider,
+                config.dreaming.interval_secs.map(std::time::Duration::from_secs),
+                config.dreaming.window_secs.map(std::time::Duration::from_secs),
+                config.dreaming.max_events,
+            ))
+        } else {
+            None
+        };
+
     // ── 5b-bis. Hebbian decay task — QUELLEN Q-8 adoption ──────────────────
     //
     // Runs `memory::consolidate::run_consolidation_pass` every 2h. Math
@@ -1137,6 +1160,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // Abort the sources GC task — same reasoning as decay above.
     if let Some(task) = gc_task {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // Abort the R-02 Phase 4c dreaming task. Embed-path callers
+    // hit `spawn_blocking` for OuroModel/local_qwen forward;
+    // aborting cancels the JoinHandle but the blocking task
+    // may run to completion (acceptable — drains naturally,
+    // never strands the model load).
+    if let Some(task) = dreaming_task {
         task.abort();
         let _ = task.await;
     }

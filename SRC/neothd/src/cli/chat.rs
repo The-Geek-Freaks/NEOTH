@@ -3265,6 +3265,7 @@ mod tests {
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
+            dreaming: crate::config::DreamingConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3411,6 +3412,7 @@ mod tests {
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
+            dreaming: crate::config::DreamingConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3517,6 +3519,7 @@ mod tests {
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
+            dreaming: crate::config::DreamingConfig::default(),
         };
         let args = ChatArgs {
             message: Some("Capital of France?".into()),
@@ -3642,6 +3645,7 @@ mod tests {
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
+            dreaming: crate::config::DreamingConfig::default(),
         };
         let args = ChatArgs {
             message: Some("hi".into()),
@@ -3775,6 +3779,7 @@ mod tests {
             auto_update: crate::config::AutoUpdateConfig::default(),
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
+            dreaming: crate::config::DreamingConfig::default(),
         };
         let args = ChatArgs {
             message: Some("trigger".into()),

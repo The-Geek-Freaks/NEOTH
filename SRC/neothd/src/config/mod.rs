@@ -233,6 +233,50 @@ pub struct FreedomConfig {
     /// lets operators flip it OFF without recompiling.
     #[serde(default)]
     pub plugins: PluginsConfig,
+    /// R-02 Phase 4c (Session 22): nightly dreaming pipeline gate.
+    /// Off by default — operator opts in via `dreaming.enabled: true`.
+    /// When on, `cli::dreaming_task::spawn` runs on
+    /// `interval_secs` (default 24h) over a window of `window_secs`
+    /// (default 24h) capped at `max_events` (default 500). When an
+    /// `inference.embedding_provider` is also wired, the task uses
+    /// `compose_dreams_with_embeddings` for cosine-clustered themes;
+    /// otherwise it falls back to deterministic compose_dream
+    /// (matches L-07 `allow_cloud_fallback: false` safe-default).
+    #[serde(default)]
+    pub dreaming: DreamingConfig,
+}
+
+/// R-02 Phase 4c — nightly dreaming task gates.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct DreamingConfig {
+    /// Master switch. `false` = task never spawns (zero CPU /
+    /// memory / log noise). `true` = spawn the interval task at
+    /// daemon boot.
+    pub enabled: bool,
+    /// Interval between dreaming passes in seconds. `None` =
+    /// 86_400 (24h, matches the SPEC nightly 03:00 cron pattern).
+    /// Operators wanting hourly batches set 3600.
+    pub interval_secs: Option<u64>,
+    /// Time window read from `idx_episode` per pass in seconds.
+    /// `None` = 86_400 (one day's events per tick).
+    pub window_secs: Option<u64>,
+    /// Cap on events processed per pass. `None` = 500. Bounds
+    /// operator-LLM cost on high-traffic days (~50ms/embed × 500 =
+    /// ~25s compute per pass).
+    pub max_events: Option<usize>,
+}
+
+impl Default for DreamingConfig {
+    fn default() -> Self {
+        // Off by default — opt-in gate per the noob-wizard rule.
+        Self {
+            enabled: false,
+            interval_secs: None,
+            window_secs: None,
+            max_events: None,
+        }
+    }
 }
 
 /// NOOB-UX-3 plugin runtime gates.
@@ -1355,5 +1399,56 @@ mod tests {
         assert!(cfg2.rollback.should_capture("file_write"));
         assert!(!cfg2.rollback.should_capture("config_write"));
         assert_eq!(cfg2.rollback.max_snapshot_bytes, 32_768);
+    }
+
+    // ── R-02 Phase 4c — DreamingConfig serde wiring ──────────────────
+
+    #[test]
+    fn dreaming_config_default_is_off() {
+        let cfg = DreamingConfig::default();
+        assert!(!cfg.enabled, "Phase 4c task is OFF by default");
+        assert!(cfg.interval_secs.is_none());
+        assert!(cfg.window_secs.is_none());
+        assert!(cfg.max_events.is_none());
+    }
+
+    #[test]
+    fn dreaming_section_absent_loads_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(dir.path(), "operator_id: alice\n");
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(!cfg.dreaming.enabled);
+        assert!(cfg.dreaming.interval_secs.is_none());
+    }
+
+    #[test]
+    fn dreaming_enabled_with_custom_interval_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "operator_id: alice\n\
+                    dreaming:\n  \
+                    enabled: true\n  \
+                    interval_secs: 3600\n  \
+                    window_secs: 86400\n  \
+                    max_events: 100\n";
+        let path = write_yaml(dir.path(), yaml);
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.dreaming.enabled);
+        assert_eq!(cfg.dreaming.interval_secs, Some(3600));
+        assert_eq!(cfg.dreaming.window_secs, Some(86_400));
+        assert_eq!(cfg.dreaming.max_events, Some(100));
+    }
+
+    #[test]
+    fn dreaming_partial_block_inherits_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        // Operator sets only `enabled: true` — rest fall through to
+        // None which means downstream uses the task's DEFAULT_*.
+        let yaml = "dreaming:\n  enabled: true\n";
+        let path = write_yaml(dir.path(), yaml);
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.dreaming.enabled);
+        assert!(cfg.dreaming.interval_secs.is_none());
+        assert!(cfg.dreaming.window_secs.is_none());
+        assert!(cfg.dreaming.max_events.is_none());
     }
 }
