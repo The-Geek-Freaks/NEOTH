@@ -27,6 +27,7 @@ pub mod extension_registry;
 pub mod extract;
 pub mod fact_check;
 pub mod lookup;
+pub mod presets;
 pub mod redaction;
 pub mod runner;
 pub mod temporal_guard;

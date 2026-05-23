@@ -1793,11 +1793,11 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 
 ### Category 4 — Profile + Adaptation (15 items)
 
-- [ ] **P-01** Behavior-pattern detection — 5 estimators (Temporal/Cadence/Length/Topic/Tone) + aggregation cron (P2)
-- [ ] **P-02** Profile presets — 5 presets + apply + `neoth profile preset` CLI (P2)
-- [ ] **P-03** GUI profile selector — Slint wizard screen + post-wizard switcher (P2)
-- [ ] **P-04** Proactive self-development — `propose_adjustments` + `neoth self-dev review` CLI (P2)
-- [ ] **P-05** WAL events 0x1B PROFILE_PRESET_APPLIED + 0x1C/D/E self-dev (P2)
+- [ ] **P-01** Behavior-pattern detection — 5 estimators (Temporal/Cadence/Length/Topic/Tone) + aggregation cron (P2) — multi-day workstream needing live behavioural-data sources from the WAL replay + cron-driven aggregation pipeline.
+- [~] **P-02** Profile presets — 5 presets + apply + `neoth profile preset` CLI (P2) — **Preset data + apply primitive shipped Session 21.** `profile/presets.rs` ships `ProfilePreset::{Lowkey,Formal,Deepdive,Tutor,Opsec}` enum (LOWKEY recommended per memory hard rule) with `as_str` / `parse` (case-insensitive) / `ALL` slice for iteration / `description` (operator-readable, picker-fit ≤220 chars). `PresetData { preset, system_addendum, verbosity, formality, ask_clarifying, trim_disclaimers }` returned by `apply_preset(preset)` carries the tuning matrix. `build_preset_applied_payload(preset, source, ts_unix)` emits the JSON for the 0x1B WAL frame. 15 tests pin: as_str / ALL count / parse round-trip / case-insensitive parse / unknown rejection / distinct descriptions + picker-fit + LOWKEY (recommended) tag drift guard + per-preset behaviour (lowkey empty / formal professional / deepdive clarifying / tutor steps / opsec trim) + payload JSON shape + source wire forms. CLI `neoth profile preset apply <name>` + GUI selector follow when wizard rev lands.
+- [ ] **P-03** GUI profile selector — Slint wizard screen + post-wizard switcher (P2) — gated on R-1 Slint chat-surface workstream.
+- [ ] **P-04** Proactive self-development — `propose_adjustments` + `neoth self-dev review` CLI (P2) — needs behavioural-data corpus from P-01 to propose against. Deferred pending P-01.
+- [x] **P-05** WAL events 0x1B PROFILE_PRESET_APPLIED + 0x1C/D/E self-dev (P2) — **Shipped Session 21.** Four new event codes added to `wal/events.rs`: `EVENT_TYPE_PROFILE_PRESET_APPLIED` (0x1B) for the preset-apply moment with `{preset_name, source, ts_unix}` payload; `EVENT_TYPE_SELF_DEV_PROPOSED` (0x1C) for the proactive-loop output `{proposal_id, kind, reason, confidence, ts_unix}`; `EVENT_TYPE_SELF_DEV_ACCEPTED` (0x1D) when operator accepts via `neoth self-dev accept` `{proposal_id, ts_unix}`; `EVENT_TYPE_SELF_DEV_DECLINED` (0x1E) with reason ∈ `"declined"|"timeout"`. Const-time band checks extended; name-table entries added; `profile::presets::build_preset_applied_payload` ships the 0x1B payload builder. Self-dev payload builders ship when P-04 lands the proactive loop.
 - [ ] **P-06** Block-B profile injection ≥ 0.6 confidence gate (P2 Day 50) — see CH-09
 - [ ] **P-07** Block-C recall ranking profile_relevance_bonus (P2) — see CH-10
 - [ ] **P-08** Briefing emit (cron-driven proactive) (P2)

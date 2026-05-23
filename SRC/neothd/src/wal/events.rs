@@ -102,6 +102,27 @@ pub const EVENT_TYPE_REFUSAL_REROUTED: u8 = 0x19;
 /// `0x1A REFUSAL_PERSISTENT` — N consecutive refusals for the same
 /// task. Payload: `{attempt_count, final_class, session_id}`.
 pub const EVENT_TYPE_REFUSAL_PERSISTENT: u8 = 0x1A;
+/// `0x1B PROFILE_PRESET_APPLIED` — operator picked a profile preset
+/// (LOWKEY / FORMAL / DEEPDIVE / TUTOR / OPSEC) via the wizard or
+/// `neoth profile preset apply <name>`. Payload (JSON):
+/// `{preset_name, source, ts_unix}` where `source` ∈ `"wizard" |
+/// "cli" | "gui"`. Drives downstream profile injection (CH-09).
+/// P-02 + P-05 (Session 21).
+pub const EVENT_TYPE_PROFILE_PRESET_APPLIED: u8 = 0x1B;
+/// `0x1C SELF_DEV_PROPOSED` — proactive self-dev loop emitted a
+/// proposed adjustment for operator review. Payload:
+/// `{proposal_id, kind, reason, confidence, ts_unix}`. Operator
+/// reviews via `neoth self-dev review`. P-04 + P-05 (Session 21).
+pub const EVENT_TYPE_SELF_DEV_PROPOSED: u8 = 0x1C;
+/// `0x1D SELF_DEV_ACCEPTED` — operator accepted a self-dev proposal
+/// (`neoth self-dev accept <proposal_id>`). Payload:
+/// `{proposal_id, ts_unix}`. The matching PROFILE_DELTA lands
+/// immediately after this event. P-04 + P-05 (Session 21).
+pub const EVENT_TYPE_SELF_DEV_ACCEPTED: u8 = 0x1D;
+/// `0x1E SELF_DEV_DECLINED` — operator declined or let the
+/// proposal time-out. Payload: `{proposal_id, reason, ts_unix}`.
+/// `reason` ∈ `"declined" | "timeout"`. P-04 + P-05 (Session 21).
+pub const EVENT_TYPE_SELF_DEV_DECLINED: u8 = 0x1E;
 /// `0x1F HEMISPHERE_REBOUND` — operator changed the provider binding
 /// for one hemisphere role (Left/Right/Cerebellum) via `neoth
 /// hemispheres set` or the wizard step 5d. Payload:
@@ -857,6 +878,14 @@ const _: () = {
         [(EVENT_TYPE_REFUSAL_REROUTED < 0x10 || EVENT_TYPE_REFUSAL_REROUTED > 0x1F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_REFUSAL_PERSISTENT < 0x10 || EVENT_TYPE_REFUSAL_PERSISTENT > 0x1F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PROFILE_PRESET_APPLIED < 0x10
+        || EVENT_TYPE_PROFILE_PRESET_APPLIED > 0x1F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_SELF_DEV_PROPOSED < 0x10 || EVENT_TYPE_SELF_DEV_PROPOSED > 0x1F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_SELF_DEV_ACCEPTED < 0x10 || EVENT_TYPE_SELF_DEV_ACCEPTED > 0x1F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_SELF_DEV_DECLINED < 0x10 || EVENT_TYPE_SELF_DEV_DECLINED > 0x1F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_HEMISPHERE_REBOUND < 0x10 || EVENT_TYPE_HEMISPHERE_REBOUND > 0x1F) as usize];
     let _ = [(); 1]
@@ -1035,6 +1064,10 @@ mod tests {
             ("REFUSAL_REDIRECTED", EVENT_TYPE_REFUSAL_REDIRECTED),
             ("REFUSAL_REROUTED", EVENT_TYPE_REFUSAL_REROUTED),
             ("REFUSAL_PERSISTENT", EVENT_TYPE_REFUSAL_PERSISTENT),
+            ("PROFILE_PRESET_APPLIED", EVENT_TYPE_PROFILE_PRESET_APPLIED),
+            ("SELF_DEV_PROPOSED", EVENT_TYPE_SELF_DEV_PROPOSED),
+            ("SELF_DEV_ACCEPTED", EVENT_TYPE_SELF_DEV_ACCEPTED),
+            ("SELF_DEV_DECLINED", EVENT_TYPE_SELF_DEV_DECLINED),
             ("HEMISPHERE_REBOUND", EVENT_TYPE_HEMISPHERE_REBOUND),
             ("PROVIDER_REQUEST", EVENT_TYPE_PROVIDER_REQUEST),
             ("PROVIDER_RESPONSE", EVENT_TYPE_PROVIDER_RESPONSE),
