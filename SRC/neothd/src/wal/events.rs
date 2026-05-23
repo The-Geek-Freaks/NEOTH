@@ -711,8 +711,32 @@ pub const EVENT_TYPE_CLUSTER_PEER_CONFIRMED: u8 = 0xE6;
 /// Payload (JSON): `{pub_key_hex, ts_unix}`.
 pub const EVENT_TYPE_CLUSTER_PEER_REVOKED: u8 = 0xE7;
 
-// Cluster band 0xE0..=0xE7 fully assigned (R-7 + Phase 4 pairing).
-// Further cluster lifecycle events need a new reserved band.
+/// `0xE8 CLUSTER_ROLE_CHANGED` — emitted when the local node's
+/// cluster role transitions (e.g. `follower` → `orchestrator`,
+/// `orchestrator` → `passive`). Drives the operator-facing
+/// `neoth cluster status` line so a leader handoff is visible in
+/// the WAL replay.
+///
+/// Payload (JSON): `{old_role, new_role, ts_unix, reason}`.
+/// `reason` is one of `"election"` / `"manual"` / `"peer_loss"`.
+/// C-5 Phase 5 (Session 21).
+pub const EVENT_TYPE_CLUSTER_ROLE_CHANGED: u8 = 0xE8;
+
+/// `0xE9 CLUSTER_REQUEST_FORWARDED` — emitted by the orchestrator
+/// when an inbound `complete()` request is routed to a peer for
+/// load/capability reasons (e.g. peer holds the GPU model the
+/// local node lacks). Replay surfaces the routing decision next
+/// to the matching `PROVIDER_REQUEST`.
+///
+/// Payload (JSON): `{request_id, target_peer_pubkey, reason,
+/// ts_unix}`. `reason` is one of `"capability"` / `"load"` /
+/// `"affinity"` / `"fallback"`.
+/// C-5 Phase 5 (Session 21).
+pub const EVENT_TYPE_CLUSTER_REQUEST_FORWARDED: u8 = 0xE9;
+
+// Cluster band 0xE0..=0xE9 currently assigned. 0xEA..=0xEF reserved
+// for further cluster lifecycle events (split-brain detection,
+// cluster-wide config sync, leader stand-down, ...).
 
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
@@ -974,6 +998,10 @@ const _: () = {
         || EVENT_TYPE_CLUSTER_PEER_CONFIRMED > 0xE7) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_REVOKED < 0xE0
         || EVENT_TYPE_CLUSTER_PEER_REVOKED > 0xE7) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_ROLE_CHANGED < 0xE0
+        || EVENT_TYPE_CLUSTER_ROLE_CHANGED > 0xEF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_REQUEST_FORWARDED < 0xE0
+        || EVENT_TYPE_CLUSTER_REQUEST_FORWARDED > 0xEF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
@@ -1109,6 +1137,13 @@ mod tests {
             (
                 "CLUSTER_CAPABILITIES_CHANGED",
                 EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED,
+            ),
+            ("CLUSTER_PEER_CONFIRMED", EVENT_TYPE_CLUSTER_PEER_CONFIRMED),
+            ("CLUSTER_PEER_REVOKED", EVENT_TYPE_CLUSTER_PEER_REVOKED),
+            ("CLUSTER_ROLE_CHANGED", EVENT_TYPE_CLUSTER_ROLE_CHANGED),
+            (
+                "CLUSTER_REQUEST_FORWARDED",
+                EVENT_TYPE_CLUSTER_REQUEST_FORWARDED,
             ),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),

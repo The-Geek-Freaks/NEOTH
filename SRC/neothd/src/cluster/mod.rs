@@ -94,6 +94,13 @@ pub mod gossip_wire;
 /// `PLAN/SPEC_cluster_phase5_hysteria_relay_2026-05-22.md`.
 pub mod relay;
 
+/// C-5 (Session 21) — typed payload shapes for cluster lifecycle
+/// WAL events `EVENT_TYPE_CLUSTER_ROLE_CHANGED` (0xE8) +
+/// `EVENT_TYPE_CLUSTER_REQUEST_FORWARDED` (0xE9). Pure-fn surface;
+/// transport wiring (C-1..C-4) is gated on the K-1 Hyperswarm
+/// path decision.
+pub mod wal_payloads;
+
 /// Stable identifier for a peer in the cluster. Format = UUID v7 string.
 /// First peer that brings a freshly-paired cluster online is the genesis;
 /// every join writes its UUID into the local cluster_roles table.

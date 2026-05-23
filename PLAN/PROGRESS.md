@@ -379,10 +379,7 @@ itself.
       shipped; live load table gated on K-1 transport.
 - [ ] **C-4** Orchestrator election heuristic — design pinned, code
       gated on K-1.
-- [ ] **C-5** WAL events `0x50 CLUSTER_PEER_JOIN`, `0x51
-      CLUSTER_PEER_LEAVE`, `0x52 CLUSTER_ROLE_CHANGED`, `0x53
-      CLUSTER_REQUEST_FORWARDED` — can ship independently once the
-      payload shape is fixed (separate from transport wiring).
+- [x] **C-5** WAL events for cluster lifecycle — **Shipped Session 21 (spec-corrected).** 0x50-0x53 from the original spec were taken by panic/recovery + sanitizer pipelines; cluster lives in the 0xE0-0xEF reserved band. PEER_JOIN/PEER_LEAVE are already covered by `EVENT_TYPE_CLUSTER_PEER_CONNECTED` (0xE0) + `EVENT_TYPE_CLUSTER_PEER_DISCONNECTED` (0xE1) shipped earlier. **New event codes added Session 21:** `EVENT_TYPE_CLUSTER_ROLE_CHANGED` (0xE8) + `EVENT_TYPE_CLUSTER_REQUEST_FORWARDED` (0xE9). Band extended to 0xE0..=0xE9 (0xEA-0xEF reserved). Typed payload primitives in `cluster/wal_payloads.rs`: `ClusterRoleChangedPayload { old_role, new_role, reason: RoleChangeReason::{Election,Manual,PeerLoss}, ts_unix }` + `ClusterRequestForwardedPayload { request_id, target_peer_pubkey, reason: ForwardReason::{Capability,Load,Affinity,Fallback}, ts_unix }`. snake_case serde so `peer_loss` round-trips correctly. Name-table entries added for CLUSTER_PEER_CONFIRMED (0xE6) + CLUSTER_PEER_REVOKED (0xE7) + the two new codes (closing a stale name-table gap). Const-time range checks extended. 10 tests pin enum stable strings + constructor field round-trip + JSON shape + serde round-trip. Transport wiring (C-1..C-4) still gated on K-1.
 
 ### Phase 20 — R-8 Cloud connectors
 
