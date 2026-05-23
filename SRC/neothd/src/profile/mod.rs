@@ -30,6 +30,7 @@ pub mod extension_registry;
 pub mod extract;
 pub mod fact_check;
 pub mod injection;
+pub mod inline_extract_trigger;
 pub mod lookup;
 pub mod presets;
 pub mod redaction;

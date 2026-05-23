@@ -75,6 +75,7 @@ mod mcp;
 mod media;
 mod memory;
 mod n8n_api;
+mod telemetry;
 // V10-06 GA blocker — Phase-3 cutover migration registry. Encodes the
 // 12 Jarvis stores as a static table so `neoth-migrate` (Phase-3 bin,
 // shipped separately) and `neoth doctor --explain migrate` consult the

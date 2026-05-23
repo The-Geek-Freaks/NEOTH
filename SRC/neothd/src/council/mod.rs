@@ -26,6 +26,7 @@
 //!     (CH-09/10/11) — those layer on top of `run_debate` once the
 //!     dispatch path consumes it.
 
+pub mod adaptive_thresholds;
 pub mod budget;
 pub mod callosum;
 pub mod dissent;
