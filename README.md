@@ -317,7 +317,7 @@ neoth code "add a migration and tests for the profile baseline event" --dispatch
 
 ## Coding Buddy
 
-NEOTH is not another chat UI. It is a local-first operator layer with WAL-backed memory, six brain-region views, three role-bound hemispheres, audited profile learning, and consent-gated clustering across LAN, Tailscale, and advanced Hysteria paths.
+NEOTH is not another chat UI. It is a local-first operator layer with WAL-backed memory, six brain-region views, three role-bound hemispheres, audited profile learning, and consent-gated clustering on LAN and Tailscale today (Hysteria sidecar pattern for restricted networks; embedded path lands post-O-7).
 
 For coding, it can sit next to your repo, remember the project, plan work on a canvas, split tasks into a Kanban board, dispatch focused coding sessions, and keep review context from disappearing between runs.
 
@@ -368,12 +368,12 @@ Legend: `&#10003;` strong / native, `&#9680;` partial / adjacent, `&#8722;` not 
 | Six memory layers plus six brain-region views | &#10003; | &#9680; persistent/layered memory | &#9680; Memory Tree | &#9680; memory plugin/context surface |
 | Coding canvas + Kanban + dispatch + review promotion tied to memory | &#10003; | &#10003; Kanban/workflow precedent | &#9680; coder tools | &#9680; Live Canvas + agents |
 | Obsidian / human-inspectable memory | &#10003; WAL authoritative, vault inspectable | &#9680; Markdown memory files | &#10003; strongest Obsidian/Memory Tree UX | &#9680; wiki/skill bridge |
-| Private mesh/channel story: LAN/mDNS, Tailscale, Hysteria, Keet | &#9680; mDNS/Hysteria pieces, Keet preview | &#9680; Tailscale access | &#8722; | &#9680; Bonjour/Tailscale nodes |
+| Private mesh/channel story: LAN/mDNS, Tailscale, Hysteria, Keet | &#9680; LAN/mDNS shipped; Tailscale shipped; Hysteria sidecar-ready (relay binary + config types + health checks); Keet adapter scaffolded (R-A1 gated) | &#9680; Tailscale access | &#8722; | &#9680; Bonjour/Tailscale nodes |
 | Consent-gated memory cluster semantics | &#9680; explicit architecture/primitives | &#8722; | &#8722; | &#9680; gateway/node pairing |
 | Deployment shape | &#10003; Rust core + optional Rust/Slint GUI | &#8722; Python/web/Docker style | &#9680; Tauri + Rust sidecar + pnpm app | &#8722; Node/TypeScript gateway |
 | Plugin sandbox | &#10003; WASM caps + hostcall allowlist | &#9680; skills/extensions | &#10003; QuickJS skill sandbox | &#10003; Docker/SSH/OpenShell sandbox + plugin API |
 
-Short version: Hermes is the Kanban/workflow precedent, OpenHuman is the Obsidian/auto-fetch precedent, and OpenClaw is the gateway/channel/canvas precedent. NEOTH's defensible advantage is the combination: loyal DAU-friendly buddy positioning, local profile learning with audit/redaction, three-hemisphere council, brain-region memory model, native coding workflow, and cluster-ready private mesh in a Rust-first operator runtime.
+Short version: Hermes is the Kanban/workflow precedent, OpenHuman is the Obsidian/auto-fetch precedent, and OpenClaw is the gateway/channel/canvas precedent. NEOTH's defensible advantage is the combination: loyal DAU-friendly buddy positioning, local profile learning with audit/redaction, three-hemisphere council, brain-region memory model, native coding workflow, and cluster-ready private mesh (LAN/Tailscale today, Hysteria sidecar pattern ready, Keet adapter gated on R-A1) in a Rust-first operator runtime.
 
 <br>
 
@@ -443,7 +443,8 @@ The v1.1 memory model is designed for continuity without dumping everything into
 | **Multimodal** | PDF, image, audio, and video ingestion with local embeddings/transcription paths. |
 | **Coding** | `neoth code --dispatch`, Kanban sessions, sub-agent roles, review promotion. |
 | **Plugins** | Skills as data, plugins as code, WASM runtime with resource limits. |
-| **Cluster** | LAN/mDNS and Tailscale pairing; Hysteria relay path for restricted networks. |
+| **Cluster** | Single-node `OrchestratingPolicy` + WAL events ship today; multi-peer routing rides on the Keet transport (R-A1 gated). LAN/mDNS pairing primitives ready. |
+| **Hysteria** | Sidecar pattern. NEOTH ships the relay binary + config types + health checks; the Hysteria QUIC daemon runs as a separate process today. Embedded build deferred to post-O-7. |
 | **Ops** | `doctor`, `status`, `privacy audit`, `wal verify`, backup, self-update, release signing. |
 
 ### Release surface
@@ -453,7 +454,7 @@ The v1.1 memory model is designed for continuity without dumping everything into
 | Core channels | CLI, GUI, Telegram, WhatsApp Business, Slack Socket Mode. |
 | Extended channels | Discord and Keet, exposed behind the same channel adapter contract. |
 | Local model choices | Qwen as default local memory model; Ouro as optional thinking model. |
-| Cluster | LAN/mDNS and Tailscale first; Hysteria relay is the advanced route for hard networks. |
+| Cluster | LAN/mDNS pairing + Tailscale shipped. Hysteria relay is sidecar-ready (separate Hysteria QUIC daemon today; embedded build follows post-O-7). |
 | Cloud | Explicit provider choice only. No silent profile-extraction fallback. |
 
 ### Why the council matters
@@ -544,9 +545,9 @@ NEOTH should fit into the knowledge system and network you already trust, not fo
 | **Obsidian vault** | Human-readable memory mirror, project notes, decisions, skills, and long-term knowledge you can inspect without NEOTH. |
 | **LAN / mDNS** | Home and office devices. |
 | **Tailscale / WireGuard** | Private device mesh for laptop, workstation, home server, and travel machines. |
-| **Hysteria relay** | Advanced path for hard networks where direct pairing is unreliable. |
-| **Keet** | Peer-to-peer chat/channel path for users who want less platform gravity. |
-| **Cluster pairing** | Cluster-ready NEOTH nodes prepared for operator-approved state exchange without manual copy-paste. |
+| **Hysteria sidecar** | Sidecar-ready integration. NEOTH ships the relay binary + config types + health checks; the Hysteria QUIC daemon itself runs alongside as a separate process per the architect's verdict. Embedded build lands post-O-7. |
+| **Keet** | Peer-to-peer chat/channel path for users who want less platform gravity. Adapter currently scaffolded; full transport gated on the operator's Hyperswarm-path decision (R-A1). |
+| **Cluster pairing** | Cluster-ready NEOTH nodes. Single-node mode + the `OrchestratingPolicy` trait + WAL events ship today; live multi-peer routing rides on top of the Keet transport once R-A1 lands. |
 
 Pairing is consent-gated. A peer with the right key still needs approval before it joins your memory cluster.
 
