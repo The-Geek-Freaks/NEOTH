@@ -49,6 +49,7 @@ pub mod mode;
 pub mod models;
 pub mod obsidian;
 pub mod obsidian_sync_task;
+pub mod ouro;
 pub mod permissions;
 pub mod preset;
 pub mod privacy;
@@ -319,6 +320,14 @@ pub enum Commands {
     /// daemon would report today, `plan` runs the `LocalOnly` /
     /// `LeastLoaded` policies against a synthetic peer table.
     Cluster(cluster::ClusterArgs),
+
+    /// Inspect the Ouro thinking-models provider (O-3).
+    ///
+    /// `list` enumerates every supported ByteDance Ouro checkpoint
+    /// (1.4B / 2.6B × base / -Thinking) with size + thinking-flag +
+    /// recommended-use hint. `status` reports the operator's
+    /// currently-configured Ouro state from freedom.yaml.
+    Ouro(ouro::OuroArgs),
 
     /// Estimate the cost of a provider call BEFORE dispatching it (C-14).
     ///
@@ -684,6 +693,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Cluster(mut args) => {
             args.output = global_output;
             cluster::run_cluster(args).await?;
+        }
+        Commands::Ouro(mut args) => {
+            args.output = global_output;
+            ouro::run_ouro(args)?;
         }
         Commands::Cost(mut args) => {
             args.output = global_output;
