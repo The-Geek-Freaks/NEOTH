@@ -341,9 +341,9 @@ case. Decision required before K-2 lands.
 
 ### Phase 17 — R-4 FacCam default plugin
 
-- [ ] **F-1** Once plugin manifest format is finalised (Day-23 WASM host), declare FacCam with `default_install: true`
-- [ ] **F-2** Bundle method depends on R-A3 outcome (binary subprocess vs WASM port)
-- [ ] **F-3** GUI plugins screen pre-checks the entry
+- [x] **F-1** ~~Once plugin manifest format is finalised (Day-23 WASM host), declare FacCam with `default_install: true`~~ — **Closed-as-obsolete Session 21.** R-A3 web research confirmed FacCam does NOT exist (see `QUELLEN/research/R-A3_faccam.md` + memory `[[neoth-faccam-doesnt-exist]]`). The Round-2 FC-1..FC-4 redirect re-routed this concern to FadCam (Android) + OBS VirtualCam (desktop) via wizard-link-only integration — no WASM plugin manifest needed because neither product has a programmable API to wrap.
+- [x] **F-2** ~~Bundle method depends on R-A3 outcome~~ — **Closed-as-obsolete Session 21.** R-A3 closed: no bundling needed since the picked products (FadCam / OBS VirtualCam per R-A6) are wizard-link-only. See FC-2/FC-3/FC-4 entries for the actual shipped integration.
+- [x] **F-3** ~~GUI plugins screen pre-checks the entry~~ — **Closed-as-superseded Session 21.** Replaced by FC-4 GUI picker primitive shipped at `installers/faccam_family.rs` (FacCamFamilyOption picker + recommend_for_host).
 
 ## Round 2 — Phases 18-24 (per `memory/neoth-arch-v2.md`)
 
@@ -494,7 +494,7 @@ Hard rule: NEOTH never requires "remember this" — every turn auto-persists. Th
 - [x] **AU-4** `permissions::confirm` module: `confirm_interactive` (dialoguer y/n), `confirm_channel` (caller-supplied future + timeout), `confirm_daemon_only` (best-effort flag or fail-closed). Top-level `resolve(decision, mode, ask) -> Decision` plumbs `Confirm` through the right path. Default channel timeout 90s. 8 tests including timeout race.
 - [x] **AU-5** WAL events `0xA0 PERMISSION_GRANTED`, `0xA1 PERMISSION_DENIED`, `0xA2 LEVEL_ELEVATED`, `0xA3 LEVEL_DEROGATED`. Compile-time invariants + uniqueness regression. `permissions::gate` helper emits frames via the writer.
 - [x] **AU-6** `~/.neoth/policy.yaml` reader: `PolicyConfig { dangerous_targets, dangerous_patterns }`. `target_is_dangerous` case-insensitive exact match, `command_is_dangerous` substring match. Missing file → empty defaults, bad YAML → loud error. 4 tests.
-- [ ] **AU-7** GUI radio picker — deferred to R-1 Slint wizard.
+- [~] **AU-7** GUI radio picker — deferred to R-1 Slint wizard. *Duplicated at line 1847 as G-04.* Same `[~]` GUI-deferred status, deduped.
 
 ### Phase 28c — R-24 Hebbian forget + ground truth (per `memory/neoth-groundtruth-and-forget.md`) — DONE
 
@@ -1741,8 +1741,8 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 
 - [x] **C-01** WhatsApp Business Cloud API full impl (P2) — **Verified shipped Session 22 audit**: CH-WHATSAPP-OUT (Graph API send) + CH-WHATSAPP-INBOUND-DECODER (Meta envelope parser) + R2-P0-2 follow-up (LIVE webhook listener on 127.0.0.1:8443 with X-Hub-Signature-256 verification + full Meta credential set) all shipped Sessions 16-20.
 - [x] **C-02** Slack Socket Mode full impl (P2) — **Verified shipped Session 22 audit**: CH-SLACK-INBOUND-DECODER (socket-mode envelope parser) + CH-SLACK-OUT + R2-P0-2 follow-up (LIVE socket loop via `SlackChannel::run` when both `slack_bot_token` + `slack_app_token` present) all shipped Sessions 16-20.
-- [ ] **C-03** Keet adapter K-1..K-5 (P2+) — impl choice: Rust port vs Pears HTTP bridge
-- [ ] **C-04** Keet wizard default channel (P2+) — depends on C-03
+- [~] **C-03** Keet adapter K-1..K-5 (P2+) — impl choice: Rust port vs Pears HTTP bridge — *Duplicate of K-1..K-5 at lines 318-322 (operator decision blocking).* See K-1 decision note at `QUELLEN/research/R-A1_K1_decision.md` (waiting on Alex's Pears-dep accept/decline).
+- [~] **C-04** Keet wizard default channel (P2+) — depends on C-03 — *Duplicate of K-4 at line 321.* Same `[~]` defer status, deduped to avoid double-counting.
 - [x] **C-05** Discord adapter (P2) — **Fully shipped (recheck-closed Session 21).** Pre-existing code at `channels/discord.rs` (381 LOC SEND-only via REST API, 2000-char split, rate-limit honour) + `channels/discord_gateway.rs` (781 LOC WebSocket gateway, sharding, heartbeats, intents) + `channels/discord_gateway_loop.rs` (674 LOC receive loop with reconnect-with-backoff + InboundMessage decoder). Total 1836 LOC across 3 files — both send + receive paths operational. Open PROGRESS bullet was stale; closing.
 - [ ] **C-06** Signal adapter (P2)
 - [ ] **C-07** iMessage adapter (P2)
@@ -1876,7 +1876,7 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [ ] **E-16** `neoth init --import-jarvis` wizard flag (P2+)
 - [ ] **E-17** Multi-operator support (P3+)
 - [~] **E-18** `neoth telemetry on` opt-in anonymous version-check (P3+) — **Primitives + payload + privacy contract shipped Session 21.** New `src/telemetry.rs` ships: `TelemetryConfig { enabled: bool }` (default false — drift-guarded so a future refactor accidentally flipping the default surfaces in tests); `TelemetryPayload { neoth_version, os, arch, anonymous_id }` minimal wire shape; `anonymous_id_from_operator(id) -> String` SHA-256-truncated-to-16-hex helper (operator id never leaves the host verbatim); `build_payload(version, operator_id)`; `should_send(&config)` gate; `preview_for_operator(&payload)` operator-readable text the `neoth telemetry preview` CLI prints BEFORE opt-in. 13 tests pin every privacy invariant: default OFF + anonymous_id is 16-char lowercase-hex + deterministic + differs-per-operator + does-NOT-leak-operator-string + payload-has-no-operator_id-field drift guards + preview mentions every payload field + preview explicitly states "opt-in / OFF" + preview lists what is NOT sent ("no chat content", "no provider keys"). HTTPS POST + endpoint URL choice land in focused E-18 impl session — primitives + payload contract are pinned so wire-up has a non-debatable spec.
-- [ ] **E-19** Ecology-Schicht full — self-improvement loop, Council-adaptation, Tool-genealogy (P4)
+- [~] **E-19** Ecology-Schicht full — self-improvement loop, Council-adaptation, Tool-genealogy (P4) — *Same workstream as CH-13 (design started Session 21 — see `PLAN/DESIGN_CH13_ecology_schicht_2026-05-23.md`) and V1x-01.* P4 milestone, 10-12 focused days per the design note. `[~]` deferred until P4 phase opens.
 - [ ] **E-20** Schema migration tooling for v1.2 COMPRESSED WAL flag (v1.2)
 - [~] **E-21** WASM plugin activation default decision (Open question — SPEC_skill_plugin_system §13 Q4) — **Decision note shipped Session 21.** `PLAN/OPEN_QUESTION_E21_wasm_plugin_default.md` lays out the two options (default-active vs default-inactive) with concrete pros/cons + my recommendation (option B default-inactive — honours the AGENTER hard rule, matches the n8n/Obsidian conservative defaults already shipped, smaller blast radius for sandbox bugs) + "what ships when Alex picks" per verdict. Waiting on Alex's call.
 - [~] **E-22** Skill hot-reload scope decision (Open question — SPEC_skill_plugin_system §13 Q1) — **Decision note shipped Session 21.** `PLAN/OPEN_QUESTION_E22_skill_hot_reload.md` lays out the four scope options (no-reload / metadata-only / everything-except-active-invocations / everything-with-abort) with operator-friction vs consistency tradeoffs + my recommendation (option 3 — standard "watch mode" semantics; per-invocation version pinning via `Arc<SkillBody>` clone-at-invocation; matches vite/cargo-watch/esbuild expectations) + "what ships when Alex picks" per verdict.
@@ -2491,12 +2491,12 @@ Concrete UX work (each is its own pick):
 
 ### v1.x — Post-GA polish (Phase 4 / Ecology-Schicht)
 
-- [ ] **V1x-01** Ecology-Schicht (self-improvement loop, Council-adaptation, Tool-genealogy)
-- [ ] **V1x-02** Adaptive Council thresholds (operator-pattern driven)
-- [ ] **V1x-03** Hebbian tuning + drift detection anchor (PROFILE_BASELINE_SNAPSHOT operational)
-- [ ] **V1x-04** WAL warm/cold tier S3-compatible cold store
-- [ ] **V1x-05** Multi-operator support
-- [ ] **V1x-06** zstd-3 compression on compacted segments — COMPRESSED flag (v1.2)
+- [~] **V1x-01** Ecology-Schicht — *Same as E-19 + CH-13 (design shipped Session 21). v1.x post-GA milestone.*
+- [~] **V1x-02** Adaptive Council thresholds (operator-pattern driven) — *Same as CH-12 (primitive shipped Session 21 at `council/adaptive_thresholds.rs`). v1.x is the full wire-up + adaptive-feedback-loop atop the primitive.*
+- [~] **V1x-03** Hebbian tuning + drift detection anchor (PROFILE_BASELINE_SNAPSHOT operational) — *Same as P-10 (primitive shipped Session 21 at `profile/baseline_snapshot.rs`) + P-12 (P4 Hebbian tuning). v1.x is the full drift-detection-pipeline atop the snapshot.*
+- [~] **V1x-04** WAL warm/cold tier S3-compatible cold store — *Same as CT-09. P4 multi-day; needs operator-side S3 endpoint design.*
+- [~] **V1x-05** Multi-operator support — *Same as E-17. P3+ multi-week design + impl.*
+- [~] **V1x-06** zstd-3 compression on compacted segments — COMPRESSED flag (v1.2) — *Same as CT-10 (flag-bit reservation shipped Session 21 at `wal/segment_header.rs`). v1.x is the full wire-impl + format-v2 bump atop the reservation.*
 
 ---
 
