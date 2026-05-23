@@ -17,6 +17,7 @@
 
 pub mod audio;
 pub mod pdf;
+pub mod pdf_forms;
 pub mod video;
 pub mod vision;
 

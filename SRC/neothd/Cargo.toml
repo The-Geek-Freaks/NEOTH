@@ -56,6 +56,17 @@ qwen-metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal
 # release binaries flip ON via cargo-dist on platforms with PTY support.
 pty-subprocess = ["dep:portable-pty"]
 
+# M-1b (Session 21) — pdfium-render integration for form-field
+# reading + write/sign on PDF assets. Builds on pdf-extract for
+# plain text (already shipped) by adding the C++ FFI wrapper around
+# Google's PDFium. Optional because pdfium-render needs the pdfium
+# dynamic library at runtime (~5 MiB on Linux/Windows, larger on
+# macOS). Default OFF; release binaries bundle the pdfium dylib +
+# flip ON via cargo-dist. Without the feature, the form-field API
+# returns an actionable "rebuild with --features pdf-forms or use
+# `neoth ingest pdf <file>` for text-only extraction" error.
+pdf-forms = ["dep:pdfium-render"]
+
 [dependencies]
 # Day-1 minimal
 tokio              = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "io-std", "net", "process", "sync", "signal", "time"] }
@@ -326,6 +337,14 @@ windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foun
 # release artefact does not ship the dep unless the operator opts into the
 # PTY-subprocess backend.
 [dependencies.portable-pty]
+version = "0.8"
+optional = true
+
+# M-1b (Session 21) — PDF form-field reading + write/sign via the
+# pdfium-render C++ FFI wrapper around Google's PDFium. Feature-
+# gated; without `pdf-forms` the form-field module returns an
+# actionable rebuild-or-fallback error.
+[dependencies.pdfium-render]
 version = "0.8"
 optional = true
 
