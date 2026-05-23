@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 430" width="1280" height="430" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH advantage scorecard">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="76%">
+      <stop offset="0%" stop-color="#202020"/>
+      <stop offset="100%" stop-color="#070707"/>
+    </radialGradient>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
+      .title { font-size: 28px; font-weight: 300; letter-spacing: 6px; fill: #fff; }
+      .label { font-size: 12px; letter-spacing: 1.4px; }
+      .small { font-size: 10px; letter-spacing: 1px; fill: #d8d8d8; opacity: .8; }
+    </style>
+  </defs>
+  <rect width="1280" height="430" rx="36" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1278" height="428" rx="36" fill="none" stroke="#fff" stroke-opacity=".08"/>
+  <text x="640" y="54" class="sans title" text-anchor="middle">WHERE NEOTH IS DIFFERENT</text>
+  <text x="640" y="84" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" text-anchor="middle" opacity=".78">BUDDY + MEMORY + COUNCIL + CODING + PRIVATE CLUSTER</text>
+
+  <g class="mono">
+    <rect x="72" y="128" width="248" height="214" rx="24" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".34"/>
+    <text x="96" y="166" class="label" fill="#00ff80">NEOTH</text>
+    <text x="96" y="198" class="small">OK loyal buddy</text>
+    <text x="96" y="222" class="small">OK local profile learning</text>
+    <text x="96" y="246" class="small">OK 3 role hemispheres</text>
+    <text x="96" y="270" class="small">OK 6 memory layers</text>
+    <text x="96" y="294" class="small">OK private cluster path</text>
+
+    <rect x="370" y="128" width="248" height="214" rx="24" fill="#05d5ff" opacity=".065" stroke="#05d5ff" stroke-opacity=".28"/>
+    <text x="394" y="166" class="label" fill="#05d5ff">HERMES</text>
+    <text x="394" y="198" class="small">OK Kanban precedent</text>
+    <text x="394" y="222" class="small">PART workflow memory</text>
+    <text x="394" y="246" class="small">PART fast/deep routing</text>
+    <text x="394" y="270" class="small">NO private mesh focus</text>
+    <text x="394" y="294" class="small">NO single Rust binary</text>
+
+    <rect x="668" y="128" width="248" height="214" rx="24" fill="#ff2a6d" opacity=".065" stroke="#ff2a6d" stroke-opacity=".28"/>
+    <text x="692" y="166" class="label" fill="#ff2a6d">OPENHUMAN</text>
+    <text x="692" y="198" class="small">OK Obsidian UX</text>
+    <text x="692" y="222" class="small">PART desktop buddy</text>
+    <text x="692" y="246" class="small">PART local memory</text>
+    <text x="692" y="270" class="small">NO 3-hemisphere council</text>
+    <text x="692" y="294" class="small">NO cluster memory path</text>
+
+    <rect x="966" y="128" width="248" height="214" rx="24" fill="#fff" opacity=".05" stroke="#fff" stroke-opacity=".18"/>
+    <text x="990" y="166" class="label" fill="#fff">OPENCLAW</text>
+    <text x="990" y="198" class="small">OK gateway + canvas</text>
+    <text x="990" y="222" class="small">PART memory/context</text>
+    <text x="990" y="246" class="small">PART coding agents</text>
+    <text x="990" y="270" class="small">PART Tailscale nodes</text>
+    <text x="990" y="294" class="small">NO governed buddy memory</text>
+  </g>
+
+  <rect x="315" y="368" width="650" height="34" rx="12" fill="#00ff80" opacity=".08" stroke="#00ff80" stroke-opacity=".22"/>
+  <text x="640" y="390" class="mono" font-size="11" letter-spacing="2" fill="#00ff80" text-anchor="middle">NEOTH combines the useful precedents into one operator-owned runtime</text>
+</svg>
