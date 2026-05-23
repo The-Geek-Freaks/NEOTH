@@ -20,6 +20,7 @@ members = [
     "neoth-plugin-sdk",
     "neothd-gui",
     "neoth-migrate",
+    "neoth-relay",
 ]
 
 [workspace.package]

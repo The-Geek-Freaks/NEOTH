@@ -1,0 +1,45 @@
+[package]
+name        = "neoth-relay"
+version     = "0.1.0-alpha.0"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+description = "Standalone NEOTH relay daemon — Cluster Phase 5 Hysteria-shared peer registry."
+
+# Architect verdict (Session 21, `neoth_open_decisions_verdicts`):
+# the relay is a SEPARATE binary, not embedded in `neothd` and not
+# forked from Hysteria. Single-responsibility, AIO-compliant install
+# path, operators can deploy the relay on a cheap edge node without
+# pulling in the daemon's full memory / channels / providers stack.
+#
+# v0.1 scope = minimal serve loop + in-memory PeerRoster. The
+# `cluster::relay` primitive shape is duplicated here intentionally
+# (Rule of Three — two callers today, factor into a shared
+# `neoth-cluster-types` crate when the third lands). Real Hysteria
+# socket plumbing + relay-to-relay mesh ship in multi-week
+# follow-ups per `PLAN/SPEC_cluster_phase5_hysteria_relay_2026-05-22.md`.
+#
+# Build/run:
+#   cargo build -p neoth-relay --release
+#   ./neoth-relay serve --bind 0.0.0.0:8443
+#   ./neoth-relay --help
+
+[[bin]]
+name = "neoth-relay"
+path = "src/main.rs"
+
+[dependencies]
+anyhow     = "1"
+clap       = { version = "4", features = ["derive"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+tokio      = { version = "1", features = ["macros", "rt-multi-thread", "net", "io-util", "sync", "time"] }
+tracing    = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
