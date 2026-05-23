@@ -3262,6 +3262,7 @@ mod tests {
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
+            proactive: crate::config::ProactiveConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3409,6 +3410,7 @@ mod tests {
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
+            proactive: crate::config::ProactiveConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3516,6 +3518,7 @@ mod tests {
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
+            proactive: crate::config::ProactiveConfig::default(),
         };
         let args = ChatArgs {
             message: Some("Capital of France?".into()),
@@ -3642,6 +3645,7 @@ mod tests {
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
+            proactive: crate::config::ProactiveConfig::default(),
         };
         let args = ChatArgs {
             message: Some("hi".into()),
@@ -3776,6 +3780,7 @@ mod tests {
             coding: crate::config::CodingConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
+            proactive: crate::config::ProactiveConfig::default(),
         };
         let args = ChatArgs {
             message: Some("trigger".into()),

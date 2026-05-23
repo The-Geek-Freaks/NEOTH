@@ -1754,7 +1754,7 @@ Source: Agent 4 forensic extraction from all PLAN/*.md + PROGRESS.md. **Tick eac
 - [x] **C-13** Cross-channel `human_uuid` in InboundMessage (P2+) — **Shipped Session 21.** New `human_uuid: Option<String>` field on `InboundMessage` (UUID v7 string format when set; `None` for adapters not wired into the future C-12 resolver). Every existing construction site (discord_gateway_loop / slack_events / slack_socket / telegram / whatsapp_webhook) updated to set `None` so the C-12 resolver can populate later without touching the adapter code. 2 new tests pin default-None drift guard + round-trip-when-present. 316 channels tests stay green.
 - [ ] **C-14** Per-messenger formatting rules F-1..F-4 (P2) — Formatter trait + 5 channel impls
 - [ ] **C-15** Telegram live-test with real bot token (pre-v0.1) — Codex item #6
-- [ ] **C-16** `proactive: enabled` freedom.yaml field (P3+)
+- [x] **C-16** `proactive: enabled` freedom.yaml field (P3+) — **Shipped Session 21.** New `ProactiveConfig { enabled: bool }` struct in `config/mod.rs` + `pub proactive: ProactiveConfig` field on `FreedomConfig`. Default OFF per AGENTER hard rule "no destructive auto-action without operator GO per command" — drift-guarded by `proactive_config_default_is_off` test. Section-absent loads default-off; `proactive.enabled: true` round-trips via YAML. 5 test fixtures in `cli/chat.rs` updated to construct with `proactive: ProactiveConfig::default()` so test surface stays consistent. C-11 `send_proactive()` impl reads this gate before posting unsolicited outbound — gate ships now, runtime wire-up follows when C-11 lands.
 
 ### Category 2 — Local Inference (14 items)
 

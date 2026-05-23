@@ -244,6 +244,27 @@ pub struct FreedomConfig {
     /// (matches L-07 `allow_cloud_fallback: false` safe-default).
     #[serde(default)]
     pub dreaming: DreamingConfig,
+
+    /// C-16 (Session 21) — operator opt-in for proactive channel
+    /// messaging. When `enabled = true`, the daemon's cron + the
+    /// future `send_proactive()` impl (C-11) MAY post outbound
+    /// messages on their own (briefings, follow-ups). Default
+    /// `false` per the AGENTER hard rule "no destructive auto-
+    /// action without operator GO per command".
+    #[serde(default)]
+    pub proactive: ProactiveConfig,
+}
+
+/// C-16 (Session 21) — proactive messaging opt-in. Pure config
+/// shape; the runtime gate consults `proactive.enabled` before
+/// firing any unsolicited outbound. Default OFF.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ProactiveConfig {
+    /// Master switch. `false` = daemon never posts unsolicited
+    /// messages (briefings stay opt-in-per-call via the cron yaml).
+    /// `true` = cron + `send_proactive()` MAY post on their own.
+    pub enabled: bool,
 }
 
 /// R-02 Phase 4c — nightly dreaming task gates.
@@ -1447,5 +1468,33 @@ mod tests {
         assert!(cfg.dreaming.interval_secs.is_none());
         assert!(cfg.dreaming.window_secs.is_none());
         assert!(cfg.dreaming.max_events.is_none());
+    }
+
+    // ── C-16 proactive: enabled (Session 21) ────────────────────
+
+    #[test]
+    fn proactive_config_default_is_off() {
+        // AGENTER hard rule drift guard — "no destructive auto-
+        // action without operator GO per command". A future
+        // refactor flipping the default to true would surface here.
+        let cfg = ProactiveConfig::default();
+        assert!(!cfg.enabled);
+    }
+
+    #[test]
+    fn proactive_section_absent_loads_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(dir.path(), "operator_id: alice\n");
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(!cfg.proactive.enabled);
+    }
+
+    #[test]
+    fn proactive_enabled_true_round_trips_via_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "operator_id: alice\nproactive:\n  enabled: true\n";
+        let path = write_yaml(dir.path(), yaml);
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.proactive.enabled);
     }
 }
