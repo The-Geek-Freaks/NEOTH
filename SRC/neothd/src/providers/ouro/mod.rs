@@ -36,4 +36,5 @@ pub mod forward;
 pub mod layers;
 pub mod model;
 pub mod quantize;
+pub mod quantized_layers;
 pub mod rope;
