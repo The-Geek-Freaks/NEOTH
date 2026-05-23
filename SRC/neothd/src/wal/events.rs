@@ -205,6 +205,13 @@ pub const EVENT_TYPE_CHANNEL_ACK: u8 = 0x37;
 /// Phase 33b SP-5 (C-prime, deferred to LiveDelivery — placeholder reserved).
 /// Payload: `{channel, message_id, new_text_hash, bytes, ts}`.
 pub const EVENT_TYPE_CHANNEL_EDIT: u8 = 0x38;
+/// `0x39 N8N_REQUEST` — n8n workflow hit the NEOTH localhost HTTP API.
+/// One frame per inbound request to `/api/*` (after bearer-auth success).
+/// Payload: `{endpoint, source_ip, request_id, ts_unix}`. The matching
+/// downstream event (PROVIDER_REQUEST / CHANNEL_EGRESS / RECALL_HIT)
+/// carries the same `request_id` so WAL replay shows the trigger chain
+/// end-to-end. N-3 (Session 21).
+pub const EVENT_TYPE_N8N_REQUEST: u8 = 0x39;
 
 // ---- 0x50..=0x5F  Panic / recovery (Pick #35 Session 14 WAL recovery) -----
 
@@ -917,6 +924,7 @@ const _: () = {
         [(EVENT_TYPE_INGRESS_SANITIZED < 0x30 || EVENT_TYPE_INGRESS_SANITIZED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_ACK < 0x30 || EVENT_TYPE_CHANNEL_ACK > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_EDIT < 0x30 || EVENT_TYPE_CHANNEL_EDIT > 0x3F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_N8N_REQUEST < 0x30 || EVENT_TYPE_N8N_REQUEST > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FIRED < 0x40 || EVENT_TYPE_JOB_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_SUCCESS < 0x40 || EVENT_TYPE_JOB_SUCCESS > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
@@ -1088,6 +1096,7 @@ mod tests {
             ("INGRESS_SANITIZED", EVENT_TYPE_INGRESS_SANITIZED),
             ("CHANNEL_ACK", EVENT_TYPE_CHANNEL_ACK),
             ("CHANNEL_EDIT", EVENT_TYPE_CHANNEL_EDIT),
+            ("N8N_REQUEST", EVENT_TYPE_N8N_REQUEST),
             ("JOB_FIRED", EVENT_TYPE_JOB_FIRED),
             ("JOB_SUCCESS", EVENT_TYPE_JOB_SUCCESS),
             ("JOB_FAILED", EVENT_TYPE_JOB_FAILED),
