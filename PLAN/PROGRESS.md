@@ -315,15 +315,11 @@ is unmaintained since 2021. Path 3 is the cheapest + cleanest if
 the operator already runs Keet/Pears; Path 2 covers the headless
 case. Decision required before K-2 lands.
 
-- [ ] **K-1** Pick a path (1 / 2 / 3) — operator design call.
-- [ ] **K-2** `channels/keet.rs` adapter implementing `Channel` trait —
-      gated on K-1.
-- [ ] **K-3** Pairing UX: GUI wizard screens (or QR codes from CLI),
-      24-word seed phrase, multi-device sync — gated on K-1.
-- [ ] **K-4** Wizard step 6 default: Keet (Telegram becomes secondary) —
-      gated on K-1.
-- [ ] **K-5** WAL events `0x35 KEET_INGRESS`, `0x36 KEET_EGRESS` — can
-      ship independently of K-1 once the payload shape is fixed.
+- [ ] **K-1** Pick a path (1 / 2 / 3) — operator design call. Genuinely blocked: 3-5 months (Path 1) vs ~1 week + 60MiB Node footprint (Path 2) vs ~3 days but operator-owned-Pears-dependency (Path 3) — needs Alex's call before K-2/K-3/K-4 can proceed.
+- [ ] **K-2** `channels/keet.rs` adapter implementing `Channel` trait — gated on K-1.
+- [ ] **K-3** Pairing UX: GUI wizard screens (or QR codes from CLI), 24-word seed phrase, multi-device sync — gated on K-1.
+- [ ] **K-4** Wizard step 6 default: Keet (Telegram becomes secondary) — gated on K-1.
+- [x] **K-5** WAL events for Keet ingress/egress — **Payload shape shipped Session 21.** Spec-corrected: 0x35/0x36 were already claimed by `INGRESS_QUARANTINED`/`INGRESS_SANITIZED` (sanitizer pipeline). Keet now reuses generic `EVENT_TYPE_CHANNEL_INGRESS` (0x32) + `EVENT_TYPE_CHANNEL_EGRESS` (0x33) with Keet-typed PAYLOAD: `channels/keet_wal.rs::KeetIngressPayload { channel: "keet", peer_pubkey, device_id, text, ts_iso, reply_to }` + `KeetEgressPayload { ..., message_id }` (carries Keet's send-side ACK ID). `KEET_CHANNEL_SLUG = "keet"` const drift-guarded. Constructors auto-fill the slug so callers can't drift. `to_bytes()` emits the JSON byte vec the WAL writer consumes. 13 tests pin: slug-canonical-only-match, constructor-slug-fill, reply_to default-none, with_reply_to / with_message_id, JSON-required-fields, serde round-trip, ingress/egress core-field-name parity.
 
 ### Phase 16 — R-1 GUI wizard
 
