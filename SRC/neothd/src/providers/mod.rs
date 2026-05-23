@@ -37,6 +37,7 @@ pub mod pty_session;
 pub mod quota;
 pub mod singleflight;
 pub mod tmux_session;
+pub mod tmux_socket;
 pub mod tmux_sweeper;
 pub mod tmux_sweeper_task;
 pub mod whisper;
