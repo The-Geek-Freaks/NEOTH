@@ -326,6 +326,29 @@ pub trait Channel: Send + Sync {
             feature: "edit_message",
         })
     }
+
+    /// C-11 (Session 21) — send an unsolicited proactive message.
+    /// Distinct from `send_text` (which assumes a reply context):
+    /// `send_proactive` is the daemon firing on its own (cron
+    /// briefing, follow-up reminder, self-dev acceptance notice).
+    ///
+    /// **CRITICAL gate**: callers MUST check
+    /// `FreedomConfig::proactive.enabled` (C-16) BEFORE invoking
+    /// this method. The default impl bails with `NotSupported` so
+    /// adapters that haven't opted in stay silent; the operator
+    /// gate is honoured by the caller, not by the trait impl.
+    /// Per AGENTER hard rule "no destructive auto-action without
+    /// operator GO per command" — proactive messaging is the
+    /// archetypal example.
+    async fn send_proactive(
+        &self,
+        _chat_id: &str,
+        _text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        Err(ChannelError::NotSupported {
+            feature: "send_proactive",
+        })
+    }
 }
 
 /// C-10 — minimal chat metadata returned by `Channel::get_chat_meta`.
@@ -664,6 +687,23 @@ mod tests {
             err,
             ChannelError::NotSupported {
                 feature: "edit_message"
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn default_send_proactive_returns_not_supported() {
+        // C-11 default impl — adapter must opt in explicitly. The
+        // operator-side gate is FreedomConfig::proactive.enabled
+        // (C-16); this test pins the per-adapter default refusal
+        // so a misconfigured caller cannot route around the gate
+        // by hitting an adapter that "happens to allow it".
+        let c = NoopChannel;
+        let err = c.send_proactive("x", "hi").await.unwrap_err();
+        assert!(matches!(
+            err,
+            ChannelError::NotSupported {
+                feature: "send_proactive"
             }
         ));
     }
