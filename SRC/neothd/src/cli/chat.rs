@@ -2239,13 +2239,24 @@ async fn profile_block_for_callosum() -> Option<String> {
 /// rusqlite + profile lookup with no tokio dependency. Extracted so
 /// tests + future migration paths (e.g. neoth-sync embedded query
 /// surface) can call it directly without a runtime.
+///
+/// CH-11 (Session 21): the confidence floor is now sourced from
+/// `profile::injection::DEFAULT_INJECTION_FLOOR` (P-06 primitive) so
+/// a future tune of the Block-B injection threshold lands in one
+/// place. Previously hard-coded as `0.6` — same value, but the
+/// drift-guard on the primitive's tests now covers this call site
+/// too. `MAX_CLAIMS` stays a chat-callosum-local constant since it's
+/// tunable independently of the gate floor.
 fn profile_block_for_callosum_sync() -> Option<String> {
-    const MIN_CONFIDENCE: f64 = 0.6;
     const MAX_CLAIMS: usize = 8;
     let db_path = crate::memory::store::default_path();
     let conn = crate::memory::store::open(&db_path).ok()?;
-    let claims =
-        crate::profile::lookup::top_claims_for_chat(&conn, MIN_CONFIDENCE, MAX_CLAIMS).ok()?;
+    let claims = crate::profile::lookup::top_claims_for_chat(
+        &conn,
+        crate::profile::injection::DEFAULT_INJECTION_FLOOR,
+        MAX_CLAIMS,
+    )
+    .ok()?;
     if claims.is_empty() {
         return None;
     }
@@ -3204,6 +3215,28 @@ mod tests {
         let _ = profile_block_for_callosum_sync();
         // No assertion on the value; the point is that the call
         // returned at all without panicking.
+    }
+
+    #[test]
+    fn callosum_min_confidence_consumes_p06_injection_floor_constant() {
+        // CH-11 / P-06 drift guard (Session 21): the callosum profile-
+        // injection floor MUST source from the primitive
+        // `profile::injection::DEFAULT_INJECTION_FLOOR` (currently
+        // 0.6). If a future refactor either (a) re-introduces a
+        // hardcoded literal here, or (b) changes the primitive's
+        // default without thinking through callosum impact, this
+        // test surfaces the drift.
+        //
+        // Why pin at the constant rather than the literal: the
+        // SPEC says "Block-B profile injection ≥ 0.6 confidence
+        // gate" once. Two places enforcing the same threshold
+        // independently always drift; the single-source-of-truth
+        // is `DEFAULT_INJECTION_FLOOR` per CH-11 closeout.
+        assert!(
+            (crate::profile::injection::DEFAULT_INJECTION_FLOOR - 0.6).abs() < f64::EPSILON,
+            "primitive's DEFAULT_INJECTION_FLOOR drifted from 0.6 — \
+             update SPEC + this drift guard together"
+        );
     }
 
     #[tokio::test]
