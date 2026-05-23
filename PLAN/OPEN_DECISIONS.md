@@ -179,3 +179,50 @@ Lazy-ack ("REC all") is fine for any subset you're comfortable defaulting on.
 - **Pre-v0.1 ship**: add `libc::mlock` on the deserialized config struct on Linux (D-003 P0).
 - **v0.5**: SetNamedSecurityInfoW DACL restriction on Windows WAL segments (D-008).
 - **Day-1 (local)**: verify FILE_FLAG_WRITE_THROUGH effect on Windows WAL latency to confirm durability disclaimer is accurate (D-008).
+
+---
+
+## Session 21 follow-up decisions (added 2026-05-23)
+
+Three decision-notes shipped during Session 21 + are awaiting Alex's
+accept/decline before downstream code can land:
+
+### D-101 (was K-1) — Hyperswarm path for Keet + Cluster
+
+**Decision note:** `QUELLEN/research/R-A1_K1_decision.md`
+**Recommendation:** Path 3 (Pears HTTP bridge) + auto-install Pears via the wizard.
+**Blocks:** K-2 / K-3 / K-4 / C-1..C-4 / CT-01..CT-04 / G-06.
+**3 sub-decisions waiting:**
+1. Pears auto-install via wizard? Recommended: yes (matches the
+   claude-cli + gemini-cli + codex auto-install precedent).
+2. K-2 stub-upgrade scope: minimal reqwest-client first OR with K-3
+   pairing UX bundled? Recommended: client first, K-3 separate session.
+3. Trigger order: Keet first OR Cluster first? Recommended: Keet —
+   bigger operator-visible payoff + same `pears_bridge.rs` infra
+   serves cluster afterward.
+
+### D-102 (was E-21) — WASM plugin activation default
+
+**Decision note:** `PLAN/OPEN_QUESTION_E21_wasm_plugin_default.md`
+**Recommendation:** Option B — default-inactive on first discovery.
+**Blocks:** V10-04 WASM plugin host GA blocker.
+**Reasoning:** Matches the AGENTER hard rule + n8n/Obsidian
+conservative defaults already shipped. Sandbox bug blast radius is
+one operator-confirmed plugin instead of every dropped file.
+
+### D-103 (was E-22) — Skill hot-reload scope
+
+**Decision note:** `PLAN/OPEN_QUESTION_E22_skill_hot_reload.md`
+**Recommendation:** Option 3 — everything reloads, active invocations
+finish on the old version (`Arc<SkillBody>` clone-at-invocation).
+**Blocks:** Future operator iteration loop for skill authors.
+**Reasoning:** Standard "watch mode" semantics every modern dev tool
+uses (vite, cargo watch, esbuild). Option 1 (no reload) is too
+operator-friction; option 4 (abort active) is too surprising.
+
+### Operator action
+
+Reply to this file (or PROGRESS.md commit) with one of:
+- "Accept all three recommendations" → Session 22 ships the wiring.
+- Per-decision verdict (e.g. "D-101 yes / D-102 yes / D-103 alt 2").
+- "Defer D-101 + D-103 until v0.5; D-102 yes" — any subset.
