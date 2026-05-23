@@ -76,6 +76,15 @@ pub mod heartbeat;
 /// per `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
 pub mod gossip;
 
+/// Phase 5 Hysteria-shared relay registration primitives — operator-
+/// configured `RelayConfig` (endpoint + 5-peer-per-key cap),
+/// `RelayRegistration` wire shape, `PeerRoster` in-memory store with
+/// register / refresh / unregister / prune_stale. The standalone
+/// `neoth-relay` daemon + the Hysteria-side socket plumbing land in
+/// multi-week follow-ups per
+/// `PLAN/SPEC_cluster_phase5_hysteria_relay_2026-05-22.md`.
+pub mod relay;
+
 /// Stable identifier for a peer in the cluster. Format = UUID v7 string.
 /// First peer that brings a freshly-paired cluster online is the genesis;
 /// every join writes its UUID into the local cluster_roles table.
