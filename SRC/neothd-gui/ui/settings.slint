@@ -1130,6 +1130,7 @@ export component SettingsView inherits Rectangle {
                                 "openai_compat",
                                 "gemini_api",
                                 "local_qwen",
+                                "local_ouro",
                                 "hermes",
                                 "openclaw",
                             ];
@@ -1139,8 +1140,9 @@ export component SettingsView inherits Rectangle {
                                 root.provider-current == "openai_compat" ? 2 :
                                 root.provider-current == "gemini_api"    ? 3 :
                                 root.provider-current == "local_qwen"    ? 4 :
-                                root.provider-current == "hermes"        ? 5 :
-                                root.provider-current == "openclaw"      ? 6 :
+                                root.provider-current == "local_ouro"    ? 5 :
+                                root.provider-current == "hermes"        ? 6 :
+                                root.provider-current == "openclaw"      ? 7 :
                                                                             0;
                             selected(i) => {
                                 if (i == 0) { root.provider-current = "claude_cli"; }
@@ -1148,8 +1150,9 @@ export component SettingsView inherits Rectangle {
                                 if (i == 2) { root.provider-current = "openai_compat"; }
                                 if (i == 3) { root.provider-current = "gemini_api"; }
                                 if (i == 4) { root.provider-current = "local_qwen"; }
-                                if (i == 5) { root.provider-current = "hermes"; }
-                                if (i == 6) { root.provider-current = "openclaw"; }
+                                if (i == 5) { root.provider-current = "local_ouro"; }
+                                if (i == 6) { root.provider-current = "hermes"; }
+                                if (i == 7) { root.provider-current = "openclaw"; }
                                 root.provider-changed(root.provider-current);
                             }
                         }

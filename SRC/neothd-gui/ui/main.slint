@@ -267,7 +267,9 @@ export component MainWindow inherits Window {
     // the require_provider_key() logic in `providers/mod.rs`: claude_cli
     // uses OAuth, local_qwen is local, everything else is REST + bearer.
     out property <bool> provider-needs-key:
-        root.provider-choice != "claude_cli" && root.provider-choice != "local_qwen";
+        root.provider-choice != "claude_cli"
+            && root.provider-choice != "local_qwen"
+            && root.provider-choice != "local_ouro";
 
     // Skip the keys step entirely when no secrets are needed — saves the
     // operator an empty screen when they've picked claude_cli + CLI-only.
@@ -717,6 +719,7 @@ export component MainWindow inherits Window {
                             "openai_compat",
                             "gemini_api",
                             "local_qwen",
+                            "local_ouro",
                             "hermes",
                             "openclaw",
                         ];
@@ -727,8 +730,9 @@ export component MainWindow inherits Window {
                             if (i == 2) { root.provider-choice = "openai_compat"; }
                             if (i == 3) { root.provider-choice = "gemini_api"; }
                             if (i == 4) { root.provider-choice = "local_qwen"; }
-                            if (i == 5) { root.provider-choice = "hermes"; }
-                            if (i == 6) { root.provider-choice = "openclaw"; }
+                            if (i == 5) { root.provider-choice = "local_ouro"; }
+                            if (i == 6) { root.provider-choice = "hermes"; }
+                            if (i == 7) { root.provider-choice = "openclaw"; }
                         }
                     }
                 }
