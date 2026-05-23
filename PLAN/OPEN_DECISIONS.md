@@ -226,3 +226,27 @@ Reply to this file (or PROGRESS.md commit) with one of:
 - "Accept all three recommendations" → Session 22 ships the wiring.
 - Per-decision verdict (e.g. "D-101 yes / D-102 yes / D-103 alt 2").
 - "Defer D-101 + D-103 until v0.5; D-102 yes" — any subset.
+
+### Resolution — Session 21 (2026-05-23)
+
+Operator handed the three decisions to a 6-agent senior-dev panel:
+architect, rust-reviewer, security-reviewer, performance-optimizer,
+code-explorer, code-architect. **6/6 unanimous** on every sub-question.
+
+| Decision     | Verdict | Reasoning headline |
+|--------------|---------|--------------------|
+| **D-101**    | **Path 3 (Pears HTTP bridge)** | Path 1 = 3-5 mo + protocol drift; Path 2 = 60 MiB Node weight + violates self-contained rule; Path 3 = `reqwest` already in deps, zero new workspace dep, lands in already-stubbed `channels/keet/` + `cluster::HyperswarmPeerRegistry` |
+| **D-101a**   | **Yes — auto-install Pears via wizard** | `installers/{node,obsidian,obs,tmux,n8n}.rs` precedent already shipped; `installers/pears.rs` is a direct clone of the `npm install -g <runtime>` pattern with `cmd /C` on Windows |
+| **D-101b**   | **Minimal reqwest client first (K-2 standalone)** | Bundling K-3 pairing UX (24-word seed + GUI) couples unproven HTTP bridge with stateful pairing protocol; ship transport first, operator-test, then K-3 |
+| **D-101c**   | **Keet first** | Shared `pears_bridge.rs` infra strict superset of cluster's needs; bigger operator-visible payoff; cluster C-1..C-4 inherits the implementation with no rework |
+| **D-102**    | **Option B — default-inactive** | wasmtime hostcall surface = full operator-secret blast radius; matches n8n/Obsidian conservative defaults; current `wasm_plugin/mod.rs` has NO active-on-discover assumption, zero retro-fit |
+| **D-103**    | **Option 3 — `Arc<SkillBody>` clone-at-invocation** | Standard watch-mode semantics (vite, cargo-watch); `arc-swap` already in Cargo.toml + used for FreedomConfig hot-reload; consent boundary stays coherent because the version pinned at invocation start is what the gate evaluated against |
+
+**Blueprints (per code-architect agent):**
+- D-101: `installers/pears.rs` (mirror `node.rs`) + `channels/pears_bridge.rs` (reqwest POST/subscribe surface)
+- D-102: `activation: Pending|Active|Disabled` on `WasmPluginEntry` in `wasm_plugin/discovery.rs`; wizard step 7b in `cli/init.rs` (multiselect bulk-enable)
+- D-103: split `Skill` → `SkillManifest` + `SkillBody` in `skills/schema.rs`; `notify::RecommendedWatcher` in `skills/loader.rs::watch_skills_dir`; daemon main task atomically swaps registry `Arc`
+
+Implementation lands progressively across Session 22+. Each ship updates
+the relevant PROGRESS.md line in the same turn per
+[[neoth-progress-md-update-rule]].

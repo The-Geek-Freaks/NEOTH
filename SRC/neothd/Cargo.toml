@@ -181,6 +181,18 @@ mdns-sd = "0.11"
 # tasks read the config concurrently.
 arc-swap = "1"
 
+# D-103 (Session 21, 2026-05-23) — filesystem watcher for skills
+# hot-reload. The skills registry lives behind `ArcSwap<Vec<Skill>>`
+# (same pattern as FreedomConfig above); `notify` fires on
+# `~/.neoth/skills/<id>/skill.yaml` create/modify/remove and the
+# registry watcher task atomically swaps the new vec in. Active
+# invocations hold their cloned `Arc` to completion, the next
+# invocation picks up the new body (vite/cargo-watch semantics).
+# Default features picks the right per-OS backend at runtime
+# (inotify on Linux, FSEvents on macOS, ReadDirectoryChanges on
+# Windows) so cross-target builds Just Work.
+notify = "8"
+
 # Phase 33b SP-2 (HMAC compaction) -- pure-Rust HMAC-SHA256 over the WAL
 # tail since the last compaction marker. Tamper detection without
 # external key infrastructure. RustCrypto family, no openssl.

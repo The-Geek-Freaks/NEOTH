@@ -22,9 +22,11 @@ pub mod bundled;
 pub mod installer;
 pub mod loader;
 pub mod mode_registry;
+pub mod registry;
 pub mod router;
 pub mod schema;
 pub mod test_harness;
 
 pub use loader::load_all;
+pub use registry::SkillRegistry;
 pub use router::route;
