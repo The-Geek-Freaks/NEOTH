@@ -417,7 +417,9 @@ path remains a follow-up, not a v0.x blocker.
 
 ### Phase 21 — R-9 Multimodal pipeline
 
-- [ ] **M-1** `media/pdf.rs` — `pdfium-render` read (text + form fields) + write/sign
+- [x] **M-1 (scaffolding)** `media/pdf.rs` — per-page text extract + metadata wrapper + form-field readiness — Shipped 2026-05-23 Session 22. Builds on existing `pdf-extract`-backed `PdfExtractor` with: `PdfMetadata { title, author, page_count, has_form_fields }` (v1 populates page_count only, others forward-compat placeholders for M-1b), `PdfPage { page_no, text }` per-page entry with 1-indexed page numbers, `split_into_pages(whole_text)` pure splitter on `\x0c` form-feed (the exact byte `pdf-extract` emits between pages) preserving empty pages for stable numbering (image-only middle pages stay as empty entries so page-anchored recall doesn't drift), `extract_pages(asset) -> Result<Vec<PdfPage>>` async helper, `extract_metadata(asset) -> Result<PdfMetadata>` async helper. 6 new tests pin: empty text returns empty, no-form-feed single-page, form-feed split correctness, **empty-page preservation for stable numbering headline**, metadata default placeholders, PdfPage round-trip. **M-1b open**: `pdfium-render` C++ FFI integration behind `pdfium` cargo feature for form-field reading + write/sign + title/author population. 3401 → 3407 daemon tests; clippy --tests -D warnings clean.
+
+
 - [ ] **M-2** `media/vision.rs` — local CLIP via candle (later) + fall-through to vision-capable provider for now
 - [ ] **M-3** `media/audio.rs` — `whisper-rs` for inbound voice transcribe, `piper-rs` or vendor TTS for outbound
 - [ ] **M-4** `media/video.rs` — ffmpeg subprocess for thumbnail + transcript extraction
