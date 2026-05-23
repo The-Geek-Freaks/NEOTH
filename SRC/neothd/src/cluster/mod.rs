@@ -69,6 +69,13 @@ pub mod audit_sidecar;
 /// hyperswarm::spawn_discovery lands as a follow-up.
 pub mod heartbeat;
 
+/// Phase 6 gossip state-sync primitives — `GossipTag` (per-event
+/// do_not_gossip opt-out), `GossipPolicy` (replicate_raw_ingress +
+/// replay_budget_days), `ReplayBudget` resolved view. Wire protocol
+/// (vector-clock gossip + JSONL append-stream) lands in follow-ups
+/// per `PLAN/SPEC_cluster_phase6_gossip_state_sync_2026-05-22.md`.
+pub mod gossip;
+
 /// Stable identifier for a peer in the cluster. Format = UUID v7 string.
 /// First peer that brings a freshly-paired cluster online is the genesis;
 /// every join writes its UUID into the local cluster_roles table.
