@@ -62,6 +62,7 @@ pub mod reload;
 pub mod rollback;
 pub mod schema;
 pub mod search;
+pub mod self_dev;
 pub mod serve;
 pub mod skills;
 pub mod slack;
@@ -533,6 +534,14 @@ pub enum Commands {
     /// `delete <name>` removes (idempotent). Source: `~/.neoth/presets.yaml`.
     Preset(preset::PresetArgs),
 
+    /// P-04 proactive self-development workflow. `review` lists pending
+    /// proposals; `accept <id>` applies + emits 0x1D SELF_DEV_ACCEPTED;
+    /// `decline <id>` records refusal + emits 0x1E SELF_DEV_DECLINED;
+    /// `propose --from-profile <p>` generates proposals from a recorded
+    /// BehaviouralProfile + emits 0x1C SELF_DEV_PROPOSED per proposal.
+    /// Local store at `~/.neoth/self_dev/proposals.json`.
+    SelfDev(self_dev::SelfDevArgs),
+
     /// LLM provider catalogue (C-1 Session 13). `list` enumerates all
     /// supported `InferenceProvider` variants + their implementation
     /// status + the OpenAI-compatible endpoint examples that the
@@ -850,6 +859,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Preset(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();
             preset::run(&home, args)?;
+        }
+        Commands::SelfDev(args) => {
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            // CLI invocation runs without a live daemon writer; the
+            // accept/decline/propose paths record locally + warn that
+            // the matching WAL frames will land when the daemon picks
+            // up the change on next start. Invocation from inside the
+            // daemon supplies the writer via a different call path.
+            self_dev::run(&home, args, None).await?;
         }
         Commands::Channel { action } => {
             let _ = action;

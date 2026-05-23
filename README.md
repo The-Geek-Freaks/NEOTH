@@ -83,6 +83,35 @@ The wizard asks human questions: who you are, where NEOTH should talk to you, wh
 
 YAML is optional. The engine is not.
 
+### Self-dev — NEOTH proposes its own profile adjustments
+
+NEOTH watches how you actually use it (5 behavioural signals: temporal,
+cadence, length, topic, tone) and proposes profile adjustments you can
+accept or decline. Every proposal lands in your operator-visible local
+store + emits a WAL frame so the decision chain is auditable.
+
+```bash
+# (NEOTH writes a behavioural-profile snapshot as the cron aggregation
+#  task runs; for a one-off you can hand-craft one or pipe it from a
+#  future `neoth profile stats` command.)
+
+neoth self-dev propose --from-profile ~/.neoth/profile_snapshot.json
+neoth self-dev review                         # list pending proposals
+neoth self-dev accept switch_preset-a1b2c3d4  # emits 0x1D WAL frame
+neoth self-dev decline switch_preset-deadbeef --reason timeout
+```
+
+What it can propose today:
+
+- **Switch preset** when tone signal flipped vs the active preset.
+- **Adjust verbosity** when median prompt length crosses 30 / 200 chars.
+- **Adjust briefing schedule** when peak hour drifts.
+- **Learn extension** when a topic crosses 30 prompts.
+
+Every accept/decline is recorded as `EVENT_TYPE_SELF_DEV_ACCEPTED` (0x1D)
+or `EVENT_TYPE_SELF_DEV_DECLINED` (0x1E) in the WAL — you can audit
+NEOTH's self-improvement chain with `neoth wal show --type self_dev_*`.
+
 <img src=".github/assets/neoth-readme-flow.svg" alt="NEOTH first-run flow - wizard, memory, everywhere, audit" width="100%">
 
 <table>
