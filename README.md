@@ -13,12 +13,12 @@
 <h1>Stop reintroducing yourself to your AI.</h1>
 
 <p>
-  <strong>NEOTH is a private, loyal AI buddy for normal people, builders, and serious operators.</strong>
+  <strong>Daily companion for humans. Operator memory for pros. Local-first by default.</strong>
 </p>
 
 <p>
   It remembers what you allow, works in your interests, follows you across your tools,
-  and stays under your control.
+  and gives serious operators a Rust-powered local stack without making normal people edit YAML.
 </p>
 
 <p>
@@ -82,6 +82,8 @@ neoth recall "what do you know about how I like to work?"
 The wizard asks human questions: who you are, where NEOTH should talk to you, which privacy defaults you want, which model should answer quickly, which local model may learn your profile, and how much autonomy it gets.
 
 YAML is optional. The engine is not.
+
+<img src=".github/assets/neoth-readme-flow.svg" alt="NEOTH first-run flow - wizard, memory, everywhere, audit" width="100%">
 
 <table>
   <tr>
@@ -286,6 +288,8 @@ NEOTH is not another chat UI. It is a local-first operator layer with WAL-backed
 
 For coding, it can sit next to your repo, remember the project, plan work on a canvas, split tasks into a Kanban board, dispatch focused coding sessions, and keep review context from disappearing between runs.
 
+<img src=".github/assets/neoth-readme-coding.svg" alt="NEOTH coding buddy control loop - canvas, Kanban, hemispheres, patch, tests, memory" width="100%">
+
 ```bash
 neoth code "add a migration and tests for the profile baseline event" --dispatch
 neoth kanban watch
@@ -318,85 +322,26 @@ Hermes proved the Kanban-shaped coding loop; NEOTH makes it native to memory. Th
 
 Different projects optimize for different jobs. NEOTH is the one shaped around a **loyal, private, long-term buddy** that also has serious engineering depth.
 
-<table>
-  <tr>
-    <th>Dimension</th>
-    <th>NEOTH v1.1</th>
-    <th>Hermes</th>
-    <th>OpenHuman</th>
-    <th>OpenClaw</th>
-  </tr>
-  <tr>
-    <td><strong>Primary promise</strong></td>
-    <td><strong>Private operator buddy</strong><br>Remembers you, works for your interests, follows you everywhere.</td>
-    <td>Agent workflow UI<br>Strong task sessions, Kanban-style execution, activity feed.</td>
-    <td>Desktop AI assistant<br>OAuth-heavy integrations and personal app context.</td>
-    <td>Multi-channel gateway<br>Broad channel/provider/plugin surface.</td>
-  </tr>
-  <tr>
-    <td><strong>Target user</strong></td>
-    <td><strong>Normal users and pros</strong><br>Wizard-first for non-technical users, deep controls for operators.</td>
-    <td>Builders running coding or task workflows.</td>
-    <td>Users who want a desktop companion connected to many services.</td>
-    <td>Teams/operators who want a large extensible AI gateway.</td>
-  </tr>
-  <tr>
-    <td><strong>Memory model</strong></td>
-    <td><strong>Six-layer memory</strong><br>Hot, warm, episodic, semantic, knowledge, and Obsidian/vault mirror.</td>
-    <td>Session/task memory, profile notes, skills, and workflow state.</td>
-    <td>Memory tree, app context, integrations, and Obsidian-style vault knowledge.</td>
-    <td>Context engine, memory SDK, dreaming-style processing, and skills.</td>
-  </tr>
-  <tr>
-    <td><strong>Brain model</strong></td>
-    <td><strong>Three role-bound hemispheres</strong><br>Fast role, deep role, and synthesis/orchestration talk through the same memory substrate.</td>
-    <td>Fast/deep routing and workers; no NEOTH-style three-hemisphere council.</td>
-    <td>Agents, tools, and TODO planning around desktop context.</td>
-    <td>Multi-agent gateway and skills; broad routing rather than brain-region council.</td>
-  </tr>
-  <tr>
-    <td><strong>Coding</strong></td>
-    <td><strong>Native coding orchestration</strong><br>Canvas planning, Kanban, dispatch, patch/test/review loop, remembered repo decisions.</td>
-    <td><strong>Strongest Kanban predecessor</strong><br>Board-driven coding workflow, workers, and activity feed.</td>
-    <td>Coder tools, subagents, TODO planning, lint/test flows; less Kanban/council-native.</td>
-    <td>Live canvas, TaskFlow, and coding-agent skills; more gateway/skill orchestration than NEOTH memory-coding loop.</td>
-  </tr>
-  <tr>
-    <td><strong>Obsidian / inspectability</strong></td>
-    <td><strong>Governed memory first</strong><br>Obsidian is an inspectable surface; WAL, evidence, confidence, redaction, and region views stay authoritative.</td>
-    <td>Markdown-inspectable memory files and profile notes.</td>
-    <td><strong>Strongest Obsidian-native UX</strong><br>Memory tree and vault editing are central strengths.</td>
-    <td>Obsidian/wiki skills and CLI bridge; useful, but not the core memory authority.</td>
-  </tr>
-  <tr>
-    <td><strong>Privacy</strong></td>
-    <td><strong>Local-first where it matters</strong><br>Qwen/Ouro profile extraction, no silent fallback, redactions, destination audit.</td>
-    <td>Self-hosted/server oriented; less granular provider/redaction audit.</td>
-    <td>Local memory plus backend/OAuth surfaces depending on feature.</td>
-    <td>Gateway/channel safety and local allowlists; broad tool surface increases risk.</td>
-  </tr>
-  <tr>
-    <td><strong>Private mesh</strong></td>
-    <td><strong>LAN/Tailscale first</strong><br>mDNS, Tailscale/WireGuard pairing, Hysteria advanced relay path, Keet preview channel.</td>
-    <td>No strong private-mesh claim in the local design sources.</td>
-    <td>No strong Tailscale/Hysteria/Keet claim in the local design sources.</td>
-    <td>Tailscale device access exists; Hysteria/Keet are not the core story.</td>
-  </tr>
-  <tr>
-    <td><strong>Clusterability</strong></td>
-    <td><strong>Explicit cluster architecture</strong><br>Consent-gated peer discovery, pairing, and future memory/state gossip semantics.</td>
-    <td>Server-centered workflow surface, not peer memory clustering.</td>
-    <td>Workspace/backend-centered, not peer memory clustering.</td>
-    <td>Gateway nodes and remote access; stronger at device control than memory-cluster semantics.</td>
-  </tr>
-  <tr>
-    <td><strong>Deployment shape</strong></td>
-    <td><strong>Single Rust binary</strong><br>Optional GUI, local models, plugins, and cluster pairing.</td>
-    <td>Python/web style stack.</td>
-    <td>Tauri/pnpm desktop style stack.</td>
-    <td>Node/TypeScript multi-package stack.</td>
-  </tr>
-</table>
+<img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH advantage scorecard versus Hermes, OpenHuman, and OpenClaw" width="100%">
+
+Legend: `&#10003;` strong / native, `&#9680;` partial / adjacent, `&#8722;` not the focus in local sources, `preview` exists but should not be oversold.
+
+| Capability | NEOTH v1.1 | Hermes | OpenHuman | OpenClaw |
+| :-- | :--: | :--: | :--: | :--: |
+| Loyal personal buddy for normal users **and** pros | &#10003; | &#9680; workflow-first | &#9680; desktop-first | &#9680; gateway-first |
+| GUI-first setup without mandatory YAML | &#10003; | &#8722; | &#9680; | &#8722; |
+| Local profile extraction with no silent cloud fallback | &#10003; | &#9680; self-hosted | &#9680; local memory + broker | &#9680; allowlists |
+| Evidence, confidence, redaction, request-destination audit | &#10003; | &#9680; | &#9680; | &#9680; |
+| Three role-bound hemispheres plus council/dissent | &#10003; | &#9680; fast/deep routing | &#8722; | &#9680; multi-agent gateway |
+| Six memory layers plus six brain-region views | &#10003; | &#9680; persistent memory | &#9680; memory tree | &#9680; context/memory SDK |
+| Native coding canvas + Kanban + dispatch + review promotion | &#10003; | &#10003; Kanban predecessor | &#9680; coder tools | &#9680; canvas + agents |
+| Obsidian as inspectable surface while WAL stays authoritative | &#10003; | &#9680; markdown notes | &#10003; strongest Obsidian UX | &#9680; wiki/skill bridge |
+| LAN/Tailscale private mesh | &#10003; | &#8722; | &#8722; | &#9680; Tailscale nodes |
+| Hysteria relay path for hard networks | &#10003; advanced | &#8722; | &#8722; | &#8722; |
+| Keet / peer-to-peer channel path | &#10003; preview | &#8722; | &#8722; | &#8722; |
+| Consent-gated memory cluster semantics | &#10003; | &#8722; | &#8722; | &#9680; gateway nodes |
+| Single Rust binary shape | &#10003; | &#8722; Python/web | &#8722; Tauri/pnpm | &#8722; Node/TS |
+| WASM plugin sandbox with caps and hostcall allowlist | &#10003; | &#9680; skills | &#9680; approval/tools | &#9680; sandboxed surfaces |
 
 Short version: Hermes is the coding/Kanban precedent, OpenHuman is the Obsidian/auto-fetch precedent, OpenClaw is the gateway/canvas/channel precedent, and NEOTH combines the useful parts into a local-first, brain-regioned, council-governed operator runtime.
 
@@ -415,6 +360,8 @@ Short version: Hermes is the coding/Kanban precedent, OpenHuman is the Obsidian/
 ### The machinery that makes the buddy trustworthy.
 
 <img src=".github/assets/neoth-readme-system.svg" alt="NEOTH system map - one memory, many surfaces" width="100%">
+
+<img src=".github/assets/neoth-readme-brain.svg" alt="NEOTH three role-bound hemispheres and six memory layers" width="100%">
 
 ### Three role-bound hemispheres that talk to each other
 
@@ -559,6 +506,8 @@ NEOTH has two extension surfaces:
 ### Obsidian and private mesh
 
 NEOTH should fit into the knowledge system and network you already trust, not force everything into one app.
+
+<img src=".github/assets/neoth-readme-private-mesh.svg" alt="NEOTH private mesh across Obsidian, LAN, Tailscale, Hysteria, Keet, and cluster nodes" width="100%">
 
 | Surface | What it is for |
 | :-- | :-- |
