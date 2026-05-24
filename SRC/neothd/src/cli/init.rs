@@ -11,7 +11,7 @@ use std::io::IsTerminal;
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{info, warn};
 
 /// LLM provider kind. Typed enum (replaces stringly-typed v0.1 alpha).
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -153,6 +153,16 @@ pub struct InitArgs {
     /// interactive confirm screen — there's no terminal to draw it on.
     #[arg(long, value_name = "N")]
     pub council_depth: Option<u8>,
+
+    /// E-21 step 7c non-interactive override (D-102 deferred follow-up).
+    /// Pre-activate a discovered WASM plugin by id without the
+    /// interactive multiselect — repeat the flag for each id to
+    /// activate. Unknown ids are warned but don't fail the wizard.
+    /// CI / cloud-init operators use this to flip plugins to Active
+    /// during scripted bring-up; everyone else uses the interactive
+    /// step or `neoth plugin enable <id>` afterwards.
+    #[arg(long = "enable-plugin", value_name = "ID", num_args = 0..)]
+    pub enable_plugin: Vec<String>,
 
     /// Re-run full wizard even if already initialized.
     #[arg(long)]
@@ -1791,7 +1801,7 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
 /// daemon boot's `bootstrap_plugin_invoker` reads the operator's
 /// decisions directly.
 fn step7c_wasm_plugin_activation(
-    _args: &InitArgs,
+    args: &InitArgs,
     interactive: bool,
     neoth_dir: &std::path::Path,
     state: &mut WizardState,
@@ -1802,16 +1812,52 @@ fn step7c_wasm_plugin_activation(
     let report = crate::wasm_plugin::discovery::discover(&plugins_root);
     if report.loaded.is_empty() {
         // Common first-run case: no plugins discovered. Skip silently
-        // so the wizard transcript stays tight.
+        // so the wizard transcript stays tight. Operator passing
+        // --enable-plugin without any plugins on disk gets a warn
+        // so the typo'd id is at least surfaced.
+        if !args.enable_plugin.is_empty() {
+            warn!(
+                ids = ?args.enable_plugin,
+                "--enable-plugin given but no plugins discovered under {}",
+                plugins_root.display()
+            );
+        }
         state.steps_completed.push(71); // 7c marker (7-and-three-quarters)
         return Ok(());
     }
 
     if !interactive {
-        // Non-interactive runs leave activations empty — operator
-        // can flip them later with `neoth plugin enable <id>`. We
-        // still log the discovery so CI / cloud-init operators see
-        // the names in their wizard transcript.
+        // Non-interactive runs honour --enable-plugin <id> (repeatable).
+        // Unknown ids surface a warn so CI operators see the typo but
+        // the wizard doesn't bail — partial activation is better than
+        // a failed init.
+        let known: std::collections::HashSet<&str> = report
+            .loaded
+            .iter()
+            .map(|p| p.manifest.id.as_str())
+            .collect();
+        let mut activated: Vec<String> = Vec::new();
+        let disabled: Vec<String> = Vec::new();
+        for id in &args.enable_plugin {
+            if known.contains(id.as_str()) {
+                state.plugins.wasm.activations.insert(
+                    id.clone(),
+                    crate::wasm_plugin::discovery::PluginActivation::Active,
+                );
+                activated.push(id.clone());
+            } else {
+                let discovered: Vec<&str> = known.iter().copied().collect();
+                warn!(
+                    id = %id,
+                    discovered = ?discovered,
+                    "--enable-plugin id not found among discovered plugins; ignored"
+                );
+            }
+        }
+        // Any plugin not explicitly enabled stays PENDING (no entry =
+        // default). We do NOT auto-Disabled them — that matches the
+        // operator's mental model: `--enable-plugin X` is positive,
+        // silence is "decide later" not "actively refused".
         let ids: Vec<&str> = report
             .loaded
             .iter()
@@ -1820,7 +1866,9 @@ fn step7c_wasm_plugin_activation(
         info!(
             count = report.loaded.len(),
             ids = ?ids,
-            "wasm plugins discovered; non-interactive run leaves them PENDING"
+            activated = ?activated,
+            disabled = ?disabled,
+            "wasm plugins discovered; non-interactive activation applied"
         );
         state.steps_completed.push(71);
         return Ok(());
@@ -3266,6 +3314,86 @@ mod tests {
             state.plugins.wasm.activations,
         );
         assert!(state.steps_completed.contains(&71));
+    }
+
+    #[test]
+    fn step7c_non_interactive_with_enable_plugin_flag_activates_named_ids() {
+        // E-21 non-interactive follow-up: `--enable-plugin indexer_v1`
+        // during scripted bring-up MUST land indexer_v1 = Active in
+        // freedom.yaml without prompting. Other discovered plugins
+        // stay Pending (no entry = default at boot).
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        for id in ["indexer_v1", "recall_rerank"] {
+            let pd = neoth_dir.join("plugins").join(id);
+            std::fs::create_dir_all(&pd).unwrap();
+            std::fs::write(
+                pd.join("plugin.toml"),
+                format!("id = \"{id}\"\nname = \"x\"\nversion = \"0.1.0\"\n"),
+            )
+            .unwrap();
+            std::fs::write(pd.join("plugin.wasm"), [
+                0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+            ])
+            .unwrap();
+        }
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            enable_plugin: vec!["indexer_v1".to_string()],
+            ..Default::default()
+        };
+        let mut state = fixture_state();
+        step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
+        assert_eq!(
+            state
+                .plugins
+                .wasm
+                .activations
+                .get("indexer_v1")
+                .copied(),
+            Some(crate::wasm_plugin::discovery::PluginActivation::Active),
+            "indexer_v1 must be Active after --enable-plugin",
+        );
+        // recall_rerank stays absent from the map → default Pending
+        // at daemon boot.
+        assert!(
+            !state.plugins.wasm.activations.contains_key("recall_rerank"),
+            "unspecified plugins must stay PENDING (no map entry); got {:?}",
+            state.plugins.wasm.activations,
+        );
+    }
+
+    #[test]
+    fn step7c_non_interactive_unknown_enable_plugin_id_is_warn_not_fail() {
+        // Typo on the operator's CLI line MUST NOT fail the wizard.
+        // Per the non-interactive contract: partial activation is
+        // better than a failed init.
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let pd = neoth_dir.join("plugins").join("indexer_v1");
+        std::fs::create_dir_all(&pd).unwrap();
+        std::fs::write(
+            pd.join("plugin.toml"),
+            "id = \"indexer_v1\"\nname = \"x\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(pd.join("plugin.wasm"), [
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        ])
+        .unwrap();
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            enable_plugin: vec!["typoed_id".to_string(), "indexer_v1".to_string()],
+            ..Default::default()
+        };
+        let mut state = fixture_state();
+        // Should not panic / not bail; typoed_id is ignored, the valid
+        // id still activates.
+        step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
+        assert!(state.plugins.wasm.activations.contains_key("indexer_v1"));
+        assert!(!state.plugins.wasm.activations.contains_key("typoed_id"));
     }
 
     #[test]
