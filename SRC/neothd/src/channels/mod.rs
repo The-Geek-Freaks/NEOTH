@@ -21,6 +21,7 @@ pub mod keet;
 pub mod keet_bencode;
 pub mod keet_crypto;
 pub mod keet_dht;
+pub mod keet_pairing;
 pub mod keet_udp;
 pub mod keet_wal;
 pub mod pears_bridge;
