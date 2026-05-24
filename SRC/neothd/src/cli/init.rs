@@ -1574,8 +1574,33 @@ fn provider_kind_to_inference(
     }
 }
 
+/// K-4b (Session 21, 2026-05-23) — operator-facing Telegram prompt text.
+/// Defaults depend on whether `pear` is on PATH: when present, Keet is
+/// the recommended primary so Telegram is framed as the FALLBACK and
+/// the wizard defaults to No more strongly; without pear, Telegram is
+/// the only operator-private option so the prompt stays neutral.
+///
+/// Pure-fn so the K-4b restructure can be unit-tested without a TTY.
+pub(crate) fn k4b_telegram_prompt_text(pear_present: bool) -> &'static str {
+    if pear_present {
+        "[6/8] Set up Telegram as a FALLBACK channel? (Keet is preferred primary; default: no)"
+    } else {
+        "[6/8] Set up a Telegram bot now? (optional, can add later)"
+    }
+}
+
 async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
     info!("wizard step 6: channel");
+
+    // K-4b (Session 21): probe `pear` once so the prompt copy reflects
+    // whether Keet is reachable as the preferred primary. The probe is
+    // cheap (single subprocess spawn with 5s timeout) and only runs in
+    // interactive mode where the prompt actually surfaces.
+    let pear_present = if interactive {
+        crate::installers::pears::check_pears().await.is_some()
+    } else {
+        false
+    };
 
     // Resolve token from args or interactive prompt.
     let token = if let Some(t) = args.telegram_token.clone() {
@@ -1587,7 +1612,7 @@ async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardSta
         {
             let set_up =
                 dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt("[6/7] Set up a Telegram bot now? (optional, can add later)")
+                    .with_prompt(k4b_telegram_prompt_text(pear_present))
                     .default(false)
                     .interact()
                     .context("telegram channel prompt")?;
@@ -3616,6 +3641,42 @@ mod tests {
             back.pears_bearer_token.as_ref().map(|s| s.expose().len()),
             Some(64),
         );
+    }
+
+    // ── K-4b telegram-prompt text tests (Session 21) ────────────────
+
+    #[test]
+    fn k4b_prompt_demotes_telegram_when_pear_present() {
+        // K-4b: when `pear` is on PATH, Keet is the preferred primary.
+        // The Telegram prompt must reframe Telegram as a FALLBACK so
+        // operators don't accidentally pick it as primary out of habit.
+        let s = k4b_telegram_prompt_text(true);
+        assert!(s.contains("FALLBACK"), "msg: {s}");
+        assert!(s.contains("Keet"), "msg: {s}");
+        assert!(s.contains("preferred primary"), "msg: {s}");
+        assert!(s.contains("default: no"), "msg: {s}");
+    }
+
+    #[test]
+    fn k4b_prompt_neutral_when_pear_missing() {
+        // Backward-compat pin: operators without `pear` see the
+        // original neutral Telegram prompt — Keet is unreachable so
+        // there's nothing to demote Telegram against.
+        let s = k4b_telegram_prompt_text(false);
+        assert!(!s.contains("FALLBACK"));
+        assert!(!s.contains("Keet"));
+        assert!(s.contains("Telegram"));
+        assert!(s.contains("optional"));
+    }
+
+    #[test]
+    fn k4b_prompt_keeps_step_label_consistent_across_modes() {
+        // Both variants must carry the same `[6/8]` step label so the
+        // wizard transcript stays parseable — operators (or automated
+        // probes) grepping for "[6/8]" find it regardless of the pear
+        // detection outcome.
+        assert!(k4b_telegram_prompt_text(true).contains("[6/8]"));
+        assert!(k4b_telegram_prompt_text(false).contains("[6/8]"));
     }
 
     // ── K-4 channel-ordering tests (Session 21) ─────────────────────
