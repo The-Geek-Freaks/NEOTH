@@ -205,6 +205,14 @@ pub struct WizardState {
     /// FreedomConfig surface.
     #[serde(default)]
     pub auto_update: crate::config::AutoUpdateConfig,
+    /// D-102 wizard step 7c (Session 21, 2026-05-23): per-plugin
+    /// activation state populated by `step7c_wasm_plugin_activation`.
+    /// Empty by default; the step writes
+    /// `activations[<id>] = Active|Disabled` based on the operator's
+    /// MultiSelect picks. Maps 1:1 to FreedomConfig.plugins so the
+    /// YAML round-trip lands the same shape at daemon boot.
+    #[serde(default)]
+    pub plugins: crate::config::PluginsConfig,
     pub steps_completed: Vec<u8>,
 }
 
@@ -245,6 +253,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step6_channel(&args, interactive, &mut state).await?;
     step7_autonomy(&args, interactive, &mut state)?;
     step7b_auto_update(&args, interactive, &mut state)?;
+    step7c_wasm_plugin_activation(&args, interactive, &neoth_dir, &mut state)?;
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {
@@ -1757,6 +1766,128 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
     Ok(())
 }
 
+/// D-102 wizard step 7c (Session 21, 2026-05-23) — bulk-enable
+/// multiselect for discovered WASM plugins.
+///
+/// Per the 6/6 senior-dev panel verdict on D-102 (default-inactive),
+/// the daemon NEVER auto-instantiates a discovered `.wasm` plugin.
+/// This step is where the operator picks which ones to opt into during
+/// onboarding — the alternative is running `neoth plugin enable <id>`
+/// once per plugin after first boot, which is the friction the agent
+/// panel called out as the noob-UX gap.
+///
+/// Behaviour:
+///   - Scans `<neoth_dir>/plugins/` via `wasm_plugin::discovery::discover`.
+///   - Zero discovered → silent no-op (the common first-run state).
+///   - Non-interactive → leaves activations empty (every plugin stays
+///     Pending; operator must enable via `neoth plugin enable <id>`
+///     after install).
+///   - Interactive → MultiSelect with one row per discovered plugin.
+///     Picked → `Active`; unpicked → `Disabled` (NOT `Pending`, because
+///     the operator HAS reviewed it during the wizard).
+///
+/// Activations land on `state.plugins.wasm.activations`; `write_config`
+/// serialises the whole `plugins:` block into freedom.yaml so the next
+/// daemon boot's `bootstrap_plugin_invoker` reads the operator's
+/// decisions directly.
+fn step7c_wasm_plugin_activation(
+    _args: &InitArgs,
+    interactive: bool,
+    neoth_dir: &std::path::Path,
+    state: &mut WizardState,
+) -> Result<()> {
+    info!("wizard step 7c: wasm plugin activation");
+
+    let plugins_root = neoth_dir.join("plugins");
+    let report = crate::wasm_plugin::discovery::discover(&plugins_root);
+    if report.loaded.is_empty() {
+        // Common first-run case: no plugins discovered. Skip silently
+        // so the wizard transcript stays tight.
+        state.steps_completed.push(71); // 7c marker (7-and-three-quarters)
+        return Ok(());
+    }
+
+    if !interactive {
+        // Non-interactive runs leave activations empty — operator
+        // can flip them later with `neoth plugin enable <id>`. We
+        // still log the discovery so CI / cloud-init operators see
+        // the names in their wizard transcript.
+        let ids: Vec<&str> = report
+            .loaded
+            .iter()
+            .map(|p| p.manifest.id.as_str())
+            .collect();
+        info!(
+            count = report.loaded.len(),
+            ids = ?ids,
+            "wasm plugins discovered; non-interactive run leaves them PENDING"
+        );
+        state.steps_completed.push(71);
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        println!();
+        println!(
+            "[7c/8] {} WASM plugin(s) discovered under ~/.neoth/plugins/.",
+            report.loaded.len()
+        );
+        println!("       Default is PENDING (skipped at daemon boot until you opt in).");
+        println!("       Pick the ones you want active. Unpicked = Disabled.");
+
+        let labels: Vec<String> = report
+            .loaded
+            .iter()
+            .map(|p| {
+                format!(
+                    "{}  ({})",
+                    p.manifest.id,
+                    p.manifest.name,
+                )
+            })
+            .collect();
+
+        let picked = dialoguer::MultiSelect::with_theme(
+            &dialoguer::theme::ColorfulTheme::default(),
+        )
+        .with_prompt("[7c/8] Activate plugins (space to toggle, Enter to confirm)")
+        .items(&labels)
+        .interact()
+        .context("wasm plugin multiselect")?;
+
+        let picked_set: std::collections::HashSet<usize> = picked.into_iter().collect();
+        let mut active_count = 0usize;
+        let mut disabled_count = 0usize;
+        for (idx, plugin) in report.loaded.iter().enumerate() {
+            let state_val = if picked_set.contains(&idx) {
+                active_count += 1;
+                crate::wasm_plugin::discovery::PluginActivation::Active
+            } else {
+                disabled_count += 1;
+                crate::wasm_plugin::discovery::PluginActivation::Disabled
+            };
+            state
+                .plugins
+                .wasm
+                .activations
+                .insert(plugin.manifest.id.clone(), state_val);
+        }
+        println!(
+            "  [7c/8] {} plugin(s) Active, {} Disabled.",
+            active_count, disabled_count,
+        );
+    }
+    #[cfg(not(feature = "wizard"))]
+    {
+        // Slim build (no dialoguer): default Pending for every
+        // discovered id — same as non-interactive.
+    }
+
+    state.steps_completed.push(71);
+    Ok(())
+}
+
 fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     info!("wizard step 8: summary");
     // Step 7 (autonomy) already pushed `7`; pushing again here corrupted
@@ -2698,6 +2829,7 @@ mod tests {
             autonomy: crate::permissions::AutonomyLevel::Standard,
             inference: crate::config::inference::InferenceTopology::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
+            plugins: crate::config::PluginsConfig::default(),
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
@@ -3059,5 +3191,103 @@ mod tests {
         // the operator picked depth=2 — they should see the next-step
         // implications too.
         assert!(s.contains("depth=3+"));
+    }
+
+    // ── D-102 wizard step 7c — bulk plugin activation tests ─────────
+
+    #[test]
+    fn step7c_missing_plugins_dir_silent_noop_records_marker() {
+        // Common first-run state: ~/.neoth/plugins/ doesn't exist yet.
+        // Step must not panic + must record its marker so a wizard
+        // resume can tell the step ran.
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth-empty");
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        let mut state = fixture_state();
+        step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
+        assert!(
+            state.plugins.wasm.activations.is_empty(),
+            "no plugins discovered → no activations recorded"
+        );
+        assert!(state.steps_completed.contains(&71));
+    }
+
+    #[test]
+    fn step7c_empty_plugins_dir_silent_noop() {
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        std::fs::create_dir_all(neoth_dir.join("plugins")).unwrap();
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        let mut state = fixture_state();
+        step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
+        assert!(state.plugins.wasm.activations.is_empty());
+        assert!(state.steps_completed.contains(&71));
+    }
+
+    #[test]
+    fn step7c_non_interactive_with_discovered_plugins_leaves_activations_empty() {
+        // Per panel verdict on D-102 + non-interactive contract:
+        // automatically opting plugins in without operator review
+        // would defeat the default-inactive guarantee. Activations
+        // must stay empty (= every id falls through to default
+        // Pending at boot).
+        let dir = tempfile::tempdir().unwrap();
+        let neoth_dir = dir.path().join(".neoth");
+        let plugins_root = neoth_dir.join("plugins").join("indexer_v1");
+        std::fs::create_dir_all(&plugins_root).unwrap();
+        std::fs::write(
+            plugins_root.join("plugin.toml"),
+            "id = \"indexer_v1\"\nname = \"Indexer\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        // Minimal valid WASM module bytes (wasm magic + version).
+        std::fs::write(plugins_root.join("plugin.wasm"), [
+            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        ])
+        .unwrap();
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        let mut state = fixture_state();
+        step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
+        assert!(
+            state.plugins.wasm.activations.is_empty(),
+            "non-interactive run MUST NOT auto-activate; got {:?}",
+            state.plugins.wasm.activations,
+        );
+        assert!(state.steps_completed.contains(&71));
+    }
+
+    #[test]
+    fn wizard_state_plugins_field_round_trips_through_yaml() {
+        // D-102 wire-format pin: WizardState.plugins serialises into
+        // the same `plugins:\n  wasm:\n    activations:\n      <id>: active`
+        // shape FreedomConfig deserialises from. A drift here would
+        // mean the operator's wizard picks don't reach the daemon.
+        let mut state = fixture_state();
+        state.plugins.wasm.activations.insert(
+            "indexer_v1".to_string(),
+            crate::wasm_plugin::discovery::PluginActivation::Active,
+        );
+        state.plugins.wasm.activations.insert(
+            "recall_rerank".to_string(),
+            crate::wasm_plugin::discovery::PluginActivation::Disabled,
+        );
+        let yaml = serde_yaml::to_string(&state).expect("serialize");
+        assert!(yaml.contains("plugins:"));
+        assert!(yaml.contains("wasm:"));
+        assert!(yaml.contains("activations:"));
+        assert!(yaml.contains("indexer_v1: active"));
+        assert!(yaml.contains("recall_rerank: disabled"));
     }
 }
