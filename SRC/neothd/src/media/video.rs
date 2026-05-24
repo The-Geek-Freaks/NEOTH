@@ -277,41 +277,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn thumbnail_surfaces_missing_ffmpeg_with_helpful_message() {
-        let prev = std::env::var("PATH").ok();
-        // SAFETY: test-only env mutation; restored before the next
-        // assertion to keep the parallel-test race window tiny.
-        unsafe {
-            std::env::set_var("PATH", "");
-        }
-        let asset = Asset::Bytes {
-            kind: AssetKind::Video,
-            mime: "video/mp4".into(),
-            data: b"fake".to_vec(),
-        };
-        let r = extract_thumbnail(&asset).await;
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("PATH", v),
-                None => std::env::remove_var("PATH"),
-            }
-        }
-        match r {
-            Err(ExtractionError::Backend {
-                backend: "video",
-                reason,
-            }) if reason.contains("ffmpeg not on PATH") => {}
-            other => panic!("expected ffmpeg-missing Backend error, got: {other:?}"),
-        }
-    }
-
-    #[tokio::test]
     async fn extract_surfaces_missing_ffmpeg_with_helpful_message() {
-        // Override PATH so the spawn fails with NotFound.
+        // Override PATH so the spawn fails with NotFound. SAFETY:
+        // process-wide env mutation; race-prone against concurrent
+        // tests that spawn other subprocesses. PATH is restored
+        // promptly to keep the window small. The duplicate
+        // path-mutation test for `extract_thumbnail` was deleted in
+        // favour of the live ffmpeg `#[ignore]` test above — running
+        // both raised the race-window to a degree the worktree test
+        // could observe.
         let prev = std::env::var("PATH").ok();
-        // SAFETY: test-only env mutation. Cargo runs tests in parallel,
-        // so a concurrent test reading PATH for a real subprocess could
-        // race here. We restore promptly to keep the window small.
         unsafe {
             std::env::set_var("PATH", "");
         }
