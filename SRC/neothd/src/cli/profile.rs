@@ -65,6 +65,20 @@ pub enum ProfileAction {
         #[arg(long)]
         id: i64,
     },
+    /// P-02 (Workstream B follow-up, Session 22) — manage profile
+    /// presets that shape tone / verbosity / clarifying behaviour.
+    ///
+    /// Subcommands: `list` shows all 5 built-in presets with their
+    /// operator-facing descriptions; `show <name>` decodes one preset
+    /// into its `PresetData` (system_addendum + verbosity + formality
+    /// + clarifying + trim_disclaimers); `apply <name>` writes the
+    /// active-preset marker to `~/.neoth/profile/active_preset.txt`
+    /// so chat dispatch can compose the system_addendum on next run.
+    Preset {
+        #[command(subcommand)]
+        sub: PresetSub,
+    },
+
     /// Manually drive the 6-stage profile pipeline. Pick a single
     /// trigger via `--trigger-event <id>` OR batch-run against the
     /// last N inbound events via `--last-n <count>`. Either flag is
@@ -90,6 +104,76 @@ pub enum ProfileAction {
         #[arg(long)]
         extensions_file: Option<std::path::PathBuf>,
     },
+}
+
+/// P-02 (Session 22) — subcommands under `neoth profile preset`.
+/// Maps 1:1 to `profile::presets::ProfilePreset` operations.
+#[derive(Subcommand, Debug, Clone)]
+pub enum PresetSub {
+    /// List every built-in preset with its operator-readable description.
+    List,
+    /// Show the decoded `PresetData` for one preset (system_addendum +
+    /// verbosity + formality + ask_clarifying + trim_disclaimers).
+    Show {
+        /// Preset name. One of: lowkey / formal / deepdive / tutor / opsec.
+        name: String,
+    },
+    /// Activate a preset. Writes the marker file at
+    /// `~/.neoth/profile/active_preset.txt`; chat dispatch reads it on
+    /// next run to compose the preset's `system_addendum` into the
+    /// system prompt.
+    Apply {
+        /// Preset name. One of: lowkey / formal / deepdive / tutor / opsec.
+        name: String,
+    },
+}
+
+/// Relative path under `~/.neoth/` where the active preset name is
+/// persisted. Single-line file, no trailing newline. Atomic-rename
+/// write via `credentials::write_mode_0600` so the chat-side reader
+/// can never observe a partial write.
+pub const ACTIVE_PRESET_RELATIVE_PATH: &str = "profile/active_preset.txt";
+
+/// Absolute path to the active-preset marker for a given home.
+pub fn active_preset_path(home: &std::path::Path) -> std::path::PathBuf {
+    home.join(ACTIVE_PRESET_RELATIVE_PATH)
+}
+
+/// Persist the active preset name to the marker file. Atomic via
+/// `.txt.tmp` + rename. Mode 0600 on unix. Mirrors the pattern
+/// `briefing_gate::record_last_active` ships for the last-active marker.
+pub fn record_active_preset(
+    home: &std::path::Path,
+    preset: crate::profile::presets::ProfilePreset,
+) -> Result<()> {
+    let path = active_preset_path(home);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "create parent dir for active_preset marker: {}",
+                parent.display()
+            )
+        })?;
+    }
+    let bytes = preset.as_str().as_bytes().to_vec();
+    let tmp = path.with_extension("txt.tmp");
+    crate::config::credentials::write_mode_0600(&tmp, &bytes)
+        .with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
+    Ok(())
+}
+
+/// Read the current active preset, if any. Returns `None` when the
+/// marker file is missing / empty / contains an unknown preset name.
+/// Chat dispatch treats `None` as "no preset active, ship default
+/// system prompt unchanged".
+pub fn load_active_preset(
+    home: &std::path::Path,
+) -> Option<crate::profile::presets::ProfilePreset> {
+    let path = active_preset_path(home);
+    let s = std::fs::read_to_string(&path).ok()?;
+    crate::profile::presets::ProfilePreset::parse(s.trim())
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -177,6 +261,7 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             }
             Ok(())
         }
+        ProfileAction::Preset { sub } => run_preset_sub(sub, &args.output).await,
         ProfileAction::Run {
             trigger_event,
             last_n,
@@ -579,6 +664,121 @@ fn render_summary(rows: &[ProfileRow], output: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// P-02 (Session 22) — dispatcher for `neoth profile preset ...`.
+async fn run_preset_sub(sub: PresetSub, output: &OutputFormat) -> Result<()> {
+    use crate::profile::presets::{ProfilePreset, apply_preset};
+
+    let home = FreedomConfig::default_neoth_home();
+    match sub {
+        PresetSub::List => {
+            #[derive(serde::Serialize)]
+            struct Row {
+                name: &'static str,
+                description: &'static str,
+                recommended: bool,
+            }
+            let rows: Vec<Row> = ProfilePreset::ALL
+                .iter()
+                .map(|p| Row {
+                    name: p.as_str(),
+                    description: p.description(),
+                    recommended: matches!(p, ProfilePreset::Lowkey),
+                })
+                .collect();
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string_pretty(&rows)?);
+                }
+                OutputFormat::Table => {
+                    let active = load_active_preset(&home);
+                    println!("Profile presets:");
+                    for row in &rows {
+                        let active_tag = match active {
+                            Some(p) if p.as_str() == row.name => " (active)",
+                            _ => "",
+                        };
+                        let recommended = if row.recommended { "(recommended)" } else { "" };
+                        println!("  {} {recommended}{active_tag}", row.name);
+                        println!("    {}", row.description);
+                    }
+                    println!();
+                    println!("Apply via `neoth profile preset apply <name>`.");
+                }
+            }
+            Ok(())
+        }
+        PresetSub::Show { name } => {
+            let preset = ProfilePreset::parse(&name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown preset `{name}`. Run `neoth profile preset list` for valid names."
+                )
+            })?;
+            let data = apply_preset(preset);
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "preset": preset.as_str(),
+                        "system_addendum": data.system_addendum,
+                        "verbosity": format!("{:?}", data.verbosity),
+                        "formality": format!("{:?}", data.formality),
+                        "ask_clarifying": data.ask_clarifying,
+                        "trim_disclaimers": data.trim_disclaimers,
+                    }))?
+                ),
+                OutputFormat::Table => {
+                    println!("Preset      : {}", preset.as_str());
+                    println!("Verbosity   : {:?}", data.verbosity);
+                    println!("Formality   : {:?}", data.formality);
+                    println!("Clarifying  : {}", data.ask_clarifying);
+                    println!("Trim disclaimers: {}", data.trim_disclaimers);
+                    println!();
+                    if data.system_addendum.is_empty() {
+                        println!("System addendum: <empty>");
+                    } else {
+                        println!("System addendum:");
+                        for line in data.system_addendum.lines() {
+                            println!("  {line}");
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
+        PresetSub::Apply { name } => {
+            let preset = ProfilePreset::parse(&name).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "unknown preset `{name}`. Run `neoth profile preset list` for valid names."
+                )
+            })?;
+            record_active_preset(&home, preset).with_context(|| {
+                format!(
+                    "persist active preset to {}",
+                    active_preset_path(&home).display()
+                )
+            })?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "applied": true,
+                        "preset": preset.as_str(),
+                        "marker": active_preset_path(&home),
+                    }))?
+                ),
+                OutputFormat::Table => println!(
+                    "Active preset → {}. Marker: {}\n  \
+                     Chat dispatch picks this up on next run. \
+                     Re-run `neoth profile preset apply <other>` to switch.",
+                    preset.as_str(),
+                    active_preset_path(&home).display(),
+                ),
+            }
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,5 +875,66 @@ mod tests {
     fn render_show_handles_empty_without_panicking() {
         render_show(&[], &OutputFormat::Json).unwrap();
         render_show(&[], &OutputFormat::Table).unwrap();
+    }
+
+    // ── P-02 (Session 22): preset marker round-trip ──────────────────
+
+    use crate::profile::presets::ProfilePreset;
+
+    #[test]
+    fn active_preset_path_drift_guard() {
+        assert_eq!(ACTIVE_PRESET_RELATIVE_PATH, "profile/active_preset.txt");
+    }
+
+    #[test]
+    fn load_active_preset_returns_none_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load_active_preset(dir.path()).is_none());
+    }
+
+    #[test]
+    fn record_then_load_round_trips_each_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        for preset in ProfilePreset::ALL {
+            record_active_preset(dir.path(), *preset).expect("record");
+            let loaded = load_active_preset(dir.path()).expect("load");
+            assert_eq!(loaded.as_str(), preset.as_str());
+        }
+    }
+
+    #[test]
+    fn record_overwrites_previous_preset() {
+        let dir = tempfile::tempdir().unwrap();
+        record_active_preset(dir.path(), ProfilePreset::Formal).unwrap();
+        record_active_preset(dir.path(), ProfilePreset::Lowkey).unwrap();
+        let loaded = load_active_preset(dir.path()).unwrap();
+        assert_eq!(loaded.as_str(), "lowkey");
+    }
+
+    #[test]
+    fn record_persists_via_atomic_tmp_then_rename() {
+        // Drift guard — write goes via `.txt.tmp` sibling + rename. A
+        // concurrent reader during persist sees OLD or NEW, never a
+        // partial write. Detect by asserting the .tmp is gone after.
+        let dir = tempfile::tempdir().unwrap();
+        record_active_preset(dir.path(), ProfilePreset::Opsec).unwrap();
+        let tmp = active_preset_path(dir.path()).with_extension("txt.tmp");
+        assert!(
+            !tmp.exists(),
+            ".txt.tmp must be renamed away: {}",
+            tmp.display()
+        );
+    }
+
+    #[test]
+    fn load_active_preset_returns_none_for_unknown_name() {
+        // Corrupted marker (operator hand-edited the file with garbage)
+        // → load returns None instead of crashing. Chat dispatch then
+        // falls back to "no preset" without surfacing the error.
+        let dir = tempfile::tempdir().unwrap();
+        let path = active_preset_path(dir.path());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"not-a-real-preset-name").unwrap();
+        assert!(load_active_preset(dir.path()).is_none());
     }
 }

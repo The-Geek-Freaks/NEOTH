@@ -83,6 +83,14 @@ pub struct MemoryArgs {
     #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget"])]
     pub dimension: bool,
 
+    /// V10-08 — rebuild the HNSW embedding index from scratch by scanning
+    /// all rows in `idx_embedding`. Writes the snapshot to
+    /// `<neoth_home>/embeddings.hnsw`. Use after a database restore or when
+    /// the snapshot is missing or corrupted. Safe to interrupt: the snapshot
+    /// is written atomically (temp-file + rename).
+    #[arg(long, conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension"])]
+    pub rebuild_index: bool,
+
     /// Max rows for `--tier` recall.
     #[arg(long, default_value = "20")]
     pub limit: usize,
@@ -111,6 +119,9 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     }
     if args.dimension {
         return run_memory_dimension(&args).await;
+    }
+    if args.rebuild_index {
+        return run_memory_rebuild_index(&args).await;
     }
 
     let home = FreedomConfig::default_neoth_home();
@@ -600,6 +611,47 @@ async fn run_memory_dimension(args: &MemoryArgs) -> Result<()> {
             }
             println!();
             println!("  verdict: {}", report.honest_verdict);
+        }
+    }
+    Ok(())
+}
+
+/// `neoth memory --rebuild-index` — V10-08. Rebuild the HNSW embedding index
+/// from scratch by scanning `idx_embedding` and persist to
+/// `<neoth_home>/embeddings.hnsw`.
+async fn run_memory_rebuild_index(args: &MemoryArgs) -> Result<()> {
+    use crate::config::FreedomConfig;
+    use crate::memory::{embeddings, store};
+
+    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path)
+        .with_context(|| format!("open views.db for rebuild-index: {}", db_path.display()))?;
+
+    // Snapshot lives one level up from the WAL dir, i.e. <neoth_home>/embeddings.hnsw.
+    let neoth_home = FreedomConfig::default_neoth_home();
+    let index_path = neoth_home.join("embeddings.hnsw");
+
+    let n = tokio::task::spawn_blocking(move || embeddings::rebuild_index(&conn, &index_path))
+        .await
+        .context("spawn_blocking for rebuild_index")??;
+
+    match args.output {
+        crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "indexed": n,
+                    "snapshot": neoth_home.join("embeddings.hnsw").display().to_string(),
+                }))?
+            );
+        }
+        crate::cli::OutputFormat::Table => {
+            println!("# HNSW index rebuild complete");
+            println!("  vectors indexed : {n}");
+            println!(
+                "  snapshot path   : {}",
+                neoth_home.join("embeddings.hnsw").display()
+            );
         }
     }
     Ok(())

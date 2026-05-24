@@ -122,6 +122,12 @@ regex = "1.10"
 tar    = "0.4"
 flate2 = "1.0"
 
+# Workstream F (CT-10/E-20/V1x-06) — WAL v1.2 zstd-3 compression on
+# sealed segments. Level-3 chosen per HANDOFF §Workstream-F: good ratio
+# at low latency, suitable for JSON-heavy WAL payloads. `zstd` 0.13 wraps
+# the vendored libzstd; no system-zstd linkage, stays AIO-compatible.
+zstd = "0.13"
+
 # V03-09 Phase 2b (Session 19) -- archive extractors for the self-
 # update download path. cargo-dist publishes Windows releases as
 # `.zip` (zip crate), Linux + macOS as `.tar.xz` (lzma-rs + tar).
@@ -266,6 +272,14 @@ teloxide     = { version = "0.17", default-features = false, features = ["ctrlc_
 # FTS5 deferred to Day-11b; the bundled build does include it when we want it.
 rusqlite     = { version = "0.31", features = ["bundled"] }
 
+# V10-08 (Workstream E) — HNSW embedding index. Pure-Rust approximate nearest-
+# neighbour index. Replaces the O(N) cosine scan in memory/embeddings.rs for
+# corpora beyond ~50k vectors. Persisted as a bincode snapshot alongside the
+# WAL dir at <neoth_home>/embeddings.hnsw. bincode 1.x chosen for the stable
+# 1.x API; hnsw_rs 0.3 is the pure-Rust HNSW engine (self-contained rule OK).
+hnsw_rs = "0.3"
+bincode  = "1"
+
 # Day-14a (Local Qwen inference -- skeleton) -- model + tokenizer download
 # from Hugging Face. candle (the actual inference runtime) is added in D14b
 # so this phase doesn't bring in the heavy GPU build deps.
@@ -338,7 +352,9 @@ libc        = "0.2"
 [target.'cfg(windows)'.dependencies]
 # Win32_System_Memory: K-Sec-2 VirtualLock for SecretString (2026-05-17).
 # Win32_Security_Cryptography: K-Sec-4 DPAPI wrap for HMAC key (2026-05-22).
-windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography"] }
+# Win32_Security_Authorization: E-11 SetEntriesInAclW + SetNamedSecurityInfoW + BuildExplicitAccessWithNameW (2026-05-24).
+# Win32_Storage_FileSystem: E-12 FlushFileBuffers WAL durability (2026-05-24).
+windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
 
 # B-6 Item 3f (Session 21) — PTY stealth for interactive subprocess.
 # `portable-pty` is the cross-platform PTY crate WezTerm uses (Wez Furlong).

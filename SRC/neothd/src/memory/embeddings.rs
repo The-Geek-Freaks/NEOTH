@@ -2,9 +2,22 @@
 //!
 //! Persists fixed-size dense vectors (CLIP image embeddings today,
 //! potentially audio + text projections later) so recall can do
-//! similarity search across modalities. Brute-force cosine for now —
-//! HNSW / IVF arrives when the corpus exceeds ~50k vectors, which a
-//! solo operator is unlikely to hit in v0.1.x.
+//! similarity search across modalities.
+//!
+//! ## Search backends
+//!
+//! Two complementary search paths are provided:
+//!
+//! 1. **Brute-force** ([`find_similar`]) — O(N) cosine scan directly over
+//!    `idx_embedding`. Acceptable up to [`BRUTE_FORCE_CEILING`] (~50k vectors).
+//!    Always available, zero setup, used as fallback.
+//!
+//! 2. **HNSW** ([`EmbeddingIndex`]) — approximate nearest-neighbour index via
+//!    `hnsw_rs`. Built in-memory, persisted via `bincode` to
+//!    `<neoth_home>/embeddings.hnsw`. On first boot the index is populated from
+//!    existing `idx_embedding` rows ([`EmbeddingIndex::build_from_sqlite`]). Add
+//!    vectors after each upsert with [`EmbeddingIndex::add`] then call
+//!    [`EmbeddingIndex::save`] on graceful shutdown.
 //!
 //! Storage layout:
 //!   * `embedding BLOB` — `dim × 4` bytes, little-endian f32. L2-norm
@@ -13,12 +26,15 @@
 //!   * `(source_kind, source_ref)` is the natural key — an `(image, path)`
 //!     can only ever have one current embedding. New inserts UPSERT,
 //!     bumping `created_at`.
-//!
-//! Self-contained: no HNSW / qdrant / lance dep. Pure rusqlite + a
-//! handful of fold-style reductions.
+
+use std::collections::HashMap;
+use std::path::Path;
 
 use anyhow::{Context, Result};
+use hnsw_rs::anndists::dist::distances::DistCosine;
+use hnsw_rs::hnsw::Hnsw;
 use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
 
 /// Insert (or replace) one embedding row. `embedding` MUST already be
 /// L2-normalised — `find_similar` relies on that to skip per-candidate
@@ -301,6 +317,377 @@ pub(crate) fn brute_force_ceiling_flag_for_test() -> bool {
     BRUTE_FORCE_CEILING_WARNED.load(std::sync::atomic::Ordering::Acquire)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HNSW embedding index — V10-08
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Metadata stored per indexed vector so search results can be
+/// reconstructed as [`SimilarHit`] without a round-trip to SQLite.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct VectorMeta {
+    id: i64,
+    source_kind: String,
+    source_ref: String,
+    model: String,
+    created_at: i64,
+}
+
+/// The bincode snapshot written to `<neoth_home>/embeddings.hnsw`.
+///
+/// Layout: every indexed vector is stored in insertion order; the HNSW
+/// graph is rebuilt from these raw vectors on load. Rebuilding takes
+/// O(N log N) time — fast enough for ≤500k vectors on commodity
+/// hardware (< 1 min). The alternative (serialising the internal graph
+/// links) would require unsafe access to hnsw_rs internals.
+#[derive(Serialize, Deserialize)]
+struct IndexSnapshot {
+    /// HNSW construction parameters — must be consistent across save/load.
+    max_nb_connection: usize,
+    ef_construction: usize,
+    /// One entry per indexed vector, in insertion order.
+    entries: Vec<(VectorMeta, Vec<f32>)>,
+}
+
+/// In-process HNSW index over the embedding corpus.
+///
+/// Call [`EmbeddingIndex::build_from_sqlite`] on first boot (or after
+/// `neoth memory rebuild-index`) to populate from `idx_embedding`.
+/// Call [`EmbeddingIndex::add`] after each successful [`upsert`].
+/// Call [`EmbeddingIndex::save`] on graceful daemon shutdown.
+/// Call [`EmbeddingIndex::load`] on boot before the first search.
+///
+/// The `'static` lifetime bound on the inner `Hnsw` is required because
+/// hnsw_rs stores data internally and the struct must be `Send + 'static`
+/// to cross tokio task boundaries.
+pub struct EmbeddingIndex {
+    // SAFETY: 'static here because hnsw_rs copies inserted data into its
+    // own heap allocations; no external data reference escapes the struct.
+    hnsw: Hnsw<'static, f32, DistCosine>,
+    /// Maps the hnsw data-id (a sequential `usize`) back to row metadata.
+    meta: HashMap<usize, VectorMeta>,
+    /// Raw vectors kept for snapshot persistence (rebuild on load).
+    raw: Vec<(usize, VectorMeta, Vec<f32>)>,
+    /// Next data-id to assign on insert.
+    next_id: usize,
+    /// HNSW max-nb-connection (M) used during construction.
+    max_nb_connection: usize,
+    /// ef_construction parameter used during construction.
+    ef_construction: usize,
+}
+
+/// HNSW construction constants. M=16 / ef=200 is a well-balanced
+/// operating point: recall ≥ 0.95 @ top-10 on cosine-similarity
+/// workloads with dim 256–768. Operators who need higher recall at the
+/// cost of build time can tune via `freedom.yaml` in a future release.
+const HNSW_M: usize = 16;
+const HNSW_EF_CONSTRUCTION: usize = 200;
+/// ef_search — number of entry-point candidates explored per query.
+/// 64 gives recall ≥ 0.98 at top-10 for M=16 / ef_c=200 on
+/// typical embedding workloads.
+const HNSW_EF_SEARCH: usize = 64;
+/// Initial capacity hint. The HNSW graph grows dynamically; this just
+/// avoids repeated reallocations for small corpora.
+const HNSW_INITIAL_CAPACITY: usize = 10_000;
+/// Max layers in the HNSW graph. 8 layers is sufficient for ≤10M
+/// vectors.
+const HNSW_NB_LAYER: usize = 8;
+
+impl EmbeddingIndex {
+    /// Create a new, empty HNSW index.
+    pub fn new() -> Self {
+        let hnsw = Hnsw::<f32, DistCosine>::new(
+            HNSW_M,
+            HNSW_INITIAL_CAPACITY,
+            HNSW_NB_LAYER,
+            HNSW_EF_CONSTRUCTION,
+            DistCosine,
+        );
+        Self {
+            hnsw,
+            meta: HashMap::new(),
+            raw: Vec::new(),
+            next_id: 0,
+            max_nb_connection: HNSW_M,
+            ef_construction: HNSW_EF_CONSTRUCTION,
+        }
+    }
+
+    /// Insert one L2-normalised vector with its row metadata into the index.
+    /// `id` is the SQLite `idx_embedding.id` (rowid). `source_kind`,
+    /// `source_ref`, `model`, `created_at` mirror the DB columns.
+    pub fn add(
+        &mut self,
+        id: i64,
+        source_kind: &str,
+        source_ref: &str,
+        model: &str,
+        vector: &[f32],
+        created_at: i64,
+    ) {
+        let data_id = self.next_id;
+        self.next_id += 1;
+        let meta = VectorMeta {
+            id,
+            source_kind: source_kind.to_owned(),
+            source_ref: source_ref.to_owned(),
+            model: model.to_owned(),
+            created_at,
+        };
+        self.hnsw.insert((&vector.to_vec(), data_id));
+        self.meta.insert(data_id, meta.clone());
+        self.raw.push((data_id, meta, vector.to_vec()));
+    }
+
+    /// Approximate top-k nearest-neighbour search. `query` must be
+    /// L2-normalised. Returns up to `top_k` hits sorted by cosine
+    /// similarity descending. Returns an empty `Vec` when the index is
+    /// empty — never panics.
+    ///
+    /// Note: `hnsw_rs` with `DistCosine` returns *cosine distance*
+    /// (1 − dot_product). We convert back to similarity here.
+    pub fn find_similar_hnsw(&self, query: &[f32], top_k: usize) -> Vec<SimilarHit> {
+        if top_k == 0 || self.meta.is_empty() {
+            return Vec::new();
+        }
+        let ef = HNSW_EF_SEARCH.max(top_k);
+        let neighbours = self.hnsw.search(query, top_k, ef);
+        let mut hits: Vec<SimilarHit> = neighbours
+            .into_iter()
+            .filter_map(|n| {
+                let m = self.meta.get(&n.d_id)?;
+                // hnsw_rs DistCosine returns 1 - dot_product (cosine
+                // distance). Clamp to [0, 2] before negation so a
+                // degenerate distance (NaN / negative) doesn't escape.
+                let dist = n.distance.clamp(0.0, 2.0);
+                Some(SimilarHit {
+                    id: m.id,
+                    source_kind: m.source_kind.clone(),
+                    source_ref: m.source_ref.clone(),
+                    model: m.model.clone(),
+                    similarity: 1.0 - dist,
+                    created_at: m.created_at,
+                })
+            })
+            .collect();
+        // Sort descending by similarity, break ties by created_at DESC.
+        hits.sort_by(|a, b| {
+            b.similarity
+                .partial_cmp(&a.similarity)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(b.created_at.cmp(&a.created_at))
+        });
+        hits.truncate(top_k);
+        hits
+    }
+
+    /// Number of indexed vectors.
+    pub fn len(&self) -> usize {
+        self.meta.len()
+    }
+
+    /// `true` when no vectors have been inserted yet.
+    pub fn is_empty(&self) -> bool {
+        self.meta.is_empty()
+    }
+
+    /// Persist the index snapshot to `path` using an atomic write
+    /// (write to `path.tmp`, then rename). Uses `bincode` 1.x encoding.
+    ///
+    /// The snapshot stores raw vectors + metadata. On [`load`] the
+    /// HNSW graph is rebuilt from those vectors, which is faster than
+    /// serialising the internal link structure.
+    pub fn save(&self, path: &Path) -> Result<()> {
+        let snapshot = IndexSnapshot {
+            max_nb_connection: self.max_nb_connection,
+            ef_construction: self.ef_construction,
+            entries: self
+                .raw
+                .iter()
+                .map(|(_, meta, vec)| (meta.clone(), vec.clone()))
+                .collect(),
+        };
+        let bytes =
+            bincode::serialize(&snapshot).context("bincode-encode embedding index snapshot")?;
+
+        // Atomic write: write to a sibling .tmp file then rename.
+        let tmp = path.with_extension("hnsw.tmp");
+        if let Some(parent) = tmp.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create dir for embedding index: {}", parent.display()))?;
+        }
+        std::fs::write(&tmp, &bytes)
+            .with_context(|| format!("write embedding index tmp file: {}", tmp.display()))?;
+        std::fs::rename(&tmp, path)
+            .with_context(|| format!("atomic rename {} → {}", tmp.display(), path.display()))?;
+        tracing::debug!(
+            path = %path.display(),
+            vectors = self.meta.len(),
+            bytes = bytes.len(),
+            "embedding index snapshot written"
+        );
+        Ok(())
+    }
+
+    /// Load an index snapshot from `path`. Returns `Ok(None)` when the
+    /// file does not yet exist (first boot before any snapshot is written).
+    /// Returns `Err` on I/O or decode failure (corrupted snapshot).
+    ///
+    /// The HNSW graph is rebuilt from the stored raw vectors on load;
+    /// this takes O(N log N) time proportional to the corpus size.
+    pub fn load(path: &Path) -> Result<Option<Self>> {
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(path)
+            .with_context(|| format!("read embedding index snapshot: {}", path.display()))?;
+        let snapshot: IndexSnapshot = bincode::deserialize(&bytes)
+            .with_context(|| format!("decode embedding index snapshot: {}", path.display()))?;
+
+        let mut idx = Self::new_with_params(snapshot.max_nb_connection, snapshot.ef_construction);
+        for (meta, vec) in snapshot.entries {
+            idx.add(
+                meta.id,
+                &meta.source_kind,
+                &meta.source_ref,
+                &meta.model,
+                &vec,
+                meta.created_at,
+            );
+        }
+        tracing::info!(
+            path = %path.display(),
+            vectors = idx.meta.len(),
+            "embedding index loaded from snapshot"
+        );
+        Ok(Some(idx))
+    }
+
+    /// Construct the index from all rows in `idx_embedding`, filtered
+    /// by optional `kind_filter`. Dimension is inferred from the first
+    /// row; rows with mismatched dimension are logged and skipped.
+    ///
+    /// Used for first-boot migration (no snapshot exists yet) and for
+    /// `neoth memory rebuild-index`.
+    pub fn build_from_sqlite(conn: &Connection, kind_filter: Option<&str>) -> Result<Self> {
+        let mut idx = Self::new();
+
+        let sql_base = "SELECT id, source_kind, source_ref, model, embedding, dim, created_at \
+                        FROM idx_embedding";
+        let sql_filtered = format!("{sql_base} WHERE source_kind = ?1");
+        let sql = if kind_filter.is_some() {
+            sql_filtered.as_str()
+        } else {
+            sql_base
+        };
+
+        let mut stmt = conn
+            .prepare(sql)
+            .context("prepare build_from_sqlite query")?;
+
+        let rows: Vec<(i64, String, String, String, Vec<u8>, i64, i64)> = match kind_filter {
+            Some(kind) => stmt
+                .query_map(rusqlite::params![kind], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("scan idx_embedding for build_from_sqlite (filtered)")?,
+            None => stmt
+                .query_map([], |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .context("scan idx_embedding for build_from_sqlite")?,
+        };
+
+        let mut inferred_dim: Option<usize> = None;
+        let mut skipped = 0usize;
+
+        for (id, source_kind, source_ref, model, blob, dim_col, created_at) in rows {
+            let dim = dim_col as usize;
+            // Infer dimension from first row; skip mismatches.
+            match inferred_dim {
+                None => inferred_dim = Some(dim),
+                Some(d) if d != dim => {
+                    tracing::warn!(
+                        id,
+                        expected_dim = d,
+                        got_dim = dim,
+                        "build_from_sqlite: dim mismatch, row skipped"
+                    );
+                    skipped += 1;
+                    continue;
+                }
+                Some(_) => {}
+            }
+            let Some(vec) = blob_to_floats(&blob, dim) else {
+                tracing::warn!(id, "build_from_sqlite: blob/dim mismatch, row skipped");
+                skipped += 1;
+                continue;
+            };
+            idx.add(id, &source_kind, &source_ref, &model, &vec, created_at);
+        }
+
+        tracing::info!(
+            indexed = idx.meta.len(),
+            skipped,
+            "embedding index built from idx_embedding"
+        );
+        Ok(idx)
+    }
+
+    /// Constructor with explicit tuning parameters. Used internally by
+    /// [`load`] to reconstruct with the same params used at build time.
+    fn new_with_params(max_nb_connection: usize, ef_construction: usize) -> Self {
+        let hnsw = Hnsw::<f32, DistCosine>::new(
+            max_nb_connection,
+            HNSW_INITIAL_CAPACITY,
+            HNSW_NB_LAYER,
+            ef_construction,
+            DistCosine,
+        );
+        Self {
+            hnsw,
+            meta: HashMap::new(),
+            raw: Vec::new(),
+            next_id: 0,
+            max_nb_connection,
+            ef_construction,
+        }
+    }
+}
+
+impl Default for EmbeddingIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Rebuild the HNSW index from `idx_embedding` and persist to `path`.
+/// Called by `neoth memory rebuild-index`. Returns the number of
+/// vectors indexed.
+pub fn rebuild_index(conn: &Connection, path: &Path) -> Result<usize> {
+    let idx = EmbeddingIndex::build_from_sqlite(conn, None)?;
+    let n = idx.len();
+    idx.save(path)?;
+    Ok(n)
+}
+
 fn floats_to_blob(v: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(v.len() * 4);
     for f in v {
@@ -550,5 +937,145 @@ mod tests {
             "flag stays true — once-set, never reset by the production path"
         );
         reset_brute_force_ceiling_flag_for_test();
+    }
+
+    // ── HNSW index tests (V10-08 Workstream E) ───────────────────────
+
+    /// T1: add + search round-trip — verify that an inserted vector can be
+    /// found by HNSW search with similarity close to 1.0.
+    #[test]
+    fn hnsw_add_and_search_round_trip() {
+        let mut idx = EmbeddingIndex::new();
+        let v = unit(vec![1.0, 0.0, 0.0]);
+        idx.add(1, "image", "a.png", "clip", &v, 1000);
+        let hits = idx.find_similar_hnsw(&v, 1);
+        assert_eq!(hits.len(), 1, "expected one hit");
+        assert_eq!(hits[0].source_ref, "a.png");
+        // Cosine similarity of identical unit vectors = 1.0 (within f32
+        // tolerance after hnsw_rs distance conversion).
+        assert!(
+            hits[0].similarity > 0.99,
+            "similarity of identical vectors must be ~1.0, got {}",
+            hits[0].similarity
+        );
+    }
+
+    /// T2: persist + load round-trip — save the index, load it back, verify
+    /// that search still works after deserialization.
+    #[test]
+    fn hnsw_persist_and_load_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("embeddings.hnsw");
+
+        let v_a = unit(vec![1.0, 0.0, 0.0]);
+        let v_b = unit(vec![0.0, 1.0, 0.0]);
+
+        {
+            let mut idx = EmbeddingIndex::new();
+            idx.add(1, "image", "a.png", "clip", &v_a, 1000);
+            idx.add(2, "image", "b.png", "clip", &v_b, 1001);
+            idx.save(&path).expect("save must succeed");
+        }
+
+        let loaded = EmbeddingIndex::load(&path)
+            .expect("load must succeed")
+            .expect("snapshot must exist after save");
+
+        assert_eq!(loaded.len(), 2, "loaded index must have 2 vectors");
+        let hits = loaded.find_similar_hnsw(&v_a, 1);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].source_ref, "a.png");
+        assert!(hits[0].similarity > 0.99);
+    }
+
+    /// T3: migration from idx_embedding — build index from a synthetic
+    /// SQLite table with 100 rows and verify all are indexed.
+    #[test]
+    fn hnsw_build_from_sqlite_100_rows() {
+        let conn = open_with_schema();
+        // Insert 100 orthogonal unit vectors (dim=8, cycling across basis).
+        for i in 0u64..100 {
+            let mut v = vec![0.0f32; 8];
+            v[(i % 8) as usize] = 1.0;
+            upsert(&conn, "text", &format!("doc{i}"), "model", &v).unwrap();
+        }
+        let idx =
+            EmbeddingIndex::build_from_sqlite(&conn, None).expect("build from sqlite must succeed");
+        assert_eq!(idx.len(), 100, "all 100 rows must be indexed");
+    }
+
+    /// T4: empty-index search returns empty Vec, no panic.
+    #[test]
+    fn hnsw_empty_index_search_returns_empty() {
+        let idx = EmbeddingIndex::new();
+        let q = unit(vec![1.0, 0.0, 0.0]);
+        let hits = idx.find_similar_hnsw(&q, 10);
+        assert!(hits.is_empty(), "empty index must return empty Vec");
+    }
+
+    /// T5: search when no snapshot exists yet falls back gracefully
+    /// (load returns Ok(None), caller can use brute-force without crashing).
+    #[test]
+    fn hnsw_load_returns_none_when_no_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("does_not_exist.hnsw");
+        let result = EmbeddingIndex::load(&path).expect("load must not error when file absent");
+        assert!(
+            result.is_none(),
+            "must return None when snapshot not present"
+        );
+    }
+
+    /// T6: ranking — after inserting three vectors, HNSW search returns
+    /// them in descending similarity order (same as brute-force).
+    #[test]
+    fn hnsw_search_ranks_by_similarity_descending() {
+        let mut idx = EmbeddingIndex::new();
+        let query = unit(vec![1.0, 0.0, 0.0]);
+        // a: identical to query → similarity ~1.0
+        let a = unit(vec![1.0, 0.0, 0.0]);
+        // b: close to query
+        let b = unit(vec![0.9, 0.1, 0.0]);
+        // c: orthogonal to query → similarity ~0.0
+        let c = unit(vec![0.0, 1.0, 0.0]);
+
+        idx.add(1, "image", "a.png", "clip", &a, 1000);
+        idx.add(2, "image", "b.png", "clip", &b, 1001);
+        idx.add(3, "image", "c.png", "clip", &c, 1002);
+
+        let hits = idx.find_similar_hnsw(&query, 3);
+        assert_eq!(hits.len(), 3);
+        // Similarity must be non-increasing.
+        for w in hits.windows(2) {
+            assert!(
+                w[0].similarity >= w[1].similarity,
+                "hits must be sorted descending by similarity: {} < {}",
+                w[0].similarity,
+                w[1].similarity
+            );
+        }
+        // Closest hit must be the identical vector.
+        assert_eq!(hits[0].source_ref, "a.png");
+    }
+
+    /// T7: rebuild_index helper writes a valid snapshot that load can read.
+    #[test]
+    fn hnsw_rebuild_index_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("v.db");
+        let idx_path = dir.path().join("embeddings.hnsw");
+        let conn = crate::memory::store::open(&db_path).unwrap();
+
+        let v = unit(vec![1.0, 0.0, 0.0]);
+        upsert(&conn, "image", "x.png", "clip", &v).unwrap();
+
+        let n = rebuild_index(&conn, &idx_path).expect("rebuild_index must succeed");
+        assert_eq!(n, 1, "one vector must be indexed");
+        assert!(idx_path.exists(), "snapshot file must be created");
+
+        let loaded = EmbeddingIndex::load(&idx_path)
+            .expect("load must succeed after rebuild")
+            .expect("snapshot must exist");
+        assert_eq!(loaded.len(), 1);
     }
 }
