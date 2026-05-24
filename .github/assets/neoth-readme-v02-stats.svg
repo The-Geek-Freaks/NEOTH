@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" width="1280" height="560" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH v0.2 release stats dashboard">
+  <defs>
+    <radialGradient id="dash-bg" cx="50%" cy="40%" r="78%">
+      <stop offset="0%" stop-color="#1a1a1a"/>
+      <stop offset="100%" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="green-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00ff80" stop-opacity=".35"/>
+      <stop offset="100%" stop-color="#00ff80" stop-opacity=".05"/>
+    </linearGradient>
+    <linearGradient id="pink-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff2a6d" stop-opacity=".32"/>
+      <stop offset="100%" stop-color="#ff2a6d" stop-opacity=".04"/>
+    </linearGradient>
+    <linearGradient id="cyan-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#05d5ff" stop-opacity=".32"/>
+      <stop offset="100%" stop-color="#05d5ff" stop-opacity=".04"/>
+    </linearGradient>
+    <linearGradient id="yellow-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffd166" stop-opacity=".30"/>
+      <stop offset="100%" stop-color="#ffd166" stop-opacity=".04"/>
+    </linearGradient>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
+      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
+      .title { font-size: 30px; font-weight: 300; letter-spacing: 7px; fill: #fff; }
+      .label-small { font-size: 10px; letter-spacing: 2.5px; opacity: .82; }
+      .label-tag { font-size: 11px; letter-spacing: 1.6px; }
+      .metric-big { font-size: 64px; font-weight: 200; letter-spacing: -1px; }
+      .metric-tiny { font-size: 9px; letter-spacing: 1.4px; opacity: .68; }
+      .row-text { font-size: 12px; letter-spacing: .5px; fill: #e0e0e0; }
+      .row-num { font-size: 13px; letter-spacing: 1px; }
+    </style>
+  </defs>
+  <rect width="1280" height="560" rx="36" fill="url(#dash-bg)"/>
+  <rect x="1" y="1" width="1278" height="558" rx="36" fill="none" stroke="#fff" stroke-opacity=".08"/>
+
+  <text x="640" y="58" class="sans title" text-anchor="middle">NEOTH  v0.2  RELEASE  DASHBOARD</text>
+  <text x="640" y="86" class="mono label-small" fill="#00ff80" text-anchor="middle">SESSION 23 SHIP  ·  COMMIT 83d60a9  ·  DEFERRED BACKLOG = 0</text>
+
+  <!-- four big metric cards -->
+  <g class="mono">
+    <rect x="72" y="124" width="266" height="148" rx="22" fill="url(#green-glow)" stroke="#00ff80" stroke-opacity=".36"/>
+    <text x="92" y="152" class="label-tag" fill="#00ff80">TEST SUITE</text>
+    <text x="92" y="216" class="metric-big" fill="#fff">4240</text>
+    <text x="92" y="244" class="metric-tiny" fill="#e0e0e0">PASSING  ·  11 IGNORED  ·  0 FAILED</text>
+    <text x="92" y="260" class="metric-tiny" fill="#00ff80">VERIFIED ACROSS 2 CONSECUTIVE RERUNS</text>
+
+    <rect x="354" y="124" width="266" height="148" rx="22" fill="url(#pink-glow)" stroke="#ff2a6d" stroke-opacity=".34"/>
+    <text x="374" y="152" class="label-tag" fill="#ff2a6d">MEMORY MODEL</text>
+    <text x="374" y="216" class="metric-big" fill="#fff">6×6</text>
+    <text x="374" y="244" class="metric-tiny" fill="#e0e0e0">LAYERS  ×  BRAIN REGIONS</text>
+    <text x="374" y="260" class="metric-tiny" fill="#ff2a6d">HIPPOCAMPUS · AMYGDALA · INSULA · ...</text>
+
+    <rect x="636" y="124" width="266" height="148" rx="22" fill="url(#cyan-glow)" stroke="#05d5ff" stroke-opacity=".34"/>
+    <text x="656" y="152" class="label-tag" fill="#05d5ff">SURFACES</text>
+    <text x="656" y="216" class="metric-big" fill="#fff">8</text>
+    <text x="656" y="244" class="metric-tiny" fill="#e0e0e0">CHANNELS  ·  ONE ENRICHMENT PIPELINE</text>
+    <text x="656" y="260" class="metric-tiny" fill="#05d5ff">CLI · GUI · TG · WA · SLACK · DC · KEET · n8n</text>
+
+    <rect x="918" y="124" width="290" height="148" rx="22" fill="url(#yellow-glow)" stroke="#ffd166" stroke-opacity=".34"/>
+    <text x="938" y="152" class="label-tag" fill="#ffd166">SESSION 23</text>
+    <text x="938" y="216" class="metric-big" fill="#fff">12</text>
+    <text x="938" y="244" class="metric-tiny" fill="#e0e0e0">COMMITS  ·  ALL PUSHED  ·  GATES GREEN</text>
+    <text x="938" y="260" class="metric-tiny" fill="#ffd166">e4b5949 → 83d60a9  (10 ship + 2 doc)</text>
+  </g>
+
+  <!-- ship table -->
+  <g class="mono">
+    <text x="72" y="324" class="label-tag" fill="#00ff80" letter-spacing="3">WHAT  SHIPPED</text>
+    <line x1="72" y1="338" x2="1208" y2="338" stroke="#fff" stroke-opacity=".12"/>
+
+    <text x="72" y="370" class="row-text">K-Wire-3</text>
+    <text x="280" y="370" class="row-text" fill="#a8a8a8">pipeline::build_enriched_request + chat.rs + serve.rs channel-side parity</text>
+    <text x="1100" y="370" class="row-num" fill="#00ff80" text-anchor="end">3 commits</text>
+    <text x="1208" y="370" class="row-num" fill="#00ff80" text-anchor="end">17 tests</text>
+
+    <text x="72" y="398" class="row-text">N-3 hyper API</text>
+    <text x="280" y="398" class="row-text" fill="#a8a8a8">127.0.0.1:9744 · 6 endpoints · bearer + cooldown + 0x39 audit-before-auth</text>
+    <text x="1100" y="398" class="row-num" fill="#00ff80" text-anchor="end">9 files</text>
+    <text x="1208" y="398" class="row-num" fill="#00ff80" text-anchor="end">+16 tests</text>
+
+    <text x="72" y="426" class="row-text">M-4 thumbnail</text>
+    <text x="280" y="426" class="row-text" fill="#a8a8a8">ffmpeg subprocess: first-frame JPEG + base64 metadata + audit-closure for M-2/M-3/M-5</text>
+    <text x="1100" y="426" class="row-num" fill="#00ff80" text-anchor="end">1 commit</text>
+    <text x="1208" y="426" class="row-num" fill="#00ff80" text-anchor="end">+1 test</text>
+
+    <text x="72" y="454" class="row-text">B-6 final</text>
+    <text x="280" y="454" class="row-text" fill="#a8a8a8">13-item wrapper port verified + assets/tmux.conf reference + 3 hook ports as Rust modules</text>
+    <text x="1100" y="454" class="row-num" fill="#00ff80" text-anchor="end">1 asset</text>
+    <text x="1208" y="454" class="row-num" fill="#00ff80" text-anchor="end">audit pass</text>
+
+    <text x="72" y="482" class="row-text">Rustdoc fixes</text>
+    <text x="280" y="482" class="row-text" fill="#a8a8a8">4 nested-fence / path-layout markdown blocks (catalogue / parser / operator_md / loader)</text>
+    <text x="1100" y="482" class="row-num" fill="#00ff80" text-anchor="end">4 files</text>
+    <text x="1208" y="482" class="row-num" fill="#00ff80" text-anchor="end">doc-test green</text>
+
+    <text x="72" y="510" class="row-text">Race fix</text>
+    <text x="280" y="510" class="row-text" fill="#a8a8a8">duplicate PATH-mutation test removed (was racing with the git-worktree test under cargo's parallel runner)</text>
+    <text x="1100" y="510" class="row-num" fill="#00ff80" text-anchor="end">1 commit</text>
+    <text x="1208" y="510" class="row-num" fill="#00ff80" text-anchor="end">flake = 0</text>
+  </g>
+
+  <text x="640" y="538" class="mono metric-tiny" fill="#666" text-anchor="middle" letter-spacing="2.5">
+    cargo fmt · cargo clippy -D warnings · cargo test --workspace --all-targets   ALL GREEN
+  </text>
+</svg>

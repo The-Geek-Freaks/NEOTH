@@ -59,7 +59,34 @@
   </a>
 </p>
 
+<p>
+  <img alt="4240 tests passing" src="https://img.shields.io/badge/tests-4240_passing-00ff80?style=flat-square&labelColor=0d0d0d">
+  <img alt="0 deferred items" src="https://img.shields.io/badge/v0.2_backlog-0_deferred-00ff80?style=flat-square&labelColor=0d0d0d">
+  <img alt="0 clippy warnings" src="https://img.shields.io/badge/clippy-0_warnings-00ff80?style=flat-square&labelColor=0d0d0d">
+  <img alt="6 memory layers + 6 brain regions" src="https://img.shields.io/badge/memory-6_layers_x_6_regions-ff2a6d?style=flat-square&labelColor=0d0d0d">
+  <img alt="8 channel surfaces" src="https://img.shields.io/badge/channels-8_surfaces-ff2a6d?style=flat-square&labelColor=0d0d0d">
+  <img alt="WAL-audited" src="https://img.shields.io/badge/WAL--audited-every_provider_call-05d5ff?style=flat-square&labelColor=0d0d0d">
+  <img alt="no-phone-home" src="https://img.shields.io/badge/no_phone_home-mechanically_tested-ffd166?style=flat-square&labelColor=0d0d0d">
+</p>
+
 </div>
+
+## What's new in v0.2 (Session 23 ship)
+
+<img src=".github/assets/neoth-readme-v02-stats.svg" alt="NEOTH v0.2 release dashboard - 4240 tests passing, 0 deferred, 12 commits, all gates green" width="100%">
+
+Frisch geshipped — public release candidate aus commit `83d60a9`:
+
+| Workstream | Ship | Why it matters |
+| :-- | :-- | :-- |
+| **K — pipeline helper** | `pipeline::build_enriched_request` factored out + channel-side parity | Telegram / Slack / Keet inbounds now layer operator_md + skills + MCP catalogue + persona prefix the same way `neoth chat` does — channels stop being second-class. |
+| **D — n8n localhost API** | Hyper 1.x server on `127.0.0.1:9744`, 6 endpoints, bearer auth, 5-strike cooldown, 0x39 WAL audit per request | n8n workflows can now drive NEOTH (recall, provider call, memory save, channel send) without any cloud round-trip. Loopback-only + audit-before-auth means every attempt is durable, every misuse is visible. |
+| **H — multimodal pipeline** | Video thumbnail extract via ffmpeg subprocess + 4-backend chain (pdf / vision / audio / video) verified end-to-end | Voice messages in Telegram → 16 kHz mono → operator-cached Whisper → chat reply. Images → CLIP embeddings → cosine-similarity recall. Videos → audio track + JPEG thumbnail in one ffmpeg pass. |
+| **I — claude-cli tmux backend** | 13-item wrapper-port audit closure + `assets/tmux.conf` reference snippet | Warm-session protocol (dual-timer wait, idle/working detection, v6.4.3 bullet-line extractor, 4-class retry, ANSI strip, `--append-system-prompt` conflict merge) all in-process. No bridge.py dependency. |
+
+Plus: 4 Rustdoc nested-fence fixes + test-suite race fix (process-wide PATH mutation race against the worktree test).
+
+**v0.2 deferred backlog: 0.** All 8 items from the Session 23 handoff closed. v0.2.0 tag-ready from HEAD.
 
 ## Try it in 60 seconds
 
@@ -355,6 +382,22 @@ Hermes proved the Kanban-shaped coding loop; NEOTH makes it native to memory. Th
 
 Different projects optimize for different jobs. NEOTH is the one shaped around a **loyal, private, long-term buddy** that also has serious engineering depth.
 
+### 7 things only NEOTH does
+
+> The other projects each get one of these right. NEOTH is the only one that ships **all of them in the same binary**.
+
+| # | Capability | Why it's unique |
+| :--: | :-- | :-- |
+| 1 | **Layered enrichment helper used by BOTH CLI + channels** (`pipeline::build_enriched_request`) | Channel inbounds (Telegram / Slack / Keet) get the same operator_md + skills + MCP catalogue + persona prefix the CLI does. Other tools treat channels as second-class one-shot prompts. |
+| 2 | **n8n localhost API with WAL audit-before-auth** (`/api/{health,recall,provider/call,channel/send,stats,memory/save}` on `127.0.0.1:9744`) | Workflow automation drives NEOTH without any cloud round-trip; every request lands in the WAL **before** the auth check so even refused attempts are durable. |
+| 3 | **Local profile extraction with no silent cloud fallback** (Qwen / Ouro forward pass behind `inference.embedding_provider` + L-07 `allow_cloud_fallback: false` safe-default) | When the local model isn't cached, the embedding hop returns `None` instead of leaking the prompt to a vendor. Other tools default the other way. |
+| 4 | **Six brain-region SQLite views** (`idx_episode` / `idx_importance` / `idx_council` / `idx_motor` / `idx_habit` / `idx_profile`) | Recall isn't one flat "history" — it's hippocampus + amygdala + insula + cerebellum + basal-ganglia + hypothalamus, each tracked separately + queryable independently. |
+| 5 | **Three role-bound hemispheres with smart-trigger council** (Left fast + Right deep + Cerebellum orchestrator, dissent surfaced as `EVENT_TYPE_COUNCIL_*` WAL frames) | Daily budget + per-day debate cap mean the council only fires when complexity / risk / contradiction warrants it. Other multi-agent stacks debate everything. |
+| 6 | **Operator-cached multimodal pipeline** (image / audio / video → local CLIP / Whisper / ffmpeg, transcription metadata surfaces cache status) | Phone-home is never the fallback. If artifacts aren't cached, metadata says `"model not cached"` and the chat sees the actionable next step. |
+| 7 | **Tmux warm-session claude-cli backend in-process** (full bridge.py v6.4.3 protocol: dual-timer wait, bullet-line extractor, 4-class retry, --append-system-prompt merge, env scrub, opusplan alias) | No external bridge daemon. The "claude takes 30s to wake up" cold-start problem disappears via a warm tmux pane the adapter owns + sweeps via the B-10 TTL task. |
+
+<br>
+
 <img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH advantage scorecard versus Hermes, OpenHuman, and OpenClaw" width="100%">
 
 Legend: `&#10003;` strong / native, `&#9680;` partial / adjacent, `&#8722;` not the focus in local sources, `preview` exists but should not be oversold.
@@ -372,6 +415,13 @@ Legend: `&#10003;` strong / native, `&#9680;` partial / adjacent, `&#8722;` not 
 | Consent-gated memory cluster semantics | &#9680; explicit architecture/primitives | &#8722; | &#8722; | &#9680; gateway/node pairing |
 | Deployment shape | &#10003; Rust core + optional Rust/Slint GUI | &#8722; Python/web/Docker style | &#9680; Tauri + Rust sidecar + pnpm app | &#8722; Node/TypeScript gateway |
 | Plugin sandbox | &#10003; WASM caps + hostcall allowlist | &#9680; skills/extensions | &#10003; QuickJS skill sandbox | &#10003; Docker/SSH/OpenShell sandbox + plugin API |
+| n8n / workflow HTTP API on loopback with WAL audit-per-request | &#10003; `/api/*` on 127.0.0.1:9744, bearer + cooldown + 0x39 audit | &#8722; | &#8722; | &#9680; gateway HTTP surface (not n8n-shaped) |
+| Channel-side enrichment parity with the CLI prompt path | &#10003; `pipeline::build_enriched_request` reused by `chat.rs` + `serve.rs` (Session 23 K-Wire-3) | &#8722; | &#8722; | &#9680; gateway message pipeline |
+| Mode router on top of skill router (narrower trigger-phrases beat broad keywords) | &#10003; `ModeRegistry::match_trigger` overlays `system_prompt_delta` | &#9680; skill activation | &#8722; | &#9680; agent/skill match |
+| Two-stage skill router (keyword Stage-1 + embedding cosine Stage-2) | &#10003; `route_stage2_embedding` runs only when Stage-1 misses + `inference.embedding_provider` is wired | &#8722; | &#9680; embedding-search adjacent | &#8722; |
+| Operator-cached multimodal pipeline (CLIP image embeddings + Whisper transcript + ffmpeg thumbnail / audio extract) | &#10003; all 4 extractors in-process; cache-miss surfaces `transcription_status: "model not cached"` | &#8722; | &#9680; ingestion-adjacent | &#9680; channel attachments |
+| Warm-session tmux backend for `claude-cli` (no cold start, full bridge.py v6.4.3 protocol in-process) | &#10003; `claude_tmux::send_and_wait` + 4-class retry + bullet-line extractor + 8 tmux options + B-10 TTL sweeper | &#9680; CLI-tool wrappers | &#8722; | &#9680; claude-cli adapter |
+| WAL frame band reservations + bounded body caps | &#10003; 0x01..=0x7F structured; n8n API capped at 256 KiB | &#9680; structured logs | &#9680; episode log | &#9680; audit log |
 
 Short version: Hermes is the Kanban/workflow precedent, OpenHuman is the Obsidian/auto-fetch precedent, and OpenClaw is the gateway/channel/canvas precedent. NEOTH's defensible advantage is the combination: loyal DAU-friendly buddy positioning, local profile learning with audit/redaction, three-hemisphere council, brain-region memory model, native coding workflow, and cluster-ready private mesh (LAN/Tailscale today, Hysteria sidecar pattern ready, Keet adapter gated on R-A1) in a Rust-first operator runtime.
 
@@ -655,6 +705,8 @@ neoth profile show --evidence
 | [docs/local-models.md](docs/local-models.md) | Qwen, Ouro, CLIP, Whisper. |
 | [docs/plugins.md](docs/plugins.md) | Skills and WASM plugins. |
 | [docs/council.md](docs/council.md) | Multi-model council design. |
+| [docs/cron-vs-n8n.md](docs/cron-vs-n8n.md) | When to use the built-in cron vs the n8n localhost API. |
+| [docs/n8n-api.md](docs/n8n-api.md) | Loopback HTTP API: endpoints, bearer auth, audit trail, curl examples. |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | Fix common setup problems. |
 
 ### Design sources
