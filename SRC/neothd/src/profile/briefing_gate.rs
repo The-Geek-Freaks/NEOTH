@@ -218,13 +218,15 @@ mod tests {
         // the estimator uses; we pre-compute the expected hour from
         // the seed timestamp and align the test to it.
         let seed_ts = 1_700_000_000_i64;
-        let hour_target = ((seed_ts.rem_euclid(86_400)) / 3600) as u8;
+        let _hour_target = ((seed_ts.rem_euclid(86_400)) / 3600) as u8;
         let samples = (0..10)
             .map(|i| turn(seed_ts + i * 86_400, "msg"))
             .collect::<Vec<_>>();
         aggregate_and_persist(dir.path(), &samples).unwrap();
         // No record_last_active — load_last_active returns None →
         // unwrap_or(0) → seconds_since = now - 0 = now (very large).
+        // The test asserts Skip regardless of `current_hour` — pass
+        // 9 as an arbitrary value; the inactivity gate trips first.
         let now = 1_700_000_000;
         let v = should_emit_for_briefing(dir.path(), now, 9, &BriefingPolicy::default());
         assert!(

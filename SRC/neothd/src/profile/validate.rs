@@ -122,26 +122,42 @@ fn check_claim(
             claim.confidence
         )));
     }
-    // Evidence-event-id check. Skipped if the claim has no citations —
-    // the H1 user-speech check still applies via `reasoning` matching
-    // would be ideal, but we don't have a structured reasoning parser
-    // yet. v0.1: claims without `evidence_event_ids` are accepted ONLY
-    // if every segment in the window includes at least one user-speech
-    // row (the guard's `require_first_person_window` covers that case).
-    if !claim.evidence_event_ids.is_empty() {
-        for ev in &claim.evidence_event_ids {
-            if !window_ids.contains(ev) {
-                return Err(ValidateError::UnknownEvidence(*ev));
-            }
-        }
-        // H1: at least one cited event must be UserSpeech-eligible.
-        if !claim
-            .evidence_event_ids
-            .iter()
-            .any(|e| user_speech_ids.contains(e))
-        {
+    // Evidence-event-id check.
+    //
+    // K-Validate-ZeroEv hardening (Session 22, 2026-05-23): previously
+    // the empty-citation path was a silent bypass — claims with NO
+    // `evidence_event_ids` short-circuited Ok(()) before the H1 check
+    // could run. An attacker injecting a ProfileDelta with empty
+    // evidence on every claim slipped past the validator entirely.
+    //
+    // Fixed semantics:
+    //   - When the claim HAS citations: every cited id must be in the
+    //     window AND at least one must be UserSpeech-eligible (H1).
+    //   - When the claim has NO citations: the WINDOW itself must
+    //     contain at least one UserSpeech-eligible segment. That's the
+    //     "require_first_person_window" property that the prior
+    //     comment claimed without enforcing. Without it, an empty-
+    //     evidence claim could land against a window of pure
+    //     ToolOutput / QuotedExternal segments — the exact privacy
+    //     leak vector this check exists to close.
+    if claim.evidence_event_ids.is_empty() {
+        if user_speech_ids.is_empty() {
             return Err(ValidateError::NoFirstPersonProvenance);
         }
+        return Ok(());
+    }
+    for ev in &claim.evidence_event_ids {
+        if !window_ids.contains(ev) {
+            return Err(ValidateError::UnknownEvidence(*ev));
+        }
+    }
+    // H1: at least one cited event must be UserSpeech-eligible.
+    if !claim
+        .evidence_event_ids
+        .iter()
+        .any(|e| user_speech_ids.contains(e))
+    {
+        return Err(ValidateError::NoFirstPersonProvenance);
     }
     Ok(())
 }
@@ -273,12 +289,74 @@ mod tests {
     }
 
     #[test]
-    fn claim_with_no_evidence_passes_provenance_check() {
-        // v0.1: evidence-less claims rely on the guard's
-        // require_first_person_window for the H1 check.
+    fn claim_with_no_evidence_passes_when_window_has_user_speech() {
+        // K-Validate-ZeroEv: evidence-less claims pass ONLY when the
+        // window itself has at least one UserSpeech segment. The
+        // `window()` fixture includes event_id=10 with `is_extraction_eligible()=true`,
+        // so the window-level user-speech check passes.
         let d = delta(vec![claim("identity.x", 0.5, vec![])]);
         let v = validate(d, &window()).unwrap();
         assert_eq!(v.delta.claims.len(), 1);
+        assert!(v.dropped.is_empty());
+    }
+
+    /// K-Validate-ZeroEv contract pin: an evidence-less claim against
+    /// a window with ZERO UserSpeech segments MUST be dropped with
+    /// `NoFirstPersonProvenance`. Closes the silent-bypass vector
+    /// where the previous validator would accept the claim because
+    /// the empty-evidence short-circuit skipped every H1 check.
+    #[test]
+    fn claim_with_no_evidence_drops_when_window_has_no_user_speech() {
+        use crate::profile::types::Attribution;
+        // Build a window where every segment is QuotedExternal (NOT
+        // extraction-eligible) — mimics an attacker context with
+        // pure tool-output / quoted-other-person content.
+        let segments = vec![
+            att(20, Attribution::QuotedExternal),
+            att(21, Attribution::QuotedExternal),
+        ];
+        let win = AttributedWindow {
+            trigger_event_id: 1,
+            segments,
+        };
+        let d = delta(vec![claim("identity.x", 0.5, vec![])]);
+        let v = validate(d, &win).unwrap();
+        assert_eq!(v.delta.claims.len(), 0, "must drop the bypass-attempt claim");
+        assert_eq!(v.dropped.len(), 1);
+        assert!(
+            matches!(v.dropped[0].reason, ValidateError::NoFirstPersonProvenance),
+            "expected NoFirstPersonProvenance, got {:?}",
+            v.dropped[0].reason,
+        );
+    }
+
+    /// K-Validate-ZeroEv mass-bypass pin: even WITH the patch, a
+    /// delta with N empty-evidence claims against a UserSpeech-free
+    /// window must drop ALL N. Catches a partial-fix regression that
+    /// would let SOME bypass claims through.
+    #[test]
+    fn many_empty_evidence_claims_all_dropped_when_window_unsafe() {
+        use crate::profile::types::Attribution;
+        let segments = vec![att(20, Attribution::QuotedExternal)];
+        let win = AttributedWindow {
+            trigger_event_id: 1,
+            segments,
+        };
+        let d = delta(vec![
+            claim("identity.a", 0.5, vec![]),
+            claim("identity.b", 0.6, vec![]),
+            claim("identity.c", 0.7, vec![]),
+            claim("identity.d", 0.8, vec![]),
+        ]);
+        let v = validate(d, &win).unwrap();
+        assert_eq!(v.delta.claims.len(), 0);
+        assert_eq!(v.dropped.len(), 4);
+        assert!(
+            v.dropped
+                .iter()
+                .all(|d| matches!(d.reason, ValidateError::NoFirstPersonProvenance)),
+            "every empty-evidence claim must drop with NoFirstPersonProvenance"
+        );
     }
 
     #[test]
