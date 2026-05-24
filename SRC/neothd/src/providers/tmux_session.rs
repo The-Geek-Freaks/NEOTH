@@ -41,6 +41,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
+use super::tmux_socket::{TmuxSocket, socket_args};
+
 /// Default prefix used by Alex's bridge. NEOTH inherits the convention so
 /// existing operator scripts that list sessions starting with `cc-` keep
 /// working when both stacks share a host. Configurable via
@@ -55,10 +57,44 @@ pub const DEFAULT_CAPTURE_HISTORY_LINES: i32 = 1000;
 
 /// One live tmux session NEOTH owns. Holding the value keeps the
 /// session alive; dropping it issues a best-effort `kill-session`.
+///
+/// B-6 Item 4c integration (Session 22): every tmux invocation routes
+/// through `tmux_cmd()` / `tmux_cmd_sync()` which splice the operator's
+/// configured `-L <socket>` arg pair at the start. Default constructor
+/// uses the shared per-user socket (backward-compatible); operators
+/// who pinned `freedom.yaml::claude_cli.tmux.socket_name = "neoth"`
+/// use `new_with_socket` to land sessions on the dedicated NEOTH
+/// server.
 #[derive(Debug)]
 pub struct TmuxSession {
     name: String,
+    socket: TmuxSocket,
     killed: bool,
+}
+
+impl TmuxSession {
+    /// Build a fresh tokio Command with `tmux` + the operator's
+    /// socket-name args spliced. All async sites in this module go
+    /// through this helper so a future tmux verb addition can't
+    /// accidentally skip the `-L` flag.
+    fn tmux_cmd(&self) -> Command {
+        let mut cmd = Command::new("tmux");
+        for arg in socket_args(self.socket.name()) {
+            cmd.arg(arg);
+        }
+        cmd
+    }
+
+    /// Sync variant for the Drop impl. tokio Command can't be used
+    /// inside Drop (no runtime), so the fire-and-forget kill uses
+    /// std::process::Command — same socket-arg splicing applied.
+    fn tmux_cmd_sync(&self) -> std::process::Command {
+        let mut cmd = std::process::Command::new("tmux");
+        for arg in socket_args(self.socket.name()) {
+            cmd.arg(arg);
+        }
+        cmd
+    }
 }
 
 impl TmuxSession {
@@ -94,18 +130,41 @@ impl TmuxSession {
             .await
     }
 
-    /// Start a new detached tmux session running `command` (split on
-    /// whitespace by tmux's shell). Returns once tmux acknowledges the
-    /// session creation — the inner command may still be initialising.
+    /// Start a new detached tmux session on the shared per-user socket.
+    /// Backward-compatible default — operators on
+    /// `freedom.yaml::claude_cli.tmux.socket_name = ""` (the default
+    /// shared socket) get the same behaviour as before B-6 4c.
     pub async fn new(name: impl Into<String>, command: &str) -> Result<Self> {
+        Self::new_with_socket(name, command, TmuxSocket::shared()).await
+    }
+
+    /// B-6 Item 4c (Session 22) — start a new detached tmux session
+    /// on the operator-configured socket. `TmuxSocket::shared()` ⇒
+    /// shared per-user socket (no `-L` flag); `TmuxSocket::neoth()` ⇒
+    /// `-L neoth` so server-scoped settings can land without polluting
+    /// the operator's own tmux.
+    pub async fn new_with_socket(
+        name: impl Into<String>,
+        command: &str,
+        socket: TmuxSocket,
+    ) -> Result<Self> {
         let name = name.into();
         validate_session_name(&name)?;
 
-        // `tmux new-session -d -s <name> <command>` — `-d` keeps the
-        // session detached, `-s` names it. The command is passed as a
-        // single arg so tmux runs it via the system shell; this matches
-        // how operators normally invoke `claude` interactively.
-        let status = Command::new("tmux")
+        // `tmux [-L <socket>] new-session -d -s <name> <command>` —
+        // `-d` keeps the session detached, `-s` names it. The command
+        // is passed as a single arg so tmux runs it via the system
+        // shell; this matches how operators normally invoke `claude`
+        // interactively.
+        //
+        // Note: we can't go through self.tmux_cmd() yet (no self exists)
+        // so we splice the socket args inline. Every OTHER call site in
+        // the impl uses self.tmux_cmd() / self.tmux_cmd_sync().
+        let mut cmd = Command::new("tmux");
+        for arg in socket_args(socket.name()) {
+            cmd.arg(arg);
+        }
+        let status = cmd
             .arg("new-session")
             .arg("-d")
             .arg("-s")
@@ -125,8 +184,16 @@ impl TmuxSession {
         }
         Ok(Self {
             name,
+            socket,
             killed: false,
         })
+    }
+
+    /// Borrow the socket the session was created on. Exposed so the
+    /// daemon's diagnostic surface (`neoth doctor`) can list
+    /// "session X on socket Y" for the operator.
+    pub fn socket(&self) -> &TmuxSocket {
+        &self.socket
     }
 
     /// Session name as known to tmux. Useful for operator-facing
@@ -141,7 +208,8 @@ impl TmuxSession {
     /// Does NOT submit — pair with [`send_enter`] for an interactive
     /// CLI that needs a newline to dispatch.
     pub async fn send_text(&self, text: &str) -> Result<()> {
-        let status = Command::new("tmux")
+        let status = self
+            .tmux_cmd()
             .arg("send-keys")
             .arg("-t")
             .arg(&self.name)
@@ -167,7 +235,8 @@ impl TmuxSession {
     /// previously sent via [`send_text`]. Separate call so callers can
     /// stage multi-line input before dispatching.
     pub async fn send_enter(&self) -> Result<()> {
-        let status = Command::new("tmux")
+        let status = self
+            .tmux_cmd()
             .arg("send-keys")
             .arg("-t")
             .arg(&self.name)
@@ -194,7 +263,8 @@ impl TmuxSession {
     /// stabilisation — capture is a snapshot, not a wait.
     pub async fn capture_pane(&self, history_lines: i32) -> Result<String> {
         let start = format!("-{history_lines}");
-        let output = Command::new("tmux")
+        let output = self
+            .tmux_cmd()
             .arg("capture-pane")
             .arg("-p")
             .arg("-t")
@@ -263,7 +333,8 @@ impl TmuxSession {
         if self.killed {
             return Ok(());
         }
-        let status = Command::new("tmux")
+        let status = self
+            .tmux_cmd()
             .arg("kill-session")
             .arg("-t")
             .arg(&self.name)
@@ -287,7 +358,8 @@ impl TmuxSession {
     /// Check whether tmux still tracks this session. False when the
     /// session was killed externally or `kill()` already ran.
     pub async fn exists(&self) -> bool {
-        let status = Command::new("tmux")
+        let status = self
+            .tmux_cmd()
             .arg("has-session")
             .arg("-t")
             .arg(&self.name)
@@ -309,8 +381,10 @@ impl Drop for TmuxSession {
         // detached `tmux kill-session` via the synchronous std API so
         // the call still issues even when the surrounding tokio runtime
         // is being torn down. Errors are swallowed because the operator
-        // already lost the session reference.
-        let _ = std::process::Command::new("tmux")
+        // already lost the session reference. Routes through
+        // tmux_cmd_sync() to honour the operator's `-L <socket>` choice.
+        let _ = self
+            .tmux_cmd_sync()
             .arg("kill-session")
             .arg("-t")
             .arg(&self.name)
@@ -494,5 +568,89 @@ mod tests {
         let r = TmuxSession::new("bad;name", "cat").await;
         assert!(r.is_err());
         assert!(r.unwrap_err().to_string().contains("invalid char"));
+    }
+
+    // ── B-6 Item 4c integration tests (Session 22) ───────────────────
+
+    #[tokio::test]
+    async fn new_with_socket_rejects_invalid_names_before_spawning_tmux() {
+        // Same validation path runs for the new_with_socket constructor.
+        // Pin so a future refactor that splits validation doesn't
+        // accidentally skip it on the new_with_socket path.
+        let r = TmuxSession::new_with_socket("bad;name", "cat", TmuxSocket::neoth()).await;
+        assert!(r.is_err());
+        assert!(r.unwrap_err().to_string().contains("invalid char"));
+    }
+
+    /// B-6 4c contract pin: a session constructed via the
+    /// backward-compat `new()` lives on the shared per-user socket.
+    /// Tmux probe-skip on Windows / no-tmux hosts — validation +
+    /// field assertion run everywhere.
+    #[tokio::test]
+    async fn default_constructor_uses_shared_socket() {
+        if !TmuxSession::is_available().await {
+            return;
+        }
+        let s = TmuxSession::new("neoth-cc-b6-default-test", "cat")
+            .await
+            .expect("tmux new-session");
+        assert!(s.socket().is_shared(), "new() must default to shared");
+        // Drop kills the session.
+        drop(s);
+    }
+
+    /// B-6 4c contract pin: `new_with_socket(TmuxSocket::neoth())`
+    /// lands the session on the dedicated `-L neoth` server. Drop
+    /// must kill on the SAME socket — otherwise the session would
+    /// leak (kill on shared socket misses a session that lives on
+    /// the dedicated socket).
+    #[tokio::test]
+    async fn new_with_socket_lands_session_on_dedicated_socket() {
+        if !TmuxSession::is_available().await {
+            return;
+        }
+        let s = TmuxSession::new_with_socket(
+            "neoth-cc-b6-dedicated-test",
+            "cat",
+            TmuxSocket::neoth(),
+        )
+        .await
+        .expect("tmux new-session -L neoth");
+        assert_eq!(s.socket().name(), Some("neoth"));
+        // The session MUST exist on the dedicated socket — verified
+        // via exists() which routes through tmux_cmd() (same socket).
+        assert!(
+            s.exists().await,
+            "session should be live on its own -L neoth server"
+        );
+        // And it must NOT show up on the shared socket (a cross-check
+        // via has-session without -L would return false).
+        let cross_check = Command::new("tmux")
+            .arg("has-session")
+            .arg("-t")
+            .arg("neoth-cc-b6-dedicated-test")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .await;
+        // Cross-check returns non-success when the session lives on a
+        // different socket. (Returns Ok+success only if the operator
+        // happens to have a same-named session on the shared socket —
+        // session name `neoth-cc-b6-dedicated-test` is unique enough
+        // to make that vanishingly unlikely.)
+        match cross_check {
+            Ok(status) => assert!(
+                !status.success(),
+                "shared-socket cross-check should miss the dedicated-socket session"
+            ),
+            Err(_) => {
+                // tmux binary missing mid-test — skip silently.
+            }
+        }
+        // Cleanup explicit so the dedicated-socket session doesn't
+        // leak between tests run in the same process.
+        let mut s = s;
+        let _ = s.kill().await;
     }
 }
