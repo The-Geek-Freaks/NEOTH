@@ -141,6 +141,19 @@ impl Channel for DiscordChannel {
         }
         last_id.ok_or_else(|| ChannelError::Transport("empty text after chunking".into()))
     }
+
+    /// C-11 wire-up (Session 21): proactive send delegates to `send_text`.
+    /// Discord's REST POST is identical for solicited replies vs
+    /// daemon-initiated proactive — the operator-gate
+    /// (`FreedomConfig::proactive.enabled`) is the CALLER's
+    /// responsibility per the C-11 trait contract.
+    async fn send_proactive(
+        &self,
+        chat_id: &str,
+        text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        self.send_text(chat_id, text).await
+    }
 }
 
 impl DiscordChannel {
@@ -377,5 +390,26 @@ mod tests {
         // Hard rule from Discord docs — bumping this requires platform
         // confirmation.
         assert_eq!(DISCORD_MAX_CONTENT_CHARS, 2000);
+    }
+
+    /// C-11 wire-up pin: send_proactive routes through the same
+    /// Discord REST POST path as send_text. Verified via the
+    /// bogus-token Transport error — proves the trait default
+    /// `NotSupported` is no longer the path Discord falls through to.
+    #[tokio::test]
+    async fn send_proactive_delegates_to_send_text_returns_transport_error_on_invalid_token() {
+        use crate::channels::ChannelError;
+        let c = DiscordChannel::new(SecretString::from("invalid-bot-token")).unwrap();
+        let err = c.send_proactive("12345", "hi").await.unwrap_err();
+        // Discord classifies 401 as Auth (not Transport); both prove
+        // the delegate landed. The trait default would have surfaced
+        // NotSupported { feature: "send_proactive" } — we pin that
+        // explicit negative below.
+        assert!(
+            matches!(err, ChannelError::Transport(_) | ChannelError::Auth(_)),
+            "expected Transport or Auth (delegate path); got {err:?}"
+        );
+        let msg = format!("{err}");
+        assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
     }
 }

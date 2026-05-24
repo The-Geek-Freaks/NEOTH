@@ -82,6 +82,19 @@ impl Channel for TelegramChannel {
         Ok(MessageId(msg.id.0.to_string()))
     }
 
+    /// C-11 wire-up (Session 21): proactive send delegates to `send_text`.
+    /// The wire-level Telegram sendMessage call is identical for solicited
+    /// replies vs daemon-initiated proactive — the operator-gate
+    /// (`FreedomConfig::proactive.enabled`) is the CALLER's
+    /// responsibility per the C-11 trait contract, NOT this adapter's.
+    async fn send_proactive(
+        &self,
+        chat_id: &str,
+        text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        self.send_text(chat_id, text).await
+    }
+
     /// SP-5 C-prime: media send. Not wired through teloxide yet (no operator
     /// pressure for proactive media at v0.1.x); explicit `NotSupported` keeps
     /// the pipeline honest until R-9 multimodal lands.
@@ -368,5 +381,25 @@ mod tests {
     fn pick_largest_photo_returns_none_for_empty() {
         let photos: Vec<PhotoSize> = vec![];
         assert!(pick_largest_photo(&photos).is_none());
+    }
+
+    /// C-11 wire-up pin: with a bogus token, both send_text +
+    /// send_proactive surface a Transport error (not NotSupported).
+    /// Proves the wire-up landed: the trait default would have
+    /// returned NotSupported for send_proactive. Network call shape
+    /// is identical to send_text — the test forces the chat_id parse
+    /// failure path so no actual Telegram HTTP request happens.
+    #[tokio::test]
+    async fn send_proactive_delegates_to_send_text_returns_transport_error_on_bad_chat_id() {
+        let t = TelegramChannel::new(SecretString::from("dummy-token"), None);
+        let err = t.send_proactive("not-a-number", "hi").await.unwrap_err();
+        assert!(
+            matches!(err, ChannelError::Transport(_)),
+            "expected Transport (delegate to send_text path); got {err:?}"
+        );
+        // Belt-and-suspenders: ensure we did NOT fall through to
+        // the trait default `NotSupported { feature: "send_proactive" }`.
+        let msg = format!("{err}");
+        assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
     }
 }

@@ -222,6 +222,21 @@ impl Channel for KeetChannel {
             Err(e) => Err(ChannelError::Transport(e.to_string())),
         }
     }
+
+    /// C-11 wire-up (Session 21): proactive send delegates to `send_text`.
+    /// Pears `POST /topics/<id>/messages` doesn't distinguish solicited
+    /// replies from daemon-initiated proactive — the operator-gate
+    /// (`FreedomConfig::proactive.enabled`) is the CALLER's
+    /// responsibility per the C-11 trait contract. Without a bridge
+    /// configured the underlying `send_text` returns NotSupported,
+    /// which propagates here unchanged.
+    async fn send_proactive(
+        &self,
+        chat_id: &str,
+        text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        self.send_text(chat_id, text).await
+    }
 }
 
 #[cfg(test)]
@@ -433,6 +448,35 @@ mod tests {
         assert!(
             matches!(err, ChannelError::Transport(_)),
             "expected Transport error from offline bridge, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_proactive_without_bridge_inherits_not_supported() {
+        // C-11 wire-up: without a bridge, the underlying send_text
+        // returns NotSupported, and send_proactive's delegation
+        // propagates that — operators on a bridge-less build see
+        // the same diagnostic for both surfaces.
+        let c = KeetChannel::new(SecretString::from("seed".to_string()));
+        let err = c.send_proactive("topic-x", "hi").await.unwrap_err();
+        assert!(matches!(
+            err,
+            ChannelError::NotSupported { feature: "send_text" }
+        ));
+    }
+
+    #[tokio::test]
+    async fn send_proactive_with_offline_bridge_returns_transport_error() {
+        // C-11 wire-up: with a bridge configured but offline, both
+        // send_text + send_proactive surface Transport. Pin so the
+        // delegation can't silently fall back to NotSupported.
+        let bridge =
+            PearsBridge::new("http://127.0.0.1:65433").expect("localhost bridge constructs");
+        let c = KeetChannel::new(SecretString::from("x".to_string())).with_bridge(bridge);
+        let err = c.send_proactive("topic-y", "hi").await.unwrap_err();
+        assert!(
+            matches!(err, ChannelError::Transport(_)),
+            "expected Transport (delegate path); got {err:?}"
         );
     }
 

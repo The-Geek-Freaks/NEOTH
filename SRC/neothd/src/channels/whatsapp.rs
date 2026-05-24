@@ -109,6 +109,21 @@ impl Channel for WhatsAppChannel {
         })?;
         Ok(MessageId(id))
     }
+
+    /// C-11 wire-up (Session 21): proactive send delegates to `send_text`.
+    /// WhatsApp's outbound API is identical for solicited replies vs
+    /// daemon-initiated proactive (the Meta-side "24h template-only"
+    /// constraint is a higher-level concern that callers handle via
+    /// template selection — this trait method just ships the bytes).
+    /// The operator-gate (`FreedomConfig::proactive.enabled`) is the
+    /// CALLER's responsibility per the C-11 trait contract.
+    async fn send_proactive(
+        &self,
+        chat_id: &str,
+        text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        self.send_text(chat_id, text).await
+    }
 }
 
 #[cfg(test)]
@@ -171,5 +186,26 @@ mod tests {
         // No mid-line newlines — wizard renders it as one block.
         let nl_count = WhatsAppChannel::SETUP_HINT.matches('\n').count();
         assert!(nl_count <= 1);
+    }
+
+    /// C-11 wire-up pin: send_proactive routes through the same Graph
+    /// API path as send_text. Verified via the bogus-token Transport
+    /// error — proves the trait default `NotSupported` is no longer
+    /// the path WhatsApp falls through to.
+    #[tokio::test]
+    async fn send_proactive_delegates_to_send_text_returns_transport_error_on_invalid_token() {
+        use crate::channels::ChannelError;
+        let c = WhatsAppChannel::new(
+            SecretString::from("definitely-invalid-token"),
+            "1234567890".to_string(),
+            SecretString::from("v"),
+        );
+        let err = c.send_proactive("+15551234567", "hi").await.unwrap_err();
+        assert!(
+            matches!(err, ChannelError::Transport(_)),
+            "expected Transport (delegate path); got {err:?}"
+        );
+        let msg = format!("{err}");
+        assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
     }
 }

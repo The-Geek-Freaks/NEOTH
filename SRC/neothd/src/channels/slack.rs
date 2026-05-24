@@ -90,6 +90,19 @@ impl Channel for SlackChannel {
         })?;
         Ok(MessageId(ts))
     }
+
+    /// C-11 wire-up (Session 21): proactive send delegates to `send_text`.
+    /// Slack's chat.postMessage is identical for solicited replies vs
+    /// daemon-initiated proactive — the operator-gate
+    /// (`FreedomConfig::proactive.enabled`) is the CALLER's
+    /// responsibility per the C-11 trait contract.
+    async fn send_proactive(
+        &self,
+        chat_id: &str,
+        text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        self.send_text(chat_id, text).await
+    }
 }
 
 #[cfg(test)]
@@ -153,5 +166,24 @@ mod tests {
         let h = SlackChannel::SETUP_HINT;
         assert!(h.contains("xoxb"));
         assert!(h.contains("xapp"));
+    }
+
+    /// C-11 wire-up pin: send_proactive routes through the same Slack
+    /// chat.postMessage path as send_text. Verified via the bogus-token
+    /// Transport error — proves the trait default `NotSupported` is no
+    /// longer the path Slack falls through to.
+    #[tokio::test]
+    async fn send_proactive_delegates_to_send_text_returns_transport_error_on_invalid_token() {
+        let c = SlackChannel::new(
+            SecretString::from("xoxb-definitely-invalid"),
+            SecretString::from("xapp-also-invalid"),
+        );
+        let err = c.send_proactive("C12345", "hi").await.unwrap_err();
+        assert!(
+            matches!(err, crate::channels::ChannelError::Transport(_)),
+            "expected Transport (delegate path); got {err:?}"
+        );
+        let msg = format!("{err}");
+        assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
     }
 }
