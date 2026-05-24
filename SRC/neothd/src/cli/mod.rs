@@ -70,6 +70,7 @@ pub mod skills;
 pub mod slack;
 pub mod slash;
 pub mod status;
+pub mod telemetry;
 pub mod tour;
 pub mod tts;
 pub mod tweaks;
@@ -245,6 +246,15 @@ pub enum Commands {
     /// `revoke <id>`. Facts are decay-immune; they always surface in recall
     /// before any episodic row.
     Groundtruth(groundtruth::GroundtruthArgs),
+
+    /// Opt-in anonymous version-check telemetry (E-18 Workstream N).
+    ///
+    /// Subcommands: `status` (default) / `preview` / `on` / `off` /
+    /// `send-now [--force]`. Default state is OFF. The opt-in payload
+    /// is `{neoth_version, os, arch, anonymous_id (SHA-256 prefix)}` —
+    /// nothing else. Endpoint pinned to `https://telemetry.neoth.dev/v1/ping`;
+    /// operator override via `freedom.yaml::telemetry.endpoint`.
+    Telemetry(telemetry::TelemetryArgs),
 
     /// Architecture Decision Records — list / extract. Phase 31 R-21.
     ///
@@ -671,6 +681,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Groundtruth(mut args) => {
             args.output = global_output;
             groundtruth::run_groundtruth(args).await?;
+        }
+        Commands::Telemetry(mut args) => {
+            args.output = global_output;
+            telemetry::run_telemetry(args).await?;
         }
         Commands::Adr(mut args) => {
             args.output = global_output;

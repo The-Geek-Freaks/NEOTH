@@ -253,6 +253,14 @@ pub struct FreedomConfig {
     /// action without operator GO per command".
     #[serde(default)]
     pub proactive: ProactiveConfig,
+    /// E-18 Workstream N (Session 22) — operator opt-in for
+    /// anonymous version-check telemetry. Default OFF
+    /// (`enabled: false`, `endpoint: None`). When on, the daemon
+    /// POSTs `{neoth_version, os, arch, anonymous_id}` once per
+    /// boot to `endpoint` or [`crate::telemetry::DEFAULT_TELEMETRY_ENDPOINT`].
+    /// CLI surface: `neoth telemetry on/off/preview/send-now/status`.
+    #[serde(default)]
+    pub telemetry: crate::telemetry::TelemetryConfig,
 }
 
 /// C-16 (Session 21) — proactive messaging opt-in. Pure config

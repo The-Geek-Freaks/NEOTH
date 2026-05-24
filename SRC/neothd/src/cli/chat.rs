@@ -3359,6 +3359,7 @@ mod tests {
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
+            telemetry: crate::telemetry::TelemetryConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3507,6 +3508,7 @@ mod tests {
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
+            telemetry: crate::telemetry::TelemetryConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3615,6 +3617,7 @@ mod tests {
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
+            telemetry: crate::telemetry::TelemetryConfig::default(),
         };
         let args = ChatArgs {
             message: Some("Capital of France?".into()),
@@ -3742,6 +3745,7 @@ mod tests {
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
+            telemetry: crate::telemetry::TelemetryConfig::default(),
         };
         let args = ChatArgs {
             message: Some("hi".into()),
@@ -3877,6 +3881,7 @@ mod tests {
             plugins: crate::config::PluginsConfig::default(),
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
+            telemetry: crate::telemetry::TelemetryConfig::default(),
         };
         let args = ChatArgs {
             message: Some("trigger".into()),

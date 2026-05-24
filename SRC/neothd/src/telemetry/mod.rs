@@ -21,25 +21,56 @@
 //!   - Any IP-identifying header beyond what TLS reveals at
 //!     connect-time (the daemon doesn't include extra headers).
 //!
-//! This module ships the **opt-in gate** + **payload builder**.
-//! The actual HTTPS POST + endpoint URL choice land in the focused
-//! E-18 impl session.
+//! Workstream N (Session 22) closeout: this module now ships the
+//! opt-in gate + payload builder AS WELL AS the real HTTPS POST
+//! impl in `http.rs`. The CLI surface lives at `cli/telemetry.rs`
+//! (`neoth telemetry on/off/preview/send-now/status`).
+
+pub mod http;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// Canonical telemetry endpoint URL. Pinned in a const so operators
+/// auditing the source see exactly where their opt-in pings land.
+/// Operators can override via `freedom.yaml::telemetry.endpoint`
+/// when running a self-hosted relay (e.g. enterprise privacy
+/// requirements pointing at an internal log sink).
+pub const DEFAULT_TELEMETRY_ENDPOINT: &str = "https://telemetry.neoth.dev/v1/ping";
+
 /// Operator's telemetry preference. Stored in
-/// `freedom.yaml::telemetry.enabled`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// `freedom.yaml::telemetry`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct TelemetryConfig {
     /// Default: false. Operator opts-in via `neoth telemetry on`.
     pub enabled: bool,
+    /// Operator override for [`DEFAULT_TELEMETRY_ENDPOINT`]. `None`
+    /// = use the canonical endpoint. Validated as HTTPS at send-time
+    /// (HTTP is rejected) so a misconfigured endpoint can't
+    /// silently downgrade an opt-in operator from TLS.
+    #[serde(default)]
+    pub endpoint: Option<String>,
 }
 
 impl Default for TelemetryConfig {
     fn default() -> Self {
         // E-18 hard requirement: telemetry OFF by default.
-        Self { enabled: false }
+        Self {
+            enabled: false,
+            endpoint: None,
+        }
+    }
+}
+
+impl TelemetryConfig {
+    /// Resolve the effective endpoint URL: operator override OR the
+    /// canonical default. Caller passes the result to
+    /// [`http::send_payload`].
+    pub fn effective_endpoint(&self) -> &str {
+        self.endpoint
+            .as_deref()
+            .unwrap_or(DEFAULT_TELEMETRY_ENDPOINT)
     }
 }
 
@@ -122,8 +153,39 @@ mod tests {
 
     #[test]
     fn enabled_config_sends() {
-        let c = TelemetryConfig { enabled: true };
+        let c = TelemetryConfig {
+            enabled: true,
+            endpoint: None,
+        };
         assert!(should_send(&c));
+    }
+
+    // ── Endpoint resolution ─────────────────────────────────────
+
+    #[test]
+    fn default_endpoint_is_pinned_https() {
+        // Drift guard — if someone bumps the default to http://
+        // operators downgrade silently from TLS.
+        assert!(DEFAULT_TELEMETRY_ENDPOINT.starts_with("https://"));
+        assert_eq!(
+            DEFAULT_TELEMETRY_ENDPOINT,
+            "https://telemetry.neoth.dev/v1/ping"
+        );
+    }
+
+    #[test]
+    fn effective_endpoint_falls_back_to_default_when_none() {
+        let c = TelemetryConfig::default();
+        assert_eq!(c.effective_endpoint(), DEFAULT_TELEMETRY_ENDPOINT);
+    }
+
+    #[test]
+    fn effective_endpoint_honours_operator_override() {
+        let c = TelemetryConfig {
+            enabled: true,
+            endpoint: Some("https://internal.example.com/log".to_string()),
+        };
+        assert_eq!(c.effective_endpoint(), "https://internal.example.com/log");
     }
 
     // ── anonymous_id_from_operator ──────────────────────────────
@@ -223,9 +285,24 @@ mod tests {
 
     #[test]
     fn telemetry_config_serde_round_trips() {
-        let c = TelemetryConfig { enabled: true };
+        let c = TelemetryConfig {
+            enabled: true,
+            endpoint: Some("https://example.com/x".into()),
+        };
         let s = serde_yaml::to_string(&c).unwrap();
         let back: TelemetryConfig = serde_yaml::from_str(&s).unwrap();
         assert_eq!(back, c);
+    }
+
+    #[test]
+    fn telemetry_config_deserialises_legacy_without_endpoint() {
+        // Operators on freedom.yaml that predates Workstream N have
+        // only `telemetry: { enabled: false }` — the missing endpoint
+        // field MUST round-trip as `None` instead of failing the
+        // load.
+        let yaml = "enabled: false\n";
+        let c: TelemetryConfig = serde_yaml::from_str(yaml).unwrap();
+        assert!(!c.enabled);
+        assert!(c.endpoint.is_none());
     }
 }

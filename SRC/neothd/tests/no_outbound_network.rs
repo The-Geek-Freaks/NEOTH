@@ -58,6 +58,26 @@
 //!                                    `127.0.0.1` / `localhost` / `[::1]`
 //!                                    — same operator-opt-in category as
 //!                                    the other channel adapters above.
+//!   - `src/telemetry/`             — OPT-IN anonymous version-check
+//!                                    POST. Default OFF (drift-guarded by
+//!                                    `telemetry::tests::default_config_is_off`).
+//!                                    Endpoint pinned to
+//!                                    `https://telemetry.neoth.dev/v1/ping`
+//!                                    in `DEFAULT_TELEMETRY_ENDPOINT` const.
+//!                                    `http::validate_endpoint` rejects
+//!                                    every non-HTTPS scheme + malformed URL
+//!                                    at the boundary so an operator override
+//!                                    via `freedom.yaml::telemetry.endpoint`
+//!                                    cannot silently downgrade from TLS
+//!                                    (test coverage:
+//!                                    `http::tests::validate_endpoint_rejects_http` +
+//!                                    `..._rejects_file_scheme` +
+//!                                    `..._rejects_malformed_url` +
+//!                                    `send_payload_to_http_url_rejected_without_network_call`).
+//!                                    Payload contents drift-guarded by
+//!                                    `tests::payload_has_no_operator_id_field`
+//!                                    so a future refactor can't leak the
+//!                                    operator id verbatim.
 //!   - `src/cluster/`               — Operator-configured peer discovery +
 //!                                    federation. Today: `tailscale.rs`
 //!                                    TCP-probes tailnet peers (CGNAT
@@ -89,6 +109,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/channels/discord_gateway_loop.rs",
     "src/channels/keet_udp.rs",
     "src/channels/pears_bridge.rs",
+    "src/telemetry/",
     "src/cluster/",
     "src/transport/",
 ];
