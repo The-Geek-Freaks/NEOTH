@@ -4,6 +4,10 @@
 
 pub mod builder;
 pub mod compaction;
+/// Workstream F (CT-10/E-20/V1x-06) — zstd compress/decompress helpers
+/// for sealed WAL segments. Pure sync wrappers; the writer calls them
+/// during segment finalization (not on the hot per-frame path).
+pub mod compress;
 #[cfg(windows)]
 pub mod dpapi;
 pub mod error;
@@ -18,6 +22,8 @@ pub mod snapshot;
 pub mod types;
 #[cfg(windows)]
 pub mod win_acl;
+#[cfg(windows)]
+pub mod win_native;
 pub mod writer;
 
 // Re-exports of the small set of types that callers outside wal/ actually

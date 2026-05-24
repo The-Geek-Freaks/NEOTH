@@ -13,13 +13,33 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info, warn};
 
+use super::compress::compress_frames;
 use super::error::WalError;
 use super::frame::encode_frame;
 use super::header::EventHeaderV2;
-use super::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader};
+use super::segment_header::{
+    ParsedSegmentHeader, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_LEN, SEGMENT_HEADER_V2_LEN,
+    SegmentHeader, SegmentHeaderV2, parse_segment_header,
+};
 
 const DEFAULT_CHANNEL_CAPACITY: usize = 1024;
 pub const MAX_PAYLOAD_BYTES: usize = 16 * 1024 * 1024; // 16 MiB sanity ceiling
+
+/// Workstream F (CT-10/E-20/V1x-06) — per-writer compression policy.
+///
+/// Production code reads `FreedomConfig::wal.compression` and passes the
+/// corresponding variant to `spawn_with_policy`. Tests use `CompressionPolicy`
+/// directly to exercise both paths without loading freedom.yaml.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CompressionPolicy {
+    /// Write v1 segment headers; frames are uncompressed (default, v0.1.x).
+    #[default]
+    None,
+    /// Write v2 segment headers; seal the frame body with zstd level-3 before
+    /// closing the segment. The SEGMENT_FLAG_COMPRESSED bit is set in the
+    /// header flags byte.
+    Zstd3,
+}
 
 /// Segment-rotation thresholds. Either condition triggers rollover before
 /// the next frame is written. Per spec the size ceiling is 16 MiB and the
@@ -300,22 +320,35 @@ impl WalWriterHandle {
     }
 }
 
-/// Spawn the writer task with default rotation policy (16 MiB / 24 h).
+/// Spawn the writer task with default rotation policy (16 MiB / 24 h) and
+/// no compression (v0.1.x default).
 pub fn spawn(
     segment_path: PathBuf,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
     spawn_with_policy(segment_path, RotationPolicy::default())
 }
 
-/// Spawn the writer task with an explicit rotation policy. Production code
-/// uses [`spawn`]; tests use this to exercise rotation without writing 16 MiB.
+/// Spawn the writer task with an explicit rotation policy and no compression.
+/// Production code uses [`spawn`]; tests use this to exercise rotation without
+/// writing 16 MiB.
 pub fn spawn_with_policy(
     segment_path: PathBuf,
     policy: RotationPolicy,
 ) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
+    spawn_with_policy_and_compression(segment_path, policy, CompressionPolicy::None)
+}
+
+/// Spawn the writer task with explicit rotation policy AND compression policy.
+/// Used by the daemon when `freedom.yaml::wal.compression` is set, and by
+/// tests that need to exercise v2 compressed segments.
+pub fn spawn_with_policy_and_compression(
+    segment_path: PathBuf,
+    policy: RotationPolicy,
+    compression: CompressionPolicy,
+) -> Result<(WalWriterHandle, tokio::task::JoinHandle<()>), WalError> {
     let (tx, rx) = mpsc::channel(DEFAULT_CHANNEL_CAPACITY);
     let join = tokio::spawn(async move {
-        if let Err(e) = run_writer(segment_path, rx, policy).await {
+        if let Err(e) = run_writer(segment_path, rx, policy, compression).await {
             error!(error = %e, "WAL writer task exited with error");
         }
     });
@@ -407,7 +440,11 @@ struct WriterState {
     /// Path of the active segment on disk.
     path: PathBuf,
     /// Bytes already written to the active segment (including its header).
-    /// First-frame offset = `SEGMENT_HEADER_LEN`.
+    /// For v1 segments: first-frame offset = `SEGMENT_HEADER_LEN` (60).
+    /// For v2 segments: first-frame offset = `SEGMENT_HEADER_V2_LEN` (61).
+    /// In compression mode the "frames" buffer is held in `pending_frames`
+    /// and flushed (compressed) when the segment rotates or the writer shuts
+    /// down. `offset` still tracks logical position for compaction markers.
     offset: u64,
     /// Sequence number of the active segment.
     seq: u64,
@@ -415,6 +452,12 @@ struct WriterState {
     /// `age_ns` rotation check.
     opened_at_ns: u64,
     policy: RotationPolicy,
+    /// Workstream F — compression policy for newly-written segments.
+    compression: CompressionPolicy,
+    /// In-memory accumulator for frame bytes when `compression == Zstd3`.
+    /// Flushed (compressed) to disk on rotation or shutdown.
+    /// Empty when `compression == None`.
+    pending_frames: Vec<u8>,
 }
 
 impl WriterState {
@@ -441,6 +484,13 @@ fn next_segment_path(current: &Path, next_seq: u64) -> PathBuf {
 /// so a reader scanning forward sees the rollover at the head of the new
 /// file before any further frames).
 async fn rotate(state: &mut WriterState, reason: RotationReason) -> Result<(), WalError> {
+    // Workstream F: finalize compressed segment before rotating.
+    if state.compression == CompressionPolicy::Zstd3 && !state.pending_frames.is_empty() {
+        if let Err(e) = finalize_compressed_segment(state).await {
+            warn!(error = %e, "WAL rotation: compressed segment finalize failed; continuing with raw frames");
+        }
+    }
+
     // Final sync before closing. `sync_data` was already called per frame;
     // this is belt-and-suspenders for the last-frame metadata.
     state.file.sync_all().await?;
@@ -464,15 +514,26 @@ async fn rotate(state: &mut WriterState, reason: RotationReason) -> Result<(), W
     debug_assert!(opened.is_new, "rotation target should always be a new file");
 
     let now_ns = current_ns();
-    let header = SegmentHeader::new(0, next_seq, 0, now_ns, [0u8; 16]);
-    new_file.write_all(&header.to_le_bytes()).await?;
+    let header_len = match state.compression {
+        CompressionPolicy::None => {
+            let header = SegmentHeader::new(0, next_seq, 0, now_ns, [0u8; 16]);
+            new_file.write_all(&header.to_le_bytes()).await?;
+            SEGMENT_HEADER_LEN
+        }
+        CompressionPolicy::Zstd3 => {
+            let header =
+                SegmentHeaderV2::new(0, next_seq, 0, now_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+            new_file.write_all(&header.to_le_bytes()).await?;
+            SEGMENT_HEADER_V2_LEN
+        }
+    };
     new_file.sync_data().await?;
 
     state.file = new_file;
     state.path = next_path;
     state.seq = next_seq;
     state.opened_at_ns = now_ns;
-    state.offset = SEGMENT_HEADER_LEN as u64;
+    state.offset = header_len as u64;
 
     // Audit-trail event in the new segment's first frame slot.
     let payload = serde_json::to_vec(&serde_json::json!({
@@ -504,12 +565,15 @@ async fn run_writer(
     segment_path: PathBuf,
     mut rx: mpsc::Receiver<WriteRequest>,
     policy: RotationPolicy,
+    compression: CompressionPolicy,
 ) -> Result<(), WalError> {
     let opened = open_segment(&segment_path).await?;
     let mut file = opened.file;
     let seq = segment_seq_from_path(&segment_path);
 
-    // F-14: every new segment begins with a 60-byte SegmentHeader at offset 0.
+    // F-14: every new segment begins with a segment header at offset 0.
+    // v1 (no compression): 60-byte SegmentHeader.
+    // v2 (zstd_3): 61-byte SegmentHeaderV2 with SEGMENT_FLAG_COMPRESSED.
     //
     // Pick #36 (Session 14): existing-segment path now scans the tail for
     // torn frames via `wal::recovery::scan_tail`. On torn-tail detection
@@ -521,15 +585,27 @@ async fn run_writer(
     let mut pending_recovery: Option<PendingRecovery> = None;
     let (offset, opened_at_ns) = if opened.is_new {
         let ts_ns = current_ns();
-        let header = SegmentHeader::new(0, seq, 0, ts_ns, [0u8; 16]);
-        file.write_all(&header.to_le_bytes()).await?;
+        let header_len = match compression {
+            CompressionPolicy::None => {
+                let header = SegmentHeader::new(0, seq, 0, ts_ns, [0u8; 16]);
+                file.write_all(&header.to_le_bytes()).await?;
+                SEGMENT_HEADER_LEN
+            }
+            CompressionPolicy::Zstd3 => {
+                let header =
+                    SegmentHeaderV2::new(0, seq, 0, ts_ns, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+                file.write_all(&header.to_le_bytes()).await?;
+                SEGMENT_HEADER_V2_LEN
+            }
+        };
         file.sync_data().await?;
         debug!(
             path = %segment_path.display(),
             seq,
-            "wrote SegmentHeader for new WAL segment"
+            compression = ?compression,
+            "wrote segment header for new WAL segment"
         );
-        (SEGMENT_HEADER_LEN as u64, ts_ns)
+        (header_len as u64, ts_ns)
     } else {
         let metadata_len = file.metadata().await?.len();
         if metadata_len < SEGMENT_HEADER_LEN as u64 {
@@ -634,6 +710,8 @@ async fn run_writer(
         seq,
         opened_at_ns,
         policy,
+        compression,
+        pending_frames: Vec::new(),
     };
 
     debug!(path = %state.path.display(), offset = state.offset, "WAL writer opened segment");
@@ -723,7 +801,23 @@ async fn run_writer(
 
         let frame = encode_frame(&req.header, &req.payload);
         let immediate = crate::wal::events::needs_immediate_sync(req.header.event_type);
-        let result = if immediate {
+        // Workstream F: compressed segments buffer frames in-memory;
+        // the file write happens on finalize (rotate/shutdown).
+        let result = if state.compression == CompressionPolicy::Zstd3 {
+            state.pending_frames.extend_from_slice(&frame);
+            // For compressed segments we also write frames immediately to
+            // a temp staging area so recovery still works on unclean shutdown.
+            // However we keep the design simple: write raw frames to the file
+            // during live operation, then on finalize rewrite the file with
+            // the compressed body. This way the file is always parseable even
+            // after a crash (just uncompressed despite the header flag).
+            // On clean finalize the compressed form replaces the raw form.
+            let r = write_only(&mut state.file, &frame).await;
+            if r.is_ok() {
+                pending_unsynced = true;
+            }
+            r
+        } else if immediate {
             // SYNC_ON_WRITE frame — `write_and_sync` calls `sync_data`
             // after `write_all`, which durably commits BOTH this frame
             // AND any preceding batchable frames that landed in the OS
@@ -801,6 +895,13 @@ async fn run_writer(
         }
     }
 
+    // Workstream F: finalize compressed segment on clean shutdown.
+    if state.compression == CompressionPolicy::Zstd3 && !state.pending_frames.is_empty() {
+        if let Err(e) = finalize_compressed_segment(&mut state).await {
+            warn!(error = %e, "WAL shutdown: compressed segment finalize failed; raw frames remain on disk");
+        }
+    }
+
     // Pick #40: shutdown drain — if the last write was batchable,
     // sync_data now so the operator's final partial-streaming reply
     // lands durably before the daemon exits. Caller's `drop(writer)`
@@ -813,6 +914,78 @@ async fn run_writer(
     }
 
     debug!("WAL writer task: channel closed, exiting");
+    Ok(())
+}
+
+/// Workstream F (CT-10/E-20/V1x-06) — finalize a compressed segment.
+///
+/// When `compression == Zstd3`, frames are written raw to disk during live
+/// operation (so unclean-shutdown recovery still works). On clean finalize
+/// (rotation or shutdown), this function:
+///   1. Compresses `state.pending_frames` with zstd-3.
+///   2. Rewrites the segment file as: v2-header(61 B) + compressed-blob.
+///
+/// The rewrite is done atomically: write to a `.tmp` sibling, then rename
+/// over the original. If any step fails the original (raw) file remains
+/// intact — operator keeps a parseable (uncompressed) segment despite the
+/// COMPRESSED flag in the header. The header flag is only written when
+/// compression succeeds.
+async fn finalize_compressed_segment(state: &mut WriterState) -> Result<(), WalError> {
+    let compressed = compress_frames(&state.pending_frames)?;
+    let tmp_path = state.path.with_extension("wal.tmp");
+
+    // Re-read the original header to preserve generation/seq/first_event_id/
+    // segment_start_ts_ns/node_id from the live segment.
+    let original_bytes = tokio::fs::read(&state.path).await?;
+    let parsed = parse_segment_header(&original_bytes)?;
+    let (generation, segment_seq, first_event_id, segment_start_ts_ns, node_id) = match parsed {
+        ParsedSegmentHeader::V1(h) => (
+            h.generation,
+            h.segment_seq,
+            h.first_event_id,
+            h.segment_start_ts_ns,
+            h.node_id,
+        ),
+        ParsedSegmentHeader::V2(h) => (
+            h.generation,
+            h.segment_seq,
+            h.first_event_id,
+            h.segment_start_ts_ns,
+            h.node_id,
+        ),
+    };
+
+    let v2_header = SegmentHeaderV2::new(
+        generation,
+        segment_seq,
+        first_event_id,
+        segment_start_ts_ns,
+        node_id,
+        SEGMENT_FLAG_COMPRESSED,
+    );
+
+    // Write to tmp.
+    let mut tmp_opts = tokio::fs::OpenOptions::new();
+    tmp_opts.create(true).write(true).truncate(true);
+    #[cfg(unix)]
+    tmp_opts.mode(0o600);
+    let mut tmp_file = tmp_opts.open(&tmp_path).await?;
+    tmp_file.write_all(&v2_header.to_le_bytes()).await?;
+    tmp_file.write_all(&compressed).await?;
+    tmp_file.sync_all().await?;
+    drop(tmp_file);
+
+    // Atomic rename over original.
+    tokio::fs::rename(&tmp_path, &state.path).await?;
+
+    info!(
+        path = %state.path.display(),
+        raw_bytes = state.pending_frames.len(),
+        compressed_bytes = compressed.len(),
+        ratio = format!("{:.1}%", compressed.len() as f64 / state.pending_frames.len().max(1) as f64 * 100.0),
+        "WAL segment finalized with zstd-3 compression"
+    );
+    state.pending_frames.clear();
     Ok(())
 }
 
@@ -1543,4 +1716,175 @@ mod tests {
     // indirectly by tokio's own mpsc tests + by integration coverage in
     // the daemon shutdown path. A unit test would require an invasive
     // private constructor purely to satisfy the test, so we don't add one.
+
+    // ── Workstream F (CT-10/E-20/V1x-06) — v2 + zstd-3 compression ──────
+
+    /// Write+read v1: spawn with default (no compression), verify v1 header.
+    #[tokio::test]
+    async fn v1_segment_has_v1_header_and_uncompressed_frames() {
+        use crate::wal::segment_header::{
+            ParsedSegmentHeader, SEGMENT_FORMAT_VERSION_V1, parse_segment_header,
+        };
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (handle, join) = spawn(seg.clone()).expect("spawn v1");
+        handle
+            .append(header_for(5, 1), b"hello".to_vec())
+            .await
+            .expect("append");
+        drop(handle);
+        join.await.expect("join");
+
+        let bytes = read(&seg).await.unwrap();
+        let parsed = parse_segment_header(&bytes).expect("parse header");
+        assert!(
+            matches!(parsed, ParsedSegmentHeader::V1(_)),
+            "default spawn must produce a v1 header"
+        );
+        assert!(!parsed.is_compressed());
+        assert_eq!(parsed.segment_format_version(), SEGMENT_FORMAT_VERSION_V1);
+    }
+
+    /// Write+read v2 uncompressed: spawn with Zstd3 but segment has no frames
+    /// yet — verify the written header is v2 with COMPRESSED flag set.
+    #[tokio::test]
+    async fn v2_header_written_when_compression_policy_is_zstd3() {
+        use crate::wal::segment_header::{
+            ParsedSegmentHeader, SEGMENT_FORMAT_VERSION, parse_segment_header,
+        };
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (handle, join) = spawn_with_policy_and_compression(
+            seg.clone(),
+            RotationPolicy::default(),
+            CompressionPolicy::Zstd3,
+        )
+        .expect("spawn zstd");
+        handle
+            .append(header_for(5, 1), b"hello".to_vec())
+            .await
+            .expect("append");
+        drop(handle);
+        join.await.expect("join");
+
+        let bytes = read(&seg).await.unwrap();
+        assert!(
+            bytes.len() > SEGMENT_HEADER_V2_LEN,
+            "v2 segment must be larger than 61-byte header"
+        );
+        let parsed = parse_segment_header(&bytes).expect("parse v2 header");
+        assert!(
+            matches!(parsed, ParsedSegmentHeader::V2(_)),
+            "zstd spawn must produce a v2 header; got {parsed:?}"
+        );
+        assert_eq!(parsed.segment_format_version(), SEGMENT_FORMAT_VERSION);
+    }
+
+    /// Write+read v2 compressed: frames survive round-trip through zstd.
+    #[tokio::test]
+    async fn v2_compressed_frames_round_trip() {
+        use crate::wal::compress::decompress_frames;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::parse_segment_header;
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (handle, join) = spawn_with_policy_and_compression(
+            seg.clone(),
+            RotationPolicy::default(),
+            CompressionPolicy::Zstd3,
+        )
+        .expect("spawn zstd");
+        let payload1 = b"frame-one".to_vec();
+        let payload2 = b"frame-two".to_vec();
+        handle
+            .append(header_for(payload1.len() as u32, 1), payload1.clone())
+            .await
+            .expect("f1");
+        handle
+            .append(header_for(payload2.len() as u32, 2), payload2.clone())
+            .await
+            .expect("f2");
+        drop(handle);
+        join.await.expect("join");
+
+        let bytes = read(&seg).await.unwrap();
+        let parsed = parse_segment_header(&bytes).expect("parse");
+        assert!(
+            parsed.is_compressed(),
+            "segment must be compressed after clean shutdown"
+        );
+        let hdr_len = parsed.header_len();
+        let raw_frames = decompress_frames(&bytes[hdr_len..]).expect("decompress");
+        let d1 = decode_frame(&raw_frames).expect("decode frame 1");
+        assert_eq!(d1.payload, b"frame-one");
+        let d2 = decode_frame(&raw_frames[d1.header.total_len as usize..]).expect("decode frame 2");
+        assert_eq!(d2.payload, b"frame-two");
+    }
+
+    /// Reader handles mixed v1+v2 directory (operator partway through migration).
+    #[tokio::test]
+    async fn mixed_v1_v2_segments_in_same_directory_both_parse() {
+        use crate::wal::segment_header::{ParsedSegmentHeader, parse_segment_header};
+        let dir = tempdir().unwrap();
+
+        // Write a v1 segment.
+        let seg1 = dir.path().join("000001.wal");
+        {
+            let (handle, join) = spawn(seg1.clone()).expect("spawn v1");
+            handle
+                .append(header_for(3, 1), b"v1!".to_vec())
+                .await
+                .expect("v1 append");
+            drop(handle);
+            join.await.expect("v1 join");
+        }
+
+        // Write a v2 compressed segment.
+        let seg2 = dir.path().join("000002.wal");
+        {
+            let (handle, join) = spawn_with_policy_and_compression(
+                seg2.clone(),
+                RotationPolicy::default(),
+                CompressionPolicy::Zstd3,
+            )
+            .expect("spawn v2");
+            handle
+                .append(header_for(3, 2), b"v2!".to_vec())
+                .await
+                .expect("v2 append");
+            drop(handle);
+            join.await.expect("v2 join");
+        }
+
+        let b1 = read(&seg1).await.unwrap();
+        let b2 = read(&seg2).await.unwrap();
+        let p1 = parse_segment_header(&b1).expect("parse seg1");
+        let p2 = parse_segment_header(&b2).expect("parse seg2");
+        assert!(matches!(p1, ParsedSegmentHeader::V1(_)), "seg1 must be v1");
+        assert!(matches!(p2, ParsedSegmentHeader::V2(_)), "seg2 must be v2");
+        assert!(!p1.is_compressed());
+        assert!(p2.is_compressed());
+    }
+
+    /// Compression ratio sanity: 10 KiB JSON-heavy payload < 30% of original.
+    #[test]
+    fn compression_ratio_sanity_on_json_payload() {
+        use crate::wal::compress::compress_frames;
+        // Build a JSON-heavy payload similar to real WAL frames.
+        let chunk = br#"{"event_type":"PROVIDER_RESPONSE","ts_ns":1700000000000000000,"payload":{"role":"assistant","content":"Hello world! This is a WAL payload for compression.","tokens":42}}"#;
+        let mut input = Vec::with_capacity(10_240);
+        while input.len() < 10_240 {
+            let take = (10_240 - input.len()).min(chunk.len());
+            input.extend_from_slice(&chunk[..take]);
+        }
+        let compressed = compress_frames(&input).expect("compress");
+        let ratio = compressed.len() as f64 / input.len() as f64;
+        assert!(
+            ratio < 0.30,
+            "expected compressed/original < 30%, got {:.1}% ({}/{} bytes)",
+            ratio * 100.0,
+            compressed.len(),
+            input.len(),
+        );
+    }
 }

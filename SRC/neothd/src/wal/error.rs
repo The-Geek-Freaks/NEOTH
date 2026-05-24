@@ -88,4 +88,12 @@ pub enum WalError {
         expected_crc: u32,
         got_crc: u32,
     },
+
+    /// Workstream F (CT-10/E-20/V1x-06) — zstd compression failed.
+    #[error("WAL segment compression failed: {0}")]
+    Compress(String),
+
+    /// Workstream F (CT-10/E-20/V1x-06) — zstd decompression failed.
+    #[error("WAL segment decompression failed: {0}")]
+    Decompress(String),
 }

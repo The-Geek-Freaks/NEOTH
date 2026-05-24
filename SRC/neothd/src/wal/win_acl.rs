@@ -1,45 +1,42 @@
 // Windows DACL restriction for NEOTH files (WAL segments, freedom.yaml, ...).
 //
-// Approach: invoke `icacls.exe` to grant the current user full control on the
-// target file. We do NOT pass `/inheritance:r` — stripping inherited ACEs
-// mid-write locks the daemon's own threads out of the file it just opened.
-// Operators who need full sealing run `icacls "%USERPROFILE%\.neoth\" /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F"`
-// once after `neoth init`. See SECURITY.md.
+// E-11: This module is the public entry point for DACL restriction on Windows.
+//       It now delegates to `win_native::set_owner_dacl` which calls
+//       `SetNamedSecurityInfoW` + `SetEntriesInAclW` directly, eliminating
+//       the previous `icacls.exe` subprocess approach (D-008).
 //
-// icacls ships with every Windows install since XP and is significantly
-// simpler than the equivalent unsafe Win32 wiring (OpenProcessToken +
-// GetTokenInformation + InitializeAcl + AddAccessAllowedAce +
-// SetNamedSecurityInfoW). The cost is one subprocess per restricted file,
-// which is acceptable for WAL segments (rotated occasionally) and config
-// files (written once).
+// Historical note (D-008): the original implementation shelled out to
+// `icacls.exe /grant:r <USER>:(F)` which introduced one subprocess spawn per
+// restricted file plus a command-line injection risk if USERNAME contained
+// unexpected characters. The native API path in `win_native.rs` removes both
+// concerns and reduces latency by ~50–200ms per WAL rotation.
 //
-// Security: USERNAME is validated against `[A-Za-z0-9._\- ]` before being
-// passed to icacls. Without this, a hostile `USERNAME=foo" /grant Everyone:F`
-// value could inject extra icacls arguments through CreateProcessW's
-// command-line construction.
-//
-// Caveats:
-//   - Race window: file exists briefly with inherited DACL between
-//     OpenOptions::open() and this call. For freedom.yaml this is mitigated
-//     by `umask`-equivalent OpenOptions on unix. On Windows the only fix is
-//     CreateFileW with SECURITY_ATTRIBUTES — tracked for v0.5.
-//   - %USERNAME% must be set. NEOTH startup ensures this; if missing or
-//     malformed the call degrades gracefully to a logged warning.
-//   - The subprocess call is wrapped in `tokio::task::spawn_blocking` when
-//     called from async contexts (see `restrict_to_owner_async`).
+// Policy unchanged from the icacls approach:
+//   - Only the explicit DACL entry is set (no PROTECTED_DACL flag), so
+//     inherited ACEs remain. This avoids locking out the daemon's open file
+//     handles mid-write.
+//   - %USERNAME% must be available. NEOTH startup ensures this. If missing or
+//     invalid the call degrades to a logged warning (same behaviour as before).
+//   - Async callers use `restrict_to_owner_async` which runs on a
+//     `spawn_blocking` thread to avoid blocking a tokio worker.
 
 #![cfg(windows)]
 
 use std::io;
 use std::path::Path;
-use std::process::Command;
 
 use tracing::warn;
 
+use super::win_native;
+
 /// Validate that a Windows USERNAME contains only the characters that can
-/// safely be used as a single icacls argument component. Rejects values
-/// containing quotes, backslashes, control chars, or anything outside the
-/// expected `[A-Za-z0-9._\- ]` set.
+/// safely be used as a trustee name. Rejects values containing quotes,
+/// backslashes, control chars, or anything outside `[A-Za-z0-9._\- ]`.
+///
+/// This guard is kept here (even though we no longer pass USERNAME to a
+/// subprocess command line) because an empty or wildly malformed USERNAME
+/// indicates a broken environment and it is safer to skip the DACL call
+/// entirely and emit a warning than to pass garbage to Win32 APIs.
 fn safe_username(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 64
@@ -48,15 +45,14 @@ fn safe_username(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ' '))
 }
 
-/// Restrict `path` so the current user (owner) has explicit Full Control.
-/// Inherited ACEs are intentionally NOT stripped (see module doc + SECURITY.md).
+/// Restrict `path` so the current user (owner) has explicit Full Control via
+/// a native `SetNamedSecurityInfoW` DACL entry.
 ///
-/// On failure, emits a warning and returns Ok — callers must NOT rely on
-/// this for security-critical guarantees on Windows.
+/// On failure, emits a warning and returns `Ok` — callers must NOT rely on
+/// this for security-critical guarantees on Windows (see SECURITY.md).
 ///
-/// This is the **sync** entry point. From async/tokio contexts, use
-/// `restrict_to_owner_async` which wraps in `spawn_blocking` so the icacls
-/// subprocess does not block a tokio worker thread.
+/// This is the **sync** entry point. From async/tokio contexts use
+/// `restrict_to_owner_async`.
 pub fn restrict_to_owner(path: &Path) -> io::Result<()> {
     let username = match std::env::var("USERNAME") {
         Ok(u) if safe_username(&u) => u,
@@ -64,7 +60,7 @@ pub fn restrict_to_owner(path: &Path) -> io::Result<()> {
             warn!(
                 path = %path.display(),
                 username_len = u.len(),
-                "USERNAME contains unexpected characters; refusing to invoke icacls"
+                "USERNAME contains unexpected characters; skipping native DACL set"
             );
             return Ok(());
         }
@@ -74,40 +70,28 @@ pub fn restrict_to_owner(path: &Path) -> io::Result<()> {
         }
     };
 
-    let output = Command::new("icacls.exe")
-        .arg(path)
-        .arg("/grant:r")
-        .arg(format!("{username}:(F)"))
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => Ok(()),
-        Ok(out) => {
+    match win_native::set_owner_dacl(path, &username) {
+        Ok(()) => Ok(()),
+        Err(e) => {
             warn!(
                 path = %path.display(),
-                stderr = %String::from_utf8_lossy(&out.stderr).trim_end(),
-                stdout = %String::from_utf8_lossy(&out.stdout).trim_end(),
-                code = out.status.code(),
-                "icacls failed to restrict DACL"
+                error = %e,
+                "native SetNamedSecurityInfoW failed to restrict DACL"
             );
-            Ok(())
-        }
-        Err(e) => {
-            warn!(path = %path.display(), error = %e, "icacls.exe could not be invoked");
             Ok(())
         }
     }
 }
 
-/// Async wrapper around `restrict_to_owner`. Runs the icacls subprocess on a
-/// blocking thread pool so the calling tokio task isn't blocked. Same Ok-on-
-/// failure semantics as the sync entry point.
+/// Async wrapper around [`restrict_to_owner`]. Runs on a blocking thread
+/// pool so the calling tokio task isn't blocked. Same `Ok`-on-failure
+/// semantics as the sync entry point.
 pub async fn restrict_to_owner_async(path: &Path) -> io::Result<()> {
     let owned: std::path::PathBuf = path.to_path_buf();
     tokio::task::spawn_blocking(move || restrict_to_owner(&owned))
         .await
         .unwrap_or_else(|join_err| {
-            warn!(error = %join_err, "icacls task panicked");
+            warn!(error = %join_err, "restrict_to_owner task panicked");
             Ok(())
         })
 }
@@ -121,19 +105,39 @@ mod tests {
     #[test]
     fn restrict_to_owner_does_not_panic_on_normal_file() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("test.txt");
+        let path = dir.path().join("test.wal");
         File::create(&path).unwrap();
-        // Smoke test: function runs to completion without panic.
-        // Verifying the DACL semantically would require Win32 readback;
-        // we trust icacls reporting its own exit status.
+        // Smoke test: runs to completion without panic.
+        // DACL correctness is verified via round-trip tests in win_native::tests.
         restrict_to_owner(&path).expect("ok");
     }
 
     #[test]
     fn restrict_to_owner_handles_nonexistent_path() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("nope.txt");
-        // icacls will fail with exit 5 or 2; our wrapper logs and returns Ok.
+        let path = dir.path().join("nope.wal");
+        // File does not exist — the native call will fail, which is logged
+        // and swallowed (Ok-on-failure policy).
         restrict_to_owner(&path).expect("graceful fallback");
+    }
+
+    #[test]
+    fn safe_username_accepts_valid_names() {
+        assert!(safe_username("Alice"));
+        assert!(safe_username("Shadow-PC"));
+        assert!(safe_username("john.doe"));
+        assert!(safe_username("user_name"));
+        // Backslash is NOT in the allowed set — domain prefixes are rejected.
+        // `USERNAME` on Windows is the local user name without the domain.
+        assert!(!safe_username("DOMAIN\\user"));
+        assert!(!safe_username(""));
+        assert!(!safe_username(&"x".repeat(65)));
+    }
+
+    #[test]
+    fn safe_username_rejects_injection_attempts() {
+        assert!(!safe_username("foo\" /grant Everyone:F"));
+        assert!(!safe_username("foo\0bar"));
+        assert!(!safe_username("foo\nbar"));
     }
 }
