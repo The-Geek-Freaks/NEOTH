@@ -23,18 +23,45 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::{Channel, PipelineHandler};
+use super::pears_bridge::{PearsBridge, PostMessageRequest};
+use super::{Channel, ChannelError, MessageId, PipelineHandler};
 use crate::secret::SecretString;
 
 pub struct KeetChannel {
     /// Operator's 24-word pairing phrase. Stored as `SecretString` so
     /// mlock + zeroize protect it the same way provider keys do.
     seed_phrase: SecretString,
+    /// K-2b (Session 21, 2026-05-23): optional out-of-process Pears
+    /// HTTP bridge for outbound message sends. `None` keeps the legacy
+    /// "deferred" behaviour — `send_text` surfaces `NotSupported` and
+    /// the operator gets the same diagnostic as before. `Some(bridge)`
+    /// routes sends through `PearsBridge::post_message` so K-2 is
+    /// operator-testable against a live `pear` process before K-3
+    /// pairing UX lands.
+    bridge: Option<PearsBridge>,
 }
 
 impl KeetChannel {
     pub fn new(seed_phrase: SecretString) -> Self {
-        Self { seed_phrase }
+        Self {
+            seed_phrase,
+            bridge: None,
+        }
+    }
+
+    /// K-2b: attach a configured `PearsBridge` so outbound sends route
+    /// through the Pears HTTP surface. Returns `self` for builder-style
+    /// chaining — `KeetChannel::new(seed).with_bridge(bridge)`.
+    pub fn with_bridge(mut self, bridge: PearsBridge) -> Self {
+        self.bridge = Some(bridge);
+        self
+    }
+
+    /// Whether the channel has a Pears bridge attached. Exposed so
+    /// the daemon's channel-spawn loop can log "Keet running with /
+    /// without bridge" at startup without poking the private field.
+    pub fn has_bridge(&self) -> bool {
+        self.bridge.is_some()
     }
 
     /// Operator-visible hint for the pairing flow. Exposed so the wizard
@@ -136,17 +163,64 @@ impl Channel for KeetChannel {
     }
 
     async fn run(&self, _handler: PipelineHandler) -> Result<()> {
-        // Hyperswarm + Hypercore transport is multi-week work. The trait
-        // path stays clean — when the transport lands, replace this body
-        // with the actual swarm join + topic subscription. Until then,
-        // dispatching to Keet bails fast with an actionable message.
-        anyhow::bail!(
-            "keet channel: receive loop is deferred until the Hyperswarm \
-             transport lands. Use Telegram for v0.1.x. The seed phrase \
-             you configured ({} chars) is persisted unchanged so the \
-             upgrade requires no re-pairing.",
-            self.seed_phrase.expose().len(),
-        )
+        // Inbound receive loop is K-3+ work: bridge subscribe channel +
+        // long-polling SSE / WebSocket against the Pears runtime. The
+        // trait path stays clean — when K-3 lands, replace this body
+        // with the actual subscription. Until then, dispatching to Keet
+        // bails fast with an actionable message that distinguishes the
+        // bridge-configured from bridge-missing case.
+        if self.bridge.is_some() {
+            anyhow::bail!(
+                "keet channel: outbound send_text works via the Pears bridge, \
+                 but the inbound receive loop is deferred until K-3 (pairing \
+                 + subscribe wiring). The seed phrase you configured ({} chars) \
+                 is persisted unchanged so the upgrade requires no re-pairing.",
+                self.seed_phrase.expose().len(),
+            )
+        } else {
+            anyhow::bail!(
+                "keet channel: no Pears bridge configured + receive loop is \
+                 deferred until the bridge + K-3 pairing land. Use Telegram \
+                 for v0.1.x. The seed phrase you configured ({} chars) is \
+                 persisted unchanged so the upgrade requires no re-pairing.",
+                self.seed_phrase.expose().len(),
+            )
+        }
+    }
+
+    /// K-2b (Session 21, 2026-05-23): send a plain-text message via
+    /// the Pears HTTP bridge. The `chat_id` is the Keet topic id (the
+    /// chat the operator paired against on their phone); `text` is the
+    /// outbound body. Returns the bridge-issued `message_id` so the
+    /// surrounding pipeline can record it alongside the WAL
+    /// `CHANNEL_EGRESS` frame for ACK + dedupe tracking.
+    ///
+    /// Error mapping:
+    ///   - no bridge configured → `ChannelError::NotSupported`
+    ///     (legacy contract — operators on bridge-less builds see
+    ///     the same diagnostic as before)
+    ///   - bridge HTTP / transport failure → `ChannelError::Transport`
+    ///   - bridge returned non-2xx → `ChannelError::Transport` with
+    ///     the status code + body for operator debugging
+    async fn send_text(
+        &self,
+        chat_id: &str,
+        text: &str,
+    ) -> std::result::Result<MessageId, ChannelError> {
+        let Some(bridge) = self.bridge.as_ref() else {
+            return Err(ChannelError::NotSupported {
+                feature: "send_text",
+            });
+        };
+        let body = PostMessageRequest {
+            text: text.to_string(),
+            attachment_b64: None,
+            attachment_mime: None,
+        };
+        match bridge.post_message(chat_id, &body).await {
+            Ok(resp) => Ok(MessageId(resp.message_id)),
+            Err(e) => Err(ChannelError::Transport(e.to_string())),
+        }
     }
 }
 
@@ -327,6 +401,60 @@ mod tests {
             }
             .as_str(),
             "suspicious_word_length"
+        );
+    }
+
+    // ── K-2b: Pears HTTP bridge wire-up tests (Session 21) ─────────────
+
+    #[test]
+    fn has_bridge_reports_false_for_default_constructor() {
+        let c = KeetChannel::new(SecretString::from("x".to_string()));
+        assert!(!c.has_bridge());
+    }
+
+    #[test]
+    fn with_bridge_flips_has_bridge_true() {
+        let bridge = PearsBridge::local().expect("local bridge constructs");
+        let c = KeetChannel::new(SecretString::from("x".to_string())).with_bridge(bridge);
+        assert!(c.has_bridge());
+    }
+
+    #[tokio::test]
+    async fn send_text_with_bridge_returns_transport_error_when_bridge_offline() {
+        // K-2b contract: when a bridge IS configured but the Pears
+        // runtime isn't reachable, send_text must surface a
+        // ChannelError::Transport (NOT NotSupported). NotSupported is
+        // reserved for the legacy bridge-missing path so callers can
+        // distinguish "feature deferred" from "transport failed".
+        let bridge =
+            PearsBridge::new("http://127.0.0.1:65432").expect("localhost bridge constructs");
+        let c = KeetChannel::new(SecretString::from("x".to_string())).with_bridge(bridge);
+        let err = c.send_text("topic-abc", "hello world").await.unwrap_err();
+        assert!(
+            matches!(err, ChannelError::Transport(_)),
+            "expected Transport error from offline bridge, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_with_bridge_bails_with_bridge_specific_diagnostic() {
+        // K-2b: run() still bails (inbound receive loop is K-3), but
+        // the diagnostic differs between bridge-configured and
+        // bridge-missing so the operator knows whether the K-2b
+        // outbound path is live.
+        let bridge =
+            PearsBridge::new("http://127.0.0.1:65432").expect("localhost bridge constructs");
+        let c = KeetChannel::new(SecretString::from("x".to_string())).with_bridge(bridge);
+        let handler: PipelineHandler = Box::new(|_inbound| Box::pin(async move { Ok(None) }));
+        let err = c.run(handler).await.unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("outbound send_text works"),
+            "bridge-on diagnostic must mention working outbound path: {msg}"
+        );
+        assert!(
+            msg.contains("K-3"),
+            "bridge-on diagnostic must point at K-3 follow-up: {msg}"
         );
     }
 }
