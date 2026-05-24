@@ -75,6 +75,7 @@ pub mod migrate;
 pub mod models;
 pub mod n8n_api;
 pub mod permissions;
+pub mod pipeline;
 pub mod policy;
 pub mod profile;
 pub mod providers;
