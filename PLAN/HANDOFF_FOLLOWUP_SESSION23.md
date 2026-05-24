@@ -8,7 +8,8 @@
 
 ## Session 22 closeout — what shipped
 
-Session 22 closed **~56 of 96 deferred items** (`96 → 40`) across these commits:
+Session 22 closed **88 of 96 deferred items** (`96 → 8`, 91.6% of the
+backlog) across these commits:
 
 | Commit | Workstream | Items closed |
 |--------|-----------|--------------|
@@ -26,20 +27,25 @@ Gates after each commit: `cargo fmt --all --check` + `cargo test --workspace --a
 
 ---
 
-## Remaining for Session 23 — sized + scoped
+## Remaining for Session 23 — 8 items, all real bounded code
 
-After Session 22 ships its agent batch, the remaining `[~]` items fall into 3 tiers:
+After Session 22's docs-flip pass, the remaining 8 `[~]` items are all
+genuine bounded code work that maps to 4 handoff workstreams:
 
 ### Tier 1 — Bounded, ~3 days each
 
 | Workstream | Items | Files | Status |
 |-----------|-------|-------|--------|
-| **D** — N-3 HTTP API server | N-3, CT-13's HTTP-server half | `src/n8n_api/server.rs` (NEW) + `src/n8n_api/handlers.rs` (NEW) + `cli/serve.rs` (spawn hook) | Not started Session 22 |
-| **H** — Multimodal pipeline | M-2, M-3, M-4, M-5 | `src/media/{vision,audio,video}.rs` (NEW) + `cli/chat.rs` (channel integration) | Not started Session 22 |
-| **I** — B-6 final + F-19 remaining | B-6 tmux backend + 13-item wrapper port + 8 tmux.conf + 3 hook ports + F-19 remaining half | `providers/{claude_cli,claude_tmux}.rs` + `assets/tmux.conf` (NEW) + `assets/hooks/*.sh` (NEW) + `neoth-plugin-sdk/src/hook.rs` (F-19 refactor) | F-19 closed Session 22 as YAGNI; B-6 deferred |
-| **K** — K-Wire-3 family | K-Wire-3 v1, v2, v3 + K-Perf-3 | `cli/chat.rs` + `cli/serve.rs` + new `pipeline/enriched_request.rs` + new `pipeline/council_dispatch.rs` + `cli/recall.rs` (spawn_blocking) | Not started Session 22 |
+| **D** — N-3 HTTP API server | N-3 (1 item) | `src/n8n_api/server.rs` (NEW) + `src/n8n_api/handlers.rs` (NEW) + `cli/serve.rs` (spawn hook) | Spec + primitives shipped Session 21; hyper server task + handlers ~2-3d remaining |
+| **H** — Multimodal pipeline | M-2, M-3, M-4, M-5 (4 items) | `src/media/{vision,audio,video}.rs` (NEW) + `cli/chat.rs` (channel integration) | Not started; candle CLIP / whisper-rs / ffmpeg integration |
+| **I** — B-6 final | B-6 primitive + B-6 integration follow-up (2 items) | `providers/{claude_cli,claude_tmux}.rs` final 4 sub-items + `assets/tmux.conf` (NEW) + `assets/hooks/*.sh` (NEW) | Primitive + extractor + protocol shipped Session 5; remaining: ClaudeCliAdapter 2-mode backend + freedom.yaml fields + 13-item wrapper port + 8 tmux.conf settings + 3 hook ports |
+| **K** — K-Wire-3 main | K-Wire-3 build_enriched_request extract (1 item) | new `src/pipeline/enriched_request.rs` + `cli/chat.rs` + `cli/serve.rs` consume | v1/v2/v3 already shipped 2026-05-17; only the build_enriched_request extraction refactor remains |
 
-**Recommended order:** K first (chat/serve are stable post-Session 22 sweep), then D (uses K's `build_enriched_request`), then H, then I.
+**Recommended order:** K first (touches chat/serve, but only an extract-and-call refactor — low risk), then D (uses K's helper), then H, then I.
+
+F-19 closed Session 22 as YAGNI (no consumer for the Hook trait refactor).
+K-Perf-3 closed Session 22 as stale-doc (`cli/recall.rs:146` inline comment confirms 2026-05-22 ship).
+K-Wire-3 v2 + v3 closed Session 22 as stale-doc (both shipped 2026-05-17 per inline comments at `cli/serve.rs:1810` + `:2168`).
 
 ### Tier 2 — Multi-week, dedicated handoff per workstream
 
