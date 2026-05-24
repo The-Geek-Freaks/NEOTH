@@ -50,10 +50,12 @@ jobs:
 
       - name: Run cargo-audit
         working-directory: SRC/neothd
+        # SX-04: `set -eo pipefail` is the GHA bash default, so removing
+        # `|| true` makes the pipe propagate cargo-audit's non-zero exit
+        # on RUSTSEC findings instead of silently swallowing CVEs.
         run: |
           cargo audit --json 2>/dev/null \
-            | tee /tmp/audit-result.json \
-            || true
+            | tee /tmp/audit-result.json
           # Always show human-readable output too
           cargo audit
 
