@@ -101,6 +101,30 @@ pub mod relay;
 /// path decision.
 pub mod wal_payloads;
 
+// ── Cluster C-1..C-4 (Session 21, 2026-05-23) — Pears transport ──────
+//
+// Agent panel verdict on D-101 picked the Pears HTTP bridge as the
+// shared transport for both Keet messaging + cluster operations. The
+// four C-* modules below are the cluster-side counterparts of
+// channels::pears_bridge:
+//
+//   C-1  pears_peer_discovery — peer announce/lookup over cluster topic
+//        (adopts openclaw bonjour watchdog state machine)
+//   C-2  pears_federation     — WAL segment shipping trait (default
+//        impl returns Deferred until live `pear` validation)
+//   C-3  pears_routing        — request routing policy + decision shape
+//   C-4  pears_election       — lowest-pubkey-wins orchestrator election
+//
+// All four are unit-tested but UNTESTED against a live `pear` runtime —
+// the actual transport round-trip needs operator-side K-3.5 pairing
+// validation first. Gated behind freedom.yaml::cluster.transport =
+// "pears" (default "disabled"), with a one-shot operator warn on first
+// enable explaining the live-test gap.
+pub mod pears_election;
+pub mod pears_federation;
+pub mod pears_peer_discovery;
+pub mod pears_routing;
+
 /// Stable identifier for a peer in the cluster. Format = UUID v7 string.
 /// First peer that brings a freshly-paired cluster online is the genesis;
 /// every join writes its UUID into the local cluster_roles table.
