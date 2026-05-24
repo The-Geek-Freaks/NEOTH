@@ -160,10 +160,27 @@ pub async fn run_chat_with(
     let home = FreedomConfig::default_neoth_home();
     let cwd = std::env::current_dir().unwrap_or_else(|_| home.clone());
     let skills_dir = home.join("skills");
-    let (blocks_res, skills_res) = tokio::join!(
-        crate::memory::operator_md::assemble(&home, &cwd),
-        crate::skills::load_all(&skills_dir),
-    );
+    // E-22 chat-route (Session 21, 2026-05-23): swap raw `load_all` for
+    // the SkillRegistry path so the chat call goes through the same
+    // ArcSwap<Vec<Skill>> primitive the daemon's hot-reload watcher
+    // targets. When running inside a long-lived daemon, the process-wide
+    // global registry (initialised by `serve.rs`) is reused — the chat
+    // path then automatically sees skill edits the watcher picked up
+    // between turns. One-shot `neoth chat` falls back to a per-call
+    // registry build (no watcher, no shared state).
+    let (blocks_res, registry_res) = match crate::skills::registry::global() {
+        Some(reg) => {
+            let blocks = crate::memory::operator_md::assemble(&home, &cwd).await;
+            (blocks, Ok::<_, anyhow::Error>(reg))
+        }
+        None => {
+            let (b, r) = tokio::join!(
+                crate::memory::operator_md::assemble(&home, &cwd),
+                crate::skills::SkillRegistry::load(&skills_dir),
+            );
+            (b, r)
+        }
+    };
     let blocks = blocks_res.unwrap_or_default();
     let operator_context = if blocks.is_empty() {
         None
@@ -209,7 +226,19 @@ pub async fn run_chat_with(
     //
     // Two-stage re-rank (Qwen3-Q8 embedding) hooks in once Day-14b inference
     // lands.
-    let installed_skills = skills_res.unwrap_or_default();
+    // Arc<Vec<Skill>> snapshot — derefs to &[Skill] for the router
+    // calls below + every .iter() / Vec method continues to compile
+    // unchanged because of Arc's transparent deref chain.
+    let installed_skills = match registry_res {
+        Ok(reg) => reg.snapshot_owned(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "skill registry load failed; chat proceeds with empty skill set"
+            );
+            std::sync::Arc::new(Vec::new())
+        }
+    };
     let mode_registry = crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
         .unwrap_or_default();
     let mode_hit = mode_registry.match_trigger(&prompt);

@@ -141,6 +141,45 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             .context("consent gate (V03-08 + A-2)")?;
     }
 
+    // E-22 chat-route (Session 21, 2026-05-23): prime the process-wide
+    // SkillRegistry + start its filesystem watcher BEFORE any
+    // request-handling tasks spawn. Every in-daemon chat path reads
+    // through `crate::skills::registry::global()`, so once this fires
+    // operator edits to `~/.neoth/skills/<id>/skill.yaml` propagate to
+    // the next chat turn without a daemon restart (250ms debounce).
+    // Watcher handle is intentionally leaked: daemon lifetime owns it,
+    // tear-down on process exit is fine.
+    let _skill_watcher = {
+        let home = FreedomConfig::default_neoth_home();
+        let skills_dir = home.join("skills");
+        match crate::skills::SkillRegistry::load(&skills_dir).await {
+            Ok(reg) => {
+                let watcher = reg.watch();
+                let inited = crate::skills::registry::init_global(std::sync::Arc::clone(&reg));
+                if !inited {
+                    warn!(
+                        "global skill registry already initialised earlier in this process — \
+                         keeping the existing instance + spawning a redundant watcher (cheap)"
+                    );
+                }
+                info!(
+                    skill_count = reg.snapshot().len(),
+                    dir = %skills_dir.display(),
+                    watcher_active = watcher.is_some(),
+                    "skill registry primed for daemon"
+                );
+                watcher
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "skill registry load failed; chat paths will fall back to per-call load"
+                );
+                None
+            }
+        }
+    };
+
     // ── 2. Prepare WAL directory + segment ──────────────────────────────────
     let wal_dir = FreedomConfig::default_wal_dir();
     let segment_path = args
