@@ -1671,13 +1671,138 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 }
             }
 
+            // ── K-Wire-3 (Session 23) — channel-side enrichment via helper ─
+            // Channel inbounds now reach CLI parity on every layer the
+            // `pipeline::build_enriched_request` helper composes:
+            // operator_md + skills + MCP catalogue + persona + repo
+            // context. Prior channel path skipped all of these and sent
+            // the bare prompt to the provider. Slash command dispatch
+            // (below) overrides the enriched system when a `/cmd`
+            // matches — preserving the original slash semantics.
+            //
+            // Note: this adds 5 FS reads per inbound (operator_md +
+            // skills dir + mcp_servers.yaml + tweaks.toml + code_map
+            // sqlite probe). Matches `chat.rs::run_chat_with` cost; on
+            // a healthy filesystem the combined latency is sub-30ms.
+            let channel_home = crate::config::FreedomConfig::default_neoth_home();
+            let channel_cwd = std::env::current_dir().unwrap_or_else(|_| channel_home.clone());
+            let operator_blocks = crate::memory::operator_md::assemble(&channel_home, &channel_cwd)
+                .await
+                .unwrap_or_default();
+            let operator_context = if operator_blocks.is_empty() {
+                None
+            } else {
+                Some(crate::memory::operator_md::render(&operator_blocks))
+            };
+
+            // Prefer the daemon's global SkillRegistry (built once at
+            // startup + hot-reloaded by the file watcher); fall back to
+            // per-call load when the global wasn't initialised.
+            let installed_skills = match crate::skills::registry::global() {
+                Some(reg) => reg.snapshot_owned(),
+                None => {
+                    match crate::skills::SkillRegistry::load(&channel_home.join("skills")).await {
+                        Ok(reg) => reg.snapshot_owned(),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "skill registry load failed on channel path; empty set"
+                            );
+                            std::sync::Arc::new(Vec::new())
+                        }
+                    }
+                }
+            };
+            let mode_registry =
+                crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
+                    .unwrap_or_default();
+            let mode_hit = mode_registry.match_trigger(&sanitized_text);
+            let (skill_layer, used_skill_id): (Option<String>, Option<String>) =
+                if let Some(resolved) = mode_hit {
+                    let parent = installed_skills
+                        .iter()
+                        .find(|s| s.id() == resolved.skill_id);
+                    info!(
+                        channel = channel_str,
+                        mode = %resolved.mode.id,
+                        skill = %resolved.skill_id,
+                        "mode activated via ModeRegistry (channel path)"
+                    );
+                    let layer = match parent {
+                        Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
+                            "{}\n\n{}",
+                            p.system_prompt(),
+                            resolved.mode.system_prompt_delta
+                        )),
+                        Some(p) => Some(p.system_prompt().to_string()),
+                        None if !resolved.mode.system_prompt_delta.is_empty() => {
+                            Some(resolved.mode.system_prompt_delta.clone())
+                        }
+                        None => None,
+                    };
+                    (layer, None)
+                } else {
+                    let skill_match = crate::skills::route(&sanitized_text, &installed_skills);
+                    if let Some(m) = &skill_match {
+                        info!(
+                            channel = channel_str,
+                            skill = m.skill.id(),
+                            matched_keywords = ?m.matched_keywords,
+                            "skill activated (channel path)"
+                        );
+                    }
+                    let layer = skill_match
+                        .as_ref()
+                        .map(|m| m.skill.system_prompt().to_string());
+                    let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+                    (layer, id)
+                };
+
+            let channel_mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
+                warn!(
+                    error = %e,
+                    "mcp_servers.yaml load failed on channel path — proceeding without MCP tools"
+                );
+                Default::default()
+            });
+            let channel_mcp_catalogue: Option<String> = if channel_mcp_servers.enabled().is_empty()
+            {
+                None
+            } else {
+                crate::mcp::catalogue::assemble_catalogue(&channel_mcp_servers).await
+            };
+
+            let channel_tweaks_path = crate::tweaks::Tweaks::default_path();
+            let channel_persona = crate::tweaks::Tweaks::load_or_default(&channel_tweaks_path)
+                .ok()
+                .and_then(|t| t.persona_override.clone());
+
+            let channel_repo_context = crate::cli::chat::maybe_repo_context_block(
+                config_for_handler.as_ref(),
+                &sanitized_text,
+            );
+
+            let channel_enriched =
+                crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+                    prompt: &sanitized_text,
+                    operator_context: operator_context.as_deref(),
+                    explicit_system: None,
+                    repo_context_block: channel_repo_context.as_deref(),
+                    skill_system_prompt: skill_layer.as_deref(),
+                    used_skill_id: used_skill_id.as_deref(),
+                    mcp_catalogue: channel_mcp_catalogue.as_deref(),
+                    persona_override: channel_persona.as_deref(),
+                });
+            let channel_enriched_system = channel_enriched.system;
+            let _channel_used_skill_id = channel_enriched.used_skill_id;
+
             // ── Slash command dispatch (Phase 28 R-17 SC-2) ───────────────
             // If the operator opens with `/<name> args`, route through the
             // slash registry. Built-ins (`/help`, `/recall`, `/status`,
             // `/jobs`) + `~/.neoth/commands/*.toml` overrides. The matched
-            // command's prompt template becomes the system prompt; `args`
-            // becomes the user message. Non-commands (or unknown names)
-            // pass through to the provider untouched.
+            // command's prompt template REPLACES the enriched system
+            // prompt (slash semantics preserved); non-matches fall back
+            // to the layered enrichment from the helper above.
             let (final_prompt, system_override) =
                 match crate::slash::parse_invocation(&sanitized_text) {
                     crate::slash::Invocation::Command { name, args } => {
@@ -1689,14 +1814,16 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                             info!(slash_command = %name, "slash dispatch");
                             (args, Some(rendered))
                         } else {
-                            // Unknown command — pass through. Caller's provider
-                            // sees the raw text with the leading slash so it can
+                            // Unknown command — pass through with the
+                            // enriched system so the model can still
                             // respond with "unknown command, try /help".
-                            (sanitized_text.clone(), None)
+                            (sanitized_text.clone(), channel_enriched_system)
                         }
                     }
-                    crate::slash::Invocation::Escaped { text } => (text, None),
-                    crate::slash::Invocation::NotACommand => (sanitized_text.clone(), None),
+                    crate::slash::Invocation::Escaped { text } => (text, channel_enriched_system),
+                    crate::slash::Invocation::NotACommand => {
+                        (sanitized_text.clone(), channel_enriched_system)
+                    }
                 };
 
             // ── Operator hooks at PreProviderCall (Phase 29 R-15 H-3) ─────
