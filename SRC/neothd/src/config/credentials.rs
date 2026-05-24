@@ -60,6 +60,17 @@ pub struct Credentials {
     /// pick socket mode; the app token lets the daemon open the
     /// WebSocket to Slack's edge directly.
     pub slack_app_token: Option<SecretString>,
+    /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
+    /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
+    /// before persisting. Wrapped in SecretString so the same
+    /// mlock+zeroize protections the provider keys carry apply here.
+    pub keet_seed_phrase: Option<SecretString>,
+    /// K-3.5 (Session 21, 2026-05-23) — bearer token the wizard
+    /// generates for the Pears HTTP bridge. 32 random bytes hex-
+    /// encoded (64 chars). `pear` reads this on launch; NEOTH
+    /// attaches it to every PearsBridge::post_message / .health()
+    /// request via `bearer_auth`.
+    pub pears_bearer_token: Option<SecretString>,
 }
 
 impl Credentials {
@@ -129,6 +140,8 @@ impl Credentials {
             whatsapp_app_secret,
             slack_bot_token,
             slack_app_token,
+            keet_seed_phrase,
+            pears_bearer_token,
         } = self;
         provider_key.is_none()
             && telegram_token.is_none()
@@ -138,6 +151,8 @@ impl Credentials {
             && whatsapp_app_secret.is_none()
             && slack_bot_token.is_none()
             && slack_app_token.is_none()
+            && keet_seed_phrase.is_none()
+            && pears_bearer_token.is_none()
     }
 
     /// True if either field is set. Mirror of `!is_empty()` for call-site
