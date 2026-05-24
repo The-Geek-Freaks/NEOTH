@@ -242,6 +242,13 @@ pub const EVENT_TYPE_JOB_SUCCESS: u8 = 0x41;
 /// Scheduled job failed (provider error, channel delivery failure, timeout, …).
 /// Payload: `{ job_id, name, duration_ms, error }`.
 pub const EVENT_TYPE_JOB_FAILED: u8 = 0x42;
+/// P-08 cron consumer (Workstream C, Session 22) — scheduled job
+/// suppressed by the briefing-gate verdict before any provider call.
+/// Surfaces as a non-failure audit record so operators can see that
+/// the cron task fired AND the gate (silent-hours / inactivity /
+/// duplicate-emit policy) decided "do nothing this tick".
+/// Payload: `{ job_id, name, reason, current_hour, ts_unix_ms }`.
+pub const EVENT_TYPE_JOB_SKIPPED_BY_GATE: u8 = 0x43;
 
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
@@ -927,6 +934,8 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_JOB_FIRED < 0x40 || EVENT_TYPE_JOB_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_SUCCESS < 0x40 || EVENT_TYPE_JOB_SUCCESS > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_JOB_SKIPPED_BY_GATE < 0x40 || EVENT_TYPE_JOB_SKIPPED_BY_GATE > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60

@@ -1577,6 +1577,22 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 .await
                 .context("write RAW_TEXT WAL frame for inbound")?;
 
+            // ── P-08 briefing-gate marker (Workstream C, Session 22) ──────
+            // Channel ingress is the operator engaging via any wired
+            // surface (Telegram / Discord / Keet / …). Refresh the
+            // last-active marker so the briefing-gate's inactivity check
+            // treats this as a real engagement signal. Best-effort: a
+            // permission failure on the marker file MUST NOT fail the
+            // inbound handler — recording is an audit signal, not an
+            // ingress-correctness invariant.
+            let _ = crate::profile::briefing_gate::record_last_active(
+                &crate::config::FreedomConfig::default_neoth_home(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            );
+
             // ── Emit CHANNEL_INGRESS (hashed metadata) ────────────────────
             let ingress_payload = serde_json::to_vec(&serde_json::json!({
                 "channel": inbound.channel,

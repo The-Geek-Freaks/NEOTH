@@ -131,6 +131,17 @@ pub async fn run_chat_with(
         .await
         .context("write RAW_TEXT WAL frame")?;
 
+    // ── P-08 briefing-gate marker (Workstream C, Session 22) ──────────────
+    // Update the operator-activity timestamp so the cron task's
+    // `should_emit_for_briefing` check sees a fresh "operator engaged"
+    // signal without re-scanning the WAL. Best-effort: a permission
+    // failure on the marker file MUST NOT fail the chat — recording is
+    // an audit signal, not a chat-correctness invariant.
+    let _ = crate::profile::briefing_gate::record_last_active(
+        &FreedomConfig::default_neoth_home(),
+        now_unix() as i64,
+    );
+
     // ── PROVIDER_REQUEST (hashed metadata) ────────────────────────────────
     let req_payload = serde_json::to_vec(&serde_json::json!({
         "operator_id": config.operator_id,
