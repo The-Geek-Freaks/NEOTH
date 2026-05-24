@@ -29,6 +29,7 @@ pub mod obs;
 pub mod obsidian;
 pub mod obsidian_vault;
 pub mod pears;
+pub mod qwen_weights;
 pub mod tmux;
 
 /// One of the three CLIs NEOTH knows how to install.

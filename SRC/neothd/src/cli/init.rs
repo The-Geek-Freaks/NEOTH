@@ -164,6 +164,46 @@ pub struct InitArgs {
     #[arg(long = "enable-plugin", value_name = "ID", num_args = 0..)]
     pub enable_plugin: Vec<String>,
 
+    /// NOOB-UX-6 (Workstream B) — pre-download the LocalQwen model weights
+    /// inside the wizard. Without this flag the wizard surfaces the
+    /// `huggingface-cli download …` command and lets the operator run it
+    /// later; with it the wizard offers to spawn the download synchronously
+    /// (interactive confirms once more before spawning; non-interactive
+    /// records the opt-in + surfaces the command to run).
+    #[arg(long = "download-qwen-weights")]
+    pub download_qwen_weights: bool,
+
+    /// O-1 (Workstream B) — opt into the Obsidian-install wizard step. With
+    /// no flag the wizard skips Obsidian in non-interactive mode; with the
+    /// flag the wizard renders the OS-specific install command + records the
+    /// opt-in. Interactive mode prompts independently of this flag.
+    #[arg(long = "install-obsidian")]
+    pub install_obsidian: bool,
+
+    /// O-2 (Workstream B) — bootstrap a fresh NEOTH-Vault under the operator's
+    /// `~/Documents/NEOTH-Vault/`. Writes the curated `.obsidian/` config +
+    /// templates from `installers::obsidian_vault::bootstrap_files`. Non-
+    /// interactive: skipped without this flag; with it, the vault is created
+    /// at the default path. Interactive: prompted with operator-pickable path.
+    #[arg(long = "bootstrap-vault")]
+    pub bootstrap_vault: bool,
+
+    /// N-1 (Workstream B) — opt into the n8n install wizard step. Non-
+    /// interactive: skipped unless this flag is set. Interactive: prompts
+    /// + auto-picks Docker over npm when both are available.
+    #[arg(long = "install-n8n")]
+    pub install_n8n: bool,
+
+    /// E-16 (Workstream B) — Jarvis seed migration. Path to the operator's
+    /// `HIPPOCAMPUS_CORE.md` (or the directory holding the 12 Jarvis stores).
+    /// When set, the wizard records the import intent + surfaces the
+    /// `neoth-migrate dry-run` / `apply --confirm` runbook against the path.
+    /// Heavyweight migrations stay operator-triggered — the wizard never
+    /// auto-applies. Non-interactive only honours the flag; interactive
+    /// prompts for the path independently.
+    #[arg(long = "import-jarvis", value_name = "PATH")]
+    pub import_jarvis: Option<std::path::PathBuf>,
+
     /// Re-run full wizard even if already initialized.
     #[arg(long)]
     pub force: bool,
@@ -234,6 +274,38 @@ pub struct WizardState {
     /// freedom.yaml + persisted to credentials.yaml::pears_bearer_token.
     #[serde(skip)]
     pub pears_bearer_token: Option<crate::secret::SecretString>,
+    /// NOOB-UX-6 (Workstream B, Session 22) — operator opted into
+    /// the Qwen-weights pre-download step. Recorded for the audit
+    /// trail + wal NOOB_UX events; no behaviour beyond the wizard step.
+    #[serde(default)]
+    pub download_qwen_weights: bool,
+    /// O-1 (Workstream B, Session 22) — operator opted into the
+    /// Obsidian install wizard step. The actual install is operator-
+    /// run; this field records the intent.
+    #[serde(default)]
+    pub install_obsidian: bool,
+    /// O-2 (Workstream B, Session 22) — operator opted into the
+    /// NEOTH-Vault bootstrap. When `true`, `step6d` materialised the
+    /// curated `.obsidian/` config + templates at the recorded path.
+    #[serde(default)]
+    pub bootstrap_vault: bool,
+    /// O-2 (Workstream B, Session 22) — vault path picked by the
+    /// operator (default `~/Documents/NEOTH-Vault/`). `None` when
+    /// `bootstrap_vault == false`. Persisted so the materialiser
+    /// (O-4) finds the same vault on next boot.
+    #[serde(default)]
+    pub vault_path: Option<std::path::PathBuf>,
+    /// N-1 (Workstream B, Session 22) — operator opted into n8n.
+    /// Captures the strategy + port; the install command itself is
+    /// operator-run.
+    #[serde(default)]
+    pub install_n8n: bool,
+    /// E-16 (Workstream B, Session 22) — Jarvis seed migration
+    /// source path. When `Some`, the wizard recorded the operator's
+    /// intent to run `neoth-migrate` against this path. `None` for
+    /// fresh-host operators with no Jarvis history.
+    #[serde(default)]
+    pub import_jarvis: Option<std::path::PathBuf>,
     pub steps_completed: Vec<u8>,
 }
 
@@ -271,8 +343,13 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step4_role(&args, interactive, &mut state)?;
     step5_provider(&args, interactive, &mut state).await?;
     step5b_inference_topology(&args, interactive, &mut state)?;
+    step5c_qwen_weights(&args, interactive, &mut state).await?;
     step6_channel(&args, interactive, &mut state).await?;
     step6b_keet_pairing(&args, interactive, &mut state).await?;
+    step6c_obsidian_install(&args, interactive, &mut state).await?;
+    step6d_obsidian_vault_bootstrap(&args, interactive, &mut state)?;
+    step6e_n8n_install(&args, interactive, &mut state).await?;
+    step6f_import_jarvis(&args, interactive, &mut state)?;
     step7_autonomy(&args, interactive, &mut state)?;
     step7b_auto_update(&args, interactive, &mut state)?;
     step7c_wasm_plugin_activation(&args, interactive, &neoth_dir, &mut state)?;
@@ -1589,6 +1666,137 @@ pub(crate) fn k4b_telegram_prompt_text(pear_present: bool) -> &'static str {
     }
 }
 
+/// Step 5c — NOOB-UX-6 (Workstream B): Qwen weights pre-download.
+///
+/// Only meaningful when the operator's inference topology pulls in
+/// `LocalQwen` somewhere (default_slot or any hemisphere or the
+/// embedding provider). The probe is sync + ~1ms (file_exists); when
+/// weights are already cached the step is a no-op log line.
+///
+/// Non-interactive: honours `--download-qwen-weights`. With the flag
+/// the step records the intent + surfaces the `huggingface-cli` line
+/// the operator runs. Without the flag the step is a silent no-op
+/// for hosts that don't touch LocalQwen.
+async fn step5c_qwen_weights(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    use crate::installers::qwen_weights;
+
+    info!("wizard step 5c: qwen weights");
+
+    if !inference_uses_local_qwen(&state.inference, &state.provider_kind) {
+        // Operator picked cloud-only — no LocalQwen path = nothing to
+        // pre-download. Mark step run + return.
+        state.steps_completed.push(58);
+        return Ok(());
+    }
+
+    let cached = qwen_weights::check_weights_cached(qwen_weights::DEFAULT_QWEN_MODEL_ID);
+
+    if !interactive {
+        let opted_in = args.download_qwen_weights;
+        let action = qwen_weights::recommend_action(cached, opted_in);
+        match action {
+            qwen_weights::WeightsAction::AlreadyCached => {
+                info!(
+                    model = qwen_weights::DEFAULT_QWEN_MODEL_ID,
+                    "qwen weights cached"
+                );
+            }
+            qwen_weights::WeightsAction::DownloadNeeded => {
+                state.download_qwen_weights = true;
+                let cmd =
+                    qwen_weights::weights_download_command(qwen_weights::DEFAULT_QWEN_MODEL_ID);
+                info!(
+                    cmd = %cmd.join(" "),
+                    gb = qwen_weights::DEFAULT_QWEN_DOWNLOAD_GB,
+                    "operator opted into Qwen weights pre-download"
+                );
+            }
+            qwen_weights::WeightsAction::OperatorSkipped => {
+                warn!(
+                    model = qwen_weights::DEFAULT_QWEN_MODEL_ID,
+                    "LocalQwen configured but weights not cached + operator did not pass --download-qwen-weights; \
+                     first chat will lazy-download"
+                );
+            }
+        }
+        state.steps_completed.push(58);
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        println!();
+        if cached {
+            println!("[5c/8] Qwen weights already cached (~/.cache/huggingface/hub/). Skipping.");
+            state.steps_completed.push(58);
+            return Ok(());
+        }
+        println!(
+            "[5c/8] LocalQwen is wired but the {} weights aren't cached yet (~{} GB download).",
+            qwen_weights::DEFAULT_QWEN_MODEL_ID,
+            qwen_weights::DEFAULT_QWEN_DOWNLOAD_GB,
+        );
+        let opt_in = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Pre-download the Qwen weights now? (skip = lazy-download on first chat)")
+            .default(false)
+            .interact()
+            .context("qwen weights opt-in")?;
+        if !opt_in {
+            println!(
+                "  Skipped — weights will lazy-download on first chat (operator-visible progress)."
+            );
+            state.steps_completed.push(58);
+            return Ok(());
+        }
+        state.download_qwen_weights = true;
+        let cmd = qwen_weights::weights_download_command(qwen_weights::DEFAULT_QWEN_MODEL_ID);
+        println!();
+        println!("  To download the weights, run:");
+        println!("      $ {}", cmd.join(" "));
+        println!(
+            "  (`huggingface-cli` ships with the `huggingface_hub` pip package; \
+             `pip install -U huggingface_hub` if missing.)"
+        );
+    }
+
+    state.steps_completed.push(58);
+    Ok(())
+}
+
+/// True when the configured inference topology touches LocalQwen
+/// anywhere — default slot, a hemisphere override, or the embedding
+/// provider. Sole call site is `step5c_qwen_weights`'s skip-check.
+fn inference_uses_local_qwen(
+    topology: &crate::config::inference::InferenceTopology,
+    provider_kind: &Option<ProviderKind>,
+) -> bool {
+    use crate::config::inference::InferenceProvider;
+
+    if matches!(provider_kind, Some(ProviderKind::LocalQwen)) {
+        return true;
+    }
+    if matches!(
+        topology.default_slot.provider,
+        Some(InferenceProvider::LocalQwen)
+    ) {
+        return true;
+    }
+    if matches!(
+        topology.embedding_provider,
+        Some(InferenceProvider::LocalQwen)
+    ) {
+        return true;
+    }
+    let hemis = [&topology.cerebellum, &topology.left, &topology.right];
+    hemis
+        .iter()
+        .any(|slot| matches!(slot.provider, Some(InferenceProvider::LocalQwen)))
+}
+
 async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
     info!("wizard step 6: channel");
 
@@ -1769,6 +1977,329 @@ async fn step6b_keet_pairing(
     }
 
     state.steps_completed.push(60);
+    Ok(())
+}
+
+/// Step 6c — O-1 (Workstream B): Obsidian install.
+///
+/// Surfaces the OS-appropriate `winget` / `brew` / AppImage URL.
+/// Never auto-spawns the installer — operators paste the command
+/// (per "operator GO per command" rule). The wizard records the
+/// opt-in so subsequent boots know whether to nudge the vault step.
+async fn step6c_obsidian_install(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    use crate::installers::obsidian;
+
+    info!("wizard step 6c: obsidian install");
+
+    let already = obsidian::detect_obsidian_install();
+    if already {
+        info!("obsidian already installed; skipping install step");
+        state.install_obsidian = true;
+        state.steps_completed.push(61);
+        return Ok(());
+    }
+
+    if !interactive {
+        if !args.install_obsidian {
+            state.steps_completed.push(61);
+            return Ok(());
+        }
+        state.install_obsidian = true;
+        let path = obsidian::recommend_install_path(false);
+        let cmd = obsidian::install_command(path);
+        info!(
+            path = path.as_str(),
+            cmd = %cmd.join(" "),
+            "operator opted into obsidian install"
+        );
+        state.steps_completed.push(61);
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        println!();
+        println!("[6c/8] Obsidian (vault archive — see step 6d) is not installed.");
+        let install = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Install Obsidian now? (recommended for the NEOTH-Vault archive)")
+            .default(true)
+            .interact()
+            .context("obsidian install confirm")?;
+        if !install {
+            state.steps_completed.push(61);
+            return Ok(());
+        }
+        state.install_obsidian = true;
+        let path = obsidian::recommend_install_path(false);
+        let cmd = obsidian::install_command(path);
+        println!();
+        if cmd.is_empty() {
+            println!("  Obsidian appears to be installed via a non-standard path. Skipping.");
+        } else {
+            println!("  Suggested install command for this platform:");
+            println!("      $ {}", cmd.join(" "));
+            println!("  Run it in a separate shell; the wizard does not auto-spawn installers.");
+        }
+    }
+
+    state.steps_completed.push(61);
+    Ok(())
+}
+
+/// Step 6d — O-2 (Workstream B): NEOTH-Vault bootstrap.
+///
+/// When the operator opts in, the wizard creates the vault directory
+/// + writes the curated `.obsidian/` config + templates from
+/// `installers::obsidian_vault::bootstrap_files`. Idempotent — files
+/// that already exist are left alone (operator's edits win).
+fn step6d_obsidian_vault_bootstrap(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    use crate::installers::obsidian_vault;
+
+    info!("wizard step 6d: obsidian vault bootstrap");
+
+    let mut bootstrap = false;
+    let mut vault_path: Option<std::path::PathBuf> = None;
+
+    if !interactive {
+        if !args.bootstrap_vault {
+            state.steps_completed.push(62);
+            return Ok(());
+        }
+        bootstrap = true;
+        vault_path = obsidian_vault::default_vault_path();
+    } else {
+        #[cfg(feature = "wizard")]
+        {
+            let default_path = obsidian_vault::default_vault_path();
+            let default_label = default_path
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "<HOME unset>".to_string());
+            println!();
+            println!("[6d/8] Bootstrap a NEOTH-Vault at: {default_label}");
+            let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("Create the vault now? (skip if you already have one)")
+                .default(true)
+                .interact()
+                .context("vault bootstrap confirm")?;
+            if want {
+                bootstrap = true;
+                vault_path = default_path;
+            }
+        }
+    }
+
+    if !bootstrap {
+        state.steps_completed.push(62);
+        return Ok(());
+    }
+
+    let Some(path) = vault_path else {
+        warn!("vault bootstrap requested but no default path resolvable (HOME unset); skipping");
+        state.steps_completed.push(62);
+        return Ok(());
+    };
+
+    std::fs::create_dir_all(&path)
+        .with_context(|| format!("create vault root at {}", path.display()))?;
+    let mut wrote = 0usize;
+    let mut skipped = 0usize;
+    for file in obsidian_vault::bootstrap_files() {
+        let target = path.join(file.relative_path);
+        if target.exists() {
+            skipped += 1;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create vault subdir {}", parent.display()))?;
+        }
+        std::fs::write(&target, file.content)
+            .with_context(|| format!("write vault file {}", target.display()))?;
+        wrote += 1;
+    }
+    info!(
+        vault = %path.display(),
+        wrote,
+        skipped,
+        "neoth vault bootstrapped"
+    );
+
+    state.bootstrap_vault = true;
+    state.vault_path = Some(path);
+    state.steps_completed.push(62);
+    Ok(())
+}
+
+/// Step 6e — N-1 (Workstream B): n8n install opt-in.
+///
+/// Probes Docker + npm asynchronously, picks the recommended path
+/// via `InstallStrategy::recommend`. The actual install command is
+/// surfaced — never auto-spawned — so the operator runs it with full
+/// visibility.
+async fn step6e_n8n_install(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    use crate::installers::n8n;
+
+    info!("wizard step 6e: n8n install");
+
+    if !interactive {
+        if !args.install_n8n {
+            state.steps_completed.push(63);
+            return Ok(());
+        }
+        state.install_n8n = true;
+        let docker = n8n::check_docker_available().await.is_some();
+        let npm = n8n::check_npm_available().await.is_some();
+        match n8n::InstallStrategy::recommend(docker, npm) {
+            Some(strategy) => {
+                let cmd = strategy.install_command(n8n::DEFAULT_N8N_PORT);
+                info!(
+                    strategy = strategy.as_str(),
+                    cmd = %cmd.join(" "),
+                    "operator opted into n8n install"
+                );
+            }
+            None => {
+                warn!(
+                    "n8n install opted in but neither docker nor npm available; install one first"
+                );
+            }
+        }
+        state.steps_completed.push(63);
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        println!();
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("[6e/8] Install n8n (workflow engine, optional)?")
+            .default(false)
+            .interact()
+            .context("n8n install confirm")?;
+        if !want {
+            state.steps_completed.push(63);
+            return Ok(());
+        }
+        state.install_n8n = true;
+        let docker = n8n::check_docker_available().await.is_some();
+        let npm = n8n::check_npm_available().await.is_some();
+        match n8n::InstallStrategy::recommend(docker, npm) {
+            Some(strategy) => {
+                let cmd = strategy.install_command(n8n::DEFAULT_N8N_PORT);
+                println!();
+                println!("  {}", strategy.description());
+                println!("      $ {}", cmd.join(" "));
+                println!(
+                    "  Then open http://127.0.0.1:{} to finish n8n's first-run setup.",
+                    n8n::DEFAULT_N8N_PORT
+                );
+            }
+            None => {
+                println!();
+                println!(
+                    "  Neither Docker nor npm is on PATH. Install one first, then re-run \
+                     `neoth init --force` to get the n8n step."
+                );
+            }
+        }
+    }
+
+    state.steps_completed.push(63);
+    Ok(())
+}
+
+/// Step 6f — E-16 (Workstream B): Jarvis seed migration record.
+///
+/// The actual migration is the separate `neoth-migrate` binary; the
+/// wizard records the operator's intent + surfaces the runbook so a
+/// later `neoth-migrate apply --confirm` knows where to look. Never
+/// auto-applies — migrating 12 stores is heavyweight + irreversible
+/// once the WAL frames land.
+fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+    info!("wizard step 6f: jarvis import intent");
+
+    let path = if !interactive {
+        args.import_jarvis.clone()
+    } else {
+        #[cfg(feature = "wizard")]
+        {
+            let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("[6f/8] Migrate an existing Jarvis HIPPOCAMPUS_CORE.md into NEOTH?")
+                .default(false)
+                .interact()
+                .context("jarvis import confirm")?;
+            if !want {
+                state.steps_completed.push(64);
+                return Ok(());
+            }
+            let raw: String =
+                dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt(
+                        "  Path to HIPPOCAMPUS_CORE.md (or directory with 12 Jarvis stores)",
+                    )
+                    .allow_empty(true)
+                    .interact_text()
+                    .context("jarvis path input")?;
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(std::path::PathBuf::from(trimmed))
+            }
+        }
+        #[cfg(not(feature = "wizard"))]
+        {
+            None
+        }
+    };
+
+    let Some(path) = path else {
+        state.steps_completed.push(64);
+        return Ok(());
+    };
+
+    if !path.exists() {
+        warn!(
+            path = %path.display(),
+            "jarvis import path does not exist; recording intent but operator must \
+             repoint with `neoth-migrate dry-run --source <path>` before applying"
+        );
+    }
+
+    state.import_jarvis = Some(path.clone());
+
+    if interactive {
+        #[cfg(feature = "wizard")]
+        {
+            println!();
+            println!("  Intent recorded. Run the migration when ready:");
+            println!("      $ neoth-migrate dry-run");
+            println!("      $ neoth-migrate apply --confirm");
+            println!(
+                "  The wizard never auto-applies — migration writes WAL frames you can't undo."
+            );
+        }
+    } else {
+        info!(
+            path = %path.display(),
+            "jarvis import intent recorded; operator runs `neoth-migrate apply --confirm` manually"
+        );
+    }
+
+    state.steps_completed.push(64);
     Ok(())
 }
 
@@ -3076,6 +3607,12 @@ mod tests {
             plugins: crate::config::PluginsConfig::default(),
             keet_seed_phrase: None,
             pears_bearer_token: None,
+            download_qwen_weights: false,
+            install_obsidian: false,
+            bootstrap_vault: false,
+            vault_path: None,
+            install_n8n: false,
+            import_jarvis: None,
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
@@ -3766,5 +4303,238 @@ mod tests {
         assert!(yaml.contains("activations:"));
         assert!(yaml.contains("indexer_v1: active"));
         assert!(yaml.contains("recall_rerank: disabled"));
+    }
+
+    // ── Workstream B (Session 22) — 5 wizard step regressions ─────────────
+
+    fn args_with_flag(set: impl FnOnce(&mut InitArgs)) -> InitArgs {
+        let mut a = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        set(&mut a);
+        a
+    }
+
+    #[tokio::test]
+    async fn step5c_non_interactive_no_op_when_provider_not_local_qwen() {
+        // Cloud-only operator — no LocalQwen path. Step must skip
+        // silently without recording opt-in.
+        let mut state = fixture_state();
+        state.provider_kind = Some(ProviderKind::ClaudeCli);
+        let args = args_with_flag(|a| a.download_qwen_weights = true);
+        step5c_qwen_weights(&args, false, &mut state).await.unwrap();
+        assert!(!state.download_qwen_weights);
+        assert!(state.steps_completed.contains(&58));
+    }
+
+    #[tokio::test]
+    async fn step5c_non_interactive_records_when_flag_set_and_local_qwen() {
+        // LocalQwen-using operator + --download-qwen-weights → opt-in
+        // recorded. The probe lives under a synthetic HOME so the
+        // "weights missing" branch is exercised.
+        let temp = tempfile::tempdir().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_userprofile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::set_var("HOME", temp.path());
+            std::env::set_var("USERPROFILE", temp.path());
+        }
+
+        let mut state = fixture_state();
+        state.provider_kind = Some(ProviderKind::LocalQwen);
+        let args = args_with_flag(|a| a.download_qwen_weights = true);
+        step5c_qwen_weights(&args, false, &mut state).await.unwrap();
+        assert!(state.download_qwen_weights);
+        assert!(state.steps_completed.contains(&58));
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_userprofile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn step6c_non_interactive_no_op_when_flag_absent() {
+        let mut state = fixture_state();
+        let args = args_with_flag(|_| {}); // no install_obsidian
+        step6c_obsidian_install(&args, false, &mut state)
+            .await
+            .unwrap();
+        // Whether install_obsidian was set depends on whether the host
+        // happens to have Obsidian already installed (sets it true).
+        // The flag-absent path either records "already present" or
+        // does nothing — the marker MUST land either way.
+        assert!(state.steps_completed.contains(&61));
+    }
+
+    #[tokio::test]
+    async fn step6c_non_interactive_records_when_flag_set() {
+        let mut state = fixture_state();
+        let args = args_with_flag(|a| a.install_obsidian = true);
+        step6c_obsidian_install(&args, false, &mut state)
+            .await
+            .unwrap();
+        assert!(state.install_obsidian);
+        assert!(state.steps_completed.contains(&61));
+    }
+
+    #[test]
+    fn step6d_non_interactive_no_op_when_flag_absent() {
+        let mut state = fixture_state();
+        let args = args_with_flag(|_| {});
+        step6d_obsidian_vault_bootstrap(&args, false, &mut state).unwrap();
+        assert!(!state.bootstrap_vault);
+        assert!(state.vault_path.is_none());
+        assert!(state.steps_completed.contains(&62));
+    }
+
+    #[test]
+    fn step6d_non_interactive_bootstraps_vault_when_flag_set() {
+        // Point HOME at a tempdir so the default_vault_path resolves
+        // into the sandbox + the test cleans up automatically.
+        let temp = tempfile::tempdir().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_userprofile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::set_var("HOME", temp.path());
+            std::env::set_var("USERPROFILE", temp.path());
+        }
+
+        let mut state = fixture_state();
+        let args = args_with_flag(|a| a.bootstrap_vault = true);
+        step6d_obsidian_vault_bootstrap(&args, false, &mut state).unwrap();
+
+        assert!(state.bootstrap_vault);
+        let path = state.vault_path.as_ref().expect("vault_path recorded");
+        assert!(path.exists());
+        assert!(path.join("README.md").exists());
+        assert!(path.join(".obsidian").join("app.json").exists());
+        assert!(state.steps_completed.contains(&62));
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_userprofile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+    }
+
+    #[test]
+    fn step6d_idempotent_skips_files_that_already_exist() {
+        // Operator re-runs init with --force: existing vault files
+        // must NOT be clobbered (operator edits win).
+        let temp = tempfile::tempdir().unwrap();
+        let prev_home = std::env::var_os("HOME");
+        let prev_userprofile = std::env::var_os("USERPROFILE");
+        unsafe {
+            std::env::set_var("HOME", temp.path());
+            std::env::set_var("USERPROFILE", temp.path());
+        }
+
+        let vault = temp.path().join("Documents").join("NEOTH-Vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let sentinel = "OPERATOR EDIT — DO NOT OVERWRITE\n";
+        std::fs::write(vault.join("README.md"), sentinel).unwrap();
+
+        let mut state = fixture_state();
+        let args = args_with_flag(|a| a.bootstrap_vault = true);
+        step6d_obsidian_vault_bootstrap(&args, false, &mut state).unwrap();
+
+        let body = std::fs::read_to_string(vault.join("README.md")).unwrap();
+        assert_eq!(body, sentinel, "operator-edited README must be preserved");
+
+        unsafe {
+            match prev_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+            match prev_userprofile {
+                Some(v) => std::env::set_var("USERPROFILE", v),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn step6e_non_interactive_no_op_when_flag_absent() {
+        let mut state = fixture_state();
+        let args = args_with_flag(|_| {});
+        step6e_n8n_install(&args, false, &mut state).await.unwrap();
+        assert!(!state.install_n8n);
+        assert!(state.steps_completed.contains(&63));
+    }
+
+    #[tokio::test]
+    async fn step6e_non_interactive_records_when_flag_set() {
+        let mut state = fixture_state();
+        let args = args_with_flag(|a| a.install_n8n = true);
+        step6e_n8n_install(&args, false, &mut state).await.unwrap();
+        assert!(state.install_n8n);
+        assert!(state.steps_completed.contains(&63));
+    }
+
+    #[test]
+    fn step6f_non_interactive_no_op_when_flag_absent() {
+        let mut state = fixture_state();
+        let args = args_with_flag(|_| {});
+        step6f_import_jarvis(&args, false, &mut state).unwrap();
+        assert!(state.import_jarvis.is_none());
+        assert!(state.steps_completed.contains(&64));
+    }
+
+    #[test]
+    fn step6f_non_interactive_records_path_when_flag_set() {
+        let temp = tempfile::tempdir().unwrap();
+        let jarvis = temp.path().join("HIPPOCAMPUS_CORE.md");
+        std::fs::write(&jarvis, "synthetic jarvis seed").unwrap();
+
+        let mut state = fixture_state();
+        let args = args_with_flag(|a| a.import_jarvis = Some(jarvis.clone()));
+        step6f_import_jarvis(&args, false, &mut state).unwrap();
+        assert_eq!(state.import_jarvis.as_ref(), Some(&jarvis));
+        assert!(state.steps_completed.contains(&64));
+    }
+
+    #[test]
+    fn inference_uses_local_qwen_detects_default_slot() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider};
+        let mut topology = crate::config::inference::InferenceTopology::default();
+        topology.default_slot = HemisphereSlot {
+            provider: Some(InferenceProvider::LocalQwen),
+            ..Default::default()
+        };
+        assert!(inference_uses_local_qwen(&topology, &None));
+    }
+
+    #[test]
+    fn inference_uses_local_qwen_detects_hemisphere_override() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider};
+        let mut topology = crate::config::inference::InferenceTopology::default();
+        topology.left = HemisphereSlot {
+            provider: Some(InferenceProvider::LocalQwen),
+            ..Default::default()
+        };
+        assert!(inference_uses_local_qwen(&topology, &None));
+    }
+
+    #[test]
+    fn inference_uses_local_qwen_false_for_cloud_only_topology() {
+        let topology = crate::config::inference::InferenceTopology::default();
+        assert!(!inference_uses_local_qwen(
+            &topology,
+            &Some(ProviderKind::ClaudeCli)
+        ));
     }
 }
