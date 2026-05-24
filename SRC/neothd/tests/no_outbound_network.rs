@@ -43,6 +43,21 @@
 //!                                    Operator-configured channel adapter
 //!                                    that dials Discord's gateway URL after
 //!                                    `gateway.json` discovery.
+//!   - `src/channels/pears_bridge.rs`
+//!                                  — LOCALHOST-ONLY HTTP client for the
+//!                                    operator-bundled `pear` runtime
+//!                                    (Holepunch CLI). Construction is
+//!                                    routed through `normalise_localhost_url`
+//!                                    which rejects every non-loopback host
+//!                                    at the boundary (test coverage:
+//!                                    `pears_bridge::tests::new_rejects_*`
+//!                                    pins the invariant — 4 explicit
+//!                                    reject cases for remote-IP, public
+//!                                    DNS, file://, empty URL). The
+//!                                    `reqwest::Client` only ever dials
+//!                                    `127.0.0.1` / `localhost` / `[::1]`
+//!                                    — same operator-opt-in category as
+//!                                    the other channel adapters above.
 //!   - `src/cluster/`               — Operator-configured peer discovery +
 //!                                    federation. Today: `tailscale.rs`
 //!                                    TCP-probes tailnet peers (CGNAT
@@ -73,6 +88,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/channels/discord.rs",
     "src/channels/discord_gateway_loop.rs",
     "src/channels/keet_udp.rs",
+    "src/channels/pears_bridge.rs",
     "src/cluster/",
     "src/transport/",
 ];
