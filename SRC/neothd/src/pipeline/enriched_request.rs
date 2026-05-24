@@ -100,14 +100,26 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     // stray newline at the edge of one block doesn't widen the gap to
     // the next. The merge below adds the canonical "\n\n" separator.
     let layers: [Option<&str>; 5] = [
-        inputs.operator_context.map(str::trim).filter(|s| !s.is_empty()),
-        inputs.explicit_system.map(str::trim).filter(|s| !s.is_empty()),
-        inputs.repo_context_block.map(str::trim).filter(|s| !s.is_empty()),
+        inputs
+            .operator_context
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        inputs
+            .explicit_system
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        inputs
+            .repo_context_block
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
         inputs
             .skill_system_prompt
             .map(str::trim)
             .filter(|s| !s.is_empty()),
-        inputs.mcp_catalogue.map(str::trim).filter(|s| !s.is_empty()),
+        inputs
+            .mcp_catalogue
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
     ];
 
     // Assemble the body: concatenate non-empty layers with a blank
@@ -226,7 +238,10 @@ mod tests {
         inputs.operator_context = Some("op");
         inputs.persona_override = Some("blunt + concise");
         let out = build_enriched_request(inputs);
-        assert_eq!(out.system.as_deref(), Some("Tone + persona: blunt + concise\n\nop"));
+        assert_eq!(
+            out.system.as_deref(),
+            Some("Tone + persona: blunt + concise\n\nop")
+        );
     }
 
     #[test]
@@ -234,7 +249,10 @@ mod tests {
         let mut inputs = empty_inputs("greet");
         inputs.persona_override = Some("warmth + humour");
         let out = build_enriched_request(inputs);
-        assert_eq!(out.system.as_deref(), Some("Tone + persona: warmth + humour"));
+        assert_eq!(
+            out.system.as_deref(),
+            Some("Tone + persona: warmth + humour")
+        );
     }
 
     #[test]

@@ -199,47 +199,21 @@ pub async fn run_chat_with(
         Some(crate::memory::operator_md::render(&blocks))
     };
 
-    let combined_system = match (operator_context, args.system.clone()) {
-        (Some(ctx), Some(s)) => Some(format!("{ctx}\n\n{s}")),
-        (Some(ctx), None) => Some(ctx),
-        (None, sys) => sys,
-    };
+    // ── K-Wire-3 (Session 23) — layered enrichment via shared helper ──────
+    // Pre-loads every enrichment block the prior 200-LOC inline
+    // composition used:
+    //   1. installed_skills (snapshot from registry)
+    //   2. mode/skill routing → skill_layer + used_skill_id
+    //   3. mcp_catalogue (async assemble — gated on enabled servers)
+    //   4. persona_override (tweaks.toml)
+    //   5. repo_context_block (K-Repo-Map auto-context)
+    // Then `pipeline::build_enriched_request` composes them in the
+    // canonical layer order (operator_md + explicit_system + repo +
+    // skill + MCP, with persona as a top-line prefix). Channel-side
+    // `cli/serve.rs::build_pipeline_handler` calls the same helper
+    // so every inbound surface reaches the same context layering.
 
-    // ── K-Repo-Map Phase 3c (Session 14 Pick #26) — auto repo-context ─────
-    // When `config.code_map.auto_context_max_files > 0`, query the
-    // persisted code map for files relevant to this prompt and stitch
-    // a `<repo-context>` block into the system prompt. Disabled by
-    // default (max=0) so the rollout doesn't change baseline behaviour.
-    // Best-effort: any failure (missing DB, query error) silently
-    // skips injection — the chat never blocks on code-map state.
-    let combined_system = match maybe_repo_context_block(&config, &prompt) {
-        Some(block) => Some(match combined_system {
-            Some(s) => format!("{s}\n\n{block}"),
-            None => block,
-        }),
-        None => combined_system,
-    };
-
-    // ── Skill router (Phase 27 R-16) ──────────────────────────────────────
-    // Keyword-scan the prompt against installed skills. If a skill activates,
-    // append its system_prompt to combined_system so the skill's instructions
-    // win over both operator rules and the user-supplied --system.
-    //
-    // QM-3 + QM-23 integration (2026-05-22 Session 20): BEFORE the broad
-    // skill-route, check the ModeRegistry built from the loaded skill set.
-    // Modes carry narrower trigger_phrases ("fact-check these claims" /
-    // "do a lit review") that beat the parent skill's broader keywords.
-    // When a mode hits, the layered system prompt becomes:
-    //   <skill base system_prompt> + "\n\n" + <mode system_prompt_delta>
-    // Operator-readable: the mode's narrower context overlays the skill's
-    // base context. When no mode hits, fall back to the broad
-    // `skills::route` Stage-1 keyword scan (today's behaviour).
-    //
-    // Two-stage re-rank (Qwen3-Q8 embedding) hooks in once Day-14b inference
-    // lands.
-    // Arc<Vec<Skill>> snapshot — derefs to &[Skill] for the router
-    // calls below + every .iter() / Vec method continues to compile
-    // unchanged because of Arc's transparent deref chain.
+    // Arc<Vec<Skill>> snapshot — derefs to &[Skill] for the router.
     let installed_skills = match registry_res {
         Ok(reg) => reg.snapshot_owned(),
         Err(e) => {
@@ -250,115 +224,93 @@ pub async fn run_chat_with(
             std::sync::Arc::new(Vec::new())
         }
     };
+
+    // QM-3 + QM-23 (2026-05-22 Session 20): ModeRegistry trigger_phrases
+    // beat the broader skill keyword scan when they hit. The matched
+    // mode's `system_prompt_delta` layers on top of the parent skill's
+    // base `system_prompt`. When no mode hits, fall back to the broad
+    // `skills::route` Stage-1 keyword scan + Stage-2 embedding re-rank.
     let mode_registry = crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
         .unwrap_or_default();
     let mode_hit = mode_registry.match_trigger(&prompt);
-    let (combined_system, _skill_match) = if let Some(resolved) = mode_hit {
-        // Find the parent skill so we can layer the base prompt + delta.
-        let parent = installed_skills
-            .iter()
-            .find(|s| s.id() == resolved.skill_id);
-        info!(
-            mode = %resolved.mode.id,
-            skill = %resolved.skill_id,
-            spectrum = %resolved.mode.spectrum.as_str(),
-            oversight = %resolved.mode.oversight.as_str(),
-            "mode activated via ModeRegistry"
-        );
-        let mode_layer = match parent {
-            Some(p) if !resolved.mode.system_prompt_delta.is_empty() => {
-                format!(
+    let (skill_layer, used_skill_id): (Option<String>, Option<String>) =
+        if let Some(resolved) = mode_hit {
+            let parent = installed_skills
+                .iter()
+                .find(|s| s.id() == resolved.skill_id);
+            info!(
+                mode = %resolved.mode.id,
+                skill = %resolved.skill_id,
+                spectrum = %resolved.mode.spectrum.as_str(),
+                oversight = %resolved.mode.oversight.as_str(),
+                "mode activated via ModeRegistry"
+            );
+            let layer = match parent {
+                Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
                     "{}\n\n{}",
                     p.system_prompt(),
                     resolved.mode.system_prompt_delta
-                )
-            }
-            Some(p) => p.system_prompt().to_string(),
-            None => resolved.mode.system_prompt_delta.clone(),
-        };
-        let merged = match combined_system {
-            Some(sys) if !mode_layer.is_empty() => Some(format!("{sys}\n\n{mode_layer}")),
-            Some(sys) => Some(sys),
-            None if !mode_layer.is_empty() => Some(mode_layer),
-            None => None,
-        };
-        // No skill_match for the downstream review-gate / WAL frame —
-        // mode activation is its own audit path. The skill router's
-        // `SkillMatch` shape doesn't carry mode metadata, so we leave
-        // it None and let downstream code see "no skill activated"
-        // even though a mode did. Review-gate dispatching via /agent
-        // is the explicit operator path; modes don't trigger it.
-        (merged, None)
-    } else {
-        let mut skill_match = crate::skills::route(&prompt, &installed_skills);
-        // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
-        // Runs ONLY when keyword Stage-1 missed AND the operator
-        // configured `freedom.yaml::inference.embedding_provider`.
-        // The L-07 `allow_cloud_fallback: false` safe-default lives
-        // in `embed_provider_from_config` (returns None when no
-        // local impl is available + the operator picked cloud).
-        // Stage-2 winner is folded into the same `RouteMatch` shape
-        // so all downstream logic (system_prompt layering, WAL audit)
-        // stays unchanged. embedding_score: Some(score) marks the
-        // path in operator-visible logs.
-        if skill_match.is_none() {
-            if let Some(embed_provider) =
-                crate::providers::embed_provider_from_config(&config).await
-            {
-                if let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
-                    &prompt,
-                    &installed_skills,
-                    embed_provider.as_ref(),
-                )
-                .await
+                )),
+                Some(p) => Some(p.system_prompt().to_string()),
+                None if !resolved.mode.system_prompt_delta.is_empty() => {
+                    Some(resolved.mode.system_prompt_delta.clone())
+                }
+                None => None,
+            };
+            // Mode activation is its own audit path — review-gate
+            // dispatching via /agent is the explicit operator path,
+            // so no used_skill_id surfaces here (mirrors the prior
+            // `_skill_match` discard).
+            (layer, None)
+        } else {
+            // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
+            // Runs ONLY when keyword Stage-1 missed AND the operator
+            // configured `freedom.yaml::inference.embedding_provider`.
+            let mut skill_match = crate::skills::route(&prompt, &installed_skills);
+            if skill_match.is_none() {
+                if let Some(embed_provider) =
+                    crate::providers::embed_provider_from_config(&config).await
                 {
-                    info!(
-                        skill = skill.id(),
-                        cosine = score,
-                        "skill activated via Stage-2 embedding re-rank"
-                    );
-                    skill_match = Some(crate::skills::router::RouteMatch {
-                        skill,
-                        matched_keywords: Vec::new(),
-                        embedding_score: Some(score),
-                    });
+                    if let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
+                        &prompt,
+                        &installed_skills,
+                        embed_provider.as_ref(),
+                    )
+                    .await
+                    {
+                        info!(
+                            skill = skill.id(),
+                            cosine = score,
+                            "skill activated via Stage-2 embedding re-rank"
+                        );
+                        skill_match = Some(crate::skills::router::RouteMatch {
+                            skill,
+                            matched_keywords: Vec::new(),
+                            embedding_score: Some(score),
+                        });
+                    }
                 }
             }
-        }
-        let merged = match (&skill_match, combined_system) {
-            (Some(m), Some(sys)) => Some(format!("{sys}\n\n{}", m.skill.system_prompt())),
-            (Some(m), None) => Some(m.skill.system_prompt().to_string()),
-            (None, sys) => sys,
-        };
-        if let Some(m) = &skill_match {
-            if m.embedding_score.is_none() {
-                info!(
-                    skill = m.skill.id(),
-                    matched_keywords = ?m.matched_keywords,
-                    "skill activated"
-                );
+            if let Some(m) = &skill_match {
+                if m.embedding_score.is_none() {
+                    info!(
+                        skill = m.skill.id(),
+                        matched_keywords = ?m.matched_keywords,
+                        "skill activated"
+                    );
+                }
             }
-            // Stage-2 winners already logged above with their cosine
-            // score so the operator sees the path that activated.
-        }
-        (merged, skill_match)
-    };
+            let layer = skill_match
+                .as_ref()
+                .map(|m| m.skill.system_prompt().to_string());
+            let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+            (layer, id)
+        };
 
-    // ── MCP tool catalogue injection (Step 1 of autonomous routing) ───────
-    // Each enabled MCP server is queried for its tools/list, descriptions
-    // are run through the prompt-injection sanitizer (CDX-03), the
-    // catalogue block is rendered as Markdown + appended to the system
-    // prompt. The model now SEES which tools exist; Step 2 — parsing
-    // tool-call blocks from the response + dispatching via
-    // `mcp::gate::invoke_with_audit` — ships separately.
-    //
-    // No-op when `~/.neoth/mcp_servers.yaml` is missing/empty.
-    //
-    // Pick #34 (Session 14, silent-failure audit-fix): the prior
-    // `unwrap_or_default()` swallowed YAML parse errors silently —
-    // a broken edit made tools disappear on every message with zero
-    // operator feedback. Now we surface the parse error at warn level
-    // while still proceeding with no MCP tools so chat continues.
+    // ── MCP tool catalogue (Step 1 of autonomous routing) ─────────────────
+    // No-op when `~/.neoth/mcp_servers.yaml` is missing/empty. Pick #34
+    // (Session 14, silent-failure audit-fix): surface YAML parse errors
+    // at warn level instead of silently disabling MCP tools.
     let mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
         warn!(
             error = %e,
@@ -367,8 +319,8 @@ pub async fn run_chat_with(
         );
         Default::default()
     });
-    let combined_system = if mcp_servers.enabled().is_empty() {
-        combined_system
+    let mcp_catalogue: Option<String> = if mcp_servers.enabled().is_empty() {
+        None
     } else {
         match crate::mcp::catalogue::assemble_catalogue(&mcp_servers).await {
             Some(cat) => {
@@ -377,29 +329,38 @@ pub async fn run_chat_with(
                     bytes = cat.len(),
                     "MCP tool catalogue injected into system prompt"
                 );
-                match combined_system {
-                    Some(s) => Some(format!("{s}\n\n{cat}")),
-                    None => Some(cat),
-                }
+                Some(cat)
             }
-            None => combined_system,
+            None => None,
         }
     };
 
-    // ── C-7 persona layer ─────────────────────────────────────────────────
-    // tweaks.toml::persona_override gets prepended to the system prompt
-    // so the operator's chosen tone (`blunt`, `concise, no chitchat`,
-    // `warmth + humour`) flows into every provider call regardless of
-    // which adapter is active. Empty when no tweaks file exists.
+    // ── C-7 persona layer (tweaks.toml::persona_override) ─────────────────
     let tweaks_path = crate::tweaks::Tweaks::default_path();
-    let persona_prefix = crate::tweaks::Tweaks::load_or_default(&tweaks_path)
+    let persona_override = crate::tweaks::Tweaks::load_or_default(&tweaks_path)
         .ok()
         .and_then(|t| t.persona_override.clone());
-    let combined_system = match (persona_prefix, combined_system) {
-        (Some(persona), Some(sys)) => Some(format!("Tone + persona: {persona}\n\n{sys}")),
-        (Some(persona), None) => Some(format!("Tone + persona: {persona}")),
-        (None, sys) => sys,
-    };
+
+    // ── K-Repo-Map Phase 3c — pre-compute the auto-context block ─────────
+    // Best-effort: any failure silently skips injection.
+    let repo_context_block = maybe_repo_context_block(&config, &prompt);
+
+    // ── Compose layered system prompt via shared helper ───────────────────
+    let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+        prompt: &prompt,
+        operator_context: operator_context.as_deref(),
+        explicit_system: args.system.as_deref(),
+        repo_context_block: repo_context_block.as_deref(),
+        skill_system_prompt: skill_layer.as_deref(),
+        used_skill_id: used_skill_id.as_deref(),
+        mcp_catalogue: mcp_catalogue.as_deref(),
+        persona_override: persona_override.as_deref(),
+    });
+    let combined_system = enriched.system;
+    // used_skill_id is plumbed through for any downstream audit
+    // consumers; the existing chat path consumes `combined_system`
+    // the same way it did before the helper extraction.
+    let _used_skill_id = enriched.used_skill_id;
 
     // ── Permission gate (Phase 28b AU-4) + C-14 cost preview ───────────────
     // Real `eur_estimate` from the cost predictor — feeds both the

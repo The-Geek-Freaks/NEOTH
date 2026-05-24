@@ -27,4 +27,4 @@
 
 pub mod enriched_request;
 
-pub use enriched_request::{build_enriched_request, EnrichedRequest, EnrichmentInputs};
+pub use enriched_request::{EnrichedRequest, EnrichmentInputs, build_enriched_request};
