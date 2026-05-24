@@ -22,6 +22,7 @@
 
 pub mod apply;
 pub mod baseline_snapshot;
+pub mod briefing_gate;
 pub mod briefing_policy;
 pub mod claim_guard;
 pub mod delta;
@@ -36,6 +37,7 @@ pub mod presets;
 pub mod redaction;
 pub mod runner;
 pub mod self_dev;
+pub mod snapshot;
 pub mod temporal_guard;
 pub mod timestamp_check;
 pub mod types;
