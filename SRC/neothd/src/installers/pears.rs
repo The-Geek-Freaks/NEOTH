@@ -53,15 +53,9 @@ impl PearsInstallPath {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::NpmWindows => {
-                "Install Pears runtime via npm (Windows — requires Node.js LTS)"
-            }
-            Self::NpmMacos => {
-                "Install Pears runtime via npm (macOS — requires Node.js LTS)"
-            }
-            Self::NpmLinux => {
-                "Install Pears runtime via npm (Linux — requires Node.js LTS)"
-            }
+            Self::NpmWindows => "Install Pears runtime via npm (Windows — requires Node.js LTS)",
+            Self::NpmMacos => "Install Pears runtime via npm (macOS — requires Node.js LTS)",
+            Self::NpmLinux => "Install Pears runtime via npm (Linux — requires Node.js LTS)",
             Self::AlreadyInstalled => "Pears already installed — skip",
         }
     }
@@ -190,7 +184,10 @@ mod tests {
         // npm on Windows ships as a .cmd; bash + tokio::process can't
         // exec it directly, so we go through `cmd /C`. Drift guard.
         let cmd = install_command(PearsInstallPath::NpmWindows);
-        assert_eq!(cmd[..3], ["cmd".to_string(), "/C".to_string(), "npm".to_string()]);
+        assert_eq!(
+            cmd[..3],
+            ["cmd".to_string(), "/C".to_string(), "npm".to_string()]
+        );
         assert!(cmd.contains(&"pear".to_string()));
         assert!(cmd.contains(&"-g".to_string()));
     }

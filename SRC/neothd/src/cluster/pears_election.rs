@@ -70,14 +70,9 @@ pub struct Election {
 /// per-peer identity the discovery layer surfaces. No tiebreaks needed
 /// (pubkeys are unique by construction). No timing dependence — the
 /// same vote arrives at the same answer on every node.
-pub fn elect_orchestrator(
-    peer_set: &BTreeSet<PeerPubkey>,
-    local_pubkey: &PeerPubkey,
-) -> Election {
+pub fn elect_orchestrator(peer_set: &BTreeSet<PeerPubkey>, local_pubkey: &PeerPubkey) -> Election {
     let orchestrator = peer_set.iter().next().cloned();
-    let local_is_orchestrator = orchestrator
-        .as_ref()
-        .is_some_and(|o| o == local_pubkey);
+    let local_is_orchestrator = orchestrator.as_ref().is_some_and(|o| o == local_pubkey);
     Election {
         orchestrator,
         peer_count: peer_set.len(),
@@ -178,7 +173,10 @@ mod tests {
         b.insert(pk("a_first"));
         b.insert(pk("m_middle"));
         b.insert(pk("z_last"));
-        assert_eq!(elect_orchestrator(&a, &pk("x")), elect_orchestrator(&b, &pk("x")));
+        assert_eq!(
+            elect_orchestrator(&a, &pk("x")),
+            elect_orchestrator(&b, &pk("x"))
+        );
     }
 
     #[test]

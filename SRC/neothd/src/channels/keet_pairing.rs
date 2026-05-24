@@ -56,8 +56,7 @@ impl BearerToken {
     /// `rand::random` would use under the hood.
     pub fn generate() -> Result<Self> {
         let mut bytes = [0u8; BEARER_TOKEN_BYTES];
-        getrandom::getrandom(&mut bytes)
-            .context("OS RNG failed during bearer token generation")?;
+        getrandom::getrandom(&mut bytes).context("OS RNG failed during bearer token generation")?;
         let hex_str = hex::encode(bytes);
         Ok(Self(SecretString::from(hex_str)))
     }
@@ -148,8 +147,7 @@ pub fn prepare_pairing(seed_phrase: &str, bridge_port: u16) -> Result<PairingInf
         .pairing_anchor_preview()
         .ok_or_else(|| anyhow::anyhow!("seed phrase produced no anchor — empty after trim?"))?;
     let bearer_token = BearerToken::generate()?;
-    let freedom_yaml_snippet =
-        super::pears_bridge::render_freedom_yaml_snippet(bridge_port, true);
+    let freedom_yaml_snippet = super::pears_bridge::render_freedom_yaml_snippet(bridge_port, true);
     Ok(PairingInfo {
         pairing_anchor,
         bearer_token,
@@ -267,7 +265,11 @@ mod tests {
         // Operator hit Enter mid-paste. Must error with a clear
         // diagnostic that points at the validation kind so the wizard
         // can re-prompt.
-        let short: String = good_phrase().split_whitespace().take(12).collect::<Vec<_>>().join(" ");
+        let short: String = good_phrase()
+            .split_whitespace()
+            .take(12)
+            .collect::<Vec<_>>()
+            .join(" ");
         let err = prepare_pairing(&short, 9100).unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("wrong_word_count"), "msg: {msg}");
@@ -276,10 +278,7 @@ mod tests {
 
     #[test]
     fn prepare_pairing_bails_on_uppercase_word() {
-        let mut words: Vec<String> = good_phrase()
-            .split_whitespace()
-            .map(String::from)
-            .collect();
+        let mut words: Vec<String> = good_phrase().split_whitespace().map(String::from).collect();
         words[2] = "AbLE".into();
         let err = prepare_pairing(&words.join(" "), 9100).unwrap_err();
         assert!(err.to_string().contains("invalid_character"));

@@ -1704,13 +1704,11 @@ async fn step6b_keet_pairing(
             return Ok(());
         }
 
-        let set_up = dialoguer::Confirm::with_theme(
-            &dialoguer::theme::ColorfulTheme::default(),
-        )
-        .with_prompt("[6b/8] `pear` runtime detected. Pair Keet now? (optional)")
-        .default(false)
-        .interact()
-        .context("keet pairing confirm")?;
+        let set_up = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("[6b/8] `pear` runtime detected. Pair Keet now? (optional)")
+            .default(false)
+            .interact()
+            .context("keet pairing confirm")?;
         if !set_up {
             state.steps_completed.push(60);
             return Ok(());
@@ -1760,7 +1758,11 @@ async fn step6b_keet_pairing(
                         );
                         break;
                     }
-                    println!("  Re-paste the phrase (attempt {}/{}).", attempt + 1, MAX_ATTEMPTS);
+                    println!(
+                        "  Re-paste the phrase (attempt {}/{}).",
+                        attempt + 1,
+                        MAX_ATTEMPTS
+                    );
                 }
             }
         }
@@ -2049,22 +2051,15 @@ fn step7c_wasm_plugin_activation(
         let labels: Vec<String> = report
             .loaded
             .iter()
-            .map(|p| {
-                format!(
-                    "{}  ({})",
-                    p.manifest.id,
-                    p.manifest.name,
-                )
-            })
+            .map(|p| format!("{}  ({})", p.manifest.id, p.manifest.name,))
             .collect();
 
-        let picked = dialoguer::MultiSelect::with_theme(
-            &dialoguer::theme::ColorfulTheme::default(),
-        )
-        .with_prompt("[7c/8] Activate plugins (space to toggle, Enter to confirm)")
-        .items(&labels)
-        .interact()
-        .context("wasm plugin multiselect")?;
+        let picked =
+            dialoguer::MultiSelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("[7c/8] Activate plugins (space to toggle, Enter to confirm)")
+                .items(&labels)
+                .interact()
+                .context("wasm plugin multiselect")?;
 
         let picked_set: std::collections::HashSet<usize> = picked.into_iter().collect();
         let mut active_count = 0usize;
@@ -3500,9 +3495,10 @@ mod tests {
         )
         .unwrap();
         // Minimal valid WASM module bytes (wasm magic + version).
-        std::fs::write(plugins_root.join("plugin.wasm"), [
-            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-        ])
+        std::fs::write(
+            plugins_root.join("plugin.wasm"),
+            [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+        )
         .unwrap();
         let args = InitArgs {
             non_interactive: true,
@@ -3535,9 +3531,10 @@ mod tests {
                 format!("id = \"{id}\"\nname = \"x\"\nversion = \"0.1.0\"\n"),
             )
             .unwrap();
-            std::fs::write(pd.join("plugin.wasm"), [
-                0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-            ])
+            std::fs::write(
+                pd.join("plugin.wasm"),
+                [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+            )
             .unwrap();
         }
         let args = InitArgs {
@@ -3549,12 +3546,7 @@ mod tests {
         let mut state = fixture_state();
         step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
         assert_eq!(
-            state
-                .plugins
-                .wasm
-                .activations
-                .get("indexer_v1")
-                .copied(),
+            state.plugins.wasm.activations.get("indexer_v1").copied(),
             Some(crate::wasm_plugin::discovery::PluginActivation::Active),
             "indexer_v1 must be Active after --enable-plugin",
         );
@@ -3581,9 +3573,10 @@ mod tests {
             "id = \"indexer_v1\"\nname = \"x\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
-        std::fs::write(pd.join("plugin.wasm"), [
-            0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-        ])
+        std::fs::write(
+            pd.join("plugin.wasm"),
+            [0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00],
+        )
         .unwrap();
         let args = InitArgs {
             non_interactive: true,
@@ -3634,7 +3627,9 @@ mod tests {
         let back: crate::config::credentials::Credentials =
             serde_yaml::from_str(&yaml).expect("deserialize");
         assert_eq!(
-            back.keet_seed_phrase.as_ref().map(|s| s.expose().to_string()),
+            back.keet_seed_phrase
+                .as_ref()
+                .map(|s| s.expose().to_string()),
             Some("alpha bravo charlie".to_string()),
         );
         assert_eq!(
@@ -3734,8 +3729,9 @@ mod tests {
         // NOT mention either key.
         let mut state = fixture_state();
         state.keet_seed_phrase = Some(crate::secret::SecretString::from("not_in_freedom_yaml"));
-        state.pears_bearer_token =
-            Some(crate::secret::SecretString::from("token_not_in_freedom_yaml"));
+        state.pears_bearer_token = Some(crate::secret::SecretString::from(
+            "token_not_in_freedom_yaml",
+        ));
         let yaml = serde_yaml::to_string(&state).expect("serialize");
         assert!(
             !yaml.contains("keet_seed_phrase"),

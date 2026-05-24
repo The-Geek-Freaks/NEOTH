@@ -59,8 +59,8 @@ pub fn persist_snapshot(home: &Path, profile: &BehaviouralProfile) -> Result<()>
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create parent dir for snapshot: {}", parent.display()))?;
     }
-    let bytes = serde_json::to_vec_pretty(profile)
-        .context("serialise BehaviouralProfile as JSON")?;
+    let bytes =
+        serde_json::to_vec_pretty(profile).context("serialise BehaviouralProfile as JSON")?;
     let tmp = path.with_extension("json.tmp");
     crate::config::credentials::write_mode_0600(&tmp, &bytes)
         .with_context(|| format!("write {}", tmp.display()))?;
@@ -209,11 +209,8 @@ mod tests {
         // snapshot — operator's profile updates as new turns land.
         let dir = tempdir().unwrap();
         let first = aggregate_and_persist(dir.path(), &[turn(1, "a")]).unwrap();
-        let second = aggregate_and_persist(
-            dir.path(),
-            &[turn(1, "a"), turn(2, "b"), turn(3, "c")],
-        )
-        .unwrap();
+        let second =
+            aggregate_and_persist(dir.path(), &[turn(1, "a"), turn(2, "b"), turn(3, "c")]).unwrap();
         assert_ne!(first, second);
         let loaded = load_snapshot(dir.path()).unwrap();
         assert_eq!(loaded, second);

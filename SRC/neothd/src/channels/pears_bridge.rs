@@ -241,9 +241,11 @@ fn normalise_localhost_url(url: &str) -> Result<String, PearsBridgeError> {
             reason: format!("unsupported scheme: {}", parsed.scheme()),
         });
     }
-    let host = parsed.host_str().ok_or_else(|| PearsBridgeError::MalformedUrl {
-        reason: "URL has no host".into(),
-    })?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| PearsBridgeError::MalformedUrl {
+            reason: "URL has no host".into(),
+        })?;
     // `Url::host_str()` returns IPv6 addresses wrapped in brackets
     // (`[::1]`) when surfaced from the URL form. Strip them so the
     // localhost match covers both presentations consistently.
@@ -266,9 +268,7 @@ pub fn render_freedom_yaml_snippet(port: u16, has_token: bool) -> String {
     } else {
         "  # bridge_token: optional bearer; wizard generates one if you skip this line"
     };
-    format!(
-        "channels:\n  pears:\n    bridge_port: {port}\n{token_line}\n"
-    )
+    format!("channels:\n  pears:\n    bridge_port: {port}\n{token_line}\n")
 }
 
 #[cfg(test)]
@@ -278,7 +278,11 @@ mod tests {
     #[test]
     fn local_uses_default_port() {
         let bridge = PearsBridge::local().unwrap();
-        assert!(bridge.base_url().contains(&format!(":{DEFAULT_BRIDGE_PORT}")));
+        assert!(
+            bridge
+                .base_url()
+                .contains(&format!(":{DEFAULT_BRIDGE_PORT}"))
+        );
         assert!(bridge.base_url().contains("127.0.0.1"));
     }
 

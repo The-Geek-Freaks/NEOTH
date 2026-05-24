@@ -195,7 +195,10 @@ mod tests {
         let v = should_emit_for_briefing(dir.path(), 0, 9, &BriefingPolicy::default());
         match v {
             EmitVerdict::Skip { reason } => {
-                assert!(reason.contains("no behavioural snapshot"), "reason: {reason}");
+                assert!(
+                    reason.contains("no behavioural snapshot"),
+                    "reason: {reason}"
+                );
                 assert!(reason.contains("aggregation"), "reason: {reason}");
             }
             EmitVerdict::Emit { .. } => panic!("must Skip when snapshot missing"),
@@ -253,12 +256,7 @@ mod tests {
         aggregate_and_persist(dir.path(), &samples).unwrap();
         record_last_active(dir.path(), 1_700_000_940).unwrap(); // 60s before now
         let now = 1_700_001_000;
-        let v = should_emit_for_briefing(
-            dir.path(),
-            now,
-            hour_target,
-            &BriefingPolicy::default(),
-        );
+        let v = should_emit_for_briefing(dir.path(), now, hour_target, &BriefingPolicy::default());
         assert!(
             matches!(v, EmitVerdict::Emit { .. }),
             "active hour + recent activity must Emit, got {v:?}"
@@ -285,12 +283,7 @@ mod tests {
         record_last_active(dir.path(), 1_700_000_000).unwrap();
         // Use hour_target so the active-hour gate passes, leaving the
         // inactivity gate as the sole Skip trigger.
-        let v = should_emit_for_briefing(
-            dir.path(),
-            now,
-            hour_target,
-            &BriefingPolicy::default(),
-        );
+        let v = should_emit_for_briefing(dir.path(), now, hour_target, &BriefingPolicy::default());
         assert!(
             matches!(v, EmitVerdict::Skip { .. }),
             "3-day inactivity must Skip, got {v:?}"
@@ -319,12 +312,8 @@ mod tests {
         // gate trips. `(hour_target + 12) % 24` reliably picks the
         // opposite-side-of-day hour, guaranteed to have 0 hits.
         let inactive_hour = (hour_target + 12) % 24;
-        let v = should_emit_for_briefing(
-            dir.path(),
-            now,
-            inactive_hour,
-            &BriefingPolicy::default(),
-        );
+        let v =
+            should_emit_for_briefing(dir.path(), now, inactive_hour, &BriefingPolicy::default());
         match v {
             EmitVerdict::Skip { reason } => {
                 assert!(reason.contains("activity window"), "reason: {reason}");

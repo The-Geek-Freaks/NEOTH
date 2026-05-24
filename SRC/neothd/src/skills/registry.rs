@@ -195,20 +195,19 @@ mod watcher {
         // `notify` callbacks run on the watcher's own thread — bounce
         // each event onto the tokio runtime via unbounded mpsc so the
         // debounce loop can `select!` on it alongside cancellation.
-        let mut watcher = match notify::recommended_watcher(move |res: notify::Result<Event>| {
-            match res {
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<Event>| match res {
                 Ok(ev) => {
                     let _ = event_tx.send(ev);
                 }
                 Err(e) => warn!(error = %e, "skill watcher reported error"),
-            }
-        }) {
-            Ok(w) => w,
-            Err(e) => {
-                warn!(error = %e, "failed to construct skill watcher; hot-reload disabled");
-                return None;
-            }
-        };
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    warn!(error = %e, "failed to construct skill watcher; hot-reload disabled");
+                    return None;
+                }
+            };
 
         if let Err(e) = watcher.watch(&registry.skills_dir, RecursiveMode::Recursive) {
             warn!(

@@ -309,10 +309,7 @@ impl PearsPeerDiscovery {
         let mut reg = self.registry.lock().await;
         let evicted = reg.sweep_stale(now_unix_ts);
         if !evicted.is_empty() {
-            info!(
-                count = evicted.len(),
-                "Pears cluster: evicted stale peers"
-            );
+            info!(count = evicted.len(), "Pears cluster: evicted stale peers");
         }
         let election = elect_orchestrator(&reg.peers, &self.local_pubkey);
         (evicted, election)
@@ -357,8 +354,7 @@ impl SupervisorState {
         self.restart_timestamps_unix.push(now_unix_ts);
 
         let too_many_consecutive = self.consecutive_restarts > MAX_CONSECUTIVE_RESTARTS;
-        let too_many_in_window =
-            self.restart_timestamps_unix.len() as u32 > MAX_RESTARTS_IN_WINDOW;
+        let too_many_in_window = self.restart_timestamps_unix.len() as u32 > MAX_RESTARTS_IN_WINDOW;
         if too_many_consecutive || too_many_in_window {
             self.state.transition(AnnouncerState::DisabledByRecoveryCap);
             warn!(
@@ -461,7 +457,7 @@ mod tests {
         let now = 1000 + STALE_PEER.as_secs() + 1;
         let evicted = reg.sweep_stale(now);
         assert_eq!(evicted.len(), 2); // both fresh + stale are past now-STALE
-                                      // Re-check with a smaller delta.
+        // Re-check with a smaller delta.
         let mut reg2 = PeerRegistry::new();
         reg2.record_announce(&payload("fresh", 1000));
         reg2.record_announce(&payload("stale", 100));
@@ -513,7 +509,10 @@ mod tests {
         m.transition(AnnouncerState::Announcing);
         m.transition(AnnouncerState::Announced);
         assert_eq!(m.current, AnnouncerState::Announced);
-        assert_eq!(m.history, vec![AnnouncerState::Idle, AnnouncerState::Announcing]);
+        assert_eq!(
+            m.history,
+            vec![AnnouncerState::Idle, AnnouncerState::Announcing]
+        );
     }
 
     #[test]
@@ -575,10 +574,7 @@ mod tests {
         }
         // The 4th failure hits > MAX_CONSECUTIVE_RESTARTS (3).
         let still_active = sup.record_failure(1003);
-        assert!(
-            !still_active,
-            "4th consecutive failure must trip the cap"
-        );
+        assert!(!still_active, "4th consecutive failure must trip the cap");
         assert_eq!(sup.state.current, AnnouncerState::DisabledByRecoveryCap);
         assert!(sup.state.current.is_terminal());
     }
@@ -663,14 +659,9 @@ mod tests {
     async fn handle_inbound_announce_records_peer_and_returns_election() {
         let bridge = Arc::new(PearsBridge::local().unwrap());
         let disc = PearsPeerDiscovery::new(bridge, "my-cluster", "alex");
-        let e = disc
-            .handle_inbound_announce(payload("bob", 100))
-            .await;
+        let e = disc.handle_inbound_announce(payload("bob", 100)).await;
         assert_eq!(e.peer_count, 1);
-        assert_eq!(
-            e.orchestrator.as_ref().map(|p| p.as_str()),
-            Some("bob")
-        );
+        assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("bob"));
         // alex isn't in the registry yet (no announce_self call), so
         // local_is_orchestrator stays false.
         assert!(!e.local_is_orchestrator);
@@ -689,10 +680,7 @@ mod tests {
         // alex + bob were at ts=100; now - STALE_PEER (60s) = 4941. Both stale.
         assert_eq!(evicted.len(), 2);
         assert_eq!(e.peer_count, 1);
-        assert_eq!(
-            e.orchestrator.as_ref().map(|p| p.as_str()),
-            Some("carol")
-        );
+        assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("carol"));
     }
 
     #[tokio::test]

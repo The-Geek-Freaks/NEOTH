@@ -2780,10 +2780,7 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
     let mut skipped_pending: Vec<String> = Vec::new();
     let mut skipped_disabled: Vec<String> = Vec::new();
     report.loaded.retain(|p| {
-        let state = activations
-            .get(&p.manifest.id)
-            .copied()
-            .unwrap_or_default();
+        let state = activations.get(&p.manifest.id).copied().unwrap_or_default();
         match state {
             crate::wasm_plugin::discovery::PluginActivation::Active => true,
             crate::wasm_plugin::discovery::PluginActivation::Pending => {

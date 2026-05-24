@@ -346,10 +346,8 @@ pub struct WasmPluginsConfig {
     /// (channels, providers, skills) already respects. Matches the
     /// conservative defaults n8n + Obsidian already use.
     #[serde(default)]
-    pub activations: std::collections::BTreeMap<
-        String,
-        crate::wasm_plugin::discovery::PluginActivation,
-    >,
+    pub activations:
+        std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivation>,
 }
 
 fn default_wasm_plugins_enabled() -> bool {

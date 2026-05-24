@@ -102,11 +102,21 @@ pub async fn configure_session_for_claude(session: &TmuxSession) {
     // status (session-scoped)
     let _ = run_tmux_set(socket, &["set-option", "-t", name, "status", "off"]).await;
     // window-scoped trio
-    let _ =
-        run_tmux_set(socket, &["set-window-option", "-t", name, "monitor-activity", "off"]).await;
-    let _ = run_tmux_set(socket, &["set-window-option", "-t", name, "monitor-bell", "off"]).await;
-    let _ =
-        run_tmux_set(socket, &["set-window-option", "-t", name, "remain-on-exit", "on"]).await;
+    let _ = run_tmux_set(
+        socket,
+        &["set-window-option", "-t", name, "monitor-activity", "off"],
+    )
+    .await;
+    let _ = run_tmux_set(
+        socket,
+        &["set-window-option", "-t", name, "monitor-bell", "off"],
+    )
+    .await;
+    let _ = run_tmux_set(
+        socket,
+        &["set-window-option", "-t", name, "remain-on-exit", "on"],
+    )
+    .await;
     debug!(session = name, "claude tmux per-session options applied");
     info!("{SERVER_LEVEL_NOTE}");
 }

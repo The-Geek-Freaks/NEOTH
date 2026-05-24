@@ -63,8 +63,12 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
     match args.action {
         PluginAction::List => render_list(&home, args.output, false),
         PluginAction::Pending => render_list(&home, args.output, true),
-        PluginAction::Enable { id } => set_activation(&home, &id, PluginActivation::Active, args.output),
-        PluginAction::Disable { id } => set_activation(&home, &id, PluginActivation::Disabled, args.output),
+        PluginAction::Enable { id } => {
+            set_activation(&home, &id, PluginActivation::Active, args.output)
+        }
+        PluginAction::Disable { id } => {
+            set_activation(&home, &id, PluginActivation::Disabled, args.output)
+        }
     }
 }
 
@@ -77,10 +81,7 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
         .loaded
         .iter()
         .map(|p| {
-            let state = activations
-                .get(&p.manifest.id)
-                .copied()
-                .unwrap_or_default();
+            let state = activations.get(&p.manifest.id).copied().unwrap_or_default();
             (p.manifest.id.clone(), state, p.manifest.name.clone())
         })
         .collect();
@@ -169,7 +170,10 @@ fn set_activation(
         emit_unchanged(id, new_state, output);
         return Ok(());
     }
-    cfg.plugins.wasm.activations.insert(id.to_string(), new_state);
+    cfg.plugins
+        .wasm
+        .activations
+        .insert(id.to_string(), new_state);
     cfg.save_public_to_default_path()
         .context("save freedom.yaml after plugin activation change")?;
 
@@ -177,12 +181,7 @@ fn set_activation(
     Ok(())
 }
 
-fn emit_changed(
-    id: &str,
-    prev: PluginActivation,
-    new: PluginActivation,
-    output: OutputFormat,
-) {
+fn emit_changed(id: &str, prev: PluginActivation, new: PluginActivation, output: OutputFormat) {
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let payload = json!({
@@ -200,9 +199,7 @@ fn emit_changed(
                 new.as_str()
             );
             if matches!(new, PluginActivation::Active) {
-                println!(
-                    "The plugin will instantiate on the next `neoth serve` boot."
-                );
+                println!("The plugin will instantiate on the next `neoth serve` boot.");
             }
         }
     }

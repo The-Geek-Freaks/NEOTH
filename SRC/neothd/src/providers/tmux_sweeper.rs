@@ -355,19 +355,14 @@ mod tests {
             Ok(s) => s,
             Err(_) => return,
         };
-        let mut s_dedicated = match TmuxSession::new_with_socket(
-            &name_dedicated,
-            "cat",
-            TmuxSocket::neoth(),
-        )
-        .await
-        {
-            Ok(s) => s,
-            Err(_) => {
-                let _ = s_shared.kill().await;
-                return;
-            }
-        };
+        let mut s_dedicated =
+            match TmuxSession::new_with_socket(&name_dedicated, "cat", TmuxSocket::neoth()).await {
+                Ok(s) => s,
+                Err(_) => {
+                    let _ = s_shared.kill().await;
+                    return;
+                }
+            };
         // Sweep on dedicated socket — should see ONLY the dedicated
         // session under the matching prefix.
         let decisions = sweep_once_on_socket(
@@ -392,7 +387,9 @@ mod tests {
         .await
         .expect("sweep on dedicated (shared-prefix)");
         assert!(
-            !decisions_cross.iter().any(|d| d.session_name == name_shared),
+            !decisions_cross
+                .iter()
+                .any(|d| d.session_name == name_shared),
             "dedicated-socket sweep MUST NOT see shared-socket sessions"
         );
         let _ = s_shared.kill().await;

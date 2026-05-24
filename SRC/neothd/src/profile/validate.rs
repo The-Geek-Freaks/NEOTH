@@ -321,7 +321,11 @@ mod tests {
         };
         let d = delta(vec![claim("identity.x", 0.5, vec![])]);
         let v = validate(d, &win).unwrap();
-        assert_eq!(v.delta.claims.len(), 0, "must drop the bypass-attempt claim");
+        assert_eq!(
+            v.delta.claims.len(),
+            0,
+            "must drop the bypass-attempt claim"
+        );
         assert_eq!(v.dropped.len(), 1);
         assert!(
             matches!(v.dropped[0].reason, ValidateError::NoFirstPersonProvenance),

@@ -98,10 +98,9 @@ pub struct PearsWalFederator {
 impl Default for PearsWalFederator {
     fn default() -> Self {
         Self {
-            deferred_reason:
-                "Pears WAL federation not yet validated against live `pear` runtime. \
+            deferred_reason: "Pears WAL federation not yet validated against live `pear` runtime. \
                  Verify K-3.5 pairing + K-2b post_message round-trip first."
-                    .to_string(),
+                .to_string(),
         }
     }
 }

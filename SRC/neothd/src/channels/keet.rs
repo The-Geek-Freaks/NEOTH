@@ -461,7 +461,9 @@ mod tests {
         let err = c.send_proactive("topic-x", "hi").await.unwrap_err();
         assert!(matches!(
             err,
-            ChannelError::NotSupported { feature: "send_text" }
+            ChannelError::NotSupported {
+                feature: "send_text"
+            }
         ));
     }
 

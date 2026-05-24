@@ -609,13 +609,10 @@ mod tests {
         if !TmuxSession::is_available().await {
             return;
         }
-        let s = TmuxSession::new_with_socket(
-            "neoth-cc-b6-dedicated-test",
-            "cat",
-            TmuxSocket::neoth(),
-        )
-        .await
-        .expect("tmux new-session -L neoth");
+        let s =
+            TmuxSession::new_with_socket("neoth-cc-b6-dedicated-test", "cat", TmuxSocket::neoth())
+                .await
+                .expect("tmux new-session -L neoth");
         assert_eq!(s.socket().name(), Some("neoth"));
         // The session MUST exist on the dedicated socket — verified
         // via exists() which routes through tmux_cmd() (same socket).

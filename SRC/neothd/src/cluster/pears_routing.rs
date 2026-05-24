@@ -83,20 +83,22 @@ pub enum RoutingTarget {
 /// ```
 pub fn route(policy: RoutingPolicy, election: &Election) -> RoutingDecision {
     match policy {
-        RoutingPolicy::SendToOrchestrator => match (&election.orchestrator, election.local_is_orchestrator) {
-            (Some(pk), false) => RoutingDecision {
-                target: RoutingTarget::Remote(pk.clone()),
-                reason: "elected orchestrator is a remote peer",
-            },
-            (Some(_), true) => RoutingDecision {
-                target: RoutingTarget::Local,
-                reason: "local node is the elected orchestrator",
-            },
-            (None, _) => RoutingDecision {
-                target: RoutingTarget::Local,
-                reason: "no peers in cluster; local handles request",
-            },
-        },
+        RoutingPolicy::SendToOrchestrator => {
+            match (&election.orchestrator, election.local_is_orchestrator) {
+                (Some(pk), false) => RoutingDecision {
+                    target: RoutingTarget::Remote(pk.clone()),
+                    reason: "elected orchestrator is a remote peer",
+                },
+                (Some(_), true) => RoutingDecision {
+                    target: RoutingTarget::Local,
+                    reason: "local node is the elected orchestrator",
+                },
+                (None, _) => RoutingDecision {
+                    target: RoutingTarget::Local,
+                    reason: "no peers in cluster; local handles request",
+                },
+            }
+        }
         RoutingPolicy::SendToLowestLoadPeerWithCapability => RoutingDecision {
             target: RoutingTarget::Local,
             reason: "policy reserved for v0.2 — falling back to local",
