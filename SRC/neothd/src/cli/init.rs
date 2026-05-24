@@ -2110,14 +2110,36 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     );
     println!("  Role:      {role_display}");
     println!("  Provider:  {provider_display}");
-    println!(
-        "  Channel:   {}",
-        if state.telegram_token.is_some() {
-            "Telegram"
-        } else {
-            "none"
+    // K-4 (Session 21, 2026-05-23): primary/secondary channel display.
+    // Keet wins if paired (operator-private + e2e by default); Telegram
+    // is the fallback. Both paired → "Keet (primary) / Telegram
+    // (secondary)" — encodes the recommended-default flip the agent
+    // panel called for in K-4.
+    let channels = configured_channels(state);
+    let channel_line = match channels.as_slice() {
+        [] => "none".to_string(),
+        [one] => match one.as_str() {
+            "keet" => "Keet".to_string(),
+            "telegram" => "Telegram".to_string(),
+            other => other.to_string(),
+        },
+        [primary, secondary] => {
+            fn pretty(s: &str) -> &str {
+                match s {
+                    "keet" => "Keet",
+                    "telegram" => "Telegram",
+                    other => other,
+                }
+            }
+            format!(
+                "{} (primary) / {} (secondary)",
+                pretty(primary),
+                pretty(secondary)
+            )
         }
-    );
+        many => many.join(", "),
+    };
+    println!("  Channel:   {channel_line}");
     // Pick #34 (Session 14, operator-flow audit-fix Flow#1): surface
     // the consent-gate requirement BEFORE the operator runs `neoth
     // chat` and hits the consent-prompt cold. The gate exists for
@@ -2417,11 +2439,23 @@ fn format_iso8601(unix_secs: u64) -> String {
 /// surfaces are live without parsing freedom.yaml. Extend this when a
 /// future channel (keet, whatsapp, slack) lands.
 fn configured_channels(state: &WizardState) -> Vec<String> {
+    // K-4 (Session 21, 2026-05-23): primary-channel ordering. Once
+    // Keet pairing succeeded, surface Keet FIRST in the configured
+    // list — `.initialized` marker + post-init wizard summary both
+    // read this as "first entry = primary". Telegram still listed
+    // but becomes the fallback channel. This is the minimal-first
+    // K-4 verdict: change the recommended-primary signal without
+    // restructuring step6_channel's dispatch (full default flip
+    // gated on cluster live-test against `pear`).
     let mut out = Vec::new();
+    if state.keet_seed_phrase.is_some() {
+        out.push("keet".to_string());
+    }
     if state.telegram_token.is_some() {
         out.push("telegram".to_string());
     }
-    out.sort();
+    // No .sort() — K-4 ordering is intentional. The Vec is the
+    // primary-first list operators see in `neoth status` output.
     out
 }
 
@@ -3582,6 +3616,52 @@ mod tests {
             back.pears_bearer_token.as_ref().map(|s| s.expose().len()),
             Some(64),
         );
+    }
+
+    // ── K-4 channel-ordering tests (Session 21) ─────────────────────
+
+    #[test]
+    fn k4_configured_channels_lists_keet_first_when_both_paired() {
+        // K-4 contract pin: when operator paired BOTH Keet + Telegram
+        // during the wizard, Keet appears FIRST in the configured list.
+        // First entry = primary; downstream (status display, .initialized
+        // marker, post-init summary) reads this ordering.
+        let mut s = fixture_state();
+        // fixture_state sets Telegram already; add Keet.
+        s.keet_seed_phrase = Some(crate::secret::SecretString::from(
+            "alpha bravo charlie delta echo foxtrot golf hotel india juliet \
+             kilo lima mike november oscar papa quebec romeo sierra tango \
+             uniform victor whiskey xray",
+        ));
+        let chans = configured_channels(&s);
+        assert_eq!(chans, vec!["keet".to_string(), "telegram".to_string()]);
+    }
+
+    #[test]
+    fn k4_configured_channels_keet_only_when_no_telegram() {
+        let mut s = fixture_state();
+        s.telegram_token = None;
+        s.keet_seed_phrase = Some(crate::secret::SecretString::from("seed".to_string()));
+        let chans = configured_channels(&s);
+        assert_eq!(chans, vec!["keet".to_string()]);
+    }
+
+    #[test]
+    fn k4_configured_channels_telegram_only_when_no_keet() {
+        // Backward-compat pin: a wizard run that skipped Keet pairing
+        // still lists Telegram as the configured channel — K-4 must
+        // not regress the pre-Keet operators.
+        let s = fixture_state(); // has Telegram, no Keet
+        let chans = configured_channels(&s);
+        assert_eq!(chans, vec!["telegram".to_string()]);
+    }
+
+    #[test]
+    fn k4_configured_channels_empty_when_neither_paired() {
+        let mut s = fixture_state();
+        s.telegram_token = None;
+        s.keet_seed_phrase = None;
+        assert!(configured_channels(&s).is_empty());
     }
 
     #[test]
