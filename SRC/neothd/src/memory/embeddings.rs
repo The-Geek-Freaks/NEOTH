@@ -433,7 +433,7 @@ impl EmbeddingIndex {
             model: model.to_owned(),
             created_at,
         };
-        self.hnsw.insert((&vector.to_vec(), data_id));
+        self.hnsw.insert((vector, data_id));
         self.meta.insert(data_id, meta.clone());
         self.raw.push((data_id, meta, vector.to_vec()));
     }
@@ -569,6 +569,11 @@ impl EmbeddingIndex {
     /// Used for first-boot migration (no snapshot exists yet) and for
     /// `neoth memory rebuild-index`.
     pub fn build_from_sqlite(conn: &Connection, kind_filter: Option<&str>) -> Result<Self> {
+        // Row shape for the build_from_sqlite SELECT: `(id, source_kind,
+        // source_ref, model, embedding, dim, created_at)`. Aliased so the
+        // type doesn't trip clippy::type_complexity at the Vec call site.
+        type BuildRow = (i64, String, String, String, Vec<u8>, i64, i64);
+
         let mut idx = Self::new();
 
         let sql_base = "SELECT id, source_kind, source_ref, model, embedding, dim, created_at \
@@ -584,7 +589,7 @@ impl EmbeddingIndex {
             .prepare(sql)
             .context("prepare build_from_sqlite query")?;
 
-        let rows: Vec<(i64, String, String, String, Vec<u8>, i64, i64)> = match kind_filter {
+        let rows: Vec<BuildRow> = match kind_filter {
             Some(kind) => stmt
                 .query_map(rusqlite::params![kind], |r| {
                     Ok((
