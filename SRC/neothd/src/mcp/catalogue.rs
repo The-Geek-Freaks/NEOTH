@@ -41,7 +41,7 @@ pub const CATALOGUE_SERVER_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// Output shape (Markdown so the LLM treats it as structured text):
 ///
-/// ```text
+/// ````text
 /// # Available MCP Tools
 ///
 /// Tools you can invoke by emitting a fenced `mcp-tool-call` JSON block:
@@ -57,7 +57,7 @@ pub const CATALOGUE_SERVER_TIMEOUT: Duration = Duration::from_secs(5);
 ///
 /// ## Server `github`
 /// - **search_repos** — ...
-/// ```
+/// ````
 ///
 /// Server entries that fail to spawn are listed as
 /// `## Server <id> — UNAVAILABLE: <reason>` so the operator + the LLM

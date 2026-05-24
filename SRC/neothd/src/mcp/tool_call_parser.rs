@@ -3,11 +3,11 @@
 //! Step 2 of autonomous MCP routing. The catalogue (Step 1) instructs
 //! the LLM to emit tool calls as:
 //!
-//! ```text
+//! ````text
 //! ```mcp-tool-call
 //! {"server": "filesystem", "tool": "read_file", "arguments": {"path": "/tmp/x"}}
 //! ```
-//! ```
+//! ````
 //!
 //! This module extracts every such block from the response text and
 //! returns a structured [`ParsedToolCall`] per match. Malformed blocks

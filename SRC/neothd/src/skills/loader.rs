@@ -13,7 +13,7 @@
 //!    multi-file skills referencing sibling assets work as expected).
 //!
 //! Layout convention for user-installed skills:
-//! ```
+//! ```text
 //! ~/.neoth/skills/
 //!   morning-news/
 //!     skill.yaml           ← parsed

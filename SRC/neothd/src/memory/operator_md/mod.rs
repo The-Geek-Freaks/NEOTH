@@ -4,7 +4,7 @@
 //! single context block that goes at the top of every provider call. Mirrors
 //! Claude Code's `CLAUDE.md` hierarchy:
 //!
-//! ```
+//! ```text
 //! ~/.neoth/NEOTH.md                — global operator rules (always loaded)
 //! <cwd>/NEOTH.md                   — project-specific overrides (if exists)
 //! ~/.neoth/rules/index.md          — modular rules index (lists *.md to include)
