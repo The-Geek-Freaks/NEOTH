@@ -213,6 +213,11 @@ sha2   = "0.10"
 # adapter independent of upstream churn.
 hex    = "0.4"
 
+# N-3 Workstream D (Session 23) — base64url-NOPAD encoding for the
+# localhost API bearer token. 32 random bytes → 43-char URL-safe
+# token stored at ~/.neoth/n8n_api_token.
+base64 = "0.22"
+
 # K-Repo-Map Phase 1 (Session 14 Pick #13) — fast filesystem walker that
 # honours .gitignore / .ignore / .neothignore semantics, parallel by
 # default, used in NEOTH's first-pass code-map scan. Pure Rust, no

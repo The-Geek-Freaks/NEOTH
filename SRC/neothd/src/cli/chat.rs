@@ -3321,6 +3321,7 @@ mod tests {
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
+            n8n_api: crate::config::N8nApiConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3470,6 +3471,7 @@ mod tests {
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
+            n8n_api: crate::config::N8nApiConfig::default(),
         };
 
         let provider = MockProvider {
@@ -3579,6 +3581,7 @@ mod tests {
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
+            n8n_api: crate::config::N8nApiConfig::default(),
         };
         let args = ChatArgs {
             message: Some("Capital of France?".into()),
@@ -3707,6 +3710,7 @@ mod tests {
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
+            n8n_api: crate::config::N8nApiConfig::default(),
         };
         let args = ChatArgs {
             message: Some("hi".into()),
@@ -3843,6 +3847,7 @@ mod tests {
             dreaming: crate::config::DreamingConfig::default(),
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
+            n8n_api: crate::config::N8nApiConfig::default(),
         };
         let args = ChatArgs {
             message: Some("trigger".into()),

@@ -261,6 +261,16 @@ pub struct FreedomConfig {
     /// CLI surface: `neoth telemetry on/off/preview/send-now/status`.
     #[serde(default)]
     pub telemetry: crate::telemetry::TelemetryConfig,
+
+    /// N-3 Workstream D (Session 23) — operator opt-in for the
+    /// localhost HTTP API n8n workflows talk to. Default OFF: every
+    /// bootstrap workflow (`daily_summary`, `morning_brief`,
+    /// `weekly_stats`) ships INACTIVE so a fresh install never serves
+    /// HTTP without explicit operator opt-in. Bind is loopback-only;
+    /// bearer token is a 43-char base64url-NOPAD secret stored at
+    /// `~/.neoth/n8n_api_token` mode-0600.
+    #[serde(default)]
+    pub n8n_api: N8nApiConfig,
 }
 
 /// Workstream F (CT-10/E-20/V1x-06) — WAL compression policy.
@@ -367,6 +377,38 @@ mod wal_config_tests {
         let dir = tempdir().unwrap();
         let cfg = load_wal_config(&dir.path().join("nonexistent.yaml"));
         assert_eq!(cfg.compression, WalCompression::None);
+    }
+}
+
+/// N-3 Workstream D (Session 23) — `freedom.yaml::n8n_api` shape.
+///
+/// Default OFF: a fresh install must explicitly flip `enabled: true`
+/// + run `neoth n8n token` to bring the localhost HTTP API up. Port
+/// pinned to [`crate::n8n_api::DEFAULT_N8N_API_PORT`] (9744) so the
+/// bootstrap workflow JSONs at `assets/n8n_workflows/*.json` find
+/// the daemon without operator-side surgery.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct N8nApiConfig {
+    /// Master switch. Default `false` — the hyper task never spawns
+    /// until the operator opts in.
+    pub enabled: bool,
+    /// Loopback port the hyper server binds. Defaults to
+    /// `crate::n8n_api::DEFAULT_N8N_API_PORT` (9744). Override only
+    /// when 9744 collides with another local service.
+    pub port: u16,
+    /// Override the bearer-token file location. `None` resolves to
+    /// `~/.neoth/n8n_api_token` (mode-0600 / DACL-restricted).
+    pub token_path: Option<std::path::PathBuf>,
+}
+
+impl Default for N8nApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: crate::n8n_api::DEFAULT_N8N_API_PORT,
+            token_path: None,
+        }
     }
 }
 

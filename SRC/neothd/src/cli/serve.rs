@@ -791,6 +791,55 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "tmux sweeper task spawned"
     );
 
+    // ── 5b-sext. n8n localhost API server (N-3 Workstream D) ──────────────
+    //
+    // Binds 127.0.0.1:<config.n8n_api.port> when
+    // `freedom.yaml::n8n_api.enabled = true`. Hyper 1.x service with
+    // bearer auth (5-strike cooldown), per-request 0x39 WAL audit
+    // frame, loopback-only enforcement (bind + accept-time check),
+    // 256 KiB body cap. Default OFF — operator opts in + runs
+    // `neoth n8n token` first to generate the bearer.
+    let n8n_api_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    let n8n_api_task: Option<tokio::task::JoinHandle<()>> = if config.n8n_api.enabled {
+        let home = FreedomConfig::default_neoth_home();
+        let token_path = config
+            .n8n_api
+            .token_path
+            .clone()
+            .unwrap_or_else(|| home.clone());
+        match crate::n8n_api::server::load_or_init_token(&token_path) {
+            Ok(token) => {
+                let state = std::sync::Arc::new(crate::n8n_api::server::ApiState {
+                    writer: writer.clone(),
+                    config: std::sync::Arc::new(config.clone()),
+                    home: home.clone(),
+                    token,
+                    cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+                    boot_instant: std::time::Instant::now(),
+                });
+                info!(
+                    port = config.n8n_api.port,
+                    "n8n localhost API enabled — spawning hyper task on 127.0.0.1"
+                );
+                Some(crate::n8n_api::server::spawn_server(
+                    state,
+                    std::sync::Arc::clone(&n8n_api_shutdown),
+                ))
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    path = %token_path.display(),
+                    "n8n_api token load/init failed — API will NOT be available this session"
+                );
+                None
+            }
+        }
+    } else {
+        debug!("freedom.yaml::n8n_api.enabled = false; skipping localhost API spawn");
+        None
+    };
+
     // ── 5c-bis. Spawn /healthz + /metrics listener — Phase 33c BS-1 ────────
     //
     // Optional, off by default. Operator opts in by setting
@@ -1261,6 +1310,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // next interval picks up — safe to drop.
     if let Some(task) = tmux_sweeper_task {
         task.abort();
+        let _ = task.await;
+    }
+
+    // Drain the n8n localhost API. Notify the accept loop first so it
+    // breaks cleanly between accepts (in-flight handler tasks finish
+    // their existing response), then drop the JoinHandle.
+    n8n_api_shutdown.notify_waiters();
+    if let Some(task) = n8n_api_task {
         let _ = task.await;
     }
 

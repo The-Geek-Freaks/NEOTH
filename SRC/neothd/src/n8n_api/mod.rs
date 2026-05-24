@@ -2,13 +2,26 @@
 //!
 //! Full spec: `PLAN/SPEC_n8n_localhost_api_2026-05-23.md`.
 //!
-//! This module ships the **request envelope primitives** + **bearer
-//! auth** + **WAL payload builder** for `EVENT_TYPE_N8N_REQUEST`
-//! (0x39). The actual hyper server task + per-endpoint handlers
-//! land in a focused N-3 impl session that wires everything into
-//! `cli::serve::run_serve`. Primitives here are pure-fn /
-//! deterministic so the impl session has the contract pinned + the
-//! handler code reduces to glue.
+//! Layer split:
+//! - `mod.rs` (this file) — request/response primitives + bearer
+//!   token helpers + WAL payload builder. Pure-fn / deterministic;
+//!   no I/O.
+//! - [`auth`] — 5-strike auth-failure cooldown tracker (in-memory).
+//! - [`server`] — hyper 1.x task that binds to `127.0.0.1:<port>`,
+//!   pipes requests through the auth middleware + loopback guard +
+//!   into [`handlers`].
+//! - [`handlers`] — the six v1 endpoint handlers
+//!   (/api/health, /api/recall, /api/provider/call,
+//!   /api/channel/send, /api/stats, /api/memory/save).
+//!
+//! Spawned from `cli::serve::run_serve` when
+//! `freedom.yaml::n8n_api.enabled = true`. Bind is loopback-only
+//! (defence in depth — middleware AND hyper bind both enforce
+//! `127.0.0.1` so a single regression can't expose the API to LAN).
+
+pub mod auth;
+pub mod handlers;
+pub mod server;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -29,6 +42,12 @@ pub const N8N_API_TOKEN_CHAR_LEN: usize = 43;
 /// vector (operator owns the host).
 pub const AUTH_FAILURE_STRIKE_LIMIT: u32 = 5;
 pub const AUTH_FAILURE_COOLDOWN_SECS: u64 = 60;
+
+/// Per-request body cap. n8n payloads carrying a `/api/memory/save`
+/// body or `/api/provider/call` prompt should never exceed this
+/// without the operator explicitly raising it. 256 KiB matches the
+/// `assets/n8n_workflows/*.json` worst-case prompt envelope.
+pub const REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024;
 
 /// API error code surfaced in the JSON envelope. Operator + n8n
 /// workflow read this to decide retry vs surface-to-human.
@@ -196,16 +215,11 @@ mod tests {
 
     #[test]
     fn default_port_pinned_for_workflow_asset_compat() {
-        // Drift guard — every N-2 bootstrap workflow JSON references
-        // http://127.0.0.1:9744. Renaming orphans the shipped assets.
         assert_eq!(DEFAULT_N8N_API_PORT, 9744);
     }
 
     #[test]
     fn token_char_len_matches_256_bit_entropy() {
-        // 32 raw bytes (256 bits) → 43 base64url-NOPAD chars. Pin
-        // so a future bump to 64 bytes (overkill for localhost-only)
-        // doesn't silently land without operator awareness.
         assert_eq!(N8N_API_TOKEN_CHAR_LEN, 43);
     }
 
@@ -213,6 +227,11 @@ mod tests {
     fn auth_failure_strike_limit_pinned() {
         assert_eq!(AUTH_FAILURE_STRIKE_LIMIT, 5);
         assert_eq!(AUTH_FAILURE_COOLDOWN_SECS, 60);
+    }
+
+    #[test]
+    fn request_body_limit_pinned() {
+        assert_eq!(REQUEST_BODY_LIMIT_BYTES, 256 * 1024);
     }
 
     // ── ApiErrorCode ────────────────────────────────────────────
@@ -276,7 +295,6 @@ mod tests {
     #[test]
     fn new_request_id_returns_uuid_v7_shape() {
         let id = new_request_id();
-        // UUID is 36 chars with dashes at 8/13/18/23.
         assert_eq!(id.len(), 36);
         assert_eq!(id.as_bytes()[8], b'-');
         assert_eq!(id.as_bytes()[13], b'-');
@@ -305,17 +323,12 @@ mod tests {
 
     #[test]
     fn constant_time_eq_rejects_one_byte_diff() {
-        // Same length, last byte different.
         assert!(!constant_time_token_eq("abcdef0", "abcdef1"));
     }
 
     #[test]
     fn constant_time_eq_returns_false_on_empty_inputs() {
-        // Empty tokens are never valid.
         assert!(constant_time_token_eq("", ""));
-        // (Both empty: technically equal — but caller MUST reject
-        // empty tokens at the extract stage. This test just pins
-        // the math.)
     }
 
     // ── extract_bearer_token ────────────────────────────────────
@@ -365,8 +378,6 @@ mod tests {
 
     #[test]
     fn n8n_request_payload_round_trips_endpoint_path_verbatim() {
-        // Drift guard — endpoint path must round-trip verbatim so
-        // WAL replay can grep by exact route.
         for path in ["/api/health", "/api/provider/call", "/api/channel/send"] {
             let bytes = build_n8n_request_payload(path, "127.0.0.1", "r", 0);
             let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
