@@ -96,12 +96,17 @@ const SERVER_LEVEL_NOTE: &str = concat!(
 /// improvements, not load-bearing for correctness.
 pub async fn configure_session_for_claude(session: &TmuxSession) {
     let name = session.name();
+    // B-6 4c: route every set-option through the session's socket so
+    // dedicated-server sessions apply options to the right server.
+    let socket = session.socket().name();
     // status (session-scoped)
-    let _ = run_tmux_set(&["set-option", "-t", name, "status", "off"]).await;
+    let _ = run_tmux_set(socket, &["set-option", "-t", name, "status", "off"]).await;
     // window-scoped trio
-    let _ = run_tmux_set(&["set-window-option", "-t", name, "monitor-activity", "off"]).await;
-    let _ = run_tmux_set(&["set-window-option", "-t", name, "monitor-bell", "off"]).await;
-    let _ = run_tmux_set(&["set-window-option", "-t", name, "remain-on-exit", "on"]).await;
+    let _ =
+        run_tmux_set(socket, &["set-window-option", "-t", name, "monitor-activity", "off"]).await;
+    let _ = run_tmux_set(socket, &["set-window-option", "-t", name, "monitor-bell", "off"]).await;
+    let _ =
+        run_tmux_set(socket, &["set-window-option", "-t", name, "remain-on-exit", "on"]).await;
     debug!(session = name, "claude tmux per-session options applied");
     info!("{SERVER_LEVEL_NOTE}");
 }
@@ -109,8 +114,18 @@ pub async fn configure_session_for_claude(session: &TmuxSession) {
 /// Run `tmux <args>` for a set-option invocation, logging failures at
 /// WARN. Caller can ignore the Result — failures are quality-of-life
 /// degradations, not correctness violations.
-async fn run_tmux_set(args: &[&str]) -> anyhow::Result<()> {
-    let status = Command::new("tmux")
+///
+/// B-6 4c integration (Session 22): `socket` carries the operator's
+/// configured `-L <name>` choice. Empty/None ⇒ shared per-user socket
+/// (backward-compat with pre-4c behaviour); Some(name) ⇒ splice
+/// `-L <name>` BEFORE the args so the set-option lands on the
+/// dedicated server.
+async fn run_tmux_set(socket: Option<&str>, args: &[&str]) -> anyhow::Result<()> {
+    let mut cmd = Command::new("tmux");
+    for arg in super::tmux_socket::socket_args(socket) {
+        cmd.arg(arg);
+    }
+    let status = cmd
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -946,8 +961,15 @@ mod tests {
             }
         };
         configure_session_for_claude(&session).await;
-        // Read back status — must be "off".
-        let output = tokio::process::Command::new("tmux")
+        // Read back status — must be "off". B-6 4c: the show-options
+        // probe must hit the same socket as the session, otherwise a
+        // dedicated-socket session would be invisible to the shared
+        // socket's tmux server.
+        let mut cmd = tokio::process::Command::new("tmux");
+        for arg in crate::providers::tmux_socket::socket_args(session.socket().name()) {
+            cmd.arg(arg);
+        }
+        let output = cmd
             .arg("show-options")
             .arg("-t")
             .arg(&name)

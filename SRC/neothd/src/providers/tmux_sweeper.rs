@@ -22,6 +22,8 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use tokio::process::Command;
 
+use super::tmux_socket::{TmuxSocket, socket_args};
+
 /// Default operator-grade TTL: 10 minutes idle = stale. Matches Alex's
 /// bridge `TMUX_IDLE_SECS=600` env default.
 pub const DEFAULT_IDLE_TTL: Duration = Duration::from_secs(600);
@@ -54,16 +56,28 @@ pub enum SweepAction {
 /// sweeper is a no-op on Windows hosts, matching the [`TmuxSession`]
 /// degradation strategy.
 pub async fn sweep_once(prefix: &str, idle_ttl: Duration) -> Result<Vec<SweepDecision>> {
+    sweep_once_on_socket(prefix, idle_ttl, &TmuxSocket::shared()).await
+}
+
+/// B-6 Item 4c integration (Session 22) — socket-aware sweep variant.
+/// Honours the operator's `freedom.yaml::claude_cli.tmux.socket_name`
+/// so daemon-managed sessions on `-L neoth` get swept by their own
+/// sweeper without touching sessions on the operator's shared socket.
+pub async fn sweep_once_on_socket(
+    prefix: &str,
+    idle_ttl: Duration,
+    socket: &TmuxSocket,
+) -> Result<Vec<SweepDecision>> {
     if prefix.is_empty() {
         anyhow::bail!("tmux sweep: prefix must not be empty (would match every session)");
     }
-    let sessions = list_neoth_sessions(prefix).await?;
+    let sessions = list_neoth_sessions_on_socket(prefix, socket).await?;
     let now = current_unix_secs();
     let mut decisions = Vec::with_capacity(sessions.len());
     for (name, activity_ts) in sessions {
         let idle_secs = now.saturating_sub(activity_ts);
         if idle_secs > idle_ttl.as_secs() {
-            let action = match kill_session(&name).await {
+            let action = match kill_session_on_socket(&name, socket).await {
                 Ok(_) => SweepAction::Killed,
                 Err(_) => SweepAction::AlreadyGone,
             };
@@ -85,9 +99,23 @@ pub async fn sweep_once(prefix: &str, idle_ttl: Duration) -> Result<Vec<SweepDec
 
 /// `tmux ls -F '#{session_name} #{session_activity}'` — emits one line
 /// per session. `session_activity` is a unix-epoch-seconds value tmux
-/// updates whenever input/output happens in the pane.
+/// updates whenever input/output happens in the pane. Backward-compat
+/// wrapper around [`list_neoth_sessions_on_socket`] using the shared
+/// socket.
+#[allow(dead_code)]
 async fn list_neoth_sessions(prefix: &str) -> Result<Vec<(String, u64)>> {
-    let output = Command::new("tmux")
+    list_neoth_sessions_on_socket(prefix, &TmuxSocket::shared()).await
+}
+
+async fn list_neoth_sessions_on_socket(
+    prefix: &str,
+    socket: &TmuxSocket,
+) -> Result<Vec<(String, u64)>> {
+    let mut cmd = Command::new("tmux");
+    for arg in socket_args(socket.name()) {
+        cmd.arg(arg);
+    }
+    let output = cmd
         .arg("ls")
         .arg("-F")
         .arg("#{session_name} #{session_activity}")
@@ -135,8 +163,17 @@ fn parse_tmux_ls(stdout: &str, prefix: &str) -> Vec<(String, u64)> {
         .collect()
 }
 
+#[allow(dead_code)]
 async fn kill_session(name: &str) -> Result<()> {
-    let status = Command::new("tmux")
+    kill_session_on_socket(name, &TmuxSocket::shared()).await
+}
+
+async fn kill_session_on_socket(name: &str, socket: &TmuxSocket) -> Result<()> {
+    let mut cmd = Command::new("tmux");
+    for arg in socket_args(socket.name()) {
+        cmd.arg(arg);
+    }
+    let status = cmd
         .arg("kill-session")
         .arg("-t")
         .arg(name)
@@ -298,5 +335,93 @@ mod tests {
         // must agree by convention; if these drift, the sweeper would
         // silently miss every session NEOTH spawns.
         assert!(DEFAULT_SESSION_PREFIX.starts_with("neoth-"));
+    }
+
+    // ── B-6 Item 4c socket-aware sweep tests (Session 22) ────────────
+
+    #[tokio::test]
+    async fn sweep_on_dedicated_socket_only_sees_its_own_sessions() {
+        // B-6 4c contract: a sweep run on the dedicated `-L neoth`
+        // socket MUST NOT touch sessions on the shared socket. Proves
+        // socket isolation end-to-end through the sweeper.
+        if !TmuxSession::is_available().await {
+            return;
+        }
+        let pid = std::process::id();
+        // Spawn one session on shared, one on dedicated.
+        let name_shared = format!("neoth-cc-shared-iso-{pid}");
+        let name_dedicated = format!("neoth-cc-dedicated-iso-{pid}");
+        let mut s_shared = match TmuxSession::new(&name_shared, "cat").await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut s_dedicated = match TmuxSession::new_with_socket(
+            &name_dedicated,
+            "cat",
+            TmuxSocket::neoth(),
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(_) => {
+                let _ = s_shared.kill().await;
+                return;
+            }
+        };
+        // Sweep on dedicated socket — should see ONLY the dedicated
+        // session under the matching prefix.
+        let decisions = sweep_once_on_socket(
+            "neoth-cc-dedicated-iso-",
+            Duration::from_secs(3600),
+            &TmuxSocket::neoth(),
+        )
+        .await
+        .expect("sweep on dedicated");
+        assert!(
+            decisions.iter().any(|d| d.session_name == name_dedicated),
+            "dedicated-socket sweep should see dedicated-socket session"
+        );
+        // Now sweep on dedicated socket with the SHARED-socket prefix
+        // — must NOT see the shared-socket session because it lives
+        // on a different server.
+        let decisions_cross = sweep_once_on_socket(
+            "neoth-cc-shared-iso-",
+            Duration::from_secs(3600),
+            &TmuxSocket::neoth(),
+        )
+        .await
+        .expect("sweep on dedicated (shared-prefix)");
+        assert!(
+            !decisions_cross.iter().any(|d| d.session_name == name_shared),
+            "dedicated-socket sweep MUST NOT see shared-socket sessions"
+        );
+        let _ = s_shared.kill().await;
+        let _ = s_dedicated.kill().await;
+    }
+
+    #[tokio::test]
+    async fn sweep_once_backward_compat_uses_shared_socket() {
+        // Pin: the no-socket-arg `sweep_once` defaults to shared,
+        // matching pre-4c behaviour. A future refactor that flipped
+        // the default to dedicated would silently stop sweeping
+        // operator-side shared-socket sessions.
+        if !TmuxSession::is_available().await {
+            return;
+        }
+        let pid = std::process::id();
+        let name = format!("neoth-cc-compat-{pid}");
+        let mut session = match TmuxSession::new(&name, "cat").await {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        // sweep_once (no socket arg) must see the shared-socket session.
+        let decisions = sweep_once("neoth-cc-compat-", Duration::from_secs(3600))
+            .await
+            .expect("sweep_once backward compat");
+        assert!(
+            decisions.iter().any(|d| d.session_name == name),
+            "sweep_once must see shared-socket session by default"
+        );
+        let _ = session.kill().await;
     }
 }
