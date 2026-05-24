@@ -384,4 +384,122 @@ A1 binding: **PL-04 + PL-05 hard pre-condition before any EM-* item merges.** A5
 - Push.
 - Repeat.
 
-The 6-agent Gremium synthesis stops here. Implementation begins with v0.2.1 SX-01 (SSRF guard) — the single highest-leverage 1-day ship that prevents the v0.5 email/paperless ingest surface from becoming a credential exfiltration vector.
+---
+
+## Round-3 Forgotten-Items Sweep (2026-05-24)
+
+A third Gremium of 6 agents (F1 SPEC / F2 HANDOFF / F3 archive / F4 ADVERSARIAL / F5 QUELLEN / F6 GREMIUM-verdicts) walked every PLAN/, PLAN/archive/, and PLAN/ADVERSARIAL/ file and cross-referenced against `PROGRESS_v0_2_FINAL.md` + the 152 backlog items above. They surfaced **70 forgotten commitments / open decisions / unfixed risks** that fell through the cracks.
+
+Three of A5's earlier CRITICAL items overlap with F4's ADV-01/02/03 findings — those are tracked once below in the appropriate lane. SPEC-02 was a false alarm (n8n localhost API IS shipped Session 23, commit `76c4fbe`). Conductor 3-layer context skill was double-flagged by F3 (ARCH-03) + F5 (QU-06) → priority +1.
+
+### Cross-validated high-confidence items (multiple agents flagged the same gap)
+
+| Cross-flag | Item | Lane |
+| :-- | :-- | :-- |
+| F3 ARCH-03 + F5 QU-06 | Conductor 3-layer context skill (`skills/conductor.yaml`) | v0.3 |
+| F3 ARCH-02 + F4 ADV-12 + F1 SPEC-08 | Council adversarial test suite (`tests/council_adversarial.rs` 7 tests + `GROUND_TRUTH_TAG` fix) | v0.4 |
+| A5 SX-02/03 + F5 QU-04 | Centralized output redaction (`security/redact.rs`) | v0.2.1 |
+| F3 ARCH-05 + F1 SPEC-08 + F2 HO-07 | Jarvis migration runbook + recall parity gate + neoth-monitor sidecar | v0.9 |
+| F2 HO-01 + F1 SPEC-01 | Coding workflow dispatcher + Picks 2-10 | v0.3-v0.9 |
+
+### Round-3 v0.2.1 SECURITY HOTFIX additions
+
+- [ ] **ADV-01** WAL `.cpt` crash-recovery files use only CRC32c + xxh3-64 (non-cryptographic). Attacker pre-places crafted `.cpt` with injected `PROFILE_DELTA` events. Add HMAC-SHA256 over `.cpt` content + verify before apply + re-run region_tag validation on recovered frames. — F4 — S 1-2d
+- [ ] **ADV-02** `MmapMut` active WAL segment permanently write-mapped — plugin code im neothd-user space kann silent zero-fill `importance: f32` (no CRC mismatch → silent GC erasure at next compaction). Switch active-segment write to `WalWriterTask` with `O_DSYNC`; sealed segments stay read-only `Mmap`. — F4 — M 2-4d
+- [ ] **ADV-03** Profile Block-B injection has zero untrusted-data boundary. Adversarial paste from Telegram → schema-valid `idx_profile` → injected verbatim in Left-hemisphere system prompt → Hebbian amplifies to ≥0.95 confidence over 26 turns. XML delimiters wrap + `is_quoted_content` pre-filter + flip `require_approval` default true + prompt-injection eval corpus under `eval/prompt_injection_corpus/`. **A5's PL-04 only scoped to paperless/email — profile-extraction path was the missed surface.** — F4 — M 3-5d
+- [ ] **ADV-11** `inventory` crate silent-empty on Windows GNU target (`x86_64-pc-windows-gnu`). All plugin hooks silently fail to register: build green, direct-call tests pass, `inventory::iter::<Hook>().count() == 0` at runtime. **Dev runs on Windows.** Add `.cargo/config.toml` linker flag `-Wl,--whole-archive` OR enforce MSVC target in README + CI. — F4 — XS <0.5d
+- [ ] **GR-01** WhatsApp `LIVE` label honesty — pipeline produced outbound is currently dropped. **Operator pick A (XS rename to `INBOUND-LIVE`) OR pick B (S wire webhook_listener → WhatsApp Graph API send helper).** R7 evaluator: release-gate blocker. — F6 — XS / S
+- [ ] **GR-02** Channel-flapping doctor check label-fix — `check_channel_flapping` measures provider error-rate. **Pick A (XS rename "provider flapping") OR pick B (S add channel/surface field to `UsageEvent`).** — F6 — XS / S
+- [ ] **GR-04** Circuit breaker wire-in — `providers/circuit_breaker.rs` shipped with 12 tests but no `Provider::complete`/`stream` call site uses `try_acquire`/`record_success/failure`. Reliability claim currently vacuous. — F6 — S
+- [ ] **GR-08** Webhook query parser RFC 3986 last-write-wins doc comment in `webhook_verify.rs`. — F6 — XS
+- [ ] **GR-12** Five GUI code-audit findings shipped nowhere: H-1 `chat-channel-switched` callback never bound in Rust (sidebar clicks silent); **H-2 Autonomy ComboBox visual shows "strict" but writes "standard" to freedom.yaml — DATA-INTEGRITY BUG**; H-3 hardware probe blocks main UI thread; H-4 kanban fetch blocks startup; M-1 wizard re-entry blank operator-id/provider from defaults (not parsed freedom.yaml). — F6 — S total
+- [ ] **GR-13** Pre-v0.1 P0 verify: `cli/init.rs::write_config` uses `.mode(0o600)` on `OpenOptions` BEFORE `open()` (not chmod-after-create race) AND `libc::mlock` on deserialized config struct on Linux. — F6 — XS verify / S fix if wrong
+- [ ] **GR-05** GUI `Apply active` E2E test with fake `neothd` subprocess. — F6 — XS
+- [ ] **GR-06** Document `OnSessionStart` `Block` semantics (logged, does not stop daemon). — F6 — XS
+- [ ] **GR-07** Segment numeric sort vs lexicographic — close as accepted risk (single call site enforces `{:06}.wal` zero-padding) OR add the 5-line defensive numeric parse. — F6 — XS
+
+### Round-3 v0.3 additions
+
+- [ ] **SPEC-06** Wizard step 5d (three provider pickers for left/right/cerebellum) + `neoth hemispheres {show, set, test}` CLI + `providers::from_config_for_role` real per-role construction wired to ALL call sites + WAL `0x1F HEMISPHERE_REBOUND` + Slint sidebar switcher panel. **`InferenceTopology` per-hemisphere slots shipped but operator UX is missing.** — F1 — S 4d
+- [ ] **HO-01** Coding workflow dispatcher — `Worker` trait + `WorkerOutcome` + workspace dispatch loop (BACKLOG → hemisphere worker → patch+test → IN_PROGRESS → REVIEW). Chorus-gated questions never answered. **Makes `neoth code` useful end-to-end.** — F2 — L >5d
+- [ ] **HO-03** Five cluster single-session bites: `neoth cluster discover` policy verdict pre-scan / doctor `mdns announcer` check / `neoth cluster confirm --interactive` / `freedom.yaml::cluster.listen_port` knob / Slint settings panel cluster section. — F2 — M 2-5d
+- [ ] **HO-05** `tweaks.toml` runtime theme/persona parser (~30 keys, R-21 deliverable). **Prerequisite für jede GUI theming work in Workstream P.** — F2 — S <2d
+- [ ] **HO-06** NEOTH startup credential-pattern scanner — `~/.neoth/policy.yaml::git.remote_urls.forbid_inline_tokens` + `startup_audit.scan_paths` for `ghp_`/`sk-`/`AKIA` patterns. — F2 — S <2d
+- [ ] **HO-02** GUI fallback for missing Cerebellum ("no Cerebellum bound — run wizard step 5d") + stale-Planning-session reaper on dispatcher startup. — F2 — XS each
+- [ ] **ARCH-03 / QU-06** Conductor 3-layer context skill (`skills/conductor.yaml`, product/spec/plan injection, claimed -29% runtime / -17% tokens) — **cross-flagged by F3 + F5.** — XS 1h
+- [ ] **QU-01** SmallCode EarlyStopDetector — repetition-loop tail-scan + patch-spiral counter (4 failures → full-rewrite) + greeting-regression detector. `coding/retry_policy.rs` ~220 LOC. Today every failure → silent `Blocked`. — F5 — S 3-4h
+- [ ] **QU-02** SmallCode per-model capability profiles — `ModelProfile` struct (`context_length` / `tool_format` / `strengths`). **Today: identical prompt format → silent JSON parse fail on wrong backend.** — F5 — S 200 LOC
+- [ ] **QU-03** SmallCode 2-stage tool router for ≤16k contexts — `select_category` first → category-specific schemas. ~50% schema-token reduction. Gates on QU-02. — F5 — S 180 LOC
+- [ ] **QU-04** Centralized output redaction `security/redact.rs` — pattern-based API key detection + `ALWAYS_REDACT_KEYS` deny-list + ANSI strip + path traversal block. **Today: `.env` lines + Bearer tokens land raw in WAL.** — F5 + cross-flag mit A5 — S 120 LOC
+- [ ] **QU-05** SmallCode validate→fix→escalate loop — `cargo check --message-format=json` post-write, re-inject errors (max 2 attempts), escalate to Right hemisphere via new `WorkerOutcome::Escalate`. — F5 — M 250 LOC
+- [ ] **QU-07** Six LOWKEY skill YAMLs als first-class drops — `lowkey_base.yaml` / `magi_ultra.yaml` / `omega_prime.yaml` / `archon.yaml` / `raskal.yaml` / `pme.yaml` + `max_plus_plus.yaml`. **Today LOWKEY in refusal-recovery uses hardcoded constants.** — F5 — S 1d
+- [ ] **QU-09a** agency-agents top-2: EvidenceCollector + RealityChecker as `sub_agents` builtins. — F5 — S 1d total
+- [ ] **QU-10a** 8 superpowers individual skill YAMLs not in Q21/Q24 bundle: systematic-debugging / test-driven-development / requesting-code-review / receiving-code-review / writing-skills / finishing-a-development-branch / executing-plans / using-git-worktrees. — F5 — S 5h
+- [ ] **QU-10b** SP-A1 task_executor.rs controller loop iterating `idx_kanban_pending` — closes "chat-pipeline wiring still open" gap aus shipped review.rs. — F5 — M 1-2d
+- [ ] **QU-10c** SP-H2 `--verify-tests` flag on `neoth finish`/`neoth branch`. — F5 — S 0.5d
+- [ ] **ADV-04** PROFILE_REDACT re-extraction block — `profile.apply` consults redaction history before emitting `PROFILE_DELTA`; redacted claim does NOT reborn on next mention. — F4 — S 1-2d
+- [ ] **ADV-05** PII gate Block-B injection guard — `profile.inject_into_block_b()` skips claims whose PII category is currently disabled (today: extraction-only, historical claims continue für 276 days nach disable). — F4 — XS
+- [ ] **ADV-06** Per-sub-field `identity.{name,age,role,location,languages}` granularity in freedom.yaml schema + `test_profile_location_subfield_gate`. — F4 — S 1-2d
+- [ ] **ADV-07** Mirror-refusal feedback loop guard — `derived_from_mirror_pipeline: bool` flag on PROVIDER_RESPONSE; `profile.extract` skips `operator_preferences` category on mirror-triggered turns. **Today: closed self-amplifying loop "Alex values limitation-reflection".** — F4 — S 1-2d
+- [ ] **ADV-08** Define + persist `compaction_epoch: u32` in `SegmentHeader` — atomic increment before `.cpt.tmp` write. Fixes idempotency-key collision after mid-rename crash. — F4 — S 1-2d
+- [ ] **ADV-09** Telegram operator command privilege ceiling in `SPEC_channels.md` — destructive ops (`profile redact`, `wal admin`, `profile export`) reject Telegram-sourced with explicit error requiring CLI+local-auth. — F4 — S 1.5d
+- [ ] **ADV-10** HTTP 429 explicit handlers in `profile_learn.yaml` (skip extraction + log `PROFILE_EXTRACT_SKIPPED`) AND `council_debate.yaml` (degrade to 2-participant with documented verdict confidence penalty). — F4 — S 1-2d
+- [ ] **GR-10** Unified safe-mode status surface — single source of truth for active safety rails (`{ rail: "plugin_blocked", reason: "..." }`) + GUI panel within 1s. Trust Ledger family. — F6 — M
+- [ ] **GR-11** Property/fuzz tests for `webhook_verify.rs` signature canonicalization + timestamp windows via `proptest`. — F6 — S
+- [ ] **GR-14** `neoth-plugin-sdk` workspace spin-out — convert single-crate to multi-crate; SDK published independently. — F6 — S
+- [ ] **GR-15** Shared `provider_call_with_breaker_and_usage()` wrapper — `record_now` heute über 4 call sites duplicated (chat-sync / chat-stream / council-hemisphere / MCP-loop). — F6 — S
+
+### Round-3 v0.4 additions
+
+- [ ] **SPEC-03** Council smart-trigger pipeline + per-provider 429 cascade with fallback chains + `council.toml` budget + WAL `0x3D`/`0x3E`/`0x3F` + `neoth council {list, inspect, suppress, budget set}` CLI. **Without smart-trigger gates every security-keyword query fires council at 25-35% rate, draining quota by 14:00.** — F1 — M 3-4d
+- [ ] **SPEC-05** User adaptation — 5 passive estimators (Temporal/Cadence/Length/Topic/Tone) + daily cron → `idx_profile` + `neoth self-dev review` CLI + `propose_adjustments` module + WAL `0x1C`/`0x1D`/`0x1E` + GUI profile selector (Slint step5c + sidebar switcher). — F1 — M 10d
+- [ ] **SPEC-07** `ProfileClaimGuard` Schicht-0 gate zwischen `profile.extract` and `profile.apply` — redaction registry / first-person attribution / daily LLM-call cap / timestamp normalization / typed extension registry. WAL `0x38 PROFILE_DELTA_BLOCKED` + `idx_profile_redactions` SQLite migration. **Five ADVERSARIAL risks share this single fix point.** — F1 — S 3d
+- [ ] **SPEC-10** Refusal recovery layer — per-hemisphere refusal detection (`CouncilStrategy` enum + `hemisphere_role` extension to `0x16` payload) + `RefusalCause::infer_cause` + LOWKEY reframing catalogue (6 reframings) + `recovery::orchestrate` state machine + WAL `0x19 REFUSAL_REROUTED` + `neoth refusal recovery {test, history, disable}` CLI + doctor check. — F1 — M 7d
+- [ ] **ARCH-02** Council adversarial test suite — 7 named tests (`test_all_three_agree_and_wrong` / `test_emergent_divergence_explosion` / `test_callosum_self_destructs` / `test_fuzz_input_against_council` / `test_token_budget_exhaustion` / `test_prompt_bundle_replay_determinism` / `test_left_dominates_right_unfairly`) at `tests/council_adversarial.rs`. — F3 — M 3-5d
+- [ ] **ARCH-04** Block-layer hard token caps + graceful degradation (D oldest 50% → C lowest-importance 50% → Conductor.plan/spec, never A/B/E) + WAL `0x2F BUDGET_EXCEEDED` + paired `prompt_token_estimate`/`prompt_token_actual` on PROVIDER_REQUEST. **Pre-condition für KF-08.** — F3 — S <2d
+- [ ] **ARCH-07** LOWKEY skill versioning — `content_hash = SHA-256(yaml || template)` at load + `disabled_for_eval_sessions` in freedom.yaml + `prompt_bundle_hash = SHA-256(BlockA..E)` per PROVIDER_REQUEST + `0x29 SKILL_INJECT_SKIPPED`. **Prerequisite für ARCH-02 replay-determinism test.** — F3 — XS
+- [ ] **ADV-12** Council `test_all_three_agree_and_wrong` strukturelle Fix — embed `[GROUND_TRUTH_TAG]` in prompt context; `factual_contradiction_check` compares against ground truth not hemisphere agreement. Fixture format `tests/council_adversarial/fixtures/unanimous_wrong_*.json`. — F4 — S 1-2d
+- [ ] **HO-04** Register 4 operator design decision stubs for R-2 + R-02 Phase 3 — port strategy / cadence / embedding model / channel-ingress privacy. — F2 — XS register; L follow-on
+- [ ] **QU-08** `idx_episode` 60-min temporal-window view — `src/wal/views/episode.rs` Hippocampus episode summaries. — F5 — S 100 LOC
+- [ ] **QU-09b** 11 remaining agency-agents sub-personas: BackendArchitect / IncidentResponder / MinimalChangeReviewer / DbOptimizer / OnboardingGuide / SreMonitor / ApiTester / TestResultsAnalyzer / IdentityGraphOperator / McpServerBuilder / TaskDecomposer. — F5 — L 6d
+- [ ] **QU-10d** SP-A2 parallel dispatch mode alongside sequential in task_executor.rs (gates on QU-10b). — F5 — M 1d
+- [ ] **QU-11** ARS-6 `resume_from_passport` — multi-session pipeline recovery via WAL `0xB3 MODE_CHECKPOINT` + `recall::reconstruct_from_checkpoint` + `cli/chat.rs` "resume from [hash]" command. — F5 — S 1d
+
+### Round-3 v0.5 additions
+
+- [ ] **ARCH-01** Tailslayer dual-replica vector store — `tailslayer-rs` crate (hugepage-backed `ReplicatedBuffer<f32>`). Cargo.toml hat heute nur comment stub. Cut auf mmap-only linear-scan in v0.8 MVP scope, nie zu v1.0 backlog migriert. — F3 — M 2-5d
+- [ ] **SPEC-04** Local Qwen3-4B-INT4 für profile extraction — `LocalInference` Rust impl via candle + `neoth model fetch` + `profile_learn.yaml` updated to `model: local_qwen3_4b` + health-check task + `freedom.yaml::inference.allow_cloud_fallback=false` default + `neoth privacy audit` CLI + WAL `0x3A`/`0x3B`/`0x3C` + `ProviderTarget` typed field on PROVIDER_REQUEST. **Without this, every profile-extraction turn sends Alex's conversation content to Gemini API (privacy theater).** Gated on Day-14b forward-pass unstuck. — F1 — M 5d
+- [ ] **SPEC-13** Ouro LoopLM provider — 24 shared layers × 4 recurrent passes candle model + `OuroAdapter` Provider impl + `ProviderKind::Ouro` config variant + wizard step-5 option + GUI provider-choice + hemisphere sub-panel + optional Q8 quantization. **Operator explicitly requested ("als Qwen alternative"); nothing in PROGRESS references Ouro.** — F1 — M 6.5d (8.5d with Q8)
+- [ ] **ADV-13** Deterministic pre-extraction timestamp normalization stage — NLP parses relative time expressions ("3 years ago") against conversation's actual `hlc_ns` before LLM call. — F4 — S 2d
+- [ ] **GR-16** Windows WAL `SetNamedSecurityInfoW` DACL restriction — D-008 final verdict, never placed in backlog. — F6 — S
+
+### Round-3 v0.9 additions
+
+- [ ] **ARCH-05** Jarvis migration runbook — eval-goldset (100 queries aus live Jarvis `recall.sh`), shadow-run 14 days mit Telegram-mirror dual-write, recall parity ≥ 0.85 Cohen's Kappa, YubiKey/TOTP-gated cutover + rollback in 30 min. **Highest-risk omission — NEOTH cannot become primary memory store ohne this gate.** PROGRESS heute springt von v0.9 zu v1.0 ohne migration lane. — F3 — L >5d
+- [ ] **ARCH-06** HLC integration in WAL header — v0.8 §4 96-byte wire format hat `hlc { ns: u64, logical: u32 }` at offset 32 replacing `ts_ns` + WAL `0x2E CLOCK_SKEW_DETECTED`. **Conflict: scoped "Phase 3+ only" aber v0.8 sagt "ship Day 1 cannot retrofit". Prerequisite für SL-01b cluster WAL gossip.** — F3 — S <2d
+- [ ] **SPEC-08** Recall parity methodology — 100-query goldset extraction + 4-grader protocol (A/B/C + external family-D + operator-anchor) + kappa computation + parity-score formula + absolute-quality floors + CRITICAL divergence detection (WAL `0x3E EVAL_CRITICAL_DIVERGENCE`) + `GROUND_TRUTH_TAG` fix. **Go/no-go gate für Phase 3 Jarvis cutover (folds into ARCH-05).** — F1 — M 19d
+- [ ] **SPEC-09** Cluster auto-discovery Phases 2-4 — `mdns-sd` mDNS announcer + listener (`neoth cluster discover`) + Tailscale magic-DNS scan + consent gate + `cluster.yaml` persistence + `neoth cluster {confirm, revoke, status}` + doctor surface + WAL `0xE0`/`0xE2` + wizard step 8. **Without Phases 2-4 `neoth cluster` ist empty + "shared memory across devices" use case unreachable.** — F1 — L 5-6d
+- [ ] **SPEC-11** Cross-channel identity view `idx_human_identity` (UUID v7) + `neothctl identity merge` + `LiveDelivery` Rust struct (send-or-edit + finalize für Telegram/Slack/WhatsApp) + Phase 2 channel adapters (Discord/Signal/iMessage/LINE/Matrix). **SP-5 C-prime trigger ("second production adapter") has no backlog item.** — F1 — M for identity+LiveDelivery; L >5d each for Phase 2 adapters
+- [ ] **SPEC-12** R-02 LLM clustering Phase 3 — embedding-based theme clustering (cosine + agglomerative, 0.65 threshold) + LLM theme summarisation prompt + cross-theme dependency merging + `compose_themed_dreams_for_day` + WAL `0xF1 DREAM_COMPOSED` + `neoth dream {now, CLI}` + privacy gate. **Phase 1+2 in tree, Phase 3 macht dreams useful (semantic compression).** Gated on Day-14b. — F1 — M 14d
+- [ ] **SPEC-14** Phase 6.1 gossip wire-protocol spec doc — vector-clock representation + replay envelope + LWW conflict-resolution rules. **Single-session deliverable, prerequisite für SL-01b implementation.** — F1 — XS spec-only
+- [ ] **HO-07** `neoth-monitor` alerting sidecar — post-cutover hot-watch daemon mit 5 trigger rules + 4 neue WAL events (`0x3C MONITOR_PERF_ALERT` / `0x3D MONITOR_PANIC_EVENT` / `0x3E MONITOR_CHANNEL_SILENT` / `0x3F MONITOR_CRC_RATE_ALERT` — re-bandnumbered weil 0x38..0x3B mit CHANNEL_MSG_EDIT clash) + 30min channel-silence + 0.1%/day CRC threshold. **Required vor Day-80 cutover per ARCH-05.** — F2 — M 2-5d
+- [ ] **ADV-14** Longitudinal recall regression anchor — `eval/regression_anchor_day30.jsonl` (20 query+response pairs at cutover) + weekly cron re-run + alert on `cosine(embed(current), anchor) < 0.70` + WAL `0x3F REGRESSION_ALERT`. — F4 — S 1.5d setup
+
+### Round-3 v1.0 additions
+
+- [ ] **SPEC-01** Coding workflow implementation Picks 2-10 — Store CRUD + heuristic classifier + decomposer + `neoth code` CLI + worker dispatcher + activity feed CLI + GUI Code Sessions tab + LLM classify + review flow. **Without Picks 2-10 operator cannot use `neoth code` at all.** ~3050 LOC across 9 picks. (Overlaps mit HO-01 dispatcher — HO-01 ist Pick 5; Picks 2-4 + 6-10 here.) — F1 — L >5d
+- [ ] **GR-03** Trust Ledger + Autonomy Gradients + Recovery-first UX — Gremium-identified primary differentiators vs OpenClaw/Hermes/OpenHuman. **Operator pick: v0.4 or v0.9 or defer.** — F6 — M-L each
+- [ ] **GR-09** GUI screen-transition fade animation (deferred at Session 18 G-27, never placed). Add to GU-02 polish OR formal close. — F6 — S
+- [ ] **HO-08** Ecology-Schicht 3-step pickup procedure + 2 new file targets (`council/adaptation.rs` + `skills/genealogy.rs`) + pre-audit of `profile/self_dev.rs` + `council/callosum.rs` + `skills/registry.rs`. — F2 — XS planning
+- [ ] **HO-09** V1x-03 drift detection 4 deliverables — `profile/baseline_diff.rs` (NEW pure-fn) + cron consumer wrapper + `freedom.yaml::drift_alert` config block + `neoth profile drift {report, baseline, reset}` CLI. — F2 — M 2-5d
+
+---
+
+## Round-3 totals + WAL band re-coordination
+
+- **70 new items** added across 6 lanes (v0.2.1 hotfix + v0.3 + v0.4 + v0.5 + v0.9 + v1.0).
+- **Additional effort: ~95-130 person-days** on top of the original 210-260. Total v1.0 scope: ~305-390 person-days.
+- **WAL band conflict resolved:** F2 HO-07 originally claimed `0x38..0x3B` for monitor events, but `0x38 CHANNEL_MSG_EDIT` already lives there. Re-routed to `0x3C..0x3F` as `MONITOR_*` band. Update sequencing rule #2 accordingly.
+- **Operator picks still needed:** GR-01 (WhatsApp A or B) / GR-02 (flapping A or B) / GR-03 (Trust Ledger lane) / HO-04 (R-2 + R-02 Phase 3 four decisions). All four block their respective lane starts.
+
+The Round-3 sweep stops here. Implementation begins with v0.2.1 SX-01 (SSRF guard) — unchanged from Round-2 verdict. The Round-3 ADV-01..03 + ADV-11 + GR-12 H-2 items fold INTO the same v0.2.1 hotfix lane.
