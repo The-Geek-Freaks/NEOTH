@@ -959,6 +959,23 @@ impl FreedomConfig {
         neoth_home()
     }
 
+    /// Session 24 env-mutation refactor (Option C): build the
+    /// `~/.neoth/` path against an explicit `base` directory instead
+    /// of reading `HOME` / `USERPROFILE` from the process-global env.
+    /// Tests that previously mutated the env can now pass a tempdir
+    /// directly — no `std::env::set_var`, no cross-test race.
+    pub fn default_neoth_home_at(base: &Path) -> PathBuf {
+        neoth_home_from(base)
+    }
+
+    /// Same idea for the WAL directory specifically. Mirrors
+    /// [`default_wal_dir`] but accepts an explicit `base` so test
+    /// callers don't have to call `default_neoth_home_at(base).join("wal")`
+    /// themselves.
+    pub fn default_wal_dir_at(base: &Path) -> PathBuf {
+        neoth_home_from(base).join("wal")
+    }
+
     /// Path to the optional cron jobs file (`~/.neoth/jobs.yaml`).
     ///
     /// Returns `Some` regardless of whether the file exists — callers should
@@ -1057,7 +1074,15 @@ fn neoth_home() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))
         .unwrap_or_else(|_| PathBuf::from("."));
-    home.join(".neoth")
+    neoth_home_from(&home)
+}
+
+/// Session 24: build the `~/.neoth/` path against an explicit `base`.
+/// Pure function — no env reads, no allocation beyond the final join.
+/// Used by [`FreedomConfig::default_neoth_home_at`] and the test
+/// helpers in `cli/*` that previously had to mutate HOME.
+pub fn neoth_home_from(base: &Path) -> PathBuf {
+    base.join(".neoth")
 }
 
 #[cfg(unix)]

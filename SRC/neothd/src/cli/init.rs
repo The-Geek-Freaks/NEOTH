@@ -2061,9 +2061,29 @@ fn step6d_obsidian_vault_bootstrap(
     interactive: bool,
     state: &mut WizardState,
 ) -> Result<()> {
+    step6d_obsidian_vault_bootstrap_with_home(args, interactive, state, None)
+}
+
+/// Session 24 env-mutation refactor: explicit `home_override` lets
+/// tests pass a tempdir instead of mutating the global HOME /
+/// USERPROFILE env vars. Production call site passes `None` and
+/// reads the env as before.
+fn step6d_obsidian_vault_bootstrap_with_home(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+    home_override: Option<&std::path::Path>,
+) -> Result<()> {
     use crate::installers::obsidian_vault;
 
     info!("wizard step 6d: obsidian vault bootstrap");
+
+    let resolve_vault = || -> Option<std::path::PathBuf> {
+        match home_override {
+            Some(h) => Some(obsidian_vault::default_vault_path_at(h)),
+            None => obsidian_vault::default_vault_path(),
+        }
+    };
 
     let mut bootstrap = false;
     let mut vault_path: Option<std::path::PathBuf> = None;
@@ -2074,11 +2094,11 @@ fn step6d_obsidian_vault_bootstrap(
             return Ok(());
         }
         bootstrap = true;
-        vault_path = obsidian_vault::default_vault_path();
+        vault_path = resolve_vault();
     } else {
         #[cfg(feature = "wizard")]
         {
-            let default_path = obsidian_vault::default_vault_path();
+            let default_path = resolve_vault();
             let default_label = default_path
                 .as_ref()
                 .map(|p| p.display().to_string())
@@ -4416,20 +4436,20 @@ mod tests {
 
     #[test]
     fn step6d_non_interactive_bootstraps_vault_when_flag_set() {
-        let _env_lock = lock_home_env();
-        // Point HOME at a tempdir so the default_vault_path resolves
-        // into the sandbox + the test cleans up automatically.
+        // Session 24 env-mutation refactor: use the explicit
+        // `home_override` parameter instead of mutating the global
+        // HOME / USERPROFILE env vars. No lock needed; tempdir
+        // is fully isolated per test.
         let temp = tempfile::tempdir().unwrap();
-        let prev_home = std::env::var_os("HOME");
-        let prev_userprofile = std::env::var_os("USERPROFILE");
-        unsafe {
-            std::env::set_var("HOME", temp.path());
-            std::env::set_var("USERPROFILE", temp.path());
-        }
-
         let mut state = fixture_state();
         let args = args_with_flag(|a| a.bootstrap_vault = true);
-        step6d_obsidian_vault_bootstrap(&args, false, &mut state).unwrap();
+        step6d_obsidian_vault_bootstrap_with_home(
+            &args,
+            false,
+            &mut state,
+            Some(temp.path()),
+        )
+        .unwrap();
 
         assert!(state.bootstrap_vault);
         let path = state.vault_path.as_ref().expect("vault_path recorded");
@@ -4437,32 +4457,14 @@ mod tests {
         assert!(path.join("README.md").exists());
         assert!(path.join(".obsidian").join("app.json").exists());
         assert!(state.steps_completed.contains(&62));
-
-        unsafe {
-            match prev_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match prev_userprofile {
-                Some(v) => std::env::set_var("USERPROFILE", v),
-                None => std::env::remove_var("USERPROFILE"),
-            }
-        }
     }
 
     #[test]
     fn step6d_idempotent_skips_files_that_already_exist() {
-        let _env_lock = lock_home_env();
+        // Session 24 env-mutation refactor: explicit home_override.
         // Operator re-runs init with --force: existing vault files
         // must NOT be clobbered (operator edits win).
         let temp = tempfile::tempdir().unwrap();
-        let prev_home = std::env::var_os("HOME");
-        let prev_userprofile = std::env::var_os("USERPROFILE");
-        unsafe {
-            std::env::set_var("HOME", temp.path());
-            std::env::set_var("USERPROFILE", temp.path());
-        }
-
         let vault = temp.path().join("Documents").join("NEOTH-Vault");
         std::fs::create_dir_all(&vault).unwrap();
         let sentinel = "OPERATOR EDIT — DO NOT OVERWRITE\n";
@@ -4470,21 +4472,16 @@ mod tests {
 
         let mut state = fixture_state();
         let args = args_with_flag(|a| a.bootstrap_vault = true);
-        step6d_obsidian_vault_bootstrap(&args, false, &mut state).unwrap();
+        step6d_obsidian_vault_bootstrap_with_home(
+            &args,
+            false,
+            &mut state,
+            Some(temp.path()),
+        )
+        .unwrap();
 
         let body = std::fs::read_to_string(vault.join("README.md")).unwrap();
         assert_eq!(body, sentinel, "operator-edited README must be preserved");
-
-        unsafe {
-            match prev_home {
-                Some(v) => std::env::set_var("HOME", v),
-                None => std::env::remove_var("HOME"),
-            }
-            match prev_userprofile {
-                Some(v) => std::env::set_var("USERPROFILE", v),
-                None => std::env::remove_var("USERPROFILE"),
-            }
-        }
     }
 
     #[tokio::test]

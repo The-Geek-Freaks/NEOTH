@@ -31,7 +31,16 @@ pub fn default_vault_path() -> Option<PathBuf> {
     } else {
         std::env::var_os("HOME").map(PathBuf::from)
     }?;
-    Some(home.join("Documents").join(NEOTH_VAULT_DIR_NAME))
+    Some(default_vault_path_at(&home))
+}
+
+/// Session 24 env-mutation refactor (Option C): build the vault path
+/// against an explicit `home` directory instead of reading HOME /
+/// USERPROFILE from the process-global env. Tests that previously had
+/// to mutate the env to redirect this lookup can now pass a tempdir
+/// directly + skip the unsafe `std::env::set_var` round-trip.
+pub fn default_vault_path_at(home: &std::path::Path) -> PathBuf {
+    home.join("Documents").join(NEOTH_VAULT_DIR_NAME)
 }
 
 /// One bootstrap plugin NEOTH recommends. `community_id` matches
