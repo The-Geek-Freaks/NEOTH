@@ -128,46 +128,94 @@ pub struct ReinforceOutcome {
 // This module owns only the math primitives (decay/reinforce/ranking/tier_for)
 // and per-event helpers (`hebbian_reinforce_event`).
 
-/// Apply Hebbian reinforce to one event in `idx_episode`. Reads the current
-/// importance + ts_ns, computes the new value, writes both `importance` and
-/// `last_access_ts` back. Caller is responsible for emitting the audit WAL
-/// event (`IMPORTANCE_REINFORCED`) when a writer is available.
+/// Apply Hebbian reinforce to one event in `idx_episode` (hot tier). Reads
+/// the current importance + ts_ns, computes the new value, writes both
+/// `importance` and `last_access_ts` back. Caller is responsible for emitting
+/// the audit WAL event (`IMPORTANCE_REINFORCED`) when a writer is available.
 ///
 /// Returns `Ok(None)` if the event_id is unknown (e.g. operator passed a
 /// stale id from an archived row). The caller should treat that as a
 /// soft-fail, not a panic.
+///
+/// M-01 (Session 24): this hot-only entry point is kept as a thin wrapper
+/// around the tier-aware [`hebbian_reinforce_at_tier`] so existing daemon
+/// callsites do not need to change. New code that knows the hit's tier
+/// (e.g. `cli/recall.rs`) should call `hebbian_reinforce_at_tier` directly
+/// so warm + cold rows also get reinforced on recall hits — pre-fix only
+/// the hot-tier branch reinforced, leaving warm/cold importance frozen
+/// against active access and violating SPEC `PLAN/SPEC_memory_tiers.md`
+/// MT-3 ("Hebbian reinforce on every recall hit, all tiers").
 pub fn hebbian_reinforce_event(
     conn: &Connection,
     event_id: i64,
     now_ns: u64,
 ) -> Result<Option<ReinforceOutcome>> {
-    // Pick #32 (Session 14, audit-fix): prior `.ok()` collapsed every
-    // DB error to `None`, which the caller treats as "event not found,
-    // skip reinforcement" — silently degrading the memory tier for
-    // active facts whenever transient locks / corrupt schema hit. The
-    // `optional()` pattern carves out `QueryReturnedNoRows → Ok(None)`
-    // and propagates everything else with context.
+    hebbian_reinforce_at_tier(conn, Tier::Hot, event_id, now_ns)
+}
+
+/// Apply Hebbian reinforce to one event in the tier's backing table —
+/// `idx_episode` for Hot, `idx_consolidated` for Warm, `idx_longterm` for
+/// Cold. Returns the old + new importance + tier in a [`ReinforceOutcome`].
+///
+/// Warm-tier lookup uses `COALESCE(event_id, -id) = ?` so it matches both
+/// (a) retained events whose original `idx_episode.event_id` survived the
+/// hot→warm migration, and (b) synthesised per-day summary rows where
+/// `event_id IS NULL`. The matching pattern mirrors how [`crate::cli::recall`]
+/// surfaces warm hits, so any id returned by recall round-trips here.
+///
+/// Cold-tier rows always have a non-null `event_id` (set by
+/// [`crate::memory::consolidate::run_consolidation_pass`]'s warm→cold
+/// promotion path — original id when available, synthetic `-row_id - 1`
+/// otherwise) and the lookup is the simple `event_id = ?` predicate.
+///
+/// Returns `Ok(None)` if the row is unknown — soft-fail per `Pick #32`.
+pub fn hebbian_reinforce_at_tier(
+    conn: &Connection,
+    tier: Tier,
+    event_id: i64,
+    now_ns: u64,
+) -> Result<Option<ReinforceOutcome>> {
     use rusqlite::OptionalExtension;
-    let row: Option<(f64, i64)> = conn
-        .query_row(
-            "SELECT importance, ts_ns FROM idx_episode WHERE event_id = ?1",
-            params![event_id],
-            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, i64>(1)?)),
-        )
+    // SQL is hard-pinned to one table per tier; the table-name is a
+    // compile-time literal so this is NOT runtime-format SQL.
+    let (select_sql, update_sql) = match tier {
+        Tier::Hot => (
+            "SELECT importance FROM idx_episode WHERE event_id = ?1",
+            "UPDATE idx_episode SET importance = ?1, last_access_ts = ?2 \
+             WHERE event_id = ?3",
+        ),
+        Tier::Warm => (
+            "SELECT importance FROM idx_consolidated \
+             WHERE COALESCE(event_id, -id) = ?1",
+            "UPDATE idx_consolidated SET importance = ?1, last_access_ts = ?2 \
+             WHERE COALESCE(event_id, -id) = ?3",
+        ),
+        Tier::Cold => (
+            "SELECT importance FROM idx_longterm WHERE event_id = ?1",
+            "UPDATE idx_longterm SET importance = ?1, last_access_ts = ?2 \
+             WHERE event_id = ?3",
+        ),
+    };
+    let old: Option<f64> = conn
+        .query_row(select_sql, params![event_id], |r| r.get::<_, f64>(0))
         .optional()
         .with_context(|| {
-            format!("lookup idx_episode for hebbian reinforce, event_id={event_id}")
+            format!(
+                "lookup {tier} row for hebbian reinforce, event_id={event_id}",
+                tier = tier.as_str(),
+            )
         })?;
-    let Some((old, ts_ns)) = row else {
+    let Some(old) = old else {
         return Ok(None);
     };
-    let tier = tier_for(now_ns, ts_ns as u64);
     let new = hebbian_reinforce_value(old, tier);
-    conn.execute(
-        "UPDATE idx_episode SET importance = ?1, last_access_ts = ?2 WHERE event_id = ?3",
-        params![new, now_ns as i64, event_id],
-    )
-    .context("update idx_episode importance after recall hit")?;
+    conn.execute(update_sql, params![new, now_ns as i64, event_id])
+        .with_context(|| {
+            format!(
+                "update {tier} importance after recall hit, event_id={event_id}",
+                tier = tier.as_str(),
+            )
+        })?;
     Ok(Some(ReinforceOutcome { old, new, tier }))
 }
 
@@ -264,6 +312,158 @@ mod tests {
         let conn = store::open(&db).unwrap();
         let out = hebbian_reinforce_event(&conn, 99_999, 0).unwrap();
         assert!(out.is_none());
+    }
+
+    // ── M-01 (Session 24) tier-aware reinforce ────────────────────────
+    //
+    // Pre-fix `hebbian_reinforce_event` only touched `idx_episode`; the
+    // recall path explicitly skipped warm + cold hits, so frequently-
+    // recalled consolidated/long-term memories decayed against active
+    // access. These tests pin the new tier-dispatch contract: each
+    // tier writes to its own backing table, and the warm-tier COALESCE
+    // trick handles both retained-event + synthesised summary rows.
+
+    fn insert_consolidated(
+        conn: &Connection,
+        event_id: Option<i64>,
+        importance: f64,
+    ) -> i64 {
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('retained', '2026-01-01', ?1, 'warm', 'h', ?2, 0, 0)",
+            params![event_id, importance],
+        )
+        .unwrap();
+        conn.last_insert_rowid()
+    }
+
+    fn insert_longterm(conn: &Connection, event_id: i64, importance: f64) {
+        conn.execute(
+            "INSERT INTO idx_longterm \
+             (event_id, text, text_hash, importance, promoted_ts, last_access_ts, archive_path) \
+             VALUES (?1, 'cold', 'h', ?2, 0, 0, NULL)",
+            params![event_id, importance],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn hebbian_reinforce_at_tier_warm_retained_row_uses_event_id() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        let _row_id = insert_consolidated(&conn, Some(123), 0.5);
+        let now: u64 = 1_700_000_000 * 1_000_000_000;
+        let out = hebbian_reinforce_at_tier(&conn, Tier::Warm, 123, now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.tier, Tier::Warm);
+        // Warm k=0.10: 0.5 → 0.55
+        assert!((out.new - 0.55).abs() < 1e-6, "new={}", out.new);
+        let imp: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_consolidated WHERE event_id = 123",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((imp - 0.55).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hebbian_reinforce_at_tier_warm_summary_row_uses_negative_id() {
+        // Summary rows have NULL event_id; recall surfaces them with
+        // synthetic event_id = -id. The reinforce path must route the
+        // negative id back to the same row via COALESCE.
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        let row_id = insert_consolidated(&conn, None, 0.4);
+        let now: u64 = 1_700_000_000 * 1_000_000_000;
+        let synthetic_id = -row_id;
+        let out = hebbian_reinforce_at_tier(&conn, Tier::Warm, synthetic_id, now)
+            .unwrap()
+            .unwrap();
+        // 0.4 + 0.10 * 0.6 = 0.46
+        assert!((out.new - 0.46).abs() < 1e-6, "new={}", out.new);
+        let imp: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_consolidated WHERE id = ?1",
+                params![row_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!((imp - 0.46).abs() < 1e-6);
+    }
+
+    #[test]
+    fn hebbian_reinforce_at_tier_cold_updates_longterm() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        insert_longterm(&conn, 555, 0.7);
+        let now: u64 = 1_700_000_000 * 1_000_000_000;
+        let out = hebbian_reinforce_at_tier(&conn, Tier::Cold, 555, now)
+            .unwrap()
+            .unwrap();
+        assert_eq!(out.tier, Tier::Cold);
+        // Cold k=0.05: 0.7 + 0.05 * 0.3 = 0.715
+        assert!((out.new - 0.715).abs() < 1e-6, "new={}", out.new);
+        let (imp, last): (f64, i64) = conn
+            .query_row(
+                "SELECT importance, last_access_ts FROM idx_longterm WHERE event_id = 555",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!((imp - 0.715).abs() < 1e-6);
+        assert_eq!(last, now as i64);
+    }
+
+    #[test]
+    fn hebbian_reinforce_at_tier_unknown_id_returns_none_per_tier() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        let now: u64 = 1;
+        assert!(
+            hebbian_reinforce_at_tier(&conn, Tier::Hot, 1, now)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            hebbian_reinforce_at_tier(&conn, Tier::Warm, 1, now)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            hebbian_reinforce_at_tier(&conn, Tier::Cold, 1, now)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn hebbian_reinforce_event_still_targets_hot_only() {
+        // Back-compat: the old hot-only entry point must keep its
+        // pre-M-01 behaviour so daemon callsites that don't carry a
+        // tier label still reinforce idx_episode rows.
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("v.db")).unwrap();
+        let now: u64 = 1_700_000_000 * 1_000_000_000;
+        insert_row(&conn, 7, now as i64 - (DAY_NS as i64), 0.3);
+        // Warm row with the same event_id must NOT be touched.
+        insert_consolidated(&conn, Some(7), 0.3);
+        let out = hebbian_reinforce_event(&conn, 7, now).unwrap().unwrap();
+        assert_eq!(out.tier, Tier::Hot);
+        let warm_imp: f64 = conn
+            .query_row(
+                "SELECT importance FROM idx_consolidated WHERE event_id = 7",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            (warm_imp - 0.3).abs() < 1e-9,
+            "warm row must be untouched, got {warm_imp}",
+        );
     }
 
     // Consolidation-pass tests moved to memory::consolidate alongside the

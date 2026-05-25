@@ -187,12 +187,20 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
         .await
         .context("recall query task panicked")??;
 
-    // Phase 28a R-22 MT-3: Hebbian reinforce on hot-tier hits.
-    // Warm/cold rows live in different tables; reinforcement for those
-    // tiers is a separate pass that the daemon's tail-indexer owns
-    // (warm/cold reinforce is part of the daily consolidation cycle,
-    // not per-recall). Soft-fails per row — a stale event_id returns
-    // None and we move on.
+    // Phase 28a R-22 MT-3: Hebbian reinforce on EVERY recall hit (all
+    // tiers). Groundtruth rows are immutable (decay never touches the
+    // table per SPEC GT-3) — they're excluded explicitly below.
+    //
+    // M-01 (Session 24): pre-fix this branch silently skipped warm
+    // + cold hits with `if h.tier != "hot" { continue; }`, which left
+    // active access to consolidated/long-term memories invisible to
+    // the reinforcement loop and violated SPEC `MT-3` ("Hebbian
+    // reinforce on every recall hit, all tiers"). A frequently-recalled
+    // warm row would decay at the daily 0.99 rate without any
+    // counter-push, eventually falling below `PROMOTION_THRESHOLD`
+    // and dropping at the 90-day boundary instead of promoting to
+    // cold. Fix: dispatch the reinforce call to the tier's backing
+    // table via `hebbian_reinforce_at_tier`.
     //
     // M-02 (Session 24): pre-fix this branch reinforced rows
     // silently because the CLI path had no WAL writer to emit
@@ -207,10 +215,16 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // warn but never abort the recall reply.
     let mut reinforcements: Vec<(i64, ReinforceFrame)> = Vec::new();
     for h in &rows {
-        if h.tier != "hot" {
-            continue;
-        }
-        match tiers::hebbian_reinforce_event(&conn, h.event_id, now_ns) {
+        let tier = match h.tier.as_str() {
+            "hot" => Some(tiers::Tier::Hot),
+            "warm" => Some(tiers::Tier::Warm),
+            "cold" => Some(tiers::Tier::Cold),
+            // Groundtruth + any unknown tier label are skipped — the
+            // ground-truth table is decay-immune by design.
+            _ => None,
+        };
+        let Some(tier) = tier else { continue };
+        match tiers::hebbian_reinforce_at_tier(&conn, tier, h.event_id, now_ns) {
             Ok(Some(out)) => {
                 tracing::debug!(
                     event_id = h.event_id,
@@ -229,7 +243,12 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 ));
             }
             Ok(None) => {}
-            Err(e) => tracing::warn!(event_id = h.event_id, error = %e, "reinforce failed"),
+            Err(e) => tracing::warn!(
+                event_id = h.event_id,
+                tier = tier.as_str(),
+                error = %e,
+                "reinforce failed",
+            ),
         }
     }
     if !reinforcements.is_empty() {
