@@ -1526,13 +1526,27 @@ pub async fn run_chat_with(
                     None
                 }
             };
+        // Session 24 fix #2: when `from_config_for_learn` returns Err
+        // (= learn_provider build failed AND allow_cloud_fallback=false
+        // per `providers::from_config_for_learn` step 4 contract), the
+        // operator's intent is "no fallback, skip extraction". The
+        // pre-fix code fell back to the main `provider` here, which
+        // sent the operator's full conversation window to the cloud
+        // path they had explicitly opted out of. The comment above
+        // said "skip with warn" but the code did the opposite.
+        // Honest fix: bail before invoking the pipeline.
+        let learn_dispatch: Option<&dyn crate::providers::Provider> = learn_provider_owned
+            .as_deref()
+            .map(|p| p as &dyn crate::providers::Provider);
+        if learn_dispatch.is_none() {
+            tracing::info!(
+                allow_cloud_fallback = config.profile.allow_cloud_fallback,
+                "profile.learn pass skipped: learn_provider build failed and \
+                 allow_cloud_fallback=false (operator chose privacy over learn)"
+            );
+        } else if let Some(learn_provider_ref) = learn_dispatch {
         match crate::memory::store::open(&views_path) {
             Ok(mut conn) => {
-                let learn_provider_ref: &dyn crate::providers::Provider =
-                    match learn_provider_owned.as_deref() {
-                        Some(p) => p,
-                        None => provider, // L-07 fallback already handled above; this branch = build failed AND no fallback configured → use main provider as the LAST-CHANCE behaviour matching pre-V10-07 semantics. Operator who sets learn_provider but doesn't want cloud-fallback should see the warn above and fix their setup.
-                    };
                 let pipeline_fut = async {
                     if let Err(e) =
                         crate::memory::indexer::replay_once(&mut conn, &segment_path).await
@@ -1603,6 +1617,7 @@ pub async fn run_chat_with(
                 );
             }
         }
+        } // Session 24 fix #2: closes the `else if let Some(learn_provider_ref) = ...`
     }
 
     // ── Two-stage review gate (obra/superpowers Item #2) ───────────────────
