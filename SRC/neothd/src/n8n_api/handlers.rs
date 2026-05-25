@@ -232,7 +232,7 @@ fn read_stat_counts(conn: &rusqlite::Connection) -> Result<StatsResponse, rusqli
 
 // ── /api/memory/save ────────────────────────────────────────────
 
-pub fn memory_save(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
+pub async fn memory_save(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
     let req: MemorySaveRequest = match parse_body(&ctx.body) {
         Ok(r) => r,
         Err(outcome) => return outcome,
@@ -267,23 +267,32 @@ pub fn memory_save(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
     // tier the CLI's `neoth memory save` ends up writing.
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_RAW_TEXT, &payload).build();
-    // Best-effort fire-and-forget — the writer task ack handle is
-    // owned by the dispatch loop. Drop the future via `tokio::spawn`
-    // so the handler returns promptly even when the WAL is briefly
-    // backpressured.
-    let writer = state.writer.clone();
-    tokio::spawn(async move {
-        if let Err(e) = writer.append(header, payload).await {
+    // Session 24 #4 fix: await the WAL append so the API only
+    // returns `stored: true` AFTER the writer task acknowledges.
+    // Pre-fix this was fire-and-forget — the handler returned 200
+    // before the frame was durable, so a writer task that died
+    // (queue full, fsync error, daemon shutdown mid-call) silently
+    // dropped the audit record while n8n thought the save succeeded.
+    // Now: WAL backpressure / closed-writer / fsync errors surface
+    // as 5xx so the n8n workflow author can retry on the same idem-
+    // potency key instead of corrupting the audit trail.
+    match state.writer.append(header, payload).await {
+        Ok(_) => HandlerOutcome::ok_json(
+            serde_json::to_value(MemorySaveResponse {
+                stored: true,
+                bytes,
+            })
+            .unwrap_or(JsonValue::Null),
+        ),
+        Err(e) => {
             tracing::warn!(error = %e, "n8n_api memory_save WAL append failed");
+            HandlerOutcome::error(
+                ApiErrorCode::UpstreamError,
+                format!("memory_save WAL append failed: {e}"),
+                "retry — the WAL writer may be briefly backpressured or shutting down",
+            )
         }
-    });
-    HandlerOutcome::ok_json(
-        serde_json::to_value(MemorySaveResponse {
-            stored: true,
-            bytes,
-        })
-        .unwrap_or(JsonValue::Null),
-    )
+    }
 }
 
 // ── /api/provider/call ──────────────────────────────────────────
@@ -339,7 +348,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
 
 // ── /api/channel/send ───────────────────────────────────────────
 
-pub fn channel_send(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
+pub async fn channel_send(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
     let req: ChannelSendRequest = match parse_body(&ctx.body) {
         Ok(r) => r,
         Err(outcome) => return outcome,
@@ -376,15 +385,24 @@ pub fn channel_send(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS, &payload)
             .build();
-    let writer = state.writer.clone();
-    tokio::spawn(async move {
-        if let Err(e) = writer.append(header, payload).await {
+    // Session 24 #4 fix: await the WAL append so the API only
+    // returns `queued: true` AFTER the writer task acknowledges.
+    // Pre-fix the handler returned 200 before the frame was durable
+    // — n8n got an OK for a payload that may have silently dropped.
+    match state.writer.append(header, payload).await {
+        Ok(_) => HandlerOutcome::ok_json(
+            serde_json::to_value(ChannelSendResponse { queued: true })
+                .unwrap_or(JsonValue::Null),
+        ),
+        Err(e) => {
             tracing::warn!(error = %e, "n8n_api channel_send WAL append failed");
+            HandlerOutcome::error(
+                ApiErrorCode::UpstreamError,
+                format!("channel_send WAL append failed: {e}"),
+                "retry — the WAL writer may be briefly backpressured or shutting down",
+            )
         }
-    });
-    HandlerOutcome::ok_json(
-        serde_json::to_value(ChannelSendResponse { queued: true }).unwrap_or(JsonValue::Null),
-    )
+    }
 }
 
 /// Wire — the dispatcher in `server::dispatch` matches the path +
@@ -394,9 +412,9 @@ pub async fn route(ctx: ApiRequestCtx, state: Arc<ApiState>) -> HandlerOutcome {
         ("GET", "/api/health") => health(&ctx, &state),
         ("POST", "/api/recall") => recall(&ctx, &state),
         ("GET", "/api/stats") => stats(&ctx, &state),
-        ("POST", "/api/memory/save") => memory_save(&ctx, &state),
+        ("POST", "/api/memory/save") => memory_save(&ctx, &state).await,
         ("POST", "/api/provider/call") => provider_call(&ctx, &state).await,
-        ("POST", "/api/channel/send") => channel_send(&ctx, &state),
+        ("POST", "/api/channel/send") => channel_send(&ctx, &state).await,
         (method, path) if path.starts_with("/api/") => HandlerOutcome::error(
             ApiErrorCode::NotFound,
             format!("no route for {method} {path}"),
