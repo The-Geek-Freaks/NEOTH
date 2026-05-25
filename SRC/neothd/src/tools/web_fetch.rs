@@ -12,9 +12,22 @@
 //! gets readable text, not byte-perfect Markdown". Tables, headers,
 //! and links survive; layout / colour / scripts do not.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use anyhow::{Context, Result};
+use tokio::net::lookup_host;
 
 use crate::providers::http_client;
+
+/// Cloud metadata hostnames that resolve to link-local 169.254.x.x in
+/// practice but are sometimes resolvable to public IPs in misconfigured
+/// DNS — block them by name as defence-in-depth.
+const BLOCKED_METADATA_HOSTS: &[&str] = &[
+    "metadata.google.internal",
+    "metadata.azure.internal",
+    "169.254.169.254",
+    "metadata",
+];
 
 /// Hard ceiling on response body. Matches the WAL payload cap so a
 /// 50 MiB HTML response can't crash the daemon when an agent pipes it
@@ -42,12 +55,18 @@ pub struct FetchResult {
 /// `MAX_EXTRACTED_BYTES` ceiling); other content types return their
 /// raw bytes count + empty text + a status flag.
 pub async fn fetch(url: &str) -> Result<FetchResult> {
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        anyhow::bail!("web_fetch: only http(s) URLs accepted, got: {url}");
-    }
-    let client = http_client::build_client().context("build reqwest client")?;
+    // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
+    // pre-resolution to block private/loopback/link-local/cloud-metadata
+    // targets BEFORE the HTTP client opens a socket.
+    let parsed = validate_url(url).await?;
+    // Use the no-redirect variant so an attacker cannot 302 us into a
+    // private network after `validate_url` cleared the initial host.
+    // Operators who need redirects see the 3xx status + Location header
+    // and call `fetch` again (each call re-validates).
+    let client =
+        http_client::build_client_no_redirect().context("build web_fetch reqwest client")?;
     let resp = client
-        .get(url)
+        .get(parsed.as_str())
         .header("User-Agent", "NEOTH-fetch/0.1 (+self-hosted)")
         .send()
         .await
@@ -90,6 +109,184 @@ pub async fn fetch(url: &str) -> Result<FetchResult> {
         text,
         truncated,
     })
+}
+
+/// SX-01: parse + validate URL. Rejects non-http(s) schemes, hostnames
+/// matching known cloud-metadata names, and any host that resolves to a
+/// private / loopback / link-local / unique-local-v6 / multicast IP. On
+/// rejection emits a `tracing::warn!` so the audit trail surfaces the
+/// blocked target.
+///
+/// Returns the parsed `url::Url` so callers can reuse the canonical form
+/// without re-parsing. Note: this is best-effort defence at *call time* —
+/// the underlying reqwest client may re-resolve at connect time
+/// (classic TOCTOU). Mitigated by `redirect(Policy::none())` in
+/// `http_client::build_client` so an attacker cannot 302 us into a
+/// private network after the check.
+async fn validate_url(url_str: &str) -> Result<url::Url> {
+    let parsed = url::Url::parse(url_str)
+        .with_context(|| format!("web_fetch: invalid URL: {url_str}"))?;
+
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            tracing::warn!(
+                scheme = other,
+                url = url_str,
+                "web_fetch: rejected non-http(s) scheme"
+            );
+            anyhow::bail!(
+                "web_fetch: only http(s) URLs accepted, got scheme `{other}`: {url_str}"
+            );
+        }
+    }
+
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("web_fetch: URL has no host: {url_str}"))?;
+
+    let host_lower = host.to_ascii_lowercase();
+    if BLOCKED_METADATA_HOSTS.iter().any(|h| host_lower == *h) {
+        tracing::warn!(
+            host = %host,
+            url = url_str,
+            "web_fetch: rejected cloud metadata hostname"
+        );
+        anyhow::bail!("web_fetch: refused metadata host `{host}`: {url_str}");
+    }
+
+    let port = parsed.port_or_known_default().ok_or_else(|| {
+        anyhow::anyhow!("web_fetch: URL missing port and no default for scheme: {url_str}")
+    })?;
+
+    let mut saw_any = false;
+    for addr in lookup_host(format!("{host}:{port}"))
+        .await
+        .with_context(|| format!("web_fetch: DNS lookup failed for {host}"))?
+    {
+        saw_any = true;
+        if is_private_ip(addr.ip()) {
+            // Test-only escape hatch: wiremock binds to 127.0.0.1, so the
+            // existing round-trip tests cannot run against a production
+            // SSRF guard. A per-test `LoopbackGuard` (below in #[cfg(test)])
+            // flips a thread-local that lets `is_loopback()` traffic pass.
+            // Production builds never compile this branch — the
+            // `#[cfg(test)]` keeps it out of the release binary entirely.
+            #[cfg(test)]
+            if test_overrides::loopback_allowed() && addr.ip().is_loopback() {
+                continue;
+            }
+            tracing::warn!(
+                host = %host,
+                ip = %addr.ip(),
+                url = url_str,
+                "web_fetch: rejected private/loopback/link-local IP"
+            );
+            anyhow::bail!(
+                "web_fetch: refused private address {} for host `{host}`: {url_str}",
+                addr.ip()
+            );
+        }
+    }
+
+    if !saw_any {
+        anyhow::bail!("web_fetch: DNS resolved zero addresses for {host}: {url_str}");
+    }
+
+    Ok(parsed)
+}
+
+/// True if `ip` is in any address class NEOTH must never connect to from
+/// an external-fetch tool. Union of: loopback, RFC-1918 private,
+/// link-local (covers AWS/GCP/Azure 169.254.169.254 metadata),
+/// IPv6 unique-local (RFC-4193 fc00::/7), IPv6 link-local (fe80::/10),
+/// unspecified, broadcast, documentation ranges, and multicast.
+fn is_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_multicast()
+                || is_shared_v4(v4)
+                || is_benchmarking_v4(v4)
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || is_unique_local_v6(v6)
+                || is_link_local_v6(v6)
+                || is_ipv4_mapped_private(v6)
+        }
+    }
+}
+
+/// RFC-6598 shared address space `100.64.0.0/10` — carrier-grade NAT.
+fn is_shared_v4(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 100 && (o[1] & 0xc0) == 64
+}
+
+/// RFC-2544 benchmarking range `198.18.0.0/15`.
+fn is_benchmarking_v4(ip: Ipv4Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 198 && (o[1] == 18 || o[1] == 19)
+}
+
+/// RFC-4193 IPv6 unique-local `fc00::/7`.
+fn is_unique_local_v6(ip: Ipv6Addr) -> bool {
+    (ip.octets()[0] & 0xfe) == 0xfc
+}
+
+/// IPv6 link-local `fe80::/10`.
+fn is_link_local_v6(ip: Ipv6Addr) -> bool {
+    let o = ip.octets();
+    o[0] == 0xfe && (o[1] & 0xc0) == 0x80
+}
+
+/// IPv4-mapped IPv6 addresses (`::ffff:0:0/96`) — re-check the embedded
+/// v4 octets against the private-IP rules, otherwise an attacker can
+/// bypass via `::ffff:127.0.0.1`.
+fn is_ipv4_mapped_private(ip: Ipv6Addr) -> bool {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        is_private_ip(IpAddr::V4(v4))
+    } else {
+        false
+    }
+}
+
+#[cfg(test)]
+mod test_overrides {
+    //! Thread-local SSRF overrides used by the test suite only. Never
+    //! compiled into release binaries — production `validate_url` ALWAYS
+    //! rejects loopback targets.
+    use std::cell::Cell;
+    thread_local! {
+        static ALLOW_LOOPBACK: Cell<bool> = const { Cell::new(false) };
+    }
+    pub(super) fn loopback_allowed() -> bool {
+        ALLOW_LOOPBACK.with(|c| c.get())
+    }
+    /// RAII guard: enables loopback for the current test's tokio
+    /// runtime thread, restores deny on drop. `#[tokio::test]` defaults
+    /// to current-thread flavour, so the thread-local survives across
+    /// awaits inside one test without leaking into parallel tests.
+    pub(super) struct LoopbackGuard;
+    impl LoopbackGuard {
+        pub(super) fn enable() -> Self {
+            ALLOW_LOOPBACK.with(|c| c.set(true));
+            Self
+        }
+    }
+    impl Drop for LoopbackGuard {
+        fn drop(&mut self) {
+            ALLOW_LOOPBACK.with(|c| c.set(false));
+        }
+    }
 }
 
 fn truncate(s: &str, max: usize) -> (String, bool) {
@@ -409,10 +606,198 @@ mod tests {
         assert!(err.to_string().contains("http(s) URLs"));
     }
 
+    // ── SX-01: SSRF guard rejection corpus ────────────────────────────────
+    //
+    // Coverage matrix per A5 CRIT-01 finding. Each `fetch` call MUST fail
+    // before any HTTP socket is opened (validate_url runs first).
+
+    #[tokio::test]
+    async fn ssrf_rejects_gopher_scheme() {
+        let err = fetch("gopher://example.com/").await.unwrap_err();
+        assert!(err.to_string().contains("http(s) URLs"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_dict_scheme() {
+        let err = fetch("dict://example.com/").await.unwrap_err();
+        assert!(err.to_string().contains("http(s) URLs"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_ftp_scheme() {
+        let err = fetch("ftp://example.com/").await.unwrap_err();
+        assert!(err.to_string().contains("http(s) URLs"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_ipv4_loopback_literal() {
+        let err = fetch("http://127.0.0.1/api/health").await.unwrap_err();
+        assert!(
+            err.to_string().contains("private address"),
+            "expected private-address rejection, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_ipv4_loopback_alt_octet() {
+        // `127.0.0.0/8` is fully loopback — not just 127.0.0.1.
+        let err = fetch("http://127.42.0.99/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_rfc1918_10_8() {
+        let err = fetch("http://10.0.0.1/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_rfc1918_192_168() {
+        let err = fetch("http://192.168.1.1/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_rfc1918_172_16_through_172_31() {
+        let err = fetch("http://172.20.0.5/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_link_local_aws_metadata() {
+        // 169.254.169.254 is the AWS/GCP/Azure instance-metadata IP. Goes
+        // through the hostname blocklist before DNS even runs.
+        let err = fetch("http://169.254.169.254/latest/meta-data/")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("metadata host")
+                || err.to_string().contains("private address"),
+            "expected metadata or private-address rejection, got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_link_local_other_169_254() {
+        let err = fetch("http://169.254.42.42/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_gcp_metadata_hostname() {
+        let err = fetch("http://metadata.google.internal/")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("metadata host"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_azure_metadata_hostname() {
+        let err = fetch("http://metadata.azure.internal/")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("metadata host"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_ipv6_loopback() {
+        let err = fetch("http://[::1]/api").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_ipv6_unique_local() {
+        let err = fetch("http://[fc00::1]/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_ipv6_link_local() {
+        let err = fetch("http://[fe80::1]/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_ipv4_mapped_ipv6_loopback() {
+        // Classic IPv4-mapped bypass: `::ffff:127.0.0.1` looks like an
+        // IPv6 address but the embedded v4 octets are loopback. Our
+        // `is_ipv4_mapped_private` check unwraps + re-validates.
+        let err = fetch("http://[::ffff:127.0.0.1]/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_zero_v4() {
+        let err = fetch("http://0.0.0.0/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_broadcast_v4() {
+        let err = fetch("http://255.255.255.255/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_cgnat_shared_v4() {
+        // RFC-6598 100.64.0.0/10 — common in carrier networks.
+        let err = fetch("http://100.64.0.1/").await.unwrap_err();
+        assert!(err.to_string().contains("private address"));
+    }
+
+    #[tokio::test]
+    async fn ssrf_rejects_malformed_url() {
+        // Junk strings should never reach the HTTP client. `url::Url::parse`
+        // catches missing scheme; the wrapper context surfaces "invalid URL".
+        let err = fetch("not a url at all").await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid URL") || msg.contains("only http(s) URLs"),
+            "expected URL rejection, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn is_private_ip_catches_classic_ssrf_targets() {
+        // Pure-function smoke matrix — runs without DNS / sockets so the
+        // is_private_ip primitive is provably correct independently of
+        // the async `fetch` wiring.
+        use std::net::Ipv4Addr;
+        use std::net::Ipv6Addr;
+        let blocked = [
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(169, 254, 169, 254)),
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+            IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1)),
+            IpAddr::V6(Ipv6Addr::LOCALHOST),
+            IpAddr::V6("fc00::1".parse().unwrap()),
+            IpAddr::V6("fe80::1".parse().unwrap()),
+            IpAddr::V6("::ffff:127.0.0.1".parse().unwrap()),
+        ];
+        for ip in blocked {
+            assert!(is_private_ip(ip), "expected {ip} to be blocked");
+        }
+
+        let allowed = [
+            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8)),
+            IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1)),
+            IpAddr::V4(Ipv4Addr::new(140, 82, 121, 4)), // github.com
+            IpAddr::V6("2001:4860:4860::8888".parse().unwrap()), // google DNS
+        ];
+        for ip in allowed {
+            assert!(!is_private_ip(ip), "expected {ip} to be allowed");
+        }
+    }
+
     // ── CDX-04: wiremock HTTP round-trip coverage ─────────────────────────
 
     #[tokio::test]
     async fn fetch_html_decodes_via_real_http() {
+        let _g = test_overrides::LoopbackGuard::enable();
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let mock = MockServer::start().await;
@@ -445,6 +830,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_passes_plaintext_through_verbatim() {
+        let _g = test_overrides::LoopbackGuard::enable();
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let mock = MockServer::start().await;
@@ -464,6 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_propagates_non_2xx_status() {
+        let _g = test_overrides::LoopbackGuard::enable();
         // Status is captured but body still parsed — operator sees what
         // the server actually returned, including 404 pages.
         use wiremock::matchers::method;
@@ -482,6 +869,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_returns_empty_text_for_binary_content_type() {
+        let _g = test_overrides::LoopbackGuard::enable();
         use wiremock::matchers::method;
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let mock = MockServer::start().await;
@@ -500,6 +888,7 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_includes_user_agent_header() {
+        let _g = test_overrides::LoopbackGuard::enable();
         // Drift guard — if the User-Agent string ever changes by
         // accident, the regression shows up here. Our fetcher
         // identifies itself as `NEOTH-fetch/0.1 (+self-hosted)`.

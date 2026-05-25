@@ -4994,6 +4994,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-normalization",
  "unicode-segmentation",
+ "url",
  "uuid",
  "wasmtime",
  "windows-sys 0.59.0",

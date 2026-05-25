@@ -33,7 +33,22 @@ pub fn parse_proxy_setting(value: Option<&str>) -> Result<Option<reqwest::Proxy>
 /// optional SOCKS5 proxy from `NEOTH_HTTP_PROXY`. Defaults to a direct
 /// client when the env var is unset.
 pub fn build_client() -> Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder().timeout(Duration::from_secs(120));
+    build_client_with(reqwest::redirect::Policy::default())
+}
+
+/// Build a reqwest client that follows the operator's proxy configuration
+/// but never follows HTTP redirects. Used by `tools::web_fetch` (SX-01):
+/// blocking redirects closes the bypass where an attacker controls a
+/// public URL that 302s into a private network after the initial
+/// `validate_url` host check has passed.
+pub fn build_client_no_redirect() -> Result<reqwest::Client> {
+    build_client_with(reqwest::redirect::Policy::none())
+}
+
+fn build_client_with(redirect_policy: reqwest::redirect::Policy) -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .timeout(Duration::from_secs(120))
+        .redirect(redirect_policy);
     let raw = std::env::var("NEOTH_HTTP_PROXY").ok();
     if let Some(proxy) = parse_proxy_setting(raw.as_deref())? {
         builder = builder.proxy(proxy);
