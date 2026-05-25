@@ -1,78 +1,41 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" width="1280" height="560" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH three hemispheres and six memory layers">
+<svg width="1400" height="500" viewBox="0 0 1400 500" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH memory and brain model</title>
+  <desc id="desc">Three brain roles and six memory layers inside NEOTH 1.0.</desc>
   <defs>
-    <radialGradient id="bg" cx="50%" cy="46%" r="72%">
-      <stop offset="0%" stop-color="#202020"/>
-      <stop offset="100%" stop-color="#080808"/>
-    </radialGradient>
-    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="7" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     <style>
-      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
-      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
-      .title { font-size: 28px; font-weight: 300; letter-spacing: 6px; fill: #fff; }
-      .label { font-size: 12px; letter-spacing: 1.7px; }
-      .small { font-size: 10px; letter-spacing: 1px; fill: #d8d8d8; opacity: .8; }
+      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     </style>
   </defs>
+  <rect width="1400" height="500" rx="34" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="498" rx="33" stroke="white" stroke-opacity=".08"/>
+  <text x="70" y="60" fill="white" class="sans" font-size="25" font-weight="700">3 brain roles. 6 memory layers. One operator-owned truth.</text>
+  <text x="70" y="92" fill="#8d8d8d" class="sans" font-size="15">NEOTH is built to stop context loss without turning memory into an opaque vendor database.</text>
 
-  <rect width="1280" height="560" rx="36" fill="url(#bg)"/>
-  <rect x="1" y="1" width="1278" height="558" rx="36" fill="none" stroke="#fff" stroke-opacity=".08"/>
-  <text x="640" y="54" class="sans title" text-anchor="middle">THREE ROLES / SIX MEMORY LAYERS</text>
-  <text x="640" y="84" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" text-anchor="middle" opacity=".78">FAST HELP, DEEP THINKING, AUDITED SYNTHESIS</text>
-
-  <g class="mono" text-anchor="middle">
-    <rect x="90" y="138" width="280" height="124" rx="26" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".34"/>
-    <text x="230" y="178" class="label" fill="#00ff80">LEFT HEMISPHERE</text>
-    <text x="230" y="208" class="small">fast answer</text>
-    <text x="230" y="230" class="small">implementation</text>
-
-    <rect x="910" y="138" width="280" height="124" rx="26" fill="#05d5ff" opacity=".075" stroke="#05d5ff" stroke-opacity=".34"/>
-    <text x="1050" y="178" class="label" fill="#05d5ff">RIGHT HEMISPHERE</text>
-    <text x="1050" y="208" class="small">deep analysis</text>
-    <text x="1050" y="230" class="small">risk + review</text>
-
-    <circle cx="640" cy="200" r="92" fill="#fff" opacity=".045" stroke="#fff" stroke-opacity=".16" filter="url(#glow)"/>
-    <text x="640" y="185" class="sans" font-size="44" font-weight="100" letter-spacing="14" fill="#fff">NEOTH</text>
-    <text x="640" y="222" class="label" fill="#ff2a6d">CALLOSUM / CEREBELLUM</text>
-    <text x="640" y="246" class="small">orchestrate, route, dissent</text>
+  <g transform="translate(84 145)">
+    <circle cx="155" cy="120" r="105" fill="#101010" stroke="#00ff80" stroke-opacity=".45" filter="url(#glow)"/>
+    <circle cx="305" cy="120" r="105" fill="#101010" stroke="#ff2a6d" stroke-opacity=".45" filter="url(#glow)"/>
+    <circle cx="455" cy="120" r="105" fill="#101010" stroke="#05d5ff" stroke-opacity=".45" filter="url(#glow)"/>
+    <text x="155" y="104" text-anchor="middle" fill="white" class="sans" font-size="20" font-weight="700">Left</text>
+    <text x="155" y="132" text-anchor="middle" fill="#00ff80" class="mono" font-size="12">fast action</text>
+    <text x="305" y="104" text-anchor="middle" fill="white" class="sans" font-size="20" font-weight="700">Right</text>
+    <text x="305" y="132" text-anchor="middle" fill="#ff2a6d" class="mono" font-size="12">deep analysis</text>
+    <text x="455" y="104" text-anchor="middle" fill="white" class="sans" font-size="20" font-weight="700">Callosum</text>
+    <text x="455" y="132" text-anchor="middle" fill="#05d5ff" class="mono" font-size="12">sync + dissent</text>
+    <text x="305" y="276" text-anchor="middle" fill="#777" class="sans" font-size="13">Roles share evidence, not vibes.</text>
   </g>
 
-  <path d="M370,200 C462,148 545,148 560,200" fill="none" stroke="#00ff80" stroke-opacity=".52"/>
-  <path d="M910,200 C818,148 735,148 720,200" fill="none" stroke="#05d5ff" stroke-opacity=".52"/>
-  <path d="M560,236 C510,314 360,324 250,342" fill="none" stroke="#00ff80" stroke-opacity=".32"/>
-  <path d="M720,236 C770,314 920,324 1030,342" fill="none" stroke="#05d5ff" stroke-opacity=".32"/>
-  <path d="M640,292 L640,342" stroke="#ff2a6d" stroke-opacity=".42"/>
-
-  <g class="mono">
-    <rect x="72" y="352" width="172" height="82" rx="16" fill="#00ff80" opacity=".07" stroke="#00ff80" stroke-opacity=".26"/>
-    <text x="96" y="382" class="label" fill="#00ff80">L1 HOT</text>
-    <text x="96" y="410" class="small">session + canvas</text>
-
-    <rect x="260" y="352" width="172" height="82" rx="16" fill="#00ff80" opacity=".055" stroke="#00ff80" stroke-opacity=".2"/>
-    <text x="284" y="382" class="label" fill="#00ff80">L2 WARM</text>
-    <text x="284" y="410" class="small">recent recall</text>
-
-    <rect x="448" y="352" width="172" height="82" rx="16" fill="#05d5ff" opacity=".07" stroke="#05d5ff" stroke-opacity=".26"/>
-    <text x="472" y="382" class="label" fill="#05d5ff">L3 EPISODIC</text>
-    <text x="472" y="410" class="small">events + time</text>
-
-    <rect x="636" y="352" width="172" height="82" rx="16" fill="#05d5ff" opacity=".055" stroke="#05d5ff" stroke-opacity=".2"/>
-    <text x="660" y="382" class="label" fill="#05d5ff">L4 SEMANTIC</text>
-    <text x="660" y="410" class="small">concept recall</text>
-
-    <rect x="824" y="352" width="172" height="82" rx="16" fill="#ff2a6d" opacity=".07" stroke="#ff2a6d" stroke-opacity=".26"/>
-    <text x="848" y="382" class="label" fill="#ff2a6d">L5 KNOWLEDGE</text>
-    <text x="848" y="410" class="small">skills + lessons</text>
-
-    <rect x="1012" y="352" width="196" height="82" rx="16" fill="#fff" opacity=".055" stroke="#fff" stroke-opacity=".18"/>
-    <text x="1036" y="382" class="label" fill="#fff">L6 VAULT</text>
-    <text x="1036" y="410" class="small">Obsidian mirror</text>
+  <g transform="translate(730 130)">
+    <rect x="0" y="0" width="590" height="292" rx="26" fill="#111" stroke="white" stroke-opacity=".08"/>
+    <text x="34" y="42" fill="#00ff80" class="mono" font-size="13" letter-spacing="2">SIX MEMORY LAYERS</text>
+    <g class="sans" font-size="14">
+      <rect x="34" y="66" width="522" height="28" rx="8" fill="#18241d"/><text x="50" y="86" fill="white">L1 Hot working set</text><text x="320" y="86" fill="#9a9a9a">active chat, canvas, current task</text>
+      <rect x="34" y="103" width="522" height="28" rx="8" fill="#1b1b1b"/><text x="50" y="123" fill="white">L2 Warm cache</text><text x="320" y="123" fill="#9a9a9a">recent context, high-use facts</text>
+      <rect x="34" y="140" width="522" height="28" rx="8" fill="#24151a"/><text x="50" y="160" fill="white">L3 Episodic</text><text x="320" y="160" fill="#9a9a9a">events, conversations, decisions</text>
+      <rect x="34" y="177" width="522" height="28" rx="8" fill="#111f24"/><text x="50" y="197" fill="white">L4 Semantic</text><text x="320" y="197" fill="#9a9a9a">files, embeddings, concepts</text>
+      <rect x="34" y="214" width="522" height="28" rx="8" fill="#1b1b1b"/><text x="50" y="234" fill="white">L5 Skills + habits</text><text x="320" y="234" fill="#9a9a9a">routines, tools, learned workflows</text>
+      <rect x="34" y="251" width="522" height="28" rx="8" fill="#18241d"/><text x="50" y="271" fill="white">L6 Vault mirror</text><text x="320" y="271" fill="#9a9a9a">Obsidian-readable operator archive</text>
+    </g>
   </g>
-
-  <text x="640" y="496" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" opacity=".7" text-anchor="middle">not one opaque chat history: evidence, regions, layers, redactions</text>
 </svg>

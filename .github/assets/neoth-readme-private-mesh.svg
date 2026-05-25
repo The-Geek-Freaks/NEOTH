@@ -1,71 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 430" width="1280" height="430" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH private mesh Obsidian Tailscale Hysteria Keet cluster">
+<svg width="1400" height="420" viewBox="0 0 1400 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH private mesh</title>
+  <desc id="desc">NEOTH running across private devices using LAN, Tailscale, Hysteria and Keet with consent-gated pairing.</desc>
   <defs>
-    <radialGradient id="bg" cx="50%" cy="46%" r="74%">
-      <stop offset="0%" stop-color="#202020"/>
-      <stop offset="100%" stop-color="#070707"/>
-    </radialGradient>
-    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="5" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <linearGradient id="mesh" x1="100" y1="210" x2="1300" y2="210">
+      <stop offset="0" stop-color="#00ff80"/>
+      <stop offset=".5" stop-color="#05d5ff"/>
+      <stop offset="1" stop-color="#ff2a6d"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     <style>
-      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
-      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
-      .title { font-size: 28px; font-weight: 300; letter-spacing: 6px; fill: #fff; }
-      .label { font-size: 12px; letter-spacing: 1.8px; }
-      .small { font-size: 10px; letter-spacing: 1px; fill: #d8d8d8; opacity: .8; }
+      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .node{fill:#121212;stroke:white;stroke-opacity:.1}
     </style>
   </defs>
+  <rect width="1400" height="420" rx="34" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="418" rx="33" stroke="white" stroke-opacity=".08"/>
+  <text x="70" y="60" fill="white" class="sans" font-size="25" font-weight="700">Private mesh, not platform gravity</text>
+  <text x="70" y="92" fill="#8d8d8d" class="sans" font-size="15">Laptop, workstation, phone channels and home server can cooperate without turning your memory into somebody else's cloud.</text>
 
-  <rect width="1280" height="430" rx="36" fill="url(#bg)"/>
-  <rect x="1" y="1" width="1278" height="428" rx="36" fill="none" stroke="#fff" stroke-opacity=".08"/>
-  <text x="640" y="54" class="sans title" text-anchor="middle">PRIVATE MESH, NOT PLATFORM GRAVITY</text>
-  <text x="640" y="84" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" text-anchor="middle" opacity=".78">OBSIDIAN / LAN / TAILSCALE / HYSTERIA / KEET / CLUSTER</text>
+  <path d="M190 230 C355 85 530 330 700 210 S1045 85 1210 230" stroke="url(#mesh)" stroke-width="3" filter="url(#glow)"/>
+  <path d="M190 230 C350 340 525 100 700 210 S1050 340 1210 230" stroke="url(#mesh)" stroke-width="1.5" opacity=".35"/>
 
-  <circle cx="640" cy="218" r="84" fill="#fff" opacity=".045" stroke="#fff" stroke-opacity=".16" filter="url(#glow)"/>
-  <text x="640" y="207" class="sans" font-size="42" font-weight="100" letter-spacing="12" fill="#fff" text-anchor="middle">NEOTH</text>
-  <text x="640" y="239" class="mono label" fill="#00ff80" text-anchor="middle">CONSENT GATED</text>
-
-  <g class="mono" text-anchor="middle">
-    <rect x="78" y="142" width="190" height="88" rx="18" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".32"/>
-    <text x="173" y="176" class="label" fill="#00ff80">LAPTOP</text>
-    <text x="173" y="204" class="small">CLI + GUI</text>
-
-    <rect x="236" y="292" width="210" height="88" rx="18" fill="#05d5ff" opacity=".075" stroke="#05d5ff" stroke-opacity=".32"/>
-    <text x="341" y="326" class="label" fill="#05d5ff">OBSIDIAN</text>
-    <text x="341" y="354" class="small">human-readable vault</text>
-
-    <rect x="535" y="320" width="210" height="76" rx="18" fill="#ff2a6d" opacity=".075" stroke="#ff2a6d" stroke-opacity=".32"/>
-    <text x="640" y="350" class="label" fill="#ff2a6d">HOME SERVER</text>
-    <text x="640" y="374" class="small">cluster node</text>
-
-    <rect x="834" y="292" width="210" height="88" rx="18" fill="#05d5ff" opacity=".075" stroke="#05d5ff" stroke-opacity=".32"/>
-    <text x="939" y="326" class="label" fill="#05d5ff">TAILSCALE</text>
-    <text x="939" y="354" class="small">private device mesh</text>
-
-    <rect x="1012" y="142" width="190" height="88" rx="18" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".32"/>
-    <text x="1107" y="176" class="label" fill="#00ff80">PHONE</text>
-    <text x="1107" y="204" class="small">chat channels</text>
-
-    <rect x="390" y="116" width="180" height="72" rx="16" fill="#fff" opacity=".055" stroke="#fff" stroke-opacity=".18"/>
-    <text x="480" y="145" class="label" fill="#fff">HYSTERIA</text>
-    <text x="480" y="168" class="small">hard networks</text>
-
-    <rect x="710" y="116" width="180" height="72" rx="16" fill="#fff" opacity=".055" stroke="#fff" stroke-opacity=".18"/>
-    <text x="800" y="145" class="label" fill="#fff">KEET</text>
-    <text x="800" y="168" class="small">p2p channel path</text>
+  <g class="sans" font-size="14">
+    <g transform="translate(92 164)"><rect class="node" width="190" height="110" rx="20" stroke="#00ff80" stroke-opacity=".38"/><text x="95" y="44" text-anchor="middle" fill="white" font-weight="700">Laptop</text><text x="95" y="70" text-anchor="middle" fill="#8d8d8d">GUI + coding</text></g>
+    <g transform="translate(342 98)"><rect class="node" width="190" height="110" rx="20" stroke="#00ff80" stroke-opacity=".38"/><text x="95" y="44" text-anchor="middle" fill="white" font-weight="700">Workstation</text><text x="95" y="70" text-anchor="middle" fill="#8d8d8d">GPU models</text></g>
+    <g transform="translate(605 155)"><rect width="190" height="120" rx="60" fill="#0b0b0b" stroke="#05d5ff" stroke-opacity=".55" filter="url(#glow)"/><text x="95" y="55" text-anchor="middle" fill="white" font-weight="700">NEOTH Core</text><text x="95" y="82" text-anchor="middle" fill="#8d8d8d">policy + WAL</text></g>
+    <g transform="translate(868 98)"><rect class="node" width="190" height="110" rx="20" stroke="#05d5ff" stroke-opacity=".38"/><text x="95" y="44" text-anchor="middle" fill="white" font-weight="700">Home Server</text><text x="95" y="70" text-anchor="middle" fill="#8d8d8d">Paperless + n8n</text></g>
+    <g transform="translate(1118 164)"><rect class="node" width="190" height="110" rx="20" stroke="#ff2a6d" stroke-opacity=".38"/><text x="95" y="44" text-anchor="middle" fill="white" font-weight="700">Phone Channels</text><text x="95" y="70" text-anchor="middle" fill="#8d8d8d">WhatsApp, Telegram, Keet</text></g>
   </g>
 
-  <path d="M268,186 C395,160 474,178 556,206" fill="none" stroke="#00ff80" stroke-opacity=".36"/>
-  <path d="M1012,186 C885,160 806,178 724,206" fill="none" stroke="#00ff80" stroke-opacity=".36"/>
-  <path d="M446,336 C515,292 590,300 620,294" fill="none" stroke="#05d5ff" stroke-opacity=".36"/>
-  <path d="M834,336 C765,292 690,300 660,294" fill="none" stroke="#05d5ff" stroke-opacity=".36"/>
-  <path d="M570,152 C620,164 633,178 640,134" fill="none" stroke="#fff" stroke-opacity=".2"/>
-  <path d="M710,152 C660,164 647,178 640,134" fill="none" stroke="#fff" stroke-opacity=".2"/>
-  <path d="M640,302 L640,320" stroke="#ff2a6d" stroke-opacity=".45"/>
-
-  <text x="640" y="408" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" opacity=".72" text-anchor="middle">same buddy across devices, but pairing requires operator consent</text>
+  <g class="mono" font-size="12" letter-spacing="2">
+    <rect x="294" y="300" width="172" height="36" rx="10" fill="#111" stroke="#00ff80" stroke-opacity=".35"/><text x="380" y="323" text-anchor="middle" fill="#00ff80">LAN / MDNS</text>
+    <rect x="491" y="300" width="172" height="36" rx="10" fill="#111" stroke="#05d5ff" stroke-opacity=".35"/><text x="577" y="323" text-anchor="middle" fill="#05d5ff">TAILSCALE</text>
+    <rect x="688" y="300" width="172" height="36" rx="10" fill="#111" stroke="#05d5ff" stroke-opacity=".35"/><text x="774" y="323" text-anchor="middle" fill="#05d5ff">HYSTERIA</text>
+    <rect x="885" y="300" width="172" height="36" rx="10" fill="#111" stroke="#ff2a6d" stroke-opacity=".35"/><text x="971" y="323" text-anchor="middle" fill="#ff2a6d">KEET</text>
+  </g>
+  <text x="700" y="374" text-anchor="middle" fill="#666" class="sans" font-size="13">Every peer is consent-gated. Keys prove identity; the operator still approves membership and capabilities.</text>
 </svg>

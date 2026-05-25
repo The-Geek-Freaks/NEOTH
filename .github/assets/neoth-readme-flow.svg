@@ -1,71 +1,65 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" width="1280" height="360" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH flow from first run to loyal buddy">
+<svg width="1400" height="360" viewBox="0 0 1400 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH 1.0 first run flow</title>
+  <desc id="desc">From install to wizard, memory, surfaces, action, verification and improvement.</desc>
   <defs>
-    <radialGradient id="bg" cx="50%" cy="45%" r="78%">
-      <stop offset="0%" stop-color="#202020"/>
-      <stop offset="100%" stop-color="#080808"/>
-    </radialGradient>
-    <linearGradient id="wire" x1="0%" x2="100%">
-      <stop offset="0%" stop-color="#00ff80" stop-opacity=".15"/>
-      <stop offset="50%" stop-color="#00ff80" stop-opacity=".9"/>
-      <stop offset="100%" stop-color="#05d5ff" stop-opacity=".2"/>
+    <linearGradient id="line" x1="120" y1="180" x2="1280" y2="180">
+      <stop offset="0" stop-color="#00ff80"/>
+      <stop offset=".5" stop-color="#ff2a6d"/>
+      <stop offset="1" stop-color="#05d5ff"/>
     </linearGradient>
-    <filter id="glow" x="-30%" y="-60%" width="160%" height="220%">
-      <feGaussianBlur stdDeviation="5" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     <style>
-      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
-      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
-      .title { font-size: 26px; font-weight: 300; letter-spacing: 6px; fill: #fff; }
-      .label { font-size: 13px; letter-spacing: 2px; }
-      .small { font-size: 11px; letter-spacing: 1px; fill: #d8d8d8; opacity: .78; }
+      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      @keyframes dash{to{stroke-dashoffset:-48}}
+      .dash{stroke-dasharray:14 18;animation:dash 4s linear infinite}
     </style>
   </defs>
+  <rect width="1400" height="360" rx="30" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="358" rx="29" stroke="white" stroke-opacity=".08"/>
+  <text x="70" y="62" fill="white" class="sans" font-size="24" font-weight="700">One setup. One buddy. Every surface.</text>
+  <text x="70" y="92" fill="#8a8a8a" class="sans" font-size="15">NEOTH 1.0 is designed so normal users can start in the GUI while pros keep every lever reachable.</text>
 
-  <rect width="1280" height="360" rx="34" fill="url(#bg)"/>
-  <rect x="1" y="1" width="1278" height="358" rx="34" fill="none" stroke="#fff" stroke-opacity=".08"/>
-  <text x="640" y="54" class="sans title" text-anchor="middle">FIRST RUN TO LOYAL BUDDY</text>
-  <text x="640" y="82" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" text-anchor="middle" opacity=".78">WIZARD / MEMORY / SURFACES / AUDIT</text>
+  <path d="M135 180 H1265" stroke="url(#line)" stroke-width="3" filter="url(#glow)"/>
+  <path class="dash" d="M135 180 H1265" stroke="white" stroke-opacity=".25" stroke-width="2"/>
 
-  <path d="M170,190 C320,112 430,112 505,190 C580,268 700,268 775,190 C850,112 970,112 1110,190" fill="none" stroke="url(#wire)" stroke-width="2" filter="url(#glow)"/>
-
-  <g class="mono" text-anchor="middle">
-    <g>
-      <circle cx="170" cy="190" r="56" fill="#00ff80" opacity=".08" stroke="#00ff80" stroke-opacity=".42"/>
-      <text x="170" y="181" class="label" fill="#00ff80">01 WIZARD</text>
-      <text x="170" y="207" class="small">plain questions</text>
-      <text x="170" y="229" class="small">no YAML needed</text>
+  <g class="sans" font-size="15" fill="white">
+    <g transform="translate(90 128)">
+      <rect width="160" height="104" rx="18" fill="#121212" stroke="#00ff80" stroke-opacity=".45"/>
+      <circle cx="80" cy="36" r="15" fill="#00ff80" opacity=".2"/><text x="80" y="42" text-anchor="middle" fill="#00ff80" font-weight="700">1</text>
+      <text x="80" y="72" text-anchor="middle" font-weight="700">Install</text>
+      <text x="80" y="92" text-anchor="middle" fill="#8d8d8d" font-size="12">binary or cargo</text>
     </g>
-    <g>
-      <circle cx="505" cy="190" r="56" fill="#05d5ff" opacity=".08" stroke="#05d5ff" stroke-opacity=".42"/>
-      <text x="505" y="181" class="label" fill="#05d5ff">02 MEMORY</text>
-      <text x="505" y="207" class="small">evidence + recall</text>
-      <text x="505" y="229" class="small">redact anytime</text>
+    <g transform="translate(310 128)">
+      <rect width="160" height="104" rx="18" fill="#121212" stroke="#00ff80" stroke-opacity=".45"/>
+      <circle cx="80" cy="36" r="15" fill="#00ff80" opacity=".2"/><text x="80" y="42" text-anchor="middle" fill="#00ff80" font-weight="700">2</text>
+      <text x="80" y="72" text-anchor="middle" font-weight="700">Wizard</text>
+      <text x="80" y="92" text-anchor="middle" fill="#8d8d8d" font-size="12">plain-language setup</text>
     </g>
-    <g>
-      <circle cx="775" cy="190" r="56" fill="#ff2a6d" opacity=".08" stroke="#ff2a6d" stroke-opacity=".42"/>
-      <text x="775" y="181" class="label" fill="#ff2a6d">03 EVERYWHERE</text>
-      <text x="775" y="207" class="small">CLI, GUI, chat</text>
-      <text x="775" y="229" class="small">same buddy</text>
+    <g transform="translate(530 128)">
+      <rect width="160" height="104" rx="18" fill="#121212" stroke="#ff2a6d" stroke-opacity=".45"/>
+      <circle cx="80" cy="36" r="15" fill="#ff2a6d" opacity=".2"/><text x="80" y="42" text-anchor="middle" fill="#ff2a6d" font-weight="700">3</text>
+      <text x="80" y="72" text-anchor="middle" font-weight="700">Memory</text>
+      <text x="80" y="92" text-anchor="middle" fill="#8d8d8d" font-size="12">approved facts only</text>
     </g>
-    <g>
-      <circle cx="1110" cy="190" r="56" fill="#fff" opacity=".055" stroke="#fff" stroke-opacity=".22"/>
-      <text x="1110" y="181" class="label" fill="#fff">04 AUDIT</text>
-      <text x="1110" y="207" class="small">what it knows</text>
-      <text x="1110" y="229" class="small">where it went</text>
+    <g transform="translate(750 128)">
+      <rect width="160" height="104" rx="18" fill="#121212" stroke="#ff2a6d" stroke-opacity=".45"/>
+      <circle cx="80" cy="36" r="15" fill="#ff2a6d" opacity=".2"/><text x="80" y="42" text-anchor="middle" fill="#ff2a6d" font-weight="700">4</text>
+      <text x="80" y="72" text-anchor="middle" font-weight="700">Everywhere</text>
+      <text x="80" y="92" text-anchor="middle" fill="#8d8d8d" font-size="12">GUI, CLI, phone, docs</text>
+    </g>
+    <g transform="translate(970 128)">
+      <rect width="160" height="104" rx="18" fill="#121212" stroke="#05d5ff" stroke-opacity=".45"/>
+      <circle cx="80" cy="36" r="15" fill="#05d5ff" opacity=".2"/><text x="80" y="42" text-anchor="middle" fill="#05d5ff" font-weight="700">5</text>
+      <text x="80" y="72" text-anchor="middle" font-weight="700">Act</text>
+      <text x="80" y="92" text-anchor="middle" fill="#8d8d8d" font-size="12">with consent gates</text>
+    </g>
+    <g transform="translate(1190 128)">
+      <rect width="160" height="104" rx="18" fill="#121212" stroke="#05d5ff" stroke-opacity=".45"/>
+      <circle cx="80" cy="36" r="15" fill="#05d5ff" opacity=".2"/><text x="80" y="42" text-anchor="middle" fill="#05d5ff" font-weight="700">6</text>
+      <text x="80" y="72" text-anchor="middle" font-weight="700">Verify</text>
+      <text x="80" y="92" text-anchor="middle" fill="#8d8d8d" font-size="12">audit, improve, repeat</text>
     </g>
   </g>
-
-  <g class="mono">
-    <rect x="70" y="284" width="525" height="42" rx="13" fill="#00ff80" opacity=".07" stroke="#00ff80" stroke-opacity=".22"/>
-    <text x="96" y="310" fill="#00ff80" font-size="12" letter-spacing="1.4">NORMAL USER PATH</text>
-    <text x="260" y="310" fill="#eee" font-size="12" opacity=".82">install -> gui -> connect a chat -> talk normally</text>
-
-    <rect x="685" y="284" width="525" height="42" rx="13" fill="#05d5ff" opacity=".07" stroke="#05d5ff" stroke-opacity=".22"/>
-    <text x="711" y="310" fill="#05d5ff" font-size="12" letter-spacing="1.4">PRO PATH</text>
-    <text x="812" y="310" fill="#eee" font-size="12" opacity=".82">cli -> recall -> code dispatch -> audit -> cluster</text>
-  </g>
+  <text x="700" y="315" text-anchor="middle" fill="#5c5c5c" class="mono" font-size="11" letter-spacing="3">NO YAML REQUIRED FOR THE HAPPY PATH - FULL CONTROL WHEN YOU WANT IT</text>
 </svg>

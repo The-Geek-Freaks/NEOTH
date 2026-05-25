@@ -1,87 +1,52 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 520" width="1280" height="520" preserveAspectRatio="xMidYMid meet" role="img" aria-label="NEOTH coding buddy canvas Kanban dispatch review memory">
+<svg width="1400" height="460" viewBox="0 0 1400 460" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH Coding Buddy</title>
+  <desc id="desc">NEOTH coding workflow with planning canvas, Kanban, three brain roles, tests, review and durable project memory.</desc>
   <defs>
-    <radialGradient id="bg" cx="50%" cy="44%" r="75%">
-      <stop offset="0%" stop-color="#202020"/>
-      <stop offset="100%" stop-color="#070707"/>
-    </radialGradient>
-    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
-      <feGaussianBlur stdDeviation="5" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
+    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     <style>
-      .sans { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", system-ui, sans-serif; }
-      .mono { font-family: "JetBrains Mono", "SF Mono", Consolas, monospace; }
-      .h { font-size: 28px; font-weight: 300; letter-spacing: 6px; fill: #fff; }
-      .label { font-size: 12px; letter-spacing: 1.8px; }
-      .tiny { font-size: 10px; letter-spacing: 1px; fill: #d8d8d8; opacity: .8; }
+      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .card{fill:#121212;stroke:white;stroke-opacity:.1}
+      .head{fill:#1a1a1a;stroke:white;stroke-opacity:.08}
     </style>
   </defs>
-  <rect width="1280" height="520" rx="36" fill="url(#bg)"/>
-  <rect x="1" y="1" width="1278" height="518" rx="36" fill="none" stroke="#fff" stroke-opacity=".08"/>
+  <rect width="1400" height="460" rx="34" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="458" rx="33" stroke="white" stroke-opacity=".08"/>
+  <text x="70" y="60" fill="white" class="sans" font-size="25" font-weight="700">The coding buddy that remembers the repo</text>
+  <text x="70" y="92" fill="#8d8d8d" class="sans" font-size="15">Plan visually, split work, dispatch roles, verify tests, promote decisions into memory, and resume without explaining the project again.</text>
 
-  <text x="640" y="54" class="sans h" text-anchor="middle">CODING BUDDY CONTROL LOOP</text>
-  <text x="640" y="84" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" text-anchor="middle" opacity=".78">PROMPT -> CANVAS -> KANBAN -> HEMISPHERES -> PATCH / TEST / MEMORY</text>
+  <g transform="translate(70 128)">
+    <rect width="385" height="258" rx="24" class="card"/>
+    <text x="28" y="40" fill="#00ff80" class="mono" font-size="13" letter-spacing="2">CANVAS</text>
+    <rect x="28" y="66" width="329" height="42" rx="10" class="head"/><text x="45" y="92" fill="white" class="sans" font-size="14">Goal -> acceptance criteria</text>
+    <rect x="28" y="122" width="156" height="86" rx="12" fill="#0d0d0d" stroke="#00ff80" stroke-opacity=".35"/><text x="106" y="153" text-anchor="middle" fill="white" class="sans" font-size="13">Design</text><text x="106" y="176" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="11">architecture + risk</text>
+    <rect x="201" y="122" width="156" height="86" rx="12" fill="#0d0d0d" stroke="#ff2a6d" stroke-opacity=".35"/><text x="279" y="153" text-anchor="middle" fill="white" class="sans" font-size="13">Implementation</text><text x="279" y="176" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="11">patch + tests</text>
+    <path d="M106 208 V230 H279 V208" stroke="#05d5ff" stroke-opacity=".45"/>
+    <text x="192" y="246" text-anchor="middle" fill="#05d5ff" class="mono" font-size="11">reviewable plan, not chat soup</text>
+  </g>
 
-  <g class="mono">
-    <rect x="58" y="136" width="210" height="102" rx="18" fill="#00ff80" opacity=".075" stroke="#00ff80" stroke-opacity=".32"/>
-    <text x="84" y="170" class="label" fill="#00ff80">OPERATOR PROMPT</text>
-    <text x="84" y="198" class="tiny">"add migration + tests"</text>
-    <text x="84" y="220" class="tiny">constraints + repo memory</text>
-
-    <rect x="326" y="118" width="250" height="138" rx="22" fill="#05d5ff" opacity=".07" stroke="#05d5ff" stroke-opacity=".32"/>
-    <text x="352" y="154" class="label" fill="#05d5ff">PLANNING CANVAS</text>
-    <text x="352" y="184" class="tiny">tasks, deps, risks</text>
-    <text x="352" y="206" class="tiny">acceptance criteria</text>
-    <text x="352" y="228" class="tiny">operator-visible plan</text>
-
-    <rect x="640" y="112" width="360" height="150" rx="22" fill="#fff" opacity=".045" stroke="#fff" stroke-opacity=".13"/>
-    <text x="666" y="146" class="label" fill="#fff">KANBAN SESSION</text>
-    <g>
-      <rect x="666" y="170" width="52" height="62" rx="10" fill="#00ff80" opacity=".11" stroke="#00ff80" stroke-opacity=".28"/>
-      <text x="692" y="194" class="tiny" text-anchor="middle">TODO</text>
-      <text x="692" y="215" class="tiny" text-anchor="middle">3</text>
-      <rect x="730" y="170" width="70" height="62" rx="10" fill="#05d5ff" opacity=".11" stroke="#05d5ff" stroke-opacity=".28"/>
-      <text x="765" y="194" class="tiny" text-anchor="middle">ACTIVE</text>
-      <text x="765" y="215" class="tiny" text-anchor="middle">2</text>
-      <rect x="812" y="170" width="70" height="62" rx="10" fill="#ff2a6d" opacity=".11" stroke="#ff2a6d" stroke-opacity=".28"/>
-      <text x="847" y="194" class="tiny" text-anchor="middle">REVIEW</text>
-      <text x="847" y="215" class="tiny" text-anchor="middle">1</text>
-      <rect x="894" y="170" width="70" height="62" rx="10" fill="#fff" opacity=".07" stroke="#fff" stroke-opacity=".22"/>
-      <text x="929" y="194" class="tiny" text-anchor="middle">DONE</text>
-      <text x="929" y="215" class="tiny" text-anchor="middle">4</text>
+  <g transform="translate(505 128)">
+    <rect width="390" height="258" rx="24" class="card"/>
+    <text x="28" y="40" fill="#ff2a6d" class="mono" font-size="13" letter-spacing="2">KANBAN</text>
+    <g class="sans" font-size="12">
+      <rect x="28" y="65" width="96" height="154" rx="12" fill="#0d0d0d" stroke="#00ff80" stroke-opacity=".28"/><text x="76" y="91" text-anchor="middle" fill="white">Todo</text>
+      <rect x="147" y="65" width="96" height="154" rx="12" fill="#0d0d0d" stroke="#ff2a6d" stroke-opacity=".28"/><text x="195" y="91" text-anchor="middle" fill="white">Doing</text>
+      <rect x="266" y="65" width="96" height="154" rx="12" fill="#0d0d0d" stroke="#05d5ff" stroke-opacity=".28"/><text x="314" y="91" text-anchor="middle" fill="white">Review</text>
+      <rect x="44" y="112" width="64" height="28" rx="7" fill="#111"/><rect x="44" y="150" width="64" height="28" rx="7" fill="#111"/>
+      <rect x="163" y="112" width="64" height="28" rx="7" fill="#111"/><rect x="282" y="112" width="64" height="28" rx="7" fill="#111"/><rect x="282" y="150" width="64" height="28" rx="7" fill="#111"/>
     </g>
-
-    <rect x="1062" y="136" width="160" height="102" rx="18" fill="#ff2a6d" opacity=".075" stroke="#ff2a6d" stroke-opacity=".32"/>
-    <text x="1142" y="170" class="label" fill="#ff2a6d" text-anchor="middle">OUTPUT</text>
-    <text x="1142" y="198" class="tiny" text-anchor="middle">patch + tests</text>
-    <text x="1142" y="220" class="tiny" text-anchor="middle">review summary</text>
+    <text x="195" y="246" text-anchor="middle" fill="#8d8d8d" class="mono" font-size="11">Backlog -> Todo -> Doing -> Review -> Done</text>
   </g>
 
-  <g class="mono">
-    <rect x="190" y="335" width="270" height="104" rx="20" fill="#00ff80" opacity=".07" stroke="#00ff80" stroke-opacity=".28"/>
-    <text x="216" y="370" class="label" fill="#00ff80">LEFT HEMISPHERE</text>
-    <text x="216" y="400" class="tiny">fast implementation</text>
-    <text x="216" y="422" class="tiny">small scoped fixes</text>
-
-    <rect x="505" y="335" width="270" height="104" rx="20" fill="#05d5ff" opacity=".07" stroke="#05d5ff" stroke-opacity=".28"/>
-    <text x="531" y="370" class="label" fill="#05d5ff">RIGHT HEMISPHERE</text>
-    <text x="531" y="400" class="tiny">architecture + review</text>
-    <text x="531" y="422" class="tiny">risks, patterns, dissent</text>
-
-    <rect x="820" y="335" width="270" height="104" rx="20" fill="#ff2a6d" opacity=".07" stroke="#ff2a6d" stroke-opacity=".28"/>
-    <text x="846" y="370" class="label" fill="#ff2a6d">MEMORY PROMOTION</text>
-    <text x="846" y="400" class="tiny">decisions, tests, findings</text>
-    <text x="846" y="422" class="tiny">durable repo context</text>
+  <g transform="translate(945 128)">
+    <rect width="385" height="258" rx="24" class="card"/>
+    <text x="28" y="40" fill="#05d5ff" class="mono" font-size="13" letter-spacing="2">THREE BRAIN ROLES</text>
+    <circle cx="93" cy="124" r="58" fill="#101010" stroke="#00ff80" stroke-opacity=".45" filter="url(#glow)"/>
+    <circle cx="193" cy="124" r="58" fill="#101010" stroke="#ff2a6d" stroke-opacity=".45" filter="url(#glow)"/>
+    <circle cx="293" cy="124" r="58" fill="#101010" stroke="#05d5ff" stroke-opacity=".45" filter="url(#glow)"/>
+    <text x="93" y="119" text-anchor="middle" fill="white" class="sans" font-size="13" font-weight="700">Fast</text><text x="93" y="140" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="11">ship</text>
+    <text x="193" y="119" text-anchor="middle" fill="white" class="sans" font-size="13" font-weight="700">Deep</text><text x="193" y="140" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="11">reason</text>
+    <text x="293" y="119" text-anchor="middle" fill="white" class="sans" font-size="13" font-weight="700">Sync</text><text x="293" y="140" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="11">orchestrate</text>
+    <text x="193" y="218" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="13">Tests, review findings, decisions, and tradeoffs become durable project memory.</text>
   </g>
-
-  <path d="M268,187 L326,187" stroke="#00ff80" stroke-width="1.4" opacity=".6"/>
-  <path d="M576,187 L640,187" stroke="#05d5ff" stroke-width="1.4" opacity=".6"/>
-  <path d="M1000,187 L1062,187" stroke="#ff2a6d" stroke-width="1.4" opacity=".6"/>
-  <path d="M820,262 C800,306 702,318 640,335" fill="none" stroke="#05d5ff" stroke-opacity=".45"/>
-  <path d="M760,262 C720,306 420,318 325,335" fill="none" stroke="#00ff80" stroke-opacity=".45"/>
-  <path d="M895,262 C930,306 952,318 955,335" fill="none" stroke="#ff2a6d" stroke-opacity=".45"/>
-  <text x="640" y="484" class="mono" font-size="10" letter-spacing="3" fill="#00ff80" opacity=".72" text-anchor="middle">the code loop remembers why the code changed</text>
 </svg>
