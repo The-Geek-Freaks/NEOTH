@@ -23,6 +23,9 @@ targets = [
 ]
 
 [licenses]
+# Schema v2: scalar severity fields ("deny"/"warn") dropped in favour of
+# default-deny + explicit allow/deny lists below.
+version = 2
 # Confidence threshold for SPDX-license detection. 0.8 = strict enough to
 # catch ambiguities, loose enough to accept the long tail of OSS readmes.
 confidence-threshold = 0.8
@@ -41,21 +44,19 @@ allow = [
     "0BSD",
     "MPL-2.0",
     "OpenSSL",
+    # SX-05b additions (2026-05-25):
+    # CDLA-Permissive-2.0 — Community Data License Agreement, permissive,
+    # used by webpki-roots (transitive via reqwest, tokio-tungstenite, hf-hub).
+    # Compatible with MIT/Apache stance — no copyleft, no patent traps.
+    "CDLA-Permissive-2.0",
+    # BSL-1.0 — Boost Software License, OSI + FSF approved, permissive.
+    # Used by xxhash-rust (transitive). No additional obligations.
+    "BSL-1.0",
 ]
 
-# Explicit deny list. cargo-deny would also reject by absence-from-allow,
-# but spelling these out makes the intent loud.
-deny = [
-    "GPL-1.0",
-    "GPL-2.0",
-    "GPL-3.0",
-    "AGPL-1.0",
-    "AGPL-3.0",
-    "LGPL-2.0",
-    "LGPL-2.1",
-    "LGPL-3.0",
-    "SSPL-1.0",
-]
+# v2 dropped the [licenses.deny] list (PR #611) — anything not in `allow`
+# above is denied by default. GPL / AGPL / LGPL / SSPL therefore stay
+# rejected without an explicit list, because none of them are allow-listed.
 
 [bans]
 multiple-versions = "warn"
@@ -75,13 +76,16 @@ deny = [
 skip = []
 
 [advisories]
+# Schema v2: cargo-deny ≥0.16 dropped the per-class severity scalars
+# (yanked / unmaintained / notice / vulnerability = "deny"|"warn"|"allow").
+# v2 reports all advisories by default; tune scope via [advisories.ignore]
+# or the scope-enum fields below ("all" | "workspace" | "transitive" | "none").
+version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-# Yanked crates are an automatic deny. Unmaintained warns rather than
-# denies because some of our transitive deps are stable-but-low-activity.
-yanked = "deny"
-unmaintained = "warn"
-notice = "warn"
+# Walk every dep — workspace + transitive. Tightens the SX-05b fix:
+# we want NEOTH advisories AND third-party advisories surfaced.
+unmaintained = "all"
 # Advisories acknowledged and ruled out as non-exploitable in NEOTH's
 # threat model. Each ignore MUST carry a reason + plan-to-resolve so
 # the audit pipeline stays honest. Re-evaluate every release.
@@ -90,7 +94,26 @@ notice = "warn"
 # (rustls-webpki 0.101.7) dropped after the teloxide 0.13 → 0.17 bump
 # pulled reqwest 0.13 + rustls-webpki 0.103.13 into the tree. Tree
 # inspection confirms 0.101.7 no longer present.
-ignore = []
+#
+# 2026-05-25 SX-05b: schema-fix unmasked 5 unmaintained advisories that
+# were hidden behind the prior config-parse failure. All are unmaintained
+# (not vulnerable) and have no safe upgrade; ignore with re-evaluation
+# planned for v0.3.
+ignore = [
+    # bincode — team disbanded after doxxing incident. We use bincode 1.x
+    # for WAL frame format; migration to bincode 2 or postcard requires
+    # WAL format migration. Plan: evaluate postcard switch in v0.3.
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1.x — WAL format-stable; v0.3 plans postcard migration." },
+    # number_prefix — tiny formatting crate, transitive via indicatif.
+    # No vulnerability; upstream indicatif owns the migration.
+    { id = "RUSTSEC-2025-0119", reason = "number_prefix — transitive via indicatif; upstream migration tracked." },
+    # paste — dtolnay archived; no vuln. Transitive via several macro
+    # crates. Replacement (`pastey`) requires upstream migrations.
+    { id = "RUSTSEC-2024-0436", reason = "paste — archived but no vuln; transitive only; pastey migration pending upstream." },
+    # xsalsa20poly1305 — renamed to crypto_secretbox. Transitive via
+    # peeroxide-dht v1.3.1. Needs upstream peeroxide bump.
+    { id = "RUSTSEC-2023-0037", reason = "xsalsa20poly1305 — transitive via peeroxide-dht; upstream bump tracked." },
+]
 
 [sources]
 unknown-registry = "deny"

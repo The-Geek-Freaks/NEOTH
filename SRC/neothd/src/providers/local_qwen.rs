@@ -313,7 +313,7 @@ impl LocalQwenAdapter {
         ] {
             // Use a generous timeout for the safetensors fetch.
             let downloaded =
-                tokio::time::timeout(Duration::from_secs(900), repo_handle.get(filename))
+                tokio::time::timeout(Duration::from_secs(900), repo_handle.download(filename))
                     .await
                     .with_context(|| format!("HF download timeout for {filename}"))?
                     .with_context(|| format!("HF download error for {filename}"))?;

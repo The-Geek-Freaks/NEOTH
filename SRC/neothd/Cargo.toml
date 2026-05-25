@@ -288,7 +288,7 @@ bincode  = "1"
 # Day-14a (Local Qwen inference -- skeleton) -- model + tokenizer download
 # from Hugging Face. candle (the actual inference runtime) is added in D14b
 # so this phase doesn't bring in the heavy GPU build deps.
-hf-hub       = { version = "0.3", features = ["tokio"] }
+hf-hub       = { version = "0.5", default-features = false, features = ["tokio", "rustls-tls"] }
 tokenizers   = { version = "0.20", default-features = false, features = ["onig"] }
 
 # Day-14b (Local Qwen forward pass) -- candle CPU build. CUDA / Metal are
