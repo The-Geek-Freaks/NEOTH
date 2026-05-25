@@ -233,6 +233,19 @@ pub struct FreedomConfig {
     /// lets operators flip it OFF without recompiling.
     #[serde(default)]
     pub plugins: PluginsConfig,
+    /// AR-03 (Session 24) — per-stage hook chain composition. Keyed
+    /// by stage name (`"pre_pipeline"` / `"pre_provider_call"` / etc).
+    /// Today carries one field, `fail_fast`, that flips the
+    /// dispatcher's regex-compile-error behaviour from skip-and-warn
+    /// to Block-the-stage. Operator-defined per-stage policy lives
+    /// here so a future `priority_floor` / `max_chain_depth` field
+    /// lands in the same shape without another schema bump.
+    ///
+    /// Empty by default — every stage keeps the pre-AR-03 lenient
+    /// behaviour (regex errors skip the hook + continue) unless the
+    /// operator opts that stage into `fail_fast = true`.
+    #[serde(default)]
+    pub hook_chain: std::collections::HashMap<String, HookChainConfig>,
     /// R-02 Phase 4c (Session 22): nightly dreaming pipeline gate.
     /// Off by default — operator opts in via `dreaming.enabled: true`.
     /// When on, `cli::dreaming_task::spawn` runs on
@@ -464,6 +477,46 @@ impl Default for DreamingConfig {
 /// `bootstrap_plugin_invoker` call so hook-engine `Plugin`
 /// actions degrade to Allow (same as a slim daemon build).
 /// Default is `true` because the wizard-shipped release
+/// AR-03 (Session 24) — per-stage hook chain policy. Operators
+/// drop one entry per stage they want stricter behaviour on.
+///
+/// Example freedom.yaml:
+///
+/// ```yaml
+/// hook_chain:
+///   pre_provider_call:
+///     fail_fast: true
+///   post_provider_call:
+///     fail_fast: false
+/// ```
+///
+/// Today only `fail_fast` is honoured. Future fields (`max_chain_depth`,
+/// `priority_floor`, `timeout_ms`) land here without another schema
+/// touch — the map shape absorbs additions cleanly.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HookChainConfig {
+    /// When `true`, the dispatcher escalates a hook regex-compile
+    /// failure at this stage from skip-and-warn to
+    /// `StageOutcome::Block`. Default `false` preserves the pre-AR-03
+    /// lenient behaviour. Use `true` for stages where a misconfigured
+    /// safety hook should stop the turn rather than silently fall back
+    /// to allow.
+    #[serde(default)]
+    pub fail_fast: bool,
+}
+
+impl FreedomConfig {
+    /// AR-03 — look up the configured policy for `stage` and return
+    /// the `fail_fast` flag. Returns `false` for any stage the
+    /// operator hasn't pinned (= legacy lenient behaviour).
+    pub fn fail_fast_for_stage(&self, stage: crate::hooks::stages::HookStage) -> bool {
+        self.hook_chain
+            .get(stage.as_str())
+            .map(|cfg| cfg.fail_fast)
+            .unwrap_or(false)
+    }
+}
+
 /// already compiled the feature on; operators who want a
 /// quieter daemon flip it to `false`.
 ///
@@ -1731,5 +1784,54 @@ mod tests {
         let path = write_yaml(dir.path(), yaml);
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.proactive.enabled);
+    }
+
+    // ── AR-03 (Session 24) hook_chain per-stage policy ────────────────
+
+    #[test]
+    fn ar_03_hook_chain_section_absent_returns_lenient_default() {
+        // No section in freedom.yaml → every stage is lenient
+        // (fail_fast=false). Back-compat with every existing install.
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(dir.path(), "operator_id: alice\n");
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.hook_chain.is_empty());
+        for stage in [
+            crate::hooks::stages::HookStage::PreProviderCall,
+            crate::hooks::stages::HookStage::PreChannelIngress,
+            crate::hooks::stages::HookStage::PostProviderCall,
+        ] {
+            assert!(
+                !cfg.fail_fast_for_stage(stage),
+                "default for {} must be lenient",
+                stage.as_str(),
+            );
+        }
+    }
+
+    #[test]
+    fn ar_03_hook_chain_fail_fast_round_trips_via_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "operator_id: alice\n\
+                    hook_chain:\n  \
+                      pre_provider_call:\n    \
+                        fail_fast: true\n  \
+                      post_provider_call:\n    \
+                        fail_fast: false\n";
+        let path = write_yaml(dir.path(), yaml);
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(
+            cfg.fail_fast_for_stage(crate::hooks::stages::HookStage::PreProviderCall),
+            "pre_provider_call opted into fail_fast",
+        );
+        assert!(
+            !cfg.fail_fast_for_stage(crate::hooks::stages::HookStage::PostProviderCall),
+            "post_provider_call explicitly opted out",
+        );
+        // Stage not mentioned in yaml → default lenient.
+        assert!(
+            !cfg.fail_fast_for_stage(crate::hooks::stages::HookStage::PreChannelIngress),
+            "absent stage → lenient default",
+        );
     }
 }

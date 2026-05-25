@@ -85,6 +85,29 @@ pub fn run_stage_with_plugins(
     hooks: &[HookDef],
     invoker: Option<&dyn PluginInvoker>,
 ) -> Result<StageOutcome> {
+    run_stage_with_config(stage, body, hooks, invoker, false)
+}
+
+/// AR-03 (Session 24) — full-form dispatcher with the per-stage
+/// `fail_fast` policy threaded through.
+///
+/// When `fail_fast = false` (the pre-AR-03 lenient default), a hook
+/// with an unparseable regex matcher logs warn + is skipped, and the
+/// stage continues with the remaining hooks.
+///
+/// When `fail_fast = true`, the same regex compile failure escalates
+/// to `StageOutcome::Block { name: <hook>, reason: "fail_fast: regex
+/// compile failed ..." }`. Used by operators who put a safety hook in
+/// `[hook_chain.pre_provider_call]` with `fail_fast: true` so a
+/// typo'd matcher doesn't silently degrade the gate they wrote
+/// precisely BECAUSE they wanted a block.
+pub fn run_stage_with_config(
+    stage: HookStage,
+    body: &str,
+    hooks: &[HookDef],
+    invoker: Option<&dyn PluginInvoker>,
+    fail_fast: bool,
+) -> Result<StageOutcome> {
     let mut current = body.to_string();
     let mut hits = Vec::new();
 
@@ -94,6 +117,25 @@ pub fn run_stage_with_plugins(
             Some(m) => match Regex::new(&m.pattern) {
                 Ok(re) => re.is_match(&current),
                 Err(e) => {
+                    if fail_fast {
+                        // AR-03 — operator opted this stage into
+                        // strict mode. A typo'd matcher escalates to
+                        // Block so a safety hook can't silently fail
+                        // open.
+                        tracing::error!(
+                            hook = %hook.name,
+                            pattern = %m.pattern,
+                            error = %e,
+                            "fail_fast: bad regex in hook matcher — blocking stage",
+                        );
+                        return Ok(StageOutcome::Block {
+                            name: hook.name.clone(),
+                            reason: format!(
+                                "fail_fast: regex compile failed for hook `{name}`: {e}",
+                                name = hook.name,
+                            ),
+                        });
+                    }
                     tracing::warn!(
                         hook = %hook.name,
                         pattern = %m.pattern,
@@ -206,6 +248,7 @@ mod tests {
             name: name.into(),
             stage,
             enabled: Some(true),
+            priority: None,
             matcher: None,
             action: HookAction::Allow,
         }
@@ -216,6 +259,7 @@ mod tests {
             name: name.into(),
             stage,
             enabled: Some(true),
+            priority: None,
             matcher: Some(HookMatcher {
                 pattern: pattern.into(),
             }),
@@ -230,6 +274,7 @@ mod tests {
             name: name.into(),
             stage,
             enabled: Some(true),
+            priority: None,
             matcher: None,
             action: HookAction::Block {
                 reason: reason.into(),
@@ -242,6 +287,7 @@ mod tests {
             name: name.into(),
             stage,
             enabled: Some(true),
+            priority: None,
             matcher: None,
             action: HookAction::Plugin {
                 plugin_id: plugin_id.into(),
@@ -255,6 +301,7 @@ mod tests {
             name: name.into(),
             stage,
             enabled: Some(true),
+            priority: None,
             matcher: None,
             action: HookAction::Plugin {
                 plugin_id: plugin_id.into(),
@@ -402,6 +449,7 @@ mod tests {
             name: "wipe".into(),
             stage: HookStage::PreProviderCall,
             enabled: Some(true),
+            priority: None,
             matcher: None,
             action: HookAction::Replace {
                 template: "n/a".into(),
@@ -436,6 +484,7 @@ mod tests {
             name: "bad".into(),
             stage: HookStage::PreProviderCall,
             enabled: Some(true),
+            priority: None,
             matcher: Some(HookMatcher {
                 pattern: "[invalid".into(),
             }),
@@ -582,5 +631,99 @@ mod tests {
             other => panic!("happy-path required plugin must Continue, got: {other:?}"),
         }
         assert_eq!(invoker.calls.lock().unwrap().len(), 1);
+    }
+
+    // ── AR-03 (Session 24) per-stage fail_fast escalation ─────────────
+
+    #[test]
+    fn ar_03_fail_fast_false_keeps_legacy_skip_on_bad_regex() {
+        // Back-compat pin: fail_fast=false (default) preserves the
+        // pre-AR-03 behaviour — bad regex skips the hook + continues.
+        let bad = HookDef {
+            name: "bad".into(),
+            stage: HookStage::PreProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: Some(HookMatcher {
+                pattern: "[invalid".into(),
+            }),
+            action: HookAction::Block {
+                reason: "should-not-fire".into(),
+            },
+        };
+        let good = allow_hook("good", HookStage::PreProviderCall);
+        let out = run_stage_with_config(
+            HookStage::PreProviderCall,
+            "x",
+            &[bad, good],
+            None,
+            false,
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Continue { hits, .. } => assert_eq!(hits, vec!["good"]),
+            other => panic!("fail_fast=false must skip bad hook, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ar_03_fail_fast_true_escalates_bad_regex_to_block() {
+        // AR-03 — operator opted this stage into strict mode. The bad
+        // regex must Block the stage instead of silently being skipped.
+        let bad = HookDef {
+            name: "typo-matcher".into(),
+            stage: HookStage::PreProviderCall,
+            enabled: Some(true),
+            priority: None,
+            matcher: Some(HookMatcher {
+                pattern: "[invalid".into(),
+            }),
+            action: HookAction::Allow,
+        };
+        let later = allow_hook("never-runs", HookStage::PreProviderCall);
+        let out = run_stage_with_config(
+            HookStage::PreProviderCall,
+            "x",
+            &[bad, later],
+            None,
+            true,
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Block { name, reason } => {
+                assert_eq!(name, "typo-matcher");
+                assert!(
+                    reason.contains("fail_fast")
+                        && reason.contains("regex compile failed")
+                        && reason.contains("typo-matcher"),
+                    "block reason must surface the cause: {reason}",
+                );
+            }
+            other => panic!("fail_fast=true must Block on bad regex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ar_03_fail_fast_does_not_affect_well_formed_hooks() {
+        // Sanity: a stage opted into fail_fast still runs every
+        // happy-path hook to completion. fail_fast is about errors,
+        // not strictness in general.
+        let h1 = allow_hook("a", HookStage::PreProviderCall);
+        let h2 = replace_hook("b", HookStage::PreProviderCall, "foo", "bar");
+        let out = run_stage_with_config(
+            HookStage::PreProviderCall,
+            "foo",
+            &[h1, h2],
+            None,
+            true,
+        )
+        .unwrap();
+        match out {
+            StageOutcome::Continue { body, hits } => {
+                assert_eq!(body, "bar");
+                assert_eq!(hits, vec!["a", "b"]);
+            }
+            other => panic!("fail_fast must not block well-formed chain: {other:?}"),
+        }
     }
 }

@@ -32,7 +32,17 @@ pub async fn load_all(dir: &Path) -> Result<Vec<HookDef>> {
             Err(e) => warn!(path = %path.display(), error = %e, "skipping bad hook file"),
         }
     }
-    out.sort_by(|a, b| a.name.cmp(&b.name));
+    // AR-03 (Session 24) — sort by (priority asc, name asc). Lower
+    // priority fires first; alphabetical name is the deterministic
+    // tie-breaker so hooks with the same priority still load in a
+    // stable order across installs (operator-visible reproducibility).
+    // Pre-AR-03 sort was alphabetical-only, forcing operators to
+    // smuggle order into filenames.
+    out.sort_by(|a, b| {
+        a.effective_priority()
+            .cmp(&b.effective_priority())
+            .then_with(|| a.name.cmp(&b.name))
+    });
     Ok(out)
 }
 
@@ -128,7 +138,11 @@ kind = "allow"
     }
 
     #[tokio::test]
-    async fn output_sorted_alphabetically() {
+    async fn output_sorted_alphabetically_when_priority_unset() {
+        // AR-03 (Session 24): with no `priority` field set, every hook
+        // takes the DEFAULT_PRIORITY and the alphabetical tie-breaker
+        // pins the legacy ordering. Catches any regression in the
+        // tie-break direction.
         let dir = tempdir().unwrap();
         for name in ["zebra", "alpha", "mike"] {
             tokio::fs::write(
@@ -143,5 +157,61 @@ kind = "allow"
         let hooks = load_all(dir.path()).await.unwrap();
         let names: Vec<&str> = hooks.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(names, vec!["alpha", "mike", "zebra"]);
+    }
+
+    #[tokio::test]
+    async fn ar_03_priority_field_overrides_alphabetical() {
+        // Explicit priorities pull "zebra" ahead of "alpha". Without
+        // AR-03 this would fail — the legacy sort would put "alpha"
+        // first regardless of priority.
+        let dir = tempdir().unwrap();
+        let cases = [
+            ("zebra", 1),
+            ("alpha", 50),
+            ("mike", 100),
+            ("delta", 100), // ties with mike → broken by alphabetical
+        ];
+        for (name, prio) in &cases {
+            tokio::fs::write(
+                dir.path().join(format!("{name}.toml")),
+                format!(
+                    "name = \"{name}\"\nstage = \"pre_pipeline\"\npriority = {prio}\n\
+                     [action]\nkind = \"allow\"\n",
+                ),
+            )
+            .await
+            .unwrap();
+        }
+        let hooks = load_all(dir.path()).await.unwrap();
+        let names: Vec<&str> = hooks.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["zebra", "alpha", "delta", "mike"],
+            "priority asc + name asc tie-break expected",
+        );
+    }
+
+    #[tokio::test]
+    async fn ar_03_priority_negative_values_load_first() {
+        // Useful for safety hooks that MUST fire before anything else
+        // (e.g. operator-defined panic kill-switch). Negative values
+        // are explicitly supported.
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("kill.toml"),
+            "name = \"kill\"\nstage = \"pre_pipeline\"\npriority = -100\n\
+             [action]\nkind = \"block\"\nreason = \"panic\"\n",
+        )
+        .await
+        .unwrap();
+        tokio::fs::write(
+            dir.path().join("normal.toml"),
+            "name = \"normal\"\nstage = \"pre_pipeline\"\n[action]\nkind = \"allow\"\n",
+        )
+        .await
+        .unwrap();
+        let hooks = load_all(dir.path()).await.unwrap();
+        let names: Vec<&str> = hooks.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, vec!["kill", "normal"]);
     }
 }

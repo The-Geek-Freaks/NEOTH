@@ -37,14 +37,39 @@ pub struct HookDef {
     pub stage: HookStage,
     #[serde(default)]
     pub enabled: Option<bool>,
+    /// AR-03 (Session 24) — firing order within a stage. Lower fires
+    /// FIRST; ties broken by `name` (alphabetical, stable). Default is
+    /// [`HookDef::DEFAULT_PRIORITY`] (100) so a hook without an
+    /// explicit value sits in the middle of the chain and operators
+    /// only need to set the field on hooks they care about ordering.
+    ///
+    /// Pre-AR-03 ordering was purely alphabetical-by-name, which
+    /// forced operators to rename files (`05-redact.toml` /
+    /// `10-block-tokens.toml`) to control fire order — fragile across
+    /// installs and clashed with semantic naming. With `priority`
+    /// they keep semantic names + declare order in the file itself.
+    #[serde(default)]
+    pub priority: Option<i32>,
     #[serde(default)]
     pub matcher: Option<HookMatcher>,
     pub action: HookAction,
 }
 
 impl HookDef {
+    /// Default `priority` applied to hooks that don't carry the field
+    /// in their TOML. Middle-of-the-road so adding a `priority = 10`
+    /// to a single hook pulls it ahead of every legacy hook without
+    /// the operator having to retroactively annotate the rest.
+    pub const DEFAULT_PRIORITY: i32 = 100;
+
     pub fn is_enabled(&self) -> bool {
         self.enabled.unwrap_or(true)
+    }
+
+    /// AR-03 — resolved priority with the default applied. Used by
+    /// the loader sort + the dispatcher walk.
+    pub fn effective_priority(&self) -> i32 {
+        self.priority.unwrap_or(Self::DEFAULT_PRIORITY)
     }
 }
 

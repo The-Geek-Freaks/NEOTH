@@ -624,6 +624,7 @@ kind = "allow"
             name: "x".into(),
             stage: HookStage::PreProviderCall,
             enabled: None,
+            priority: None,
             matcher: Some(HookMatcher {
                 pattern: ".*".into(),
             }),
