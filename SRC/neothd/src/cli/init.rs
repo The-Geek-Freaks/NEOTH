@@ -3243,6 +3243,23 @@ fn which_binary(name: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Process-level lock for tests that mutate the global `HOME` /
+    /// `USERPROFILE` env vars. `std::env::set_var` is process-global,
+    /// so two parallel tests in this lib that both set HOME race —
+    /// one sees the other's tempdir and asserts wrong, surfacing as
+    /// the intermittent failure of e.g. step6d_non_interactive_*.
+    /// Every test that calls `set_var("HOME"/"USERPROFILE", ...)`
+    /// MUST take this lock at function entry; release on drop
+    /// happens after the restore-prev block.
+    static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Wrapper that hides the `PoisonError` recovery boilerplate —
+    /// a previously-panicking test poisoned the mutex but the data
+    /// inside is `()`, so reuse it unconditionally.
+    fn lock_home_env() -> std::sync::MutexGuard<'static, ()> {
+        HOME_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn operator_id_valid() {
         assert!(validate_operator_id("alex").is_ok());
@@ -4331,6 +4348,7 @@ mod tests {
 
     #[tokio::test]
     async fn step5c_non_interactive_records_when_flag_set_and_local_qwen() {
+        let _env_lock = lock_home_env();
         // LocalQwen-using operator + --download-qwen-weights → opt-in
         // recorded. The probe lives under a synthetic HOME so the
         // "weights missing" branch is exercised.
@@ -4398,6 +4416,7 @@ mod tests {
 
     #[test]
     fn step6d_non_interactive_bootstraps_vault_when_flag_set() {
+        let _env_lock = lock_home_env();
         // Point HOME at a tempdir so the default_vault_path resolves
         // into the sandbox + the test cleans up automatically.
         let temp = tempfile::tempdir().unwrap();
@@ -4433,6 +4452,7 @@ mod tests {
 
     #[test]
     fn step6d_idempotent_skips_files_that_already_exist() {
+        let _env_lock = lock_home_env();
         // Operator re-runs init with --force: existing vault files
         // must NOT be clobbered (operator edits win).
         let temp = tempfile::tempdir().unwrap();
