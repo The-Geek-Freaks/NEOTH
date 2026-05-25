@@ -1,137 +1,198 @@
 # FAQ
 
----
+## What is NEOTH?
 
-## Does Neoth send my data to the cloud?
+NEOTH is a loyal, local-first AI buddy and operator runtime.
 
-Partially, by design. Here is the breakdown:
+It combines:
 
-**What goes to cloud:** Your messages to Neoth and Neoth's responses. These are sent to the LLM
-provider you configure (Claude by default). This is unavoidable — the LLM has to see the prompt
-to answer it.
+- GUI and CLI
+- long-term profile memory
+- local model paths
+- chat channels
+- coding canvas and Kanban
+- Obsidian mirror
+- n8n/cron automation
+- Paperless/email/calendar workflows
+- private mesh and cluster pairing
+- auditable policy and permission gates
 
-**What stays local by default:** Profile extraction (learning about you from your conversations)
-runs on a local model (Qwen3-4B) on your machine. Your raw conversation text is not transmitted
-to a third party for this purpose. The cloud LLM only sees the profile *summary* (a few hundred
-tokens of high-confidence facts), not the raw conversations.
+## Who is it for?
 
-**The opt-in:** If your local model is unavailable and you set `inference.allow_cloud_fallback: true`
-in freedom.yaml, extraction falls back to the cloud. That flag is `false` by default. Without it,
-extraction is simply skipped when local inference is down.
+Both normal users and pros.
 
-Run `neoth privacy audit --last 30d` to see exactly where your requests went.
+| User | NEOTH path |
+| :-- | :-- |
+| Normal user | `neoth gui`, guided wizard, plain-language settings, no YAML happy path. |
+| Developer | `neoth code`, canvas, Kanban, repo memory, review promotion, tests. |
+| Privacy hardliner | Local profile extraction, redaction, audit, no silent cloud fallback. |
+| Homelab operator | Tailscale/Hysteria/Keet mesh, cluster status, local models, n8n, Paperless. |
+| Automation builder | Cron, n8n localhost API, plugins, skills, capability gates. |
 
----
+## Does NEOTH send my data to the cloud?
 
-## How do I delete my profile?
+Only when you configure a cloud provider or enable a cloud-backed feature.
 
+Default privacy model:
+
+| Data/action | Default stance |
+| :-- | :-- |
+| Profile extraction | Local model path where available. |
+| Profile facts | Approval/evidence/redaction controlled. |
+| Raw memory | Local WAL and local indexes. |
+| Provider calls | Audited destination and explicit provider config. |
+| Cloud fallback for learning | Off unless explicitly enabled. |
+| Plugins | Sandboxed and capability-scoped. |
+
+Run:
+
+```bash
+neoth privacy audit --last 30d
 ```
-neoth profile redact --all
+
+That shows where requests went and which sensitive surfaces were used.
+
+## Can I use NEOTH without Claude/OpenAI/Gemini?
+
+Yes, if you configure a capable local model for the tasks you expect.
+
+Cloud providers are useful for high-end reasoning and convenience. Local Qwen/Ouro paths are useful for profile learning, private recall, and local reasoning when your hardware can handle it.
+
+```bash
+neoth model list
+neoth model fetch qwen
+neoth model fetch ouro
 ```
 
-This removes all profile claims from the active index immediately. WAL audit events record
-that a redaction happened (for integrity), but the actual claim values are zeroed out during
-the next compaction pass. After that pass, the values are gone and unrecoverable.
+## Does NEOTH work offline?
 
-To prevent a specific field from ever being re-learned:
+Partially to fully, depending on your model setup.
 
+| Function | Offline behavior |
+| :-- | :-- |
+| WAL memory | Works offline. |
+| Profile browsing/redaction | Works offline. |
+| Recall over local indexes | Works offline. |
+| Local Qwen/Ouro inference | Works offline after model download. |
+| CLIP/Whisper local media processing | Works offline after model download. |
+| Cloud provider calls | Require network. |
+| External channels | Require network. |
+| Tailscale/Hysteria/Keet mesh | Depends on network path. |
+
+## How do I delete or correct memory?
+
+Show evidence:
+
+```bash
+neoth profile show --evidence
 ```
+
+Redact one field:
+
+```bash
 neoth profile redact identity.location
 ```
 
-The redaction persists across restarts. Future mentions of your location won't be stored.
+Redact all profile facts:
 
----
+```bash
+neoth profile redact --all
+```
 
-## Can I use Neoth without a Claude/OpenAI/Google subscription?
+Review pending memory before it is accepted:
 
-For response generation: No, you need at least one cloud LLM. Claude, Codex, or Gemini via
-their CLI tools (which use OAuth with a subscription, or API keys if you prefer pay-per-use).
+```bash
+neoth profile pending
+neoth profile approve <id>
+neoth profile decline <id> --reason "wrong"
+```
 
-For profile extraction (Phase 2+): No subscription needed once you have the local model set up.
-`neoth model fetch qwen3-4b-int4` downloads it. Profile learning then costs only electricity.
+## Can NEOTH relearn something I redacted?
 
----
+Not if the redaction is marked as blocked from relearning.
 
-## Does it work offline?
-
-Partially. If you have the local model downloaded (Phase 2+), profile extraction, embedding
-generation, and recall queries all work offline.
-
-Response generation requires a cloud LLM and therefore requires internet access. There is no
-offline response generation in the current roadmap.
-
-WAL, profile storage, and skill loading are all local and work without internet.
-
----
+NEOTH's profile memory is designed around evidence, approval, redaction, and replay safety. Redaction should be a control surface, not a suggestion.
 
 ## Why Rust?
 
-Performance, reliability, and safety — without a garbage collector. The WAL needs predictable
-latency: a GC pause in the middle of writing an event is a problem. Rust gives deterministic
-memory management.
+NEOTH has a sensitive local runtime: memory, WAL, provider routing, plugins, channels, and automation.
 
-The single-binary deployment is also simpler in Rust than in most alternatives. No runtime to
-install, no version conflicts, no interpreter.
+Rust is a good fit because it gives:
 
-Rust's type system is also doing real work here: the permission system for plugins is enforced
-at compile time, not just at runtime. A plugin that declares `ReadOnly` cannot call vault APIs
-that require `Execute` — the code won't compile.
+- predictable performance
+- single-binary deployment
+- strong type boundaries
+- no garbage collector pauses in the WAL path
+- safer plugin and permission plumbing
+- good cross-platform story
 
----
+## How is NEOTH different from a normal chatbot?
 
-## How is Neoth different from Letta, Mem0, openclaw?
+| Normal assistant | NEOTH |
+| :-- | :-- |
+| Starts over every session. | Builds continuity over weeks and months. |
+| Lives in one app. | Follows you through GUI, CLI, phone channels, Obsidian, automation, and private mesh. |
+| Has opaque memory. | Shows evidence, confidence, approval state, and redactions. |
+| Optimizes for provider defaults. | Adapts to your language, style, constraints, tools, and privacy settings. |
+| Sends things you cannot easily audit. | Exposes provider destinations, memory facts, plugin capabilities, and WAL events. |
+| Is easy or powerful, rarely both. | Wizard-first for normal users, deep operator stack for pros. |
 
-**Letta (formerly MemGPT):** Focuses on long-term memory via a paging metaphor. Python-based.
-Cloud-hosted option. Neoth is Rust, single-binary, self-hosted only, with an event log as the
-source of truth rather than an LLM-managed memory database.
+## How is NEOTH different from Hermes, OpenHuman, and OpenClaw?
 
-**Mem0:** A memory layer you add to existing LLM apps. SDK-focused, not an agent. Neoth is a
-complete agent runtime with channels, skills, council, and profile learning built in.
+Short version:
 
-**openclaw:** A WhatsApp/Telegram gateway to Claude, built on Node.js (the predecessor to Neoth's
-channel adapter design). Neoth takes the openclaw channel concept, rewrites it in Rust, and adds
-persistent WAL memory, profile learning, local inference, and the multi-LLM council.
+| Project | Main strength | NEOTH synthesis |
+| :-- | :-- | :-- |
+| Hermes | Workflow and Kanban-shaped coding. | NEOTH adds loyal memory, profile safety, private mesh, and operator runtime around the coding loop. |
+| OpenHuman | Human-readable assistant memory. | NEOTH adds WAL authority, local profile extraction, channels, automation, and coding cockpit. |
+| OpenClaw | Gateway/channel/canvas/agent energy. | NEOTH folds that direction into a Rust local-first buddy with permissioned memory. |
+| NEOTH | Loyal buddy + private memory + coding studio + operator runtime. | One memory, every surface, your rules. |
 
-The openclaw conversation binding model (`{channel, accountId, conversationId}`) maps to Neoth's
-`human_uuid` — a stable UUID assigned per user that persists across channels when you merge them.
+See the comparison table in the root [README](../README.md#neoth-vs-hermes-vs-openhuman-vs-openclaw).
 
----
+## What is the WAL?
+
+The WAL is NEOTH's write-ahead event log.
+
+It is the durable source of truth for memory and sensitive runtime events: profile changes, provider calls, plugin actions, channel sends, automation, recovery, and verification.
+
+Useful commands:
+
+```bash
+neoth wal verify
+neoth wal show --last 50
+```
+
+## What are skills and plugins?
+
+| Extension | Best for | Safety model |
+| :-- | :-- | :-- |
+| Skills | Instructions, templates, domain knowledge, workflows. | Data-only, no code execution. |
+| WASM plugins | Real logic at lifecycle hooks. | Capability declarations, fuel limit, memory cap, timeout, hostcall allowlist. |
+
+## Can NEOTH control my computer?
+
+Only inside the autonomy and permission policy you choose.
+
+Read-only and low-risk actions can be allowed automatically at standard settings. Mutating, external, credential, system, or high-impact actions require approval unless you explicitly grant a scoped capability.
+
+## Does NEOTH support multiple users?
+
+NEOTH is primarily operator-owned.
+
+Channel integrations can identify different humans and isolate their conversation/profile state where configured. For a personal deployment, the common case is one operator with multiple surfaces and devices.
+
+## What should I run when something feels wrong?
+
+```bash
+neoth doctor
+neoth status
+neoth privacy audit
+neoth wal verify
+```
+
+Then check [troubleshooting.md](troubleshooting.md).
 
 ## License?
 
-Apache 2.0. See `LICENSE` in the repo root. You can use Neoth commercially, fork it, and
-modify it without restriction. Attribution is appreciated but not required.
-
----
-
-## Multi-user support?
-
-Yes, within a single deployment. Each Telegram/Slack/WhatsApp user gets a separate `human_uuid`.
-Their conversation history, profile, and recall are isolated from other users.
-
-The `allowed_chat_ids` (Telegram) and equivalent allowlists in other channels define who can
-interact with your Neoth instance. You can add multiple users; each gets their own profile and
-recall index.
-
-Full multi-user management with separate permission levels per user is a Phase 4 topic.
-
----
-
-## Mobile app?
-
-No native mobile app. Neoth runs on your server and connects to Telegram/WhatsApp/Slack — you
-use those apps' native mobile clients to talk to it. That is intentional: those apps already
-handle push notifications, offline message queuing, and encryption in transit.
-
-A dedicated Neoth mobile app is not on the current roadmap.
-
----
-
-## Can I run multiple Neoth instances?
-
-One instance per bot token. Running two Neoth processes with the same Telegram bot token causes
-a conflict — the second instance will fail to acquire the lock and exit with a clear error.
-
-You can run multiple instances with different bot tokens for different use cases, pointing at
-different WAL directories via `NEOTH_HOME` or `storage.wal_dir` in freedom.yaml.
+NEOTH is dual-licensed under MIT or Apache-2.0. See the repository root.

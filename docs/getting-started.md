@@ -1,185 +1,183 @@
 # Getting Started
 
-Get Neoth running in about 10 minutes.
+Get NEOTH running, create first memory, and connect a first surface.
 
----
+NEOTH has two happy paths:
 
-## Prerequisites
+| Path | Use it when |
+| :-- | :-- |
+| **GUI path** | You want guided setup, plain-language choices, and no config editing. |
+| **CLI path** | You are installing over SSH, scripting setup, or prefer terminal control. |
 
-- **Rust 1.86+** (for building from source). Check: `rustc --version`
-- OR grab a pre-built binary from the [releases page](https://github.com/your-org/neoth/releases)
-- At least one LLM CLI installed and authenticated:
-  - Claude CLI: `claude` — authenticate with your Anthropic account
-  - Codex CLI: `codex` — OpenAI account
-  - Gemini CLI: `gemini` — Google account
-- Minimum 2 GB free disk for WAL + models
-- For local model support **(Phase 2):** a GPU with 3 GB VRAM (see [local-models.md](local-models.md))
+## 1. Install
 
----
+Fast path:
 
-## Install
-
-### Option A — cargo install (simplest)
-
-```
+```bash
 cargo install neoth
 ```
 
-### Option B — build from source
+Source path:
 
-```
-git clone https://github.com/your-org/neoth
-cd neoth
-cargo build --release
-# Binary: target/release/neoth
-```
-
-Add `target/release/` to your PATH or copy the binary somewhere in your PATH.
-
-### Option C — pre-built binary
-
-Download from releases, extract, put `neoth` in your PATH. Done.
-
----
-
-## First run: `neoth init`
-
-Run this once. It creates `~/.neoth/` and walks you through the basics.
-
-```
-$ neoth init
-
-  ███╗   ██╗███████╗ ██████╗ ████████╗██╗  ██╗
-  ████╗  ██║██╔════╝██╔═══██╗╚══██╔══╝██║  ██║
-  ██╔██╗ ██║█████╗  ██║   ██║   ██║   ███████║
-  ██║╚██╗██║██╔══╝  ██║   ██║   ██║   ██╔══██║
-  ██║ ╚████║███████╗╚██████╔╝   ██║   ██║  ██║
-  ╚═╝  ╚═══╝╚══════╝ ╚═════╝    ╚═╝   ╚═╝  ╚═╝
-
-  Neoth knows. v0.1.0
-
-[init] Creating ~/.neoth/ ...
-[init] Operator ID (leave blank to auto-generate, or enter an ID): your-handle
-[init] Default language (ISO 639-1, e.g. en, de): en
-[init] Operator role (e.g. developer, security_researcher, none): developer
-[init] Writing ~/.neoth/freedom.yaml ... done
-[init] Writing ~/.neoth/policy.yaml ... done (from example template)
-[init] Writing ~/.neoth/soul.md ... done
-[init] Writing ~/.neoth/claude.md ... done
-[init] WAL directory: ~/.neoth/wal/ ... created
-
-[init] Done. Run `neoth chat "hello"` to test.
+```bash
+git clone https://github.com/The-Geek-Freaks/NEOTH
+cd NEOTH/SRC
+cargo install --path neothd
+cargo install --path neothd-gui
 ```
 
-This creates:
-- `~/.neoth/freedom.yaml` — your permission and learning config ([full reference](configuration.md))
-- `~/.neoth/policy.yaml` — per-machine safety rules ([reference](configuration.md#policyyaml))
-- `~/.neoth/soul.md` — Neoth's identity template ([reference](configuration.md#soulmd))
-- `~/.neoth/claude.md` — operational rules template ([reference](configuration.md#claudemd))
-- `~/.neoth/wal/` — the event log (do not delete)
+Verify:
 
----
-
-## First chat
-
-```
-$ neoth chat "hello"
-
-Neoth: Hey. What's up?
+```bash
+neoth --version
+neoth doctor
 ```
 
-If you see a response, your LLM auth is working. If you get an auth error, see
-[troubleshooting.md#llm-auth-failures](troubleshooting.md#llm-auth-failures).
+See [install.md](install.md) for release binaries, Linux/macOS installer, Windows MSVC, and source-build details.
 
-Try something with memory:
+## 2. Run the wizard
 
-```
-$ neoth chat "I'm a backend developer working mostly in Rust"
-$ neoth chat "what do you know about me?"
-```
+GUI:
 
-After the second message Neoth will recall what you told it in the session. Persistent cross-session
-profile learning kicks in from **(Phase 2)** onwards — see [profile.md](profile.md).
-
----
-
-## First channel: Telegram
-
-The fastest way to get Neoth into a messaging app is Telegram.
-
-**Step 1 — Create a bot**
-
-1. Open Telegram, search for `@BotFather`
-2. Send `/newbot`
-3. Choose a display name (e.g. `My Neoth`)
-4. Choose a username ending in `bot` (e.g. `myneoth_bot`)
-5. BotFather replies with a token: `123456789:ABC-DEF1234...`
-
-**Step 2 — Add the token**
-
-Add to your environment (or put in your shell profile):
-
-```
-export TELEGRAM_BOT_TOKEN="123456789:ABC-DEF1234..."
+```bash
+neoth gui
 ```
 
-**Step 3 — Allow your user ID**
+CLI:
 
-Find your numeric Telegram user ID. The easiest way: forward a message from yourself to
-`@userinfobot`. It replies with your numeric ID (e.g. `987654321`).
-
-Edit `~/.neoth/policy.yaml`:
-
-```yaml
-channels:
-  telegram:
-    allowed_chat_ids: [987654321]   # your numeric ID
+```bash
+neoth init
 ```
 
-Usernames are NOT allowed here — they change. Numeric IDs only.
+The wizard configures:
 
-**Step 4 — Start**
+| Step | What you choose | What NEOTH writes |
+| :-- | :-- | :-- |
+| Identity | Name, language, style, role, response preference. | Operator profile seed and communication defaults. |
+| Privacy | How much NEOTH may remember and what needs approval. | Profile approval gate, redaction policy, autonomy level. |
+| Models | Cloud provider, local models, cost and fallback rules. | Provider routing and local model configuration. |
+| Channels | GUI, CLI, Telegram, WhatsApp, Slack, Discord, Keet, email, calendar. | Credentials, channel allowlists, and safe defaults. |
+| Tools | Obsidian, n8n, Paperless, Todoist, local folders, plugins. | Integration config and capability boundaries. |
+| Mesh | LAN, Tailscale, Hysteria, cluster nodes. | Discovery, pairing, topology, and consent rules. |
 
-```
-$ neoth start
-```
+The normal path does not require editing YAML. Advanced config still lives in `~/.neoth/freedom.yaml` for operators who want it.
 
-```
-[neoth] WAL open: ~/.neoth/wal/
-[neoth] Telegram adapter: polling
-[neoth] Ready.
-```
+## 3. First chat
 
-Send a message to your bot in Telegram. You should get a reply.
-
----
-
-## What happens next?
-
-After your first conversations, Neoth starts building a picture of you:
-
-- **Recall** — it can pull up relevant past conversations when they matter
-- **Profile learning** (Phase 2) — it will remember your preferences, skills, and working style
-  across sessions without you having to repeat yourself
-- **Council** (Phase 2) — for complex or ambiguous questions, multiple LLMs debate before
-  answering
-
-See [profile.md](profile.md) to understand what gets stored and how to control it.
-
----
-
-## Running as a daemon
-
-```
-neoth start --daemon
+```bash
+neoth chat "hello"
 ```
 
-Logs go to `~/.neoth/neoth.log`. Stop with `neoth stop`.
+Try a first approved memory:
 
----
+```bash
+neoth chat "Remember that I prefer direct answers and work mostly in Rust."
+neoth profile pending
+neoth profile approve <id>
+neoth recall "how do I like answers?"
+```
 
-## Next steps
+Depending on your autonomy setting, NEOTH may ask in the GUI instead of requiring CLI approval.
 
-- Connect more channels: [channels.md](channels.md)
-- Understand configuration: [configuration.md](configuration.md)
-- All commands: [cli-reference.md](cli-reference.md)
+## 4. Check what NEOTH knows
+
+```bash
+neoth profile show --evidence
+neoth privacy audit --last 7d
+neoth wal verify
+```
+
+Useful actions:
+
+| Command | Purpose |
+| :-- | :-- |
+| `neoth profile show --evidence` | Show profile claims with sources and confidence. |
+| `neoth profile redact <field>` | Remove a fact and prevent unwanted relearning. |
+| `neoth profile pending` | Review memory proposals before they become durable facts. |
+| `neoth privacy audit` | Show provider destinations, network surfaces, and sensitive events. |
+| `neoth wal verify` | Verify the local event chain. |
+
+## 5. Connect a first channel
+
+Telegram is usually the fastest phone path.
+
+1. Open Telegram and talk to `@BotFather`.
+2. Create a bot with `/newbot`.
+3. Copy the bot token.
+4. Run the channel wizard:
+
+```bash
+neoth channel setup telegram
+neoth serve
+```
+
+Other surfaces:
+
+| Surface | Command |
+| :-- | :-- |
+| WhatsApp Business | `neoth channel setup whatsapp` |
+| Slack | `neoth channel setup slack` |
+| Discord | `neoth channel setup discord` |
+| Keet | `neoth channel setup keet` |
+| Email | `neoth channel setup email` |
+| Calendar | `neoth channel setup calendar` |
+
+See [channels.md](channels.md) for credentials, allowlists, webhook notes, and E2E checks.
+
+## 6. Set up local models
+
+Local models are optional, but they are the best default for private profile learning.
+
+```bash
+neoth model list
+neoth model fetch qwen
+neoth model fetch ouro
+neoth model fetch clip
+neoth model fetch whisper
+```
+
+| Model | Used for |
+| :-- | :-- |
+| Qwen | Local profile extraction and memory learning. |
+| Ouro | Local thinking/reasoning provider. |
+| CLIP | Image embeddings and visual recall. |
+| Whisper | Audio and video transcription. |
+
+See [local-models.md](local-models.md).
+
+## 7. Use the coding buddy
+
+```bash
+cd ~/src/my-project
+neoth code "map this repo and propose the next migration" --canvas
+neoth code "implement the accepted migration with tests" --dispatch
+neoth kanban watch
+```
+
+NEOTH can keep:
+
+- project decisions
+- codebase conventions
+- accepted plans
+- review findings
+- test failures and fixes
+- follow-up tasks
+
+See [../PLAN/SPEC_coding_workflow.md](../PLAN/SPEC_coding_workflow.md) for the design and [cli-reference.md](cli-reference.md) for commands.
+
+## 8. Keep it healthy
+
+Run this when setup feels wrong:
+
+```bash
+neoth doctor
+neoth status
+neoth privacy audit
+neoth wal verify
+```
+
+If a channel fails, check [troubleshooting.md](troubleshooting.md).
+
+If a provider fails, check [providers.md](providers.md).
+
+If memory feels wrong, check [profile.md](profile.md).

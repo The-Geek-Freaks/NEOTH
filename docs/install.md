@@ -1,293 +1,188 @@
-# neoth — Installation Guide
+# Installation Guide
 
-> **neoth knows.**
+NEOTH 1.0 installs as a Rust operator runtime with an optional GUI. Normal users should prefer release binaries or `cargo install`; operators can build from source.
 
----
+## Install paths
 
-## Overview
+| Path | Best for |
+| :-- | :-- |
+| **Release binary** | Normal users. No Rust toolchain. |
+| **cargo install** | Rust users who want the simplest source-distribution path. |
+| **Source build** | Contributors, packagers, operators, and private forks. |
+| **Installer script** | Linux/macOS or Windows setup with PATH wiring. |
 
-neoth is a Rust-based personal AI agent. It runs as a single binary (`neothd` daemon +
-`neoth` CLI). No cloud dependency by default -- your data stays on your machine.
+## Path A: cargo install
 
-Three installation paths:
-
-| Path | When to use |
-|------|-------------|
-| **Pre-built binary** (GitHub Releases) | Fastest. No Rust toolchain needed. |
-| **Build from source** (git + cargo) | Full control. MSRV 1.86. |
-| **cargo install** (crates.io) | Future -- not yet published. |
-
----
-
-## Path A: Pre-built Binary (Recommended for most users)
-
-> Status: **Not yet available**. Pre-built binaries will be attached to GitHub Releases
-> once the first public release is tagged. Subscribe to the repo to be notified.
-
-When available:
-
-```bash
-# Linux x86_64
-curl -sSfL https://github.com/<owner>/neoth/releases/latest/download/neoth-linux-x86_64.tar.gz \
-  | tar -xz -C ~/.local/bin/
-
-# Linux aarch64
-curl -sSfL https://github.com/<owner>/neoth/releases/latest/download/neoth-linux-aarch64.tar.gz \
-  | tar -xz -C ~/.local/bin/
-
-# macOS x86_64
-curl -sSfL https://github.com/<owner>/neoth/releases/latest/download/neoth-macos-x86_64.tar.gz \
-  | tar -xz -C ~/.local/bin/
-
-# macOS aarch64 (Apple Silicon)
-curl -sSfL https://github.com/<owner>/neoth/releases/latest/download/neoth-macos-aarch64.tar.gz \
-  | tar -xz -C ~/.local/bin/
-```
-
-Verify:
-```bash
-neoth --version
-```
-
-Then run the onboarding wizard:
-```bash
-neoth init
-```
-
----
-
-## Path B: Build from Source (Recommended today)
-
-### Prerequisites
-
-- **Rust 1.86+** (MSRV). Install via [rustup](https://rustup.rs):
-  ```bash
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  source $HOME/.cargo/env
-  ```
-
-- **git**
-
-- **C linker** (usually pre-installed):
-  - Linux: `gcc` or `clang` (install via package manager)
-  - macOS: `xcode-select --install`
-
-### Install Script (Automated)
-
-The install script handles Rust detection, cloning, building, and installing
-to `$HOME/.local/bin` with no sudo:
-
-```bash
-curl -sSf https://raw.githubusercontent.com/<owner>/neoth/main/scripts/install.sh | bash
-```
-
-For verbose output:
-```bash
-INSTALL_DEBUG=1 bash <(curl -sSf https://raw.githubusercontent.com/<owner>/neoth/main/scripts/install.sh)
-```
-
-The script is idempotent -- safe to re-run (pulls latest and rebuilds if source already exists).
-
-### Manual Build
-
-```bash
-# Clone
-git clone https://github.com/<owner>/neoth.git ~/.local/src/neoth
-cd ~/.local/src/neoth
-
-# Build (first build ~30-120s depending on machine)
-cargo build --release
-
-# Install to PATH
-mkdir -p ~/.local/bin
-cp target/release/neoth ~/.local/bin/
-cp target/release/neothd ~/.local/bin/
-chmod +x ~/.local/bin/neoth ~/.local/bin/neothd
-```
-
-Add to PATH if needed (add to `~/.bashrc`, `~/.zshrc`, or `~/.profile`):
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-```
-
----
-
-## Path C: cargo install (Future -- not yet published)
-
-> **neoth is not yet published to crates.io.** This path will become available
-> after the first stable release. Do not use it yet.
-
-When published:
 ```bash
 cargo install neoth
+neoth --version
+neoth gui
 ```
 
----
-
-## Windows
-
-### Recommended: WSL2 (Windows Subsystem for Linux)
-
-neoth is developed and tested primarily on Linux. WSL2 is the recommended path for Windows:
-
-1. Install WSL2 (requires Windows 10 version 2004+ or Windows 11):
-   ```powershell
-   wsl --install
-   ```
-   Restart when prompted. Complete Ubuntu setup.
-
-2. Inside WSL2, run the Linux install:
-   ```bash
-   curl -sSf https://raw.githubusercontent.com/<owner>/neoth/main/scripts/install.sh | bash
-   ```
-
-3. Run wizard:
-   ```bash
-   neoth init
-   ```
-
-**PowerShell helper script** (handles WSL2 detection automatically):
-```powershell
-irm https://raw.githubusercontent.com/<owner>/neoth/main/scripts/install.ps1 | iex
-```
-
-### Native Windows (Partial)
-
-Day-1 status: `cargo build --release` compiles on Windows. Binary prints banner.
-Channel adapters (Telegram etc.) are Linux-tested only in Phase 1.
-Native Windows channel support is planned for Phase 2+.
-
-To build on native Windows:
-```powershell
-git clone https://github.com/<owner>/neoth.git
-cd neoth\SRC\neothd
-cargo build --release
-```
-
----
-
-## After Installation: Onboarding
-
-Run the 7-step wizard to configure neoth:
+If you only want the CLI/daemon path after install:
 
 ```bash
 neoth init
 ```
 
-The wizard will:
-1. Accept the license (MIT OR Apache-2.0)
-2. Set your operator identity
-3. Choose your primary language and role
-4. Connect an LLM provider (Claude CLI, OpenAI, Gemini, or custom)
-5. Optionally connect a Telegram bot
-6. Write config to `~/.neoth/`
+## Path B: release binaries
 
-Non-interactive / scripted mode (for CI/Docker):
+Download the latest release from:
 
-```bash
-NEOTH_PROVIDER_KEY="sk-..." neoth init \
-  --noninteractive \
-  --accept-license \
-  --operator-id myname \
-  --language en \
-  --role developer \
-  --provider openai_api
+```text
+https://github.com/The-Geek-Freaks/NEOTH/releases/latest
 ```
 
----
-
-## Verifying the Installation
+Verify the binary, put it on your PATH, then run:
 
 ```bash
 neoth --version
-neoth --help
-neoth init --help
+neoth doctor
+neoth gui
 ```
 
-If `neoth init` was completed:
+Typical Linux/macOS layout:
+
 ```bash
+mkdir -p ~/.local/bin
+tar -xzf neoth-*.tar.gz -C ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"
+neoth --version
+```
+
+## Path C: Linux/macOS installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.sh | bash
+```
+
+Verbose mode:
+
+```bash
+INSTALL_DEBUG=1 bash <(curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.sh)
+```
+
+The installer detects Rust, installs to a user-writable location, and avoids sudo for the normal path.
+
+## Path D: Windows installer
+
+PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.ps1 | iex
+```
+
+Then:
+
+```powershell
+neoth --version
+neoth doctor
+neoth gui
+```
+
+## Path E: build from source
+
+```bash
+git clone https://github.com/The-Geek-Freaks/NEOTH ~/.local/src/neoth
+cd ~/.local/src/neoth/SRC
+cargo build --release
+cargo install --path neothd
+cargo install --path neothd-gui
+```
+
+Run:
+
+```bash
+neoth init
+neoth doctor
+```
+
+## Windows source builds: use MSVC
+
+NEOTH's Windows source build expects the MSVC Rust target, not GNU/MinGW.
+
+```powershell
+rustup default stable-x86_64-pc-windows-msvc
+rustup target add x86_64-pc-windows-msvc
+.\scripts\cargo-msvc.ps1 check --workspace
+```
+
+If `cargo` uses the GNU target, plugin registration can compile but fail at runtime. Use the wrapper script for checks and CI parity.
+
+## Requirements
+
+| Requirement | Minimum | Recommended |
+| :-- | :-- | :-- |
+| OS | Linux, macOS, Windows | Recent Linux/macOS/Windows 11 |
+| Rust | 1.86+ for source builds | Latest stable |
+| Disk | 2 GB | 10+ GB if using local models and document indexes |
+| RAM | 4 GB | 8-32 GB depending on local models |
+| GPU | Optional | NVIDIA/CUDA, ROCm, or Apple Silicon for local model speed |
+| Network | Optional for local-only memory | Required for cloud providers, updates, channels, mesh |
+
+## Optional dependencies
+
+| Dependency | Used for |
+| :-- | :-- |
+| `ffmpeg` | Audio/video extraction and thumbnails. |
+| Tailscale | Private device mesh. |
+| Hysteria | Restricted-network relay path. |
+| Obsidian | Human-readable vault mirror. |
+| n8n | Workflow automation. |
+| Paperless-ngx | OCR/document knowledge workflows. |
+
+The wizard can detect and help install optional dependencies.
+
+## First run
+
+```bash
+neoth gui
+```
+
+or:
+
+```bash
+neoth init
 neoth chat "hello"
 ```
 
----
-
-## Troubleshooting
-
-### `cargo: command not found`
-
-Rust/cargo not in PATH. Source the cargo environment:
-```bash
-source "$HOME/.cargo/env"
-```
-Or add permanently to shell profile:
-```bash
-echo 'source "$HOME/.cargo/env"' >> ~/.bashrc
-```
-
-### Build fails: `linker 'cc' not found`
-
-Install a C linker:
-```bash
-# Debian/Ubuntu
-sudo apt install build-essential
-
-# Fedora/RHEL
-sudo dnf install gcc
-
-# macOS
-xcode-select --install
-```
-
-### Build fails: `error: package requires Rust X, found Y`
-
-Upgrade Rust:
-```bash
-rustup update stable
-```
-
-### `neoth: command not found` after install
-
-Ensure `~/.local/bin` is in PATH:
-```bash
-export PATH="$HOME/.local/bin:$PATH"
-# Add to ~/.bashrc or ~/.zshrc for persistence
-```
-
-### `~/.neoth/` permission errors
+## Verify install
 
 ```bash
-chmod 700 ~/.neoth/
-chmod 600 ~/.neoth/credentials/providers.yaml
-chmod 600 ~/.neoth/credentials/channels.yaml
+neoth doctor
+neoth status
+neoth privacy audit --last 24h
+neoth wal verify
 ```
 
-### WSL2 not recognized on Windows
+Expected result:
 
-Ensure Windows is updated and WSL2 is enabled:
-```powershell
-wsl --status
-wsl --update
-```
+| Check | Good result |
+| :-- | :-- |
+| `neoth --version` | Prints installed version. |
+| `neoth doctor` | Shows provider/channel/model/setup status. |
+| `neoth status` | Shows daemon, WAL, memory, provider, channel state. |
+| `neoth privacy audit` | Shows destinations and recent sensitive events. |
+| `neoth wal verify` | Verifies the local event chain. |
 
----
+## Uninstall
 
-## Uninstalling
+Remove binaries:
 
 ```bash
-# Remove binaries
+cargo uninstall neoth || true
+cargo uninstall neothd || true
 rm -f ~/.local/bin/neoth ~/.local/bin/neothd
-
-# Remove source (if built from source)
-rm -rf ~/.local/src/neoth
-
-# Remove config (WARNING: deletes all credentials and config)
-rm -rf ~/.neoth/
 ```
 
----
+Remove local state only if you intentionally want to delete memory:
 
-## Getting Help
+```bash
+rm -rf ~/.neoth
+```
 
-- GitHub Issues: https://github.com/<owner>/neoth/issues
-- Design specs: `PLAN/` directory in the repository
-- `neoth --help` and `neoth <command> --help`
+Export first if you want to keep your vault, profile, or logs:
+
+```bash
+neoth export --out ~/neoth-export
+```

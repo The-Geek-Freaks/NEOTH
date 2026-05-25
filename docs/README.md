@@ -1,53 +1,92 @@
 # NEOTH Docs
 
-*Neoth knows.*
+NEOTH is a loyal, local-first AI buddy and operator runtime.
 
-NEOTH is a Rust-based personal AI agent — single binary, runs on your machine, connects to
-Telegram/WhatsApp/Slack, remembers you, and gets smarter over time. Privacy-first.
+These docs are written for the NEOTH 1.0 public release surface: normal users get the GUI wizard and plain-language controls; pros get the CLI, policies, WAL, local models, plugins, private mesh, and automation.
 
----
+## Start here
 
-## Pages
+| You are... | Read first | Why |
+| :-- | :-- | :-- |
+| A normal user | [getting-started.md](getting-started.md) | Install NEOTH, run the wizard, create first memory, connect a channel. |
+| Installing on a machine | [install.md](install.md) | Release binaries, cargo install, source build, Windows MSVC, verification. |
+| A CLI/operator user | [cli-reference.md](cli-reference.md) | Every command and common operator workflows. |
+| Privacy-focused | [profile.md](profile.md), [security/threat-model.md](security/threat-model.md) | Profile approval, redaction, outbound surfaces, audit commands. |
+| Using local models | [local-models.md](local-models.md), [providers.md](providers.md) | Qwen, Ouro, CLIP, Whisper, provider routing, fallback rules. |
+| Connecting chat apps | [channels.md](channels.md) | Telegram, WhatsApp, Slack, Discord, Keet, email, calendar. |
+| Building workflows | [cron-vs-n8n.md](cron-vs-n8n.md), [n8n-api.md](n8n-api.md) | Built-in cron vs n8n, loopback API, auth, audit trail. |
+| Extending NEOTH | [plugins.md](plugins.md) | Skills, WASM plugins, permissions, hostcalls, sandbox boundaries. |
+| Debugging setup | [troubleshooting.md](troubleshooting.md) | Model auth, channel setup, local models, plugins, privacy checks. |
 
-| Page | What it covers |
-|------|---------------|
-| [getting-started.md](getting-started.md) | Install, first run, first chat — 10 minutes |
-| [install.md](install.md) | Platform-specific install notes |
-| [configuration.md](configuration.md) | Every config file explained with all fields annotated |
-| [channels.md](channels.md) | Connecting Telegram, WhatsApp, Slack, Discord, Keet |
-| [providers.md](providers.md) | Claude, OpenAI, Gemini, local model setup |
-| [profile.md](profile.md) | How Neoth learns you, privacy controls, GDPR delete |
-| [council.md](council.md) | Multi-LLM debate feature — when and how it fires |
-| [plugins.md](plugins.md) | Skills and plugins — extending Neoth |
-| [local-models.md](local-models.md) | Running Qwen / Ouro / CLIP / Whisper on your GPU |
-| [cron-vs-n8n.md](cron-vs-n8n.md) | When to use the built-in cron vs the n8n localhost API |
-| [n8n-api.md](n8n-api.md) | Loopback HTTP API endpoints, auth, examples, audit trail |
-| [import-format.md](import-format.md) | Bulk-import shape for ground-truth seeding |
-| [live-e2e-protocol.md](live-e2e-protocol.md) | End-to-end channel verification protocol |
-| [architecture.md](architecture.md) | How it all works — block diagram, WAL, brain regions |
-| [faq.md](faq.md) | Common questions answered directly |
-| [troubleshooting.md](troubleshooting.md) | Common errors and how to fix them |
-| [cli-reference.md](cli-reference.md) | Every `neoth` command documented |
+## Product map
 
----
+| Area | Docs |
+| :-- | :-- |
+| First run | [getting-started.md](getting-started.md), [install.md](install.md) |
+| Commands | [cli-reference.md](cli-reference.md), [configuration.md](configuration.md) |
+| Memory | [profile.md](profile.md), [import-format.md](import-format.md), [architecture.md](architecture.md) |
+| Channels | [channels.md](channels.md), [live-e2e-protocol.md](live-e2e-protocol.md) |
+| Providers | [providers.md](providers.md), [local-models.md](local-models.md) |
+| Council | [council.md](council.md), [architecture.md](architecture.md) |
+| Automation | [cron-vs-n8n.md](cron-vs-n8n.md), [n8n-api.md](n8n-api.md) |
+| Plugins | [plugins.md](plugins.md), [configuration.md](configuration.md) |
+| Security | [security/threat-model.md](security/threat-model.md), [faq.md](faq.md) |
+| Troubleshooting | [troubleshooting.md](troubleshooting.md), [faq.md](faq.md) |
 
-## Quick orientation
+## Common paths
 
-**v0.2 ship (current main):** Single binary runs the full daily loop —
-CLI + GUI + Telegram + WhatsApp + Slack + Discord + Keet channels;
-operator-cached multimodal pipeline (PDF / image / audio / video);
-three-hemisphere council with smart-trigger budgeting; n8n localhost
-HTTP API for workflow automation; WAL-audited everything. Public
-release-candidate from commit `83d60a9` — 4240 tests passing, 0 deferred items.
+### Normal user path
 
-**Developers:** The `PLAN/` directory contains full internal specs — wire format, type design,
-anti-pattern tests. The `docs/` you're reading now is for users and operators.
+```bash
+cargo install neoth
+neoth gui
+```
 
-**What changed since v0.1:** see the top of [the root README](../README.md#whats-new-in-v02-session-23-ship)
-for the K / D / H / I workstream ship summary.
+Then use the wizard to pick:
 
----
+- privacy defaults
+- local or cloud models
+- memory approval level
+- chat channels
+- Obsidian and document integrations
+- automation and autonomy level
+
+### Pro operator path
+
+```bash
+neoth init
+neoth status
+neoth doctor
+neoth privacy audit
+neoth model list
+neoth cluster status
+neoth code "plan the next migration" --dispatch
+```
+
+### Privacy audit path
+
+```bash
+neoth privacy audit --last 30d
+neoth profile show --evidence
+neoth profile pending
+neoth wal verify
+neoth plugin audit
+```
+
+## Internal planning vs public docs
+
+The `docs/` directory is for users, operators, and contributors.
+
+The `PLAN/` directory is the internal architecture and execution record: specs, reviews, roadmaps, threat work, and backlog history. Start with:
+
+| File | Purpose |
+| :-- | :-- |
+| [../PLAN/ROAD_TO_1_0.md](../PLAN/ROAD_TO_1_0.md) | v0.3 -> v1.0 release sequencing. |
+| [../PLAN/00_DESIGN_v1.1_FINAL.md](../PLAN/00_DESIGN_v1.1_FINAL.md) | Architecture and design direction. |
+| [../PLAN/SPEC_coding_workflow.md](../PLAN/SPEC_coding_workflow.md) | Coding canvas, Kanban, dispatch, review loop. |
+| [../PLAN/SPEC_profile_claim_guard.md](../PLAN/SPEC_profile_claim_guard.md) | Profile evidence, injection guard, redaction semantics. |
+| [../PLAN/SPEC_skill_plugin_system.md](../PLAN/SPEC_skill_plugin_system.md) | Skills and WASM plugin safety model. |
 
 ## License
 
-Apache 2.0. See `LICENSE` in the repo root.
+NEOTH is dual-licensed under MIT or Apache-2.0. See the repo root.
