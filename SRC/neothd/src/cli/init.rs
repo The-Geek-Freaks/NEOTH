@@ -337,23 +337,48 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     }
 
     let mut state = WizardState::default();
+
+    // R-04 (Session 24) — restore in-flight wizard state from
+    // ~/.neoth/wizard_checkpoint.json when the operator confirms
+    // resume. Secrets are never persisted (the checkpoint module
+    // strips them); operator re-enters provider_key + telegram_token
+    // on resume. Decline → clear the file + start fresh.
+    maybe_resume_from_checkpoint(&neoth_dir, interactive, &mut state)?;
+
     step1_license(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step2_operator_id(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step3_language(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step4_role(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step5_provider(&args, interactive, &mut state).await?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step5b_inference_topology(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step5c_qwen_weights(&args, interactive, &mut state).await?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step5d_profile_approval_gate(interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step6_channel(&args, interactive, &mut state).await?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step6b_keet_pairing(&args, interactive, &mut state).await?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step6c_obsidian_install(&args, interactive, &mut state).await?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step6d_obsidian_vault_bootstrap(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step6e_n8n_install(&args, interactive, &mut state).await?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step6f_import_jarvis(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step7_autonomy(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step7b_auto_update(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step7c_wasm_plugin_activation(&args, interactive, &neoth_dir, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step8_summary(&args, &mut state)?;
 
     if args.dry_run {
@@ -361,6 +386,13 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     } else {
         write_config(&neoth_dir, &state).await?;
         write_initialized_marker(&neoth_dir, &state)?;
+        // R-04: wizard reached the `.initialized` marker — the
+        // checkpoint is no longer needed. Clear it so the next
+        // `neoth init` (e.g. via --force or reconfigure) starts
+        // from scratch instead of offering resume.
+        if let Err(e) = crate::cli::wizard_checkpoint::clear_checkpoint(&neoth_dir) {
+            tracing::warn!(error = %e, "post-init checkpoint clear failed (cosmetic)");
+        }
         println!("Configuration written to ~/.neoth/");
         // Phase 28c R-24 GT-4: optional Q&A ground-truth seed. Runs only on
         // a TTY; non-interactive flow points operator at `neoth groundtruth
@@ -431,6 +463,111 @@ fn maybe_run_groundtruth_qa(state: &WizardState) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// R-04 (Session 24) — best-effort checkpoint write between wizard
+/// steps. Failures here log a `warn!` and continue: the wizard keeps
+/// running with the in-memory state, and the operator can still finish
+/// in one sitting if the crash never actually arrives. The checkpoint
+/// only earns its keep when there IS a crash; making save failures
+/// fatal would let a transient disk issue (full /tmp, AV scanner lock)
+/// kill an otherwise-healthy wizard run.
+fn save_checkpoint_best_effort(neoth_dir: &std::path::Path, state: &WizardState) {
+    if let Err(e) = crate::cli::wizard_checkpoint::save_checkpoint(neoth_dir, state) {
+        tracing::warn!(
+            error = %e,
+            "wizard checkpoint save failed; in-memory state intact, resume after crash will lose this step",
+        );
+    }
+}
+
+/// R-04 (Session 24) — entry-point resume gate. Called once before
+/// step1. When a checkpoint file exists AND the operator is on a TTY,
+/// prompts `Resume from your previous wizard? (last updated …) [Y/n]`.
+/// On confirm: hydrates `state` from the file. On decline: clears the
+/// file so the next boot starts clean. Non-interactive (CI / pipe /
+/// `--non-interactive`) auto-resumes silently — a crashed CI run that
+/// re-runs `neoth init --non-interactive` should pick up where it
+/// left off without needing operator input.
+fn maybe_resume_from_checkpoint(
+    neoth_dir: &std::path::Path,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    let checkpoint = match crate::cli::wizard_checkpoint::load_checkpoint(neoth_dir) {
+        Ok(Some(c)) => c,
+        Ok(None) => return Ok(()),
+        Err(e) => {
+            // Corrupt checkpoint shouldn't block a fresh wizard run.
+            // Log + delete it so the next boot doesn't keep tripping.
+            tracing::warn!(
+                error = %e,
+                "wizard checkpoint unreadable, ignoring + clearing",
+            );
+            let _ = crate::cli::wizard_checkpoint::clear_checkpoint(neoth_dir);
+            return Ok(());
+        }
+    };
+
+    let resume = if interactive {
+        #[cfg(feature = "wizard")]
+        {
+            let age_hint = format_checkpoint_age(checkpoint.checkpoint_written_at_unix);
+            let prompt = format!(
+                "Found an incomplete wizard run ({age_hint}). \
+                 Resume with your previous answers? (secrets must be re-entered)",
+            );
+            dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt(prompt)
+                .default(true)
+                .interact()
+                .context("wizard resume confirm")?
+        }
+        #[cfg(not(feature = "wizard"))]
+        {
+            // No dialoguer available → fall through to the
+            // non-interactive default (auto-resume).
+            true
+        }
+    } else {
+        // CI / pipe: silently auto-resume so a re-run of `neoth init
+        // --non-interactive` after a transient crash picks up the
+        // saved progress without needing TTY input.
+        true
+    };
+
+    if resume {
+        info!(
+            steps_completed = ?checkpoint.steps_completed,
+            "wizard resumed from checkpoint",
+        );
+        checkpoint.apply_to(state);
+    } else {
+        info!("operator declined wizard resume; clearing checkpoint");
+        let _ = crate::cli::wizard_checkpoint::clear_checkpoint(neoth_dir);
+    }
+    Ok(())
+}
+
+/// Human-readable age hint for the resume prompt. Operator-facing only;
+/// not parsed back. Returns e.g. `"last updated 2 hours ago"` or
+/// `"timestamp unavailable"` if the wall clock looks bogus.
+fn format_checkpoint_age(ts_unix: i64) -> String {
+    if ts_unix <= 0 {
+        return "timestamp unavailable".into();
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    let delta = now.saturating_sub(ts_unix);
+    let phrase = match delta {
+        d if d < 60 => "less than a minute ago".to_string(),
+        d if d < 3_600 => format!("{} minutes ago", d / 60),
+        d if d < 86_400 => format!("{} hours ago", d / 3_600),
+        d => format!("{} days ago", d / 86_400),
+    };
+    format!("last updated {phrase}")
 }
 
 fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
@@ -3304,6 +3441,87 @@ fn which_binary(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── R-04 (Session 24) wizard resume gate ──────────────────────────
+
+    #[test]
+    fn maybe_resume_no_checkpoint_leaves_state_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = WizardState::default();
+        maybe_resume_from_checkpoint(dir.path(), false, &mut state).expect("noop ok");
+        assert!(state.operator_id.is_none());
+        assert!(state.steps_completed.is_empty());
+    }
+
+    #[test]
+    fn maybe_resume_non_interactive_auto_hydrates_from_checkpoint() {
+        // CI / pipe path: auto-resume without prompting. The checkpoint
+        // payload is the source of truth for non-secret fields.
+        let dir = tempfile::tempdir().unwrap();
+        let mut saved = WizardState::default();
+        saved.operator_id = Some("alex".into());
+        saved.language_code = Some("de".into());
+        saved.steps_completed = vec![1, 2, 3, 4];
+        saved.bootstrap_vault = true;
+        crate::cli::wizard_checkpoint::save_checkpoint(dir.path(), &saved).expect("save");
+
+        let mut state = WizardState::default();
+        maybe_resume_from_checkpoint(dir.path(), false, &mut state).expect("auto-resume");
+        assert_eq!(state.operator_id.as_deref(), Some("alex"));
+        assert_eq!(state.language_code.as_deref(), Some("de"));
+        assert_eq!(state.steps_completed, vec![1, 2, 3, 4]);
+        assert!(state.bootstrap_vault);
+        // Checkpoint file must still exist after auto-resume — it gets
+        // cleared at the very end of run_init or by an operator decline.
+        assert!(
+            crate::cli::wizard_checkpoint::checkpoint_path(dir.path()).exists(),
+            "non-interactive auto-resume keeps the file in place for the next save",
+        );
+    }
+
+    #[test]
+    fn maybe_resume_with_corrupt_file_clears_it_and_proceeds() {
+        // Garbage JSON in the checkpoint must NOT brick the wizard.
+        // Operator sees a fresh wizard + the bad file goes away.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path()).unwrap();
+        std::fs::write(
+            crate::cli::wizard_checkpoint::checkpoint_path(dir.path()),
+            b"<<<not real json>>>",
+        )
+        .unwrap();
+
+        let mut state = WizardState::default();
+        maybe_resume_from_checkpoint(dir.path(), false, &mut state).expect("survives corruption");
+        assert!(state.operator_id.is_none());
+        assert!(
+            !crate::cli::wizard_checkpoint::checkpoint_path(dir.path()).exists(),
+            "corrupt checkpoint must be cleared",
+        );
+    }
+
+    #[test]
+    fn format_checkpoint_age_handles_zero_and_negative() {
+        // Defensive: an operator who hand-edits the file to ts=0 or
+        // pre-epoch shouldn't crash the resume prompt.
+        assert_eq!(format_checkpoint_age(0), "timestamp unavailable");
+        assert_eq!(format_checkpoint_age(-1), "timestamp unavailable");
+    }
+
+    #[test]
+    fn format_checkpoint_age_picks_human_units() {
+        // The exact phrasing isn't a contract, but the unit boundary
+        // selection is — a 2-hour-old checkpoint should not say
+        // "7200 seconds ago" to an operator.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        assert!(format_checkpoint_age(now - 30).contains("minute"));
+        assert!(format_checkpoint_age(now - 600).contains("minutes ago"));
+        assert!(format_checkpoint_age(now - 7_200).contains("hours ago"));
+        assert!(format_checkpoint_age(now - 172_800).contains("days ago"));
+    }
 
     /// Process-level lock for tests that mutate the global `HOME` /
     /// `USERPROFILE` env vars. `std::env::set_var` is process-global,

@@ -78,6 +78,7 @@ pub mod update;
 pub mod usage;
 pub mod verify;
 pub mod wal;
+pub mod wizard_checkpoint;
 
 /// Output format for any subcommand that produces structured data.
 /// Established globally so streaming + format flags are consistent across
