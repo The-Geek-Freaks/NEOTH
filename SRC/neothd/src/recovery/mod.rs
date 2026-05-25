@@ -38,6 +38,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
+pub mod turn_journal;
+pub use turn_journal::{JournalReport, TurnEvent, TurnJournal, scan_for_journals};
+
 /// Atomically write `new_content` to `path`. When the new content is
 /// strictly shorter than the existing file, first copy the existing
 /// file to `<path>.bak` so the pre-shrink state survives.

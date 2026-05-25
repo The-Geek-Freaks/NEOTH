@@ -23,7 +23,9 @@ use clap::Args;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::recovery::{BakReport, BakVerdict, bak_path, scan_for_baks};
+use crate::recovery::{
+    BakReport, BakVerdict, JournalReport, bak_path, scan_for_baks, scan_for_journals,
+};
 
 #[derive(Args, Debug, Clone)]
 pub struct RecoverArgs {
@@ -74,14 +76,57 @@ pub async fn run_recover(args: RecoverArgs) -> Result<()> {
 }
 
 fn run_list(home: &std::path::Path, output: &OutputFormat) -> Result<()> {
-    let reports = scan_for_baks(home).context("scan for bak files")?;
+    let baks = scan_for_baks(home).context("scan for bak files")?;
+    let journals = scan_for_journals(home).context("scan for orphan journals")?;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::to_string_pretty(&reports)?);
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "baks": baks,
+                    "journals": journals,
+                }))?,
+            );
         }
-        OutputFormat::Table => render_list_table(&reports),
+        OutputFormat::Table => {
+            render_list_table(&baks);
+            render_journal_table(&journals);
+        }
     }
     Ok(())
+}
+
+fn render_journal_table(reports: &[JournalReport]) {
+    if reports.is_empty() {
+        return;
+    }
+    println!();
+    println!(
+        "# {} orphan turn-journal(s) — the prior `neoth chat` run crashed mid-turn",
+        reports.len(),
+    );
+    println!(
+        "  {:<32} {:<10} {:<10} path",
+        "turn_id", "size", "lines",
+    );
+    for r in reports {
+        println!(
+            "  {:<32} {:<10} {:<10} {}",
+            truncate(&r.turn_id, 32),
+            r.size_bytes,
+            r.line_count,
+            r.path.display(),
+        );
+    }
+    println!();
+    println!(
+        "Inspect one: `cat {}`",
+        reports[0].path.display(),
+    );
+    println!(
+        "Discard:     `rm {}`",
+        reports[0].path.display(),
+    );
 }
 
 fn render_list_table(reports: &[BakReport]) {

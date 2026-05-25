@@ -43,6 +43,22 @@ pub const EVENT_TYPE_RAW_TEXT: u8 = 0x01;
 /// downstream of this fix.
 pub const EVENT_TYPE_REINFORCE: u8 = 0x02;
 
+/// R-01 (Session 24) — operator opened a Turn-Journal for one
+/// `neoth chat` invocation. The companion JSONL file at
+/// `~/.neoth/journals/<turn_id>.jsonl` records mid-stream provenance
+/// (prompt → provider call(s) → partial chunks → final response) so
+/// a crash between OPENED and CLOSED leaves enough state on disk for
+/// the next launch's recovery flow to decide retry / discard / surface
+/// the partial. Payload carries the turn_id + journal_path + ts_unix.
+pub const EVENT_TYPE_TURN_JOURNAL_OPENED: u8 = 0x05;
+
+/// R-01 (Session 24) — companion to `EVENT_TYPE_TURN_JOURNAL_OPENED`.
+/// Emitted when a `neoth chat` turn completes cleanly + the JSONL
+/// file has been deleted. A journal sitting on disk without a
+/// matching CLOSED frame is the canonical "crash recovery candidate"
+/// signal that `neoth recover` consumes.
+pub const EVENT_TYPE_TURN_JOURNAL_CLOSED: u8 = 0x06;
+
 // ---- 0x10..=0x1F  Daemon lifecycle ----------------------------------------
 
 /// Daemon successfully started + opened its WAL.
