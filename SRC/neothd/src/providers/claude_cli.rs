@@ -555,6 +555,10 @@ impl Provider for ClaudeCliAdapter {
     /// (e.g. tool-use blocks) and we do not want to fail the stream when
     /// the CLI version is ahead of NEOTH's parser.
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
+        // GR-04 stream-wrap: same circuit-breaker semantics as
+        // `complete` (fast-fail on Open, record success on final
+        // done-chunk, record failure on error / premature drop).
+        crate::providers::circuit_breaker_stream::run_stream_with_breaker("claude_cli", async {
         let model = req.model.clone().unwrap_or_else(|| self.model.clone());
         let prompt = build_prompt_payload(&req);
 
@@ -662,7 +666,8 @@ impl Provider for ClaudeCliAdapter {
 
         // The try_stream macro yields `Result<CompletionChunk, anyhow::Error>`
         // already; wrap into the trait's ChunkStream type.
-        Ok(Box::pin(s))
+        Ok(Box::pin(s) as ChunkStream)
+        }).await
     }
 }
 

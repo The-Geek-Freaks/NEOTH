@@ -4969,6 +4969,7 @@ dependencies = [
  "pdf-extract",
  "pdfium-render",
  "peeroxide",
+ "pin-project",
  "portable-pty",
  "rand 0.9.4",
  "regex",

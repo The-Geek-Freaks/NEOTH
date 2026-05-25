@@ -244,6 +244,10 @@ chrono-tz  = "0.10"
 # Rust 2024 stabilises AFIT but `dyn Trait` with async fns still needs the
 # attribute macro (return-type-notation alternative is uglier).
 async-trait = "0.1"
+# GR-04 stream-wrap (Session 24 agent-3 design): pin-project for the
+# StreamGuard Drop impl that settles the circuit-breaker permit on
+# stream completion (success / failure / premature consumer drop).
+pin-project = "1"
 
 # Day-5b (REST provider adapters) -- OpenAI, Gemini, OpenAI-compat.
 # `rustls-tls` only (no openssl dep, no platform certs ambiguity).

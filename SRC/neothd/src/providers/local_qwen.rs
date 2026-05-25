@@ -378,6 +378,8 @@ impl Provider for LocalQwenAdapter {
     }
 
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
+        // GR-04 stream-wrap: same circuit-breaker semantics as `complete`.
+        crate::providers::circuit_breaker_stream::run_stream_with_breaker("local_qwen", async {
         // Phase 2c: real token-by-token streaming. We spawn the sampling
         // loop on a blocking thread and forward each decoded delta over
         // an mpsc channel; the returned Stream pumps the receiver. The
@@ -420,7 +422,8 @@ impl Provider for LocalQwenAdapter {
 
         use tokio_stream::wrappers::ReceiverStream;
         let stream = ReceiverStream::new(rx);
-        Ok(Box::pin(stream))
+        Ok(Box::pin(stream) as ChunkStream)
+        }).await
     }
 }
 

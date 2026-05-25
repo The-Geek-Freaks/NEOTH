@@ -524,6 +524,15 @@ impl Provider for LocalOuroAdapter {
     }
 
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
+        // GR-04 stream-wrap: same circuit-breaker semantics as
+        // `complete`. NOTE: Ouro's `complete()` is itself wrapped by
+        // the breaker; the stream wrap adds a second permit acquisition
+        // for the stream-iter that follows. That is INTENTIONAL — each
+        // public surface ({complete, stream}) takes its own permit so
+        // an Open breaker fast-fails either entry point. The complete()
+        // permit settles before the stream-iter starts, so we never
+        // hold two permits in parallel.
+        crate::providers::circuit_breaker_stream::run_stream_with_breaker("local_ouro", async {
         // Ouro doesn't yet expose per-token streaming the way the
         // claude_cli SSE path does. Fall through to the trait default:
         // single one-shot chunk at the end.
@@ -536,7 +545,8 @@ impl Provider for LocalOuroAdapter {
             input_tokens: completion.input_tokens,
             output_tokens: completion.output_tokens,
         };
-        Ok(Box::pin(stream::iter(vec![Ok(chunk)])))
+        Ok(Box::pin(stream::iter(vec![Ok(chunk)])) as ChunkStream)
+        }).await
     }
 }
 
