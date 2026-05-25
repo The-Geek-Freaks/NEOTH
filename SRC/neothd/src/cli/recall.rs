@@ -192,24 +192,48 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // tiers is a separate pass that the daemon's tail-indexer owns
     // (warm/cold reinforce is part of the daily consolidation cycle,
     // not per-recall). Soft-fails per row — a stale event_id returns
-    // None and we move on. CLI path does not have a WAL writer; the
-    // audit event (IMPORTANCE_REINFORCED 0x02) is emitted only on the
-    // daemon path where the writer is available.
+    // None and we move on.
+    //
+    // M-02 (Session 24): pre-fix this branch reinforced rows
+    // silently because the CLI path had no WAL writer to emit
+    // `EVENT_TYPE_IMPORTANCE_REINFORCED` (0x93). That left a
+    // tamper-evidence hole — operator reads `neoth wal show
+    // --type importance_reinforced` + sees only daemon-path
+    // reinforcements while CLI recall mutated importance
+    // invisibly. Fix: collect every successful reinforce, then
+    // open a short-lived WAL writer once (only if there's at
+    // least one event to emit) and write one frame per
+    // reinforcement. Single best-effort batch — failures log a
+    // warn but never abort the recall reply.
+    let mut reinforcements: Vec<(i64, ReinforceFrame)> = Vec::new();
     for h in &rows {
         if h.tier != "hot" {
             continue;
         }
         match tiers::hebbian_reinforce_event(&conn, h.event_id, now_ns) {
-            Ok(Some(out)) => tracing::debug!(
-                event_id = h.event_id,
-                tier = out.tier.as_str(),
-                old = out.old,
-                new = out.new,
-                "hebbian reinforce on recall hit",
-            ),
+            Ok(Some(out)) => {
+                tracing::debug!(
+                    event_id = h.event_id,
+                    tier = out.tier.as_str(),
+                    old = out.old,
+                    new = out.new,
+                    "hebbian reinforce on recall hit",
+                );
+                reinforcements.push((
+                    h.event_id,
+                    ReinforceFrame {
+                        tier: out.tier.as_str().to_string(),
+                        old: out.old,
+                        new: out.new,
+                    },
+                ));
+            }
             Ok(None) => {}
             Err(e) => tracing::warn!(event_id = h.event_id, error = %e, "reinforce failed"),
         }
+    }
+    if !reinforcements.is_empty() {
+        emit_reinforce_audit_frames(&reinforcements).await;
     }
 
     // R-02 Phase 2: optionally prepend dream-pipeline matches.
@@ -685,6 +709,66 @@ fn format_ts(ns: i64) -> String {
     match DateTime::<Utc>::from_timestamp(secs, nanos) {
         Some(dt) => dt.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
         None => format!("ts={secs}"),
+    }
+}
+
+/// M-02 (Session 24): per-reinforcement payload for the audit
+/// frame emitted by `emit_reinforce_audit_frames`. Mirrors the
+/// daemon-path frame shape so `neoth wal show --type
+/// importance_reinforced` renders CLI-recall reinforcements
+/// identically to daemon-path reinforcements.
+struct ReinforceFrame {
+    tier: String,
+    old: f64,
+    new: f64,
+}
+
+/// M-02 (Session 24): close the tamper-evidence hole where CLI
+/// `neoth recall` mutated row importance without emitting
+/// `EVENT_TYPE_IMPORTANCE_REINFORCED` (0x93). Opens a short-lived
+/// WAL writer (only when there's at least one reinforcement to
+/// emit), writes one frame per reinforcement, drops the writer.
+/// Best-effort throughout — failures log warn but never abort the
+/// recall reply.
+async fn emit_reinforce_audit_frames(events: &[(i64, ReinforceFrame)]) {
+    let segment_path = FreedomConfig::default_wal_dir().join("000001.wal");
+    let (writer, _join) = match crate::wal::writer::spawn(segment_path) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "M-02: WAL writer spawn failed for IMPORTANCE_REINFORCED audit \
+                 frames — recall reply continues, audit chain has a hole"
+            );
+            return;
+        }
+    };
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    for (event_id, frame) in events {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "source": "cli_recall",
+            "event_id": event_id,
+            "tier": frame.tier,
+            "old_importance": frame.old,
+            "new_importance": frame.new,
+            "ts_unix": now_unix,
+        }))
+        .unwrap_or_default();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_IMPORTANCE_REINFORCED,
+            &payload,
+        )
+        .build();
+        if let Err(e) = writer.try_append_sync(header, payload) {
+            tracing::warn!(
+                event_id = *event_id,
+                error = %e,
+                "M-02: IMPORTANCE_REINFORCED frame append failed (audit chain has a row gap)"
+            );
+        }
     }
 }
 

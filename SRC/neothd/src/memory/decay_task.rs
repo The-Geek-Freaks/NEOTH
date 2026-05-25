@@ -24,11 +24,17 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 ///
 /// `db_path` lets tests inject a tempdir db; production callers pass
 /// `store::default_path()`. Same for `interval` — tests use a short tick.
-pub fn spawn(db_path: PathBuf, interval: Duration) -> JoinHandle<Result<()>> {
+pub fn spawn(db_path: PathBuf, interval: Duration) -> JoinHandle<()> {
     tokio::spawn(async move { run(db_path, interval).await })
 }
 
-async fn run(db_path: PathBuf, interval: Duration) -> Result<()> {
+/// M-04 (Session 24): infinite-loop body never returns Ok(()), so
+/// the pre-fix `Result<()>` signature was misleading — every per-
+/// tick failure stays inside the body (logged + retried on next
+/// tick), and the only way the function exits is via task abort or
+/// panic. Return-unit makes the never-returns semantics honest +
+/// matches the JoinHandle<()> the caller actually observes.
+async fn run(db_path: PathBuf, interval: Duration) {
     let mut ticker = tokio::time::interval(interval);
     // First tick fires immediately. Skip the initial fire on the assumption
     // that fresh boot already has a recent consolidation state — gives
@@ -53,10 +59,31 @@ pub async fn run_once(db_path: &std::path::Path) -> Result<consolidate::PassRepo
     let db = db_path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<consolidate::PassReport> {
         let mut conn = store::open(&db)?;
-        let now_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-            .unwrap_or(0);
+        // M-03 (Session 24): SystemTime::now().duration_since(UNIX_EPOCH)
+        // can fail when the host clock has rolled BEFORE 1970 (broken
+        // BIOS battery, mis-initialised VM, NTP regression). Pre-fix
+        // used `unwrap_or(0)` which made every stored event look
+        // maximally old — the consolidation pass mass-migrated hot →
+        // warm and trimmed importance to floor on retentive rows. The
+        // operator's working memory tier evaporated silently across
+        // the next decay tick.
+        //
+        // Fix: skip the pass entirely on clock failure. Return an
+        // empty PassReport so the caller sees "ran, did nothing"
+        // rather than "ran, blew away the hot tier". Emit a
+        // tracing::error! so operators see the cause in NEOTH_LOG.
+        let now_ns = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => i64::try_from(d.as_nanos()).unwrap_or(i64::MAX),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "memory::decay_task::run_once: host clock is before UNIX epoch — \
+                     refusing to run consolidation (would mass-migrate hot tier). \
+                     Check BIOS battery / NTP / VM clock; rerun decay after fix."
+                );
+                return Ok(consolidate::PassReport::default());
+            }
+        };
         consolidate::run_consolidation_pass(&mut conn, now_ns)
     })
     .await?
