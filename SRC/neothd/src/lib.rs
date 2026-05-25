@@ -80,6 +80,7 @@ pub mod policy;
 pub mod profile;
 pub mod providers;
 pub mod recall;
+pub mod recovery;
 pub mod secret;
 pub mod security;
 pub mod skills;
