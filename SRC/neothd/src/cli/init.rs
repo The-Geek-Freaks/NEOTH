@@ -344,6 +344,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step5_provider(&args, interactive, &mut state).await?;
     step5b_inference_topology(&args, interactive, &mut state)?;
     step5c_qwen_weights(&args, interactive, &mut state).await?;
+    step5d_profile_approval_gate(interactive, &mut state)?;
     step6_channel(&args, interactive, &mut state).await?;
     step6b_keet_pairing(&args, interactive, &mut state).await?;
     step6c_obsidian_install(&args, interactive, &mut state).await?;
@@ -1795,6 +1796,47 @@ fn inference_uses_local_qwen(
     hemis
         .iter()
         .any(|slot| matches!(slot.provider, Some(InferenceProvider::LocalQwen)))
+}
+
+/// ADV-03 item 4 Phase 7 (Session 24): operator-awareness step for
+/// the profile-claim approval gate. The actual persistence happens
+/// via serde default on `ProfileConfig::require_approval` (true on
+/// fresh installs + missing-field migrations) AND via the
+/// `neoth profile migrate-require-approval [--disable]` CLI — this
+/// step exists so fresh-install operators KNOW the gate is on
+/// before their first chat triggers a profile extraction.
+///
+/// Non-interactive: silent no-op (the marker still records the step
+/// completed for the audit trail).
+///
+/// Interactive: print a 3-line summary + the disable command, then
+/// continue. No prompt — operator can opt out later via
+/// `neoth profile migrate-require-approval --disable` if they
+/// genuinely want auto-apply.
+fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> Result<()> {
+    info!("wizard step 5d: profile approval gate awareness");
+    if interactive {
+        println!();
+        println!("[5d/8] Profile-claim approval gate is ON by default.");
+        println!(
+            "  When NEOTH extracts a profile claim ('you live in Berlin', \
+             'your editor is vim'),"
+        );
+        println!(
+            "  it asks you to confirm before writing — protects against \
+             prompt-injection attacks"
+        );
+        println!("  via channel inbound + multi-turn slow-poison chains.");
+        println!(
+            "  Daemon mode (no tty) parks pending claims in \
+             `neoth profile pending` for review."
+        );
+        println!(
+            "  Opt out anytime with: `neoth profile migrate-require-approval --disable`"
+        );
+    }
+    state.steps_completed.push(60); // 5d marker (between 5c=58 and 6=61).
+    Ok(())
 }
 
 async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
