@@ -166,8 +166,39 @@ fn render_route((method, path): (String, String), cfg: &HealthzConfig) -> String
             Ok(snap) => http_response(200, "text/plain; version=0.0.4", &snap.render_prometheus()),
             Err(e) => http_response(500, "text/plain", &format!("snapshot error: {e}\n")),
         },
+        // R-03 (Session 24) — operator-poll tps snapshot. Single-shot
+        // JSON; future GUI/SSE clients poll on whatever cadence they
+        // need (1Hz during streaming / 10Hz idle per the spec, but
+        // the cadence is client-driven so this endpoint stays a
+        // simple GET). Returns `{output_tps, input_tps, p50_ms,
+        // p95_ms, sample_count, header_line}` — `header_line` is
+        // the operator-readable one-liner that the chat UI can drop
+        // verbatim into its status bar.
+        "/metrics/tps" => render_tps_json(cfg),
         _ => http_response(404, "text/plain", "not found\n"),
     }
+}
+
+/// R-03 — minimal JSON snapshot of the rolling-window TPS metrics.
+/// Returns `{}` (empty object) when no meter is wired so the GUI
+/// renders an inert status bar instead of erroring out.
+fn render_tps_json(cfg: &HealthzConfig) -> String {
+    let Some(meter) = cfg.meter.as_ref() else {
+        return http_response(200, "application/json", "{}\n");
+    };
+    let snap = meter.snapshot();
+    let header = snap
+        .chat_header_line()
+        .unwrap_or_else(|| "[meter] (no samples)".into());
+    let body = serde_json::json!({
+        "output_tps": snap.output_tps,
+        "input_tps": snap.input_tps,
+        "p50_ms": snap.p50_latency_ms,
+        "p95_ms": snap.p95_latency_ms,
+        "sample_count": snap.sample_count,
+        "header_line": header,
+    });
+    http_response(200, "application/json", &format!("{body}\n"))
 }
 
 /// Pick the right snapshot builder based on whether the operator wired
@@ -417,5 +448,78 @@ mod tests {
         };
         let r = render_route(("POST".into(), "/healthz".into()), &cfg);
         assert!(r.contains("HTTP/1.1 405"));
+    }
+
+    // ── R-03 (Session 24) /metrics/tps JSON endpoint ──────────────────
+
+    #[tokio::test]
+    async fn r_03_metrics_tps_returns_empty_object_when_no_meter_wired() {
+        let dir = tempdir().unwrap();
+        let (addr, task) = bind_and_serve(
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
+            cfg_for(&dir),
+        )
+        .await
+        .unwrap();
+        let body = raw_get(addr, "/metrics/tps").await;
+        assert!(body.contains("HTTP/1.1 200 OK"));
+        assert!(body.contains("application/json"));
+        // GUI client renders an inert status bar instead of crashing.
+        assert!(body.contains("{}"), "no-meter response must be empty JSON: {body}");
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn r_03_metrics_tps_returns_snapshot_fields_when_meter_wired() {
+        let dir = tempdir().unwrap();
+        let meter = crate::providers::meter::Meter::with_default_window();
+        meter.record(120, 600, std::time::Duration::from_millis(800));
+
+        let cfg = HealthzConfig {
+            home: dir.path().to_path_buf(),
+            config: None,
+            meter: Some(meter),
+        };
+        let (addr, task) = bind_and_serve(
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
+            cfg,
+        )
+        .await
+        .unwrap();
+        let body = raw_get(addr, "/metrics/tps").await;
+        assert!(body.contains("HTTP/1.1 200 OK"));
+        assert!(body.contains("application/json"));
+        // All 6 fields must appear so a GUI consumer doesn't have to
+        // probe for which version of the daemon it's talking to.
+        for field in [
+            "\"output_tps\"",
+            "\"input_tps\"",
+            "\"p50_ms\"",
+            "\"p95_ms\"",
+            "\"sample_count\"",
+            "\"header_line\"",
+        ] {
+            assert!(body.contains(field), "field {field} missing from body: {body}");
+        }
+        // header_line must carry the operator-readable format the GUI
+        // can drop verbatim — sanity that the formatter wiring didn't
+        // get bypassed.
+        assert!(body.contains("[meter]"), "header_line must contain the [meter] prefix");
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn r_03_metrics_tps_unknown_path_still_404() {
+        let dir = tempdir().unwrap();
+        let (addr, task) = bind_and_serve(
+            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
+            cfg_for(&dir),
+        )
+        .await
+        .unwrap();
+        // Sibling path that doesn't match must still 404.
+        let body = raw_get(addr, "/metrics/nope").await;
+        assert!(body.contains("HTTP/1.1 404"), "got: {body}");
+        task.abort();
     }
 }

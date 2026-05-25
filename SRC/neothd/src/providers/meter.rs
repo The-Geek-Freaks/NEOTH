@@ -163,6 +163,30 @@ impl Meter {
     }
 }
 
+impl Snapshot {
+    /// R-03 (Session 24) — operator-facing one-line chat header.
+    /// Returns `None` for a cold meter (zero samples) so the chat
+    /// path can suppress the header line entirely on the very first
+    /// turn instead of printing `[meter] 0.0 tps … 0 samples`,
+    /// which is just noise.
+    ///
+    /// Format: `[meter] {out_tps:.1} tps out · p50 {p50_ms:.0}ms · {n} samples`
+    ///
+    /// Lives on `Snapshot` (not `Meter`) so callers that already
+    /// captured a snapshot don't have to lock the meter twice.
+    pub fn chat_header_line(&self) -> Option<String> {
+        if self.sample_count == 0 {
+            return None;
+        }
+        Some(format!(
+            "[meter] {tps:.1} tps out · p50 {p50:.0}ms · {n} samples",
+            tps = self.output_tps,
+            p50 = self.p50_latency_ms,
+            n = self.sample_count,
+        ))
+    }
+}
+
 /// Linear-interpolated percentile over a sorted slice. Empty → 0.0.
 fn percentile(sorted: &[f64], q: f64) -> f64 {
     if sorted.is_empty() {
@@ -277,5 +301,52 @@ mod tests {
             "got {}",
             s.p95_latency_ms
         );
+    }
+
+    // ── R-03 (Session 24) chat-header formatter ───────────────────────
+
+    #[test]
+    fn r_03_chat_header_returns_none_for_cold_meter() {
+        // First chat turn after daemon boot — meter is empty, header
+        // must suppress instead of printing a noise line.
+        let snap = Meter::with_default_window().snapshot();
+        assert!(snap.chat_header_line().is_none());
+    }
+
+    #[test]
+    fn r_03_chat_header_renders_with_samples() {
+        let m = Meter::with_default_window();
+        m.record(120, 600, Duration::from_millis(800));
+        let snap = m.snapshot();
+        let line = snap.chat_header_line().expect("samples → Some");
+        assert!(line.starts_with("[meter] "));
+        // 600 out tokens over 60s = 10.0 tps. Format pins to 1 decimal.
+        assert!(line.contains("10.0 tps out"), "got {line}");
+        assert!(line.contains("p50 800ms"), "got {line}");
+        assert!(line.contains("1 samples"), "got {line}");
+    }
+
+    #[test]
+    fn r_03_chat_header_format_is_stable_across_decimal_widths() {
+        // Drift guard: a refactor that drops the `:.1` / `:.0` width
+        // specifiers would surface as a verbose float string.
+        let m = Meter::with_default_window();
+        m.record(0, 1, Duration::from_secs(1));
+        let line = m.snapshot().chat_header_line().unwrap();
+        // No exponent notation; no more than 4 decimals on tps.
+        assert!(!line.contains("e-"), "scientific notation leaked: {line}");
+        let tps_chunk = line
+            .split('·')
+            .next()
+            .unwrap()
+            .trim()
+            .strip_prefix("[meter] ")
+            .unwrap();
+        let dot_idx = tps_chunk.find('.').unwrap();
+        let decimals = tps_chunk[dot_idx + 1..]
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .count();
+        assert_eq!(decimals, 1, "tps must render with exactly 1 decimal: {line}");
     }
 }
