@@ -720,7 +720,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         creds.whatsapp_app_secret.clone(),
         shared_provider.as_ref(),
     ) {
-        (Some(_token), Some(_phone), Some(verify), Some(secret), Some(provider)) => {
+        (Some(token), Some(phone), Some(verify), Some(secret), Some(provider)) => {
             let handler: PipelineHandler = build_pipeline_handler(PipelineHandlerDeps {
                 provider: provider.clone(),
                 writer: writer.clone(),
@@ -737,11 +737,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
                 .parse()
                 .expect("static bind addr parses");
+            // GR-01 Pick B: thread the Graph API send creds into the
+            // listener so the dispatch path can route pipeline replies
+            // back through Meta instead of logging+dropping them.
             let listener_cfg = crate::channels::webhook_listener::WebhookListenerConfig {
                 meta_app_secret: secret.expose().as_bytes().to_vec(),
                 meta_verify_token: verify.expose().to_string(),
                 slack_signing_secret: Vec::new(),
                 pipeline: handler,
+                whatsapp_send_creds: Some(
+                    crate::channels::webhook_listener::WhatsAppSendCreds {
+                        access_token: token.clone(),
+                        phone_number_id: phone.clone(),
+                    },
+                ),
                 max_concurrent_connections: None,
             };
             let task = tokio::spawn(async move {

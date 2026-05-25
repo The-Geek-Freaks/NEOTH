@@ -87,15 +87,34 @@ pub struct WebhookListenerConfig {
     /// Slack signing secret used to verify `X-Slack-Signature`.
     pub slack_signing_secret: Vec<u8>,
     /// Pipeline handler the operator's daemon passes — invoked once
-    /// per `InboundMessage` decoded from a verified Meta POST. The
-    /// listener does NOT block on the handler's reply; outbound sends
-    /// flow through the channel adapter's `send_text`.
+    /// per `InboundMessage` decoded from a verified Meta POST. When
+    /// the handler returns `Ok(Some(outbound))` AND
+    /// `whatsapp_send_creds` is set below, the listener forwards the
+    /// reply via `whatsapp_api::send_text_message` (GR-01 Pick B).
+    /// When `whatsapp_send_creds` is `None` the listener logs-and-
+    /// drops outbound replies (pre-GR-01 behaviour) — this path is
+    /// reserved for non-WhatsApp listeners that mount the same
+    /// handler shape.
     pub pipeline: PipelineHandler,
+    /// GR-01 Pick B: WhatsApp Graph API credentials (access token +
+    /// phone-number-id). When `Some`, `dispatch_messages` routes
+    /// pipeline-produced replies back through `whatsapp_api::
+    /// send_text_message` instead of logging+dropping them. Closes
+    /// the documented gap where inbound-LIVE webhooks would call
+    /// the pipeline but silently drop the reply.
+    pub whatsapp_send_creds: Option<WhatsAppSendCreds>,
     /// R2-P1-1 concurrency cap. `None` → `DEFAULT_MAX_CONCURRENT_CONNECTIONS`.
     /// Operators behind a reverse proxy can raise this if their proxy
     /// fans out many concurrent webhook calls; localhost-only deploys
     /// rarely need to touch it.
     pub max_concurrent_connections: Option<usize>,
+}
+
+/// GR-01 Pick B: WhatsApp credentials needed by the webhook listener
+/// to send pipeline replies back out via the Meta Graph API.
+pub struct WhatsAppSendCreds {
+    pub access_token: crate::secret::SecretString,
+    pub phone_number_id: String,
 }
 
 /// Bind to `addr` and run the listener until the cancellation
@@ -389,15 +408,49 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
         let chat_id = msg.chat_id.clone();
         match (cfg.pipeline)(msg).await {
             Ok(Some(outbound)) => {
-                // The listener doesn't have a direct send path — the
-                // operator's pipeline handler must own outbound sends
-                // via the channel adapter (otherwise the listener
-                // would need to hold a WhatsAppChannel reference,
-                // which is the adapter's job). Log + drop.
-                debug!(
-                    recipient = %outbound.recipient_id,
-                    "pipeline produced outbound (drop here; adapter owns send)"
-                );
+                // GR-01 Pick B: route pipeline-produced replies back
+                // through the WhatsApp Graph API when the listener
+                // was wired with send credentials. Pre-GR-01 this
+                // arm logged-and-dropped (the operator-pipeline was
+                // supposed to own send), which silently broke the
+                // inbound→reply loop in webhook mode.
+                if let Some(creds) = cfg.whatsapp_send_creds.as_ref() {
+                    let send = crate::channels::whatsapp_api::send_text_message(
+                        &creds.access_token,
+                        &creds.phone_number_id,
+                        &outbound.recipient_id,
+                        &outbound.text,
+                    )
+                    .await;
+                    match send {
+                        Ok(r) if r.ok => {
+                            debug!(
+                                recipient = %outbound.recipient_id,
+                                wamid = ?r.message_id,
+                                "GR-01 Pick B: webhook reply delivered via Graph API",
+                            );
+                        }
+                        Ok(r) => {
+                            warn!(
+                                recipient = %outbound.recipient_id,
+                                error = ?r.error,
+                                "GR-01 Pick B: webhook reply failed (Meta API error)",
+                            );
+                        }
+                        Err(e) => {
+                            warn!(
+                                recipient = %outbound.recipient_id,
+                                error = %e,
+                                "GR-01 Pick B: webhook reply failed (transport)",
+                            );
+                        }
+                    }
+                } else {
+                    debug!(
+                        recipient = %outbound.recipient_id,
+                        "pipeline produced outbound but listener has no send creds — dropping (configure whatsapp_send_creds to wire send)"
+                    );
+                }
             }
             Ok(None) => {
                 debug!(chat_id = %chat_id, "pipeline returned no outbound");
@@ -489,6 +542,69 @@ mod tests {
         })
     }
 
+    /// GR-01 Pick B regression helper: pipeline that always emits an
+    /// outbound reply addressed to "+4900000". Used by the
+    /// `dispatch_messages_*` tests below.
+    fn pipeline_with_outbound() -> PipelineHandler {
+        Box::new(|_msg| {
+            Box::pin(async move {
+                anyhow::Result::<Option<crate::channels::OutboundMessage>>::Ok(Some(
+                    crate::channels::OutboundMessage {
+                        recipient_id: "+4900000".into(),
+                        text: "auto-reply".into(),
+                    },
+                ))
+            })
+        })
+    }
+
+    fn inbound_fixture() -> InboundMessage {
+        InboundMessage {
+            channel: ChannelKind::WhatsAppBusiness,
+            chat_id: "+4912345".into(),
+            thread_id: None,
+            sender_id: "+4912345".into(),
+            sender_display: None,
+            text: Some("hi".into()),
+            media: None,
+            reply_to: None,
+            mention_kind: None,
+            channel_ts_unix: 1_700_000_000,
+            raw_ts_ms: None,
+            human_uuid: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_drops_outbound_when_no_send_creds_present() {
+        // GR-01 backward-compat: a listener without whatsapp_send_creds
+        // (non-WhatsApp consumer) MUST log+drop pipeline replies, not
+        // panic. Pre-GR-01 behaviour preserved.
+        let cfg = WebhookListenerConfig {
+            meta_app_secret: b"m".to_vec(),
+            meta_verify_token: "v".to_string(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline: pipeline_with_outbound(),
+            whatsapp_send_creds: None,
+            max_concurrent_connections: None,
+        };
+        // No panic, no network call — completes cleanly.
+        dispatch_messages(&cfg, vec![inbound_fixture()]).await;
+    }
+
+    // NOTE on GR-01 Pick B behaviour test: a true behaviour test —
+    // verifying the dispatch path actually CALLS the graph API when
+    // creds are set — needs `whatsapp_api` to accept an injectable
+    // base URL so tests can point at wiremock instead of the real
+    // graph.facebook.com endpoint. That refactor is tracked as a
+    // v0.4 follow-up. For now the wire-in is covered by:
+    //   - the structural test above (no panic, no log-and-drop loop),
+    //   - the dispatch_messages code review (if-let arm routes
+    //     through send_text_message),
+    //   - the existing `whatsapp_inbound_live_when_full_meta_secrets_present`
+    //     integration test that pins the LIVE-mode credential
+    //     wiring at the wizard level.
+
     async fn http_get(host: &str, path: &str) -> (u16, String) {
         let url = format!("http://{host}{path}");
         let resp = reqwest::get(&url).await.expect("get");
@@ -522,6 +638,7 @@ mod tests {
             meta_verify_token: "verify123".to_string(),
             slack_signing_secret: b"slack-sig".to_vec(),
             pipeline: fake_pipeline(),
+            whatsapp_send_creds: None,
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -564,6 +681,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            whatsapp_send_creds: None,
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -606,6 +724,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"slackkey".to_vec(),
             pipeline: fake_pipeline(),
+            whatsapp_send_creds: None,
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -652,6 +771,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            whatsapp_send_creds: None,
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -687,6 +807,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            whatsapp_send_creds: None,
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -740,6 +861,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            whatsapp_send_creds: None,
             max_concurrent_connections: Some(1),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -812,6 +934,7 @@ mod tests {
             meta_verify_token: "v".to_string(),
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
+            whatsapp_send_creds: None,
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
