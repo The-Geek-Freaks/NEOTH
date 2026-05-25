@@ -178,7 +178,11 @@ const QUOTED_CONTENT_MARKERS: &[&str] = &[
 /// quoted-reply chains, code blocks, HTML payloads, forwarded
 /// headers. Triggers cause `extract` to short-circuit to "zero
 /// claims" so a hostile-content paste cannot drive profile state.
-pub(crate) fn is_quoted_content(text: &str) -> bool {
+///
+/// Public so the corpus-based integration test harness
+/// (`tests/prompt_injection_corpus_profile_block_b.rs`) can call it
+/// directly for `expected_defence: "skip_extraction"` fixtures.
+pub fn is_quoted_content(text: &str) -> bool {
     for m in QUOTED_CONTENT_MARKERS {
         if text.contains(m) {
             return true;
