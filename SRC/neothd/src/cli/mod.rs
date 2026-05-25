@@ -76,6 +76,7 @@ pub mod tts;
 pub mod tweaks;
 pub mod update;
 pub mod usage;
+pub mod recover;
 pub mod verify;
 pub mod wal;
 pub mod wizard_checkpoint;
