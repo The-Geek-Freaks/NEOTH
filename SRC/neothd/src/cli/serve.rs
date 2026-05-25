@@ -525,6 +525,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // built clients would talk to the world directly while later code
     // thinks they're proxied. The supervisor is dropped on shutdown
     // further down to kill the subprocess + clear the temp config.
+    // Session 24 fix #3: when autonomy=Strict AND Hysteria IS
+    // configured, treat encrypted egress as a hard requirement —
+    // spawn / probe failure must bail the daemon, NOT silently fall
+    // back to direct egress. Pre-fix the warn-and-continue path
+    // exfiltrated provider traffic through the operator's clear
+    // network exactly when they had explicitly set up Hysteria to
+    // avoid that. Standard / Elevated / Full operators keep the
+    // permissive "warn + direct egress" fallback (they implicitly
+    // accept it by not picking Strict).
+    let strict_egress = matches!(config.autonomy, crate::permissions::AutonomyLevel::Strict);
     let hysteria_supervisor: Option<crate::transport::hysteria::HysteriaSupervisor> = match config
         .hysteria
         .as_ref()
@@ -549,20 +559,43 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             );
                             Some(sup)
                         }
+                        Err(e) if strict_egress => {
+                            error!(
+                                error = %e,
+                                "Hysteria SOCKS5 probe failed under autonomy=strict; refusing to fall back to direct egress",
+                            );
+                            drop(sup);
+                            anyhow::bail!(
+                                "autonomy=strict requires encrypted egress but Hysteria SOCKS5 probe failed: {e}. \
+                                 Fix the Hysteria config OR lower autonomy to standard/elevated/full to allow \
+                                 direct-egress fallback."
+                            );
+                        }
                         Err(e) => {
                             warn!(
                                 error = %e,
-                                "Hysteria spawned but SOCKS5 probe failed; falling back to direct egress",
+                                "Hysteria spawned but SOCKS5 probe failed; falling back to direct egress (autonomy != strict)",
                             );
                             drop(sup); // kills the subprocess
                             None
                         }
                     }
                 }
+                Err(e) if strict_egress => {
+                    error!(
+                        error = %e,
+                        "Hysteria supervisor spawn failed under autonomy=strict; refusing to fall back to direct egress",
+                    );
+                    anyhow::bail!(
+                        "autonomy=strict requires encrypted egress but Hysteria supervisor failed to spawn: {e}. \
+                         Fix the Hysteria config OR lower autonomy to standard/elevated/full to allow \
+                         direct-egress fallback."
+                    );
+                }
                 Err(e) => {
                     warn!(
                         error = %e,
-                        "Hysteria supervisor spawn failed; continuing with direct egress"
+                        "Hysteria supervisor spawn failed; continuing with direct egress (autonomy != strict)"
                     );
                     None
                 }
