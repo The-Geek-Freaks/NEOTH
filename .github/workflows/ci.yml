@@ -65,6 +65,26 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: rustfmt, clippy
 
+      # ADV-11 (F4 finding): the `inventory` crate uses #[link_section]
+      # for plugin-hook registration. On x86_64-pc-windows-gnu (MinGW
+      # default without VS Build Tools), GNU ld silently garbage-
+      # collects custom link sections without --whole-archive, so
+      # `inventory::iter::<Hook>().count() == 0` even though `cargo
+      # build` succeeds. NEOTH targets MSVC on Windows for this reason.
+      # Fail the job if a GNU toolchain ever slips in.
+      - name: Enforce MSVC toolchain on Windows (ADV-11)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          host=$(rustc --version --verbose | grep '^host:' | awk '{print $2}')
+          echo "rustc host triple: $host"
+          if [[ "$host" != *"-msvc" ]]; then
+            echo "::error::ADV-11: Windows builds require an MSVC host triple."
+            echo "::error::Got '$host'. inventory!{} link-section registration"
+            echo "::error::silently breaks on GNU ld; switch to a -msvc toolchain."
+            exit 1
+          fi
+
       - name: Cache Cargo registry + target
         uses: actions/cache@v4
         with:

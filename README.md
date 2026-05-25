@@ -106,6 +106,15 @@ neoth chat "Remember that I prefer short answers and work mostly in Rust."
 neoth recall "what do you know about how I like to work?"
 ```
 
+> **Windows from source:** NEOTH requires the MSVC toolchain
+> (`x86_64-pc-windows-msvc`), NOT the GNU/MinGW default. The
+> `inventory` crate's plugin-hook registration uses `#[link_section]`
+> attributes that GNU `ld` garbage-collects without `--whole-archive`,
+> so a GNU build compiles cleanly but loads zero plugins at runtime
+> (silently). The shipped `scripts/cargo-msvc.ps1` wrapper sets the
+> right environment automatically; CI also fails MSVC-less Windows
+> jobs explicitly (ADV-11).
+
 The wizard asks human questions: who you are, where NEOTH should talk to you, which privacy defaults you want, which model should answer quickly, which local model may learn your profile, and how much autonomy it gets.
 
 YAML is optional. The engine is not.
