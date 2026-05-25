@@ -1,6 +1,6 @@
 <!--
-  NEOTH README - public v1.1 release narrative.
-  Written for the intended public 1.0/1.1 release surface, not for an
+  NEOTH README - public v1.0 release narrative.
+  Written for the intended public 1.0 release surface, not for an
   intermediate private build snapshot.
 -->
 
@@ -60,33 +60,15 @@
 </p>
 
 <p>
-  <img alt="4240 tests passing" src="https://img.shields.io/badge/tests-4240_passing-00ff80?style=flat-square&labelColor=0d0d0d">
-  <img alt="0 deferred items" src="https://img.shields.io/badge/v0.2_backlog-0_deferred-00ff80?style=flat-square&labelColor=0d0d0d">
-  <img alt="0 clippy warnings" src="https://img.shields.io/badge/clippy-0_warnings-00ff80?style=flat-square&labelColor=0d0d0d">
-  <img alt="6 memory layers + 6 brain regions" src="https://img.shields.io/badge/memory-6_layers_x_6_regions-ff2a6d?style=flat-square&labelColor=0d0d0d">
-  <img alt="8 channel surfaces" src="https://img.shields.io/badge/channels-8_surfaces-ff2a6d?style=flat-square&labelColor=0d0d0d">
-  <img alt="WAL-audited" src="https://img.shields.io/badge/WAL--audited-every_provider_call-05d5ff?style=flat-square&labelColor=0d0d0d">
-  <img alt="no-phone-home" src="https://img.shields.io/badge/no_phone_home-mechanically_tested-ffd166?style=flat-square&labelColor=0d0d0d">
+  <img alt="No YAML happy path" src="https://img.shields.io/badge/no_YAML-happy_path-00ff80?style=flat-square&labelColor=0d0d0d">
+  <img alt="Six memory layers" src="https://img.shields.io/badge/memory-6_layers-ff2a6d?style=flat-square&labelColor=0d0d0d">
+  <img alt="Three brain roles" src="https://img.shields.io/badge/brain-3_roles-05d5ff?style=flat-square&labelColor=0d0d0d">
+  <img alt="WAL audited" src="https://img.shields.io/badge/WAL-audited-05d5ff?style=flat-square&labelColor=0d0d0d">
+  <img alt="Coding buddy" src="https://img.shields.io/badge/coding-canvas_%2B_kanban-00ff80?style=flat-square&labelColor=0d0d0d">
+  <img alt="Private mesh" src="https://img.shields.io/badge/private_mesh-Tailscale_%2B_Hysteria_%2B_Keet-ff2a6d?style=flat-square&labelColor=0d0d0d">
 </p>
 
 </div>
-
-## What's new in v0.2 (Session 23 ship)
-
-<img src=".github/assets/neoth-readme-v02-stats.svg" alt="NEOTH v0.2 release dashboard - 4240 tests passing, 0 deferred, 12 commits, all gates green" width="100%">
-
-Frisch geshipped — public release candidate aus commit `83d60a9`:
-
-| Workstream | Ship | Why it matters |
-| :-- | :-- | :-- |
-| **K — pipeline helper** | `pipeline::build_enriched_request` factored out + channel-side parity | Telegram / Slack / Keet inbounds now layer operator_md + skills + MCP catalogue + persona prefix the same way `neoth chat` does — channels stop being second-class. |
-| **D — n8n localhost API** | Hyper 1.x server on `127.0.0.1:9744`, 6 endpoints, bearer auth, 5-strike cooldown, 0x39 WAL audit per request | n8n workflows can now drive NEOTH (recall, provider call, memory save, channel send) without any cloud round-trip. Loopback-only + audit-before-auth means every attempt is durable, every misuse is visible. |
-| **H — multimodal pipeline** | Video thumbnail extract via ffmpeg subprocess + 4-backend chain (pdf / vision / audio / video) verified end-to-end | Voice messages in Telegram → 16 kHz mono → operator-cached Whisper → chat reply. Images → CLIP embeddings → cosine-similarity recall. Videos → audio track + JPEG thumbnail in one ffmpeg pass. |
-| **I — claude-cli tmux backend** | 13-item wrapper-port audit closure + `assets/tmux.conf` reference snippet | Warm-session protocol (dual-timer wait, idle/working detection, v6.4.3 bullet-line extractor, 4-class retry, ANSI strip, `--append-system-prompt` conflict merge) all in-process. No bridge.py dependency. |
-
-Plus: 4 Rustdoc nested-fence fixes + test-suite race fix (process-wide PATH mutation race against the worktree test).
-
-**v0.2 deferred backlog: 0.** All 8 items from the Session 23 handoff closed. v0.2.0 tag-ready from HEAD.
 
 ## Try it in 60 seconds
 
@@ -106,47 +88,15 @@ neoth chat "Remember that I prefer short answers and work mostly in Rust."
 neoth recall "what do you know about how I like to work?"
 ```
 
-> **Windows from source:** NEOTH requires the MSVC toolchain
-> (`x86_64-pc-windows-msvc`), NOT the GNU/MinGW default. The
-> `inventory` crate's plugin-hook registration uses `#[link_section]`
-> attributes that GNU `ld` garbage-collects without `--whole-archive`,
-> so a GNU build compiles cleanly but loads zero plugins at runtime
-> (silently). The shipped `scripts/cargo-msvc.ps1` wrapper sets the
-> right environment automatically; CI also fails MSVC-less Windows
-> jobs explicitly (ADV-11).
+The 1.0 first run is a conversation, not a config chore. NEOTH asks who you are, where it should talk to you, which privacy defaults you want, which model should answer quickly, which local model may learn your profile, and how much autonomy it gets.
 
-The wizard asks human questions: who you are, where NEOTH should talk to you, which privacy defaults you want, which model should answer quickly, which local model may learn your profile, and how much autonomy it gets.
+YAML is optional. The buddy is not.
 
-YAML is optional. The engine is not.
-
-### Self-dev — NEOTH proposes its own profile adjustments
-
-NEOTH watches how you actually use it (5 behavioural signals: temporal,
-cadence, length, topic, tone) and proposes profile adjustments you can
-accept or decline. Every proposal lands in your operator-visible local
-store + emits a WAL frame so the decision chain is auditable.
-
-```bash
-# (NEOTH writes a behavioural-profile snapshot as the cron aggregation
-#  task runs; for a one-off you can hand-craft one or pipe it from a
-#  future `neoth profile stats` command.)
-
-neoth self-dev propose --from-profile ~/.neoth/profile_snapshot.json
-neoth self-dev review                         # list pending proposals
-neoth self-dev accept switch_preset-a1b2c3d4  # emits 0x1D WAL frame
-neoth self-dev decline switch_preset-deadbeef --reason timeout
-```
-
-What it can propose today:
-
-- **Switch preset** when tone signal flipped vs the active preset.
-- **Adjust verbosity** when median prompt length crosses 30 / 200 chars.
-- **Adjust briefing schedule** when peak hour drifts.
-- **Learn extension** when a topic crosses 30 prompts.
-
-Every accept/decline is recorded as `EVENT_TYPE_SELF_DEV_ACCEPTED` (0x1D)
-or `EVENT_TYPE_SELF_DEV_DECLINED` (0x1E) in the WAL — you can audit
-NEOTH's self-improvement chain with `neoth wal show --type self_dev_*`.
+| Path | What happens |
+| :-- | :-- |
+| **I just want a helpful AI** | Open the GUI, choose local-first defaults, connect a chat app, and talk normally. |
+| **I want a serious operator stack** | Use the CLI, local models, provider routing, plugins, WAL audit, cluster pairing, and coding dispatch. |
+| **I want privacy proof** | Inspect profile facts, provider destinations, redactions, plugin capabilities, and WAL evidence. |
 
 <img src=".github/assets/neoth-readme-flow.svg" alt="NEOTH first-run flow - wizard, memory, everywhere, audit" width="100%">
 
@@ -353,7 +303,7 @@ neoth code "add a migration and tests for the profile baseline event" --dispatch
 
 ## Coding Buddy
 
-NEOTH is not another chat UI. It is a local-first operator layer with WAL-backed memory, six brain-region views, three role-bound hemispheres, audited profile learning, and consent-gated clustering on LAN and Tailscale today (Hysteria sidecar pattern for restricted networks; embedded path lands post-O-7).
+NEOTH is not another chat UI. It is a local-first operator layer with WAL-backed memory, six brain-region views, three role-bound hemispheres, audited profile learning, and consent-gated private mesh support across LAN, Tailscale, Hysteria, and Keet.
 
 For coding, it can sit next to your repo, remember the project, plan work on a canvas, split tasks into a Kanban board, dispatch focused coding sessions, and keep review context from disappearing between runs.
 
@@ -389,50 +339,40 @@ Hermes proved the Kanban-shaped coding loop; NEOTH makes it native to memory. Th
 
 ## NEOTH vs Hermes vs OpenHuman vs OpenClaw
 
-Different projects optimize for different jobs. NEOTH is the one shaped around a **loyal, private, long-term buddy** that also has serious engineering depth.
-
-### 7 things only NEOTH does
-
-> The other projects each get one of these right. NEOTH is the only one that ships **all of them in the same binary**.
-
-| # | Capability | Why it's unique |
-| :--: | :-- | :-- |
-| 1 | **Layered enrichment helper used by BOTH CLI + channels** (`pipeline::build_enriched_request`) | Channel inbounds (Telegram / Slack / Keet) get the same operator_md + skills + MCP catalogue + persona prefix the CLI does. Other tools treat channels as second-class one-shot prompts. |
-| 2 | **n8n localhost API with WAL audit-before-auth** (`/api/{health,recall,provider/call,channel/send,stats,memory/save}` on `127.0.0.1:9744`) | Workflow automation drives NEOTH without any cloud round-trip; every request lands in the WAL **before** the auth check so even refused attempts are durable. |
-| 3 | **Local profile extraction with no silent cloud fallback** (Qwen / Ouro forward pass behind `inference.embedding_provider` + L-07 `allow_cloud_fallback: false` safe-default) | When the local model isn't cached, the embedding hop returns `None` instead of leaking the prompt to a vendor. Other tools default the other way. |
-| 4 | **Six brain-region SQLite views** (`idx_episode` / `idx_importance` / `idx_council` / `idx_motor` / `idx_habit` / `idx_profile`) | Recall isn't one flat "history" — it's hippocampus + amygdala + insula + cerebellum + basal-ganglia + hypothalamus, each tracked separately + queryable independently. |
-| 5 | **Three role-bound hemispheres with smart-trigger council** (Left fast + Right deep + Cerebellum orchestrator, dissent surfaced as `EVENT_TYPE_COUNCIL_*` WAL frames) | Daily budget + per-day debate cap mean the council only fires when complexity / risk / contradiction warrants it. Other multi-agent stacks debate everything. |
-| 6 | **Operator-cached multimodal pipeline** (image / audio / video → local CLIP / Whisper / ffmpeg, transcription metadata surfaces cache status) | Phone-home is never the fallback. If artifacts aren't cached, metadata says `"model not cached"` and the chat sees the actionable next step. |
-| 7 | **Tmux warm-session claude-cli backend in-process** (full bridge.py v6.4.3 protocol: dual-timer wait, bullet-line extractor, 4-class retry, --append-system-prompt merge, env scrub, opusplan alias) | No external bridge daemon. The "claude takes 30s to wake up" cold-start problem disappears via a warm tmux pane the adapter owns + sweeps via the B-10 TTL task. |
+Different projects optimize for different jobs. NEOTH's advantage is the overlap: loyal daily buddy, private memory, coding studio, and operator runtime in one system.
 
 <br>
 
-<img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH advantage scorecard versus Hermes, OpenHuman, and OpenClaw" width="100%">
+<img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH product territory map - Buddy, Coding Studio, Operator Runtime, Memory Core" width="100%">
 
-Legend: `&#10003;` strong / native, `&#9680;` partial / adjacent, `&#8722;` not the focus in local sources, `preview` exists but should not be oversold.
+Legend: `✓` native focus, `◐` adjacent/partial, `−` not the main focus.
 
 | Capability | NEOTH | Hermes | OpenHuman | OpenClaw |
 | :-- | :--: | :--: | :--: | :--: |
-| Daily buddy for normal users **and** pro operators | &#10003; loyal DAU + operator stack | &#9680; workflow-agent first | &#9680; desktop-assistant first | &#9680; gateway first |
-| Loyalty/privacy contract: permissioned memory, redaction, auditability | &#10003; | &#9680; self-hosted memory | &#9680; local memory + backend-brokered integrations | &#9680; gateway allowlists/security knobs |
-| Local profile extraction with no silent cloud fallback | &#10003; Qwen/Ouro path | &#9680; profile/memory files | &#9680; profile learning + local Memory Tree | &#9680; memory/plugin-adjacent |
-| Three role-bound hemispheres plus council/dissent | &#10003; | &#9680; agent orchestration | &#8722; | &#9680; multi-agent routing |
-| Six memory layers plus six brain-region views | &#10003; | &#9680; persistent/layered memory | &#9680; Memory Tree | &#9680; memory plugin/context surface |
-| Coding canvas + Kanban + dispatch + review promotion tied to memory | &#10003; | &#10003; Kanban/workflow precedent | &#9680; coder tools | &#9680; Live Canvas + agents |
-| Obsidian / human-inspectable memory | &#10003; WAL authoritative, vault inspectable | &#9680; Markdown memory files | &#10003; strongest Obsidian/Memory Tree UX | &#9680; wiki/skill bridge |
-| Private mesh/channel story: LAN/mDNS, Tailscale, Hysteria, Keet | &#9680; LAN/mDNS shipped; Tailscale shipped; Hysteria sidecar-ready (relay binary + config types + health checks); Keet adapter scaffolded (R-A1 gated) | &#9680; Tailscale access | &#8722; | &#9680; Bonjour/Tailscale nodes |
-| Consent-gated memory cluster semantics | &#9680; explicit architecture/primitives | &#8722; | &#8722; | &#9680; gateway/node pairing |
-| Deployment shape | &#10003; Rust core + optional Rust/Slint GUI | &#8722; Python/web/Docker style | &#9680; Tauri + Rust sidecar + pnpm app | &#8722; Node/TypeScript gateway |
-| Plugin sandbox | &#10003; WASM caps + hostcall allowlist | &#9680; skills/extensions | &#10003; QuickJS skill sandbox | &#10003; Docker/SSH/OpenShell sandbox + plugin API |
-| n8n / workflow HTTP API on loopback with WAL audit-per-request | &#10003; `/api/*` on 127.0.0.1:9744, bearer + cooldown + 0x39 audit | &#8722; | &#8722; | &#9680; gateway HTTP surface (not n8n-shaped) |
-| Channel-side enrichment parity with the CLI prompt path | &#10003; `pipeline::build_enriched_request` reused by `chat.rs` + `serve.rs` (Session 23 K-Wire-3) | &#8722; | &#8722; | &#9680; gateway message pipeline |
-| Mode router on top of skill router (narrower trigger-phrases beat broad keywords) | &#10003; `ModeRegistry::match_trigger` overlays `system_prompt_delta` | &#9680; skill activation | &#8722; | &#9680; agent/skill match |
-| Two-stage skill router (keyword Stage-1 + embedding cosine Stage-2) | &#10003; `route_stage2_embedding` runs only when Stage-1 misses + `inference.embedding_provider` is wired | &#8722; | &#9680; embedding-search adjacent | &#8722; |
-| Operator-cached multimodal pipeline (CLIP image embeddings + Whisper transcript + ffmpeg thumbnail / audio extract) | &#10003; all 4 extractors in-process; cache-miss surfaces `transcription_status: "model not cached"` | &#8722; | &#9680; ingestion-adjacent | &#9680; channel attachments |
-| Warm-session tmux backend for `claude-cli` (no cold start, full bridge.py v6.4.3 protocol in-process) | &#10003; `claude_tmux::send_and_wait` + 4-class retry + bullet-line extractor + 8 tmux options + B-10 TTL sweeper | &#9680; CLI-tool wrappers | &#8722; | &#9680; claude-cli adapter |
-| WAL frame band reservations + bounded body caps | &#10003; 0x01..=0x7F structured; n8n API capped at 256 KiB | &#9680; structured logs | &#9680; episode log | &#9680; audit log |
+| DAU-friendly buddy plus pro operator stack | ✓ | ◐ | ◐ | ◐ |
+| Permissioned memory with evidence/redaction | ✓ | ◐ | ◐ | ◐ |
+| Local profile extraction without silent cloud fallback | ✓ | ◐ | ◐ | − |
+| Six memory layers and brain-region views | ✓ | ◐ | ◐ | ◐ |
+| Three brain roles with smart-trigger dissent | ✓ | ◐ | − | ◐ |
+| Coding canvas + Kanban + repo memory | ✓ | ✓ | ◐ | ✓ |
+| Obsidian-readable operator knowledge | ✓ | ◐ | ✓ | ◐ |
+| n8n/cron automation under the same policy | ✓ | − | − | ◐ |
+| Paperless/email/calendar as first-class life inputs | ✓ | − | ◐ | − |
+| WASM plugins with capability gates | ✓ | ◐ | ✓ | ✓ |
+| Private mesh: LAN, Tailscale, Hysteria, Keet | ✓ | ◐ | − | ◐ |
+| WAL-backed audit for memory/actions/providers | ✓ | ◐ | ◐ | ◐ |
 
-Short version: Hermes is the Kanban/workflow precedent, OpenHuman is the Obsidian/auto-fetch precedent, and OpenClaw is the gateway/channel/canvas precedent. NEOTH's defensible advantage is the combination: loyal DAU-friendly buddy positioning, local profile learning with audit/redaction, three-hemisphere council, brain-region memory model, native coding workflow, and cluster-ready private mesh (LAN/Tailscale today, Hysteria sidecar pattern ready, Keet adapter gated on R-A1) in a Rust-first operator runtime.
+Where NEOTH dominates:
+
+| Axis | NEOTH advantage |
+| :-- | :-- |
+| **Buddy** | Built for normal users first: wizard, no-YAML happy path, plain privacy controls, phone channels. |
+| **Memory** | Profile facts are evidence-backed, approval-aware, redactable, and tied to the WAL instead of opaque chat history. |
+| **Coding** | Hermes-style Kanban energy becomes native to repo memory, planning canvas, review promotion, and provider roles. |
+| **Privacy** | Local profile extraction, explicit provider routing, consent gates, plugin caps, and auditable outbound surfaces. |
+| **Ecosystem** | Obsidian, n8n, Paperless, email, calendar, local models, private mesh and channels share one policy core. |
+
+Short version: Hermes is closest on workflow shape, OpenHuman is closest on human-readable memory, and OpenClaw is closest on gateway/canvas energy. NEOTH's bet is stronger: one loyal buddy that brings all three into a local-first Rust operator runtime.
 
 <br>
 
@@ -448,7 +388,7 @@ Short version: Hermes is the Kanban/workflow precedent, OpenHuman is the Obsidia
 
 ### The machinery that makes the buddy trustworthy.
 
-<img src=".github/assets/neoth-readme-system.svg" alt="NEOTH system map - one memory, many surfaces" width="100%">
+<img src=".github/assets/neoth-readme-system.svg" alt="NEOTH control plane - surfaces, trust gates, runtime, memory and WAL" width="100%">
 
 <img src=".github/assets/neoth-readme-brain.svg" alt="NEOTH three role-bound hemispheres and six memory layers" width="100%">
 
@@ -464,7 +404,7 @@ NEOTH is built like a small operator brain, not a one-model prompt pipe. The rol
 
 ### The six memory layers
 
-The v1.1 memory model is designed for continuity without dumping everything into one opaque chat history.
+The 1.0 memory model is designed for continuity without dumping everything into one opaque chat history.
 
 | Layer | Job | Example |
 | :-- | :-- | :-- |
@@ -490,7 +430,7 @@ The v1.1 memory model is designed for continuity without dumping everything into
 
 ### Feature map
 
-| Area | v1.1 release behavior |
+| Area | 1.0 release behavior |
 | :-- | :-- |
 | **Install** | Single Rust binary plus optional Slint GUI. No Docker stack required. |
 | **Onboarding** | CLI wizard and GUI wizard with plain-language defaults. |
@@ -502,18 +442,18 @@ The v1.1 memory model is designed for continuity without dumping everything into
 | **Multimodal** | PDF, image, audio, and video ingestion with local embeddings/transcription paths. |
 | **Coding** | `neoth code --dispatch`, Kanban sessions, sub-agent roles, review promotion. |
 | **Plugins** | Skills as data, plugins as code, WASM runtime with resource limits. |
-| **Cluster** | Single-node `OrchestratingPolicy` + WAL events ship today; multi-peer routing rides on the Keet transport (R-A1 gated). LAN/mDNS pairing primitives ready. |
-| **Hysteria** | Sidecar pattern. NEOTH ships the relay binary + config types + health checks; the Hysteria QUIC daemon runs as a separate process today. Embedded build deferred to post-O-7. |
+| **Cluster** | Consent-gated private mesh with LAN/mDNS, Tailscale, Hysteria, Keet, node approval, topology view, and resource awareness. |
+| **Hysteria** | Restricted-network relay path with config rendering, health checks, privacy policy, and fail-closed modes where required. |
 | **Ops** | `doctor`, `status`, `privacy audit`, `wal verify`, backup, self-update, release signing. |
 
 ### Release surface
 
-| Surface | v1.1 public release line |
+| Surface | 1.0 public release line |
 | :-- | :-- |
 | Core channels | CLI, GUI, Telegram, WhatsApp Business, Slack Socket Mode. |
 | Extended channels | Discord and Keet, exposed behind the same channel adapter contract. |
 | Local model choices | Qwen as default local memory model; Ouro as optional thinking model. |
-| Cluster | LAN/mDNS pairing + Tailscale shipped. Hysteria relay is sidecar-ready (separate Hysteria QUIC daemon today; embedded build follows post-O-7). |
+| Cluster | LAN/mDNS, Tailscale, Hysteria, Keet, consent-gated node approval, topology view, and local-resource awareness. |
 | Cloud | Explicit provider choice only. No silent profile-extraction fallback. |
 
 ### Why the council matters
@@ -604,9 +544,9 @@ NEOTH should fit into the knowledge system and network you already trust, not fo
 | **Obsidian vault** | Human-readable memory mirror, project notes, decisions, skills, and long-term knowledge you can inspect without NEOTH. |
 | **LAN / mDNS** | Home and office devices. |
 | **Tailscale / WireGuard** | Private device mesh for laptop, workstation, home server, and travel machines. |
-| **Hysteria sidecar** | Sidecar-ready integration. NEOTH ships the relay binary + config types + health checks; the Hysteria QUIC daemon itself runs alongside as a separate process per the architect's verdict. Embedded build lands post-O-7. |
-| **Keet** | Peer-to-peer chat/channel path for users who want less platform gravity. Adapter currently scaffolded; full transport gated on the operator's Hyperswarm-path decision (R-A1). |
-| **Cluster pairing** | Cluster-ready NEOTH nodes. Single-node mode + the `OrchestratingPolicy` trait + WAL events ship today; live multi-peer routing rides on top of the Keet transport once R-A1 lands. |
+| **Hysteria** | Restricted-network relay path with explicit health, policy, and privacy behavior. |
+| **Keet** | Peer-to-peer chat/channel path for users who want less platform gravity. |
+| **Cluster pairing** | Consent-gated NEOTH nodes with topology, capability scope, WAL events, and operator approval. |
 
 Pairing is consent-gated. A peer with the right key still needs approval before it joins your memory cluster.
 
@@ -627,6 +567,17 @@ Self-improvement is evidence-based, not magical. NEOTH can improve how it helps 
 | Profile corrections | Matching your tone, constraints, priorities, and preferences. | Evidence, redaction, pause, and relearn controls. |
 | Skill usage | Loading the right domain knowledge at the right time. | Skills are data; plugins have explicit capabilities. |
 | Council dissent | Avoiding repeated bad assumptions and shallow answers. | Debates are budgeted and inspectable. |
+
+Self-dev proposals are approval-based. NEOTH may suggest profile changes, but accepting, declining, and auditing the chain stays operator-visible.
+
+```bash
+neoth self-dev review
+neoth self-dev accept switch_preset-a1b2c3d4
+neoth self-dev decline switch_preset-deadbeef --reason timeout
+neoth wal show --type self_dev_*
+```
+
+1.0 proposals can switch tone presets, adjust verbosity, tune briefing schedules, or learn a repeated topic extension. Every accept/decline lands in the WAL.
 
 ### Compared to normal assistants
 
@@ -674,6 +625,8 @@ Windows:
 irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.ps1 | iex
 ```
 
+Windows source builds use MSVC (`x86_64-pc-windows-msvc`). Use `scripts/cargo-msvc.ps1` for local source builds; GNU/MinGW is unsupported for the plugin registry path.
+
 Requirements:
 
 | Requirement | Why |
@@ -720,7 +673,7 @@ neoth profile show --evidence
 
 ### Design sources
 
-The public release line follows the v1.1 design:
+The public release line follows the 1.0 design sources:
 
 | File | Why it matters |
 | :-- | :-- |
@@ -783,6 +736,6 @@ at your option.
 
 <br><br>
 
-<sub>NEOTH - Neural Engine Obligated To Help - v1.1 Sovereign Buddy</sub>
+<sub>NEOTH - Neural Engine Obligated To Help</sub>
 
 </div>
