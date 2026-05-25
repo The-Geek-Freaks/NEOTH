@@ -1,278 +1,202 @@
 # Channels
 
-Neoth connects to messaging apps via channel adapters. Each adapter requires a token and
-an allowlist of users who can interact with the bot.
+NEOTH exposes the same buddy through multiple surfaces. Channels are not second-class prompt pipes: they share profile memory, recall, skills, policy, redactions, provider routing, and audit.
 
-| Channel  | Status (as of 2026-05-19) | Transport |
-|----------|---------------------------|-----------|
-| Telegram | operational, v0.1+        | long-poll (no public HTTPS needed) |
-| WhatsApp | operational, v0.2+        | Meta Business Cloud webhook |
-| Slack    | operational, v0.3+        | Socket Mode WebSocket |
-| Discord  | operational (DM), v0.3+   | Gateway WebSocket |
-| Keet     | preview, v0.3+            | Pears bridge (operator-pinned Path-3) |
+## Channel matrix
 
-Per-channel formatter dialects (Telegram MarkdownV2, Slack mrkdwn, Discord CommonMark,
-WhatsApp basic, Keet plaintext) are handled by `channels::formatter`. The formatter
-auto-splits long replies into numbered `[N/M]` continuation messages.
+| Channel | Best for | Transport |
+| :-- | :-- | :-- |
+| **GUI** | Normal users, setup, memory review, privacy controls. | Native Slint app. |
+| **CLI** | Operators, SSH, scripts, coding sessions. | Local process. |
+| **Telegram** | Fast personal phone access. | Bot API long polling or webhook. |
+| **WhatsApp Business** | Mainstream phone access. | Meta Business Cloud API webhook. |
+| **Slack** | Workspaces and team workflows. | Socket Mode WebSocket + Web API. |
+| **Discord** | Community and DM usage. | Gateway WebSocket. |
+| **Keet** | P2P/private channel direction. | Pears/Keet bridge. |
+| **Email** | Important-message detection, drafts, replies. | IMAP/OAuth provider adapters. |
+| **Calendar** | Read/create/update schedule items with approval. | CalDAV/Google-style adapters. |
 
----
+Every channel should pass through:
+
+- identity mapping
+- allowlist or account binding
+- ingress sanitizer
+- profile approval gate
+- provider destination audit
+- outbound send policy
+- WAL event trail
 
 ## Telegram
 
-### Step 1 — Create the bot
+### Setup
 
-1. Open Telegram and search for `@BotFather`
-2. Send: `/newbot`
-3. Give it a display name and a username ending in `bot`
-4. BotFather sends a token: `123456789:ABC-DEF1234ghIkl...`
+1. Open Telegram and search for `@BotFather`.
+2. Send `/newbot`.
+3. Choose a display name and bot username.
+4. Copy the token.
+5. Run:
 
-### Step 2 — Set the token
-
-```
-export TELEGRAM_BOT_TOKEN="123456789:ABC-DEF1234ghIkl..."
-```
-
-Add to your shell profile (`~/.bashrc` or `~/.zshrc`) to persist across reboots.
-
-### Step 3 — Find your numeric user ID
-
-Forward any message to `@userinfobot` in Telegram. It replies with your numeric ID, e.g. `987654321`.
-
-**Important:** Neoth uses numeric IDs in the allowlist, not usernames. Usernames change; numeric
-IDs do not.
-
-### Step 4 — Add yourself to the allowlist
-
-In `~/.neoth/policy.yaml`:
-
-```yaml
-channels:
-  telegram:
-    allowed_chat_ids: [987654321]    # your numeric ID
-    require_dm: true                 # in groups: bot must be mentioned
+```bash
+neoth channel setup telegram
+neoth serve
 ```
 
-### Step 5 — Start
+Manual environment path:
 
+```bash
+export TELEGRAM_BOT_TOKEN="123456789:ABC-DEF..."
+neoth serve
 ```
-neoth start
+
+### Notes
+
+| Behavior | Detail |
+| :-- | :-- |
+| Identity | Numeric Telegram user IDs are used, not usernames. |
+| Groups | Bot can require mention before responding. |
+| Long replies | Split into continuation messages. |
+| Streaming | NEOTH can edit an in-progress message where supported. |
+| Attachments | Photos, voice, audio, documents, and captions enter the media pipeline when enabled. |
+
+## WhatsApp Business
+
+NEOTH uses the official Meta WhatsApp Business Cloud API. No personal-number hacks and no browser automation.
+
+### Setup
+
+```bash
+neoth channel setup whatsapp
+neoth serve
 ```
 
-Send a message to your bot. It should reply.
-
-### Telegram notes
-
-- Messages longer than 4096 characters are split into continuation messages automatically.
-- Streaming: Neoth sends a message, then edits it as the response generates. You see it
-  appear incrementally.
-- Only one Neoth instance can poll a bot token at a time. Starting a second instance fails
-  with a clear error. See [troubleshooting.md#telegram-webhook-conflict](troubleshooting.md#telegram-webhook-conflict).
-
-### Telegram attachment handling
-
-Neoth downloads and processes photo, voice, and audio attachments inline. Documents are
-deferred (require mime/extension detection routing before they land in the media pipeline).
-
-| Telegram message type | What Neoth does |
-|-----------------------|----------------|
-| Photo | Downloads the largest resolution variant. JPEG. Routes through the vision extractor. CLIP embedding computed if the model is cached. |
-| Voice | Downloads the OGG file. Routes through the audio extractor. Whisper transcription if the model is cached. |
-| Audio | Downloads the file (any format). Routes through the audio extractor. Whisper transcription if the model is cached. |
-| Text | Processed directly. No extractor. |
-| Sticker / location / poll / service | Acknowledged with an unsupported-kind notice. No processing. |
-
-Hard ceiling: attachments larger than 16 MiB are rejected before download when Telegram
-reports the size in the metadata response; a post-download check enforces the ceiling for
-files where the API omits the size field.
-
-Captions on photo/audio messages are extracted alongside the media and passed to the LLM as
-the text component of the inbound message.
-
----
-
-## WhatsApp
-
-Uses the Meta WhatsApp Business Cloud API — the official, TOS-compliant path. No personal
-number hacks, no browser automation.
-
-**Status:** operational since v0.2. The webhook receiver
-(`channels::whatsapp_webhook`) verifies signatures, decodes the Cloud-API payload, and
-hands inbound messages into the normal pipeline. The send path uses `whatsapp_api` against
-graph.facebook.com.
-
-**Warning:** Meta's approval process for WhatsApp Business accounts can take anywhere from
-2 days to several weeks. Start the approval process early, before you need it.
-
-### Credential fields (`credentials.yaml`)
+Credential fields:
 
 | Field | Description |
-|-------|-------------|
-| `whatsapp_access_token` | Meta Cloud API long-lived system-user access token (`EAAxxxx…`). |
-| `whatsapp_phone_number_id` | Numeric phone-number id from the Meta Business console. |
-| `whatsapp_verify_token` | Arbitrary secret string used during the webhook handshake. |
+| :-- | :-- |
+| `whatsapp_access_token` | Meta Cloud API token. |
+| `whatsapp_phone_number_id` | Phone number ID from Meta Business console. |
+| `whatsapp_verify_token` | Secret used during webhook verification. |
+| `whatsapp_app_secret` | Used for webhook signature verification. |
 
-### Prerequisites
+### Notes
 
-- A Meta Business Manager account (business.facebook.com)
-- A dedicated phone number for the bot (cannot be in use on personal WhatsApp)
-- A publicly reachable HTTPS URL for webhook callbacks (your server needs a valid TLS cert)
-
-### Setup steps
-
-1. In Meta Business Manager: add your phone number, set up a WhatsApp Business app
-2. Get a permanent System User token and your Phone Number ID
-3. Add to `credentials.yaml`:
-
-```yaml
-whatsapp_access_token: "EAAxxxxx..."
-whatsapp_phone_number_id: "123456789012345"
-whatsapp_verify_token: "your-verify-secret"
-```
-
-4. Configure the webhook URL in Meta's dashboard to point to your Neoth
-   instance (`https://<your-host>/webhook/whatsapp`). The `verify_token` you set above
-   must match Meta's verification handshake.
-
-### WhatsApp notes
-
-- No message editing. WhatsApp Business API has no edit endpoint. Neoth sends the
-  complete final response as one message instead of streaming edits.
-- If Meta approval is delayed, Telegram is a fully functional alternative.
-- Webhook transport: hyper-based HTTPS receiver inside the daemon (`A7 webhook_listener`).
-  TLS via rustls or fronted by Caddy/nginx at the operator's choice.
-
----
+| Behavior | Detail |
+| :-- | :-- |
+| Transport | HTTPS webhook receiver plus Graph API send path. |
+| Streaming | WhatsApp has no edit endpoint; NEOTH sends complete replies. |
+| Approval | External sends remain policy-gated. |
+| Business review | Meta approval can take time; use Telegram while waiting. |
 
 ## Slack
 
-Uses Slack's Socket Mode — no public HTTPS endpoint required.
+Slack uses Socket Mode so you do not need a public HTTPS endpoint.
 
-**Status:** operational since v0.3. The full receive→dispatch→send loop ships:
-`channels::slack_socket` dials the WSS endpoint Slack hands back from
-`apps.connections.open`, ACKs per frame, and routes events through `slack_events` into the
-inbound dispatcher. The send path uses `slack_api::chat_post_message` and threads the
-operator's reply back into the same conversation via the `OutboundSender` callback.
-
-### Credential fields (`credentials.yaml`)
-
-| Field | Description |
-|-------|-------------|
-| `slack_bot_token` | `xoxb-…` bot user OAuth token. Scopes: `channels:history`, `chat:write`, `im:history`, `im:write`, `users:read`. |
-| `slack_app_token` | `xapp-…` app-level token with `connections:write` scope. Required for socket mode. |
-
-### Prerequisites
-
-A Slack workspace where you have admin or app-creation rights.
-
-### Setup steps
-
-1. Go to api.slack.com/apps and create a new app
-2. Under "OAuth and Permissions": add bot token scopes:
-   `channels:history`, `chat:write`, `im:history`, `im:write`, `users:read`
-3. Install the app to your workspace; copy the Bot Token (`xoxb-…`)
-4. Under "Socket Mode": enable Socket Mode, create an app-level token with `connections:write` scope; copy the App Token (`xapp-…`)
-5. Under "Event Subscriptions": enable and subscribe to `message.im`, `message.channels`
-6. Add to `credentials.yaml`:
-
-```yaml
-slack_bot_token: "xoxb-..."
-slack_app_token: "xapp-..."
+```bash
+neoth channel setup slack
+neoth serve
 ```
 
-7. `neoth start` opens the socket-mode WebSocket automatically.
+Required Slack scopes:
 
-### Slack notes
-
-- Transport: tokio-tungstenite socket-mode WebSocket client; Slack `events_api` JSON
-  envelopes decoded into `InboundMessage` and ACKed per-frame.
-- Streaming via `chat.update`: Neoth posts a message, then edits it per token batch as
-  the response generates.
-
----
+| Scope | Purpose |
+| :-- | :-- |
+| `chat:write` | Send replies. |
+| `im:history` / `channels:history` | Read messages. |
+| `im:write` | Start or reply in DMs. |
+| `users:read` | Resolve identity. |
+| `connections:write` | Socket Mode app token. |
 
 ## Discord
 
-Uses Discord's Gateway WebSocket. No public HTTPS endpoint required.
-
-**Status:** operational since v0.3 for DMs. The send path is fully wired; the receive
-loop handles direct-messages today and tags `MESSAGE_CREATE` events from guild channels
-explicitly as v0.3+ scope (regression-tested in `channels::discord`).
-
-### Credential fields (`credentials.yaml`)
-
-| Field | Description |
-|-------|-------------|
-| `discord_bot_token` | Bot token from `discord.com/developers/applications` (no prefix). |
-
-### Setup steps
-
-1. Open `discord.com/developers/applications` and create a new application
-2. Under "Bot": create a bot user, copy the token
-3. Under "Privileged Gateway Intents": enable **Message Content Intent**
-4. Add to `credentials.yaml`:
-
-```yaml
-discord_bot_token: "MTxxx..."
+```bash
+neoth channel setup discord
+neoth serve
 ```
 
-5. Invite the bot to a DM by visiting the OAuth2 URL Generator → `bot` scope → DM permissions
-6. `neoth start` opens the Gateway WS automatically.
+Discord notes:
 
-### Discord notes
+| Behavior | Detail |
+| :-- | :-- |
+| Gateway | Uses Discord Gateway WebSocket. |
+| Message content | Requires Message Content Intent. |
+| Formatting | CommonMark-ish with Discord length limits and splitting. |
+| Scope | DM and configured guild/channel use based on allowlist policy. |
 
-- Formatter dialect: CommonMark-ish (`**bold**`, `*italic*`, fenced code, blockquotes).
-  2000-char message cap, auto-split via `channels::formatter`.
-- Heartbeat + sequence-resume already wired so transient disconnects don't lose state.
-- Guild-channel receive is the next iteration; today's DM-only scope keeps the consent
-  surface narrow.
+## Keet
 
----
+Keet is the private/P2P channel direction.
 
-## Keet (preview)
+```bash
+neoth channel setup keet
+neoth serve
+```
 
-Uses a local bridge to the Pears chat surface (Keet.io). Operator-pinned Path-3 (HTTP
-bridge) rather than the heavier native Pears stack.
+Keet is useful when the operator wants less platform gravity and more private mesh behavior.
 
-**Status:** preview since v0.3. Outbound send works; inbound receive lives behind the
-SP-5 channel-API expansion (richer `InboundMessage` + `send_text/send_media`). Full
-two-way operation lands once a second production adapter motivates the SP-5 A-expansion.
+## Email
 
-### Keet notes
+Email is treated as a sensitive channel because it contains other people's text, attachments, tracking links, and prompt-injection bait.
 
-- Formatter dialect: plaintext (Pears chat does no markdown rendering). Code fences pass
-  through as literal text but stay copy-paste friendly. Conservative 2000-char cap.
+```bash
+neoth channel setup email
+```
 
----
+Default behavior:
 
-## Future channels (planned)
+| Action | Default |
+| :-- | :-- |
+| Read inbox | Operator-approved account binding. |
+| Summarize important mail | Allowed by policy after setup. |
+| Draft replies | Allowed; drafts are marked for review. |
+| Send replies | Requires approval unless policy explicitly grants it. |
+| Learn from email | Sanitizer and attribution gate before profile/memory. |
+| Attachments | Media/document pipeline with prompt-injection checks. |
 
-These are on the roadmap but have no timeline commitment:
+## Calendar
 
-| Channel | Status |
-|---------|--------|
-| Signal | Phase 3+ — planned (requires Signal Desktop) |
-| Matrix | Phase 3+ — planned |
-| iMessage | Phase 4 — Apple restricts automation; macOS only |
-| LINE | Phase 3+ — planned |
+```bash
+neoth channel setup calendar
+```
 
----
+Default behavior:
+
+| Action | Default |
+| :-- | :-- |
+| Read schedule | Allowed after account binding. |
+| Suggest event | Allowed. |
+| Create/update/delete event | Requires confirmation unless policy grants scoped permission. |
+| Extract dates from email | Requires email ingest gate and operator confirmation. |
 
 ## Cross-channel identity
 
-If you use Neoth on both Telegram and Slack, you have two separate identities by default.
-Neoth will not auto-merge them (different accounts could be different people).
+NEOTH does not silently merge identities. If you talk to it from Telegram and Slack, those can stay separate until you link them.
 
-To explicitly link your Telegram and Slack identities:
-
-```
+```bash
+neoth identity list
 neoth identity merge <telegram-uuid> <slack-uuid>
 ```
 
-Find your UUIDs:
+After a merge, recall and profile can follow the same operator across surfaces.
 
-```
-neoth identity list
-```
+## Channel safety checklist
 
-After a merge, recall queries cover your full conversation history regardless of which
-channel you used. See [cli-reference.md](cli-reference.md#identity) for full merge options.
+| Check | Why |
+| :-- | :-- |
+| Allowlist enabled | Prevents random accounts from using your buddy. |
+| Webhook signatures verified | Prevents spoofed inbound events. |
+| Outbound sends gated | Avoids accidental external messages. |
+| Attachments size-capped | Prevents resource exhaustion. |
+| Ingest sanitized | Prevents prompt-injection and profile poisoning. |
+| WAL events written | Makes actions auditable. |
+
+## Live E2E checks
+
+Use [live-e2e-protocol.md](live-e2e-protocol.md) before trusting a production channel.
+
+Typical smoke:
+
+```bash
+neoth channel doctor
+neoth serve
+neoth privacy audit --last 1h
+```

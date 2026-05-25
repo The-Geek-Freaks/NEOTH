@@ -1,416 +1,218 @@
 # CLI Reference
 
-All `neoth` commands. Run `neoth help` or `neoth <command> --help` for options.
+The CLI is the operator cockpit for NEOTH. GUI users can ignore most of this; pros can script almost everything.
 
----
+## First run
 
-## Status and daemon control
-
-```
-neoth start
-```
-Start the Neoth daemon. Loads all adapters and begins listening on configured channels.
-
-```
-neoth start --daemon
-```
-Start in background. Logs to `~/.neoth/neoth.log`.
-
-```
-neoth stop
-```
-Stop the daemon gracefully. Waits for in-flight requests to complete.
-
-```
+```bash
+neoth init
+neoth gui
+neoth doctor
 neoth status
 ```
-Show whether the daemon is running, uptime, active channels, WAL size, disk usage.
 
-```
-neoth status --pid
-```
-Print the daemon PID only. Useful for scripting (`kill -HUP $(neoth status --pid)`).
+| Command | Purpose |
+| :-- | :-- |
+| `neoth init` | Run CLI onboarding wizard. |
+| `neoth gui` | Start the GUI wizard/chat/control surface. |
+| `neoth doctor` | Diagnose setup, providers, channels, local models, WAL, policy. |
+| `neoth status` | Show daemon, memory, provider, channel, cluster, and model status. |
 
----
+## Chat and recall
 
-## Chat (CLI mode)
+```bash
+neoth chat "hello"
+neoth recall "the router issue from last month"
+neoth ingest ./document.pdf
+```
 
-```
-neoth chat "<message>"
-```
-Send a message and get a response in the terminal. No daemon required.
-
-```
-neoth chat
-```
-Start an interactive REPL session. Exit with Ctrl+D or `exit`.
-
----
-
-## Recall
-
-```
-neoth recall "<query>"
-```
-Search past conversations for content matching the query. Returns ranked results.
-
-```
-neoth recall "<query>" --since 7d
-```
-Limit results to the last 7 days.
-
-```
-neoth recall "<query>" --limit 5
-```
-Return at most 5 results.
-
-```
-neoth recall "<query>" --format json
-```
-Output as JSON. Useful for scripting.
-
----
+| Command | Purpose |
+| :-- | :-- |
+| `neoth chat <prompt>` | Ask NEOTH from the terminal. |
+| `neoth recall <query>` | Search memory and indexed context. |
+| `neoth ingest <path>` | Ingest a file, folder, document, image, audio, or video. |
+| `neoth search <query>` | Search local indexed material where configured. |
 
 ## Profile
 
-All profile commands. Profile learning is a Phase 2 feature.
-
-```
-neoth profile show
-```
-Show active profile (fields with confidence >= 0.1), formatted.
-
-```
-neoth profile show --raw
-```
-Show all fields with confidence scores and evidence event IDs.
-
-```
-neoth profile show --pending
-```
-Show claims held pending approval (when `require_approval: true`).
-
-```
-neoth profile redact <field>
-```
-Remove a field permanently. Example: `neoth profile redact identity.location`.
-
-```
-neoth profile redact health
-```
-Remove an entire category.
-
-```
-neoth profile redact --all
-```
-Remove all profile data. GDPR right-to-delete.
-
-```
-neoth profile redact <field> --allow-relearn
-```
-Remove the field but allow it to be re-learned from future conversations.
-
-```
+```bash
+neoth profile show --evidence
+neoth profile pending
+neoth profile approve <id>
+neoth profile decline <id> --reason "wrong"
+neoth profile redact identity.location
 neoth profile pause
-```
-Stop profile learning for the current session.
-
-```
-neoth profile pause --scope=day
-```
-Stop for the rest of the day.
-
-```
-neoth profile pause --scope=forever
-```
-Stop indefinitely until `neoth profile resume`.
-
-```
 neoth profile resume
 ```
-Re-enable profile learning after a pause.
 
-```
-neoth profile approve
-```
-Approve all pending profile claims (when `require_approval: true`).
+| Command | Purpose |
+| :-- | :-- |
+| `profile show` | Show active profile facts. |
+| `profile show --evidence` | Include evidence, confidence, and source. |
+| `profile pending` | List pending memory proposals. |
+| `profile approve <id>` | Approve a pending profile claim. |
+| `profile decline <id>` | Decline a pending profile claim. |
+| `profile redact <field>` | Remove and optionally block relearning. |
+| `profile export` | Export profile as JSON/Markdown. |
+| `profile pause/resume` | Control learning. |
 
-```
-neoth profile approve <id>
-```
-Approve a specific pending claim.
+## Privacy and audit
 
+```bash
+neoth privacy audit --last 30d
+neoth wal verify
+neoth wal show --last 50
+neoth plugin audit
 ```
-neoth profile reject <id>
-```
-Reject a specific pending claim permanently.
 
-```
-neoth profile export
-```
-Export active profile as JSON to stdout.
+| Command | Purpose |
+| :-- | :-- |
+| `privacy audit` | Show destinations, sensitive events, provider calls, plugin activity. |
+| `wal verify` | Verify local event chain. |
+| `wal show` | Inspect recent WAL events. |
+| `plugin audit` | Inspect plugin capabilities and activity. |
 
-```
-neoth profile export --format=md
-```
-Export as Markdown.
+## Providers and models
 
+```bash
+neoth provider list
+neoth provider setup openai
+neoth provider doctor
+neoth model list
+neoth model fetch qwen
+neoth model fetch ouro
+neoth model fetch clip
+neoth model fetch whisper
 ```
-neoth profile export --confidence-floor=0.7
-```
-Export only fields with confidence >= 0.7.
 
-```
-neoth profile inspect <event_id>
-```
-Show extraction reasoning for a specific WAL event: hash, token counts, delta summary.
-
----
-
-## Skills
-
-```
-neoth skill list
-```
-Show all installed skills with status (enabled/disabled) and trigger mode.
-
-```
-neoth skill install <path>
-```
-Install a skill from a directory containing `skill.yaml`.
-
-```
-neoth skill enable <skill_id>
-```
-Enable a skill.
-
-```
-neoth skill disable <skill_id>
-```
-Disable a skill without removing it.
-
-```
-neoth skill inspect <skill_id>
-```
-Show the rendered template, token count, and trigger configuration.
-
-```
-neoth reload-skills
-```
-Hot-reload all skills and identity files (soul.md, claude.md). Does not restart the daemon.
-
----
-
-## Plugins
-
-```
-neoth plugin list
-```
-Show installed plugins with permission level and hook registrations.
-
-```
-neoth plugin enable <plugin_id>
-```
-Enable a WASM plugin (Phase 2). Requires daemon restart.
-
-```
-neoth plugin disable <plugin_id>
-```
-Disable a WASM plugin. Requires daemon restart.
-
-```
-neoth plugin inspect <plugin_id>
-```
-Show plugin manifest, hooks, and permission level.
-
----
+| Command | Purpose |
+| :-- | :-- |
+| `provider list` | Show configured providers. |
+| `provider setup <name>` | Configure cloud/local provider. |
+| `provider doctor` | Diagnose auth, routing, circuit breakers. |
+| `model list` | Show local model catalog/cache. |
+| `model fetch <name>` | Download a local model. |
+| `model doctor` | Diagnose local model cache and runtime. |
 
 ## Channels
 
+```bash
+neoth channel setup telegram
+neoth channel setup whatsapp
+neoth channel setup slack
+neoth channel setup discord
+neoth channel setup keet
+neoth channel setup email
+neoth channel setup calendar
+neoth channel doctor
+neoth serve
 ```
-neoth channel list
-```
-Show configured channels and their status (connected / not configured / error).
 
-```
-neoth channel telegram status
-```
-Show Telegram adapter status: polling active, last message time, error count.
+| Command | Purpose |
+| :-- | :-- |
+| `channel setup <name>` | Guided channel setup. |
+| `channel doctor` | Verify credentials, allowlists, webhooks, send path. |
+| `serve` | Run daemon/channel server. |
 
-```
-neoth channel telegram clear-webhook
-```
-Remove any registered Telegram webhook (needed before switching to polling mode).
+## Coding buddy
 
----
+```bash
+neoth code "map this repo and propose a plan" --canvas
+neoth code "implement the accepted migration with tests" --dispatch
+neoth code review --promote-findings
+neoth kanban watch
+```
 
-## Council (Phase 2)
+| Command | Purpose |
+| :-- | :-- |
+| `code <task>` | Run coding workflow. |
+| `code --canvas` | Build a planning canvas. |
+| `code --dispatch` | Split and dispatch bounded work. |
+| `code review` | Review current changes. |
+| `kanban watch` | Show live task board. |
 
-```
-neoth council list
-```
-List recent council debates.
+## Council
 
+```bash
+neoth council ask "review this plan"
+neoth council status
+neoth council history
+neoth council show <id>
 ```
-neoth council list --since 7d
-```
-List debates from the last 7 days.
 
-```
-neoth council invoke --task "<description>"
-```
-Manually trigger a council debate.
+| Command | Purpose |
+| :-- | :-- |
+| `council ask` | Force a multi-role review. |
+| `council status` | Show budget and trigger state. |
+| `council history` | List prior debates. |
+| `council show <id>` | Inspect a debate. |
 
-```
-neoth council invoke --task "<description>" --file <path>
-```
-Include file content as context for the debate.
+## Skills and plugins
 
-```
-neoth council inspect <verdict_id>
-```
-Show full transcript of a council debate.
+```bash
+neoth skill list
+neoth skill install ./skill
+neoth skill enable rust-review
+neoth reload-skills
 
+neoth plugin list
+neoth plugin install ./plugin
+neoth plugin enable my-plugin
+neoth plugin audit my-plugin
 ```
-neoth council suppress --until tomorrow
-```
-Pause automatic council triggers until tomorrow midnight.
 
-```
-neoth council budget set max_debates_per_day <n>
-```
-Adjust the daily debate cap.
+| Command | Purpose |
+| :-- | :-- |
+| `skill ...` | Manage data-only skills. |
+| `plugin ...` | Manage sandboxed WASM plugins. |
+| `reload-skills` | Reload skills without restarting where supported. |
 
----
+## Automation
 
-## Quota
+```bash
+neoth cron list
+neoth cron run morning-brief
+neoth n8n status
+neoth n8n workflows
+```
 
-```
-neoth quota status
-```
-Show LLM provider request counts, health status, and council budget remaining.
+| Command | Purpose |
+| :-- | :-- |
+| `cron list/run` | Built-in recurring jobs. |
+| `n8n status` | Loopback API/workflow status. |
+| `n8n workflows` | Installed starter workflows. |
 
-```
-neoth quota reset <provider>
-```
-Reset quota tracking for a provider. Debug use only.
+## Mesh and cluster
 
----
+```bash
+neoth cluster discover
+neoth cluster confirm <peer>
+neoth cluster status
+neoth cluster topology
+neoth local resources
+```
 
-## WAL
+| Command | Purpose |
+| :-- | :-- |
+| `cluster discover` | Find candidate nodes. |
+| `cluster confirm <peer>` | Approve a peer. |
+| `cluster status` | Show mesh health. |
+| `cluster topology` | Show connected surfaces/nodes. |
+| `local resources` | Show GPU/CPU/RAM/model usage. |
 
-```
-neoth wal stats
-```
-Show WAL size, segment count, oldest and newest events, compaction status.
+## Maintenance
 
+```bash
+neoth backup create
+neoth rollback list
+neoth update check
+neoth update apply
+neoth export --out ~/neoth-export
 ```
-neoth wal verify
-```
-Check all WAL segments for CRC errors. Reports corruption but does not fix.
 
-```
-neoth wal recover --from-checkpoint <file>
-```
-Recover from a specific checkpoint file after corruption.
-
-```
-neoth wal compact --force
-```
-Run compaction immediately (normally runs nightly at 03:30).
-
-```
-neoth wal prune --older-than 90d
-```
-Remove WAL segments older than 90 days that have been compacted.
-
----
-
-## Identity
-
-```
-neoth identity list
-```
-Show all known identities (user UUIDs) with channel bindings.
-
-```
-neoth identity show <uuid>
-```
-Show details for a specific identity: channels, first/last seen.
-
-```
-neoth identity merge <uuid1> <uuid2>
-```
-Merge two identities. All events from uuid2 are reassigned to uuid1.
-uuid2 is tombstoned. Irreversible — confirm before running.
-
----
-
-## Privacy
-
-```
-neoth privacy audit --last 30d
-```
-Show where LLM requests went in the last 30 days (local vs cloud, per provider).
-
----
-
-## Freedom and settings
-
-```
-neoth freedom show
-```
-Print the active freedom.yaml contents with current hash.
-
-```
-neoth freedom check scopes.security_research
-```
-Show the current value of a specific freedom.yaml field.
-
----
-
-## Migration and cutover (Phase 3)
-
-```
-neoth migrate status
-```
-Show migration status if upgrading from a previous version.
-
-```
-neoth cutover --phase 3
-```
-Run the Phase 3 cutover procedure (operator-auth + profile seed migration).
-
-```
-neoth rollback
-```
-Roll back to the previous WAL snapshot. Requires a recent snapshot to exist.
-
----
-
-## Model management (Phase 2)
-
-```
-neoth model list
-```
-Show available and downloaded models with sizes.
-
-```
-neoth model fetch qwen3-4b-int4
-```
-Download Qwen3-4B-INT4 from HuggingFace. Verifies SHA-256 on completion.
-
-```
-neoth model fetch qwen3-4b-int4 --resume
-```
-Resume a partial download.
-
-```
-neoth model verify qwen3-4b-int4
-```
-Verify SHA-256 and run a 10-token smoke test.
-
-```
-neoth model remove qwen3-4b-int4
-```
-Delete the model file from disk.
+| Command | Purpose |
+| :-- | :-- |
+| `backup create` | Create backup. |
+| `rollback list` | Show rollback points. |
+| `update check/apply` | Self-update where configured. |
+| `export` | Export memory/profile/vault data. |

@@ -1,197 +1,167 @@
-# Profile — Proactive Learning
+# Profile And Memory
 
-Neoth learns about you over time so it does not need to be re-told things it has already
-heard. This page explains what gets stored, how it works, and how to control it.
+NEOTH learns about the operator so it does not need to be reintroduced every session. Profile memory is permissioned, evidence-backed, redactable, and auditable.
 
-Profile learning is a **Phase 2** feature. In v0.1.0 (Day-30 MVP), profile commands exist
-but no automatic learning fires yet.
+## What NEOTH can learn
 
----
-
-## What profile fields exist
-
-Neoth builds a typed profile with the following categories:
-
-| Category | Examples | Default |
-|----------|----------|---------|
-| `identity` | Name, age, role, city-level location | ON |
-| `preferences` | Food, music, sleep schedule, communication style | ON |
-| `relationships` | People you mention: name + role + sentiment | ON |
-| `skills` | Domains + proficiency (Beginner/Intermediate/Advanced/Expert) | ON |
-| `goals` | Short/medium/long-term objectives + status | ON |
-| `health` | Conditions, medications, allergies, fitness habits | **OFF (PII)** |
-| `schedule` | Routines, recurring patterns, important dates | ON |
-| `emotional_baseline` | Typical state, stressors, energy patterns | ON |
-| `operator_preferences` | How you want Neoth to behave (tone, autonomy, language) | ON |
-
-Health fields require an explicit opt-in in `freedom.yaml`:
-
-```yaml
-profile:
-  learn:
-    health: true    # default is false
-```
-
----
+| Category | Examples | Default stance |
+| :-- | :-- | :-- |
+| `identity` | Name, role, language, city-level location. | On with approval/evidence. |
+| `preferences` | Communication style, food, music, tools, answer length. | On with approval/evidence. |
+| `projects` | Active repos, goals, services, decisions, constraints. | On with approval/evidence. |
+| `relationships` | People you mention and their role in your life/work. | On with care. |
+| `skills` | Domains, proficiency, preferred stack, learning goals. | On with approval/evidence. |
+| `goals` | Short, medium, long-term objectives and status. | On with approval/evidence. |
+| `schedule` | Routines, recurring patterns, important dates. | On with approval/evidence. |
+| `health` | Conditions, meds, allergies, fitness habits. | Off unless explicitly enabled. |
+| `operator_preferences` | Tone, autonomy, privacy, provider preference, coding style. | On with approval/evidence. |
 
 ## How learning works
 
-After every conversation exchange, Neoth runs a background extraction pass over the
-last 2-3 turns. It looks for things you said directly — not things you quoted, forwarded,
-or that Neoth itself said.
-
-Each finding becomes a **profile claim** with a **confidence score** between 0.0 and 1.0.
-
-Claims strengthen over time (Hebbian reinforcement):
-- First time you mention something: claim created at low confidence
-- Each time you confirm or repeat it: confidence increases
-- After ~26 reinforcements from 0.5: confidence reaches 0.95
-
-Claims weaken if you stop mentioning them:
-- Default decay: 0.995 per day
-- At 0.995/day: confidence halves after ~138 days without reinforcement
-- Below 0.1 confidence: claim becomes inactive (still in WAL audit trail, not shown to LLM)
-
-### What counts as valid evidence
-
-Only your own words count. The extraction layer attributes each segment of conversation before
-running: your statements, Neoth's responses, quoted/forwarded text, code blocks. Only segments
-classified as your direct speech feed into profile extraction. Pasting an article or forwarding
-a message cannot poison your profile.
-
----
-
-## Privacy: local extraction by default
-
-Profile extraction runs on a **local model** (Qwen3-4B, see [local-models.md](local-models.md)).
-Your conversation text stays on your machine.
-
-The cloud LLM (Claude) only sees the profile **summary** — the high-confidence fields formatted
-into a few hundred tokens — not the raw conversation content it was extracted from.
-
-If the local model is unavailable (not downloaded, GPU offline), extraction is **skipped** for
-that session. It does not silently fall back to a cloud provider unless you explicitly opt in:
-
-```yaml
-inference:
-  allow_cloud_fallback: true   # default is false
+```text
+Conversation / document / channel event
+  |
+  v
+Attribution and sanitizer
+  |
+  |---- your own words
+  |---- quoted/forwarded text
+  |---- model output
+  |---- code/document content
+  v
+Profile extractor
+  |
+  v
+Claim guard
+  |
+  v
+Approval gate
+  |
+  v
+WAL event + idx_profile view
 ```
 
----
+Only your own attributable words should become profile claims. Forwarded text, quoted emails, copied articles, model output, and code blocks are not trusted as "things the operator believes" by default.
 
-## PII gates
+## Profile claims
 
-Some fields are sensitive enough to require explicit opt-in:
+Every durable profile fact should carry:
 
-- `health` — medical information. Off by default.
-- `identity.location` — precise coordinates. City-level is always on if `identity: true`;
-  GPS-level requires a separate flag.
-
-Even with health turned off, your conversation text is not transmitted anywhere for extraction
-(local model only). The gate just prevents health-related claims from being stored in `idx_profile`.
-
----
-
-## CLI commands
-
-```
-# Show your active profile (fields with confidence >= 0.1)
-neoth profile show
-
-# Show full detail including confidence scores and evidence events
-neoth profile show --raw
-
-# Remove a specific field permanently
-neoth profile redact identity.location
-
-# Remove an entire category
-neoth profile redact health
-
-# Remove everything (GDPR right-to-delete)
-neoth profile redact --all
-
-# Pause learning for this session
-neoth profile pause
-
-# Pause for the rest of the day
-neoth profile pause --scope=day
-
-# Pause indefinitely
-neoth profile pause --scope=forever
-
-# Resume after a pause
-neoth profile resume
-
-# Export your profile as JSON
-neoth profile export
-
-# Export as Markdown
-neoth profile export --format=md
-
-# Export only high-confidence fields
-neoth profile export --confidence-floor=0.7
-
-# Show what the extractor did for a specific event
-neoth profile inspect <event_id>
-```
-
----
-
-## GDPR right-to-delete
-
-`neoth profile redact --all` removes all profile claims from the active index immediately.
-The WAL audit trail records *that* a redaction occurred and *when*, but not *what* the
-values were — those are zeroed out during the next compaction pass.
-
-If you want to prevent a specific field from ever being re-learned:
-
-```
-neoth profile redact identity.location
-```
-
-By default, Neoth will not re-learn that field even if you mention your location again in
-the future. The redaction registry persists across daemon restarts.
-
-If you want to allow the field to be re-learned later, use:
-
-```
-neoth profile redact identity.location --allow-relearn
-```
-
----
-
-## How the profile is used
-
-Neoth uses your profile in three places:
-
-**Context injection** — fields with confidence >= 0.6 are included in the LLM's context
-before every response. The LLM knows your name, communication style, relevant skills, etc.
-without you repeating them. Budget: ~200 tokens for the profile section.
-
-**Recall ranking** — when Neoth searches past conversations for relevant context, results
-related to your skill domains get a small boost. If you work in security research, security-related
-past conversations rank higher.
-
-**Council consultation** (Phase 2) — when multiple LLMs are debating an answer, the synthesizing
-model can consult your profile to break ties. It only sees the same 200-token summary, not raw scores.
-
----
+| Field | Purpose |
+| :-- | :-- |
+| Claim key | Stable field path such as `preferences.answer_style`. |
+| Value | The learned fact. |
+| Evidence | Event/source proving why NEOTH believes it. |
+| Confidence | Strength of the claim. |
+| Source | Channel, file, chat, document, or operator action. |
+| Approval state | Pending, approved, declined, redacted. |
+| Redaction policy | Whether it may be relearned. |
+| Timestamp | When it was learned or updated. |
 
 ## Approval gate
 
-If you want to review profile changes before they take effect:
+Review proposed memory before it becomes active:
 
-```yaml
-profile:
-  learn:
-    require_approval: false   # set to true
+```bash
+neoth profile pending
+neoth profile approve <id>
+neoth profile decline <id> --reason "not true"
 ```
 
-With approval on, new claims are held in a staging queue. Review and approve:
+Autonomy affects when NEOTH asks:
 
+| Autonomy | Profile behavior |
+| :-- | :-- |
+| Strict | Queue memory proposals for explicit approval. |
+| Standard | Queue sensitive or uncertain claims; allow low-risk preferences based on policy. |
+| Elevated | Apply routine claims, queue sensitive/high-impact claims. |
+| Full | Apply within policy scope, still audit everything. |
+
+## Local extraction
+
+Profile extraction is designed to run locally where possible.
+
+```bash
+neoth model fetch qwen
+neoth model fetch ouro
 ```
-neoth profile show --pending
-neoth profile approve         # approve all pending
-neoth profile approve <id>    # approve one
-neoth profile reject <id>     # reject one permanently
+
+Cloud fallback for profile extraction must be explicit. If local inference is unavailable and fallback is disabled, NEOTH should skip learning instead of silently uploading private context.
+
+## Redaction
+
+Show profile facts:
+
+```bash
+neoth profile show --evidence
 ```
+
+Redact one field:
+
+```bash
+neoth profile redact identity.location
+```
+
+Redact everything:
+
+```bash
+neoth profile redact --all
+```
+
+Block relearning:
+
+```bash
+neoth profile redact identity.location --never-recreate
+```
+
+Allow relearning later:
+
+```bash
+neoth profile redact identity.location --allow-relearn
+```
+
+## Pause and resume learning
+
+```bash
+neoth profile pause
+neoth profile pause --scope day
+neoth profile pause --scope forever
+neoth profile resume
+```
+
+## Export
+
+```bash
+neoth profile export --format json --out profile.json
+neoth profile export --format md --out profile.md
+```
+
+## How profile affects answers
+
+| Use | Effect |
+| :-- | :-- |
+| Context injection | Approved high-confidence facts inform tone, constraints, projects, and preferences. |
+| Recall ranking | Relevant memories are boosted based on operator profile and active topic. |
+| Coding buddy | Repo conventions, review preferences, test habits, and prior decisions become available. |
+| Council | Dissent and synthesis can consider operator constraints without seeing raw private logs. |
+| Proactivity | NEOTH can suggest reminders or workflows when patterns are strong enough and policy permits it. |
+
+## Privacy checklist
+
+```bash
+neoth profile show --evidence
+neoth profile pending
+neoth privacy audit --last 30d
+neoth wal verify
+```
+
+You should be able to answer:
+
+- What does NEOTH know?
+- Why does it believe that?
+- When did it learn it?
+- Which provider saw what?
+- Can I correct or delete it?
+- Can I block relearning?
+
+If the answer is unclear, treat it as a bug.

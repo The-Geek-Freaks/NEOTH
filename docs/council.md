@@ -1,166 +1,97 @@
-# Council — Multi-LLM Debate
+# Council
 
-For complex or ambiguous questions, Neoth can run a structured debate between multiple
-LLMs before responding. The result is a synthesized answer that has been stress-tested
-against opposing views.
+The council is NEOTH's multi-model dissent path. It does not ask every model every time. It triggers when the request is complex, risky, contradictory, high-impact, or explicitly configured.
 
-**Council is a Phase 2 feature.** Not in v0.1.0.
+## Roles
 
----
+| Role | Job |
+| :-- | :-- |
+| **Fast / Left** | Normal replies, low-latency help, routine coding, simple tool use. |
+| **Deep / Right** | Architecture, risk, long reasoning, review, hard tradeoffs. |
+| **Callosum / Orchestrator** | Context passing, dissent surfacing, final synthesis, budget, and audit. |
 
-## The three roles
+## When council fires
 
-Think of it as three specialists who confer before the answer reaches you:
+| Trigger | Example |
+| :-- | :-- |
+| Complexity | "Design the cluster sync protocol and prove failure modes." |
+| Risk | Security, privacy, data deletion, external sends, secrets, migration. |
+| Contradiction | Recall says one thing, current context says another. |
+| Operator request | `--council` or policy rule. |
+| Low confidence | The fast answer is weak or uncertain. |
+| High-impact action | Anything that affects files, credentials, calendar, email, cluster, or public output. |
 
-| Role | Provider | Job |
-|------|---------|-----|
-| Left Hemisphere | Claude Opus | Primary reasoning. Produces the answer you see. |
-| Right Hemisphere | Gemini Pro | Pattern analysis. Looks for things Left missed. Never talks to you directly. |
-| Corpus Callosum | Codex GPT | Synthesis and dissent surfacing. Decides if the hemispheres agree enough. |
+## Manual use
 
-You always get the answer from Left (Claude). Right and Callosum work in the background.
-
----
-
-## When Council fires automatically
-
-Council does NOT fire on every message — that would burn through your LLM quotas within hours.
-It fires only when all of these conditions are true:
-
-1. **Keyword match** — your message contains one of the trigger keywords:
-   `architecture`, `security`, `refactor`, `destructive`, `breaking`
-2. **Complexity gate** — your message is substantial (not a short question)
-3. **Dissent signal** — Left's initial answer scores above a disagreement threshold
-   when Callosum checks it
-4. **Rate gate** — fewer than 2 auto-triggers in the past hour
-5. **Budget gate** — fewer than 5 debates fired today
-
-All five must pass. A short "what's the security update for openssh?" does not trigger
-council even though it contains "security" — the complexity gate kills it.
-
-When council is suppressed, you get Left's direct answer and a note in the WAL event log.
-
----
-
-## Manual invocation
-
-Force a council debate regardless of triggers:
-
-```
-neoth council invoke --task "should I use async or sync Rust here?"
+```bash
+neoth council ask "review this plan for security and implementation risk"
+neoth chat --council "should I run this migration?"
+neoth code --council "review the architecture before implementation"
 ```
 
-With a file:
+## Budget
 
-```
-neoth council invoke --task "review this design" --file design.md
-```
+Council is useful because it is selective.
 
-Manual invokes count against the daily debate budget.
-
----
-
-## Quota budgets
-
-Council debates consume real LLM quota. The defaults in freedom.yaml limit damage:
-
-```
+```toml
+[council.budget]
 max_debates_per_day = 5
-max_rounds_total_per_day = 25
 max_usd_per_day = 2.00
+trigger = "smart"
 ```
 
-**CLI-auth users** (Claude Pro, ChatGPT Plus, Gemini Premium): the `max_usd_per_day` field
-is ignored because you pay a flat subscription. The debates-per-day and rounds-per-day caps
-still apply.
+Check:
 
-**API-key users**: all three caps apply.
-
----
-
-## HTTP 429 handling
-
-When a provider hits its rate limit (HTTP 429), council does not fail — it cascades to the
-next provider in the fallback chain. You will not see an error; the debate continues with
-a substitute.
-
-The cascade order:
-- Debate primary: `claude-cli -> gemini-cli -> codex-cli`
-- Debate fallback: `qwen-local -> mistral-cli -> deepseek-cli`
-- Emergency: local model (if available)
-
-A 429 event is logged in WAL for visibility.
-
----
-
-## Quota status
-
-```
+```bash
+neoth council status
 neoth quota status
 ```
 
-Example output:
+## Dissent output
 
-```
-Provider quotas — last 24h
-================================================================
-claude-cli      [████████░░] 162/200 requests  (81% used)
-codex-cli       [██████░░░░] 119/200 requests  (60% used)
-gemini-cli      [█████░░░░░] 142/250 requests  (57% used)
-qwen-local      [unlimited] 8,234 requests
+A good council result should expose:
 
-Council debates today: 3 / 5 max
-Auto-triggers this hour: 1 / 2 max
+| Field | Purpose |
+| :-- | :-- |
+| Main answer | What NEOTH recommends. |
+| Dissent | What another role disagreed with. |
+| Risk | What could go wrong. |
+| Evidence | Which memory, file, provider, or tool result mattered. |
+| Action | What is safe to do next. |
 
-Health:
-  claude-cli       OK
-  codex-cli        OK
-  gemini-cli       OK     (last 429: never)
-  qwen-local       OK
-```
+## Audit
 
-The `requests` counts come from WAL events, not from the providers themselves. They may
-differ from the provider's own count if a request failed before logging.
+Council activity should leave WAL events so the operator can inspect:
 
----
+- why council triggered
+- which providers participated
+- what the dissent was
+- what the final synthesis chose
+- how much budget was used
 
-## Managing council
+Commands:
 
-```
-# View recent debates
-neoth council list --since 7d
-
-# Full transcript of a specific debate
-neoth council inspect <verdict_id>
-
-# Pause auto-triggers until tomorrow
-neoth council suppress --until tomorrow
-
-# Adjust the daily debate cap
-neoth council budget set max_debates_per_day 10
-
-# Manually reset quota tracking (debug only)
-neoth quota reset claude-cli
+```bash
+neoth council history
+neoth council show <id>
+neoth privacy audit --last 7d
 ```
 
----
+## Tuning
 
-## Adjusting trigger sensitivity
+| Setting | Effect |
+| :-- | :-- |
+| `trigger = "off"` | Never auto-trigger; manual only. |
+| `trigger = "smart"` | Default: complexity/risk/dissent/budget aware. |
+| `trigger = "aggressive"` | More debates, useful during design/review. |
+| `max_debates_per_day` | Hard cap for automatic council. |
+| `max_usd_per_day` | Cost cap for cloud-backed council. |
 
-If council fires too often, raise the gates in freedom.yaml:
+## Failure behavior
 
-```yaml
-council:
-  smart_trigger:
-    min_user_msg_tokens: 1200    # was 800 — only longer messages qualify
-    require_dissent_score_gt: 0.6  # was 0.4 — require stronger disagreement
-    max_auto_triggers_per_hour: 1  # was 2 — halve the rate
-```
-
-If you want council to never fire automatically but keep manual invocation:
-
-```yaml
-council:
-  smart_trigger:
-    max_auto_triggers_per_hour: 0
-```
+| Failure | Expected behavior |
+| :-- | :-- |
+| Provider rate limit | Fall back to remaining roles or explain that council is degraded. |
+| Budget exhausted | Use fast/deep configured default and record why council did not run. |
+| Local model unavailable | Surface fetch/config command and avoid silent privacy fallback. |
+| Dissent unresolved | Show the uncertainty instead of pretending consensus exists. |

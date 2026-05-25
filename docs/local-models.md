@@ -1,170 +1,128 @@
 # Local Models
 
-Neoth can run a small language model on your GPU for tasks where you want your data to stay
-on your machine. The primary use case is profile extraction — learning about you from your
-conversations without sending those conversations to a cloud provider.
+Local models let NEOTH learn, recall, transcribe, embed, and reason without sending private context to a cloud provider by default.
 
-**Local model support is a Phase 2 feature.** Not in v0.1.0.
+## Model roles
 
----
+| Model | Role | Why it exists |
+| :-- | :-- | :-- |
+| **Qwen** | Local profile extraction and lightweight reasoning. | Keeps continuous learning private and cheap. |
+| **Ouro** | Local thinking/reasoning provider. | Gives NEOTH an operator-owned reasoning path. |
+| **CLIP** | Image embeddings. | Enables image recall and visual file search. |
+| **Whisper** | Audio/video transcription. | Voice notes, meetings, videos, calls, and audio attachments. |
+| **Llama/Unsloth-family models** | Optional local answer providers when hardware allows. | Lets operators trade cloud quality for local control. |
 
-## Why local?
+## Install models
 
-**Privacy.** Cloud LLMs are great at answering questions, but they receive your conversation
-text. With a local model for profile extraction, that specific task stays entirely on your
-hardware. Your raw conversations never leave your machine for that purpose.
+```bash
+neoth model list
+neoth model fetch qwen
+neoth model fetch ouro
+neoth model fetch clip
+neoth model fetch whisper
+```
 
-**Cost.** Calling a cloud API for every post-conversation extraction adds up (~$985/year at
-typical usage volume). Local inference costs electricity only (~$0 per call).
+Inspect:
 
-**Trade-off.** Local inference is slower. ~32 seconds for an 800-token extraction window at
-25 tokens/second on a mid-range GPU. This is acceptable because profile extraction runs in
-the background after you get your response — it is not on the critical path.
+```bash
+neoth model status
+neoth model doctor
+```
 
----
+## Hardware guidance
 
-## Model: Qwen3-4B-INT4
+| Hardware | Good for |
+| :-- | :-- |
+| CPU-only | Recall, WAL, profile browsing, small local tasks, slower transcription. |
+| 4-8 GB VRAM | Small Qwen/Ouro profile learning, CLIP, Whisper smaller modes. |
+| 12-24 GB VRAM | Stronger local reasoning, larger Whisper, richer multimodal work. |
+| 24+ GB VRAM | Larger local models and cluster/resource sharing. |
 
-The default local model is **Qwen3-4B** quantized to INT4.
+The wizard should recommend models based on detected RAM, VRAM, GPU family, disk, and operator goals.
 
-| Property | Value |
-|----------|-------|
-| Size | ~2.4 GB on disk |
-| VRAM required | ~3 GB |
-| CPU fallback | Yes, slower (~3-5 tokens/second) |
-| Languages | English + German + others |
-| License | Apache 2.0 |
-| Context window | 32,768 tokens |
+## Configuration
 
----
-
-## Hardware requirements
-
-**Minimum:** 3 GB VRAM. Any CUDA-compatible GPU (NVIDIA) works.
-CPU fallback is available but significantly slower. Profile extraction at CPU speed takes
-~5-10 minutes per turn — functional, but you may want to adjust extraction frequency.
-
-**Recommended:** 4+ GB VRAM. Leaves headroom for the embedding model (Qwen3-Embedding-0.6B,
-~1 GB) running alongside.
-
-Multi-GPU: if you have multiple GPUs, the local model uses one. You can configure which:
+Typical `~/.neoth/inference.toml`:
 
 ```toml
-# ~/.neoth/inference.toml
-[runtime]
-device = "cuda:1"         # use the second GPU
-fallback_device = "cpu"
+[inference]
+allow_cloud_fallback = false
+
+[models.qwen]
+enabled = true
+path = "~/.neoth/models/qwen"
+
+[models.ouro]
+enabled = true
+path = "~/.neoth/models/ouro"
+
+[models.clip]
+enabled = true
+path = "~/.neoth/models/clip"
+
+[models.whisper]
+enabled = true
+path = "~/.neoth/models/whisper"
 ```
 
----
+## Privacy posture
 
-## Setup
+| Setting | Meaning |
+| :-- | :-- |
+| `allow_cloud_fallback = false` | If local extraction fails, skip learning instead of sending private context to cloud. |
+| `allow_cloud_fallback = true` | Cloud fallback is allowed and should be visible in privacy audit. |
+| Local model missing | NEOTH should surface the missing model and show the fetch command. |
+| Model cache verified | NEOTH can use the model without re-downloading. |
 
-### Step 1 — Download the model
+Audit:
 
-```
-neoth model fetch qwen3-4b-int4
-```
-
-This downloads to `~/.neoth/models/qwen3-4b-int4.gguf` (~2.4 GB) from HuggingFace.
-SHA-256 is pinned and verified before the model loads.
-
-Resume a partial download:
-
-```
-neoth model fetch qwen3-4b-int4 --resume
-```
-
-### Step 2 — Verify
-
-```
-neoth model verify qwen3-4b-int4
-```
-
-Should print:
-
-```
-qwen3-4b-int4.gguf  OK  (sha256 match)
-Smoke test: 10 tokens in 0.4s on cuda:0
-```
-
-### Step 3 — Check freedom.yaml
-
-Local extraction is enabled by default once the model is present. The key flag:
-
-```yaml
-inference:
-  allow_cloud_fallback: false    # default — extraction skipped if local is down, no cloud
-  local_model_path: ~/.neoth/models/qwen3-4b-int4.gguf
-```
-
----
-
-## When is the local model used?
-
-| Task | Default model | Notes |
-|------|--------------|-------|
-| Profile extraction | Local (Qwen3-4B) | Your conversations stay on-device |
-| Answering you | Cloud (Claude) | Requires the cloud LLM for quality |
-| Council debate | Cloud (Claude, Gemini, Codex) | Multiple providers for diverse perspectives |
-| Embeddings | Local (Qwen3-Embedding-0.6B) | Vector search, runs locally |
-
-The split is intentional: use local where privacy matters most (extraction = raw conversation text),
-use cloud where quality matters most (your actual response).
-
----
-
-## Fallback behavior
-
-If the local model is unavailable (not downloaded, GPU offline, OOM):
-
-- **If `allow_cloud_fallback: false` (default):** Profile extraction is skipped for this turn.
-  You still get a response. Learning resumes when the local model is back.
-- **If `allow_cloud_fallback: true`:** Extraction falls back to the configured cloud provider.
-  A WAL event is logged noting the cloud fallback.
-
----
-
-## Verifying your privacy posture
-
-After running Neoth for a while, check where your requests actually went:
-
-```
+```bash
 neoth privacy audit --last 30d
+neoth model doctor
 ```
 
-Example output:
+## Cache layout
 
-```
-Last 30 days — LLM request destinations:
-  LocalQwen3_4B:   8,234 requests  (profile extraction)
-  CloudClaude:     1,012 requests  (response generation)
-  CloudGemini:         0 requests
-  CloudCodex:         87 requests  (council debate)
-```
-
-Zero `CloudGemini` for extraction means the H3 privacy fix is working: your conversations
-are not going to Google for profile analysis.
-
----
-
-## Alternative / fallback local models
-
-If 3 GB VRAM is too tight, a smaller alternative:
-
-```
-neoth model fetch qwen3-1.7b-int4
+```text
+~/.neoth/models/
+  qwen/
+  ouro/
+  clip/
+  whisper/
 ```
 
-~1.5 GB VRAM, weaker extraction quality but functional. Configure in `inference.toml`:
+NEOTH should treat model downloads as explicit operator actions, log them, and avoid repeated downloads when a verified cache exists.
 
-```toml
-[models.generative.priority]
-order = ["local_qwen3_1b7", "local_qwen3_4b", "cloud_gemini_3_1_pro"]
+## OOM and performance
+
+If local models are slow or failing:
+
+```bash
+neoth model doctor
+neoth status
+neoth local resources
 ```
 
----
+Common fixes:
 
-## OOM and other failures
+| Symptom | Fix |
+| :-- | :-- |
+| GPU OOM | Pick a smaller quant, reduce context, unload another model. |
+| CPU too slow | Use cloud for response generation but keep profile extraction local. |
+| Whisper slow | Use a smaller Whisper profile or GPU acceleration. |
+| Model missing | `neoth model fetch <name>`. |
+| Privacy fallback warning | Keep fallback disabled or explicitly accept the tradeoff. |
 
-See [troubleshooting.md#local-model-oom](troubleshooting.md#local-model-oom).
+## Local provider selection
+
+NEOTH can use local models for:
+
+- profile extraction
+- embeddings
+- recall enrichment
+- transcription
+- visual search
+- coding support
+- reasoning when hardware is sufficient
+
+Cloud providers remain useful for high-end reasoning. The point is operator choice and visible routing, not pretending every laptop can run every model well.

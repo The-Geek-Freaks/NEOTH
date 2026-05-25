@@ -1,270 +1,207 @@
 # Architecture
 
-How Neoth works under the hood. This is a high-level overview for users and operators.
-Developers who want full spec detail should read the `PLAN/` directory.
+NEOTH is a Rust-first, local-first operator runtime. The visible product is a loyal AI buddy; the machinery underneath is a memory, policy, provider, channel, coding, and automation control plane.
 
----
+## System map
 
-## Block diagram
-
-```
-You
- |
- | (Telegram / WhatsApp / Slack / CLI)
- |
-[Channel Adapter]
- |
- | InboundMessage
- |
-[Gate Layer]         <-- allowlist check, mention check, command check
- |
- | (passes gate)
- |
-[Pipeline Router]    <-- assembles context blocks A/B/C/D for the LLM
- |    |
- |    +--> [Recall]       <-- searches WAL for relevant past conversations
- |    |
- |    +--> [Profile]      <-- injects what Neoth knows about you (Phase 2)
- |    |
- |    +--> [Skills]       <-- injects relevant skill context (Day 23)
- |
- | assembled prompt
- |
-[Left Hemisphere]    <-- Claude Opus (or configured cloud LLM)
- |                       The only hemisphere that talks to you.
- |
- | response
- |
-[Channel Adapter]
- |
- | (Telegram / WhatsApp / Slack / CLI)
- |
-You
-
-
-Background (not on the critical path):
-  [Profile Extractor]  <-- runs async after response; local Qwen3-4B (Phase 2)
-  [Council Debate]     <-- fires when complexity + dissent gates pass (Phase 2)
-  [WAL Compactor]      <-- nightly cleanup at 03:30
-  [Profile Decay]      <-- nightly confidence decay at 03:30
+```text
+Operator
+  |
+  | GUI / CLI / Telegram / WhatsApp / Slack / Discord / Keet / email / calendar
+  v
+Channel + Surface Adapters
+  |
+  v
+Ingress Sanitizer + Identity + Allowlist
+  |
+  v
+Pipeline Router
+  |---- Recall
+  |---- Profile claims
+  |---- Skills
+  |---- MCP/tool catalog
+  |---- Coding canvas / Kanban state
+  |---- Policy and autonomy context
+  v
+Provider Router
+  |---- Fast role
+  |---- Deep role
+  |---- Council / dissent
+  |---- Local Qwen / Ouro / CLIP / Whisper
+  v
+Response + Action Gate
+  |
+  |---- channel send
+  |---- tool call
+  |---- plugin hook
+  |---- memory proposal
+  |---- workflow action
+  v
+WAL + SQLite Views + Obsidian Mirror
 ```
 
----
+Every sensitive path is designed to cross the same trust boundary: policy, permission, WAL event, and operator-visible audit.
 
-## The WAL (Write-Ahead Log)
+## Core components
 
-Everything Neoth does gets written to the WAL (write-ahead log) before it takes effect.
-The WAL is an append-only event log stored at `~/.neoth/wal/`.
+| Component | Job |
+| :-- | :-- |
+| **Surface adapters** | Normalize GUI, CLI, chat apps, email, calendar, n8n, cron, and coding sessions into a shared request shape. |
+| **Ingress sanitizer** | Blocks prompt-injection surfaces, quoted content, hostile markup, and unsafe inbound payloads before memory or profile learning. |
+| **Pipeline router** | Builds the enriched request: profile, recall, skills, tools, operator rules, channel context, and active task state. |
+| **Provider router** | Picks cloud/local providers by role, cost, latency, privacy, model capability, and circuit-breaker state. |
+| **Council** | Triggers multi-model dissent when risk, complexity, contradiction, or explicit policy warrants it. |
+| **WAL** | Durable source of truth for memory, provider calls, plugin actions, channel sends, recovery, and audit. |
+| **SQLite views** | Queryable projections over the WAL: episodes, importance, council, motor state, habits, profile, embeddings. |
+| **Obsidian mirror** | Human-readable knowledge layer for decisions, notes, reflections, project memory, and operator inspection. |
+| **Plugin runtime** | Skills as data, WASM plugins as sandboxed code with capability gates. |
+| **Private mesh** | LAN/mDNS, Tailscale, Hysteria, Keet, and consent-gated cluster nodes. |
 
-Every message in, every response out, every profile change, every council verdict — all
-events. The WAL is the source of truth. Views (like `idx_profile`, `idx_episode`) are
-derived from the WAL and can be rebuilt from scratch if needed.
+## WAL source of truth
 
-Why append-only: you can't lose data you never deleted. You can audit what happened. You
-can replay events to recover from corruption.
+The WAL is the durable event chain under NEOTH. Views can be rebuilt; the WAL is authoritative.
 
-The WAL uses a 96-byte event header with a CRC checksum. If a frame is corrupted, Neoth
-logs a WAL CRC error and recovers from the last valid checkpoint. See
-[troubleshooting.md#wal-crc-errors](troubleshooting.md#wal-crc-errors).
+It records:
 
-Segments rotate at 256 MB or 24 hours, whichever comes first. Old segments are compacted
-nightly (03:30). You can configure retention in `freedom.yaml`.
+- inbound and outbound messages
+- provider calls and destinations
+- memory/profile changes
+- approval/decline events
+- plugin and skill activity
+- automation actions
+- channel sends
+- recovery and verification events
+- cluster and capability lease events
 
----
+Why this matters:
 
-## Brain regions
+| Property | Result |
+| :-- | :-- |
+| Append-first | NEOTH can audit what happened even after failures. |
+| Rebuildable views | SQLite projections are convenient, not irreplaceable. |
+| Checks and authentication | Corruption and tamper paths become visible. |
+| Redaction semantics | Sensitive values can be removed while preserving integrity events. |
+| Operator commands | `neoth wal verify`, `neoth privacy audit`, and profile evidence views have real backing data. |
 
-Neoth organizes its memory into 7 named indexes. These are organized views over the WAL —
-the names are analogies for how each type of memory behaves, not claims about AI consciousness.
+## Memory regions
 
-| Region | Index | What it stores | Behavior |
-|--------|-------|---------------|---------|
-| Hippocampus | `idx_episode` | Recent conversation turns | Fast access, recent-biased |
-| Amygdala | `idx_importance` | Importance scores per event | Weights recall ranking |
-| Insula | `idx_council` | Council debate state | Council pipeline only |
-| Cerebellum | `idx_motor` | Provider stats, quota tracking | Performance telemetry |
-| Basal Ganglia | `idx_habit` | Skill trigger keywords, tool routing habits | Habit-based routing |
-| Hypothalamus | `idx_profile` | Your learned profile (Phase 2) | Slow-changing, homeostatic |
-| Visual Cortex | `idx_embedding` | Dense vector embeddings (CLIP image, future: audio/text) | Similarity search |
+NEOTH uses brain-region names as pragmatic memory analogies. They are not claims about consciousness; they are a way to keep different memory jobs separate.
 
-When Neoth searches past conversations (recall), it primarily queries Hippocampus and
-uses Amygdala importance scores to rank results. Profile-aware ranking (Phase 2) adds
-a bonus from Hypothalamus fields that match the current topic. `neoth recall --similar-to`
-and `--similar-to-text` run a brute-force cosine scan over `idx_embedding` instead.
+| Region | View | Purpose |
+| :-- | :-- | :-- |
+| **Hippocampus** | `idx_episode` | Events, conversations, timelines, and time-anchored recall. |
+| **Amygdala** | `idx_importance` | Salience, urgency, priority, and risk signals. |
+| **Insula** | `idx_council` | Debate logs, dissent, verdicts, and reasoning traces. |
+| **Cerebellum** | `idx_motor` | Tool outcomes, provider quotas, execution state, and action traces. |
+| **Basal Ganglia** | `idx_habit` | Repeated patterns, skills, triggers, and routines. |
+| **Hypothalamus** | `idx_profile` | Operator profile, preferences, evidence, redactions, and approval state. |
+| **Visual/Semantic index** | `idx_embedding` | CLIP/Whisper/text vectors and multimodal similarity search. |
 
-### idx_embedding — vector store
+## Memory layers
 
-Schema v6 added `idx_embedding`. Each row is:
-
-```
-(source_kind, source_ref)  — natural key (UNIQUE); upsert replaces
-model                      — which checkpoint produced the vector
-embedding BLOB             — dim × 4 bytes, little-endian f32
-dim INTEGER                — vector width; used as the filter in similarity queries
-created_at INTEGER         — unix seconds
-```
-
-Embeddings are expected to be L2-normalised at insert time so similarity is a plain dot
-product (no per-candidate division on the hot path). The brute-force scan walks every row
-whose `dim` matches the query; HNSW / IVF is deferred until the corpus exceeds ~50k vectors.
-
-Currently populated by the vision pipeline (`source_kind = "image"`, 512-dim CLIP ViT-B/32
-vectors). Audio-segment and video-frame `source_kind` values are reserved for future
-whisper-mel and video-frame embeddings.
-
----
+| Layer | Job |
+| :-- | :-- |
+| **L1 Hot working set** | Active chat, current task, canvas, and volatile tool results. |
+| **L2 Warm cache** | Recent recall, active project facts, and high-use context. |
+| **L3 Episodic memory** | Conversations, events, decisions, and timelines. |
+| **L4 Semantic memory** | Embeddings, files, images, audio, video, documents, and concepts. |
+| **L5 Skills and habits** | Routines, trigger patterns, tool success, provider habits, learned workflows. |
+| **L6 Vault mirror** | Obsidian-readable long-term archive owned by the operator. |
 
 ## Multimodal pipeline
 
-When a message arrives with an attachment (Telegram photo, voice, or audio message; or a
-file ingested via `neoth ingest`), it travels through an extraction pipeline before the LLM
-sees it:
-
-```
-Attachment bytes (in-memory or on-disk path)
- |
- | Asset { kind, mime, bytes | path }
- |
-[MediaExtractor router]   route_to_first_match — first backend whose kind matches wins
- |
- +--[PdfExtractor]         pdfium text extraction + page count
- +--[VisionExtractor]      image decode (image crate) → RGB buffer
- |                          → CLIP ViT-B/32 forward pass → 512-dim L2-norm embedding
- |                          (embedding only if ~/.neoth/models/openai-clip-vit-base-patch32/ cached)
- +--[AudioExtractor]       decode to 16 kHz mono f32 → WhisperEngine.transcribe()
- |                          per-chunk language auto-detect → temperature fallback loop
- +--[VideoExtractor]       extract audio track → WhisperEngine; sample frames (future)
- |
- | Extraction { text, metadata { embedding?, extractor, ... } }
- |
-[cli/ingest.rs]            persist embedding to idx_embedding (WAL 0x2C + 0x2D)
- OR
-[cli/serve.rs]             ingest attachment inline; embedding persisted in handler
+```text
+File / attachment / voice / image / video / document
+  |
+  v
+Media router
+  |---- PDF text/forms
+  |---- Image decode + CLIP embedding
+  |---- Audio decode + Whisper transcript
+  |---- Video audio + thumbnail/frame extraction
+  |---- Paperless OCR import
+  v
+Extraction record
+  |
+  |---- WAL event
+  |---- embedding/index update
+  |---- profile-safe recall material
+  v
+Recall + answer + optional Obsidian mirror
 ```
 
-Two WAL events bracket a successful ingest:
-- `0x2C INGEST_EXTRACTED` — text bytes, asset kind, model name, timestamp
-- `0x2D EMBED_PERSISTED` — source_kind, source_ref, model, dim, timestamp
+Large files, untrusted documents, email bodies, and Paperless ingest pass through sanitizer and prompt-injection checks before becoming trusted context.
 
-Both events are in the `0x20..=0x2F` LLM provider lifecycle band by current allocation.
-They will migrate to a dedicated multimodal band when one is carved out.
+## Provider routing
 
-### Model cache layout
+NEOTH can route by role:
 
-Local inference models live under `~/.neoth/models/<repo-flattened>/`. The flattening
-replaces `/` with `-` so `openai/clip-vit-base-patch32` becomes
-`openai-clip-vit-base-patch32`. Each model directory contains the same three canonical
-HuggingFace files:
+| Role | Typical provider |
+| :-- | :-- |
+| Fast answer | Low-latency cloud or local model. |
+| Deep reasoning | Stronger cloud or local reasoning model. |
+| Local profile extraction | Qwen/Ouro path. |
+| Vision | CLIP/image-capable provider path. |
+| Audio | Whisper path. |
+| Council | Multiple role-bound providers with budget and dissent handling. |
 
+Provider calls are audited by destination and circuit-breaker state.
+
+## Coding architecture
+
+The coding buddy is not a separate product bolted on top. It is another surface over the same memory and policy core.
+
+```text
+Prompt
+  |
+  v
+Canvas plan -> Kanban split -> role dispatch -> patch/test/review
+  |
+  v
+Review findings + decisions + test outcomes
+  |
+  v
+Project memory + Obsidian handoff + future recall
 ```
-~/.neoth/models/
-  openai-clip-vit-base-patch32/
-    config.json          (~1 KiB)
-    model.safetensors    (~605 MiB)
-    tokenizer.json       (~524 KiB)
-  openai-whisper-large-v3-turbo/
-    config.json
-    model.safetensors    (~1.6 GiB)
-    tokenizer.json
-```
 
-Models are pulled on-demand by `ClipEngine::new()` / `WhisperEngine::new()` (15-minute
-HF Hub timeout) or proactively via `neoth models pull clip|whisper`. The engines mmap
-the safetensors file; the SAFETY comment in both engines explains the concurrency contract
-(read-only multi-process use is permitted; `neoth models pull` is a no-op against an
-existing cache).
+The important design point: code decisions survive the session.
 
----
+## Private mesh
 
-## Hysteria egress proxy
+NEOTH can run as one node or as a consent-gated private mesh.
 
-When `freedom.yaml` contains a `hysteria:` section with a non-empty `server`, `neothd
-serve` spawns a `HysteriaSupervisor` before constructing any provider. The supervisor:
+| Transport | Purpose |
+| :-- | :-- |
+| LAN/mDNS | Local discovery at home or office. |
+| Tailscale/WireGuard | Private cross-device mesh. |
+| Hysteria | Restricted-network relay path. |
+| Keet | P2P channel and future swarm direction. |
+| Cluster policy | Node pairing, capability leases, topology view, health and resource state. |
 
-1. Writes the operator's config to `~/.neoth/hysteria/config.yaml` (deleted on drop).
-2. Spawns `hysteria client --config <path>` as a subprocess.
-3. Sets `NEOTH_HTTP_PROXY=socks5://127.0.0.1:<local_socks_port>` in the daemon's
-   environment so providers constructed after this point route through the SOCKS5
-   tunnel.
-
-The config renderer (`transport::hysteria::render_yaml_config`) rejects newline and
-control characters in `server` / `auth` to prevent YAML injection. Auth values are
-redacted when `neoth hysteria render-config` prints to the terminal.
-
-Binary lookup order: `$NEOTH_HYSTERIA_BIN` → `hysteria` on `$PATH` →
-`~/.neoth/bin/hysteria[.exe]`. Missing binary is a hard error with an actionable message.
-
-Phase 3b will route reqwest clients through the proxy; v0.1.x wires the subprocess and
-sets the env but leaves provider-level SOCKS5 plumbing to a follow-up.
-
----
-
-## Cloud archive mirror
-
-NEOTH does not talk to Dropbox / GDrive / OneDrive APIs. The operator runs the cloud
-vendor's desktop sync client and points `freedom.yaml::cloud_archive_dest` at the local
-sync folder (e.g. `~/Dropbox`). The `cloud_sync_task` runs periodically (default 3600 s)
-and mirrors `~/.neoth/archive/sessions/` into `<dest>/<subdir>/` using a copy-only,
-skip-unchanged strategy. The cloud client handles transport.
-
-`neoth cloud sync [--dest PATH] [--dry-run]` triggers an on-demand pass.
-`neoth cloud status` prints the configured destination, subdir, and last-sync state.
-
-Phase 2 follow-up: OpenDAL for direct API transport on headless servers.
-
----
-
-## Cluster surface (R-7)
-
-v0.1.x is single-node only. The cluster module exposes two policies (`LocalOnly` /
-`LeastLoaded`) and the `OrchestratingPolicy::pick_peer` trait. `neoth cluster status`
-always reports `single-node` / `local-only`. `neoth cluster plan --peers a:10,b:5`
-dry-runs the routing decision without a real swarm.
-
-Real peer discovery via Hyperswarm is deferred (see
-`QUELLEN/research/R-A1_hyperswarm.md`). The CLI surface and policy trait are finalised
-so the transport upgrade is additive.
-
----
+Keys identify peers; operator approval grants membership and capabilities.
 
 ## Context assembly
 
-Before every LLM call, the Pipeline Router assembles a prompt from four blocks:
+Before an LLM call, NEOTH assembles bounded context blocks:
 
-| Block | What goes in | Size limit |
-|-------|-------------|-----------|
-| A | System prompt, WAL metadata, session ID | ~500 tokens |
-| B | Identity (soul.md), operational rules (claude.md), profile summary (Phase 2), active skills | ~1500 tokens |
-| C | Recalled past conversations relevant to this query | ~2000 tokens |
-| D | Per-request volatile context: skill triggers, tool outputs | ~1000 tokens |
+| Block | Content |
+| :-- | :-- |
+| A | System identity, operator rules, current autonomy level. |
+| B | Approved profile facts, evidence summary, redaction constraints. |
+| C | Relevant recall from episodes, files, documents, and project memory. |
+| D | Active skills, tool catalog, channel state, coding canvas, Kanban state. |
+| E | Per-request volatile outputs and safety constraints. |
 
-The LLM never sees the raw WAL. It sees the assembled prompt. Recall results are selected
-and formatted before inclusion.
+The model does not receive raw WAL. It receives selected, policy-filtered context.
 
----
+## Tool-Framework lineage
 
-## Tool-Framework v4.1 lineage
+NEOTH follows the Tool-Framework v4.1 split:
 
-Neoth is built on the Tool-Framework v4.1 "Pflegbarer Garten" (maintainable garden) design.
-The framework defines three layers (Tool / Pipeline / Ecology), five ingredients (Variation /
-Constraints / Memory / Selection / Runtime), and 13 anti-patterns that Neoth's test suite
-enforces.
+| Layer | Responsibility |
+| :-- | :-- |
+| Tool | Bounded, testable capability. |
+| Pipeline | Orchestration and context flow. |
+| Ecology | Memory, adaptation, scoring, runtime behavior. |
 
-The key guarantee: LLM tools are pure functions (stateless, deterministic given the same inputs).
-State lives in the WAL. Pipelines orchestrate tools. The Ecology layer (Phase 4) observes and
-does not mutate. This separation prevents tool drift and makes behavior auditable.
-
-If you are a developer and want the full spec: `PLAN/tool_framework_v4_1.md`.
-
----
-
-## Phase roadmap
-
-| Phase | Timeline | Key additions |
-|-------|----------|--------------|
-| 1 (MVP) | Day 1-30 | Telegram + CLI + recall + Claude responses |
-| 2 | Day 31-60 | WhatsApp + Slack + local model + profile learning + Council |
-| 3 | Day 61-90 | Profile seed migration + eval framework + parity testing |
-| 4 | Day 91+ | Drift detection + adaptive Council thresholds + Ecology layer |
-
-Developer specs in `PLAN/00_DESIGN_v1.1_FINAL.md`.
+State lives in the WAL and views. Tools stay small. Pipelines make behavior inspectable.

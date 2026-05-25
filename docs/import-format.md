@@ -1,4 +1,4 @@
-# NEOTH Import Format (v0.1)
+# NEOTH Import Format
 
 > Pre-v1.0 normative spec for **how operators bring data INTO NEOTH** —
 > covers the `neoth-migrate` binary's input shape, the file layouts
@@ -154,9 +154,9 @@ WAL returns the same hits as against the source.
 
 ## 6. Wire shape stability guarantee
 
-NEOTH commits to the v0.1 shape above being **wire-stable** through
+NEOTH commits to the import shape above being **wire-stable** through
 v1.x. Field additions land via `serde(default)` so older
-`.import.jsonl` files keep parsing. The migrator emits the v0.1
+`.import.jsonl` files keep parsing. The migrator emits the same
 audit frames regardless of future field additions, so historical
 imports stay queryable.
 
@@ -202,9 +202,9 @@ neoth recall "something you imported" --since 30d
 - **`import` (this spec)** — operator-curated `.import.jsonl` files.
   Used for one-off historical bring-ins ("here are 3 years of
   Telegram exports").
-- **`jarvis-import`** — the Day-65 Phase-3 cutover binary documented
-  in `PLAN/RUNBOOK_phase3_cutover.md`. Walks Alex's specific 12
-  Jarvis stores; not operator-facing.
+- **`legacy-import` / migration helpers** — project-specific migration
+  tools can reuse the same WAL-write layer for private historical stores.
+  Those helpers are not part of the generic user-facing import contract.
 
 The two binaries share the WAL-write layer (same `MIGRATE_RAN`
 0x14 audit frame, same atomicity rules), so operators who later
@@ -214,5 +214,4 @@ want to use both paths get one consistent set of WAL audit events.
 
 ## 9. Changelog
 
-- **2026-05-23 (Session 22, v0.1)** — Initial public spec. Closes
-  E-08. Wire shape pinned for v1.x compatibility.
+- **2026-05-23** — Initial import shape pinned for v1.x compatibility.

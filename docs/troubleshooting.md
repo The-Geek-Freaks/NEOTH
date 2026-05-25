@@ -54,7 +54,7 @@ neoth start
 **Rust version too old:**
 
 ```
-error: package `neoth v0.1.0` cannot be built because it requires rustc 1.86.0 or newer
+error: package `neoth v1.0.0` cannot be built because it requires rustc 1.86.0 or newer
 ```
 
 Fix:
