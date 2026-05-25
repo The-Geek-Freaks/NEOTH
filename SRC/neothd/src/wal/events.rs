@@ -231,6 +231,20 @@ pub const EVENT_TYPE_N8N_REQUEST: u8 = 0x39;
 ///   - `ts_unix`: wall-clock seconds of the recovery event
 pub const EVENT_TYPE_RECOVERY_TRUNCATED: u8 = 0x50;
 
+/// ADV-01 (F4 finding, SPEC §4.3) — emitted when the crash-recovery
+/// scan encounters a `.cpt` compaction file whose paired `.cpt.hmac`
+/// is missing, wrong length, or fails HMAC-SHA256 verification.
+/// Both files are quarantined (renamed with a `.rejected.<ts>` suffix)
+/// and the corresponding `.bin` segment is left untouched.
+///
+/// Payload (JSON):
+///   - `cpt_path`: absolute path of the rejected `.cpt` file
+///   - `reason`: human-readable cause ("hmac mismatch", "hmac missing",
+///               "hmac wrong length")
+///   - `ts_unix`: wall-clock seconds of the rejection event
+///   - `quarantine_path`: where the offending `.cpt` was renamed to
+pub const EVENT_TYPE_COMPACTION_AUTH_FAILED: u8 = 0x51;
+
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
 /// Scheduled job fired by the cron scheduler.

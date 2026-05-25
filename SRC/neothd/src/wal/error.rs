@@ -96,4 +96,11 @@ pub enum WalError {
     /// Workstream F (CT-10/E-20/V1x-06) — zstd decompression failed.
     #[error("WAL segment decompression failed: {0}")]
     Decompress(String),
+
+    /// ADV-01 (F4 finding, SPEC §4.3): a `.cpt` crash-recovery file
+    /// failed HMAC-SHA256 verification — possible tamper / forged
+    /// crafted payload pre-placed by a local attacker. Recovery must
+    /// refuse to apply and quarantine both `.cpt` + `.cpt.hmac`.
+    #[error("WAL compaction file failed authenticity check: {reason}")]
+    CompactionAuthFailed { reason: String },
 }
