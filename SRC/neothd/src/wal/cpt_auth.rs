@@ -265,15 +265,13 @@ mod tests {
     }
 
     #[test]
-    fn drop_wipes_sub_key() {
-        // Manually inspect the sub-key bytes after Drop runs by
-        // re-borrowing the slot. We can't observe the memory after
-        // drop in safe Rust, so this test exercises the Drop body
-        // by constructing + dropping a key and confirming the type
-        // implements `Drop`. The wipe correctness is by code
-        // inspection — the `fill(0)` line in `Drop::drop`.
-        fn assert_drop<T: Drop>() {}
-        assert_drop::<CompactionAuthenticator>();
+    fn drop_runs_without_panic() {
+        // The `Drop` impl wipes the sub-key bytes with `fill(0)`. We
+        // can't observe the memory after drop in safe Rust, so the
+        // wipe correctness is by code inspection. Exercise the Drop
+        // body once to surface any future panic in the wipe path.
+        let auth = CompactionAuthenticator::from_master_key(&fixture_master());
+        drop(auth);
     }
 
     #[test]
