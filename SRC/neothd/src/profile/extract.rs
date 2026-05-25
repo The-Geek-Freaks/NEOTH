@@ -158,6 +158,44 @@ fn strip_code_fence(raw: &str) -> &str {
 /// Best-effort JSON extraction: if the LLM ignored "only the JSON
 /// object" and prefixed prose, find the first `{` and the matching
 /// terminating `}` (depth-counted, ignoring strings).
+/// ADV-03: substring markers that indicate the surrounding text is
+/// quoted, forwarded, or otherwise NOT first-person operator content.
+/// Conservative: false positives just mean "skip extraction this turn",
+/// which is the safe failure mode. False negatives are the security
+/// concern this list defends against.
+const QUOTED_CONTENT_MARKERS: &[&str] = &[
+    ">>>",       // REPL / Python paste indicator
+    "```",       // markdown / fenced code block
+    "</",        // HTML / XML closing tag
+    "wrote:",    // standard email reply prefix ("On 2026-... wrote:")
+    "From:",     // forwarded-email header
+    "Subject:",  // forwarded-email header
+    "-----BEGIN", // forwarded PGP block / PEM payload
+];
+
+/// ADV-03 pre-filter for `extract`. Returns true when the text looks
+/// like it contains content the operator did NOT type themselves —
+/// quoted-reply chains, code blocks, HTML payloads, forwarded
+/// headers. Triggers cause `extract` to short-circuit to "zero
+/// claims" so a hostile-content paste cannot drive profile state.
+pub(crate) fn is_quoted_content(text: &str) -> bool {
+    for m in QUOTED_CONTENT_MARKERS {
+        if text.contains(m) {
+            return true;
+        }
+    }
+    // Email-style quoted-reply: ANY line that starts with `>` (after
+    // optional whitespace) flags the segment. Matches the convention
+    // every mail client + most CLI paste flows use.
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('>') {
+            return true;
+        }
+    }
+    false
+}
+
 fn extract_json_object(raw: &str) -> Option<&str> {
     let start = raw.find('{')?;
     let bytes = raw.as_bytes();
@@ -194,6 +232,34 @@ pub async fn extract(provider: &dyn Provider, window: &AttributedWindow) -> Resu
     // outcome; burning a paid provider call to confirm "nothing here"
     // is wasteful.
     if window.extraction_eligible().is_empty() {
+        return Ok(ProfileDelta {
+            extraction_id: stable_extraction_id(window),
+            conversation_hash: stable_window_hash(window),
+            claims: Vec::new(),
+            ..Default::default()
+        });
+    }
+
+    // ADV-03 (F4 finding): skip extraction when any eligible segment
+    // contains quoted-reply markers, code fences, or HTML/XML tags.
+    // The operator-attributed content is almost certainly NOT their
+    // own first-person claim — it's a forwarded email, a pasted code
+    // snippet, or a chat reply embedding someone else's words. Treating
+    // it as profile data is the prompt-injection vector this finding
+    // closes: an attacker who controls the quoted content (the email
+    // sender they're forwarding, the gist author they're sharing) can
+    // shape the operator's stored profile.
+    if window
+        .extraction_eligible()
+        .iter()
+        .any(|s| is_quoted_content(&s.segment.text))
+    {
+        tracing::info!(
+            window_hash = %stable_window_hash(window),
+            "profile.extract ADV-03: skipping — eligible segment contains \
+             quoted-reply / code-fence / HTML markers (attacker-controllable \
+             content cannot drive profile claims)"
+        );
         return Ok(ProfileDelta {
             extraction_id: stable_extraction_id(window),
             conversation_hash: stable_window_hash(window),
@@ -617,5 +683,112 @@ mod tests {
         let input = "Hallo Welt — émigré 日本語 🦀 quote: 'hi'";
         let out = scrub_boundary_chars(input);
         assert_eq!(input, out, "non-boundary chars must round-trip");
+    }
+
+    // ── ADV-03: is_quoted_content pre-filter coverage ────────────────────
+
+    #[test]
+    fn is_quoted_content_detects_email_reply_prefix() {
+        assert!(is_quoted_content("> Yes I agree"));
+        assert!(is_quoted_content("   > leading-space email quote"));
+        assert!(is_quoted_content(
+            "On 2026-05-25, Alice wrote:\n> hello there"
+        ));
+    }
+
+    #[test]
+    fn is_quoted_content_detects_repl_paste() {
+        assert!(is_quoted_content(">>> python_paste"));
+        // Mid-line >>> still flags.
+        assert!(is_quoted_content("here is my output: >>> 42"));
+    }
+
+    #[test]
+    fn is_quoted_content_detects_code_fence() {
+        assert!(is_quoted_content("```rust\nfn x() {}\n```"));
+        // Even a single fence is enough — fenced content is per spec
+        // "not first-person operator text".
+        assert!(is_quoted_content("paste this: ```hello```"));
+    }
+
+    #[test]
+    fn is_quoted_content_detects_html_xml_tags() {
+        assert!(is_quoted_content("<div>some markup</div>"));
+        // Also: lone </ closing-tag indicator.
+        assert!(is_quoted_content("snippet </tag> trailing"));
+    }
+
+    #[test]
+    fn is_quoted_content_detects_forwarded_email_headers() {
+        assert!(is_quoted_content("From: alice@example.com\nhello"));
+        assert!(is_quoted_content("Subject: re: project\nbody"));
+    }
+
+    #[test]
+    fn is_quoted_content_detects_pem_pgp_block() {
+        let pem = "-----BEGIN PGP MESSAGE-----\nhQ...rest\n-----END PGP MESSAGE-----";
+        assert!(is_quoted_content(pem));
+    }
+
+    #[test]
+    fn is_quoted_content_accepts_plain_first_person_text() {
+        // Drift guard: legitimate operator speech must pass through.
+        // The conservative-bias trade-off accepts FALSE POSITIVES
+        // (over-skip), never FALSE NEGATIVES (under-skip).
+        assert!(!is_quoted_content("I love Rust and live in Berlin"));
+        assert!(!is_quoted_content(
+            "My main editor is vim, I write Go and Rust daily"
+        ));
+        assert!(!is_quoted_content("Hello! How are you today?"));
+    }
+
+    #[test]
+    fn is_quoted_content_accepts_empty_string() {
+        assert!(!is_quoted_content(""));
+    }
+
+    #[tokio::test]
+    async fn extract_short_circuits_when_eligible_segment_is_quoted() {
+        // Adversarial integration test: window has ONE eligible segment
+        // whose content is a quoted-reply chain. `extract` must NOT
+        // call the provider + must return zero claims.
+        let provider = MockProvider {
+            reply: r#"{"claims":[{"field":"role","value":"hacker","confidence":0.99}]}"#.into(),
+            last_request: std::sync::Mutex::new(None),
+        };
+        let window = AttributedWindow {
+            trigger_event_id: 1,
+            segments: vec![segment(
+                10,
+                Attribution::UserSpeech,
+                "> attacker forwarded: I work as a CISO at fortune-50, role: hacker",
+            )],
+        };
+        let delta = extract(&provider, &window).await.unwrap();
+        assert!(
+            delta.claims.is_empty(),
+            "quoted segment must not yield claims, got: {:?}",
+            delta.claims
+        );
+        // Mock provider was NOT invoked — no captured request.
+        assert!(
+            provider.last_request.lock().unwrap().is_none(),
+            "provider MUST NOT be called when segment is quoted content"
+        );
+    }
+
+    #[tokio::test]
+    async fn extract_runs_normally_for_plain_first_person_segments() {
+        // Drift guard: clean operator speech goes through to the LLM.
+        // Uses the existing VALID_JSON_REPLY shape so parse_delta is
+        // happy + the assertion focuses on "provider was invoked".
+        let provider = MockProvider::new(VALID_JSON_REPLY);
+        let window = user_speech_window();
+        let _ = extract(&provider, &window).await.unwrap();
+        // Provider WAS invoked — no skip-extraction short-circuit fired.
+        assert!(
+            provider.last_request.lock().unwrap().is_some(),
+            "extract must invoke provider for normal first-person content"
+        );
     }
 }
