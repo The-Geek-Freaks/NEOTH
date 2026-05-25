@@ -610,4 +610,204 @@ mod tests {
         assert!(!is_local_inference_provider("aws_bedrock"));
         assert!(!is_local_inference_provider("azure_openai"));
     }
+
+    // ── ADV-03 item 4 Phase 8: gate-aware integration tests ─────────────
+
+    #[tokio::test]
+    async fn pipeline_with_gate_queues_when_tty_absent() {
+        // Daemon-mode integration: full pipeline → claim_guard → gate.
+        // Operator runs in `serve` mode (no tty), require_approval=true,
+        // autonomy=Standard. The delta must land in idx_profile_pending
+        // + the run returns PipelineSkip::ApprovalQueued.
+        let (_dir, mut conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+
+        let provider = LlmMock {
+            reply: valid_llm_reply_with_today_date(),
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+
+        let mut cfg = crate::config::ProfileConfig::default();
+        cfg.require_approval = true;
+        let ctx = ApprovalGateContext {
+            config: &cfg,
+            autonomy: crate::permissions::AutonomyLevel::Standard,
+            is_tty: false,
+            // confirm closure must NEVER fire in tty-less mode; panic
+            // if it does to surface the wiring bug loudly.
+            confirm_fn: Box::new(|_| panic!("confirm must not fire without tty")),
+        };
+        let out = run_pipeline(
+            &mut conn,
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            Some(ctx),
+        )
+        .await
+        .unwrap();
+        match out {
+            PipelineRun::Skipped(PipelineSkip::ApprovalQueued(id)) => {
+                assert!(!id.is_empty());
+                // Pending row exists in the DB.
+                let pending = crate::profile::approval_gate::list_pending(&conn, 10).unwrap();
+                assert_eq!(pending.len(), 1);
+                assert_eq!(pending[0].extraction_id, id);
+            }
+            other => panic!("expected ApprovalQueued, got {other:?}"),
+        }
+        // No idx_profile row written — the apply path was bypassed.
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_profile WHERE superseded_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0, "apply_delta MUST NOT run on Queued outcome");
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn pipeline_with_gate_applies_when_tty_confirm_yes() {
+        // Tty integration: operator approves → full flow proceeds to
+        // Stage 6 apply_delta, idx_profile row lands, no pending row.
+        let (_dir, mut conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+
+        let provider = LlmMock {
+            reply: valid_llm_reply_with_today_date(),
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+
+        let mut cfg = crate::config::ProfileConfig::default();
+        cfg.require_approval = true;
+        let ctx = ApprovalGateContext {
+            config: &cfg,
+            autonomy: crate::permissions::AutonomyLevel::Standard,
+            is_tty: true,
+            confirm_fn: Box::new(|_delta| true), // operator says yes
+        };
+        let out = run_pipeline(
+            &mut conn,
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            Some(ctx),
+        )
+        .await
+        .unwrap();
+        match out {
+            PipelineRun::Applied { outcome, .. } => {
+                assert_eq!(outcome.claims_applied, 1);
+            }
+            other => panic!("expected Applied on tty-yes, got {other:?}"),
+        }
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn pipeline_with_gate_declines_when_tty_confirm_no() {
+        // Tty integration: operator declines → PipelineSkip::ApprovalDeclined,
+        // no idx_profile row, no pending row (decline drops the delta).
+        let (_dir, mut conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+
+        let provider = LlmMock {
+            reply: valid_llm_reply_with_today_date(),
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+
+        let mut cfg = crate::config::ProfileConfig::default();
+        cfg.require_approval = true;
+        let ctx = ApprovalGateContext {
+            config: &cfg,
+            autonomy: crate::permissions::AutonomyLevel::Standard,
+            is_tty: true,
+            confirm_fn: Box::new(|_delta| false), // operator says no
+        };
+        let out = run_pipeline(
+            &mut conn,
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            Some(ctx),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            out,
+            PipelineRun::Skipped(PipelineSkip::ApprovalDeclined)
+        ));
+        // No idx_profile row, no pending row — operator rejected the delta.
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_profile", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+        let pending = crate::profile::approval_gate::list_pending(&conn, 10).unwrap();
+        assert_eq!(pending.len(), 0);
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn pipeline_with_gate_full_autonomy_bypasses_confirm() {
+        // AutonomyLevel::Full skips the gate regardless of
+        // require_approval. Confirm closure must never fire; apply
+        // proceeds straight through.
+        let (_dir, mut conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+
+        let provider = LlmMock {
+            reply: valid_llm_reply_with_today_date(),
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+
+        let mut cfg = crate::config::ProfileConfig::default();
+        cfg.require_approval = true;
+        let ctx = ApprovalGateContext {
+            config: &cfg,
+            autonomy: crate::permissions::AutonomyLevel::Full,
+            is_tty: true,
+            confirm_fn: Box::new(|_| panic!("Full autonomy must skip confirm")),
+        };
+        let out = run_pipeline(
+            &mut conn,
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            Some(ctx),
+        )
+        .await
+        .unwrap();
+        assert!(matches!(out, PipelineRun::Applied { .. }));
+        drop(writer);
+        let _ = join.await;
+    }
 }
