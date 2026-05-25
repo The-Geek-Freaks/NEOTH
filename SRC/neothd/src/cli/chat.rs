@@ -1556,6 +1556,12 @@ pub async fn run_chat_with(
                         &guard,
                         &extensions,
                         now_unix(),
+                        // ADV-03 Phase 5 (Session 24): gate context
+                        // None preserves pre-gate behaviour. Wiring
+                        // the chat-path gate context (autonomy +
+                        // is_tty + dialoguer confirm) is Phase 6+
+                        // CLI surface work tracked separately.
+                        None,
                     )
                     .await
                     {

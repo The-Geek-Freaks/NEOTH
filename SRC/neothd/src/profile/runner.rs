@@ -39,6 +39,16 @@ pub enum PipelineSkip {
     ValidateWholeDeltaError(String),
     #[error("guard rejected delta: {0}")]
     GuardRejected(String),
+    /// ADV-03 item 4 Phase 5: Stage-5b approval_gate parked the delta
+    /// in `idx_profile_pending` because the operator runs in daemon
+    /// mode (no tty). Resolve via `neoth profile approve <id>`.
+    #[error("approval_gate queued delta {0} for operator review")]
+    ApprovalQueued(String),
+    /// ADV-03 item 4 Phase 5: operator answered "no" at the tty
+    /// confirm prompt. The delta is dropped + a 0xB7 audit frame
+    /// was emitted.
+    #[error("operator declined delta at approval prompt")]
+    ApprovalDeclined,
 }
 
 /// Outcome of one end-to-end run.
@@ -69,6 +79,11 @@ pub async fn run_pipeline(
     guard: &ProfileClaimGuard,
     extensions: &TypedExtensionRegistry,
     now_unix: u64,
+    // ADV-03 item 4 Phase 5 (Session 24): when `Some`, route the
+    // post-Stage-5 delta through `approval_gate` before apply. When
+    // `None`, behaviour is identical to pre-Phase-5 — every guarded
+    // delta proceeds straight to Stage 6 (existing callers).
+    gate_ctx: Option<ApprovalGateContext<'_>>,
 ) -> Result<PipelineRun> {
     // V10-07 H3 privacy guard: profile extraction sees the operator's
     // full conversation window — routing that through a cloud provider
@@ -158,6 +173,38 @@ pub async fn run_pipeline(
         }
     };
 
+    // Stage 5b — approval_gate (ADV-03 item 4 Phase 5). When the
+    // caller passes an `ApprovalGateContext`, route the guarded
+    // delta through the operator-confirmation gate before apply.
+    // Backward-compat: legacy `run_pipeline` (no context) always
+    // bypasses the gate and behaves exactly as before.
+    if let Some(ctx) = gate_ctx {
+        use crate::profile::approval_gate::{approval_gate, ApprovalOutcome};
+        let outcome = approval_gate(
+            &guarded,
+            ctx.config,
+            ctx.autonomy,
+            ctx.is_tty,
+            conn,
+            ctx.confirm_fn,
+            now_unix,
+        )
+        .context("pipeline stage 5b: approval_gate")?;
+        match outcome {
+            ApprovalOutcome::Approved => {
+                // fall through to Stage 6
+            }
+            ApprovalOutcome::Queued { extraction_id } => {
+                return Ok(PipelineRun::Skipped(PipelineSkip::ApprovalQueued(
+                    extraction_id,
+                )));
+            }
+            ApprovalOutcome::Declined => {
+                return Ok(PipelineRun::Skipped(PipelineSkip::ApprovalDeclined));
+            }
+        }
+    }
+
     // Stage 6 — apply. Idempotent on extraction_id.
     let apply_outcome = apply_delta(conn, writer, &guarded, now_unix as i64)
         .await
@@ -167,6 +214,18 @@ pub async fn run_pipeline(
         outcome: apply_outcome,
         validated_dropped: validated.dropped,
     })
+}
+
+/// ADV-03 item 4 Phase 5: context passed to `run_pipeline_with_gate`
+/// so Stage 5b (`approval_gate`) can route the post-guard delta. The
+/// `confirm_fn` closure isolates the actual prompt — production
+/// callers pass a `dialoguer::Confirm::interact()`; tests pass a
+/// canned yes/no.
+pub struct ApprovalGateContext<'a> {
+    pub config: &'a crate::config::ProfileConfig,
+    pub autonomy: crate::permissions::AutonomyLevel,
+    pub is_tty: bool,
+    pub confirm_fn: Box<dyn FnOnce(&ProfileDelta) -> bool + 'a>,
 }
 
 /// Pull the active redacted field names from `idx_profile_redactions`.
@@ -355,6 +414,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
+            None, // ADV-03 Phase 5: gate context unused in this test
         )
         .await
         .unwrap();
@@ -405,6 +465,7 @@ mod tests {
             &guard,
             &extensions,
             100,
+            None, // ADV-03 Phase 5: gate context unused in this test
         )
         .await
         .unwrap();
@@ -438,6 +499,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
+            None, // ADV-03 Phase 5: gate context unused in this test
         )
         .await
         .unwrap();
@@ -478,6 +540,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
+            None, // ADV-03 Phase 5: gate context unused in this test
         )
         .await
         .unwrap();
@@ -490,6 +553,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
+            None, // ADV-03 Phase 5: gate context unused in this test
         )
         .await
         .unwrap();

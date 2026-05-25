@@ -2567,6 +2567,15 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                 &guard,
                                 &extensions,
                                 now_unix,
+                                // ADV-03 Phase 5 (Session 24): None
+                                // preserves pre-gate behaviour for the
+                                // serve-mode channel ingress pipeline.
+                                // Phase 6+ wires the daemon-mode gate
+                                // context (autonomy + is_tty=false +
+                                // queue-pending closure) once the CLI
+                                // `neoth profile pending` surface is
+                                // shipped.
+                                None,
                             )
                             .await
                             {

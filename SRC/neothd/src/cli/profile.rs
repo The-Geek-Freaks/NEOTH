@@ -385,6 +385,9 @@ async fn run_pipeline_cli_batch(
             &guard,
             &extensions,
             now_unix,
+            // ADV-03 Phase 5: None preserves pre-gate behaviour
+            // for the `neoth profile run` admin command.
+            None,
         )
         .await;
         match result {
