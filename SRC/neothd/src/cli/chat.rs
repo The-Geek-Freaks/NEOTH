@@ -341,6 +341,19 @@ pub async fn run_chat_with(
         .ok()
         .and_then(|t| t.persona_override.clone());
 
+    // ── AR-01 (Session 24) — active profile preset → system_addendum ────
+    // Read `~/.neoth/profile/active_preset.txt` on EVERY turn so that
+    // `neoth profile preset apply <name>` takes effect immediately
+    // without a daemon restart. Pre-fix the addendum only landed in
+    // the system prompt at process boot (via the wizard's one-shot
+    // write into the profile snapshot). LOWKEY's addendum is the empty
+    // string; `filter(!is_empty)` keeps the field None for that case so
+    // the enricher doesn't introduce a stray blank line.
+    let preset_home = crate::config::FreedomConfig::default_neoth_home();
+    let preset_addendum = crate::cli::profile::load_active_preset(&preset_home)
+        .map(|p| crate::profile::presets::apply_preset(p).system_addendum)
+        .filter(|s| !s.is_empty());
+
     // ── K-Repo-Map Phase 3c — pre-compute the auto-context block ─────────
     // Best-effort: any failure silently skips injection.
     let repo_context_block = maybe_repo_context_block(&config, &prompt);
@@ -349,6 +362,7 @@ pub async fn run_chat_with(
     let enriched = crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
         prompt: &prompt,
         operator_context: operator_context.as_deref(),
+        preset_addendum: preset_addendum.as_deref(),
         explicit_system: args.system.as_deref(),
         repo_context_block: repo_context_block.as_deref(),
         skill_system_prompt: skill_layer.as_deref(),

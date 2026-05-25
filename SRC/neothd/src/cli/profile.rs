@@ -1277,6 +1277,122 @@ mod tests {
         assert!(load_active_preset(dir.path()).is_none());
     }
 
+    // ── AR-01 (Session 24) preset_addendum round-trip integration ────
+    //
+    // Pin the full chat-dispatch wiring without spinning up an actual
+    // chat session: write the marker → read it back → derive the
+    // addendum → pass it into `build_enriched_request` and assert the
+    // composed system prompt contains the preset's instruction text.
+    // Pre-fix this whole chain ran only at daemon boot; the test
+    // regression-guards the "every turn" semantics.
+
+    #[test]
+    fn ar_01_full_round_trip_runtime_preset_lands_in_enriched_system() {
+        use crate::pipeline::{EnrichmentInputs, build_enriched_request};
+        use crate::profile::presets::{ProfilePreset, apply_preset};
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        record_active_preset(home, ProfilePreset::Formal).expect("record FORMAL");
+
+        // Mirror the cli/chat.rs + cli/serve.rs wiring exactly.
+        let preset_addendum = load_active_preset(home)
+            .map(|p| apply_preset(p).system_addendum)
+            .filter(|s| !s.is_empty())
+            .expect("FORMAL has a non-empty addendum");
+
+        let out = build_enriched_request(EnrichmentInputs {
+            prompt: "draft an email",
+            operator_context: Some("Be brief."),
+            preset_addendum: Some(&preset_addendum),
+            explicit_system: None,
+            repo_context_block: None,
+            skill_system_prompt: None,
+            used_skill_id: None,
+            mcp_catalogue: None,
+            persona_override: None,
+        });
+
+        let system = out.system.expect("system layered");
+        assert!(
+            system.contains("formal register"),
+            "FORMAL addendum must appear verbatim in the system prompt: {system}",
+        );
+        // Order check: operator_context first, then preset_addendum.
+        let op_pos = system.find("Be brief.").expect("operator block present");
+        let preset_pos = system.find("formal register").expect("preset block present");
+        assert!(
+            op_pos < preset_pos,
+            "operator_context must layer before preset_addendum",
+        );
+    }
+
+    #[test]
+    fn ar_01_lowkey_preset_yields_no_addendum_layer() {
+        // LOWKEY's `system_addendum` is an empty string by design —
+        // the chat dispatch must `filter(!is_empty())` it out so the
+        // enricher doesn't introduce a stray blank line between
+        // operator_context and explicit_system.
+        use crate::pipeline::{EnrichmentInputs, build_enriched_request};
+        use crate::profile::presets::{ProfilePreset, apply_preset};
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        record_active_preset(home, ProfilePreset::Lowkey).expect("record LOWKEY");
+
+        let preset_addendum = load_active_preset(home)
+            .map(|p| apply_preset(p).system_addendum)
+            .filter(|s| !s.is_empty());
+        assert!(
+            preset_addendum.is_none(),
+            "LOWKEY's empty addendum must be filtered out",
+        );
+
+        let out = build_enriched_request(EnrichmentInputs {
+            prompt: "p",
+            operator_context: Some("op"),
+            preset_addendum: preset_addendum.as_deref(),
+            explicit_system: Some("user"),
+            repo_context_block: None,
+            skill_system_prompt: None,
+            used_skill_id: None,
+            mcp_catalogue: None,
+            persona_override: None,
+        });
+        // Exact "op\n\nuser" — no third blank line between them.
+        assert_eq!(out.system.as_deref(), Some("op\n\nuser"));
+    }
+
+    #[test]
+    fn ar_01_mid_session_apply_immediately_swaps_addendum() {
+        // The actual bug AR-01 fixes: a mid-session
+        // `neoth profile preset apply <name>` previously needed a
+        // daemon restart to take effect. The marker file + per-turn
+        // load means the next call to load_active_preset already
+        // sees the new preset.
+        use crate::profile::presets::{ProfilePreset, apply_preset};
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+
+        record_active_preset(home, ProfilePreset::Tutor).expect("record TUTOR");
+        let first = load_active_preset(home)
+            .map(|p| apply_preset(p).system_addendum)
+            .unwrap();
+        assert!(first.contains("tutor"));
+
+        // Operator runs `neoth profile preset apply opsec` mid-session.
+        record_active_preset(home, ProfilePreset::Opsec).expect("flip to OPSEC");
+        let second = load_active_preset(home)
+            .map(|p| apply_preset(p).system_addendum)
+            .unwrap();
+        assert!(
+            second.to_lowercase().contains("pentester"),
+            "OPSEC addendum must take effect on next load, got {second}",
+        );
+        assert_ne!(first, second, "addendum must actually change");
+    }
+
     // ── ADV-03 item 4 Phase 6: pending/approve/decline/migrate CLI tests ───
 
     /// Test-only migrate helper that targets an explicit yaml path

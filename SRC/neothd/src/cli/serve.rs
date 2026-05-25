@@ -1971,6 +1971,16 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 .ok()
                 .and_then(|t| t.persona_override.clone());
 
+            // AR-01 (Session 24) — channel path must read the live
+            // active preset on every inbound so a mid-day
+            // `neoth profile preset apply` flips the channel-side
+            // system prompt without restarting the daemon.
+            let channel_preset_home = crate::config::FreedomConfig::default_neoth_home();
+            let channel_preset_addendum =
+                crate::cli::profile::load_active_preset(&channel_preset_home)
+                    .map(|p| crate::profile::presets::apply_preset(p).system_addendum)
+                    .filter(|s| !s.is_empty());
+
             let channel_repo_context = crate::cli::chat::maybe_repo_context_block(
                 config_for_handler.as_ref(),
                 &sanitized_text,
@@ -1980,6 +1990,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
                     prompt: &sanitized_text,
                     operator_context: operator_context.as_deref(),
+                    preset_addendum: channel_preset_addendum.as_deref(),
                     explicit_system: None,
                     repo_context_block: channel_repo_context.as_deref(),
                     skill_system_prompt: skill_layer.as_deref(),

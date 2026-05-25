@@ -6,21 +6,28 @@
 //! 1. **operator_context** — assembled `~/.neoth/NEOTH.md` + project +
 //!    rules + memory. Top of stack so operator rules are visible
 //!    before anything else the model reads.
-//! 2. **explicit_system** — caller-supplied override (CLI `--system`,
+//! 2. **preset_addendum** — active profile preset's `system_addendum`
+//!    (LOWKEY / FORMAL / DEEPDIVE / TUTOR / OPSEC). AR-01 (Session 24):
+//!    caller resolves the active preset from `~/.neoth/profile/active_preset.txt`
+//!    via `cli/profile.rs::load_active_preset` + `profile::presets::apply_preset`
+//!    on every turn so `neoth profile preset apply <name>` takes effect
+//!    without a daemon restart. Placed adjacent to operator_context because
+//!    the preset is operator-tuning, not a context body.
+//! 3. **explicit_system** — caller-supplied override (CLI `--system`,
 //!    channel-side slash command template, etc.). Merged via blank
-//!    line after operator_context.
-//! 3. **repo_context_block** — K-Repo-Map auto-context block when
+//!    line after the operator-tuning layers.
+//! 4. **repo_context_block** — K-Repo-Map auto-context block when
 //!    `freedom.yaml::code_map.auto_context_max_files > 0` and the
 //!    code map matched relevant files for this prompt. Caller decides
 //!    whether to compute/skip the block.
-//! 4. **skill_system_prompt** — matched skill's `system_prompt` (or
+//! 5. **skill_system_prompt** — matched skill's `system_prompt` (or
 //!    `<skill base> + "\n\n" + <mode delta>` when the mode router
 //!    overlays a narrower trigger). Caller resolves the match
 //!    upstream and hands the assembled string here.
-//! 5. **mcp_catalogue** — rendered MCP tool catalogue when at least
+//! 6. **mcp_catalogue** — rendered MCP tool catalogue when at least
 //!    one MCP server is enabled. Caller pre-assembles the block via
 //!    `mcp::catalogue::assemble_catalogue` (async).
-//! 6. **persona_override** — `tweaks.toml::persona_override` rendered
+//! 7. **persona_override** — `tweaks.toml::persona_override` rendered
 //!    as a `"Tone + persona: <text>"` PREFIX so the tone instruction
 //!    is the first line the model reads after the layered context.
 //!
@@ -58,6 +65,14 @@ pub struct EnrichmentInputs<'a> {
     /// `None` when no operator-context blocks were found (fresh
     /// install with no `~/.neoth/NEOTH.md`).
     pub operator_context: Option<&'a str>,
+    /// AR-01 (Session 24): active profile preset's `system_addendum`.
+    /// `None` when no preset is active or the active preset is LOWKEY
+    /// (whose addendum is the empty string). Caller resolves via
+    /// `cli/profile::load_active_preset(home).map(|p|
+    /// apply_preset(p).system_addendum)` on every turn so a runtime
+    /// `neoth profile preset apply <name>` takes effect without a
+    /// daemon restart.
+    pub preset_addendum: Option<&'a str>,
     /// CLI `--system` arg or channel-side slash command template.
     /// `None` is the common case.
     pub explicit_system: Option<&'a str>,
@@ -99,9 +114,13 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
     // Trim leading/trailing whitespace from every borrowed input so a
     // stray newline at the edge of one block doesn't widen the gap to
     // the next. The merge below adds the canonical "\n\n" separator.
-    let layers: [Option<&str>; 5] = [
+    let layers: [Option<&str>; 6] = [
         inputs
             .operator_context
+            .map(str::trim)
+            .filter(|s| !s.is_empty()),
+        inputs
+            .preset_addendum
             .map(str::trim)
             .filter(|s| !s.is_empty()),
         inputs
@@ -164,6 +183,7 @@ mod tests {
         EnrichmentInputs {
             prompt,
             operator_context: None,
+            preset_addendum: None,
             explicit_system: None,
             repo_context_block: None,
             skill_system_prompt: None,
@@ -303,13 +323,14 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_full_six_layer_composition() {
+    fn snapshot_full_seven_layer_composition() {
         // Drift guard: a known set of inputs produces an exact
         // serialised system string. Any refactor that changes layer
         // ordering / separator / persona prefix will fail this test.
         let inputs = EnrichmentInputs {
             prompt: "do the thing",
             operator_context: Some("# Rules\nBe brief."),
+            preset_addendum: Some("Patient tutor mode. Explain the WHY."),
             explicit_system: Some("Always answer in JSON."),
             repo_context_block: Some("<repo-context>\nsrc/x.rs\n</repo-context>"),
             skill_system_prompt: Some("You are the systematic-debugging skill."),
@@ -321,6 +342,7 @@ mod tests {
         let expected = concat!(
             "Tone + persona: concise\n\n",
             "# Rules\nBe brief.\n\n",
+            "Patient tutor mode. Explain the WHY.\n\n",
             "Always answer in JSON.\n\n",
             "<repo-context>\nsrc/x.rs\n</repo-context>\n\n",
             "You are the systematic-debugging skill.\n\n",
@@ -338,6 +360,7 @@ mod tests {
         let inputs = EnrichmentInputs {
             prompt: "explain x",
             operator_context: Some("Be precise."),
+            preset_addendum: None,
             explicit_system: Some("Use markdown."),
             repo_context_block: Some("<repo-context>\nx.rs\n</repo-context>"),
             skill_system_prompt: None,
@@ -374,6 +397,7 @@ mod tests {
         let inputs = EnrichmentInputs {
             prompt: "telegram inbound text",
             operator_context: Some("Be helpful."),
+            preset_addendum: None,
             explicit_system: None,
             repo_context_block: None,
             skill_system_prompt: Some("Morning-news skill prompt."),
@@ -389,5 +413,60 @@ mod tests {
         );
         assert_eq!(out.system.as_deref(), Some(expected));
         assert_eq!(out.used_skill_id.as_deref(), Some("morning-news"));
+    }
+
+    // ── AR-01 (Session 24) preset_addendum coverage ────────────────────
+
+    #[test]
+    fn preset_addendum_layers_immediately_after_operator_context() {
+        // Operator + preset = the typical mid-session layout when the
+        // operator has flipped to FORMAL via `neoth profile preset apply`.
+        let mut inputs = empty_inputs("draft an email");
+        inputs.operator_context = Some("# Rules\nBe brief.");
+        inputs.preset_addendum = Some(
+            "Respond in formal register. Use full sentences, no contractions, polite address.",
+        );
+        let out = build_enriched_request(inputs);
+        let expected = concat!(
+            "# Rules\nBe brief.\n\n",
+            "Respond in formal register. Use full sentences, no contractions, polite address.",
+        );
+        assert_eq!(out.system.as_deref(), Some(expected));
+    }
+
+    #[test]
+    fn preset_addendum_layers_before_explicit_system() {
+        // CLI `--system` lands BELOW the preset because the preset is
+        // operator-tuning while --system is per-invocation.
+        let mut inputs = empty_inputs("p");
+        inputs.preset_addendum = Some("Pentester mode.");
+        inputs.explicit_system = Some("Override for one call.");
+        let out = build_enriched_request(inputs);
+        assert_eq!(
+            out.system.as_deref(),
+            Some("Pentester mode.\n\nOverride for one call."),
+        );
+    }
+
+    #[test]
+    fn empty_preset_addendum_is_treated_as_absent() {
+        // LOWKEY preset → empty addendum string. The trim+filter step
+        // must drop the layer so we don't introduce a stray blank line.
+        let mut inputs = empty_inputs("p");
+        inputs.operator_context = Some("op");
+        inputs.preset_addendum = Some("");
+        inputs.skill_system_prompt = Some("skill");
+        let out = build_enriched_request(inputs);
+        assert_eq!(out.system.as_deref(), Some("op\n\nskill"));
+    }
+
+    #[test]
+    fn preset_addendum_alone_yields_single_layer_system() {
+        // Fresh install with no operator_md: a preset addendum still
+        // produces a usable system prompt on its own.
+        let mut inputs = empty_inputs("p");
+        inputs.preset_addendum = Some("Long-form research mode.");
+        let out = build_enriched_request(inputs);
+        assert_eq!(out.system.as_deref(), Some("Long-form research mode."));
     }
 }
