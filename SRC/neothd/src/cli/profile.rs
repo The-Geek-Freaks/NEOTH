@@ -104,6 +104,48 @@ pub enum ProfileAction {
         #[arg(long)]
         extensions_file: Option<std::path::PathBuf>,
     },
+    /// ADV-03 item 4 Phase 6: list every profile delta the daemon
+    /// queued in `idx_profile_pending` while running in tty-less
+    /// mode. Operators resolve each row with `approve <extraction_id>`
+    /// (write to `idx_profile`) or `decline <extraction_id>` (drop
+    /// the row). `--limit` caps the output for terminals.
+    Pending {
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// ADV-03 item 4 Phase 6: pop a pending row + run `apply_delta`
+    /// against it. Emits `EVENT_TYPE_PROFILE_DELTA_APPROVED` (0xB6)
+    /// + the regular `PROFILE_DELTA` (0xB0) frame for each claim.
+    Approve {
+        /// Extraction id from `neoth profile pending`. The string
+        /// in the leftmost column.
+        extraction_id: String,
+    },
+    /// ADV-03 item 4 Phase 6: drop a pending row + emit
+    /// `EVENT_TYPE_PROFILE_DELTA_DECLINED` (0xB7) so the audit
+    /// trail records the operator's no-decision. Optional
+    /// `--reason` makes the audit frame self-explanatory at
+    /// replay time.
+    Decline {
+        /// Extraction id from `neoth profile pending`.
+        extraction_id: String,
+        /// Optional one-line note recorded in the 0xB7 audit
+        /// payload.
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// ADV-03 item 4 Phase 6: explicit migration command for
+    /// operators with a pre-Session-24 `freedom.yaml` that doesn't
+    /// carry the `profile.require_approval` field. The serde
+    /// default is `true` so they're already gated, but this command
+    /// surfaces that fact + writes the field explicitly so the
+    /// audit-trail of operator intent is unambiguous.
+    MigrateRequireApproval {
+        /// When set, force the value to `false` instead of `true` —
+        /// for operators who explicitly DO NOT want the gate.
+        #[arg(long)]
+        disable: bool,
+    },
 }
 
 /// P-02 (Session 22) — subcommands under `neoth profile preset`.
@@ -298,7 +340,301 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             )
             .await
         }
+        ProfileAction::Pending { limit } => {
+            run_pending_list(&conn, limit, &args.output)
+        }
+        ProfileAction::Approve { extraction_id } => {
+            drop(conn); // approve needs a fresh &mut connection.
+            run_pending_approve(&db_path, &extraction_id, &args.output).await
+        }
+        ProfileAction::Decline { extraction_id, reason } => {
+            drop(conn);
+            run_pending_decline(&db_path, &extraction_id, reason.as_deref(), &args.output).await
+        }
+        ProfileAction::MigrateRequireApproval { disable } => {
+            run_migrate_require_approval(disable, &args.output)
+        }
     }
+}
+
+// ── ADV-03 item 4 Phase 6: pending / approve / decline / migrate ─────────
+
+fn run_pending_list(
+    conn: &rusqlite::Connection,
+    limit: usize,
+    output: &OutputFormat,
+) -> Result<()> {
+    let rows = crate::profile::approval_gate::list_pending(conn, limit)?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let arr: Vec<_> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "id": r.id,
+                        "extraction_id": r.extraction_id,
+                        "claim_count": r.claim_count,
+                        "created_at_unix": r.created_at_unix,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&arr)?);
+        }
+        OutputFormat::Table => {
+            if rows.is_empty() {
+                println!(
+                    "No pending profile deltas. Operator-confirmation gate is idle."
+                );
+            } else {
+                println!(
+                    "{:<32} {:>8} {:>18}",
+                    "extraction_id", "claims", "created_at_unix"
+                );
+                for r in &rows {
+                    println!(
+                        "{:<32} {:>8} {:>18}",
+                        r.extraction_id, r.claim_count, r.created_at_unix
+                    );
+                }
+                println!();
+                println!(
+                    "Resolve with `neoth profile approve <extraction_id>` or \
+                     `decline <extraction_id> [--reason ...]`."
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn run_pending_approve(
+    db_path: &std::path::Path,
+    extraction_id: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    let mut conn = crate::memory::store::open(db_path).context("open views.db")?;
+    let row = match crate::profile::approval_gate::pop_pending(&conn, extraction_id)? {
+        Some(r) => r,
+        None => {
+            anyhow::bail!(
+                "no pending row for extraction_id={extraction_id} \
+                 (already resolved or typo?)"
+            );
+        }
+    };
+    // Decode the parked delta + push through the existing apply_delta
+    // path. The delete inside pop_pending already happened; if
+    // apply_delta fails the operator can re-extract — the queued
+    // row's purpose was the gate, not durability.
+    let delta: crate::profile::delta::ProfileDelta =
+        serde_json::from_str(&row.delta_json).context("decode parked delta_json")?;
+
+    // Spin up a fresh WAL writer for the apply call. Heavy but
+    // bounded — operators run approve interactively from a tty
+    // session, not in a hot loop.
+    let segment_path = crate::config::FreedomConfig::default_wal_dir()
+        .join("000001.wal");
+    let (writer, _join) = crate::wal::writer::spawn(segment_path)
+        .context("spawn WAL writer for approve")?;
+
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // Emit the 0xB6 audit frame BEFORE apply_delta — so a crash mid-
+    // apply leaves a clear "operator approved this delta" record
+    // even when the row writes to idx_profile didn't all land.
+    let approved_payload = crate::profile::approval_gate::approved_payload(
+        extraction_id,
+        row.claim_count as usize,
+        now_unix,
+    );
+    let header = crate::wal::HeaderBuilder::new(
+        crate::profile::approval_gate::APPROVED_EVENT,
+        &approved_payload,
+    )
+    .build();
+    let _ = writer.try_append_sync(header, approved_payload);
+
+    let outcome = crate::profile::apply::apply_delta(&mut conn, &writer, &delta, now_unix as i64)
+        .await
+        .context("apply approved delta")?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "extraction_id": extraction_id,
+                    "approved": true,
+                    "claims_applied": outcome.claims_applied,
+                    "claims_reinforced": outcome.claims_reinforced,
+                    "claims_superseded": outcome.claims_superseded,
+                    "now_unix": now_unix,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "approved extraction_id={extraction_id}: applied={}, \
+                 reinforced={}, superseded={}",
+                outcome.claims_applied,
+                outcome.claims_reinforced,
+                outcome.claims_superseded,
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn run_pending_decline(
+    db_path: &std::path::Path,
+    extraction_id: &str,
+    reason: Option<&str>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let conn = crate::memory::store::open(db_path).context("open views.db")?;
+    let row = match crate::profile::approval_gate::pop_pending(&conn, extraction_id)? {
+        Some(r) => r,
+        None => {
+            anyhow::bail!(
+                "no pending row for extraction_id={extraction_id} \
+                 (already resolved or typo?)"
+            );
+        }
+    };
+
+    let segment_path = crate::config::FreedomConfig::default_wal_dir()
+        .join("000001.wal");
+    let (writer, _join) = crate::wal::writer::spawn(segment_path)
+        .context("spawn WAL writer for decline")?;
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = crate::profile::approval_gate::declined_payload(
+        extraction_id,
+        row.claim_count as usize,
+        now_unix,
+        reason,
+    );
+    let header = crate::wal::HeaderBuilder::new(
+        crate::profile::approval_gate::DECLINED_EVENT,
+        &payload,
+    )
+    .build();
+    let _ = writer.try_append_sync(header, payload);
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "extraction_id": extraction_id,
+                    "declined": true,
+                    "reason": reason,
+                    "now_unix": now_unix,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "declined extraction_id={extraction_id} (reason: {})",
+                reason.unwrap_or("<none>"),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<()> {
+    use crate::config::FreedomConfig;
+    let path = FreedomConfig::default_path();
+    if !path.exists() {
+        anyhow::bail!(
+            "freedom.yaml not found at {} — run `neoth init` first",
+            path.display()
+        );
+    }
+    let raw = std::fs::read_to_string(&path)
+        .with_context(|| format!("read {}", path.display()))?;
+    let target_value = if disable { "false" } else { "true" };
+
+    // Idempotent surgical edit: scan for an existing
+    // `require_approval:` line under `profile:` and rewrite. If
+    // absent, append the line at the end of the profile block (we
+    // detect the block by the bare `profile:` header — operators
+    // hand-editing yaml use that convention).
+    let already_set_pattern = format!("require_approval: {target_value}");
+    if raw.contains(&already_set_pattern) {
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "migrated": false,
+                        "reason": "already-set",
+                        "value": target_value,
+                    }))?
+                );
+            }
+            OutputFormat::Table => {
+                println!(
+                    "profile.require_approval is already {target_value}. No change written."
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    // Two cases: (a) field already present with the OTHER value
+    // (flip it), (b) field absent (insert).
+    let updated = if raw.contains("require_approval:") {
+        // Flip existing line — match either spelling: `true` or `false`.
+        raw.replace("require_approval: true", &format!("require_approval: {target_value}"))
+           .replace("require_approval: false", &format!("require_approval: {target_value}"))
+    } else if raw.contains("\nprofile:\n") || raw.starts_with("profile:\n") {
+        // Insert under the existing profile: header.
+        let needle = "profile:\n";
+        raw.replacen(
+            needle,
+            &format!("profile:\n  require_approval: {target_value}\n"),
+            1,
+        )
+    } else {
+        // No profile: block at all — append one. Conservative since
+        // hand-edited freedom.yaml is rare and we want the migration
+        // to never destroy operator content.
+        format!(
+            "{}\nprofile:\n  require_approval: {target_value}\n",
+            raw.trim_end(),
+        )
+    };
+
+    std::fs::write(&path, updated.as_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "migrated": true,
+                    "field": "profile.require_approval",
+                    "value": target_value,
+                    "path": path.display().to_string(),
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "wrote profile.require_approval={target_value} to {}",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Pull the most-recent N RAW_TEXT + CHANNEL_INGRESS event ids from
@@ -939,5 +1275,183 @@ mod tests {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"not-a-real-preset-name").unwrap();
         assert!(load_active_preset(dir.path()).is_none());
+    }
+
+    // ── ADV-03 item 4 Phase 6: pending/approve/decline/migrate CLI tests ───
+
+    /// Test-only migrate helper that targets an explicit yaml path
+    /// instead of `FreedomConfig::default_path()` — keeps the test
+    /// off the global HOME / USERPROFILE env vars (Session 24 env-
+    /// mutation refactor pattern).
+    fn migrate_require_approval_at_path(
+        yaml_path: &std::path::Path,
+        disable: bool,
+    ) -> Result<bool> {
+        let raw = std::fs::read_to_string(yaml_path)?;
+        let target_value = if disable { "false" } else { "true" };
+        let already = format!("require_approval: {target_value}");
+        if raw.contains(&already) {
+            return Ok(false);
+        }
+        let updated = if raw.contains("require_approval:") {
+            raw.replace(
+                "require_approval: true",
+                &format!("require_approval: {target_value}"),
+            )
+            .replace(
+                "require_approval: false",
+                &format!("require_approval: {target_value}"),
+            )
+        } else if raw.contains("\nprofile:\n") || raw.starts_with("profile:\n") {
+            raw.replacen(
+                "profile:\n",
+                &format!("profile:\n  require_approval: {target_value}\n"),
+                1,
+            )
+        } else {
+            format!(
+                "{}\nprofile:\n  require_approval: {target_value}\n",
+                raw.trim_end()
+            )
+        };
+        std::fs::write(yaml_path, updated.as_bytes())?;
+        Ok(true)
+    }
+
+    #[test]
+    fn migrate_require_approval_writes_field_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        // Existing freedom.yaml with profile block but no require_approval.
+        std::fs::write(
+            &path,
+            "operator_id: tester\nprovider_kind: claude_cli\nprofile:\n  learn_enabled: false\n",
+        )
+        .unwrap();
+
+        let wrote = migrate_require_approval_at_path(&path, false).unwrap();
+        assert!(wrote, "first call must write the field");
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            after.contains("require_approval: true"),
+            "yaml must carry require_approval: true after migrate, got: {after}"
+        );
+    }
+
+    #[test]
+    fn migrate_require_approval_disable_flag_writes_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(&path, "profile:\n  learn_enabled: false\n").unwrap();
+        let wrote = migrate_require_approval_at_path(&path, true).unwrap();
+        assert!(wrote);
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("require_approval: false"));
+        assert!(
+            !after.contains("require_approval: true"),
+            "must not have left both spellings: {after}"
+        );
+    }
+
+    #[test]
+    fn migrate_require_approval_is_idempotent_when_already_set() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "profile:\n  require_approval: true\n  learn_enabled: false\n",
+        )
+        .unwrap();
+        let wrote = migrate_require_approval_at_path(&path, false).unwrap();
+        assert!(!wrote, "noop when value already matches target");
+        let after = std::fs::read_to_string(&path).unwrap();
+        // Untouched — no new line, no duplicate field.
+        assert_eq!(
+            after.matches("require_approval:").count(),
+            1,
+            "must not duplicate the field on noop"
+        );
+    }
+
+    #[test]
+    fn migrate_require_approval_flips_existing_value() {
+        // disable=true  → target value = "false"
+        // disable=false → target value = "true"
+        let dir = tempfile::tempdir().unwrap();
+
+        // Case 1: yaml has false, migrate with disable=true (target=false)
+        // → noop because already at target.
+        let path_a = dir.path().join("a.yaml");
+        std::fs::write(
+            &path_a,
+            "profile:\n  require_approval: false\n  learn_enabled: false\n",
+        )
+        .unwrap();
+        let wrote = migrate_require_approval_at_path(&path_a, true).unwrap();
+        assert!(!wrote, "already false, target false (disable=true) → noop");
+
+        // Case 2: yaml has false, migrate with disable=false (target=true)
+        // → flip false → true.
+        let path_b = dir.path().join("b.yaml");
+        std::fs::write(
+            &path_b,
+            "profile:\n  require_approval: false\n  learn_enabled: false\n",
+        )
+        .unwrap();
+        let wrote2 = migrate_require_approval_at_path(&path_b, false).unwrap();
+        assert!(wrote2, "false → true (disable=false) must rewrite");
+        let after = std::fs::read_to_string(&path_b).unwrap();
+        assert!(after.contains("require_approval: true"));
+        assert!(!after.contains("require_approval: false"));
+    }
+
+    #[test]
+    fn migrate_require_approval_creates_profile_block_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        // freedom.yaml with no profile: block at all.
+        std::fs::write(&path, "operator_id: tester\nprovider_kind: claude_cli\n").unwrap();
+        let wrote = migrate_require_approval_at_path(&path, false).unwrap();
+        assert!(wrote);
+        let after = std::fs::read_to_string(&path).unwrap();
+        assert!(after.contains("profile:\n  require_approval: true"));
+        // Original lines preserved.
+        assert!(after.contains("operator_id: tester"));
+        assert!(after.contains("provider_kind: claude_cli"));
+    }
+
+    #[test]
+    fn pending_list_helper_renders_empty_db_cleanly() {
+        // Exercises the read-only list path via approval_gate::
+        // list_pending directly — no CLI output capture needed.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let rows = crate::profile::approval_gate::list_pending(&conn, 10).unwrap();
+        assert!(rows.is_empty(), "fresh db has no pending rows");
+    }
+
+    #[test]
+    fn pending_list_helper_returns_inserted_row() {
+        use crate::profile::approval_gate::{insert_pending, list_pending};
+        use crate::profile::delta::{ProfileDelta, RawClaim};
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let delta = ProfileDelta {
+            extraction_id: "ext-cli-test-1".into(),
+            conversation_hash: "h".into(),
+            claims: vec![RawClaim {
+                field: "identity.role".into(),
+                value_json: serde_json::json!("dev"),
+                confidence: 0.9,
+                reasoning: "operator said so".into(),
+                evidence_event_ids: vec![1],
+            }],
+            ..Default::default()
+        };
+        insert_pending(&conn, &delta, 100).unwrap();
+        let rows = list_pending(&conn, 10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].extraction_id, "ext-cli-test-1");
+        assert_eq!(rows[0].claim_count, 1);
     }
 }
