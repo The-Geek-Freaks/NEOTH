@@ -233,9 +233,16 @@ pub fn redact_before_state_if_credential_bearing<'a>(
     before_state: &'a [u8],
 ) -> std::borrow::Cow<'a, [u8]> {
     use std::borrow::Cow;
+    // SX-02 (A5 CRIT-02): ChannelSend MUST redact too — operator-typed
+    // text from inbound channels regularly contains pasted API keys
+    // ("here's my new openai key sk-..."). Excluding it meant such
+    // keys persisted in plaintext WAL `before_state` forever.
     let should_redact = matches!(
         kind,
-        MutationKind::ConfigWrite | MutationKind::FileWrite | MutationKind::Other
+        MutationKind::ConfigWrite
+            | MutationKind::FileWrite
+            | MutationKind::Other
+            | MutationKind::ChannelSend
     );
     if !should_redact {
         return Cow::Borrowed(before_state);
@@ -519,19 +526,15 @@ mod tests {
     }
 
     #[test]
-    fn k_sec_5_skips_redaction_for_non_credential_kinds() {
-        // ChannelSend, McpToolInvoke, SqlMutation snapshots are not
-        // typically credential-bearing — the before_state is e.g. a
-        // prior outbound message id or a SQL row's JSON dump. Skip
-        // the regex pass to avoid surprising redactions in
-        // domain-specific bytes that happen to match a secret shape.
+    fn k_sec_5_skips_redaction_for_domain_specific_non_text_kinds() {
+        // SX-02 (A5 CRIT-02) INVERT: ChannelSend now redacts (operator-
+        // typed inbound text routinely carries pasted API keys). The
+        // remaining skip set covers MutationKinds whose before_state is
+        // domain-specific bytes (SQL row dumps, MCP tool inputs) that
+        // we accept may incidentally match a secret regex — operators
+        // who need redaction there enable per-tool redaction policies
+        // in a later phase (tracked separately).
         let pretend_secret = b"sk-ant-api03_xxxxxxxxxxxxxxxxxxxx";
-        let out =
-            redact_before_state_if_credential_bearing(MutationKind::ChannelSend, pretend_secret);
-        assert_eq!(
-            &*out, pretend_secret,
-            "ChannelSend must NOT trigger redaction"
-        );
         let out =
             redact_before_state_if_credential_bearing(MutationKind::SqlMutation, pretend_secret);
         assert_eq!(
@@ -544,6 +547,58 @@ mod tests {
             &*out, pretend_secret,
             "McpToolInvoke must NOT trigger redaction"
         );
+    }
+
+    #[test]
+    fn k_sec_5_channelsend_redacts_openai_key() {
+        let payload = b"new key for you: sk-1234567890abcdefghijklmnopqrstuvwxyz123456";
+        let out = redact_before_state_if_credential_bearing(MutationKind::ChannelSend, payload);
+        let s = std::str::from_utf8(&out).expect("redacted output stays UTF-8");
+        assert!(
+            s.contains("[REDACTED"),
+            "expected redaction marker in {s:?}"
+        );
+        assert!(
+            !s.contains("sk-1234567890abcdef"),
+            "raw OpenAI-style key leaked: {s:?}"
+        );
+    }
+
+    #[test]
+    fn k_sec_5_channelsend_redacts_anthropic_key() {
+        let payload = b"my anthropic key is sk-ant-api03_REPLACEMEWITHREALKEYBYTESxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+        let out = redact_before_state_if_credential_bearing(MutationKind::ChannelSend, payload);
+        let s = std::str::from_utf8(&out).expect("redacted output stays UTF-8");
+        assert!(s.contains("[REDACTED"), "expected redaction marker in {s:?}");
+        assert!(
+            !s.contains("REPLACEMEWITHREAL"),
+            "raw Anthropic-style key leaked: {s:?}"
+        );
+    }
+
+    #[test]
+    fn k_sec_5_channelsend_preserves_non_secret_utf8() {
+        // Plain operator message must round-trip unchanged so the
+        // WAL replay surface keeps producing readable history. The
+        // Cow::Borrowed return signals zero-copy / no allocation.
+        let payload = b"hello world, no secrets in this message";
+        let out = redact_before_state_if_credential_bearing(MutationKind::ChannelSend, payload);
+        assert!(
+            matches!(out, std::borrow::Cow::Borrowed(_)),
+            "non-secret ChannelSend must not allocate"
+        );
+        assert_eq!(&*out, payload);
+    }
+
+    #[test]
+    fn k_sec_5_channelsend_passthrough_on_binary_payload() {
+        // Non-UTF-8 inbound channel payload (e.g. a forwarded binary
+        // attachment recorded as opaque bytes) must not panic in the
+        // redactor — the UTF-8 check bails to Cow::Borrowed.
+        let payload: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0xFF, 0xFE, 0xFD];
+        let out = redact_before_state_if_credential_bearing(MutationKind::ChannelSend, &payload);
+        assert!(matches!(out, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(&*out, &payload[..]);
     }
 
     #[test]
