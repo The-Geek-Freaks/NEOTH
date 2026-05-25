@@ -6,7 +6,7 @@
 
 <div align="center">
 
-<img src=".github/assets/neoth-readme-hero.svg" alt="NEOTH - Stop reintroducing yourself to your AI" width="100%">
+<img src=".github/assets/neoth-hero-white.svg" alt="NEOTH - Stop reintroducing yourself to your AI" width="100%">
 
 <br>
 
