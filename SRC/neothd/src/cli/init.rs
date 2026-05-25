@@ -394,6 +394,14 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
             tracing::warn!(error = %e, "post-init checkpoint clear failed (cosmetic)");
         }
         println!("Configuration written to ~/.neoth/");
+        // R-05 (Session 24) — offer to auto-start the daemon + greet
+        // with the first-tour message. Runs on TTY only; CI / pipe
+        // skip so the wizard remains scriptable.
+        if interactive {
+            if let Err(e) = step9_offer_start_daemon(&neoth_dir) {
+                tracing::warn!(error = %e, "auto-start daemon offer failed (cosmetic)");
+            }
+        }
         // Phase 28c R-24 GT-4: optional Q&A ground-truth seed. Runs only on
         // a TTY; non-interactive flow points operator at `neoth groundtruth
         // ask` instead. Skippable in interactive mode too.
@@ -568,6 +576,157 @@ fn format_checkpoint_age(ts_unix: i64) -> String {
         d => format!("{} days ago", d / 86_400),
     };
     format!("last updated {phrase}")
+}
+
+/// Marker filename written under `~/.neoth/` to flag the very first
+/// chat session post-wizard. `neoth chat` reads + deletes it on its
+/// next run and prepends the first-tour greeting. Single-use; once
+/// the chat session consumes it the operator is past onboarding.
+pub const FIRST_TOUR_MARKER: &str = "first_tour_pending";
+
+/// Body printed for the very first interactive `neoth chat` after the
+/// wizard finishes. Lives next to the marker constant so the chat
+/// path imports both from a single source of truth.
+pub const FIRST_TOUR_MESSAGE: &str = "Hi, I'm running. Want a quick tour? \
+                                      Type `neoth chat \"give me a tour\"` \
+                                      or `neoth recall --help` to start exploring.";
+
+/// R-05 (Session 24) — final wizard step (interactive only). Offers
+/// `Start NEOTH now? [Y/n]`. On Yes:
+///   1. Spawns `neoth serve` as a detached background process so the
+///      operator's terminal returns immediately + the daemon survives
+///      the wizard process exit.
+///   2. Drops the [`FIRST_TOUR_MARKER`] file so the next interactive
+///      `neoth chat` session prepends the "Hi, I'm running. Want a
+///      quick tour?" greeting.
+///   3. Prints a confirmation line with the spawned PID + suggested
+///      first command.
+///
+/// On No: prints a hint pointing at `neoth serve` and the same first-
+/// tour suggestion. The marker is still written so a later
+/// operator-initiated `neoth serve` + `neoth chat` lands in the same
+/// onboarding-aware path.
+fn step9_offer_start_daemon(neoth_dir: &std::path::Path) -> Result<()> {
+    #[cfg(feature = "wizard")]
+    {
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Start NEOTH now?")
+            .default(true)
+            .interact()
+            .context("auto-start daemon confirm")?;
+
+        // Always drop the first-tour marker — operator might start
+        // the daemon later by hand, and the next chat session should
+        // still feel like the first.
+        if let Err(e) = write_first_tour_marker(neoth_dir) {
+            tracing::warn!(error = %e, "first-tour marker write failed (cosmetic)");
+        }
+
+        if want {
+            match spawn_daemon_detached() {
+                Ok(pid) => println!(
+                    "✓ NEOTH daemon started (pid {pid}). \
+                     Try: `neoth chat \"give me a tour\"`",
+                ),
+                Err(e) => {
+                    tracing::warn!(error = %e, "auto-start spawn failed");
+                    println!(
+                        "Couldn't auto-start the daemon ({e}). \
+                         Run `neoth serve` from a new terminal, then \
+                         `neoth chat \"give me a tour\"`."
+                    );
+                }
+            }
+        } else {
+            println!(
+                "Start NEOTH any time with `neoth serve`. \
+                 First-chat suggestion: `neoth chat \"give me a tour\"`."
+            );
+        }
+        Ok(())
+    }
+    #[cfg(not(feature = "wizard"))]
+    {
+        // No dialoguer build → leave the marker so the operator's
+        // first chat session still gets the tour, and tell them how
+        // to start the daemon.
+        let _ = write_first_tour_marker(neoth_dir);
+        println!(
+            "Start NEOTH with `neoth serve` (run in a separate terminal). \
+             First-chat suggestion: `neoth chat \"give me a tour\"`."
+        );
+        Ok(())
+    }
+}
+
+/// Spawn the current binary with the `serve` subcommand as a detached
+/// background process. Returns the child PID on success.
+///
+/// Detach semantics:
+///   - **Unix**: `Stdio::null()` on stdin/stdout/stderr so the daemon
+///     keeps running after the wizard's shell exits. The kernel inherits
+///     orphaned processes by init/launchd, so an explicit `setsid` isn't
+///     required for the wizard's "I just want it running" UX.
+///   - **Windows**: `Stdio::null()` plus `CREATE_NEW_PROCESS_GROUP`
+///     (via the `windows` crate's process flags) detaches the child
+///     from the console so closing the wizard terminal doesn't SIGTERM
+///     the daemon.
+///
+/// The path comes from `std::env::current_exe()` so a `cargo run
+/// --bin neoth` invocation reuses the same binary instead of relying
+/// on a `PATH` lookup that might miss a freshly-built dev binary.
+fn spawn_daemon_detached() -> Result<u32> {
+    use std::process::{Command, Stdio};
+
+    let exe = std::env::current_exe().context("locate current neoth binary for daemon spawn")?;
+
+    let mut cmd = Command::new(&exe);
+    cmd.arg("serve")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NEW_PROCESS_GROUP = 0x00000200; DETACHED_PROCESS = 0x00000008.
+        // The combination keeps the child alive after the wizard shell
+        // closes + decouples it from Ctrl+C in the parent console.
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
+    }
+
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("spawn `{} serve`", exe.display()))?;
+    Ok(child.id())
+}
+
+/// Drop the [`FIRST_TOUR_MARKER`] file. Idempotent — overwrites if
+/// present (operator re-ran the wizard with `--force`, both runs
+/// should land in the same onboarding-aware first-chat path).
+fn write_first_tour_marker(neoth_dir: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(neoth_dir).with_context(|| {
+        format!(
+            "create neoth dir for first-tour marker: {}",
+            neoth_dir.display(),
+        )
+    })?;
+    let path = neoth_dir.join(FIRST_TOUR_MARKER);
+    std::fs::write(&path, FIRST_TOUR_MESSAGE.as_bytes())
+        .with_context(|| format!("write first-tour marker: {}", path.display()))?;
+    Ok(())
+}
+
+/// Read + delete the first-tour marker. Returns `Some(message)` once
+/// and `None` thereafter — used by the chat path to render the
+/// greeting at most once per wizard run.
+pub fn consume_first_tour_marker(neoth_dir: &std::path::Path) -> Option<String> {
+    let path = neoth_dir.join(FIRST_TOUR_MARKER);
+    let body = std::fs::read_to_string(&path).ok()?;
+    let _ = std::fs::remove_file(&path);
+    Some(body)
 }
 
 fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
@@ -3506,6 +3665,80 @@ mod tests {
         // pre-epoch shouldn't crash the resume prompt.
         assert_eq!(format_checkpoint_age(0), "timestamp unavailable");
         assert_eq!(format_checkpoint_age(-1), "timestamp unavailable");
+    }
+
+    // ── R-05 (Session 24) auto-start + first-tour marker ─────────────
+
+    #[test]
+    fn write_first_tour_marker_creates_file_with_canonical_body() {
+        let dir = tempfile::tempdir().unwrap();
+        super::write_first_tour_marker(dir.path()).expect("write marker");
+        let path = dir.path().join(super::FIRST_TOUR_MARKER);
+        assert!(path.exists(), "marker file must exist after write");
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(body, super::FIRST_TOUR_MESSAGE);
+    }
+
+    #[test]
+    fn consume_first_tour_marker_returns_some_then_none() {
+        let dir = tempfile::tempdir().unwrap();
+        super::write_first_tour_marker(dir.path()).expect("write");
+        let first = super::consume_first_tour_marker(dir.path());
+        assert!(first.is_some());
+        assert_eq!(first.as_deref(), Some(super::FIRST_TOUR_MESSAGE));
+
+        // Second call: marker consumed → None.
+        let second = super::consume_first_tour_marker(dir.path());
+        assert!(
+            second.is_none(),
+            "marker is single-use; second consume must return None",
+        );
+        assert!(
+            !dir.path().join(super::FIRST_TOUR_MARKER).exists(),
+            "consume must delete the file",
+        );
+    }
+
+    #[test]
+    fn consume_first_tour_marker_returns_none_when_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = super::consume_first_tour_marker(dir.path());
+        assert!(
+            out.is_none(),
+            "fresh-install state (no wizard ran yet) → None, not Err",
+        );
+    }
+
+    #[test]
+    fn write_first_tour_marker_is_idempotent_on_rewrite() {
+        // Operator re-runs `neoth init --force` → second write must
+        // succeed + leave the file at the canonical message. Catches
+        // a future regression that switches to "fail if exists" mode.
+        let dir = tempfile::tempdir().unwrap();
+        super::write_first_tour_marker(dir.path()).expect("first");
+        // Tamper with the file as if a partial write happened.
+        std::fs::write(
+            dir.path().join(super::FIRST_TOUR_MARKER),
+            b"stale-content",
+        )
+        .unwrap();
+        super::write_first_tour_marker(dir.path()).expect("second");
+        let body =
+            std::fs::read_to_string(dir.path().join(super::FIRST_TOUR_MARKER)).unwrap();
+        assert_eq!(body, super::FIRST_TOUR_MESSAGE);
+    }
+
+    #[test]
+    fn first_tour_message_is_actionable_one_liner() {
+        // Drift guard: the greeting must mention a runnable command so
+        // a first-time operator has a clear next step. If a future
+        // refactor reduces it to "Hello." this fails.
+        assert!(
+            super::FIRST_TOUR_MESSAGE.contains("neoth chat")
+                || super::FIRST_TOUR_MESSAGE.contains("neoth recall"),
+            "greeting must reference a runnable command: {}",
+            super::FIRST_TOUR_MESSAGE,
+        );
     }
 
     #[test]

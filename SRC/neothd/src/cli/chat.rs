@@ -104,6 +104,16 @@ pub async fn run_chat_with(
 ) -> Result<()> {
     info!(provider = provider.name(), "neoth chat");
 
+    // R-05 (Session 24) — surface the first-tour greeting at most
+    // once per wizard run. `consume_first_tour_marker` reads + deletes
+    // the marker so subsequent chat invocations don't repeat it. Best-
+    // effort: a missing or unreadable marker means "operator past the
+    // onboarding moment", which is the safe default.
+    let first_tour_home = crate::config::FreedomConfig::default_neoth_home();
+    if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
+        println!("[neoth] {greeting}");
+    }
+
     let prompt = resolve_prompt(&args).await?;
 
     let wal_dir = FreedomConfig::default_wal_dir();
