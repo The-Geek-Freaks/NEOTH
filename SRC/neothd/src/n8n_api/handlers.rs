@@ -314,6 +314,41 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // sub-agent / slash / hook chain — workflow authors who need
     // those features should call /api/channel/send + let the
     // channel pipeline run the full stack.
+    //
+    // Session 24 fix #5: even on the bare-metal surface we now
+    // (a) honour autonomy=Strict by refusing cloud provider calls
+    //     without explicit operator confirmation; n8n workflows
+    //     cannot bypass the operator's loudest privacy signal,
+    // (b) emit PROVIDER_REQUEST (0x20) BEFORE the call + a
+    //     PROVIDER_RESPONSE (0x21) on success / PROVIDER_ERROR
+    //     (0x22) on failure so `neoth wal show --type provider_request`
+    //     surfaces every n8n-initiated provider call alongside
+    //     the chat-initiated ones — single audit truth.
+    // (c) the circuit-breaker wrap happens INSIDE
+    //     `provider.complete()` (GR-04) — automatic.
+    let provider_kind = state.config.provider_kind;
+    let is_cloud = matches!(
+        provider_kind,
+        Some(crate::cli::init::ProviderKind::OpenaiApi)
+            | Some(crate::cli::init::ProviderKind::OpenaiCompat)
+            | Some(crate::cli::init::ProviderKind::GeminiApi)
+            | Some(crate::cli::init::ProviderKind::AzureOpenAi)
+            | Some(crate::cli::init::ProviderKind::AwsBedrock)
+            | Some(crate::cli::init::ProviderKind::ClaudeCli)
+    );
+    if is_cloud && matches!(state.config.autonomy, crate::permissions::AutonomyLevel::Strict) {
+        tracing::warn!(
+            provider_kind = ?provider_kind,
+            request_id = %ctx.request_id,
+            "n8n_api provider_call refused: autonomy=strict + cloud provider"
+        );
+        return HandlerOutcome::error(
+            ApiErrorCode::PermissionDenied,
+            "n8n provider_call refused under autonomy=strict for cloud providers — \
+             confirm via the chat surface or lower autonomy to standard/elevated/full",
+            "use /api/channel/send for the gated path OR lower autonomy",
+        );
+    }
     let provider = match crate::providers::from_config(state.config.as_ref()).await {
         Ok(p) => p,
         Err(e) => {
@@ -325,24 +360,78 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         }
     };
     let request = crate::providers::Request {
-        prompt: req.prompt,
-        system: req.system,
+        prompt: req.prompt.clone(),
+        system: req.system.clone(),
         model: req.model.clone(),
         ..Default::default()
     };
+    // Emit PROVIDER_REQUEST (0x20) BEFORE the call so a crash mid-
+    // call still leaves the audit trail with the operator-typed
+    // prompt in `before_state`. The redactor in the WAL snapshot
+    // path strips secret patterns automatically.
+    let req_payload = serde_json::to_vec(&serde_json::json!({
+        "source": "n8n_api",
+        "request_id": ctx.request_id,
+        "provider_kind": format!("{:?}", provider_kind),
+        "model": req.model,
+        "prompt_bytes": req.prompt.len(),
+        "system_bytes": req.system.as_deref().map(|s| s.len()).unwrap_or(0),
+    }))
+    .unwrap_or_default();
+    let req_header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_PROVIDER_REQUEST,
+        &req_payload,
+    )
+    .build();
+    let _ = state.writer.append(req_header, req_payload).await;
+
     match provider.complete(request).await {
-        Ok(comp) => HandlerOutcome::ok_json(
-            serde_json::to_value(ProviderCallResponse {
-                completion: comp.text,
-                model: req.model,
-            })
-            .unwrap_or(JsonValue::Null),
-        ),
-        Err(e) => HandlerOutcome::error(
-            ApiErrorCode::UpstreamError,
-            format!("provider call failed: {e}"),
-            "check provider quota / credentials / cooldown",
-        ),
+        Ok(comp) => {
+            let resp_payload = serde_json::to_vec(&serde_json::json!({
+                "source": "n8n_api",
+                "request_id": ctx.request_id,
+                "model": comp.model,
+                "completion_bytes": comp.text.len(),
+                "latency_ms": comp.latency.as_millis() as u64,
+                "input_tokens": comp.input_tokens,
+                "output_tokens": comp.output_tokens,
+            }))
+            .unwrap_or_default();
+            let resp_header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_PROVIDER_RESPONSE,
+                &resp_payload,
+            )
+            .build();
+            let _ = state.writer.append(resp_header, resp_payload).await;
+            HandlerOutcome::ok_json(
+                serde_json::to_value(ProviderCallResponse {
+                    completion: comp.text,
+                    model: req.model,
+                })
+                .unwrap_or(JsonValue::Null),
+            )
+        }
+        Err(e) => {
+            let err_payload = serde_json::to_vec(&serde_json::json!({
+                "source": "n8n_api",
+                "request_id": ctx.request_id,
+                "provider_kind": format!("{:?}", provider_kind),
+                "model": req.model,
+                "error": e.to_string(),
+            }))
+            .unwrap_or_default();
+            let err_header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_PROVIDER_ERROR,
+                &err_payload,
+            )
+            .build();
+            let _ = state.writer.append(err_header, err_payload).await;
+            HandlerOutcome::error(
+                ApiErrorCode::UpstreamError,
+                format!("provider call failed: {e}"),
+                "check provider quota / credentials / cooldown",
+            )
+        }
     }
 }
 
