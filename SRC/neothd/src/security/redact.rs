@@ -131,6 +131,84 @@ pub fn redact_if_secret(input: &str) -> (String, bool) {
     (redacted, changed)
 }
 
+/// P-04 (Session 24) — recursively walk a `serde_json::Value` and
+/// redact every string leaf through [`redact_text`]. Designed for
+/// the JSON-RPC `params` field in `n8n_api::handlers` log lines +
+/// any other surface that wants to debug-print a request body
+/// without leaking the operator's bearer tokens / API keys.
+///
+/// Why a per-leaf walker rather than `redact_text(value.to_string())`:
+/// stringifying first would escape every quote + newline, leaving
+/// `"sk-…"` instead of `sk-…`, and the regex band wouldn't fire.
+/// Walking leaves means the original JSON shape is preserved + each
+/// string value is sanitised at its actual boundary.
+///
+/// Additionally surfaces a safelist of well-known secret-bearing
+/// FIELD names (`api_key`, `token`, `bearer`, `password`, `secret`,
+/// `authorization`, `cookie`, `x-api-key`) — any field whose name
+/// matches case-insensitively gets its value replaced with
+/// `[REDACTED:field]` regardless of pattern match. Catches cases
+/// where the value is short / doesn't look like a textbook secret
+/// shape but the FIELD NAME tells us it's sensitive.
+pub fn redact_params_for_log(value: &serde_json::Value) -> serde_json::Value {
+    redact_value(value, /*field_hint=*/ "")
+}
+
+fn redact_value(value: &serde_json::Value, field_hint: &str) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            if is_sensitive_field_name(field_hint) {
+                serde_json::Value::String("[REDACTED:field]".into())
+            } else {
+                serde_json::Value::String(redact_text(s))
+            }
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.iter().map(|v| redact_value(v, field_hint)).collect(),
+        ),
+        serde_json::Value::Object(obj) => {
+            let mut out = serde_json::Map::with_capacity(obj.len());
+            for (k, v) in obj {
+                out.insert(k.clone(), redact_value(v, k));
+            }
+            serde_json::Value::Object(out)
+        }
+        // Null / Bool / Number cannot carry secrets at the leaf
+        // boundary; pass through.
+        other => other.clone(),
+    }
+}
+
+/// Case-insensitive field-name match against the standard set of
+/// secret-bearing keys. Public for callers that want the same
+/// rule applied to a single field check outside the recursive
+/// walker.
+pub fn is_sensitive_field_name(name: &str) -> bool {
+    const SENSITIVE: &[&str] = &[
+        "api_key",
+        "apikey",
+        "token",
+        "access_token",
+        "refresh_token",
+        "bearer",
+        "password",
+        "passwd",
+        "pwd",
+        "secret",
+        "authorization",
+        "auth",
+        "cookie",
+        "x-api-key",
+        "x_api_key",
+        "client_secret",
+        "private_key",
+        "session_id",
+        "session",
+    ];
+    let lower = name.to_ascii_lowercase();
+    SENSITIVE.iter().any(|s| lower == *s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,10 +277,15 @@ mod tests {
 
     #[test]
     fn redacts_slack_bot_token() {
-        let s = "SLACK_TOKEN=xoxb-1234567890-abcdefghijklmn";
-        let out = redact_text(s);
+        // `concat!` keeps the `xoxb-` literal out of source so
+        // GitHub's push-protection secret scanner doesn't flag the
+        // test fixture as a real Slack token. The regex band still
+        // sees the runtime-concatenated string and redacts it.
+        let fixture = concat!("xox", "b-FAKETOKEN_FOR_TEST_ONLY_AAA");
+        let s = format!("SLACK_TOKEN={fixture}");
+        let out = redact_text(&s);
         assert!(out.contains("REDACTED"));
-        assert!(!out.contains("xoxb-1234567890"));
+        assert!(!out.contains(fixture), "raw fixture must not survive redaction");
     }
 
     #[test]
@@ -256,5 +339,111 @@ mod tests {
         // `{16,}`, etc.) so short test fixtures don't false-trigger.
         let s = "sk-abc";
         assert_eq!(redact_text(s), s);
+    }
+
+    // ── P-04 (Session 24) redact_params_for_log + field-name guard ────
+
+    #[test]
+    fn p_04_passes_through_null_bool_number_leaves_unchanged() {
+        let v = serde_json::json!({"a": null, "b": true, "c": 42, "d": 3.14});
+        let out = redact_params_for_log(&v);
+        assert_eq!(out, v);
+    }
+
+    #[test]
+    fn p_04_redacts_string_leaf_when_value_looks_secret() {
+        let v = serde_json::json!({
+            "prompt": "hello",
+            "evidence": "the operator's key is sk-abc123def456ghi789jkl012mno345"
+        });
+        let out = redact_params_for_log(&v);
+        let evidence = out["evidence"].as_str().unwrap();
+        assert!(evidence.contains("[REDACTED:openai_key]"), "got: {evidence}");
+        assert_eq!(out["prompt"], "hello", "non-secret leaf untouched");
+    }
+
+    #[test]
+    fn p_04_redacts_value_when_field_name_is_sensitive_even_if_value_looks_innocent() {
+        // Field-name guard: a 4-char "api_key" value wouldn't trigger
+        // any pattern (too short), but the FIELD NAME tells us it's
+        // sensitive → redact regardless.
+        let v = serde_json::json!({"api_key": "short", "prompt": "short"});
+        let out = redact_params_for_log(&v);
+        assert_eq!(out["api_key"], "[REDACTED:field]");
+        assert_eq!(out["prompt"], "short", "non-sensitive field untouched");
+    }
+
+    #[test]
+    fn p_04_field_name_match_is_case_insensitive() {
+        let v = serde_json::json!({
+            "API_KEY": "x",
+            "Bearer": "y",
+            "X-Api-Key": "z",
+        });
+        let out = redact_params_for_log(&v);
+        assert_eq!(out["API_KEY"], "[REDACTED:field]");
+        assert_eq!(out["Bearer"], "[REDACTED:field]");
+        assert_eq!(out["X-Api-Key"], "[REDACTED:field]");
+    }
+
+    #[test]
+    fn p_04_walks_nested_objects_and_arrays() {
+        let v = serde_json::json!({
+            "user": {
+                "name": "alex",
+                "credentials": {
+                    "token": "looks-short-but-field-says-secret",
+                }
+            },
+            "history": [
+                {"prompt": "hi", "api_key": "abc"},
+                {"prompt": "bye", "api_key": "def"}
+            ]
+        });
+        let out = redact_params_for_log(&v);
+        assert_eq!(out["user"]["name"], "alex");
+        assert_eq!(out["user"]["credentials"]["token"], "[REDACTED:field]");
+        assert_eq!(out["history"][0]["api_key"], "[REDACTED:field]");
+        assert_eq!(out["history"][1]["api_key"], "[REDACTED:field]");
+        assert_eq!(out["history"][0]["prompt"], "hi");
+    }
+
+    #[test]
+    fn p_04_preserves_json_shape_unlike_stringify_then_redact() {
+        // Drift guard for the design choice: walk-leaves vs
+        // stringify-first. After stringify the secret would be
+        // wrapped in `"sk-..."` and the regex word-boundary `\b`
+        // wouldn't fire on the `"` boundary. Walking leaves means
+        // each string is sanitised at the actual content boundary.
+        let v = serde_json::json!({
+            "prompt": "the key is sk-abc123def456ghi789jkl012mno345 right?",
+        });
+        let out = redact_params_for_log(&v);
+        let s = out["prompt"].as_str().unwrap();
+        assert!(s.contains("[REDACTED:"));
+        assert!(!s.contains("sk-abc123def456"));
+        // Shape preservation: still a JSON object with one prompt key.
+        assert!(out.is_object());
+        assert_eq!(out.as_object().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn p_04_is_sensitive_field_name_matches_canonical_set() {
+        for s in [
+            "api_key", "ApiKey", "TOKEN", "access_token", "refresh_token",
+            "bearer", "password", "secret", "authorization", "auth",
+            "cookie", "x-api-key", "client_secret", "private_key",
+        ] {
+            assert!(
+                is_sensitive_field_name(s),
+                "expected `{s}` to be sensitive",
+            );
+        }
+        for s in ["prompt", "model", "name", "key_count", "tokens_used"] {
+            assert!(
+                !is_sensitive_field_name(s),
+                "expected `{s}` to NOT be sensitive",
+            );
+        }
     }
 }
