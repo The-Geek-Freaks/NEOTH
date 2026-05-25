@@ -1,65 +1,89 @@
-<svg width="1400" height="380" viewBox="0 0 1400 380" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<svg width="1400" height="420" viewBox="0 0 1400 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">NEOTH first-run journey</title>
-  <desc id="desc">A coherent six-step NEOTH journey from install to verification.</desc>
+  <desc id="desc">A coherent NEOTH journey from first hello to trusted action and audit.</desc>
   <defs>
-    <linearGradient id="rail" x1="120" y1="200" x2="1280" y2="200">
+    <linearGradient id="rail" x1="120" y1="218" x2="1280" y2="218">
       <stop offset="0" stop-color="#00ff80"/>
-      <stop offset=".5" stop-color="#ff2a6d"/>
+      <stop offset=".48" stop-color="#ff2a6d"/>
       <stop offset="1" stop-color="#05d5ff"/>
     </linearGradient>
-    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <radialGradient id="bg" cx="50%" cy="44%" r="80%">
+      <stop offset="0" stop-color="#171717"/>
+      <stop offset=".58" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <filter id="glow" x="-30%" y="-120%" width="160%" height="340%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
     <style>
-      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
     </style>
   </defs>
-  <rect width="1400" height="380" rx="34" fill="#0d0d0d"/>
-  <rect x="1" y="1" width="1398" height="378" rx="33" stroke="white" stroke-opacity=".08"/>
-  <text x="70" y="62" fill="white" class="sans" font-size="26" font-weight="700">One setup. One buddy. Every surface.</text>
-  <text x="70" y="94" fill="#8b8b8b" class="sans" font-size="15">Normal users start in the wizard. Operators keep every lever reachable.</text>
 
-  <path id="journey" d="M138 204 H1262" stroke="url(#rail)" stroke-width="3.5" stroke-linecap="round" filter="url(#glow)"/>
-  <path d="M138 204 H1262" stroke="white" stroke-opacity=".2" stroke-width="2" stroke-dasharray="10 16">
-    <animate attributeName="stroke-dashoffset" from="0" to="-52" dur="4s" repeatCount="indefinite"/>
+  <rect width="1400" height="420" rx="40" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1398" height="418" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="66" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="5">FIRST HELLO TO TRUSTED ACTION</text>
+  <text x="700" y="101" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="15">DAUs get a guided buddy. Pros keep the controls. Both share one memory.</text>
+
+  <path id="journey" d="M116 224 H1284" stroke="url(#rail)" stroke-width="3.5" stroke-linecap="round" filter="url(#glow)"/>
+  <path d="M116 224 H1284" stroke="white" stroke-opacity=".18" stroke-width="2" stroke-dasharray="10 18">
+    <animate attributeName="stroke-dashoffset" from="0" to="-56" dur="4.6s" repeatCount="indefinite"/>
   </path>
 
+  <circle r="4" fill="#00ff80" filter="url(#glow)">
+    <animateMotion dur="8s" repeatCount="indefinite">
+      <mpath href="#journey"/>
+    </animateMotion>
+    <animate attributeName="opacity" values=".22;1;.22" dur="2.1s" repeatCount="indefinite"/>
+  </circle>
+
   <g class="sans">
-    <g transform="translate(86 138)">
-      <rect width="172" height="132" rx="22" fill="#121212" stroke="#00ff80" stroke-opacity=".38"/>
-      <circle cx="86" cy="40" r="17" fill="#00ff80" fill-opacity=".14" stroke="#00ff80" stroke-opacity=".55"/><text x="86" y="46" text-anchor="middle" fill="#00ff80" font-size="15" font-weight="700">1</text>
-      <text x="86" y="80" text-anchor="middle" fill="white" font-size="17" font-weight="700">Install</text>
-      <text x="86" y="104" text-anchor="middle" fill="#8d8d8d" font-size="12">binary, cargo, source</text>
+    <g transform="translate(90 148)">
+      <rect width="170" height="150" rx="20" fill="#111" stroke="#00ff80" stroke-opacity=".42"/>
+      <text x="85" y="38" text-anchor="middle" fill="#00ff80" font-size="11" letter-spacing="4">01</text>
+      <text x="85" y="73" text-anchor="middle" fill="white" font-size="21" font-weight="300">Install</text>
+      <text x="85" y="101" text-anchor="middle" fill="#8c8c8c" font-size="12">single binary</text>
+      <text x="85" y="122" text-anchor="middle" fill="#606060" font-size="11">cargo or app</text>
     </g>
-    <g transform="translate(310 138)">
-      <rect width="172" height="132" rx="22" fill="#121212" stroke="#00ff80" stroke-opacity=".38"/>
-      <circle cx="86" cy="40" r="17" fill="#00ff80" fill-opacity=".14" stroke="#00ff80" stroke-opacity=".55"/><text x="86" y="46" text-anchor="middle" fill="#00ff80" font-size="15" font-weight="700">2</text>
-      <text x="86" y="80" text-anchor="middle" fill="white" font-size="17" font-weight="700">Wizard</text>
-      <text x="86" y="104" text-anchor="middle" fill="#8d8d8d" font-size="12">plain-language setup</text>
+    <g transform="translate(310 148)">
+      <rect width="170" height="150" rx="20" fill="#111" stroke="#00ff80" stroke-opacity=".42"/>
+      <text x="85" y="38" text-anchor="middle" fill="#00ff80" font-size="11" letter-spacing="4">02</text>
+      <text x="85" y="73" text-anchor="middle" fill="white" font-size="21" font-weight="300">Wizard</text>
+      <text x="85" y="101" text-anchor="middle" fill="#8c8c8c" font-size="12">human questions</text>
+      <text x="85" y="122" text-anchor="middle" fill="#606060" font-size="11">no YAML path</text>
     </g>
-    <g transform="translate(534 138)">
-      <rect width="172" height="132" rx="22" fill="#121212" stroke="#ff2a6d" stroke-opacity=".38"/>
-      <circle cx="86" cy="40" r="17" fill="#ff2a6d" fill-opacity=".14" stroke="#ff2a6d" stroke-opacity=".55"/><text x="86" y="46" text-anchor="middle" fill="#ff2a6d" font-size="15" font-weight="700">3</text>
-      <text x="86" y="80" text-anchor="middle" fill="white" font-size="17" font-weight="700">Memory</text>
-      <text x="86" y="104" text-anchor="middle" fill="#8d8d8d" font-size="12">evidence + approval</text>
+    <g transform="translate(530 148)">
+      <rect width="170" height="150" rx="20" fill="#111" stroke="#ff2a6d" stroke-opacity=".42"/>
+      <text x="85" y="38" text-anchor="middle" fill="#ff2a6d" font-size="11" letter-spacing="4">03</text>
+      <text x="85" y="73" text-anchor="middle" fill="white" font-size="21" font-weight="300">Memory</text>
+      <text x="85" y="101" text-anchor="middle" fill="#8c8c8c" font-size="12">permissioned</text>
+      <text x="85" y="122" text-anchor="middle" fill="#606060" font-size="11">evidence-backed</text>
     </g>
-    <g transform="translate(758 138)">
-      <rect width="172" height="132" rx="22" fill="#121212" stroke="#ff2a6d" stroke-opacity=".38"/>
-      <circle cx="86" cy="40" r="17" fill="#ff2a6d" fill-opacity=".14" stroke="#ff2a6d" stroke-opacity=".55"/><text x="86" y="46" text-anchor="middle" fill="#ff2a6d" font-size="15" font-weight="700">4</text>
-      <text x="86" y="80" text-anchor="middle" fill="white" font-size="17" font-weight="700">Surfaces</text>
-      <text x="86" y="104" text-anchor="middle" fill="#8d8d8d" font-size="12">GUI, CLI, phone, docs</text>
+    <g transform="translate(750 148)">
+      <rect width="170" height="150" rx="20" fill="#111" stroke="#ff2a6d" stroke-opacity=".42"/>
+      <text x="85" y="38" text-anchor="middle" fill="#ff2a6d" font-size="11" letter-spacing="4">04</text>
+      <text x="85" y="73" text-anchor="middle" fill="white" font-size="21" font-weight="300">Everywhere</text>
+      <text x="85" y="101" text-anchor="middle" fill="#8c8c8c" font-size="12">CLI, GUI, phone</text>
+      <text x="85" y="122" text-anchor="middle" fill="#606060" font-size="11">Obsidian + mesh</text>
     </g>
-    <g transform="translate(982 138)">
-      <rect width="172" height="132" rx="22" fill="#121212" stroke="#05d5ff" stroke-opacity=".38"/>
-      <circle cx="86" cy="40" r="17" fill="#05d5ff" fill-opacity=".14" stroke="#05d5ff" stroke-opacity=".55"/><text x="86" y="46" text-anchor="middle" fill="#05d5ff" font-size="15" font-weight="700">5</text>
-      <text x="86" y="80" text-anchor="middle" fill="white" font-size="17" font-weight="700">Act</text>
-      <text x="86" y="104" text-anchor="middle" fill="#8d8d8d" font-size="12">gated automation</text>
+    <g transform="translate(970 148)">
+      <rect width="170" height="150" rx="20" fill="#111" stroke="#05d5ff" stroke-opacity=".42"/>
+      <text x="85" y="38" text-anchor="middle" fill="#05d5ff" font-size="11" letter-spacing="4">05</text>
+      <text x="85" y="73" text-anchor="middle" fill="white" font-size="21" font-weight="300">Act</text>
+      <text x="85" y="101" text-anchor="middle" fill="#8c8c8c" font-size="12">gated automation</text>
+      <text x="85" y="122" text-anchor="middle" fill="#606060" font-size="11">plugins + tools</text>
     </g>
-    <g transform="translate(1206 138)">
-      <rect width="108" height="132" rx="22" fill="#121212" stroke="#05d5ff" stroke-opacity=".38"/>
-      <circle cx="54" cy="40" r="17" fill="#05d5ff" fill-opacity=".14" stroke="#05d5ff" stroke-opacity=".55"/><text x="54" y="46" text-anchor="middle" fill="#05d5ff" font-size="15" font-weight="700">6</text>
-      <text x="54" y="80" text-anchor="middle" fill="white" font-size="17" font-weight="700">Verify</text>
-      <text x="54" y="104" text-anchor="middle" fill="#8d8d8d" font-size="12">audit</text>
+    <g transform="translate(1190 148)">
+      <rect width="170" height="150" rx="20" fill="#111" stroke="#05d5ff" stroke-opacity=".42"/>
+      <text x="85" y="38" text-anchor="middle" fill="#05d5ff" font-size="11" letter-spacing="4">06</text>
+      <text x="85" y="73" text-anchor="middle" fill="white" font-size="21" font-weight="300">Verify</text>
+      <text x="85" y="101" text-anchor="middle" fill="#8c8c8c" font-size="12">audit + redact</text>
+      <text x="85" y="122" text-anchor="middle" fill="#606060" font-size="11">WAL proof</text>
     </g>
   </g>
-  <text x="700" y="330" text-anchor="middle" fill="#5f5f5f" class="mono" font-size="11" letter-spacing="3">NO YAML REQUIRED FOR THE HAPPY PATH - FULL CONTROL WHEN YOU WANT IT</text>
+
+  <text x="700" y="357" text-anchor="middle" fill="#666" class="mono" font-size="10" letter-spacing="4">ONE BUDDY. ONE MEMORY. FULL CONTROL WHEN YOU WANT IT.</text>
 </svg>

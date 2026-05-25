@@ -1,29 +1,43 @@
-<svg width="1400" height="420" viewBox="0 0 1400 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<svg width="1400" height="480" viewBox="0 0 1400 480" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">NEOTH trust stack</title>
-  <desc id="desc">The NEOTH trust stack: local-first defaults, permissioned memory, auditable network use, sandboxed plugins and reversible learning.</desc>
+  <desc id="desc">Defense-in-depth stack from WAL evidence to operator override.</desc>
   <defs>
     <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     <style>
-      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
-      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .title{font-weight:200;letter-spacing:.02em}
     </style>
   </defs>
-  <rect width="1400" height="420" rx="34" fill="#0d0d0d"/>
-  <rect x="1" y="1" width="1398" height="418" rx="33" stroke="white" stroke-opacity=".08"/>
-  <text x="70" y="60" fill="white" class="sans" font-size="25" font-weight="700">Trust is a feature, not a paragraph</text>
-  <text x="70" y="92" fill="#8d8d8d" class="sans" font-size="15">NEOTH's loyalty promise is backed by inspectable mechanics: local learning, consent gates, redaction, WAL evidence and sandboxed extension points.</text>
+  <rect width="1400" height="480" rx="40" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="478" rx="39" stroke="white" stroke-opacity=".08"/>
+  <text x="72" y="62" fill="white" class="sans title" font-size="30">Trust is a stack, not a slogan.</text>
+  <text x="72" y="92" fill="#9a9a9a" class="sans" font-size="15">Every durable memory and meaningful action crosses policy, evidence and audit.</text>
 
-  <g transform="translate(110 136)" class="sans">
-    <g filter="url(#glow)">
-      <rect x="0" y="0" width="1180" height="52" rx="14" fill="#18241d" stroke="#00ff80" stroke-opacity=".45"/>
-      <rect x="60" y="62" width="1060" height="52" rx="14" fill="#111f24" stroke="#05d5ff" stroke-opacity=".45"/>
-      <rect x="120" y="124" width="940" height="52" rx="14" fill="#24151a" stroke="#ff2a6d" stroke-opacity=".45"/>
-      <rect x="180" y="186" width="820" height="52" rx="14" fill="#151515" stroke="white" stroke-opacity=".18"/>
-    </g>
-    <text x="26" y="33" fill="white" font-size="16" font-weight="700">Local-first learning</text><text x="960" y="33" fill="#9a9a9a" font-size="13">profile extraction can stay on your machine</text>
-    <text x="86" y="95" fill="white" font-size="16" font-weight="700">Permissioned memory</text><text x="916" y="95" fill="#9a9a9a" font-size="13">claims need evidence, approval, confidence and redaction controls</text>
-    <text x="146" y="157" fill="white" font-size="16" font-weight="700">Audited action</text><text x="820" y="157" fill="#9a9a9a" font-size="13">provider calls, channel sends, plugins and automation leave traces</text>
-    <text x="206" y="219" fill="white" font-size="16" font-weight="700">Operator override</text><text x="750" y="219" fill="#9a9a9a" font-size="13">pause, inspect, approve, deny, redact, export, verify</text>
+  <g transform="translate(182 136)" class="sans">
+    <rect x="0" y="232" width="1036" height="58" rx="16" fill="#101010" stroke="#05d5ff" stroke-opacity=".42" filter="url(#glow)"/>
+    <rect x="64" y="174" width="908" height="58" rx="16" fill="#121212" stroke="#00ff80" stroke-opacity=".34"/>
+    <rect x="128" y="116" width="780" height="58" rx="16" fill="#121212" stroke="#ff2a6d" stroke-opacity=".34"/>
+    <rect x="192" y="58" width="652" height="58" rx="16" fill="#121212" stroke="#05d5ff" stroke-opacity=".34"/>
+    <rect x="256" y="0" width="524" height="58" rx="16" fill="#121212" stroke="#ff2a6d" stroke-opacity=".34"/>
+
+    <text x="518" y="266" text-anchor="middle" fill="#05d5ff" class="mono" font-size="12" letter-spacing="3">WAL + EVIDENCE FOUNDATION</text>
+    <text x="518" y="208" text-anchor="middle" fill="#00ff80" font-size="16" font-weight="600">Local learning and provider routing</text>
+    <text x="518" y="150" text-anchor="middle" fill="#ff2a6d" font-size="16" font-weight="600">Permissioned profile memory</text>
+    <text x="518" y="92" text-anchor="middle" fill="#05d5ff" font-size="16" font-weight="600">Capability gates for tools, plugins and channels</text>
+    <text x="518" y="34" text-anchor="middle" fill="#ffffff" font-size="16" font-weight="600">Operator override: approve, deny, redact, pause</text>
   </g>
-  <text x="700" y="370" text-anchor="middle" fill="#666" class="mono" font-size="11" letter-spacing="3">PRIVATE BY DEFAULT - EXPLICIT WHEN CLOUD IS USED - AUDITABLE WHEN ACTION HAPPENS</text>
+
+  <g class="mono" font-size="11" letter-spacing="2.3">
+    <rect x="108" y="375" width="210" height="38" rx="8" fill="#111" stroke="#05d5ff" stroke-opacity=".32"/>
+    <text x="213" y="399" text-anchor="middle" fill="#05d5ff">AUDITABLE</text>
+    <rect x="356" y="375" width="210" height="38" rx="8" fill="#111" stroke="#00ff80" stroke-opacity=".32"/>
+    <text x="461" y="399" text-anchor="middle" fill="#00ff80">LOCAL-FIRST</text>
+    <rect x="604" y="375" width="210" height="38" rx="8" fill="#111" stroke="#ff2a6d" stroke-opacity=".32"/>
+    <text x="709" y="399" text-anchor="middle" fill="#ff2a6d">PERSONAL</text>
+    <rect x="852" y="375" width="210" height="38" rx="8" fill="#111" stroke="#05d5ff" stroke-opacity=".32"/>
+    <text x="957" y="399" text-anchor="middle" fill="#05d5ff">POLICY-GATED</text>
+    <rect x="1100" y="375" width="210" height="38" rx="8" fill="#111" stroke="#00ff80" stroke-opacity=".32"/>
+    <text x="1205" y="399" text-anchor="middle" fill="#00ff80">REVERSIBLE</text>
+  </g>
 </svg>

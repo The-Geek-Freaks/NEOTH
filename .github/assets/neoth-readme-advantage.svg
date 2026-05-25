@@ -1,35 +1,38 @@
-<svg width="1400" height="420" viewBox="0 0 1400 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">NEOTH advantage map</title>
-  <desc id="desc">NEOTH combines personal buddy, private memory, coding studio and operator runtime.</desc>
+<svg width="1400" height="480" viewBox="0 0 1400 480" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH product territory</title>
+  <desc id="desc">NEOTH combines Buddy, Coding Studio and Operator Runtime around one memory core.</desc>
   <defs>
     <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
     <style>
-      .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
-      .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+      .title{font-weight:200;letter-spacing:.02em}
     </style>
   </defs>
-  <rect width="1400" height="420" rx="34" fill="#0d0d0d"/>
-  <rect x="1" y="1" width="1398" height="418" rx="33" stroke="white" stroke-opacity=".08"/>
-  <text x="70" y="60" fill="white" class="sans" font-size="25" font-weight="700">The overlap is the product</text>
-  <text x="70" y="92" fill="#8d8d8d" class="sans" font-size="15">NEOTH 1.0 is not only chat, not only memory, not only coding, not only automation. It is the operator-owned overlap.</text>
+  <rect width="1400" height="480" rx="40" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="478" rx="39" stroke="white" stroke-opacity=".08"/>
+  <text x="72" y="62" fill="white" class="sans title" font-size="30">NEOTH wins in the overlap.</text>
+  <text x="72" y="92" fill="#9a9a9a" class="sans" font-size="15">Not just chat, not just coding, not just automation: one loyal memory core across all three.</text>
 
-  <g transform="translate(370 120)" filter="url(#glow)">
-    <circle cx="180" cy="120" r="118" fill="#00ff80" opacity=".16" stroke="#00ff80" stroke-opacity=".55"/>
-    <circle cx="310" cy="120" r="118" fill="#ff2a6d" opacity=".16" stroke="#ff2a6d" stroke-opacity=".55"/>
-    <circle cx="245" cy="230" r="118" fill="#05d5ff" opacity=".16" stroke="#05d5ff" stroke-opacity=".55"/>
-    <text x="130" y="92" fill="#00ff80" class="sans" font-size="17" font-weight="700">Daily buddy</text>
-    <text x="286" y="92" fill="#ff2a6d" class="sans" font-size="17" font-weight="700">Coding studio</text>
-    <text x="190" y="300" fill="#05d5ff" class="sans" font-size="17" font-weight="700">Private operator runtime</text>
-    <text x="245" y="176" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="10">NEOTH</text>
-    <text x="245" y="206" text-anchor="middle" fill="#aaa" class="mono" font-size="11" letter-spacing="2">LOYAL MEMORY CORE</text>
-  </g>
+  <path d="M700 116 L1056 374 H344 Z" fill="#ffffff" fill-opacity=".018" stroke="white" stroke-opacity=".08"/>
+  <path d="M700 116 L520 374 H344 Z" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".28"/>
+  <path d="M700 116 L1056 374 H880 Z" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".28"/>
+  <path d="M520 374 H880 L700 116 Z" fill="#05d5ff" fill-opacity=".06" stroke="#05d5ff" stroke-opacity=".22"/>
+  <circle cx="700" cy="286" r="86" fill="#101010" stroke="#00ff80" stroke-opacity=".45" filter="url(#glow)"/>
+  <text x="700" y="276" text-anchor="middle" fill="white" class="sans" font-size="31" font-weight="200" letter-spacing="10">NEOTH</text>
+  <text x="700" y="306" text-anchor="middle" fill="#9a9a9a" class="mono" font-size="10" letter-spacing="3">MEMORY CORE</text>
 
-  <g class="sans" font-size="14">
-    <rect x="82" y="145" width="250" height="52" rx="14" fill="#121212" stroke="#00ff80" stroke-opacity=".35"/><text x="207" y="177" text-anchor="middle" fill="white">No-YAML path for normal users</text>
-    <rect x="82" y="215" width="250" height="52" rx="14" fill="#121212" stroke="#ff2a6d" stroke-opacity=".35"/><text x="207" y="247" text-anchor="middle" fill="white">Canvas + Kanban + repo memory</text>
-    <rect x="82" y="285" width="250" height="52" rx="14" fill="#121212" stroke="#05d5ff" stroke-opacity=".35"/><text x="207" y="317" text-anchor="middle" fill="white">Auditable local-first control</text>
-    <rect x="1068" y="145" width="250" height="52" rx="14" fill="#121212" stroke="#00ff80" stroke-opacity=".35"/><text x="1193" y="177" text-anchor="middle" fill="white">Six memory layers</text>
-    <rect x="1068" y="215" width="250" height="52" rx="14" fill="#121212" stroke="#ff2a6d" stroke-opacity=".35"/><text x="1193" y="247" text-anchor="middle" fill="white">Three coordinating brain roles</text>
-    <rect x="1068" y="285" width="250" height="52" rx="14" fill="#121212" stroke="#05d5ff" stroke-opacity=".35"/><text x="1193" y="317" text-anchor="middle" fill="white">Private mesh + automation</text>
+  <text x="700" y="146" text-anchor="middle" fill="#ff2a6d" class="sans" font-size="22" font-weight="600">Buddy</text>
+  <text x="700" y="171" text-anchor="middle" fill="#9a9a9a" class="sans" font-size="13">loyal, personal, DAU-friendly</text>
+  <text x="424" y="405" text-anchor="middle" fill="#05d5ff" class="sans" font-size="22" font-weight="600">Operator Runtime</text>
+  <text x="424" y="430" text-anchor="middle" fill="#9a9a9a" class="sans" font-size="13">policy, WAL, mesh, automation</text>
+  <text x="976" y="405" text-anchor="middle" fill="#00ff80" class="sans" font-size="22" font-weight="600">Coding Studio</text>
+  <text x="976" y="430" text-anchor="middle" fill="#9a9a9a" class="sans" font-size="13">canvas, Kanban, repo memory</text>
+
+  <g class="mono" font-size="11" letter-spacing="2.2">
+    <rect x="116" y="188" width="210" height="38" rx="8" fill="#111" stroke="#ff2a6d" stroke-opacity=".32"/><text x="221" y="212" text-anchor="middle" fill="#ff2a6d">DAU PATH</text>
+    <rect x="116" y="242" width="210" height="38" rx="8" fill="#111" stroke="#05d5ff" stroke-opacity=".32"/><text x="221" y="266" text-anchor="middle" fill="#05d5ff">AUDITABLE</text>
+    <rect x="1074" y="188" width="210" height="38" rx="8" fill="#111" stroke="#00ff80" stroke-opacity=".32"/><text x="1179" y="212" text-anchor="middle" fill="#00ff80">ACTION</text>
+    <rect x="1074" y="242" width="210" height="38" rx="8" fill="#111" stroke="#05d5ff" stroke-opacity=".32"/><text x="1179" y="266" text-anchor="middle" fill="#05d5ff">PRIVATE MESH</text>
   </g>
 </svg>
