@@ -76,6 +76,10 @@ impl Provider for OpenAiAdapter {
     }
 
     async fn complete(&self, req: Request) -> Result<Completion> {
+        // GR-04: wrap in circuit breaker so persistent provider
+        // outages stop hammering the upstream + surface as a fast
+        // local error after the failure threshold trips.
+        crate::providers::circuit_breaker::run_with_breaker(self.name, async {
         let started = Instant::now();
         let model = req
             .model
@@ -178,6 +182,7 @@ impl Provider for OpenAiAdapter {
             input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
             output_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens),
         })
+        }).await
     }
 }
 

@@ -134,6 +134,8 @@ impl Provider for AwsBedrockAdapter {
     }
 
     async fn complete(&self, req: Request) -> Result<Completion> {
+        // GR-04: circuit breaker — same pattern as openai_api.
+        crate::providers::circuit_breaker::run_with_breaker("aws_bedrock", async {
         let started = Instant::now();
         let model = req
             .model
@@ -237,6 +239,7 @@ impl Provider for AwsBedrockAdapter {
             input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
             output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
         })
+        }).await
     }
 }
 

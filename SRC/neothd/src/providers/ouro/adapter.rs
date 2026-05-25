@@ -487,6 +487,9 @@ impl Provider for LocalOuroAdapter {
     }
 
     async fn complete(&self, req: Request) -> Result<Completion> {
+        // GR-04: circuit breaker — same local-inference rationale
+        // as `local_qwen` (mmap / candle / OOM failure isolation).
+        crate::providers::circuit_breaker::run_with_breaker("local_ouro", async {
         let adapter_handle = AdapterHandle {
             repo: self.repo.clone(),
             sampling: self.sampling,
@@ -517,6 +520,7 @@ impl Provider for LocalOuroAdapter {
         })
         .await
         .context("Ouro: spawn_blocking join")?
+        }).await
     }
 
     async fn stream(&self, req: Request) -> Result<ChunkStream> {

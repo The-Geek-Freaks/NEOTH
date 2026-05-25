@@ -41,6 +41,8 @@ impl Provider for GeminiAdapter {
     }
 
     async fn complete(&self, req: Request) -> Result<Completion> {
+        // GR-04: circuit breaker — same pattern as openai_api.
+        crate::providers::circuit_breaker::run_with_breaker("gemini_api", async {
         let started = Instant::now();
         let model = req
             .model
@@ -156,6 +158,7 @@ impl Provider for GeminiAdapter {
                 .as_ref()
                 .map(|u| u.candidates_token_count),
         })
+        }).await
     }
 }
 

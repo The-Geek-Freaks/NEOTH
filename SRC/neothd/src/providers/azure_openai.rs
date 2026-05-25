@@ -125,6 +125,8 @@ impl Provider for AzureOpenAiAdapter {
     }
 
     async fn complete(&self, req: Request) -> Result<Completion> {
+        // GR-04: circuit breaker — same pattern as openai_api.
+        crate::providers::circuit_breaker::run_with_breaker("azure_openai", async {
         let started = Instant::now();
         // Azure's `model` field on the request body is overloaded with
         // the deployment name; per-request override lets advanced
@@ -219,6 +221,7 @@ impl Provider for AzureOpenAiAdapter {
             input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
             output_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens),
         })
+        }).await
     }
 }
 

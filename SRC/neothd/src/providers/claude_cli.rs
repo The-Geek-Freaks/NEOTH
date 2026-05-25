@@ -500,6 +500,11 @@ impl Provider for ClaudeCliAdapter {
     }
 
     async fn complete(&self, req: Request) -> Result<Completion> {
+        // GR-04: circuit breaker — same pattern as openai_api. Note
+        // the dedup `Singleflight` already collapses concurrent
+        // duplicates; the breaker counts each Singleflight outcome
+        // once (which is the right denominator for failure-rate).
+        crate::providers::circuit_breaker::run_with_breaker("claude_cli", async {
         // B-9: dedup by (prompt, system, model). Concurrent identical
         // requests share one upstream spawn for both backends.
         let backend = self.effective_backend().await;
@@ -538,6 +543,7 @@ impl Provider for ClaudeCliAdapter {
         // counters), so the clone cost is negligible compared to the
         // dedup win on a concurrent identical request.
         Ok((*result).clone())
+        }).await
     }
 
     /// Streaming: read claude stdout line-by-line and emit each line as a

@@ -130,6 +130,39 @@ pub fn acquire_for(provider_id: &str) -> Result<OwnedPermit, BreakerError> {
     }
 }
 
+/// GR-04 helper: wrap an async provider call so it observes the
+/// breaker without each provider needing to re-implement the
+/// `acquire_for` + `record_success`/`record_failure` boilerplate.
+///
+/// Pattern at every `Provider::complete` / `Provider::stream` site:
+/// ```ignore
+/// async fn complete(&self, req: Request) -> anyhow::Result<Completion> {
+///     run_with_breaker(self.name(), async {
+///         // existing body — `?` exits land as record_failure, the
+///         // final Ok(..) lands as record_success.
+///     }).await
+/// }
+/// ```
+///
+/// The future is polled to completion regardless of the breaker
+/// outcome; only the success/failure tally and the open-circuit
+/// fast-fail are added. Open-circuit rejection materialises as an
+/// anyhow error whose message includes the provider id + retry-after
+/// hint so operators reading the WAL audit can correlate.
+pub async fn run_with_breaker<F, T>(provider_id: &str, fut: F) -> anyhow::Result<T>
+where
+    F: std::future::Future<Output = anyhow::Result<T>>,
+{
+    let permit = acquire_for(provider_id)
+        .map_err(|e| anyhow::anyhow!("circuit breaker open for {provider_id}: {e}"))?;
+    let result = fut.await;
+    match &result {
+        Ok(_) => permit.record_success(),
+        Err(_) => permit.record_failure(),
+    }
+    result
+}
+
 /// Operator-tweakable knobs. Defaults match the QM-10 spec
 /// (5 failures / 30s cooldown / single probe).
 #[derive(Clone, Copy, Debug)]
@@ -810,5 +843,82 @@ mod tests {
         let s = err.to_string();
         assert!(s.contains("open"));
         assert!(s.contains("12.5"));
+    }
+
+    // ── GR-04: run_with_breaker wrapper coverage ─────────────────────────
+
+    /// Unique provider-id per test so the global registry's state
+    /// from a previous test cannot bleed into the next.
+    fn unique_provider_id(suffix: &str) -> String {
+        format!(
+            "gr04-test-{}-{}",
+            suffix,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        )
+    }
+
+    #[tokio::test]
+    async fn run_with_breaker_admits_ok_path_and_records_success() {
+        let id = unique_provider_id("ok");
+        let out = run_with_breaker(&id, async { Ok::<u32, anyhow::Error>(7) })
+            .await
+            .expect("Ok future should pass through");
+        assert_eq!(out, 7);
+        // Successful settle keeps state Closed.
+        let snap = GLOBAL.snapshot_all();
+        let (_id, row) = snap
+            .iter()
+            .find(|(k, _)| k == &id)
+            .expect("breaker row exists");
+        assert_eq!(row.state, BreakerState::Closed);
+        assert_eq!(row.consecutive_failures, 0);
+        // consecutive_successes only ticks in HalfOpen state — in Closed
+        // the breaker just keeps consecutive_failures = 0. Pinning the
+        // state + failures is enough to prove the success path settled.
+    }
+
+    #[tokio::test]
+    async fn run_with_breaker_propagates_err_and_records_failure() {
+        let id = unique_provider_id("err");
+        let err = run_with_breaker(&id, async {
+            Err::<(), anyhow::Error>(anyhow::anyhow!("upstream fail"))
+        })
+        .await
+        .expect_err("Err future should surface");
+        assert!(format!("{err}").contains("upstream fail"));
+        // Single failure stays Closed (threshold is 5) but tally moves.
+        let snap = GLOBAL.snapshot_all();
+        let (_id, row) = snap.iter().find(|(k, _)| k == &id).unwrap();
+        assert_eq!(row.consecutive_failures, 1);
+    }
+
+    #[tokio::test]
+    async fn run_with_breaker_rejects_when_circuit_open() {
+        let id = unique_provider_id("trip");
+        // Trip the breaker by recording enough failures to exceed the
+        // default threshold (BreakerConfig::default is 5 failures).
+        for _ in 0..6 {
+            let _ = run_with_breaker(&id, async {
+                Err::<(), anyhow::Error>(anyhow::anyhow!("fail"))
+            })
+            .await;
+        }
+        // Next call MUST be rejected at acquire — never enters the
+        // future — with a message naming the provider id.
+        let err = run_with_breaker(&id, async { Ok::<(), anyhow::Error>(()) })
+            .await
+            .expect_err("open circuit must reject");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("circuit breaker open"),
+            "expected open-circuit reason, got: {msg}"
+        );
+        assert!(
+            msg.contains(&id),
+            "expected provider id in error, got: {msg}"
+        );
     }
 }

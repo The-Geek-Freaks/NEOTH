@@ -344,6 +344,11 @@ impl Provider for LocalQwenAdapter {
     }
 
     async fn complete(&self, req: Request) -> Result<Completion> {
+        // GR-04: circuit breaker. For local inference the breaker
+        // mainly catches model-load / weights-mmap / candle runtime
+        // failures (e.g. OOM, GPU hang) — repeated crashes stop
+        // burning the operator's CPU/GPU on a known-broken path.
+        crate::providers::circuit_breaker::run_with_breaker("local_qwen", async {
         let loaded = Arc::clone(&self.loaded);
         let tokenizer_path = self.tokenizer_path.clone();
         let config_path = self.config_path.clone();
@@ -369,6 +374,7 @@ impl Provider for LocalQwenAdapter {
         })
         .await
         .context("local_qwen forward task join error")?
+        }).await
     }
 
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
