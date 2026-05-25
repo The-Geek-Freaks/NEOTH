@@ -55,6 +55,7 @@ use tracing_subscriber::EnvFilter;
 pub mod shutdown;
 
 pub mod adr;
+pub mod bosk;
 pub mod channels;
 pub mod claude_plugins;
 pub mod cli;
