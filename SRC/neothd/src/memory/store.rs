@@ -26,7 +26,17 @@ use rusqlite::Connection;
 ///     by Stage 5b `approval_gate` in daemon mode (no tty), resolved via
 ///     `neoth profile approve <id>` (apply + delete row) or
 ///     `decline <id>` (drop + emit 0xB7).
-pub const SCHEMA_VERSION: i64 = 10;
+/// v11 adds a CHECK constraint on `idx_consolidated.day` (M-05, Session
+///     24): the column held free-form TEXT pre-fix, and the warm→cold
+///     SQL comparison in `consolidate::run_consolidation_pass` is a
+///     string compare against `ts_to_day_string(ninety_days_ago)`.
+///     Anything that wasn't `YYYY-MM-DD` shape (e.g. a hand-rolled
+///     INSERT with `2026/05/25` or `May 25`) silently mis-sorted and
+///     either never aged out or aged out early. The constraint pins
+///     the shape + valid month/day ranges; the v10→v11 migration
+///     rebuilds the table and normalises any non-conforming rows
+///     in flight from `consolidated_ts`.
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -287,7 +297,18 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE TABLE IF NOT EXISTS idx_consolidated (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             kind          TEXT NOT NULL CHECK (kind IN ('summary', 'retained')),
-            day           TEXT NOT NULL,              -- 'YYYY-MM-DD' bucket
+            -- M-05 (Session 24): pin ISO-8601 'YYYY-MM-DD' shape +
+            -- semantic month/day ranges. The warm→cold SQL compare in
+            -- `consolidate::run_consolidation_pass` is a string compare;
+            -- anything that wasn't this shape silently mis-sorted and
+            -- either never aged out or aged out early. `consolidate.rs`
+            -- only writes through `ts_to_day_string` so production
+            -- INSERTs satisfy the constraint by construction.
+            day           TEXT NOT NULL CHECK (
+                day GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+                AND CAST(substr(day, 6, 2) AS INTEGER) BETWEEN 1 AND 12
+                AND CAST(substr(day, 9, 2) AS INTEGER) BETWEEN 1 AND 31
+            ),
             event_id      INTEGER,                    -- NULL for summary rows
             text          TEXT NOT NULL,
             text_hash     TEXT NOT NULL,

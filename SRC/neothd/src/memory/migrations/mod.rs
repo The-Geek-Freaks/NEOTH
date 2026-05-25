@@ -87,6 +87,14 @@ pub const MIGRATIONS: &[Migration] = &[
                       operator-confirmation gate before profile delta apply",
         run: migration_v9_to_v10,
     },
+    Migration {
+        from: 10,
+        to: 11,
+        description: "M-05 (Session 24): pin idx_consolidated.day to ISO-8601 \
+                      shape via CHECK constraint; normalise any non-conforming \
+                      rows in flight from consolidated_ts",
+        run: migration_v10_to_v11,
+    },
 ];
 
 /// v3 → v4: add the two memory-tier views.
@@ -254,6 +262,74 @@ fn migration_v8_to_v9(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("v8→v9: create idx_profile_outbox")?;
+    Ok(())
+}
+
+/// v10 → v11: M-05 — table-rebuild `idx_consolidated` with a CHECK
+/// constraint that pins `day` to ISO-8601 `YYYY-MM-DD` shape + valid
+/// month/day ranges. Any pre-existing non-conforming row is normalised
+/// in flight by re-deriving the day from `consolidated_ts` (nanoseconds
+/// → unix seconds → `strftime('%Y-%m-%d', ..., 'unixepoch')`).
+///
+/// Rebuild is necessary because SQLite has no `ALTER TABLE ... ADD CHECK`.
+/// The dance is: rename old → temp, create new with constraint, INSERT
+/// SELECT through a normaliser CASE, drop temp, recreate indexes. The
+/// whole sequence runs inside the migration's transaction so a partial
+/// failure leaves the DB at v10 with `idx_consolidated` intact.
+fn migration_v10_to_v11(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE idx_consolidated RENAME TO idx_consolidated_pre_v11;
+
+        CREATE TABLE idx_consolidated (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind          TEXT NOT NULL CHECK (kind IN ('summary', 'retained')),
+            day           TEXT NOT NULL CHECK (
+                day GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+                AND CAST(substr(day, 6, 2) AS INTEGER) BETWEEN 1 AND 12
+                AND CAST(substr(day, 9, 2) AS INTEGER) BETWEEN 1 AND 31
+            ),
+            event_id      INTEGER,
+            text          TEXT NOT NULL,
+            text_hash     TEXT NOT NULL,
+            importance    REAL NOT NULL,
+            consolidated_ts INTEGER NOT NULL,
+            last_access_ts  INTEGER NOT NULL
+        );
+
+        -- Normalise bad day strings on the fly. SQLite's strftime with
+        -- 'unixepoch' modifier converts the seconds-since-epoch to the
+        -- canonical ISO-8601 date; consolidated_ts is nanoseconds so
+        -- divide by 1_000_000_000 first.
+        INSERT INTO idx_consolidated (
+            id, kind, day, event_id, text, text_hash, importance,
+            consolidated_ts, last_access_ts
+        )
+        SELECT
+            id, kind,
+            CASE
+                WHEN day GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]'
+                     AND CAST(substr(day, 6, 2) AS INTEGER) BETWEEN 1 AND 12
+                     AND CAST(substr(day, 9, 2) AS INTEGER) BETWEEN 1 AND 31
+                THEN day
+                ELSE COALESCE(
+                    strftime('%Y-%m-%d', consolidated_ts / 1000000000, 'unixepoch'),
+                    '1970-01-01'
+                )
+            END AS day,
+            event_id, text, text_hash, importance,
+            consolidated_ts, last_access_ts
+        FROM idx_consolidated_pre_v11;
+
+        DROP TABLE idx_consolidated_pre_v11;
+
+        CREATE INDEX IF NOT EXISTS idx_consolidated_day        ON idx_consolidated (day DESC);
+        CREATE INDEX IF NOT EXISTS idx_consolidated_kind_day   ON idx_consolidated (kind, day DESC);
+        CREATE INDEX IF NOT EXISTS idx_consolidated_importance ON idx_consolidated (importance DESC);
+        CREATE INDEX IF NOT EXISTS idx_consolidated_event_id   ON idx_consolidated (event_id);
+        "#,
+    )
+    .context("v10→v11: rebuild idx_consolidated with ISO-8601 CHECK + normalise day column")?;
     Ok(())
 }
 
@@ -767,6 +843,108 @@ mod tests {
         assert_eq!(text, "survives migration");
         assert!((importance - 0.5).abs() < 1e-9, "DEFAULT 0.5 applied");
         assert_eq!(last_access, 0, "DEFAULT 0 applied");
+    }
+
+    // ── M-05 (Session 24) idx_consolidated.day CHECK constraint ───────
+
+    #[test]
+    fn fresh_schema_rejects_bad_day_shape() {
+        // Fresh DB applies the v11 baseline directly; the CHECK must
+        // reject anything that isn't ISO-8601 'YYYY-MM-DD'.
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+        for bad in &["2026/05/25", "May 25", "2026-13-01", "2026-05-32", "2026-5-1"] {
+            let r = conn.execute(
+                "INSERT INTO idx_consolidated \
+                 (kind, day, text, text_hash, importance, consolidated_ts, last_access_ts) \
+                 VALUES ('retained', ?1, 't', 'h', 0.5, 0, 0)",
+                [bad],
+            );
+            assert!(
+                r.is_err(),
+                "CHECK must reject {bad:?}, got {:?}",
+                r.as_ref().map(|n| format!("rows affected: {n}")),
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_schema_accepts_iso_8601_day() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
+        for ok in &["2026-05-25", "1970-01-01", "9999-12-31"] {
+            let r = conn.execute(
+                "INSERT INTO idx_consolidated \
+                 (kind, day, text, text_hash, importance, consolidated_ts, last_access_ts) \
+                 VALUES ('retained', ?1, 't', 'h', 0.5, 0, 0)",
+                [ok],
+            );
+            assert!(r.is_ok(), "CHECK must accept {ok:?}: {:?}", r.err());
+        }
+    }
+
+    #[test]
+    fn migrate_v10_to_v11_normalises_bad_day_strings_from_consolidated_ts() {
+        // Build a v10 DB with one good row + one bad-day row; run v10→v11;
+        // verify the bad row's day got rewritten from consolidated_ts.
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO meta (key, value) VALUES ('schema_version', '10');
+            CREATE TABLE idx_consolidated (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind            TEXT NOT NULL CHECK (kind IN ('summary', 'retained')),
+                day             TEXT NOT NULL,
+                event_id        INTEGER,
+                text            TEXT NOT NULL,
+                text_hash       TEXT NOT NULL,
+                importance      REAL NOT NULL,
+                consolidated_ts INTEGER NOT NULL,
+                last_access_ts  INTEGER NOT NULL
+            );
+            -- Good row: stays as-is.
+            INSERT INTO idx_consolidated
+                (kind, day, text, text_hash, importance, consolidated_ts, last_access_ts)
+                VALUES ('retained', '2024-01-15', 'good', 'h1', 0.5,
+                        1705276800000000000, 0);
+            -- Bad row: malformed day, consolidated_ts encodes 2024-01-15
+            -- (1_705_276_800 unix seconds × 1e9 ns).
+            INSERT INTO idx_consolidated
+                (kind, day, text, text_hash, importance, consolidated_ts, last_access_ts)
+                VALUES ('retained', '15/01/2024', 'bad', 'h2', 0.5,
+                        1705276800000000000, 0);
+            "#,
+        )
+        .unwrap();
+
+        let reached = migrate(&mut conn, 10, 11).expect("v10→v11");
+        assert_eq!(reached, 11);
+
+        let days: Vec<(String, String)> = conn
+            .prepare("SELECT text, day FROM idx_consolidated ORDER BY id ASC")
+            .unwrap()
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            days,
+            vec![
+                ("good".to_string(), "2024-01-15".to_string()),
+                ("bad".to_string(), "2024-01-15".to_string()),
+            ],
+            "bad day must be rewritten from consolidated_ts",
+        );
+
+        // CHECK now active: post-migration INSERT with garbage must fail.
+        let r = conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('retained', 'garbage', 't', 'h', 0.5, 0, 0)",
+            [],
+        );
+        assert!(r.is_err(), "post-migration CHECK must reject 'garbage'");
     }
 
     /// BS-7 sibling: starting at v4 must climb cleanly to current (skipping the
