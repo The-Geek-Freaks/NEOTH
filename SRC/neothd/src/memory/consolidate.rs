@@ -44,6 +44,14 @@ pub struct PassReport {
     pub warm_decayed: usize,
     /// `idx_longterm` rows whose importance was decayed.
     pub cold_decayed: usize,
+    /// M-06 (Session 24): cold-tier rows DELETED for falling below
+    /// `FORGET_FLOOR` after long-term decay. Pre-fix this count
+    /// only lived in a `tracing::debug!` line — operators reading
+    /// `PassReport` via `neoth memory --decay --json` or the
+    /// consolidation cron audit frame could not see the cold sweep
+    /// at all. Surface it here so the report-shape matches the
+    /// other tier-archive fields.
+    pub cold_swept: usize,
 }
 
 /// Run one consolidation pass against `conn`. All work happens in a single
@@ -197,6 +205,7 @@ pub fn run_consolidation_pass(conn: &mut Connection, now_ns: i64) -> Result<Pass
             "cold-tier rows below FORGET_FLOOR dropped"
         );
     }
+    report.cold_swept = cold_swept;
 
     tx.commit().context("commit consolidation tx")?;
     Ok(report)
@@ -353,6 +362,36 @@ mod tests {
         let now: i64 = 1_700_000_000_000_000_000;
         let report = run_consolidation_pass(&mut conn, now).unwrap();
         assert_eq!(report, PassReport::default());
+    }
+
+    #[test]
+    fn pass_surfaces_cold_swept_count() {
+        // M-06 regression guard. Before the fix `cold_swept` lived only in
+        // a `debug!` line; operators reading `PassReport` could not see how
+        // many long-term rows fell below FORGET_FLOOR during the sweep.
+        let (_dir, mut conn) = open();
+        let now: i64 = 1_700_000_000_000_000_000;
+        // Three long-term rows: two below floor (0.05 + 0.04), one above (0.50).
+        conn.execute(
+            "INSERT INTO idx_longterm \
+             (event_id, text, text_hash, importance, promoted_ts, last_access_ts, archive_path) \
+             VALUES (?1, 'a', 'h1', 0.05, ?2, ?2, NULL), \
+                    (?3, 'b', 'h2', 0.04, ?2, ?2, NULL), \
+                    (?4, 'c', 'h3', 0.50, ?2, ?2, NULL)",
+            params![1_i64, now, 2_i64, 3_i64],
+        )
+        .unwrap();
+
+        let report = run_consolidation_pass(&mut conn, now).unwrap();
+        // Decay multiplier 0.999 keeps the 0.50 row above floor; the 0.05
+        // and 0.04 rows both fall below 0.10 → swept.
+        assert_eq!(report.cold_swept, 2, "report must surface the sweep count");
+        assert_eq!(report.cold_decayed, 3, "all three rows decayed first");
+
+        let remaining: i64 = conn
+            .query_row("SELECT count(*) FROM idx_longterm", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 1, "only the 0.50 row survives the sweep");
     }
 
     #[test]
