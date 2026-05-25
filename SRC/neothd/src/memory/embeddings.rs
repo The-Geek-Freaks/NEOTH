@@ -1061,6 +1061,20 @@ mod tests {
         }
         // Closest hit must be the identical vector.
         assert_eq!(hits[0].source_ref, "a.png");
+        // Tightened per Session 24 flake investigation: assert the
+        // spread between best and worst hit is large enough that
+        // floating-point rounding can't reorder the ranking. With
+        // a (1.0), b (~0.995), c (~0.0) the best-to-worst spread
+        // is >0.9 — well above any plausible rounding window. If
+        // this fires, either HNSW returned a bogus ordering (real
+        // bug) or the input vectors were silently mutated upstream.
+        assert!(
+            hits[0].similarity - hits[2].similarity > 0.5,
+            "best-to-worst similarity spread too narrow ({} -> {}); \
+             HNSW ordering may be nondeterministic for this input",
+            hits[0].similarity,
+            hits[2].similarity
+        );
     }
 
     /// T7: rebuild_index helper writes a valid snapshot that load can read.

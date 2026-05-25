@@ -414,7 +414,7 @@ const CHECK_DOCS: &[CheckDoc] = &[
               + suggested fix before scanning.",
     },
     CheckDoc {
-        name: "channel flapping",
+        name: "provider flapping",
         purpose: "Flapping detection: scans the last 24h of \
                   usage_log entries + warns when any provider with \
                   ≥5 calls has an error rate ≥20%. Catches Slack \
@@ -670,7 +670,7 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_tmux_for_claude_cli(home),
         check_usage_today(home),
         check_circuit_breakers(home),
-        check_channel_flapping(home),
+        check_provider_flapping(home),
         check_cluster_registry(home),
         check_cluster_mdns_announcer(home),
     ]
@@ -846,7 +846,7 @@ fn check_cluster_registry(home: &Path) -> CheckOutcome {
 const FLAPPING_THRESHOLD_PCT: f64 = 20.0;
 const FLAPPING_MIN_SAMPLES: u64 = 5;
 
-fn check_channel_flapping(home: &Path) -> CheckOutcome {
+fn check_provider_flapping(home: &Path) -> CheckOutcome {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
@@ -861,7 +861,7 @@ fn check_channel_flapping(home: &Path) -> CheckOutcome {
     // for operator interpretation.
     if roll.per_provider.is_empty() {
         return CheckOutcome {
-            name: "channel flapping",
+            name: "provider flapping",
             status: CheckStatus::Pass,
             detail: "no provider calls in last 24h to analyse".to_string(),
         };
@@ -884,7 +884,7 @@ fn check_channel_flapping(home: &Path) -> CheckOutcome {
     }
     if warnings.is_empty() {
         return CheckOutcome {
-            name: "channel flapping",
+            name: "provider flapping",
             status: CheckStatus::Pass,
             detail: format!(
                 "every provider with ≥{FLAPPING_MIN_SAMPLES} samples is below {:.0}% errors",
@@ -893,7 +893,7 @@ fn check_channel_flapping(home: &Path) -> CheckOutcome {
         };
     }
     CheckOutcome {
-        name: "channel flapping",
+        name: "provider flapping",
         status: CheckStatus::Warn,
         detail: format!("flapping detected — {}", warnings.join("; ")),
     }
@@ -2311,15 +2311,20 @@ mod tests {
     }
 
     #[test]
-    fn channel_flapping_pass_when_no_calls() {
+    fn provider_flapping_pass_when_no_calls() {
         let dir = tempdir().unwrap();
-        let outcome = check_channel_flapping(dir.path());
+        let outcome = check_provider_flapping(dir.path());
         assert_eq!(outcome.status, CheckStatus::Pass);
         assert!(outcome.detail.contains("no provider calls"));
+        // GR-02 (Session 24): pin the rename so a future regression
+        // that brings the misleading "channel flapping" label back
+        // (the function measures provider error-rate, not
+        // channel-level data) is caught in CI.
+        assert_eq!(outcome.name, "provider flapping");
     }
 
     #[test]
-    fn channel_flapping_pass_when_below_threshold() {
+    fn provider_flapping_pass_when_below_threshold() {
         use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         let now = std::time::SystemTime::now()
@@ -2343,12 +2348,12 @@ mod tests {
             )
             .unwrap();
         }
-        let outcome = check_channel_flapping(dir.path());
+        let outcome = check_provider_flapping(dir.path());
         assert_eq!(outcome.status, CheckStatus::Pass);
     }
 
     #[test]
-    fn channel_flapping_warns_when_above_threshold() {
+    fn provider_flapping_warns_when_above_threshold() {
         use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         let now = std::time::SystemTime::now()
@@ -2372,7 +2377,7 @@ mod tests {
             )
             .unwrap();
         }
-        let outcome = check_channel_flapping(dir.path());
+        let outcome = check_provider_flapping(dir.path());
         assert_eq!(outcome.status, CheckStatus::Warn);
         assert!(outcome.detail.contains("flapping"));
         assert!(outcome.detail.contains("openai_api"));
@@ -2387,7 +2392,7 @@ mod tests {
     }
 
     #[test]
-    fn channel_flapping_skips_low_sample_providers() {
+    fn provider_flapping_skips_low_sample_providers() {
         use crate::daemon::usage_log::{UsageEvent, append};
         let dir = tempdir().unwrap();
         let now = std::time::SystemTime::now()
@@ -2411,7 +2416,7 @@ mod tests {
             )
             .unwrap();
         }
-        let outcome = check_channel_flapping(dir.path());
+        let outcome = check_provider_flapping(dir.path());
         assert_eq!(outcome.status, CheckStatus::Pass);
     }
 
