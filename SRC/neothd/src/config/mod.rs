@@ -728,6 +728,24 @@ pub struct ProfileConfig {
     /// opt in to "spend cloud tokens when local doesn't work today".
     #[serde(default = "default_profile_allow_cloud_fallback")]
     pub allow_cloud_fallback: bool,
+    /// ADV-03 item 4 (Session 24): when `true` (default for fresh
+    /// installs) AND `learn_enabled` is also true, the extracted
+    /// `ProfileDelta` flows through a Stage-5b approval gate before
+    /// `apply_delta` writes it to `idx_profile`. tty-attached
+    /// callers see a `dialoguer::Confirm`; daemon-mode callers park
+    /// the delta in `idx_profile_pending` + emit
+    /// `EVENT_TYPE_PROFILE_DELTA_PENDING` (0xB5) for the operator to
+    /// resolve via `neoth profile approve <id>` / `decline <id>`.
+    ///
+    /// `AutonomyLevel::Strict` always confirms regardless of this
+    /// flag; `Full` skips the gate unconditionally; `Standard` and
+    /// `Elevated` respect the flag.
+    ///
+    /// Existing operators on freedom.yaml without this field inherit
+    /// `true` via the serde default — opt-out is the explicit
+    /// operator action.
+    #[serde(default = "default_profile_require_approval")]
+    pub require_approval: bool,
 }
 
 impl Default for ProfileConfig {
@@ -737,6 +755,7 @@ impl Default for ProfileConfig {
             timeout_secs: default_profile_timeout_secs(),
             learn_provider: default_profile_learn_provider(),
             allow_cloud_fallback: default_profile_allow_cloud_fallback(),
+            require_approval: default_profile_require_approval(),
         }
     }
 }
@@ -747,6 +766,14 @@ fn default_profile_learn_enabled() -> bool {
 
 fn default_profile_timeout_secs() -> u64 {
     15
+}
+
+/// ADV-03 item 4: fresh installs default to `require_approval = true`.
+/// Operators on existing freedom.yaml without this field also inherit
+/// `true` via serde — opt-out is the explicit operator action (set
+/// `profile.require_approval: false`).
+fn default_profile_require_approval() -> bool {
+    true
 }
 
 /// L-06: profile-extract should use the cheapest available path by

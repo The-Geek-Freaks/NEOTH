@@ -563,6 +563,34 @@ pub const EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT: u8 = 0xB3;
 ///  ts_unix}`.
 pub const EVENT_TYPE_PROFILE_DELTA_BLOCKED: u8 = 0xB4;
 
+/// ADV-03 item 4 (Session 24 follow-up) — a profile delta extracted
+/// by the LLM has been parked in `idx_profile_pending` awaiting
+/// operator approval. Fires when `freedom.yaml::profile.require_approval`
+/// is true (the new default for fresh installs) AND the daemon is
+/// running in tty-less mode (so no interactive `dialoguer::Confirm`
+/// is available).
+///
+/// Payload (JSON):
+///   - `extraction_id`: stable id from the extractor
+///   - `claim_count`: how many claims got parked
+///   - `field_summary`: comma-joined list of `field` names (truncated at 8)
+///   - `conversation_hash`: links the pending row back to the source window
+pub const EVENT_TYPE_PROFILE_DELTA_PENDING: u8 = 0xB5;
+
+/// ADV-03 item 4 — operator approved a pending profile delta. The
+/// `apply_delta` pipeline ran AFTER this frame; readers correlate
+/// approval -> apply via `extraction_id`.
+///
+/// Payload (JSON): `{ extraction_id, approved_at_ts_unix, claim_count }`
+pub const EVENT_TYPE_PROFILE_DELTA_APPROVED: u8 = 0xB6;
+
+/// ADV-03 item 4 — operator declined a pending profile delta. The
+/// claims are dropped + the pending row is deleted; no `apply_delta`
+/// runs.
+///
+/// Payload (JSON): `{ extraction_id, declined_at_ts_unix, claim_count, reason: Option<String> }`
+pub const EVENT_TYPE_PROFILE_DELTA_DECLINED: u8 = 0xB7;
+
 // ---- 0xF0..=0xFF  Operator / system ---------------------------------------
 
 /// Daemon refused a WAL write because `~/.neoth/` exceeded the configured

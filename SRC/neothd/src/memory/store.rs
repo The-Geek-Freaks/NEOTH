@@ -21,7 +21,12 @@ use rusqlite::Connection;
 /// v5 adds the immutable ground-truth view (Phase 28c R-24): `idx_groundtruth`
 ///     with `(id, statement, source, scope, asserted_at, revoked_at)`.
 ///     Decay never touches this table.
-pub const SCHEMA_VERSION: i64 = 9;
+/// v10 adds `idx_profile_pending` (Session 24 ADV-03 item 4): operator-
+///     confirmation queue for extracted profile deltas. Rows are written
+///     by Stage 5b `approval_gate` in daemon mode (no tty), resolved via
+///     `neoth profile approve <id>` (apply + delete row) or
+///     `decline <id>` (drop + emit 0xB7).
+pub const SCHEMA_VERSION: i64 = 10;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -434,6 +439,22 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             ON idx_profile_outbox (extraction_id);
         CREATE INDEX IF NOT EXISTS idx_profile_outbox_enqueued
             ON idx_profile_outbox (enqueued_at);
+
+        -- ── Schema v10: idx_profile_pending (Session 24 ADV-03 item 4) ────
+        --   - operator-confirmation queue for extracted profile deltas
+        --   - `delta_json` is the full ProfileDelta serialised so
+        --     `apply_delta` can replay it verbatim when approved
+        --   - `extraction_id` is the dedup key; conflict aborts the insert
+        --   - `created_at_unix` lets the CLI sort pending rows oldest-first
+        CREATE TABLE IF NOT EXISTS idx_profile_pending (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            extraction_id   TEXT NOT NULL UNIQUE,
+            delta_json      TEXT NOT NULL,
+            claim_count     INTEGER NOT NULL,
+            created_at_unix INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_pending_created
+            ON idx_profile_pending (created_at_unix ASC);
         "#,
     )
     .context("apply views schema")?;

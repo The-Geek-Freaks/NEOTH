@@ -80,6 +80,13 @@ pub const MIGRATIONS: &[Migration] = &[
                       consistency in profile/apply.rs (ADR-002)",
         run: migration_v8_to_v9,
     },
+    Migration {
+        from: 9,
+        to: 10,
+        description: "ADV-03 item 4 (Session 24): add idx_profile_pending for \
+                      operator-confirmation gate before profile delta apply",
+        run: migration_v9_to_v10,
+    },
 ];
 
 /// v3 → v4: add the two memory-tier views.
@@ -247,6 +254,29 @@ fn migration_v8_to_v9(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("v8→v9: create idx_profile_outbox")?;
+    Ok(())
+}
+
+/// v9 → v10: ADV-03 item 4 — add `idx_profile_pending` so the
+/// `approval_gate` (Stage 5b) can park operator-pending profile
+/// deltas in daemon mode. `extraction_id UNIQUE` makes the gate
+/// idempotent against duplicate-extract races (the same window
+/// can't queue twice).
+fn migration_v9_to_v10(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_profile_pending (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            extraction_id   TEXT NOT NULL UNIQUE,
+            delta_json      TEXT NOT NULL,
+            claim_count     INTEGER NOT NULL,
+            created_at_unix INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_pending_created
+            ON idx_profile_pending (created_at_unix ASC);
+        "#,
+    )
+    .context("v9→v10: create idx_profile_pending")?;
     Ok(())
 }
 

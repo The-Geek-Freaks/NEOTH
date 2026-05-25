@@ -21,6 +21,13 @@
 //! no provider calls, no LLM, no I/O outside the SQLite reader.
 
 pub mod apply;
+/// ADV-03 item 4 (Session 24): Stage-5b operator-confirmation gate
+/// between `claim_guard` (Stage 5) and `apply_delta` (Stage 6). When
+/// `profile.require_approval = true` AND `AutonomyLevel != Full`,
+/// the extracted `ProfileDelta` either prompts the operator
+/// interactively (tty present) or parks in `idx_profile_pending` for
+/// `neoth profile approve/decline` (daemon mode).
+pub mod approval_gate;
 pub mod baseline_snapshot;
 pub mod briefing_gate;
 pub mod briefing_policy;
