@@ -765,6 +765,12 @@ export component MainWindow inherits Window {
             // The verbose labels carry a one-line description so the
             // operator picks with context. selected() maps back to the
             // bare token freedom.yaml::autonomy expects.
+            // GR-12 H-2 fix: bind current-index to autonomy-choice so
+            // wizard re-entry (M-1 reload from existing freedom.yaml)
+            // shows the correct level visually. Pre-fix the ComboBox
+            // displayed index=1 ("standard") regardless of the actual
+            // stored autonomy, while the YAML write path stayed correct
+            // — display lied to the operator about the active level.
             NeothComboBox {
                 model: [
                     "strict — confirm every write, no shell exec",
@@ -773,7 +779,13 @@ export component MainWindow inherits Window {
                     "full — trust policy.yaml; nothing prompts",
                     "custom — defer to per-action rules in policy.yaml",
                 ];
-                current-index: 1;
+                current-index:
+                    root.autonomy-choice == "strict"   ? 0 :
+                    root.autonomy-choice == "standard" ? 1 :
+                    root.autonomy-choice == "elevated" ? 2 :
+                    root.autonomy-choice == "full"     ? 3 :
+                    root.autonomy-choice == "custom"   ? 4 :
+                    1;
                 selected(i) => {
                     if (i == 0) { root.autonomy-choice = "strict"; }
                     if (i == 1) { root.autonomy-choice = "standard"; }
