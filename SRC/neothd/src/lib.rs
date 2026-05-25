@@ -81,6 +81,7 @@ pub mod pipeline;
 pub mod policy;
 pub mod proactive;
 pub mod profile;
+pub mod reflection;
 pub mod providers;
 pub mod recall;
 pub mod recovery;
