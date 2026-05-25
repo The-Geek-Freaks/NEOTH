@@ -146,6 +146,40 @@ pub enum ProfileAction {
         #[arg(long)]
         disable: bool,
     },
+    /// AR-05 (Session 24) — surface profile fields that have more
+    /// than one active claim with mismatched `value_json`. Two
+    /// claims for `identity.location` (`"Berlin"` vs `"Munich"`)
+    /// both with `superseded_at IS NULL` is the canonical case the
+    /// extractor produces when context windows disagree.
+    ///
+    /// Read-only; pairs with `conflicts-resolve` for the operator
+    /// fix. Prerequisite for v0.9 G-02 (proactive surfacing of
+    /// wrong self-knowledge) — G-02 must not fire while conflicts
+    /// are unresolved or it'll volunteer the wrong claim.
+    Conflicts {
+        /// Cap on conflict groups returned. Each group is one field
+        /// with N >= 2 mismatched active claims.
+        #[arg(long, default_value = "50")]
+        limit: usize,
+    },
+    /// AR-05 (Session 24) — resolve a conflict by marking every
+    /// active claim EXCEPT the chosen `extraction_id` as
+    /// superseded. The kept row stays active; the others record
+    /// `superseded_at = now_unix` so the audit trail shows which
+    /// extraction won and when.
+    ///
+    /// Does NOT delete rows — the source claims remain queryable
+    /// via `neoth profile show --field <field>` for forensic
+    /// reasons (operator might want to revisit the decision after
+    /// new evidence arrives).
+    ConflictsResolve {
+        /// Dot-path field with the conflict, e.g. `identity.location`.
+        field: String,
+        /// `extraction_id` of the claim to KEEP active. Every other
+        /// active claim on this field gets `superseded_at = now`.
+        #[arg(long)]
+        keep: String,
+    },
 }
 
 /// P-02 (Session 22) — subcommands under `neoth profile preset`.
@@ -354,7 +388,221 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
         ProfileAction::MigrateRequireApproval { disable } => {
             run_migrate_require_approval(disable, &args.output)
         }
+        ProfileAction::Conflicts { limit } => run_conflicts_list(&conn, limit, &args.output),
+        ProfileAction::ConflictsResolve { field, keep } => {
+            run_conflicts_resolve(&conn, &field, &keep, &args.output)
+        }
     }
+}
+
+// ── AR-05 (Session 24) profile conflict detection + resolution ────────────
+
+/// One field with more than one active claim that disagree on
+/// `value_json`. Surfaced by [`run_conflicts_list`]; resolved by
+/// [`run_conflicts_resolve`].
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConflictGroup {
+    pub field: String,
+    pub claims: Vec<ConflictClaim>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ConflictClaim {
+    pub extraction_id: String,
+    pub value_json: serde_json::Value,
+    pub confidence: f64,
+    pub applied_at: i64,
+}
+
+/// AR-05 — scan `idx_profile` for any `field` with more than one
+/// active (`superseded_at IS NULL`) row whose `value_json` strings
+/// disagree. Sorts results by `(field asc, applied_at desc within
+/// each group)` so the most-recent claim per field is the top entry.
+///
+/// Pure helper — split out from the CLI handler so the test path
+/// asserts on the data, not on stdout. Limit caps the group count
+/// (not the claim count per group), matching what an operator wants
+/// to see in one terminal screen.
+pub fn detect_conflicts(
+    conn: &rusqlite::Connection,
+    limit: usize,
+) -> Result<Vec<ConflictGroup>> {
+    // SQL pulls every active row, grouped by field. The "disagree"
+    // check lives in Rust because SQLite has no `JSON_DISTINCT_GROUP`
+    // and a stringly-typed compare on value_json catches the canonical
+    // operator-facing case ("Berlin" vs "Munich") without needing to
+    // parse the JSON.
+    let mut stmt = conn.prepare(
+        "SELECT field, extraction_id, value_json, confidence, applied_at \
+         FROM idx_profile \
+         WHERE superseded_at IS NULL \
+         ORDER BY field ASC, applied_at DESC",
+    )?;
+    let rows: Vec<(String, String, String, f64, i64)> = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, f64>(3)?,
+                r.get::<_, i64>(4)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+
+    let mut groups: Vec<ConflictGroup> = Vec::new();
+    let mut current_field: Option<String> = None;
+    let mut current_claims: Vec<ConflictClaim> = Vec::new();
+
+    let flush = |field: Option<String>,
+                 claims: Vec<ConflictClaim>,
+                 groups: &mut Vec<ConflictGroup>| {
+        let Some(field) = field else {
+            return;
+        };
+        // Only emit groups where ≥ 2 claims disagree on value_json.
+        // Identical-value duplicates are not conflicts — they're just
+        // the extractor re-affirming the same fact, which is healthy.
+        let distinct: std::collections::HashSet<String> = claims
+            .iter()
+            .map(|c| c.value_json.to_string())
+            .collect();
+        if claims.len() >= 2 && distinct.len() >= 2 {
+            groups.push(ConflictGroup { field, claims });
+        }
+    };
+
+    for (field, extraction_id, value_json, confidence, applied_at) in rows {
+        if current_field.as_deref() != Some(field.as_str()) {
+            flush(current_field.take(), std::mem::take(&mut current_claims), &mut groups);
+            current_field = Some(field);
+        }
+        let value: serde_json::Value = serde_json::from_str(&value_json)
+            .unwrap_or_else(|_| serde_json::Value::String(value_json.clone()));
+        current_claims.push(ConflictClaim {
+            extraction_id,
+            value_json: value,
+            confidence,
+            applied_at,
+        });
+        if groups.len() >= limit {
+            break;
+        }
+    }
+    flush(current_field, current_claims, &mut groups);
+    groups.truncate(limit);
+    Ok(groups)
+}
+
+fn run_conflicts_list(
+    conn: &rusqlite::Connection,
+    limit: usize,
+    output: &OutputFormat,
+) -> Result<()> {
+    let groups = detect_conflicts(conn, limit)?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&groups)?);
+        }
+        OutputFormat::Table => {
+            if groups.is_empty() {
+                println!(
+                    "No active profile conflicts. Every field has at most one active claim \
+                     (or all duplicates agree on value)."
+                );
+                return Ok(());
+            }
+            println!(
+                "# {} conflict group(s) — operator action required",
+                groups.len(),
+            );
+            for g in &groups {
+                println!("\n  field: {}", g.field);
+                for c in &g.claims {
+                    println!(
+                        "    extraction={ext}  value={val}  conf={conf:.2}  applied_at={ts}",
+                        ext = c.extraction_id,
+                        val = c.value_json,
+                        conf = c.confidence,
+                        ts = c.applied_at,
+                    );
+                }
+            }
+            println!(
+                "\nResolve with: `neoth profile conflicts-resolve <field> --keep <extraction_id>`",
+            );
+        }
+    }
+    Ok(())
+}
+
+/// AR-05 — supersede every active claim on `field` except the row
+/// whose `extraction_id` matches `keep`. Returns the number of rows
+/// superseded so the caller can verify the operator actually changed
+/// state (a typo'd `keep` value supersedes everything, which is a
+/// clear bug signal).
+pub fn resolve_conflict(
+    conn: &rusqlite::Connection,
+    field: &str,
+    keep_extraction_id: &str,
+    now_unix: i64,
+) -> Result<usize> {
+    let kept_count: i64 = conn.query_row(
+        "SELECT count(*) FROM idx_profile \
+         WHERE field = ?1 \
+         AND extraction_id = ?2 \
+         AND superseded_at IS NULL",
+        rusqlite::params![field, keep_extraction_id],
+        |r| r.get(0),
+    )?;
+    if kept_count == 0 {
+        anyhow::bail!(
+            "no active claim found on field `{field}` with extraction_id `{keep_extraction_id}` \
+             — refusing to supersede every claim. Run `neoth profile conflicts` to see valid ids.",
+        );
+    }
+    let n = conn.execute(
+        "UPDATE idx_profile SET superseded_at = ?1 \
+         WHERE field = ?2 \
+         AND extraction_id != ?3 \
+         AND superseded_at IS NULL",
+        rusqlite::params![now_unix, field, keep_extraction_id],
+    )?;
+    Ok(n)
+}
+
+fn run_conflicts_resolve(
+    conn: &rusqlite::Connection,
+    field: &str,
+    keep_extraction_id: &str,
+    output: &OutputFormat,
+) -> Result<()> {
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0);
+    let superseded = resolve_conflict(conn, field, keep_extraction_id, now_unix)?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "field": field,
+                    "keep_extraction_id": keep_extraction_id,
+                    "superseded": superseded,
+                    "now_unix": now_unix,
+                }),
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "Resolved conflict on `{field}` — kept `{keep_extraction_id}`, \
+                 superseded {superseded} row(s) at unix {now_unix}.",
+            );
+        }
+    }
+    Ok(())
 }
 
 // ── ADV-03 item 4 Phase 6: pending / approve / decline / migrate ─────────
@@ -1569,5 +1817,175 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].extraction_id, "ext-cli-test-1");
         assert_eq!(rows[0].claim_count, 1);
+    }
+
+    // ── AR-05 (Session 24) profile conflicts ──────────────────────────
+
+    /// Insert helper variant that lets the AR-05 tests parametrise the
+    /// `value_json` literal — the `insert` helper above uses a fixed
+    /// `"<field>-value"` template which makes conflict detection
+    /// trivial-by-design (every claim disagrees). We want EXPLICIT
+    /// agree/disagree shapes.
+    fn insert_with_value(
+        conn: &rusqlite::Connection,
+        field: &str,
+        value_json: &str,
+        confidence: f64,
+        applied_at: i64,
+        extraction_id: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO idx_profile \
+             (extraction_id, event_id, field, value_json, confidence, evidence_event_ids, \
+              guard_version, applied_at, superseded_at) \
+             VALUES (?1, 0, ?2, ?3, ?4, '[]', '0.1.0', ?5, NULL)",
+            params![extraction_id, field, value_json, confidence, applied_at],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn ar_05_no_conflicts_when_table_empty() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        let groups = super::detect_conflicts(&conn, 50).unwrap();
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn ar_05_no_conflicts_when_every_field_has_one_claim() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.9, 100, "ext-1");
+        insert_with_value(&conn, "skills.rust", "\"expert\"", 0.95, 200, "ext-2");
+        let groups = super::detect_conflicts(&conn, 50).unwrap();
+        assert!(groups.is_empty(), "single-claim fields are not conflicts");
+    }
+
+    #[test]
+    fn ar_05_identical_duplicates_are_not_conflicts() {
+        // Two extractions agreeing on value_json is the extractor
+        // re-affirming a known fact, not a disagreement.
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.9, 100, "ext-1");
+        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.95, 200, "ext-2");
+        let groups = super::detect_conflicts(&conn, 50).unwrap();
+        assert!(groups.is_empty(), "agreeing duplicates are healthy");
+    }
+
+    #[test]
+    fn ar_05_detects_canonical_disagreement() {
+        // Two extractions disagree on identity.location → conflict.
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.7, 100, "ext-old");
+        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
+        insert_with_value(&conn, "skills.rust", "\"expert\"", 0.95, 300, "ext-skill");
+
+        let groups = super::detect_conflicts(&conn, 50).unwrap();
+        assert_eq!(groups.len(), 1, "exactly one field conflicts");
+        let g = &groups[0];
+        assert_eq!(g.field, "identity.location");
+        assert_eq!(g.claims.len(), 2);
+        // Ordered by applied_at DESC — newest first.
+        assert_eq!(g.claims[0].extraction_id, "ext-new");
+        assert_eq!(g.claims[1].extraction_id, "ext-old");
+    }
+
+    #[test]
+    fn ar_05_superseded_rows_excluded_from_conflict_detection() {
+        // Even when value_json disagrees, a superseded row is not a
+        // live claim — it must not surface as a conflict.
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        conn.execute(
+            "INSERT INTO idx_profile \
+             (extraction_id, event_id, field, value_json, confidence, evidence_event_ids, \
+              guard_version, applied_at, superseded_at) \
+             VALUES ('ext-old', 0, 'identity.location', '\"Berlin\"', 0.7, '[]', '0.1.0', 100, 99999)",
+            [],
+        )
+        .unwrap();
+        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
+        let groups = super::detect_conflicts(&conn, 50).unwrap();
+        assert!(groups.is_empty(), "superseded rows must not generate conflicts");
+    }
+
+    #[test]
+    fn ar_05_resolve_conflict_supersedes_others_and_keeps_chosen() {
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.7, 100, "ext-old");
+        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
+        insert_with_value(&conn, "identity.location", "\"Hamburg\"", 0.5, 50, "ext-stale");
+
+        let n = super::resolve_conflict(&conn, "identity.location", "ext-new", 999).unwrap();
+        assert_eq!(n, 2, "two losers must be superseded");
+
+        // ext-new still active; ext-old + ext-stale superseded at 999.
+        let active: Vec<(String, Option<i64>)> = conn
+            .prepare(
+                "SELECT extraction_id, superseded_at FROM idx_profile \
+                 WHERE field = 'identity.location' ORDER BY extraction_id ASC",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(active.len(), 3);
+        for (ext, superseded) in active {
+            match ext.as_str() {
+                "ext-new" => assert!(superseded.is_none(), "kept row stays active"),
+                _ => assert_eq!(superseded, Some(999), "loser superseded at the chosen ts"),
+            }
+        }
+
+        // Detect-pass after resolve: zero conflicts.
+        let after = super::detect_conflicts(&conn, 50).unwrap();
+        assert!(after.is_empty(), "resolved conflict must disappear from detection");
+    }
+
+    #[test]
+    fn ar_05_resolve_refuses_unknown_extraction_id() {
+        // Safety contract: typing the wrong `keep` value must NOT
+        // supersede every claim on the field. Operator gets a clear
+        // error + the table is left alone.
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.7, 100, "ext-old");
+        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
+
+        let r = super::resolve_conflict(&conn, "identity.location", "ext-typo", 999);
+        assert!(r.is_err(), "unknown extraction_id must Err");
+        let msg = format!("{:?}", r.unwrap_err());
+        assert!(
+            msg.contains("ext-typo") && msg.contains("no active claim"),
+            "error must surface the typo + the contract: {msg}",
+        );
+
+        // Both rows still active (no accidental sweep).
+        let active: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_profile \
+                 WHERE field = 'identity.location' AND superseded_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(active, 2);
+    }
+
+    #[test]
+    fn ar_05_resolve_no_op_when_only_one_active_claim() {
+        // Edge case: operator runs resolve on a field that's not in
+        // conflict. The keep row exists + active, no losers to
+        // supersede → returns 0 + leaves state unchanged.
+        let dir = tempdir().unwrap();
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        insert_with_value(&conn, "skills.rust", "\"expert\"", 0.95, 100, "ext-1");
+        let n = super::resolve_conflict(&conn, "skills.rust", "ext-1", 999).unwrap();
+        assert_eq!(n, 0, "no losers to supersede");
     }
 }
