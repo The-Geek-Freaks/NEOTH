@@ -162,7 +162,16 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
                     );
                     return;
                 }
-                let msg = String::from_utf8_lossy(&data[start..end]);
+                // SX-03 (A5 CRIT-03): plugin-supplied bytes MUST run
+                // through the credential redactor before the tracing
+                // pass. WASM linear memory hands us a &str that bypasses
+                // `SecretString` Debug protection, so a plugin that
+                // logs e.g. a parsed config row containing `sk-...` was
+                // leaking the raw key into NEOTH_LOG / stdout / the
+                // tracing-subscriber JSON sink. `redact_text` swaps
+                // every match for `[REDACTED:<class>]`.
+                let raw = String::from_utf8_lossy(&data[start..end]);
+                let msg = crate::security::redact::redact_text(&raw);
                 tracing::info!(target: "wasm_plugin", plugin = %plugin_id, "plugin log: {msg}");
             },
         )
@@ -284,10 +293,17 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
                         // No writer wired (slim daemon, tests). Preserve
                         // the Pick #34 stub behaviour so existing tests
                         // + smoke paths keep their observable shape.
+                        // SX-03 (A5 CRIT-03): pipe `kind_bytes` through
+                        // the redactor — a plugin that emits an event
+                        // whose `kind` happens to include a credential-
+                        // shape (or sets `kind` to `API_KEY=sk-...`)
+                        // would otherwise leak it via the fallback log.
+                        let kind_raw = String::from_utf8_lossy(kind_bytes);
+                        let kind_safe = crate::security::redact::redact_text(&kind_raw);
                         tracing::info!(
                             target: "wasm_plugin",
                             plugin = %plugin_id,
-                            kind = %String::from_utf8_lossy(kind_bytes),
+                            kind = %kind_safe,
                             payload_bytes = payload_bytes.len(),
                             "host.emit_event (no WAL writer attached — fallback log only)"
                         );
@@ -455,6 +471,35 @@ mod tests {
             Some(&HostcallPermission::Write),
             "emit_event MUST stay Write — Read-only plugins cannot append WAL frames"
         );
+    }
+
+    #[test]
+    fn plugin_log_redacts_api_key_pattern() {
+        // SX-03 contract: the neoth.log host call must NOT emit raw
+        // plugin-supplied secrets through `tracing::info!`. Direct unit
+        // test on the redactor proves the pattern is recognised — the
+        // closure in `build_linker` passes its borrowed `&str` through
+        // exactly this function before formatting.
+        let raw = "API_KEY=sk-abc123def456ghi789jkl012mno345pqr678";
+        let redacted = crate::security::redact::redact_text(raw);
+        assert!(
+            redacted.contains("[REDACTED"),
+            "expected redaction marker in {redacted:?}"
+        );
+        assert!(
+            !redacted.contains("sk-abc123def"),
+            "raw key leaked through redactor: {redacted:?}"
+        );
+    }
+
+    #[test]
+    fn plugin_log_preserves_safe_text() {
+        // Drift guard — a benign plugin log line ("starting work")
+        // must pass through unchanged so operator debugging stays
+        // signal-rich.
+        let raw = "starting cleanup pass on 42 entries";
+        let redacted = crate::security::redact::redact_text(raw);
+        assert_eq!(redacted, raw);
     }
 
     #[test]
