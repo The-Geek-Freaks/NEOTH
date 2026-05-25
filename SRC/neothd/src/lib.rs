@@ -56,6 +56,7 @@ pub mod shutdown;
 
 pub mod adr;
 pub mod channels;
+pub mod claude_plugins;
 pub mod cli;
 pub mod cloud;
 pub mod cluster;
