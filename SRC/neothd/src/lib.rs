@@ -49,7 +49,12 @@
 
 use anyhow::Result;
 use clap::Parser;
-use tracing::info;
+// clippy::unused_imports is wrong on `warn` here -- the `warn!`
+// macro at line 125 below DOES resolve through this import on
+// MSVC/stable. Removing it breaks compile with
+// "cannot find macro `warn` in this scope".
+#[allow(unused_imports)]
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 pub mod shutdown;
