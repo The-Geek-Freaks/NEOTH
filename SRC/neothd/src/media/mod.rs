@@ -18,6 +18,7 @@
 pub mod audio;
 pub mod pdf;
 pub mod pdf_forms;
+pub mod stt_dispatch;
 pub mod tts_dispatch;
 pub mod video;
 pub mod vision;
