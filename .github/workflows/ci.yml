@@ -101,9 +101,26 @@ jobs:
         working-directory: SRC
         run: cargo fmt --all -- --check
 
-      - name: cargo clippy --workspace (CDX-08 cross-crate guarantee)
+      # CDX-08 cross-crate guarantee.
+      # `--all-features` would pull `qwen-cuda` which depends on cudarc;
+      # cudarc's build.rs panics without nvcc on macOS + Windows
+      # runners. Per-OS feature sets keep clippy coverage tight while
+      # leaving CUDA + Metal to their dedicated feature-flag jobs
+      # further down in this workflow.
+      - name: cargo clippy --workspace (linux)
+        if: runner.os == 'Linux'
         working-directory: SRC
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" -- -D warnings
+
+      - name: cargo clippy --workspace (macos)
+        if: runner.os == 'macOS'
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host qwen-metal" -- -D warnings
+
+      - name: cargo clippy --workspace (windows)
+        if: runner.os == 'Windows'
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" -- -D warnings
 
       - name: cargo build --workspace --release
         working-directory: SRC
