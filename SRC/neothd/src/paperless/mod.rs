@@ -34,6 +34,7 @@
 
 pub mod consult;
 pub mod webhook;
+pub mod webhook_server;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;

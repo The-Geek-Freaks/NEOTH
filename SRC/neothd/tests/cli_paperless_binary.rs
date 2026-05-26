@@ -261,5 +261,33 @@ fn binary_help_includes_paperless_and_proactive_subcommands() {
         .assert()
         .success()
         .stdout(str::contains("paperless"))
-        .stdout(str::contains("proactive"));
+        .stdout(str::contains("proactive"))
+        .stdout(str::contains("webhook"));
+}
+
+#[test]
+fn binary_webhook_serve_help_lists_required_flags() {
+    Command::cargo_bin("neothd")
+        .unwrap()
+        .args(["webhook", "serve", "--help"])
+        .assert()
+        .success()
+        .stdout(str::contains("--bind"))
+        .stdout(str::contains("--vault"))
+        .stdout(str::contains("--token"))
+        .stdout(str::contains("--allow-no-auth"));
+}
+
+#[test]
+fn binary_webhook_serve_without_token_exits_nonzero() {
+    // No --token, no --allow-no-auth, no NEOTH_TOKEN env → must
+    // refuse to start. Drift guard against accidentally exposing
+    // /paperless/ingest to the LAN unauthenticated.
+    Command::cargo_bin("neothd")
+        .unwrap()
+        .env_remove("NEOTH_TOKEN")
+        .args(["webhook", "serve", "--bind", "127.0.0.1:0"])
+        .assert()
+        .failure()
+        .stderr(str::contains("--token").or(str::contains("allow-no-auth")));
 }

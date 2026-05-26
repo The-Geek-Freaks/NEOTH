@@ -14,6 +14,7 @@ pub mod arxiv;
 pub mod backup;
 pub mod paperless;
 pub mod proactive;
+pub mod webhook;
 pub mod catalog;
 pub mod chat;
 pub mod cloud;
@@ -278,6 +279,14 @@ pub enum Commands {
     /// the operator copy-pastes the draft YAML from the vault note
     /// into the live config + runs `neoth config reload`.
     Proactive(proactive::ProactiveArgs),
+
+    /// Webhook HTTP server. Subcommand: `serve`. Starts the
+    /// `paperless::webhook_server` so n8n + future MCP plugins can
+    /// drive the paperless slice via real HTTP requests. Required
+    /// `--token` (or `NEOTH_TOKEN` env) for Bearer auth on every
+    /// non-healthz route; refuses to start unauthenticated unless
+    /// `--allow-no-auth` is explicitly passed.
+    Webhook(webhook::WebhookArgs),
 
     /// Pick #37 (Session 14, Agent #4 design-consensus): trigger the
     /// running `neoth serve` daemon to re-read `freedom.yaml` and
@@ -714,6 +723,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Proactive(args) => {
             proactive::run_proactive(args)?;
+        }
+        Commands::Webhook(args) => {
+            webhook::run_webhook(args).await?;
         }
         Commands::Reload(mut args) => {
             args.output = global_output;
