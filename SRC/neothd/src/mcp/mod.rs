@@ -36,6 +36,7 @@ pub mod codegraph_server;
 pub mod dispatch_loop;
 pub mod gate;
 pub mod sanitizer;
+pub mod smart_loader;
 pub mod tool_call_parser;
 pub mod transport;
 
