@@ -20,7 +20,10 @@
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use crate::wizard::install_step::{ChainResult, FallbackChain, dry_run_install_commands};
+use crate::config::FreedomConfig;
+use crate::wizard::install_step::{
+    ChainResult, FallbackChain, build_installer_ran_payload, dry_run_install_commands,
+};
 
 #[derive(Args, Debug, Clone)]
 pub struct InstallerArgs {
@@ -90,6 +93,32 @@ async fn run_apply(pkg: &str, yes: bool, verbose: bool) -> Result<()> {
     println!("Running install chain for `{pkg}`:");
     let result = chain.install(pkg, false).await;
     print_chain_result(&result, verbose);
+
+    // W-05c — drop an audit sidecar with the InstallerRanPayload
+    // so the daemon's next boot can pick it up + emit the
+    // `0x12 INSTALLER_RAN` WAL frame. At-least-once semantics
+    // mirror the credential-import + cluster-audit ingesters.
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = build_installer_ran_payload(
+        pkg,
+        "", // version unknown at execute time; the daemon's
+        // installer_audit ingester can re-probe via the
+        // detect cache if it wants to enrich.
+        "n/a",
+        ts_unix,
+        "cli_installer_apply",
+        &result,
+    );
+    let home = FreedomConfig::default_neoth_home();
+    if let Err(e) = write_installer_audit_sidecar(&home, ts_unix, &payload) {
+        // Non-fatal — the install itself succeeded, audit is
+        // observability-only.
+        tracing::warn!(error = %e, "installer audit sidecar write failed (non-fatal)");
+    }
+
     if !result.is_success() {
         anyhow::bail!(
             "Every handle in the chain failed for `{pkg}`. \
@@ -97,6 +126,30 @@ async fn run_apply(pkg: &str, yes: bool, verbose: bool) -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// Write the `InstallerRanPayload` to a sidecar file under
+/// `~/.neoth/`. The daemon's installer_audit ingester picks it
+/// up on next boot, emits the `0x12 INSTALLER_RAN` WAL frame,
+/// then deletes the sidecar — at-least-once semantics.
+///
+/// Atomic via `.tmp` + rename, Windows-safe (target removed
+/// before the rename when it exists).
+pub fn write_installer_audit_sidecar(
+    neoth_dir: &std::path::Path,
+    ts_unix: u64,
+    payload: &crate::wal::payloads_w08::InstallerRanPayload,
+) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(neoth_dir)?;
+    let final_path = neoth_dir.join(format!("installer_ran_{ts_unix}.json"));
+    let tmp_path = final_path.with_extension("json.tmp");
+    let body = serde_json::to_vec_pretty(payload).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp_path, &body)?;
+    if final_path.exists() {
+        let _ = std::fs::remove_file(&final_path);
+    }
+    std::fs::rename(&tmp_path, &final_path)?;
+    Ok(final_path)
 }
 
 fn print_chain_result(result: &ChainResult, verbose: bool) {
@@ -147,5 +200,47 @@ mod tests {
             InstallerAction::DryRun { pkg } => assert_eq!(pkg, "Docker.Docker"),
             _ => panic!("expected DryRun"),
         }
+    }
+
+    #[test]
+    fn audit_sidecar_writes_payload_atomically() {
+        use crate::wal::payloads_w08::InstallerRanPayload;
+        let home = tempfile::tempdir().unwrap();
+        let payload = InstallerRanPayload {
+            cli_name: "Docker.Docker".into(),
+            version: String::new(),
+            login_state: "n/a".into(),
+            ts_unix: 1_700_000_000,
+            dry_run: false,
+            wizard_step: "cli_installer_apply".into(),
+            pkg_mgr: "apt".into(),
+        };
+        let path = write_installer_audit_sidecar(home.path(), 1_700_000_000, &payload).unwrap();
+        assert!(path.exists());
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("Docker.Docker"));
+        assert!(body.contains("\"pkg_mgr\""));
+        assert!(body.contains("\"wizard_step\""));
+        // No .tmp companion.
+        let tmp = home.path().join("installer_ran_1700000000.json.tmp");
+        assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn audit_sidecar_overwrites_existing() {
+        use crate::wal::payloads_w08::InstallerRanPayload;
+        let home = tempfile::tempdir().unwrap();
+        let payload = InstallerRanPayload {
+            cli_name: "x".into(),
+            version: String::new(),
+            login_state: String::new(),
+            ts_unix: 42,
+            dry_run: false,
+            wizard_step: String::new(),
+            pkg_mgr: "apt".into(),
+        };
+        let first = write_installer_audit_sidecar(home.path(), 42, &payload).unwrap();
+        let second = write_installer_audit_sidecar(home.path(), 42, &payload).unwrap();
+        assert_eq!(first, second);
     }
 }
