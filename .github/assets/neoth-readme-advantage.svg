@@ -1,6 +1,6 @@
 <svg width="1400" height="560" viewBox="0 0 1400 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">NEOTH market position</title>
-  <desc id="desc">Positioning map comparing NEOTH, Hermes, OpenHuman, and OpenClaw across durable audited memory and operator-grade control.</desc>
+  <desc id="desc">Positioning map comparing NEOTH, Hermes, OpenHuman, and OpenClaw across sovereign memory, managed convenience, coding workflow and operator-grade control.</desc>
   <defs>
     <filter id="glow" x="-30%" y="-80%" width="160%" height="260%">
       <feGaussianBlur stdDeviation="8" result="b"/>
@@ -19,7 +19,7 @@
   <rect x="1" y="1" width="1398" height="558" rx="39" stroke="white" stroke-opacity=".08"/>
 
   <text x="700" y="58" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="5">WHERE NEOTH FITS</text>
-  <text x="700" y="91" text-anchor="middle" fill="#929292" class="sans" font-size="15">The overlap: daily buddy, durable memory, coding workflow and operator controls.</text>
+  <text x="700" y="91" text-anchor="middle" fill="#929292" class="sans" font-size="15">The overlap: daily buddy, sovereign memory, coding workflow, private mesh and operator controls.</text>
 
   <g transform="translate(60 126)">
     <rect width="870" height="350" rx="24" fill="#080808" stroke="white" stroke-opacity=".08"/>
@@ -56,7 +56,7 @@
 
     <g class="mono" font-size="10" letter-spacing="2.3">
       <rect x="612" y="136" width="166" height="30" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".24"/>
-      <text x="695" y="156" text-anchor="middle" fill="#00ff80">NO YAML PATH</text>
+      <text x="695" y="156" text-anchor="middle" fill="#00ff80">NO HOSTED CORE</text>
       <rect x="612" y="176" width="166" height="30" rx="8" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".24"/>
       <text x="695" y="196" text-anchor="middle" fill="#05d5ff">WAL EVIDENCE</text>
       <rect x="612" y="216" width="166" height="30" rx="8" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".24"/>
@@ -77,8 +77,8 @@
 
     <text x="28" y="198" fill="#929292" font-size="14">
       <tspan x="28" y="198">OpenHuman:</tspan>
-      <tspan x="28" y="218">consumer memory and</tspan>
-      <tspan x="28" y="238">friendly onboarding.</tspan>
+      <tspan x="28" y="218">managed memory and</tspan>
+      <tspan x="28" y="238">OAuth convenience.</tspan>
     </text>
 
     <text x="28" y="274" fill="#929292" font-size="14">
@@ -91,9 +91,9 @@
     <text x="230" y="142" fill="#ddd" font-size="14">
       <tspan x="230" y="142">NEOTH combines</tspan>
       <tspan x="230" y="162">friendly setup</tspan>
-      <tspan x="230" y="182">with audit, memory,</tspan>
-      <tspan x="230" y="202">code, plugins and</tspan>
-      <tspan x="230" y="222">private mesh.</tspan>
+      <tspan x="230" y="182">with sovereign</tspan>
+      <tspan x="230" y="202">audit, code, plugins</tspan>
+      <tspan x="230" y="222">and private mesh.</tspan>
     </text>
   </g>
 </svg>

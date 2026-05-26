@@ -24,6 +24,7 @@ use tracing::{info, warn};
 // CLI auto-update logic — same `updater` module, separate file so
 // the GitHub-Releases-API path doesn't entangle with the npm-aware
 // installer path.
+pub mod pipeline;
 pub mod self_update;
 
 #[cfg_attr(not(test), allow(unused_imports))]
