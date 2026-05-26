@@ -31,3 +31,4 @@
 //! rename. Same allowlist on the draft id as PL-02 doc_id.
 
 pub mod draft;
+pub mod gmail;
