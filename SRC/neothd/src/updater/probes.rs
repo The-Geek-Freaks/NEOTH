@@ -59,13 +59,13 @@ pub fn neoth_self_specs_blocking(gate: GateDecision) -> Vec<ComponentSpec> {
 pub async fn cli_version_specs_async(gate: GateDecision) -> Vec<ComponentSpec> {
     use crate::updater::Component;
     let statuses = crate::updater::check_all().await;
-    let mut by_kind: std::collections::HashMap<Component, &crate::updater::UpdateStatus> =
-        std::collections::HashMap::new();
-    for s in &statuses {
-        by_kind.insert(s.component, s);
-    }
+    // Component doesn't derive Hash so a HashMap won't compile;
+    // a 3-variant linear scan is cheap + keeps the lookup obvious.
+    let find = |c: Component| -> Option<&crate::updater::UpdateStatus> {
+        statuses.iter().find(|s| s.component == c)
+    };
     let to_pair = |c: Component| -> Option<(String, Result<String, String>)> {
-        let s = by_kind.get(&c)?;
+        let s = find(c)?;
         let installed = s.installed.clone()?;
         let latest = s
             .latest

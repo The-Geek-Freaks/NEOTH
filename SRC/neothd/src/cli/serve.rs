@@ -1091,7 +1091,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         });
         let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
             cfg,
-            crate::wal::payloads_u04::UpdaterTaskKind::CliVersion,
+            crate::wal::payloads_u04::UpdaterTaskKind::CliVersions,
             builder,
             writer_for_updater,
         );
