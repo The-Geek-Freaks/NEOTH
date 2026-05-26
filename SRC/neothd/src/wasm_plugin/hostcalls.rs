@@ -67,6 +67,38 @@ const MAX_PAYLOAD_BYTES_PER_HOSTCALL: usize = 4 * 1024;
 /// job is "what + when + how much", not "verbatim plugin output". Pick
 /// #34c can add an `--include-payload` operator flag if a real plugin
 /// needs full body retention.
+///
+/// ## Concern-3 ADR (Session 24) — cross-node WAL equivalence rule
+///
+/// **Decision:** for cross-node verification, compare
+/// `header.payload_hash` (xxh3 over THIS JSON blob), NOT the full
+/// frame HMAC.
+///
+/// **Rationale:** `HeaderBuilder::build()` samples wall-clock for
+/// `event_id` + `hlc.physical_ns` at frame creation time. Two nodes
+/// running the same plugin with the same inputs will produce
+/// byte-identical PAYLOADS (this helper is pure: only inputs are
+/// plugin_id + kind + payload_bytes_len) but DIFFERENT `event_id`s
+/// (sampled per-call). The frame-level HMAC would therefore disagree
+/// across nodes while the underlying "what did the plugin decide"
+/// is identical. Comparing `payload_hash` (= `xxh3_64(payload)`)
+/// gives nodes a stable cross-node identity that excludes the
+/// intentionally-non-deterministic clock sample.
+///
+/// **Why event_id is non-deterministic by design:** event_id is
+/// the per-node ordering anchor for the WAL replay path. Making it
+/// content-deterministic would mean two frames with the same payload
+/// collapse into one ordering position — operators couldn't tell
+/// "plugin fired twice with the same shape" from "the same frame
+/// was replayed". The architect-recommended approach (Concern-3 §3
+/// from Session 24) is to keep event_id wall-clock-stamped and put
+/// the cross-node content equivalence on payload_hash.
+///
+/// **Drift guard:** the test
+/// `event_id_is_non_deterministic_across_invocations_by_design`
+/// pins this contract — a future refactor that accidentally makes
+/// event_id deterministic (e.g. derives it from payload_hash) would
+/// silently break audit semantics; the test fails loudly.
 fn build_hostcall_payload(plugin_id: &str, kind: &[u8], payload_bytes: usize) -> Vec<u8> {
     let kind_str = String::from_utf8_lossy(kind);
     // serde_json::to_vec on a small flat object is allocation-light and
@@ -569,6 +601,71 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
         assert_eq!(v["kind"], "");
         assert_eq!(v["payload_bytes"], 0);
+    }
+
+    // ── Concern-3 (Session 24) cross-node payload determinism ─────────
+    //
+    // These tests pin the "what enters the WAL frame from a plugin
+    // is deterministic on plugin inputs; only the clock-sampled
+    // event_id is non-deterministic by design" contract. See the
+    // ADR block on `build_hostcall_payload` above for the rationale.
+
+    #[test]
+    fn concern_3_same_inputs_produce_byte_identical_payloads() {
+        // Pure-helper determinism pin. Two calls with the same
+        // (plugin_id, kind, payload_bytes_len) MUST yield identical
+        // byte vectors. Any future refactor that injects time /
+        // random / HashMap iteration order would break this.
+        let a = build_hostcall_payload("indexer-v1", b"file_seen", 42);
+        let b = build_hostcall_payload("indexer-v1", b"file_seen", 42);
+        assert_eq!(
+            a, b,
+            "same inputs MUST produce byte-identical payloads (cross-node equivalence anchor)",
+        );
+    }
+
+    #[test]
+    fn concern_3_same_payload_yields_identical_xxh3_hash_in_header() {
+        // The cross-node verifier compares header.payload_hash (=
+        // xxh3_64 over the payload). Two HeaderBuilder::build()
+        // invocations with the same payload bytes MUST produce
+        // identical payload_hash values, even though event_id and
+        // hlc.physical_ns differ between calls.
+        let payload = build_hostcall_payload("plugin-x", b"some_kind", 100);
+        let header_a = crate::wal::HeaderBuilder::new(0xC4, &payload).build();
+        let header_b = crate::wal::HeaderBuilder::new(0xC4, &payload).build();
+        assert_eq!(
+            header_a.payload_hash, header_b.payload_hash,
+            "payload_hash is the cross-node content-equivalence anchor; \
+             same payload bytes MUST hash identically",
+        );
+        // Sanity: the xxh3 actually ran (not a zeroed default).
+        assert_ne!(header_a.payload_hash, 0);
+    }
+
+    #[test]
+    fn concern_3_event_id_is_non_deterministic_across_invocations_by_design() {
+        // Drift guard for the ADR decision. event_id is the per-node
+        // ordering anchor — it MUST stay non-deterministic across
+        // invocations so two frames with identical payload don't
+        // collapse to one ordering position. A future "optimisation"
+        // that derives event_id from payload_hash (or any
+        // content-stable source) breaks audit semantics; this test
+        // fails loudly if that happens.
+        //
+        // Note: the wider Concern-1 fix already makes the HLC strictly
+        // monotonic via the global tick, so we look for STRICT
+        // INEQUALITY (second > first) rather than just "different".
+        let payload = build_hostcall_payload("plugin-y", b"x", 0);
+        let header_a = crate::wal::HeaderBuilder::new(0xC4, &payload).build();
+        let header_b = crate::wal::HeaderBuilder::new(0xC4, &payload).build();
+        assert!(
+            header_b.event_id.0 > header_a.event_id.0,
+            "event_id MUST advance between invocations (drift guard for the \
+             non-deterministic-by-design contract); got a={} b={}",
+            header_a.event_id.0,
+            header_b.event_id.0,
+        );
     }
 
     #[test]
