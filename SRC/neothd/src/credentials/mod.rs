@@ -30,6 +30,11 @@
 //!   step 6 runs; tracks progress, surfaces per-source errors,
 //!   redacts via the SC-17 gate before emission.
 
+pub mod bitwarden;
+pub mod chrome;
+pub mod firefox;
+pub mod wizard_step;
+
 use std::fmt;
 
 use async_trait::async_trait;
