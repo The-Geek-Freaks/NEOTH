@@ -32,6 +32,7 @@
 pub mod catalogue;
 pub mod client;
 pub mod config;
+pub mod codegraph_server;
 pub mod dispatch_loop;
 pub mod gate;
 pub mod sanitizer;
