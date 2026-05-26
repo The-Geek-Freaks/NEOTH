@@ -32,6 +32,8 @@
 //! so audit consumers (memory recall, dreaming) join across the
 //! sanitizer event + the obsidian note via the same source tag.
 
+pub mod consult;
+
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
