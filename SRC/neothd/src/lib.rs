@@ -101,6 +101,7 @@ pub mod tweaks;
 pub mod updater;
 pub mod wal;
 pub mod wasm_plugin;
+pub mod wizard;
 
 pub const BANNER: &str = "Neoth ready. Sup.";
 
