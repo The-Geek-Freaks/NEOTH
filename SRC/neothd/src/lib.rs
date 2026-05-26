@@ -68,6 +68,7 @@ pub mod consent;
 pub mod council;
 pub mod cron;
 pub mod daemon;
+pub mod email;
 pub mod hooks;
 pub mod installers;
 pub mod mcp;
