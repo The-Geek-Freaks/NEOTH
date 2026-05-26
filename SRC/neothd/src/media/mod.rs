@@ -21,6 +21,7 @@ pub mod pdf_forms;
 pub mod stt_dispatch;
 pub mod tts_dispatch;
 pub mod video;
+pub mod video_frames;
 pub mod vision;
 
 use anyhow::Result;
