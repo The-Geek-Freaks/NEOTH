@@ -28,6 +28,7 @@ pub mod forget;
 pub mod gc;
 pub mod gc_task;
 pub mod groundtruth;
+pub mod hindsight;
 pub mod indexer;
 pub mod infra_scan;
 pub mod migrations;

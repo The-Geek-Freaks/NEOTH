@@ -42,6 +42,7 @@ pub mod qwen_weights;
 pub mod tailscale;
 pub mod tmux;
 pub mod tmux_w02;
+pub mod zero_install;
 
 /// One of the three CLIs NEOTH knows how to install.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
