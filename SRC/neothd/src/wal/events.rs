@@ -736,6 +736,37 @@ pub const EVENT_TYPE_PATCH_APPLIED: u8 = 0xD3;
 /// tell whether the diff conflicted vs the tests failed.
 pub const EVENT_TYPE_PATCH_APPLY_FAILED: u8 = 0xD4;
 
+/// W-08 (2026-05-26): wizard finished its system-detection step.
+/// `installers::detect::probe_all` aggregated probes for Docker /
+/// docker-compose / npm / node / git / ffmpeg / GPU / disk free
+/// and the wizard cached the result at
+/// `~/.neoth/detect_cache.json` (24 h TTL). One frame per detect
+/// run — operators see the full system profile NEOTH worked with
+/// at wizard-time.
+///
+/// Note: originally specced as 0x11 in W-08 but 0x11 is taken by
+/// SHUTDOWN; relocated to the config-lifecycle band where it
+/// naturally fits (wizard-time = config-time).
+/// Payload: `{ probed_at_unix, docker_version?, docker_compose_*?,
+///             npm_version?, node_version?, git_version?,
+///             ffmpeg_version?, gpu? (kind + vram_mib + vendor +
+///             name), disk_free_bytes? }`.
+pub const EVENT_TYPE_DETECT_COMPLETE: u8 = 0xD5;
+
+/// W-08 + SC-17 (2026-05-26): operator imported credentials. The
+/// payload is the [`crate::security::credential_redact::
+/// RedactedCredentialImportPayload`] — every field non-identifying
+/// by design (no names / URLs / usernames / secrets reach the
+/// WAL). `services_redacted: true` is the audit-trail invariant
+/// downstream graders assert.
+///
+/// Note: originally specced as 0x15 in W-08 but 0x15 is taken by
+/// COMPACTION_MARKER; relocated to the config-lifecycle band.
+/// Payload: `{ source, entry_count, distinct_tags_sorted,
+///             services_hash, target_vault_id, ts_unix,
+///             services_redacted: true }`.
+pub const EVENT_TYPE_CREDENTIAL_IMPORT: u8 = 0xD6;
+
 // ---- 0xE0..=0xE7  Cluster lifecycle (R-7, Session 19) ---------------------
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in

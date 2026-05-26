@@ -21,6 +21,7 @@ pub mod events;
 pub mod frame;
 pub mod header;
 pub mod hlc;
+pub mod payloads_w08;
 pub mod recovery;
 pub mod redact;
 pub mod segment_header;
