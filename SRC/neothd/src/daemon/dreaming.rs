@@ -76,6 +76,105 @@ pub struct EventRef {
     pub preview: String,
 }
 
+impl Dream {
+    /// OB-01a (Session 24) — render this dream as an Obsidian-
+    /// flavoured markdown document. Returns a string ready to
+    /// drop into `~/Obsidian/NEOTH/Dreams/YYYY-MM-DD.md` (one
+    /// dream per file when called from OB-01's nightly cron, or
+    /// concatenated when N-06's weekly digest workflow runs).
+    ///
+    /// ## Layout
+    ///
+    /// 1. **YAML frontmatter** — Obsidian's metadata convention.
+    ///    Carries `day` / `theme` / `composed_unix` / `event_count`
+    ///    / `tags` so Dataview queries can filter dreams without
+    ///    parsing the body.
+    /// 2. **H1 heading** with the day + theme label.
+    /// 3. **Summary block** with the deterministic narrative.
+    /// 4. **Source events list** — bulleted `event_id` references
+    ///    so the operator can jump back to the WAL frame via
+    ///    `neoth wal show --event-id <id>`.
+    ///
+    /// ## Why YAML frontmatter + not just plain markdown
+    ///
+    /// Obsidian's Dataview plugin (the most common operator
+    /// workflow) indexes frontmatter fields automatically. A
+    /// dream file without frontmatter loses the date-filter +
+    /// theme-filter that operators rely on. The serializer
+    /// emits it unconditionally — empty `tags: []` is preferred
+    /// over a missing field for the same reason.
+    ///
+    /// ## Drift guard
+    ///
+    /// Pinned by the tests:
+    /// - Frontmatter `---` delimiters
+    /// - Field order: day → theme → composed_unix → event_count → tags
+    /// - H1 heading shape `# Dream YYYY-MM-DD — <theme>`
+    /// - Empty event list renders an explicit "(no source events)"
+    ///   line rather than an empty bullet section (Dataview prefers
+    ///   non-empty sections)
+    pub fn to_obsidian_md(&self) -> String {
+        let yaml_tags = if self.tags.is_empty() {
+            "[]".to_string()
+        } else {
+            // YAML inline-list form with quoted tags so an operator-
+            // typed `#tag` literal can't accidentally start a YAML
+            // anchor or comment.
+            let quoted: Vec<String> = self
+                .tags
+                .iter()
+                .map(|t| format!("\"{}\"", t.replace('"', "\\\"")))
+                .collect();
+            format!("[{}]", quoted.join(", "))
+        };
+        let body_events = if self.event_ids.is_empty() {
+            "(no source events)".to_string()
+        } else {
+            self.event_ids
+                .iter()
+                .map(|id| format!("- event_id: `{id}`"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        format!(
+            "---\n\
+             day: \"{day}\"\n\
+             theme: \"{theme}\"\n\
+             composed_unix: {composed}\n\
+             event_count: {count}\n\
+             tags: {tags}\n\
+             ---\n\
+             \n\
+             # Dream {day} — {theme}\n\
+             \n\
+             ## Summary\n\
+             \n\
+             {summary}\n\
+             \n\
+             ## Source events\n\
+             \n\
+             {events}\n",
+            day = self.day,
+            theme = escape_yaml_string(&self.theme_label),
+            composed = self.composed_ts_unix,
+            count = self.event_ids.len(),
+            tags = yaml_tags,
+            summary = self.summary,
+            events = body_events,
+        )
+    }
+}
+
+/// Escape a string for safe embedding inside a YAML double-quoted
+/// scalar. Operator-supplied theme labels can contain `"` or `\`
+/// which would otherwise break the frontmatter parser. Conservative:
+/// every `\` and `"` gets backslash-escaped; everything else passes
+/// through verbatim (newlines in theme labels are not expected; if
+/// they appear, they survive as literal `\n` which Dataview tolerates).
+fn escape_yaml_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
 /// Directory under `home` that holds the daily JSONL files.
 pub fn dreams_dir(home: &Path) -> PathBuf {
     home.join("dreams")
@@ -691,5 +790,147 @@ mod tests {
             .await
             .unwrap();
         assert!(dreams.is_empty());
+    }
+
+    // ── OB-01a (Session 24) to_obsidian_md serializer ─────────────────
+
+    fn fixture_dream() -> Dream {
+        Dream {
+            composed_ts_unix: 1_700_000_000,
+            day: "2026-05-25".into(),
+            theme_label: "memory-tier consolidation".into(),
+            summary: "Theme `memory-tier consolidation`: 4 events between ts=1700 and ts=1900.".into(),
+            event_ids: vec![1, 2, 3, 4],
+            tags: vec!["memory".into(), "consolidation".into()],
+        }
+    }
+
+    #[test]
+    fn ob_01a_renders_yaml_frontmatter_with_required_fields() {
+        let md = fixture_dream().to_obsidian_md();
+        // Frontmatter delimiters on the first + a later line.
+        assert!(md.starts_with("---\n"), "frontmatter must start at line 1: {md}");
+        assert!(md.contains("\n---\n\n"), "frontmatter must close before body: {md}");
+        // All 5 required fields present, in documented order.
+        let frontmatter_end = md.find("\n---\n").expect("closing ---");
+        let frontmatter = &md[..frontmatter_end];
+        let day_pos = frontmatter.find("day:").expect("day field");
+        let theme_pos = frontmatter.find("theme:").expect("theme field");
+        let composed_pos = frontmatter
+            .find("composed_unix:")
+            .expect("composed_unix field");
+        let count_pos = frontmatter
+            .find("event_count:")
+            .expect("event_count field");
+        let tags_pos = frontmatter.find("tags:").expect("tags field");
+        assert!(day_pos < theme_pos, "day must precede theme");
+        assert!(theme_pos < composed_pos, "theme must precede composed_unix");
+        assert!(composed_pos < count_pos, "composed_unix must precede event_count");
+        assert!(count_pos < tags_pos, "event_count must precede tags");
+    }
+
+    #[test]
+    fn ob_01a_renders_h1_heading_with_day_and_theme() {
+        let md = fixture_dream().to_obsidian_md();
+        assert!(
+            md.contains("# Dream 2026-05-25 — memory-tier consolidation"),
+            "H1 must include day + em-dash + theme: {md}",
+        );
+    }
+
+    #[test]
+    fn ob_01a_summary_block_carries_the_dream_narrative() {
+        let md = fixture_dream().to_obsidian_md();
+        assert!(md.contains("## Summary"));
+        assert!(md.contains("memory-tier consolidation"));
+        assert!(md.contains("4 events"));
+    }
+
+    #[test]
+    fn ob_01a_source_events_lists_every_event_id() {
+        let md = fixture_dream().to_obsidian_md();
+        assert!(md.contains("## Source events"));
+        for id in 1..=4 {
+            assert!(
+                md.contains(&format!("event_id: `{id}`")),
+                "event_id {id} missing from: {md}",
+            );
+        }
+    }
+
+    #[test]
+    fn ob_01a_empty_event_list_renders_explicit_placeholder() {
+        // Dataview prefers a non-empty section. Empty bullet list
+        // would render as a stray heading; the placeholder line
+        // gives the operator + the parser something to anchor on.
+        let mut d = fixture_dream();
+        d.event_ids.clear();
+        let md = d.to_obsidian_md();
+        assert!(md.contains("(no source events)"));
+        assert!(md.contains("event_count: 0"));
+    }
+
+    #[test]
+    fn ob_01a_empty_tags_render_as_empty_inline_yaml_list() {
+        // Pinned: empty tags MUST render as `tags: []` (Dataview-
+        // queryable), NOT omitted. A missing field would break
+        // operators' Dataview `WHERE contains(tags, ...)` queries.
+        let mut d = fixture_dream();
+        d.tags.clear();
+        let md = d.to_obsidian_md();
+        assert!(md.contains("tags: []"), "got: {md}");
+    }
+
+    #[test]
+    fn ob_01a_tags_render_as_quoted_inline_yaml_list() {
+        let md = fixture_dream().to_obsidian_md();
+        // Drift guard: tags must be quoted to survive Obsidian's
+        // YAML parser when an operator hand-tags with `#` literal
+        // (which YAML treats as a comment).
+        assert!(md.contains("tags: [\"memory\", \"consolidation\"]"));
+    }
+
+    #[test]
+    fn ob_01a_escapes_double_quote_in_theme_label() {
+        // Operator-supplied theme labels can contain `"` — must
+        // be escaped or the YAML frontmatter parser dies.
+        let mut d = fixture_dream();
+        d.theme_label = "she said \"hi\"".into();
+        let md = d.to_obsidian_md();
+        assert!(
+            md.contains("theme: \"she said \\\"hi\\\"\""),
+            "got: {md}",
+        );
+    }
+
+    #[test]
+    fn ob_01a_escapes_backslash_in_theme_label() {
+        let mut d = fixture_dream();
+        d.theme_label = r"path\to\thing".into();
+        let md = d.to_obsidian_md();
+        assert!(
+            md.contains(r#"theme: "path\\to\\thing""#),
+            "got: {md}",
+        );
+    }
+
+    #[test]
+    fn ob_01a_output_ends_with_newline() {
+        // Hard convention for Obsidian files — POSIX-style trailing
+        // newline so concatenation into a daily digest doesn't merge
+        // adjacent dreams onto the same line.
+        let md = fixture_dream().to_obsidian_md();
+        assert!(md.ends_with('\n'), "md must end with newline");
+    }
+
+    #[test]
+    fn ob_01a_event_count_field_matches_event_ids_len() {
+        // Drift guard: `event_count` in YAML frontmatter MUST equal
+        // the bulleted source-events list length. A future refactor
+        // that derives count from a different source would silently
+        // diverge.
+        let d = fixture_dream();
+        let md = d.to_obsidian_md();
+        assert!(md.contains(&format!("event_count: {}", d.event_ids.len())));
     }
 }
