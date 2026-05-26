@@ -318,7 +318,10 @@ pub fn set_draft_status(
     operator_note: &str,
 ) -> std::io::Result<EmailDraft> {
     let mut d = load_draft(home, id).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, format!("draft {id} not found"))
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("draft {id} not found"),
+        )
     })?;
     d.status = new_status;
     d.operator_note = operator_note.to_string();
@@ -439,7 +442,10 @@ mod tests {
 
     #[test]
     fn closing_per_locale_pinned() {
-        assert_eq!(SalutationLocale::GermanFormal.closing(), "Mit freundlichen Grüßen");
+        assert_eq!(
+            SalutationLocale::GermanFormal.closing(),
+            "Mit freundlichen Grüßen"
+        );
         assert_eq!(SalutationLocale::GermanCasual.closing(), "Viele Grüße");
         assert_eq!(SalutationLocale::EnglishFormal.closing(), "Sincerely,");
         assert_eq!(SalutationLocale::EnglishCasual.closing(), "Best,");
@@ -584,8 +590,7 @@ mod tests {
         let d = sample_draft(100);
         save_draft(home.path(), &d).unwrap();
         let updated =
-            set_draft_status(home.path(), &d.id, DraftStatus::Sent, "delivered manually")
-                .unwrap();
+            set_draft_status(home.path(), &d.id, DraftStatus::Sent, "delivered manually").unwrap();
         assert_eq!(updated.status, DraftStatus::Sent);
         assert_eq!(updated.operator_note, "delivered manually");
         let again = load_draft(home.path(), &d.id).unwrap();
@@ -605,9 +610,13 @@ mod tests {
     fn sync_empty_writes_nothing() {
         let home = tempfile::tempdir().unwrap();
         let vault = tempfile::tempdir().unwrap();
-        let out =
-            sync_drafts_to_obsidian(home.path(), vault.path(), "NEOTH", Some(DraftStatus::Pending))
-                .unwrap();
+        let out = sync_drafts_to_obsidian(
+            home.path(),
+            vault.path(),
+            "NEOTH",
+            Some(DraftStatus::Pending),
+        )
+        .unwrap();
         assert_eq!(out.written, 0);
         assert!(out.target_paths.is_empty());
     }
@@ -619,9 +628,13 @@ mod tests {
         save_draft(home.path(), &sample_draft(100)).unwrap();
         save_draft(home.path(), &sample_draft(200)).unwrap();
 
-        let out =
-            sync_drafts_to_obsidian(home.path(), vault.path(), "NEOTH", Some(DraftStatus::Pending))
-                .unwrap();
+        let out = sync_drafts_to_obsidian(
+            home.path(),
+            vault.path(),
+            "NEOTH",
+            Some(DraftStatus::Pending),
+        )
+        .unwrap();
         assert_eq!(out.written, 2);
         for path in &out.target_paths {
             assert!(path.exists());
@@ -639,9 +652,13 @@ mod tests {
         let pending = sample_draft(200);
         save_draft(home.path(), &sent).unwrap();
         save_draft(home.path(), &pending).unwrap();
-        let out =
-            sync_drafts_to_obsidian(home.path(), vault.path(), "NEOTH", Some(DraftStatus::Pending))
-                .unwrap();
+        let out = sync_drafts_to_obsidian(
+            home.path(),
+            vault.path(),
+            "NEOTH",
+            Some(DraftStatus::Pending),
+        )
+        .unwrap();
         assert_eq!(out.written, 1);
     }
 

@@ -25,7 +25,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::sync_ocr_to_obsidian;
-use crate::security::paperless_ingest::{ingest_ocr_text, IngestError, OcrSource};
+use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
 
 /// JSON body of `POST /paperless/ingest`. n8n + future channel
 /// adapters serialise this verbatim.
@@ -136,16 +136,10 @@ fn parse_source(s: &str) -> Result<OcrSource, String> {
 /// response the daemon's HTTP layer serialises back to n8n.
 pub fn handle_ingest(request: &IngestRequest, vault_root: &Path) -> IngestResponse {
     if request.doc_id.is_empty() {
-        return IngestResponse::bad_request(
-            request.doc_id.clone(),
-            "doc_id is required",
-        );
+        return IngestResponse::bad_request(request.doc_id.clone(), "doc_id is required");
     }
     if request.text.is_empty() {
-        return IngestResponse::bad_request(
-            request.doc_id.clone(),
-            "text is required",
-        );
+        return IngestResponse::bad_request(request.doc_id.clone(), "text is required");
     }
 
     let source = match parse_source(&request.source) {
@@ -160,10 +154,7 @@ pub fn handle_ingest(request: &IngestRequest, vault_root: &Path) -> IngestRespon
             document_id,
             ..
         }) => {
-            let finding_strs: Vec<String> = findings
-                .iter()
-                .map(|f| format!("{f:?}"))
-                .collect();
+            let finding_strs: Vec<String> = findings.iter().map(|f| format!("{f:?}")).collect();
             return IngestResponse::quarantined(
                 document_id,
                 "SC-16 sanitizer halted the payload".to_string(),
@@ -177,10 +168,9 @@ pub fn handle_ingest(request: &IngestRequest, vault_root: &Path) -> IngestRespon
             outcome.doc_id,
             outcome.target_path.to_string_lossy().to_string(),
         ),
-        Err(e) => IngestResponse::bad_request(
-            request.doc_id.clone(),
-            format!("vault write failed: {e}"),
-        ),
+        Err(e) => {
+            IngestResponse::bad_request(request.doc_id.clone(), format!("vault write failed: {e}"))
+        }
     }
 }
 
@@ -246,10 +236,22 @@ mod tests {
 
     #[test]
     fn parse_source_accepts_all_four() {
-        assert!(matches!(parse_source("paperless_ngx"), Ok(OcrSource::PaperlessNgx)));
-        assert!(matches!(parse_source("tesseract_direct"), Ok(OcrSource::TesseractDirect)));
-        assert!(matches!(parse_source("paperless_ai"), Ok(OcrSource::PaperlessAi)));
-        assert!(matches!(parse_source("manual_upload"), Ok(OcrSource::ManualUpload)));
+        assert!(matches!(
+            parse_source("paperless_ngx"),
+            Ok(OcrSource::PaperlessNgx)
+        ));
+        assert!(matches!(
+            parse_source("tesseract_direct"),
+            Ok(OcrSource::TesseractDirect)
+        ));
+        assert!(matches!(
+            parse_source("paperless_ai"),
+            Ok(OcrSource::PaperlessAi)
+        ));
+        assert!(matches!(
+            parse_source("manual_upload"),
+            Ok(OcrSource::ManualUpload)
+        ));
     }
 
     #[test]

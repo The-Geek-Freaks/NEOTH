@@ -296,10 +296,7 @@ mod tests {
         assert_eq!(FrameFormat::Jpeg.mime_type(), "image/jpeg");
         assert_eq!(FrameFormat::Png.mime_type(), "image/png");
         assert_eq!(FrameFormat::WebP.mime_type(), "image/webp");
-        assert_eq!(
-            FrameFormat::Rgb24.mime_type(),
-            "application/octet-stream"
-        );
+        assert_eq!(FrameFormat::Rgb24.mime_type(), "application/octet-stream");
     }
 
     // ── strategy kind_str ─────────────────────────────────────────
@@ -426,10 +423,7 @@ mod tests {
             "anthropic_claude"
         );
         assert_eq!(MultimodalProvider::OpenAiGpt4o.as_str(), "openai_gpt4o");
-        assert_eq!(
-            MultimodalProvider::GoogleGemini.as_str(),
-            "google_gemini"
-        );
+        assert_eq!(MultimodalProvider::GoogleGemini.as_str(), "google_gemini");
         assert_eq!(MultimodalProvider::LocalLlava.as_str(), "local_llava");
     }
 
@@ -449,9 +443,15 @@ mod tests {
 
     #[test]
     fn multimodal_provider_max_frames_per_request() {
-        assert_eq!(MultimodalProvider::AnthropicClaude.max_frames_per_request(), 20);
+        assert_eq!(
+            MultimodalProvider::AnthropicClaude.max_frames_per_request(),
+            20
+        );
         assert_eq!(MultimodalProvider::OpenAiGpt4o.max_frames_per_request(), 10);
-        assert_eq!(MultimodalProvider::GoogleGemini.max_frames_per_request(), 16);
+        assert_eq!(
+            MultimodalProvider::GoogleGemini.max_frames_per_request(),
+            16
+        );
         assert_eq!(MultimodalProvider::LocalLlava.max_frames_per_request(), 8);
     }
 
@@ -481,7 +481,13 @@ mod tests {
 
     #[test]
     fn frame_format_serde_pinned_strings() {
-        assert_eq!(serde_json::to_string(&FrameFormat::Jpeg).unwrap(), "\"jpeg\"");
-        assert_eq!(serde_json::to_string(&FrameFormat::WebP).unwrap(), "\"webp\"");
+        assert_eq!(
+            serde_json::to_string(&FrameFormat::Jpeg).unwrap(),
+            "\"jpeg\""
+        );
+        assert_eq!(
+            serde_json::to_string(&FrameFormat::WebP).unwrap(),
+            "\"webp\""
+        );
     }
 }

@@ -223,19 +223,20 @@ pub struct PendingRow {
 pub fn insert_pending(conn: &Connection, delta: &ProfileDelta, now_unix: u64) -> Result<i64> {
     let delta_json = serde_json::to_string(delta).context("serialise ProfileDelta to JSON")?;
     // Try insert first; on UNIQUE conflict re-read the existing row's id.
-    let inserted = conn.execute(
-        "INSERT INTO idx_profile_pending \
+    let inserted = conn
+        .execute(
+            "INSERT INTO idx_profile_pending \
          (extraction_id, delta_json, claim_count, created_at_unix) \
          VALUES (?1, ?2, ?3, ?4) \
          ON CONFLICT(extraction_id) DO NOTHING",
-        rusqlite::params![
-            delta.extraction_id,
-            delta_json,
-            delta.claims.len() as i64,
-            now_unix as i64,
-        ],
-    )
-    .context("insert idx_profile_pending")?;
+            rusqlite::params![
+                delta.extraction_id,
+                delta_json,
+                delta.claims.len() as i64,
+                now_unix as i64,
+            ],
+        )
+        .context("insert idx_profile_pending")?;
     if inserted == 1 {
         Ok(conn.last_insert_rowid())
     } else {
@@ -417,7 +418,10 @@ mod tests {
             100,
         )
         .unwrap();
-        assert!(confirmed.get(), "Strict must confirm even when require_approval=false");
+        assert!(
+            confirmed.get(),
+            "Strict must confirm even when require_approval=false"
+        );
         assert_eq!(out, ApprovalOutcome::Approved);
     }
 
@@ -486,7 +490,10 @@ mod tests {
         let delta = fixture_delta();
         let id_a = insert_pending(&conn, &delta, 100).unwrap();
         let id_b = insert_pending(&conn, &delta, 200).unwrap();
-        assert_eq!(id_a, id_b, "second insert must return the existing row's id");
+        assert_eq!(
+            id_a, id_b,
+            "second insert must return the existing row's id"
+        );
         // Only one row in the table.
         let pending = list_pending(&conn, 10).unwrap();
         assert_eq!(pending.len(), 1);
@@ -533,7 +540,10 @@ mod tests {
         );
         assert_eq!(v.get("claim_count").and_then(|x| x.as_u64()), Some(1));
         assert!(v.get("field_summary").and_then(|x| x.as_array()).is_some());
-        assert_eq!(v.get("ts_unix").and_then(|x| x.as_u64()), Some(1_716_000_000));
+        assert_eq!(
+            v.get("ts_unix").and_then(|x| x.as_u64()),
+            Some(1_716_000_000)
+        );
     }
 
     #[test]

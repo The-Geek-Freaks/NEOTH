@@ -240,11 +240,7 @@ pub fn consent_decision_payload(
 /// Returns whether the marker was actually changed (true for
 /// `AllowAlways` against a non-existent marker; false otherwise).
 /// Useful for the audit anchor's `marker_written` flag.
-pub fn apply_decision(
-    home: &Path,
-    kind: ProviderKind,
-    decision: ConsentDecision,
-) -> Result<bool> {
+pub fn apply_decision(home: &Path, kind: ProviderKind, decision: ConsentDecision) -> Result<bool> {
     if !is_cloud(kind) {
         // Non-cloud providers don't gate; apply is a no-op. Keep
         // the API symmetric so callers can pipe every kind through.
@@ -859,8 +855,14 @@ mod tests {
     #[test]
     fn p_02_parse_decision_accepts_canonical_and_aliases_case_insensitive() {
         // Canonical
-        assert_eq!(parse_decision("allow_once"), Some(ConsentDecision::AllowOnce));
-        assert_eq!(parse_decision("allow_always"), Some(ConsentDecision::AllowAlways));
+        assert_eq!(
+            parse_decision("allow_once"),
+            Some(ConsentDecision::AllowOnce)
+        );
+        assert_eq!(
+            parse_decision("allow_always"),
+            Some(ConsentDecision::AllowAlways)
+        );
         assert_eq!(parse_decision("deny"), Some(ConsentDecision::Deny));
         // Numeric (1/2/3 menu picker)
         assert_eq!(parse_decision("1"), Some(ConsentDecision::AllowOnce));
@@ -870,7 +872,10 @@ mod tests {
         assert_eq!(parse_decision("YES"), Some(ConsentDecision::AllowOnce));
         assert_eq!(parse_decision("Always"), Some(ConsentDecision::AllowAlways));
         assert_eq!(parse_decision("  no  "), Some(ConsentDecision::Deny));
-        assert_eq!(parse_decision("Allow Once"), Some(ConsentDecision::AllowOnce));
+        assert_eq!(
+            parse_decision("Allow Once"),
+            Some(ConsentDecision::AllowOnce)
+        );
     }
 
     #[test]
@@ -961,8 +966,7 @@ mod tests {
         // Drift guard for the enum's serde rename. A future refactor
         // that drops `rename_all = "snake_case"` would break WAL
         // replay; this test catches it.
-        let json =
-            serde_json::to_string(&ConsentDecision::AllowAlways).unwrap();
+        let json = serde_json::to_string(&ConsentDecision::AllowAlways).unwrap();
         assert_eq!(json, "\"allow_always\"");
         let back: ConsentDecision = serde_json::from_str(&json).unwrap();
         assert_eq!(back, ConsentDecision::AllowAlways);

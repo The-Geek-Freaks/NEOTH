@@ -569,7 +569,10 @@ mod tests {
         let payload = b"my anthropic key is sk-ant-api03_REPLACEMEWITHREALKEYBYTESxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
         let out = redact_before_state_if_credential_bearing(MutationKind::ChannelSend, payload);
         let s = std::str::from_utf8(&out).expect("redacted output stays UTF-8");
-        assert!(s.contains("[REDACTED"), "expected redaction marker in {s:?}");
+        assert!(
+            s.contains("[REDACTED"),
+            "expected redaction marker in {s:?}"
+        );
         assert!(
             !s.contains("REPLACEMEWITHREAL"),
             "raw Anthropic-style key leaked: {s:?}"

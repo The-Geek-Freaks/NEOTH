@@ -58,24 +58,44 @@ const PHISHING_RULES: &[(&str, &str, u8)] = &[
     ("ph-001-verify-account", "verify your account", 30),
     ("ph-002-confirm-identity", "confirm your identity", 30),
     ("ph-003-update-payment", "update your payment", 30),
-    ("ph-004-account-suspended", "your account has been suspended", 35),
+    (
+        "ph-004-account-suspended",
+        "your account has been suspended",
+        35,
+    ),
     ("ph-005-account-locked", "your account has been locked", 35),
     ("ph-006-unusual-signin", "unusual sign-in activity", 30),
     ("ph-007-click-here-avoid", "click here to avoid", 30),
     ("ph-008-confirm-or-lose", "confirm now or lose access", 35),
-    ("ph-009-noticed-problem", "we've noticed a problem with your account", 30),
+    (
+        "ph-009-noticed-problem",
+        "we've noticed a problem with your account",
+        30,
+    ),
     ("ph-010-claim-prize", "claim your prize", 30),
     ("ph-011-seed-phrase", "enter your seed phrase", 50),
     ("ph-012-recovery-phrase", "enter your recovery phrase", 50),
     ("ph-013-wire-funds-urgent", "wire funds immediately", 35),
-    ("ph-014-tax-refund-claim", "your tax refund is ready to claim", 30),
-    ("ph-015-package-undeliverable", "your package could not be delivered", 25),
+    (
+        "ph-014-tax-refund-claim",
+        "your tax refund is ready to claim",
+        30,
+    ),
+    (
+        "ph-015-package-undeliverable",
+        "your package could not be delivered",
+        25,
+    ),
 ];
 
 /// Spam rules — lower weight than phishing because false positives
 /// are tolerable (operator sees them in ReviewQueue, not lost).
 const SPAM_RULES: &[(&str, &str, u8)] = &[
-    ("sp-001-lottery-winner", "you have been selected as the winner", 25),
+    (
+        "sp-001-lottery-winner",
+        "you have been selected as the winner",
+        25,
+    ),
     ("sp-002-prince-inheritance", "prince of", 15),
     ("sp-003-prince-inheritance-b", "transfer my inheritance", 30),
     ("sp-004-viagra", "buy viagra", 30),
@@ -84,7 +104,11 @@ const SPAM_RULES: &[(&str, &str, u8)] = &[
     ("sp-007-make-money-fast", "make money fast", 25),
     ("sp-008-work-from-home", "earn $5000 per day from home", 30),
     ("sp-009-millions-of-dollars", "millions of dollars", 15),
-    ("sp-010-congrats-winner", "congratulations, you are a winner", 25),
+    (
+        "sp-010-congrats-winner",
+        "congratulations, you are a winner",
+        25,
+    ),
 ];
 
 /// Malware-attachment extensions. Score scales with how plainly
@@ -314,7 +338,10 @@ mod tests {
             Some("internal.example.com"),
             &[],
         );
-        assert!(matches!(r.band, ThreatBand::Allow | ThreatBand::ReviewQueue));
+        assert!(matches!(
+            r.band,
+            ThreatBand::Allow | ThreatBand::ReviewQueue
+        ));
         assert!(r.score < QUARANTINE_THRESHOLD);
     }
 
@@ -402,10 +429,11 @@ mod tests {
             Some("service.paypal.com"),
             &[],
         );
-        assert!(!r.findings.iter().any(|f| matches!(
-            f,
-            ThreatFinding::DomainImpersonation { .. }
-        )));
+        assert!(
+            !r.findings
+                .iter()
+                .any(|f| matches!(f, ThreatFinding::DomainImpersonation { .. }))
+        );
     }
 
     #[test]
@@ -479,19 +507,16 @@ mod tests {
         // Without sender_domain, the impersonation rule cannot fire even
         // though the body names a brand.
         let r = assess_email_threat("paypal sent you a statement.", None, &[]);
-        assert!(!r.findings.iter().any(|f| matches!(
-            f,
-            ThreatFinding::DomainImpersonation { .. }
-        )));
+        assert!(
+            !r.findings
+                .iter()
+                .any(|f| matches!(f, ThreatFinding::DomainImpersonation { .. }))
+        );
     }
 
     #[test]
     fn assessment_is_json_serialisable_for_audit() {
-        let r = assess_email_threat(
-            "verify your account",
-            Some("attacker.example.com"),
-            &[],
-        );
+        let r = assess_email_threat("verify your account", Some("attacker.example.com"), &[]);
         let json = serde_json::to_string(&r).expect("serialise");
         assert!(json.contains("\"band\""));
         assert!(json.contains("\"score\""));

@@ -250,7 +250,10 @@ mod tests {
         // Sorted by importance ASC (most-imminent first).
         let imps: Vec<f64> = r.drifting.iter().map(|d| d.importance).collect();
         for w in imps.windows(2) {
-            assert!(w[0] <= w[1], "drifting must sort importance ASC, got {imps:?}");
+            assert!(
+                w[0] <= w[1],
+                "drifting must sort importance ASC, got {imps:?}"
+            );
         }
         // First row is imminent severity.
         assert_eq!(r.drifting[0].severity, DriftSeverity::Imminent);

@@ -885,7 +885,8 @@ mod tests {
             composed_ts_unix: 1_700_000_000,
             day: "2026-05-25".into(),
             theme_label: "memory-tier consolidation".into(),
-            summary: "Theme `memory-tier consolidation`: 4 events between ts=1700 and ts=1900.".into(),
+            summary: "Theme `memory-tier consolidation`: 4 events between ts=1700 and ts=1900."
+                .into(),
             event_ids: vec![1, 2, 3, 4],
             tags: vec!["memory".into(), "consolidation".into()],
         }
@@ -895,8 +896,14 @@ mod tests {
     fn ob_01a_renders_yaml_frontmatter_with_required_fields() {
         let md = fixture_dream().to_obsidian_md();
         // Frontmatter delimiters on the first + a later line.
-        assert!(md.starts_with("---\n"), "frontmatter must start at line 1: {md}");
-        assert!(md.contains("\n---\n\n"), "frontmatter must close before body: {md}");
+        assert!(
+            md.starts_with("---\n"),
+            "frontmatter must start at line 1: {md}"
+        );
+        assert!(
+            md.contains("\n---\n\n"),
+            "frontmatter must close before body: {md}"
+        );
         // All 5 required fields present, in documented order.
         let frontmatter_end = md.find("\n---\n").expect("closing ---");
         let frontmatter = &md[..frontmatter_end];
@@ -905,13 +912,14 @@ mod tests {
         let composed_pos = frontmatter
             .find("composed_unix:")
             .expect("composed_unix field");
-        let count_pos = frontmatter
-            .find("event_count:")
-            .expect("event_count field");
+        let count_pos = frontmatter.find("event_count:").expect("event_count field");
         let tags_pos = frontmatter.find("tags:").expect("tags field");
         assert!(day_pos < theme_pos, "day must precede theme");
         assert!(theme_pos < composed_pos, "theme must precede composed_unix");
-        assert!(composed_pos < count_pos, "composed_unix must precede event_count");
+        assert!(
+            composed_pos < count_pos,
+            "composed_unix must precede event_count"
+        );
         assert!(count_pos < tags_pos, "event_count must precede tags");
     }
 
@@ -983,10 +991,7 @@ mod tests {
         let mut d = fixture_dream();
         d.theme_label = "she said \"hi\"".into();
         let md = d.to_obsidian_md();
-        assert!(
-            md.contains("theme: \"she said \\\"hi\\\"\""),
-            "got: {md}",
-        );
+        assert!(md.contains("theme: \"she said \\\"hi\\\"\""), "got: {md}",);
     }
 
     #[test]
@@ -994,10 +999,7 @@ mod tests {
         let mut d = fixture_dream();
         d.theme_label = r"path\to\thing".into();
         let md = d.to_obsidian_md();
-        assert!(
-            md.contains(r#"theme: "path\\to\\thing""#),
-            "got: {md}",
-        );
+        assert!(md.contains(r#"theme: "path\\to\\thing""#), "got: {md}",);
     }
 
     #[test]
@@ -1085,7 +1087,10 @@ mod tests {
 
         let body = std::fs::read_to_string(&outcome.target_path).unwrap();
         // Both themes appear.
-        assert!(body.contains("theme: \"morning\""), "missing morning: {body}");
+        assert!(
+            body.contains("theme: \"morning\""),
+            "missing morning: {body}"
+        );
         assert!(
             body.contains("theme: \"afternoon\""),
             "missing afternoon: {body}",
@@ -1101,11 +1106,7 @@ mod tests {
     fn ob01_sync_writes_atomic_no_dotfile_lingers() {
         let home = tempdir().unwrap();
         let vault = tempdir().unwrap();
-        append_dream(
-            home.path(),
-            &make_dream("2026-05-26", "x", "y", &[1]),
-        )
-        .unwrap();
+        append_dream(home.path(), &make_dream("2026-05-26", "x", "y", &[1])).unwrap();
 
         let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
             .expect("sync ok");
@@ -1160,8 +1161,8 @@ mod tests {
         let vault = tempdir().unwrap();
         append_dream(home.path(), &make_dream("2026-05-26", "x", "y", &[1])).unwrap();
 
-        let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
-            .unwrap();
+        let outcome =
+            sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26").unwrap();
         let actual = std::fs::metadata(&outcome.target_path).unwrap().len() as usize;
         assert_eq!(actual, outcome.bytes_written);
     }

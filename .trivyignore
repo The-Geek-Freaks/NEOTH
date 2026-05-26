@@ -1,0 +1,24 @@
+# Trivy ignore file for the NEOTH repo.
+#
+# These advisories are also listed in `SRC/deny.toml` + the
+# `cargo audit --ignore ...` flags in `.github/workflows/security.yml`.
+# Each is unmaintained-only or has no safe upgrade — migration is
+# tracked in PROGRESS_v1_0.md.
+#
+# Re-evaluate per item when a safe upgrade lands upstream.
+
+# bincode 1.x — WAL format-stable; v0.3 plans postcard migration.
+RUSTSEC-2025-0141
+
+# number_prefix — transitive via indicatif; upstream migration tracked.
+RUSTSEC-2025-0119
+
+# paste — archived, no vuln; transitive only; pastey migration pending upstream.
+RUSTSEC-2024-0436
+
+# xsalsa20poly1305 — transitive via peeroxide-dht; upstream bump tracked.
+RUSTSEC-2023-0037
+
+# serial 0.4.0 unmaintained — transitive via portable-pty; no vuln, only
+# maintenance status. Upstream bump tracked.
+RUSTSEC-2017-0008

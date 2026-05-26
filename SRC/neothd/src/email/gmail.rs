@@ -33,8 +33,7 @@ use super::super::installers::oauth_pkce::PkcePair;
 
 /// Gmail OAuth 2.0 authorise endpoint. Pinned because operators
 /// copying-pasting from Google docs must hit the canonical URL.
-pub const GOOGLE_OAUTH_AUTHORIZE_ENDPOINT: &str =
-    "https://accounts.google.com/o/oauth2/v2/auth";
+pub const GOOGLE_OAUTH_AUTHORIZE_ENDPOINT: &str = "https://accounts.google.com/o/oauth2/v2/auth";
 
 /// Gmail OAuth 2.0 token endpoint.
 pub const GOOGLE_OAUTH_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
@@ -125,23 +124,16 @@ impl OAuthConfig {
     /// True when the configured scopes include readonly access —
     /// the inbox-fetch path requires this.
     pub fn can_read(&self) -> bool {
-        self.scopes.iter().any(|s| {
-            matches!(
-                s,
-                OAuthScope::GmailReadonly | OAuthScope::GmailModify
-            )
-        })
+        self.scopes
+            .iter()
+            .any(|s| matches!(s, OAuthScope::GmailReadonly | OAuthScope::GmailModify))
     }
 }
 
 /// Build the exact authorize URL the operator browser pops. Uses
 /// `BTreeSet`-driven scope sort so two equivalent configs always
 /// produce the same URL (cache-friendly).
-pub fn build_authorize_url(
-    config: &OAuthConfig,
-    pkce: &PkcePair,
-    state: &str,
-) -> String {
+pub fn build_authorize_url(config: &OAuthConfig, pkce: &PkcePair, state: &str) -> String {
     let scopes: BTreeSet<OAuthScope> = config.scopes.iter().copied().collect();
     let scope_str = scopes
         .iter()
@@ -165,11 +157,7 @@ pub fn build_authorize_url(
 /// Build the application/x-www-form-urlencoded body for the
 /// code→token POST. Returns a `String` ready to feed to a future
 /// HTTP client.
-pub fn token_exchange_form(
-    config: &OAuthConfig,
-    pkce: &PkcePair,
-    auth_code: &str,
-) -> String {
+pub fn token_exchange_form(config: &OAuthConfig, pkce: &PkcePair, auth_code: &str) -> String {
     [
         ("grant_type", "authorization_code"),
         ("code", auth_code),
@@ -301,20 +289,15 @@ impl FetchStrategy {
 ///   - 0..=30 days → `Unseen` (cheap + correct for the common case).
 ///
 /// Pure helper — no clock side effects (caller passes `now_unix`).
-pub fn fetch_strategy_for_freshness(
-    last_poll_unix: Option<i64>,
-    now_unix: i64,
-) -> FetchStrategy {
+pub fn fetch_strategy_for_freshness(last_poll_unix: Option<i64>, now_unix: i64) -> FetchStrategy {
     const THIRTY_DAYS_SECS: i64 = 30 * 86_400;
     match last_poll_unix {
         None => FetchStrategy::Since {
             since_unix: now_unix.saturating_sub(THIRTY_DAYS_SECS),
         },
-        Some(last) if now_unix.saturating_sub(last) > THIRTY_DAYS_SECS => {
-            FetchStrategy::Since {
-                since_unix: now_unix.saturating_sub(THIRTY_DAYS_SECS),
-            }
-        }
+        Some(last) if now_unix.saturating_sub(last) > THIRTY_DAYS_SECS => FetchStrategy::Since {
+            since_unix: now_unix.saturating_sub(THIRTY_DAYS_SECS),
+        },
         Some(_) => FetchStrategy::Unseen,
     }
 }
@@ -467,9 +450,7 @@ mod tests {
         let body = token_exchange_form(&cfg, &fixture_pkce(), "auth-code-123");
         assert!(body.contains("grant_type=authorization_code"));
         assert!(body.contains("code=auth-code-123"));
-        assert!(
-            body.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A9001%2Foauth%2Fcallback")
-        );
+        assert!(body.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A9001%2Foauth%2Fcallback"));
         assert!(body.contains("client_id=demo-client.apps.googleusercontent.com"));
         assert!(body.contains("code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"));
     }
@@ -499,7 +480,9 @@ mod tests {
 
     #[test]
     fn auth_method_kind_str_pinned_for_audit() {
-        let p = AuthMethod::PasswordPlain { password: "x".into() };
+        let p = AuthMethod::PasswordPlain {
+            password: "x".into(),
+        };
         let o = AuthMethod::OAuth2Xoauth2 {
             access_token: "y".into(),
         };
@@ -549,10 +532,7 @@ mod tests {
     fn fetch_strategy_as_str_pinned() {
         assert_eq!(FetchStrategy::Unseen.as_str(), "unseen");
         assert_eq!(FetchStrategy::Recent.as_str(), "recent");
-        assert_eq!(
-            FetchStrategy::Since { since_unix: 0 }.as_str(),
-            "since"
-        );
+        assert_eq!(FetchStrategy::Since { since_unix: 0 }.as_str(), "since");
     }
 
     #[test]
@@ -565,7 +545,9 @@ mod tests {
 
     #[test]
     fn auth_method_serialises_snake_case_with_kind_tag() {
-        let p = AuthMethod::PasswordPlain { password: "x".into() };
+        let p = AuthMethod::PasswordPlain {
+            password: "x".into(),
+        };
         let json = serde_json::to_string(&p).unwrap();
         assert!(json.contains("\"kind\":\"password_plain\""));
     }

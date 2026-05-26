@@ -197,7 +197,10 @@ mod tests {
     #[test]
     fn backend_state_needs_login_from_json() {
         let json = r#"{"BackendState":"NeedsLogin"}"#;
-        assert_eq!(BackendState::from_status_json(json), BackendState::NeedsLogin);
+        assert_eq!(
+            BackendState::from_status_json(json),
+            BackendState::NeedsLogin
+        );
     }
 
     #[test]

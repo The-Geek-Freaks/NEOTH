@@ -465,7 +465,10 @@ mod tests {
         assert!(body.contains("HTTP/1.1 200 OK"));
         assert!(body.contains("application/json"));
         // GUI client renders an inert status bar instead of crashing.
-        assert!(body.contains("{}"), "no-meter response must be empty JSON: {body}");
+        assert!(
+            body.contains("{}"),
+            "no-meter response must be empty JSON: {body}"
+        );
         task.abort();
     }
 
@@ -480,12 +483,9 @@ mod tests {
             config: None,
             meter: Some(meter),
         };
-        let (addr, task) = bind_and_serve(
-            SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0),
-            cfg,
-        )
-        .await
-        .unwrap();
+        let (addr, task) = bind_and_serve(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0), cfg)
+            .await
+            .unwrap();
         let body = raw_get(addr, "/metrics/tps").await;
         assert!(body.contains("HTTP/1.1 200 OK"));
         assert!(body.contains("application/json"));
@@ -499,12 +499,18 @@ mod tests {
             "\"sample_count\"",
             "\"header_line\"",
         ] {
-            assert!(body.contains(field), "field {field} missing from body: {body}");
+            assert!(
+                body.contains(field),
+                "field {field} missing from body: {body}"
+            );
         }
         // header_line must carry the operator-readable format the GUI
         // can drop verbatim — sanity that the formatter wiring didn't
         // get bypassed.
-        assert!(body.contains("[meter]"), "header_line must contain the [meter] prefix");
+        assert!(
+            body.contains("[meter]"),
+            "header_line must contain the [meter] prefix"
+        );
         task.abort();
     }
 

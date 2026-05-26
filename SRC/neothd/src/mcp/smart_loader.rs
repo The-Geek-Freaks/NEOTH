@@ -51,10 +51,7 @@ impl ServerProfile {
     pub fn new(name: impl Into<String>, tool_names: impl IntoIterator<Item = String>) -> Self {
         Self {
             name: name.into(),
-            tool_names: tool_names
-                .into_iter()
-                .map(|t| t.to_lowercase())
-                .collect(),
+            tool_names: tool_names.into_iter().map(|t| t.to_lowercase()).collect(),
         }
     }
 }

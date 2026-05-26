@@ -336,7 +336,12 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
             | Some(crate::cli::init::ProviderKind::AwsBedrock)
             | Some(crate::cli::init::ProviderKind::ClaudeCli)
     );
-    if is_cloud && matches!(state.config.autonomy, crate::permissions::AutonomyLevel::Strict) {
+    if is_cloud
+        && matches!(
+            state.config.autonomy,
+            crate::permissions::AutonomyLevel::Strict
+        )
+    {
         tracing::warn!(
             provider_kind = ?provider_kind,
             request_id = %ctx.request_id,
@@ -480,8 +485,7 @@ pub async fn channel_send(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutco
     // — n8n got an OK for a payload that may have silently dropped.
     match state.writer.append(header, payload).await {
         Ok(_) => HandlerOutcome::ok_json(
-            serde_json::to_value(ChannelSendResponse { queued: true })
-                .unwrap_or(JsonValue::Null),
+            serde_json::to_value(ChannelSendResponse { queued: true }).unwrap_or(JsonValue::Null),
         ),
         Err(e) => {
             tracing::warn!(error = %e, "n8n_api channel_send WAL append failed");

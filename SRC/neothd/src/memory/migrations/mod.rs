@@ -853,7 +853,13 @@ mod tests {
         // reject anything that isn't ISO-8601 'YYYY-MM-DD'.
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&dir.path().join("v.db")).unwrap();
-        for bad in &["2026/05/25", "May 25", "2026-13-01", "2026-05-32", "2026-5-1"] {
+        for bad in &[
+            "2026/05/25",
+            "May 25",
+            "2026-13-01",
+            "2026-05-32",
+            "2026-5-1",
+        ] {
             let r = conn.execute(
                 "INSERT INTO idx_consolidated \
                  (kind, day, text, text_hash, importance, consolidated_ts, last_access_ts) \

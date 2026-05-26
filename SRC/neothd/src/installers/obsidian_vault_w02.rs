@@ -129,7 +129,10 @@ pub const NEOTH_VAULT_SUBFOLDERS: &[SubfolderSpec] = &[
 /// Pre-create every subfolder under `<vault>/<subdir>`. Idempotent
 /// — existing dirs are left alone. Surfaces I/O errors so a RO
 /// volume fails loudly.
-pub fn ensure_subfolders(vault_root: &Path, subdir: &str) -> std::io::Result<Vec<std::path::PathBuf>> {
+pub fn ensure_subfolders(
+    vault_root: &Path,
+    subdir: &str,
+) -> std::io::Result<Vec<std::path::PathBuf>> {
     let mut created = Vec::with_capacity(NEOTH_VAULT_SUBFOLDERS.len());
     for spec in NEOTH_VAULT_SUBFOLDERS {
         let p = vault_root.join(subdir).join(spec.folder_name());

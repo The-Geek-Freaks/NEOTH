@@ -164,12 +164,12 @@ fn strip_code_fence(raw: &str) -> &str {
 /// which is the safe failure mode. False negatives are the security
 /// concern this list defends against.
 const QUOTED_CONTENT_MARKERS: &[&str] = &[
-    ">>>",       // REPL / Python paste indicator
-    "```",       // markdown / fenced code block
-    "</",        // HTML / XML closing tag
-    "wrote:",    // standard email reply prefix ("On 2026-... wrote:")
-    "From:",     // forwarded-email header
-    "Subject:",  // forwarded-email header
+    ">>>",        // REPL / Python paste indicator
+    "```",        // markdown / fenced code block
+    "</",         // HTML / XML closing tag
+    "wrote:",     // standard email reply prefix ("On 2026-... wrote:")
+    "From:",      // forwarded-email header
+    "Subject:",   // forwarded-email header
     "-----BEGIN", // forwarded PGP block / PEM payload
 ];
 

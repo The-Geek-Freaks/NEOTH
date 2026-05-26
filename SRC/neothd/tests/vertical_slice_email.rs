@@ -23,11 +23,11 @@
 //! the function returned.
 
 use neothd::email::draft::{
-    list_drafts, load_draft, save_draft, set_draft_status, sync_drafts_to_obsidian, build_draft,
-    DraftContextSnippet, DraftStatus, SalutationLocale,
+    DraftContextSnippet, DraftStatus, SalutationLocale, build_draft, list_drafts, load_draft,
+    save_draft, set_draft_status, sync_drafts_to_obsidian,
 };
 use neothd::security::email_sanitizer::sanitize_email_body;
-use neothd::security::email_threat::{assess_email_threat, ThreatBand, ThreatFinding};
+use neothd::security::email_threat::{ThreatBand, ThreatFinding, assess_email_threat};
 use neothd::security::ingress_sanitizer::sanitize;
 
 #[test]
@@ -66,8 +66,7 @@ fn benign_email_to_draft_review_sent_end_to_end() {
     );
     // Soft-wrapped invoice line glued back together.
     assert!(
-        sanitized.body.contains("due next Monday")
-            || sanitized.body.contains("due\nnext Monday"),
+        sanitized.body.contains("due next Monday") || sanitized.body.contains("due\nnext Monday"),
         "QP soft-wrap should join the line: {:?}",
         sanitized.body,
     );
@@ -186,11 +185,7 @@ fn phishing_email_quarantines_no_draft_no_vault_note() {
                 Please verify your account and confirm your identity \
                 immediately. Click here to avoid losing access.";
 
-    let assessment = assess_email_threat(
-        body,
-        Some("paypal-secure.attacker.tk"),
-        &[],
-    );
+    let assessment = assess_email_threat(body, Some("paypal-secure.attacker.tk"), &[]);
     assert_eq!(
         assessment.band,
         ThreatBand::Quarantine,

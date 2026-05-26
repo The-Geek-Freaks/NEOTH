@@ -490,37 +490,38 @@ impl Provider for LocalOuroAdapter {
         // GR-04: circuit breaker — same local-inference rationale
         // as `local_qwen` (mmap / candle / OOM failure isolation).
         crate::providers::circuit_breaker::run_with_breaker("local_ouro", async {
-        let adapter_handle = AdapterHandle {
-            repo: self.repo.clone(),
-            sampling: self.sampling,
-            max_new_tokens: self.max_new_tokens,
-            accelerator: self.accelerator,
-            quant_mode: self.quant_mode,
-            loaded: Arc::clone(&self.loaded),
-            tokenizer_path: self.tokenizer_path.clone(),
-            config_path: self.config_path.clone(),
-            weights_path: self.weights_path.clone(),
-            cache_dir: self.cache_dir.clone(),
-        };
-        let req_clone = req;
-        tokio::task::spawn_blocking(move || {
-            let adapter = LocalOuroAdapter {
-                repo: adapter_handle.repo,
-                cache_dir: adapter_handle.cache_dir,
-                tokenizer_path: adapter_handle.tokenizer_path,
-                config_path: adapter_handle.config_path,
-                weights_path: adapter_handle.weights_path,
-                accelerator: adapter_handle.accelerator,
-                sampling: adapter_handle.sampling,
-                max_new_tokens: adapter_handle.max_new_tokens,
-                quant_mode: adapter_handle.quant_mode,
-                loaded: adapter_handle.loaded,
+            let adapter_handle = AdapterHandle {
+                repo: self.repo.clone(),
+                sampling: self.sampling,
+                max_new_tokens: self.max_new_tokens,
+                accelerator: self.accelerator,
+                quant_mode: self.quant_mode,
+                loaded: Arc::clone(&self.loaded),
+                tokenizer_path: self.tokenizer_path.clone(),
+                config_path: self.config_path.clone(),
+                weights_path: self.weights_path.clone(),
+                cache_dir: self.cache_dir.clone(),
             };
-            run_ouro_forward(&adapter, &req_clone)
+            let req_clone = req;
+            tokio::task::spawn_blocking(move || {
+                let adapter = LocalOuroAdapter {
+                    repo: adapter_handle.repo,
+                    cache_dir: adapter_handle.cache_dir,
+                    tokenizer_path: adapter_handle.tokenizer_path,
+                    config_path: adapter_handle.config_path,
+                    weights_path: adapter_handle.weights_path,
+                    accelerator: adapter_handle.accelerator,
+                    sampling: adapter_handle.sampling,
+                    max_new_tokens: adapter_handle.max_new_tokens,
+                    quant_mode: adapter_handle.quant_mode,
+                    loaded: adapter_handle.loaded,
+                };
+                run_ouro_forward(&adapter, &req_clone)
+            })
+            .await
+            .context("Ouro: spawn_blocking join")?
         })
         .await
-        .context("Ouro: spawn_blocking join")?
-        }).await
     }
 
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
@@ -533,20 +534,21 @@ impl Provider for LocalOuroAdapter {
         // permit settles before the stream-iter starts, so we never
         // hold two permits in parallel.
         crate::providers::circuit_breaker_stream::run_stream_with_breaker("local_ouro", async {
-        // Ouro doesn't yet expose per-token streaming the way the
-        // claude_cli SSE path does. Fall through to the trait default:
-        // single one-shot chunk at the end.
-        let completion = self.complete(req).await?;
-        use crate::providers::CompletionChunk;
-        use futures_util::stream;
-        let chunk = CompletionChunk {
-            delta: completion.text,
-            done: true,
-            input_tokens: completion.input_tokens,
-            output_tokens: completion.output_tokens,
-        };
-        Ok(Box::pin(stream::iter(vec![Ok(chunk)])) as ChunkStream)
-        }).await
+            // Ouro doesn't yet expose per-token streaming the way the
+            // claude_cli SSE path does. Fall through to the trait default:
+            // single one-shot chunk at the end.
+            let completion = self.complete(req).await?;
+            use crate::providers::CompletionChunk;
+            use futures_util::stream;
+            let chunk = CompletionChunk {
+                delta: completion.text,
+                done: true,
+                input_tokens: completion.input_tokens,
+                output_tokens: completion.output_tokens,
+            };
+            Ok(Box::pin(stream::iter(vec![Ok(chunk)])) as ChunkStream)
+        })
+        .await
     }
 }
 

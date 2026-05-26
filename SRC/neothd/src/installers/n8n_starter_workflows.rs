@@ -336,11 +336,7 @@ mod tests {
         for w in starter_workflows() {
             let v: serde_json::Value = serde_json::from_str(w.body)
                 .unwrap_or_else(|e| panic!("invalid JSON for {:?}: {e}", w.slug));
-            assert_eq!(
-                v["active"], false,
-                "{:?} must ship inactive",
-                w.slug,
-            );
+            assert_eq!(v["active"], false, "{:?} must ship inactive", w.slug,);
         }
     }
 
@@ -372,13 +368,9 @@ mod tests {
                 .iter()
                 .find(|n| n["type"] == "n8n-nodes-base.scheduleTrigger")
                 .unwrap_or_else(|| {
-                    panic!(
-                        "no scheduleTrigger node in {:?}: {}",
-                        spec.slug, w.body,
-                    )
+                    panic!("no scheduleTrigger node in {:?}: {}", spec.slug, w.body,)
                 });
-            let expression = schedule["parameters"]["rule"]["interval"][0]
-                ["expression"]
+            let expression = schedule["parameters"]["rule"]["interval"][0]["expression"]
                 .as_str()
                 .unwrap_or_else(|| panic!("missing cron expression in {:?}", spec.slug));
             assert_eq!(
@@ -400,9 +392,7 @@ mod tests {
             let http = nodes
                 .iter()
                 .find(|n| n["type"] == "n8n-nodes-base.httpRequest")
-                .unwrap_or_else(|| {
-                    panic!("no httpRequest node in {:?}", spec.slug)
-                });
+                .unwrap_or_else(|| panic!("no httpRequest node in {:?}", spec.slug));
             let url = http["parameters"]["url"]
                 .as_str()
                 .unwrap_or_else(|| panic!("missing url in {:?}", spec.slug));
@@ -507,8 +497,7 @@ mod tests {
         let all = all_known_workflows();
         assert_eq!(
             all.len(),
-            super::super::n8n_workflows::BOOTSTRAP_WORKFLOWS.len()
-                + starter_workflows().len(),
+            super::super::n8n_workflows::BOOTSTRAP_WORKFLOWS.len() + starter_workflows().len(),
         );
         assert_eq!(all[0].slug, "daily_summary");
         assert_eq!(all[3].slug, "paperless_invoice_consult");
@@ -588,7 +577,10 @@ mod tests {
             .iter()
             .find(|n| n["type"] == "n8n-nodes-base.httpRequest")
             .unwrap();
-        assert_eq!(http["parameters"]["url"], "http://localhost:8765/test/endpoint");
+        assert_eq!(
+            http["parameters"]["url"],
+            "http://localhost:8765/test/endpoint"
+        );
     }
 
     #[test]

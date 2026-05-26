@@ -142,8 +142,8 @@ pub enum ManifestError {
 
 /// Parse + validate `plugin.json` bytes.
 pub fn parse_manifest(json_bytes: &[u8]) -> Result<ClaudePluginManifest, ManifestError> {
-    let parsed: ClaudePluginManifest = serde_json::from_slice(json_bytes)
-        .map_err(|e| ManifestError::Parse(e.to_string()))?;
+    let parsed: ClaudePluginManifest =
+        serde_json::from_slice(json_bytes).map_err(|e| ManifestError::Parse(e.to_string()))?;
     validate_manifest(&parsed)?;
     Ok(parsed)
 }
@@ -218,7 +218,9 @@ fn is_semver_shape(s: &str) -> bool {
     if parts.len() != 3 {
         return false;
     }
-    parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+    parts
+        .iter()
+        .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
 fn is_semver_extra_char(c: char) -> bool {
@@ -227,25 +229,19 @@ fn is_semver_extra_char(c: char) -> bool {
 
 fn validate_relative_path(p: &str) -> Result<(), ManifestError> {
     if p.starts_with('/') || p.starts_with('\\') {
-        return Err(ManifestError::PathIsAbsolute {
-            got: p.to_string(),
-        });
+        return Err(ManifestError::PathIsAbsolute { got: p.to_string() });
     }
     // Windows-style absolute (`C:\...` / `C:/...`).
     if p.len() >= 2 {
         let bytes = p.as_bytes();
         if bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-            return Err(ManifestError::PathIsAbsolute {
-                got: p.to_string(),
-            });
+            return Err(ManifestError::PathIsAbsolute { got: p.to_string() });
         }
     }
     // No `..` segment — protect the plugin sandbox from path-traversal.
     for seg in p.split(|c| c == '/' || c == '\\') {
         if seg == ".." {
-            return Err(ManifestError::PathEscapesRoot {
-                got: p.to_string(),
-            });
+            return Err(ManifestError::PathEscapesRoot { got: p.to_string() });
         }
     }
     Ok(())
@@ -322,7 +318,14 @@ mod tests {
 
     #[test]
     fn invalid_name_rejected() {
-        for bad in &["", "1starts-with-digit", "has space", "ends-with-!", "..", "/"] {
+        for bad in &[
+            "",
+            "1starts-with-digit",
+            "has space",
+            "ends-with-!",
+            "..",
+            "/",
+        ] {
             let json = format!(r#"{{"name":"{bad}","version":"1.0.0"}}"#);
             let r = parse_manifest(json.as_bytes());
             assert!(r.is_err(), "expected reject for name `{bad}`");
@@ -331,7 +334,13 @@ mod tests {
 
     #[test]
     fn valid_names_accepted() {
-        for ok in &["a", "my-plugin", "snake_case", "Mixed-Case_123", "my-plugin-v2"] {
+        for ok in &[
+            "a",
+            "my-plugin",
+            "snake_case",
+            "Mixed-Case_123",
+            "my-plugin-v2",
+        ] {
             let json = format!(r#"{{"name":"{ok}","version":"1.0.0"}}"#);
             let r = parse_manifest(json.as_bytes());
             assert!(r.is_ok(), "expected accept for name `{ok}`: {:?}", r.err());

@@ -4,16 +4,16 @@
 
 pub mod builder;
 pub mod compaction;
+/// Workstream F (CT-10/E-20/V1x-06) — zstd compress/decompress helpers
+/// for sealed WAL segments. Pure sync wrappers; the writer calls them
+/// during segment finalization (not on the hot per-frame path).
+pub mod compress;
 /// ADV-01 (F4 finding, SPEC §4.3) — HMAC-SHA256 authenticator + .cpt
 /// file format + crash-recovery apply path. Closes the pre-placed-
 /// .cpt-injection attack window on the WAL recovery boundary.
 pub mod cpt_auth;
 pub mod cpt_format;
 pub mod cpt_recovery;
-/// Workstream F (CT-10/E-20/V1x-06) — zstd compress/decompress helpers
-/// for sealed WAL segments. Pure sync wrappers; the writer calls them
-/// during segment finalization (not on the hot per-frame path).
-pub mod compress;
 #[cfg(windows)]
 pub mod dpapi;
 pub mod error;

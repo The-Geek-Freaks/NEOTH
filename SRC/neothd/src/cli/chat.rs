@@ -1569,78 +1569,78 @@ pub async fn run_chat_with(
                  allow_cloud_fallback=false (operator chose privacy over learn)"
             );
         } else if let Some(learn_provider_ref) = learn_dispatch {
-        match crate::memory::store::open(&views_path) {
-            Ok(mut conn) => {
-                let pipeline_fut = async {
-                    if let Err(e) =
-                        crate::memory::indexer::replay_once(&mut conn, &segment_path).await
-                    {
-                        tracing::warn!(
-                            error = %e,
-                            "indexer replay_once failed before profile pipeline; skipping learn"
-                        );
-                        return;
-                    }
-                    let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
-                    let extensions =
-                        crate::profile::extension_registry::TypedExtensionRegistry::load()
-                            .unwrap_or_default();
-                    match crate::profile::run_pipeline(
-                        &mut conn,
-                        &writer,
-                        learn_provider_ref,
-                        raw_event_id,
-                        2,
-                        &guard,
-                        &extensions,
-                        now_unix(),
-                        // ADV-03 Phase 5 (Session 24): gate context
-                        // None preserves pre-gate behaviour. Wiring
-                        // the chat-path gate context (autonomy +
-                        // is_tty + dialoguer confirm) is Phase 6+
-                        // CLI surface work tracked separately.
-                        None,
-                    )
-                    .await
-                    {
-                        Ok(crate::profile::PipelineRun::Applied { outcome, .. }) => {
-                            tracing::info!(
-                                claims_applied = outcome.claims_applied,
-                                claims_reinforced = outcome.claims_reinforced,
-                                claims_superseded = outcome.claims_superseded,
-                                idempotent_skip = outcome.idempotent_skip,
-                                "profile pipeline applied post-reply"
-                            );
-                        }
-                        Ok(crate::profile::PipelineRun::Skipped(reason)) => {
-                            tracing::debug!(reason = %reason, "profile pipeline skipped post-reply");
-                        }
-                        Err(e) => {
+            match crate::memory::store::open(&views_path) {
+                Ok(mut conn) => {
+                    let pipeline_fut = async {
+                        if let Err(e) =
+                            crate::memory::indexer::replay_once(&mut conn, &segment_path).await
+                        {
                             tracing::warn!(
                                 error = %e,
-                                "profile pipeline failed post-reply (non-fatal)"
+                                "indexer replay_once failed before profile pipeline; skipping learn"
+                            );
+                            return;
+                        }
+                        let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
+                        let extensions =
+                            crate::profile::extension_registry::TypedExtensionRegistry::load()
+                                .unwrap_or_default();
+                        match crate::profile::run_pipeline(
+                            &mut conn,
+                            &writer,
+                            learn_provider_ref,
+                            raw_event_id,
+                            2,
+                            &guard,
+                            &extensions,
+                            now_unix(),
+                            // ADV-03 Phase 5 (Session 24): gate context
+                            // None preserves pre-gate behaviour. Wiring
+                            // the chat-path gate context (autonomy +
+                            // is_tty + dialoguer confirm) is Phase 6+
+                            // CLI surface work tracked separately.
+                            None,
+                        )
+                        .await
+                        {
+                            Ok(crate::profile::PipelineRun::Applied { outcome, .. }) => {
+                                tracing::info!(
+                                    claims_applied = outcome.claims_applied,
+                                    claims_reinforced = outcome.claims_reinforced,
+                                    claims_superseded = outcome.claims_superseded,
+                                    idempotent_skip = outcome.idempotent_skip,
+                                    "profile pipeline applied post-reply"
+                                );
+                            }
+                            Ok(crate::profile::PipelineRun::Skipped(reason)) => {
+                                tracing::debug!(reason = %reason, "profile pipeline skipped post-reply");
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    error = %e,
+                                    "profile pipeline failed post-reply (non-fatal)"
+                                );
+                            }
+                        }
+                    };
+                    match tokio::time::timeout(timeout, pipeline_fut).await {
+                        Ok(()) => {}
+                        Err(_elapsed) => {
+                            tracing::warn!(
+                                timeout_secs = timeout.as_secs(),
+                                "profile pipeline timed out post-reply; learning abandoned for this turn"
                             );
                         }
                     }
-                };
-                match tokio::time::timeout(timeout, pipeline_fut).await {
-                    Ok(()) => {}
-                    Err(_elapsed) => {
-                        tracing::warn!(
-                            timeout_secs = timeout.as_secs(),
-                            "profile pipeline timed out post-reply; learning abandoned for this turn"
-                        );
-                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %views_path.display(),
+                        "open views.db failed for post-reply profile pipeline (non-fatal)"
+                    );
                 }
             }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    path = %views_path.display(),
-                    "open views.db failed for post-reply profile pipeline (non-fatal)"
-                );
-            }
-        }
         } // Session 24 fix #2: closes the `else if let Some(learn_provider_ref) = ...`
     }
 

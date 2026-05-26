@@ -163,9 +163,9 @@ fn redact_value(value: &serde_json::Value, field_hint: &str) -> serde_json::Valu
                 serde_json::Value::String(redact_text(s))
             }
         }
-        serde_json::Value::Array(arr) => serde_json::Value::Array(
-            arr.iter().map(|v| redact_value(v, field_hint)).collect(),
-        ),
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(|v| redact_value(v, field_hint)).collect())
+        }
         serde_json::Value::Object(obj) => {
             let mut out = serde_json::Map::with_capacity(obj.len());
             for (k, v) in obj {
@@ -260,7 +260,10 @@ mod tests {
         let s = format!("GH_TOKEN={fixture}");
         let out = redact_text(&s);
         assert!(out.contains("REDACTED"));
-        assert!(!out.contains(fixture), "raw fixture must not survive: {out}");
+        assert!(
+            !out.contains(fixture),
+            "raw fixture must not survive: {out}"
+        );
     }
 
     #[test]
@@ -298,7 +301,10 @@ mod tests {
         let s = format!("SLACK_TOKEN={fixture}");
         let out = redact_text(&s);
         assert!(out.contains("REDACTED"));
-        assert!(!out.contains(fixture), "raw fixture must not survive redaction");
+        assert!(
+            !out.contains(fixture),
+            "raw fixture must not survive redaction"
+        );
     }
 
     #[test]
@@ -378,7 +384,10 @@ mod tests {
         });
         let out = redact_params_for_log(&v);
         let evidence = out["evidence"].as_str().unwrap();
-        assert!(evidence.contains("[REDACTED:openai_key]"), "got: {evidence}");
+        assert!(
+            evidence.contains("[REDACTED:openai_key]"),
+            "got: {evidence}"
+        );
         assert_eq!(out["prompt"], "hello", "non-secret leaf untouched");
     }
 
@@ -450,14 +459,22 @@ mod tests {
     #[test]
     fn p_04_is_sensitive_field_name_matches_canonical_set() {
         for s in [
-            "api_key", "ApiKey", "TOKEN", "access_token", "refresh_token",
-            "bearer", "password", "secret", "authorization", "auth",
-            "cookie", "x-api-key", "client_secret", "private_key",
+            "api_key",
+            "ApiKey",
+            "TOKEN",
+            "access_token",
+            "refresh_token",
+            "bearer",
+            "password",
+            "secret",
+            "authorization",
+            "auth",
+            "cookie",
+            "x-api-key",
+            "client_secret",
+            "private_key",
         ] {
-            assert!(
-                is_sensitive_field_name(s),
-                "expected `{s}` to be sensitive",
-            );
+            assert!(is_sensitive_field_name(s), "expected `{s}` to be sensitive",);
         }
         for s in ["prompt", "model", "name", "key_count", "tokens_used"] {
             assert!(

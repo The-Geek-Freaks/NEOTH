@@ -124,8 +124,8 @@ pub async fn fetch(url: &str) -> Result<FetchResult> {
 /// `http_client::build_client` so an attacker cannot 302 us into a
 /// private network after the check.
 async fn validate_url(url_str: &str) -> Result<url::Url> {
-    let parsed = url::Url::parse(url_str)
-        .with_context(|| format!("web_fetch: invalid URL: {url_str}"))?;
+    let parsed =
+        url::Url::parse(url_str).with_context(|| format!("web_fetch: invalid URL: {url_str}"))?;
 
     match parsed.scheme() {
         "http" | "https" => {}
@@ -135,9 +135,7 @@ async fn validate_url(url_str: &str) -> Result<url::Url> {
                 url = url_str,
                 "web_fetch: rejected non-http(s) scheme"
             );
-            anyhow::bail!(
-                "web_fetch: only http(s) URLs accepted, got scheme `{other}`: {url_str}"
-            );
+            anyhow::bail!("web_fetch: only http(s) URLs accepted, got scheme `{other}`: {url_str}");
         }
     }
 
@@ -685,17 +683,13 @@ mod tests {
 
     #[tokio::test]
     async fn ssrf_rejects_gcp_metadata_hostname() {
-        let err = fetch("http://metadata.google.internal/")
-            .await
-            .unwrap_err();
+        let err = fetch("http://metadata.google.internal/").await.unwrap_err();
         assert!(err.to_string().contains("metadata host"));
     }
 
     #[tokio::test]
     async fn ssrf_rejects_azure_metadata_hostname() {
-        let err = fetch("http://metadata.azure.internal/")
-            .await
-            .unwrap_err();
+        let err = fetch("http://metadata.azure.internal/").await.unwrap_err();
         assert!(err.to_string().contains("metadata host"));
     }
 

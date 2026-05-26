@@ -421,7 +421,11 @@ mod tests {
         let h1 = hit(ts, "first");
         let h2 = hit(ts + 86_400 * 1_000_000_000, "second");
         let reply = format_recall_reply(&[h1, h2], RecallLanguage::English, "anything");
-        assert_eq!(reply.matches("you said:").count(), 2, "two `you said:` blocks");
+        assert_eq!(
+            reply.matches("you said:").count(),
+            2,
+            "two `you said:` blocks"
+        );
         assert!(reply.contains("first"));
         assert!(reply.contains("second"));
         // Newline-separated, not space-separated.
@@ -437,7 +441,10 @@ mod tests {
         let reply = format_recall_reply(&[h], RecallLanguage::English, "hello");
         // Inner single quotes swapped to backticks.
         assert!(reply.contains("`hello`"), "got: {reply}");
-        assert!(!reply.contains("'hello'"), "raw inner single-quote must not survive: {reply}");
+        assert!(
+            !reply.contains("'hello'"),
+            "raw inner single-quote must not survive: {reply}"
+        );
     }
 
     #[test]

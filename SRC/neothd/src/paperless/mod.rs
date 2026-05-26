@@ -77,7 +77,9 @@ pub fn sync_ocr_to_obsidian(
     if !is_safe_doc_id(&doc_id) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
-            format!("unsafe doc_id {doc_id:?} — must be non-empty, no path separators, not '.'/'..'"),
+            format!(
+                "unsafe doc_id {doc_id:?} — must be non-empty, no path separators, not '.'/'..'"
+            ),
         ));
     }
 
@@ -153,9 +155,7 @@ fn render_findings_block(findings: &[Finding]) -> String {
             Finding::OversizeInput { bytes, limit } => {
                 format!("- oversize_input: {bytes} bytes (limit {limit})\n")
             }
-            Finding::NeededNfkcNormalization => {
-                "- needed_nfkc_normalization\n".to_string()
-            }
+            Finding::NeededNfkcNormalization => "- needed_nfkc_normalization\n".to_string(),
             Finding::BadControlChar { codepoint, count } => {
                 format!("- bad_control_char: U+{codepoint:04X} ×{count}\n")
             }
@@ -189,7 +189,10 @@ fn is_safe_doc_id(id: &str) -> bool {
 /// Render which target path a given doc_id would write to. Useful
 /// for dry-run UIs without invoking the writer.
 pub fn target_path_for(vault_root: &Path, subdir: &str, doc_id: &str) -> PathBuf {
-    vault_root.join(subdir).join("Paperless").join(format!("{doc_id}.md"))
+    vault_root
+        .join(subdir)
+        .join("Paperless")
+        .join(format!("{doc_id}.md"))
 }
 
 /// Re-export the source enum so callers don't need a second `use`
@@ -253,7 +256,11 @@ mod tests {
         let p = payload("doc-77", "Hello world");
         let outcome = sync_ocr_to_obsidian(&p, vault.path(), "NEOTH").unwrap();
 
-        let expected = vault.path().join("NEOTH").join("Paperless").join("doc-77.md");
+        let expected = vault
+            .path()
+            .join("NEOTH")
+            .join("Paperless")
+            .join("doc-77.md");
         assert_eq!(outcome.target_path, expected);
         assert!(expected.exists());
 

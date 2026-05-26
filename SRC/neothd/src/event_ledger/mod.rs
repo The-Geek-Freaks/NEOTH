@@ -138,8 +138,11 @@ impl Ledger {
     /// for stable output. Returns up to `n` `(event_type_hex,
     /// count)` pairs.
     pub fn top_event_types(&self, n: usize) -> Vec<(String, u64)> {
-        let mut pairs: Vec<(String, u64)> =
-            self.counts_by_event_type.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        let mut pairs: Vec<(String, u64)> = self
+            .counts_by_event_type
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
         pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         pairs.truncate(n);
         pairs

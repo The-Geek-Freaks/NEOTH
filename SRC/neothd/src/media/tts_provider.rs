@@ -188,7 +188,12 @@ pub fn build_native_args(
 /// (the dispatcher's `cached_filename` is the long-term key; this
 /// is the short-lived per-synth file).
 pub fn temp_output_path(workdir: &Path, request: &TtsRequest) -> PathBuf {
-    let key = format!("{}|{}|{}", request.text, request.voice_id, request.format.as_str());
+    let key = format!(
+        "{}|{}|{}",
+        request.text,
+        request.voice_id,
+        request.format.as_str()
+    );
     let h = xxhash_rust::xxh3::xxh3_64(key.as_bytes());
     let ext = match request.format {
         TtsFormat::Wav | TtsFormat::PcmS16le => "wav",
@@ -238,9 +243,8 @@ impl TtsProvider for SystemNativeProvider {
         // 22050 Hz / 16-bit / mono in the default config. A
         // precise duration needs WAV-header parse; the operator
         // UIs treat this as best-effort.
-        let approx_duration_ms = ((audio_bytes.len().saturating_sub(44)) as u64
-            * 1000
-            / (22_050 * 2)) as u32;
+        let approx_duration_ms =
+            ((audio_bytes.len().saturating_sub(44)) as u64 * 1000 / (22_050 * 2)) as u32;
 
         Ok(TtsResponse {
             audio_bytes,
@@ -399,7 +403,10 @@ mod tests {
         let workdir = std::path::Path::new("/tmp");
         let r1 = req("hello", "v1");
         let r2 = req("world", "v1");
-        assert_ne!(temp_output_path(workdir, &r1), temp_output_path(workdir, &r2));
+        assert_ne!(
+            temp_output_path(workdir, &r1),
+            temp_output_path(workdir, &r2)
+        );
     }
 
     #[test]
@@ -425,7 +432,12 @@ mod tests {
         let r = req("hi", "");
         let p = temp_output_path(workdir, &r);
         assert!(p.starts_with(workdir));
-        assert!(p.file_name().unwrap().to_string_lossy().starts_with("neoth-tts-"));
+        assert!(
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("neoth-tts-")
+        );
     }
 
     // ── provider trait ────────────────────────────────────────────

@@ -161,7 +161,10 @@ pub fn render_ics(event: &CalendarEvent) -> String {
     let dtstart = ics_time(&event.start_rfc3339);
     let dtend = ics_time(&event.end_rfc3339);
     let uid = if event.event_id.is_empty() {
-        format!("neoth-draft-{}", short_hash(&event.summary, &event.start_rfc3339))
+        format!(
+            "neoth-draft-{}",
+            short_hash(&event.summary, &event.start_rfc3339)
+        )
     } else {
         event.event_id.clone()
     };

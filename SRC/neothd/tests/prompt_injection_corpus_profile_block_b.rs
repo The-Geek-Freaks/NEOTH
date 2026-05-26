@@ -15,7 +15,7 @@
 //! coverage — no code edits needed.
 
 use neothd::profile::extract::is_quoted_content;
-use neothd::profile::lookup::{render_for_synthesis_prompt, ProfileClaim, PROFILE_BOUNDARY_HEADER};
+use neothd::profile::lookup::{PROFILE_BOUNDARY_HEADER, ProfileClaim, render_for_synthesis_prompt};
 use serde::Deserialize;
 use std::{fs, path::PathBuf};
 
@@ -38,9 +38,9 @@ struct Fixture {
 fn fixture_paths() -> Vec<PathBuf> {
     // Resolve relative to the workspace root (the cwd when `cargo test` runs).
     let corpus_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()  // SRC/
+        .parent() // SRC/
         .unwrap()
-        .parent()  // AGENTER/
+        .parent() // AGENTER/
         .unwrap()
         .join("eval/prompt_injection_corpus/profile_block_b");
 
@@ -56,10 +56,8 @@ fn fixture_paths() -> Vec<PathBuf> {
 
 /// Parse a fixture JSON file; panics with the file name on error.
 fn load_fixture(path: &PathBuf) -> Fixture {
-    let raw = fs::read_to_string(path)
-        .unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-    serde_json::from_str(&raw)
-        .unwrap_or_else(|e| panic!("parse {path:?}: {e}"))
+    let raw = fs::read_to_string(path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {path:?}: {e}"))
 }
 
 /// Build the minimal claim list needed to exercise render_for_synthesis_prompt.
@@ -84,7 +82,9 @@ fn assert_skip_extraction(fx: &Fixture) {
         "[{}] skip_extraction FAIL — is_quoted_content returned false.\n\
          description: {}\n\
          evidence hint: {}",
-        fx.id, fx.description, fx.expected_evidence,
+        fx.id,
+        fx.description,
+        fx.expected_evidence,
     );
 }
 
@@ -138,7 +138,10 @@ fn assert_xml_escape(fx: &Fixture) {
          description: {}\n\
          evidence hint: {}\n\
          stripped content: {:?}",
-        fx.id, fx.description, fx.expected_evidence, stripped,
+        fx.id,
+        fx.description,
+        fx.expected_evidence,
+        stripped,
     );
 }
 
@@ -157,22 +160,18 @@ fn prompt_injection_corpus_profile_block_b() {
 
     for path in &paths {
         let fx = load_fixture(path);
-        let result = std::panic::catch_unwind(|| {
-            match fx.expected_defence.as_str() {
-                "skip_extraction" => assert_skip_extraction(&fx),
-                "xml_escape"      => assert_xml_escape(&fx),
-                other => panic!(
-                    "[{}] unknown expected_defence value: {other:?}",
-                    fx.id
-                ),
-            }
+        let result = std::panic::catch_unwind(|| match fx.expected_defence.as_str() {
+            "skip_extraction" => assert_skip_extraction(&fx),
+            "xml_escape" => assert_xml_escape(&fx),
+            other => panic!("[{}] unknown expected_defence value: {other:?}", fx.id),
         });
 
         match result {
             Ok(_) => {
-                println!("PASS [{id}] ({cat}) — {desc}",
-                    id   = fx.id,
-                    cat  = fx.category,
+                println!(
+                    "PASS [{id}] ({cat}) — {desc}",
+                    id = fx.id,
+                    cat = fx.category,
                     desc = fx.description,
                 );
                 pass += 1;
@@ -185,21 +184,22 @@ fn prompt_injection_corpus_profile_block_b() {
                 } else {
                     "(non-string panic payload)".to_string()
                 };
-                eprintln!("FAIL [{id}] ({cat}) — {desc}\n  {msg}",
-                    id   = fx.id,
-                    cat  = fx.category,
+                eprintln!(
+                    "FAIL [{id}] ({cat}) — {desc}\n  {msg}",
+                    id = fx.id,
+                    cat = fx.category,
                     desc = fx.description,
-                    msg  = msg,
+                    msg = msg,
                 );
                 fail += 1;
             }
         }
     }
 
-    println!("\nCorpus result: {pass} PASS / {fail} FAIL / {} total", paths.len());
-
-    assert_eq!(
-        fail, 0,
-        "{fail} fixture(s) failed — see FAIL lines above"
+    println!(
+        "\nCorpus result: {pass} PASS / {fail} FAIL / {} total",
+        paths.len()
     );
+
+    assert_eq!(fail, 0, "{fail} fixture(s) failed — see FAIL lines above");
 }

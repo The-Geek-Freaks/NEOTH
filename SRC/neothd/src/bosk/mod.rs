@@ -368,7 +368,10 @@ description = "z"
 url = "{ok_url}"
 "#,
             );
-            assert!(parse_catalog(toml.as_bytes()).is_ok(), "should accept {ok_url}");
+            assert!(
+                parse_catalog(toml.as_bytes()).is_ok(),
+                "should accept {ok_url}"
+            );
         }
     }
 

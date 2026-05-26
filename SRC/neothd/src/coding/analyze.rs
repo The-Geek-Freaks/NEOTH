@@ -438,8 +438,9 @@ mod tests {
 
     #[test]
     fn summarize_largest_files_capped_at_10() {
-        let files: Vec<FileRecord> =
-            (0..15).map(|i| file(&format!("f{i:02}.rs"), "rust", i, 0)).collect();
+        let files: Vec<FileRecord> = (0..15)
+            .map(|i| file(&format!("f{i:02}.rs"), "rust", i, 0))
+            .collect();
         let r = report_with(files, vec![]);
         let s = summarize(&r);
         assert_eq!(s.largest_files.len(), 10);

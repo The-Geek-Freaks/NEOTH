@@ -84,10 +84,7 @@ pub enum DomainEvent {
     /// A cron job fired. The scheduler emits this AFTER the job
     /// command launched (not after it finished) so consumers see
     /// "scheduler is alive" beats independently of job latency.
-    CronJobFired {
-        job_id: String,
-        ts_unix: i64,
-    },
+    CronJobFired { job_id: String, ts_unix: i64 },
     /// A provider call returned a response. Self-correction loop in
     /// v0.5 subscribes; today only telemetry / metrics consume.
     ProviderResponded {

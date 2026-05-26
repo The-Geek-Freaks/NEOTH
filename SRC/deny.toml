@@ -113,6 +113,13 @@ ignore = [
     # xsalsa20poly1305 — renamed to crypto_secretbox. Transitive via
     # peeroxide-dht v1.3.1. Needs upstream peeroxide bump.
     { id = "RUSTSEC-2023-0037", reason = "xsalsa20poly1305 — transitive via peeroxide-dht; upstream bump tracked." },
+    # serial 0.4.0 — unmaintained since 2017 (RUSTSEC-2017-0008). Transitive
+    # via portable-pty 0.8.1 (used by the claude-cli tmux adapter on
+    # Linux/macOS). No safe upgrade exists; portable-pty pinned a
+    # specific serial version. Migration: switch tmux adapter to a
+    # different PTY crate OR await upstream portable-pty bump. Not a
+    # vulnerability — unmaintained advisory only.
+    { id = "RUSTSEC-2017-0008", reason = "serial 0.4.0 unmaintained — transitive via portable-pty; no vuln, only maintenance status. Upstream bump tracked." },
 ]
 
 [sources]

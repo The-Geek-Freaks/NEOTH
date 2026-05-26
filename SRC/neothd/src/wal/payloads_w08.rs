@@ -186,7 +186,7 @@ mod tests {
     use crate::installers::detect::DetectReport;
     use crate::installers::gpu::{GpuKind, GpuReport};
     use crate::security::credential_redact::{
-        redact_credential_import, CredentialImportRecord, ImportSource,
+        CredentialImportRecord, ImportSource, redact_credential_import,
     };
 
     fn fresh_report(ts: u64) -> DetectReport {
@@ -331,10 +331,7 @@ mod tests {
             "wizard_step",
             "pkg_mgr",
         ] {
-            assert!(
-                json.contains(&format!("\"{key}\"")),
-                "missing key {key}",
-            );
+            assert!(json.contains(&format!("\"{key}\"")), "missing key {key}",);
         }
         assert!(json.contains("\"dry_run\":true"));
         assert!(json.contains("\"wizard_step\":\"step5_cli_picker\""));

@@ -36,7 +36,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::security::ingress_sanitizer::{sanitize, Finding, SanitizeReport};
+use crate::security::ingress_sanitizer::{Finding, SanitizeReport, sanitize};
 
 /// Source of an OCR ingest. Pinned `serde(rename_all =
 /// "snake_case")` for stable wire form across audit consumers.

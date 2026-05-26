@@ -376,11 +376,7 @@ mod tests {
 
     #[test]
     fn classify_falls_back_to_rocm_when_no_nvidia() {
-        let r = classify_from_subprocess(
-            None,
-            Some("device,vram_total_b\nrx,17179869184"),
-            None,
-        );
+        let r = classify_from_subprocess(None, Some("device,vram_total_b\nrx,17179869184"), None);
         assert_eq!(r.kind, GpuKind::Rocm);
     }
 

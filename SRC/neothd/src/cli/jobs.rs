@@ -153,9 +153,13 @@ fn run_preview(jobs: &JobsFile, id: &str, output: &OutputFormat) -> Result<()> {
             if let Some(tz) = &preview.tz {
                 println!("  tz             : {tz}");
             }
-            println!("  delivery       : {} → {}",
+            println!(
+                "  delivery       : {} → {}",
                 preview.delivery_channel.as_deref().unwrap_or("wal-only"),
-                preview.delivery_recipient.as_deref().unwrap_or("(no recipient)"),
+                preview
+                    .delivery_recipient
+                    .as_deref()
+                    .unwrap_or("(no recipient)"),
             );
             println!();
             if preview.next_fires_utc.is_empty() {
@@ -248,7 +252,12 @@ pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
     use crate::permissions::AutonomyLevel;
     let is_cloud = matches!(
         provider.as_str(),
-        "openai_api" | "gemini_api" | "openai_compat" | "aws_bedrock" | "azure_openai" | "claude_cli",
+        "openai_api"
+            | "gemini_api"
+            | "openai_compat"
+            | "aws_bedrock"
+            | "azure_openai"
+            | "claude_cli",
     );
     let verdict = match (cfg.autonomy, is_cloud, est.total_eur) {
         (_, false, _) => "allow",
@@ -339,7 +348,11 @@ mod tests {
         let job = make_job("daily-briefing", "Hi");
         let preview = super::build_preview(&job).expect("build");
         assert_eq!(preview.id, "daily-briefing");
-        assert_eq!(preview.next_fires_utc.len(), 3, "every-day cron yields 3 future fires");
+        assert_eq!(
+            preview.next_fires_utc.len(),
+            3,
+            "every-day cron yields 3 future fires"
+        );
         // The first fire must be strictly after now (sanity — operator
         // never sees a "next fire was 5 minutes ago" surprise).
         let first = &preview.next_fires_utc[0];
@@ -350,8 +363,14 @@ mod tests {
     fn ar_04_build_preview_returns_predicted_cost_fields() {
         let job = make_job("expensive", "the quick brown fox jumps over the lazy dog");
         let preview = super::build_preview(&job).expect("build");
-        assert!(preview.predicted_input_tokens > 0, "non-empty prompt → tokens > 0");
-        assert!(preview.predicted_output_tokens > 0, "meter default has a baseline > 0");
+        assert!(
+            preview.predicted_input_tokens > 0,
+            "non-empty prompt → tokens > 0"
+        );
+        assert!(
+            preview.predicted_output_tokens > 0,
+            "meter default has a baseline > 0"
+        );
         // Cost field exists + finite (could be 0 for local providers).
         assert!(preview.predicted_cost_eur.is_finite());
     }

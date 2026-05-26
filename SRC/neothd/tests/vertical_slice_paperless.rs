@@ -41,13 +41,13 @@
 
 use neothd::paperless;
 use neothd::paperless::consult::consult;
-use neothd::proactive::action_staging::{
-    list_proposals, load_proposal, make_proposal_id, set_proposal_status, stage_and_enqueue,
-    sync_proposals_to_obsidian, ProposalKind, ProposalStatus, ProposedAction,
-};
 use neothd::proactive::ProactiveQueue;
+use neothd::proactive::action_staging::{
+    ProposalKind, ProposalStatus, ProposedAction, list_proposals, load_proposal, make_proposal_id,
+    set_proposal_status, stage_and_enqueue, sync_proposals_to_obsidian,
+};
 use neothd::security::ingress_sanitizer::Finding;
-use neothd::security::paperless_ingest::{ingest_ocr_text, OcrSource};
+use neothd::security::paperless_ingest::{OcrSource, ingest_ocr_text};
 
 #[test]
 fn paperless_doc_arrives_to_operator_approval_end_to_end() {
@@ -140,11 +140,11 @@ fn paperless_doc_arrives_to_operator_approval_end_to_end() {
         rationale: format!(
             "PL-03 consult on '{}' surfaced doc {}.md — Acme is a recurring vendor. \
              Cron checks for new invoices each Monday 09:00.",
-            "what was the Acme invoice from May?",
-            doc_id,
+            "what was the Acme invoice from May?", doc_id,
         ),
-        draft_yaml: "schedule:\n  cron: \"0 9 * * 1\"\n  tz: Europe/Berlin\nprompt: \"Acme invoice scan\"\n"
-            .to_string(),
+        draft_yaml:
+            "schedule:\n  cron: \"0 9 * * 1\"\n  tz: Europe/Berlin\nprompt: \"Acme invoice scan\"\n"
+                .to_string(),
         generated_ts_unix: 1_700_000_000,
         status: ProposalStatus::Pending,
         operator_note: String::new(),
@@ -166,8 +166,8 @@ fn paperless_doc_arrives_to_operator_approval_end_to_end() {
 
     // ── 6. Idempotency drift guard ────────────────────────────────
     // Re-staging the same proposal does NOT double-queue.
-    let same_proposal = load_proposal(neoth_home.path(), &proposal_id)
-        .expect("proposal must still be on disk");
+    let same_proposal =
+        load_proposal(neoth_home.path(), &proposal_id).expect("proposal must still be on disk");
     let (_, enqueued_again) =
         stage_and_enqueue(neoth_home.path(), same_proposal, &mut queue).unwrap();
     assert!(

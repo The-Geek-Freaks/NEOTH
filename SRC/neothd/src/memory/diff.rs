@@ -31,7 +31,7 @@ use anyhow::Result;
 use rusqlite::{Connection, params};
 use serde::Serialize;
 
-use crate::memory::regions::{MemoryRegion, AMYGDALA_THRESHOLD};
+use crate::memory::regions::{AMYGDALA_THRESHOLD, MemoryRegion};
 use crate::memory::tiers::FORGET_FLOOR;
 
 /// One row in the diff. Variants distinguish the operator-visible
@@ -403,14 +403,26 @@ mod tests {
         let now = 1_700_000_000_000_000_000;
         let day_ns = 86_400 * 1_000_000_000;
         assert_eq!(parse_window_arg("7d", now).unwrap(), now - 7 * day_ns);
-        assert_eq!(parse_window_arg("2h", now).unwrap(), now - 2 * 3_600 * 1_000_000_000);
-        assert_eq!(parse_window_arg("30m", now).unwrap(), now - 30 * 60 * 1_000_000_000);
-        assert_eq!(parse_window_arg("45s", now).unwrap(), now - 45 * 1_000_000_000);
+        assert_eq!(
+            parse_window_arg("2h", now).unwrap(),
+            now - 2 * 3_600 * 1_000_000_000
+        );
+        assert_eq!(
+            parse_window_arg("30m", now).unwrap(),
+            now - 30 * 60 * 1_000_000_000
+        );
+        assert_eq!(
+            parse_window_arg("45s", now).unwrap(),
+            now - 45 * 1_000_000_000
+        );
     }
 
     #[test]
     fn parse_window_bare_integer_used_as_ts_ns() {
-        assert_eq!(parse_window_arg("1700000000000000000", 0).unwrap(), 1_700_000_000_000_000_000);
+        assert_eq!(
+            parse_window_arg("1700000000000000000", 0).unwrap(),
+            1_700_000_000_000_000_000
+        );
     }
 
     #[test]

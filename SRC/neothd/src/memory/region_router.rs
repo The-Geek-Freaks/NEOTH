@@ -83,10 +83,28 @@ const REGION_KEYWORD_MAP: &[RegionKeywords] = &[
         region: MemoryRegion::Insula,
         keywords: &[
             // English
-            "channel", "message", "telegram", "discord", "slack", "whatsapp", "keet",
-            "inbound", "outbound", "ingress", "egress", "webhook", "received", "sent",
+            "channel",
+            "message",
+            "telegram",
+            "discord",
+            "slack",
+            "whatsapp",
+            "keet",
+            "inbound",
+            "outbound",
+            "ingress",
+            "egress",
+            "webhook",
+            "received",
+            "sent",
             // German
-            "kanal", "nachricht", "empfangen", "gesendet", "telegram", "eingang", "ausgang",
+            "kanal",
+            "nachricht",
+            "empfangen",
+            "gesendet",
+            "telegram",
+            "eingang",
+            "ausgang",
         ],
     },
     // Cerebellum — orchestration: provider / council / kanban / MCP / plugin.
@@ -94,11 +112,31 @@ const REGION_KEYWORD_MAP: &[RegionKeywords] = &[
         region: MemoryRegion::Cerebellum,
         keywords: &[
             // English
-            "provider", "model", "council", "kanban", "task", "agent", "subagent",
-            "plugin", "mcp", "tool", "response", "completion", "claude", "openai",
-            "gemini", "code", "build", "review",
+            "provider",
+            "model",
+            "council",
+            "kanban",
+            "task",
+            "agent",
+            "subagent",
+            "plugin",
+            "mcp",
+            "tool",
+            "response",
+            "completion",
+            "claude",
+            "openai",
+            "gemini",
+            "code",
+            "build",
+            "review",
             // German
-            "anbieter", "modell", "antwort", "rat", "aufgabe", "werkzeug",
+            "anbieter",
+            "modell",
+            "antwort",
+            "rat",
+            "aufgabe",
+            "werkzeug",
         ],
     },
     // BasalGanglia — habits + reflexes: cron + hooks.
@@ -106,10 +144,22 @@ const REGION_KEYWORD_MAP: &[RegionKeywords] = &[
         region: MemoryRegion::BasalGanglia,
         keywords: &[
             // English
-            "cron", "job", "scheduled", "hook", "fired", "trigger", "reminder",
-            "morning", "daily", "weekly",
+            "cron",
+            "job",
+            "scheduled",
+            "hook",
+            "fired",
+            "trigger",
+            "reminder",
+            "morning",
+            "daily",
+            "weekly",
             // German
-            "zeitplan", "stündlich", "täglich", "wöchentlich", "auslöser",
+            "zeitplan",
+            "stündlich",
+            "täglich",
+            "wöchentlich",
+            "auslöser",
             "erinnerung",
         ],
     },
@@ -118,11 +168,28 @@ const REGION_KEYWORD_MAP: &[RegionKeywords] = &[
         region: MemoryRegion::Hypothalamus,
         keywords: &[
             // English
-            "refusal", "refused", "boot", "shutdown", "preset", "profile", "identity",
-            "self", "wizard", "consent", "permission",
+            "refusal",
+            "refused",
+            "boot",
+            "shutdown",
+            "preset",
+            "profile",
+            "identity",
+            "self",
+            "wizard",
+            "consent",
+            "permission",
             // German
-            "verweigerung", "verweigert", "start", "abschluss", "vorgabe", "profil",
-            "identität", "selbst", "zustimmung", "berechtigung",
+            "verweigerung",
+            "verweigert",
+            "start",
+            "abschluss",
+            "vorgabe",
+            "profil",
+            "identität",
+            "selbst",
+            "zustimmung",
+            "berechtigung",
         ],
     },
     // Hippocampus is the default — no explicit keywords. Anything
@@ -135,10 +202,23 @@ const REGION_KEYWORD_MAP: &[RegionKeywords] = &[
 /// "what kind of event".
 const AMYGDALA_BOOST_KEYWORDS: &[&str] = &[
     // English
-    "important", "critical", "urgent", "matter", "mattered", "key",
-    "worst", "best", "biggest", "salient",
+    "important",
+    "critical",
+    "urgent",
+    "matter",
+    "mattered",
+    "key",
+    "worst",
+    "best",
+    "biggest",
+    "salient",
     // German
-    "wichtig", "kritisch", "dringend", "schlimmst", "größt", "bedeutet",
+    "wichtig",
+    "kritisch",
+    "dringend",
+    "schlimmst",
+    "größt",
+    "bedeutet",
 ];
 
 /// Classify the operator's prompt into a [`RouterPlan`]. Pure
@@ -267,7 +347,11 @@ mod tests {
             "tägliche erinnerung um 9",
         ] {
             let plan = route_query(prompt);
-            assert_eq!(plan.primary, MemoryRegion::BasalGanglia, "prompt: {prompt:?}");
+            assert_eq!(
+                plan.primary,
+                MemoryRegion::BasalGanglia,
+                "prompt: {prompt:?}"
+            );
         }
     }
 
@@ -279,14 +363,22 @@ mod tests {
             "welche identität habe ich",
         ] {
             let plan = route_query(prompt);
-            assert_eq!(plan.primary, MemoryRegion::Hypothalamus, "prompt: {prompt:?}");
+            assert_eq!(
+                plan.primary,
+                MemoryRegion::Hypothalamus,
+                "prompt: {prompt:?}"
+            );
         }
     }
 
     #[test]
     fn salience_keywords_add_amygdala_boost() {
         let plan = route_query("what was the most important message");
-        assert_eq!(plan.primary, MemoryRegion::Insula, "primary still classifies");
+        assert_eq!(
+            plan.primary,
+            MemoryRegion::Insula,
+            "primary still classifies"
+        );
         assert!(plan.salience_boost, "Amygdala overlay must be on");
         assert_eq!(plan.regions().len(), 2);
         assert!(plan.regions().contains(&MemoryRegion::Amygdala));

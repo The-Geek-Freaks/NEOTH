@@ -2127,9 +2127,7 @@ fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> R
             "  Daemon mode (no tty) parks pending claims in \
              `neoth profile pending` for review."
         );
-        println!(
-            "  Opt out anytime with: `neoth profile migrate-require-approval --disable`"
-        );
+        println!("  Opt out anytime with: `neoth profile migrate-require-approval --disable`");
     }
     state.steps_completed.push(60); // 5d marker (between 5c=58 and 6=61).
     Ok(())
@@ -3717,14 +3715,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         super::write_first_tour_marker(dir.path()).expect("first");
         // Tamper with the file as if a partial write happened.
-        std::fs::write(
-            dir.path().join(super::FIRST_TOUR_MARKER),
-            b"stale-content",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join(super::FIRST_TOUR_MARKER), b"stale-content").unwrap();
         super::write_first_tour_marker(dir.path()).expect("second");
-        let body =
-            std::fs::read_to_string(dir.path().join(super::FIRST_TOUR_MARKER)).unwrap();
+        let body = std::fs::read_to_string(dir.path().join(super::FIRST_TOUR_MARKER)).unwrap();
         assert_eq!(body, super::FIRST_TOUR_MESSAGE);
     }
 
@@ -4936,13 +4929,8 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let mut state = fixture_state();
         let args = args_with_flag(|a| a.bootstrap_vault = true);
-        step6d_obsidian_vault_bootstrap_with_home(
-            &args,
-            false,
-            &mut state,
-            Some(temp.path()),
-        )
-        .unwrap();
+        step6d_obsidian_vault_bootstrap_with_home(&args, false, &mut state, Some(temp.path()))
+            .unwrap();
 
         assert!(state.bootstrap_vault);
         let path = state.vault_path.as_ref().expect("vault_path recorded");
@@ -4965,13 +4953,8 @@ mod tests {
 
         let mut state = fixture_state();
         let args = args_with_flag(|a| a.bootstrap_vault = true);
-        step6d_obsidian_vault_bootstrap_with_home(
-            &args,
-            false,
-            &mut state,
-            Some(temp.path()),
-        )
-        .unwrap();
+        step6d_obsidian_vault_bootstrap_with_home(&args, false, &mut state, Some(temp.path()))
+            .unwrap();
 
         let body = std::fs::read_to_string(vault.join("README.md")).unwrap();
         assert_eq!(body, sentinel, "operator-edited README must be preserved");

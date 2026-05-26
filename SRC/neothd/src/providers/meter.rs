@@ -347,6 +347,9 @@ mod tests {
             .chars()
             .take_while(|c| c.is_ascii_digit())
             .count();
-        assert_eq!(decimals, 1, "tps must render with exactly 1 decimal: {line}");
+        assert_eq!(
+            decimals, 1,
+            "tps must render with exactly 1 decimal: {line}"
+        );
     }
 }

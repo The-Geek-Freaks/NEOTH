@@ -203,23 +203,20 @@ pub fn recall_from_region(
                  ORDER BY importance DESC, ts_ns DESC \
                  LIMIT ?3",
             )?;
-            stmt.query_map(
-                params![AMYGDALA_THRESHOLD, pattern, limit_i],
-                |r| {
-                    Ok(EpisodeHit {
-                        event_id: r.get(0)?,
-                        event_type: r.get::<_, i64>(1)? as u8,
-                        ts_ns: r.get(2)?,
-                        text: r.get(3)?,
-                        text_hash: r.get(4)?,
-                        channel: r.get(5)?,
-                        sender_id: r.get(6)?,
-                        operator_id: r.get(7)?,
-                        tier: "hot".to_string(),
-                        importance: Some(r.get::<_, f64>(8)?),
-                    })
-                },
-            )?
+            stmt.query_map(params![AMYGDALA_THRESHOLD, pattern, limit_i], |r| {
+                Ok(EpisodeHit {
+                    event_id: r.get(0)?,
+                    event_type: r.get::<_, i64>(1)? as u8,
+                    ts_ns: r.get(2)?,
+                    text: r.get(3)?,
+                    text_hash: r.get(4)?,
+                    channel: r.get(5)?,
+                    sender_id: r.get(6)?,
+                    operator_id: r.get(7)?,
+                    tier: "hot".to_string(),
+                    importance: Some(r.get::<_, f64>(8)?),
+                })
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?
         }
         primary => {
@@ -250,10 +247,8 @@ pub fn recall_from_region(
                 binds.push((*et as i64).into());
             }
             binds.push(limit_i.into());
-            let bind_refs: Vec<&dyn rusqlite::ToSql> = binds
-                .iter()
-                .map(|v| v as &dyn rusqlite::ToSql)
-                .collect();
+            let bind_refs: Vec<&dyn rusqlite::ToSql> =
+                binds.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
             stmt.query_map(rusqlite::params_from_iter(bind_refs.iter().copied()), |r| {
                 Ok(EpisodeHit {
                     event_id: r.get(0)?,
@@ -297,10 +292,8 @@ pub fn count_by_region(conn: &Connection) -> Result<HashMap<MemoryRegion, i64>> 
                 );
                 let binds: Vec<rusqlite::types::Value> =
                     types.iter().map(|et| (*et as i64).into()).collect();
-                let bind_refs: Vec<&dyn rusqlite::ToSql> = binds
-                    .iter()
-                    .map(|v| v as &dyn rusqlite::ToSql)
-                    .collect();
+                let bind_refs: Vec<&dyn rusqlite::ToSql> =
+                    binds.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
                 conn.query_row(
                     &sql,
                     rusqlite::params_from_iter(bind_refs.iter().copied()),
@@ -337,8 +330,14 @@ mod tests {
             assert_eq!(MemoryRegion::parse(&r.as_str().to_uppercase()), Some(r));
         }
         // basal_ganglia accepts the hyphen + no-separator variant.
-        assert_eq!(MemoryRegion::parse("basal-ganglia"), Some(MemoryRegion::BasalGanglia));
-        assert_eq!(MemoryRegion::parse("basalganglia"), Some(MemoryRegion::BasalGanglia));
+        assert_eq!(
+            MemoryRegion::parse("basal-ganglia"),
+            Some(MemoryRegion::BasalGanglia)
+        );
+        assert_eq!(
+            MemoryRegion::parse("basalganglia"),
+            Some(MemoryRegion::BasalGanglia)
+        );
         assert!(MemoryRegion::parse("nope").is_none());
         assert!(MemoryRegion::parse("").is_none());
     }
@@ -431,7 +430,14 @@ mod tests {
             "INSERT INTO idx_episode \
              (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?3)",
-            params![event_id, event_type as i64, event_id, text, format!("h{event_id}"), importance],
+            params![
+                event_id,
+                event_type as i64,
+                event_id,
+                text,
+                format!("h{event_id}"),
+                importance
+            ],
         )
         .unwrap();
     }
@@ -484,19 +490,22 @@ mod tests {
         // Sorted by importance DESC.
         let imps: Vec<f64> = hits.iter().map(|h| h.importance.unwrap_or(0.0)).collect();
         for w in imps.windows(2) {
-            assert!(w[0] >= w[1], "amygdala results must sort by importance DESC");
+            assert!(
+                w[0] >= w[1],
+                "amygdala results must sort by importance DESC"
+            );
         }
     }
 
     #[test]
     fn count_by_region_partitions_rows_correctly() {
         let (_dir, conn) = open();
-        seed(&conn, 1, 0x01, "a", 0.5);    // Hippocampus
-        seed(&conn, 2, 0x01, "b", 0.95);   // Hippocampus + Amygdala (overlay)
-        seed(&conn, 3, 0x32, "c", 0.5);    // Insula
-        seed(&conn, 4, 0x65, "d", 0.5);    // Cerebellum
-        seed(&conn, 5, 0x41, "e", 0.95);   // BasalGanglia + Amygdala (overlay)
-        seed(&conn, 6, 0x10, "f", 0.5);    // Hypothalamus
+        seed(&conn, 1, 0x01, "a", 0.5); // Hippocampus
+        seed(&conn, 2, 0x01, "b", 0.95); // Hippocampus + Amygdala (overlay)
+        seed(&conn, 3, 0x32, "c", 0.5); // Insula
+        seed(&conn, 4, 0x65, "d", 0.5); // Cerebellum
+        seed(&conn, 5, 0x41, "e", 0.95); // BasalGanglia + Amygdala (overlay)
+        seed(&conn, 6, 0x10, "f", 0.5); // Hypothalamus
 
         let counts = count_by_region(&conn).unwrap();
         assert_eq!(counts[&MemoryRegion::Hippocampus], 2);

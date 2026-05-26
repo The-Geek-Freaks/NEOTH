@@ -38,13 +38,11 @@ pub const DEFAULT_PAPERLESS_PORT: u16 = 8000;
 /// URL of the upstream installer docs the wizard renders when Docker
 /// isn't available. Public so the CLI + GUI surfaces share the same
 /// link (one source of truth — broken-link audits stay simple).
-pub const PAPERLESS_UPSTREAM_DOCS_URL: &str =
-    "https://docs.paperless-ngx.com/setup/#installation";
+pub const PAPERLESS_UPSTREAM_DOCS_URL: &str = "https://docs.paperless-ngx.com/setup/#installation";
 
 /// Canonical compose-file URL operators curl to bootstrap. Pinned
 /// so a wizard re-render survives upstream-docs URL changes.
-pub const PAPERLESS_COMPOSE_BOOTSTRAP_URL: &str =
-    "https://raw.githubusercontent.com/paperless-ngx/paperless-ngx/main/docker/compose/docker-compose.postgres.yml";
+pub const PAPERLESS_COMPOSE_BOOTSTRAP_URL: &str = "https://raw.githubusercontent.com/paperless-ngx/paperless-ngx/main/docker/compose/docker-compose.postgres.yml";
 
 /// One of the install paths paperless-ngx supports. Pinned
 /// exhaustively — adding a third path needs wizard UX.
@@ -347,12 +345,16 @@ mod tests {
     #[test]
     fn install_commands_embed_work_dir_in_compose_path() {
         let cmds = InstallStrategy::DockerCompose.install_commands("/custom/paperless-dir");
-        assert!(cmds[0]
-            .iter()
-            .any(|a| a == "/custom/paperless-dir/docker-compose.yml"));
-        assert!(cmds[1]
-            .iter()
-            .any(|a| a == "/custom/paperless-dir/docker-compose.yml"));
+        assert!(
+            cmds[0]
+                .iter()
+                .any(|a| a == "/custom/paperless-dir/docker-compose.yml")
+        );
+        assert!(
+            cmds[1]
+                .iter()
+                .any(|a| a == "/custom/paperless-dir/docker-compose.yml")
+        );
     }
 
     #[test]

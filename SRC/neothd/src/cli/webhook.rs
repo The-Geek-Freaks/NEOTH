@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
-use crate::paperless::webhook_server::{spawn_webhook_server, WebhookServerConfig};
+use crate::paperless::webhook_server::{WebhookServerConfig, spawn_webhook_server};
 
 #[derive(Args, Debug, Clone)]
 pub struct WebhookArgs {

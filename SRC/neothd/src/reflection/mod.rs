@@ -54,13 +54,12 @@ const STOPWORDS: &[&str] = &[
     "und", "oder", "aber", "doch", "weil", "wenn", "dann", "ja", "nein", "nicht", "kein", "keine",
     "ich", "du", "er", "sie", "es", "wir", "ihr", "mich", "dich", "uns", "euch", "mein", "dein",
     "ist", "war", "sind", "waren", "hat", "habe", "haben", "wird", "werden", "kann", "können",
-    "auf", "in", "im", "an", "am", "zu", "zum", "zur", "mit", "von", "vom", "für", "über",
-    "das", "wie", "was", "wer", "wo", "warum", "wann",
-    // English stopwords
-    "the", "a", "an", "and", "or", "but", "of", "in", "on", "to", "for", "with", "is", "it",
-    "i", "you", "he", "she", "we", "they", "this", "that", "what", "when", "where", "why",
-    "have", "has", "had", "do", "does", "did", "be", "been", "being", "are", "was", "were",
-    "will", "would", "should", "could", "can", "may", "might", "as", "at", "by", "from",
+    "auf", "in", "im", "an", "am", "zu", "zum", "zur", "mit", "von", "vom", "für", "über", "das",
+    "wie", "was", "wer", "wo", "warum", "wann", // English stopwords
+    "the", "a", "an", "and", "or", "but", "of", "in", "on", "to", "for", "with", "is", "it", "i",
+    "you", "he", "she", "we", "they", "this", "that", "what", "when", "where", "why", "have",
+    "has", "had", "do", "does", "did", "be", "been", "being", "are", "was", "were", "will",
+    "would", "should", "could", "can", "may", "might", "as", "at", "by", "from",
     // NEOTH chat noise
     "neoth", "chat", "ok", "okay", "ja", "yes", "no", "nö", "hm", "danke", "thanks",
 ];
@@ -76,9 +75,8 @@ const STOPWORDS: &[&str] = &[
 /// data rather than the cron's enqueue side effect.
 pub fn top_topics_last_7_days(conn: &Connection, now_ns: i64, n: usize) -> Result<Vec<String>> {
     let cutoff = now_ns.saturating_sub(7 * NS_PER_DAY);
-    let mut stmt = conn.prepare(
-        "SELECT text FROM idx_episode WHERE ts_ns >= ?1 AND ts_ns <= ?2",
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT text FROM idx_episode WHERE ts_ns >= ?1 AND ts_ns <= ?2")?;
     let rows: Vec<String> = stmt
         .query_map(rusqlite::params![cutoff, now_ns], |r| r.get::<_, String>(0))?
         .collect::<rusqlite::Result<_>>()?;
@@ -278,10 +276,7 @@ pub fn append_reflection(
 
 /// Load every reflection for `iso_week`. Missing file → empty;
 /// malformed lines skipped (corrupted disk doesn't kill the read path).
-pub fn load_reflections_for_week(
-    home: &std::path::Path,
-    iso_week: &str,
-) -> Vec<WeeklyReflection> {
+pub fn load_reflections_for_week(home: &std::path::Path, iso_week: &str) -> Vec<WeeklyReflection> {
     use std::fs;
     let path = jsonl_file_for_week(home, iso_week);
     let Ok(body) = fs::read_to_string(&path) else {
@@ -466,10 +461,18 @@ mod tests {
         insert(&conn, 2, now_ns - 3 * NS_PER_DAY, "memory passing tests");
         insert(&conn, 3, now_ns - 6 * NS_PER_DAY, "memory consolidation");
         // 1 episode about "ancient" OUTSIDE the window — must be excluded.
-        insert(&conn, 4, now_ns - 30 * NS_PER_DAY, "ancient ancient ancient");
+        insert(
+            &conn,
+            4,
+            now_ns - 30 * NS_PER_DAY,
+            "ancient ancient ancient",
+        );
 
         let topics = top_topics_last_7_days(&conn, now_ns, 3).unwrap();
-        assert!(topics.contains(&"memory".to_string()), "in-window topic must appear");
+        assert!(
+            topics.contains(&"memory".to_string()),
+            "in-window topic must appear"
+        );
         assert!(
             !topics.contains(&"ancient".to_string()),
             "out-of-window topic must be excluded",
@@ -487,7 +490,11 @@ mod tests {
         assert_eq!(item.priority, 50);
         assert_eq!(item.dedup_key, "reflection:weekly:2026-W21");
         assert_eq!(item.source, "g_01_mini");
-        assert!(item.body.contains("memory, wal, und recall"), "got: {}", item.body);
+        assert!(
+            item.body.contains("memory, wal, und recall"),
+            "got: {}",
+            item.body
+        );
         assert!(item.body.contains("dranbleiben"), "template tail missing");
     }
 
@@ -517,7 +524,10 @@ mod tests {
         let item1 = build_reflection_item("2026-W21", &["memory".into()], 0).unwrap();
         let item2 = build_reflection_item("2026-W21", &["recall".into()], 0).unwrap();
         assert!(q.enqueue(item1));
-        assert!(!q.enqueue(item2), "same week must dedupe even with different topics");
+        assert!(
+            !q.enqueue(item2),
+            "same week must dedupe even with different topics"
+        );
         // Next week — different tag → both can coexist.
         let item3 = build_reflection_item("2026-W22", &["wal".into()], 0).unwrap();
         assert!(q.enqueue(item3));
@@ -555,7 +565,10 @@ mod tests {
         let r = make_reflection("2026-W21", &[]);
         let md = r.to_obsidian_md();
         assert!(md.contains("topics: []"));
-        assert!(md.contains("(no topics)"), "missing topics placeholder: {md}");
+        assert!(
+            md.contains("(no topics)"),
+            "missing topics placeholder: {md}"
+        );
     }
 
     #[test]

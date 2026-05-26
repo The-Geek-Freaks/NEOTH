@@ -91,15 +91,14 @@ const STOPWORDS: &[&str] = &[
     // German function words
     "der", "die", "das", "den", "dem", "des", "ein", "eine", "einer", "einen", "einem", "eines",
     "und", "oder", "aber", "doch", "weil", "wenn", "dann", "ja", "nein", "nicht", "kein", "keine",
-    "ich", "you", "er", "sie", "wir", "ihr", "mich", "dich", "uns", "euch", "mein", "dein",
-    "ist", "war", "sind", "waren", "hat", "habe", "haben", "wird", "werden", "kann", "können",
-    "auf", "in", "im", "an", "am", "zu", "zum", "zur", "mit", "von", "vom", "für", "über",
-    "wie", "was", "wer", "wo", "warum", "wann",
-    // English
-    "the", "and", "or", "but", "of", "in", "on", "to", "for", "with", "is", "it",
-    "this", "that", "what", "when", "where", "why",
-    "have", "has", "had", "do", "does", "did", "be", "been", "being", "are", "was", "were",
-    "will", "would", "should", "could", "can", "may", "might", "as", "at", "by", "from",
+    "ich", "you", "er", "sie", "wir", "ihr", "mich", "dich", "uns", "euch", "mein", "dein", "ist",
+    "war", "sind", "waren", "hat", "habe", "haben", "wird", "werden", "kann", "können", "auf",
+    "in", "im", "an", "am", "zu", "zum", "zur", "mit", "von", "vom", "für", "über", "wie", "was",
+    "wer", "wo", "warum", "wann", // English
+    "the", "and", "or", "but", "of", "in", "on", "to", "for", "with", "is", "it", "this", "that",
+    "what", "when", "where", "why", "have", "has", "had", "do", "does", "did", "be", "been",
+    "being", "are", "was", "were", "will", "would", "should", "could", "can", "may", "might", "as",
+    "at", "by", "from",
 ];
 
 /// Extract scoring tokens from a question. Pure — public for tests
@@ -162,7 +161,7 @@ pub fn consult(
                 matches: Vec::new(),
                 query_tokens,
                 scanned: 0,
-            }
+            };
         }
     };
 
@@ -199,10 +198,7 @@ pub fn consult(
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let filename = entry
-            .file_name()
-            .to_string_lossy()
-            .to_string();
+        let filename = entry.file_name().to_string_lossy().to_string();
         candidates.push(ConsultMatch {
             filename,
             path,
@@ -329,8 +325,16 @@ mod tests {
     fn consult_returns_doc_with_matching_token() {
         let vault = tempfile::tempdir().unwrap();
         let paperless_dir = vault.path().join("NEOTH").join("Paperless");
-        write_md(&paperless_dir, "doc-001.md", "# Paperless\nInvoice from Acme Co, May 2026");
-        write_md(&paperless_dir, "doc-002.md", "# Paperless\nCoffee receipt at corner cafe");
+        write_md(
+            &paperless_dir,
+            "doc-001.md",
+            "# Paperless\nInvoice from Acme Co, May 2026",
+        );
+        write_md(
+            &paperless_dir,
+            "doc-002.md",
+            "# Paperless\nCoffee receipt at corner cafe",
+        );
 
         let r = consult(vault.path(), "NEOTH", "invoice acme", 5);
         assert_eq!(r.scanned, 2);

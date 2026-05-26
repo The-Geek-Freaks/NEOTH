@@ -136,110 +136,112 @@ impl Provider for AwsBedrockAdapter {
     async fn complete(&self, req: Request) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("aws_bedrock", async {
-        let started = Instant::now();
-        let model = req
-            .model
-            .clone()
-            .unwrap_or_else(|| self.default_model.clone());
+            let started = Instant::now();
+            let model = req
+                .model
+                .clone()
+                .unwrap_or_else(|| self.default_model.clone());
 
-        let body = build_converse_body(&req);
-        let body_bytes = serde_json::to_vec(&body).context("serialise Bedrock Converse body")?;
+            let body = build_converse_body(&req);
+            let body_bytes =
+                serde_json::to_vec(&body).context("serialise Bedrock Converse body")?;
 
-        let url_str = self.endpoint_url(&model);
-        let parsed_url =
-            reqwest::Url::parse(&url_str).with_context(|| format!("parse URL {url_str}"))?;
-        let host = parsed_url
-            .host_str()
-            .ok_or_else(|| anyhow::anyhow!("Bedrock URL has no host: {url_str}"))?
-            .to_string();
-        let path = parsed_url.path().to_string();
-        let query = parsed_url.query().unwrap_or("").to_string();
+            let url_str = self.endpoint_url(&model);
+            let parsed_url =
+                reqwest::Url::parse(&url_str).with_context(|| format!("parse URL {url_str}"))?;
+            let host = parsed_url
+                .host_str()
+                .ok_or_else(|| anyhow::anyhow!("Bedrock URL has no host: {url_str}"))?
+                .to_string();
+            let path = parsed_url.path().to_string();
+            let query = parsed_url.query().unwrap_or("").to_string();
 
-        let signed = sign(
-            "POST",
-            &host,
-            &path,
-            &query,
-            &body_bytes,
-            &self.region,
-            SERVICE_NAME,
-            &self.credentials,
-            chrono::Utc::now(),
-        );
+            let signed = sign(
+                "POST",
+                &host,
+                &path,
+                &query,
+                &body_bytes,
+                &self.region,
+                SERVICE_NAME,
+                &self.credentials,
+                chrono::Utc::now(),
+            );
 
-        let response = self
-            .http
-            .post(parsed_url.clone())
-            .header("content-type", "application/json")
-            .header("host", &host)
-            .header("authorization", signed.authorization.clone())
-            .header("x-amz-date", &signed.x_amz_date)
-            .header("x-amz-content-sha256", &signed.x_amz_content_sha256)
-            .pipe_if(signed.x_amz_security_token.as_ref(), |req, token| {
-                req.header("x-amz-security-token", token)
-            })
-            .body(body_bytes)
-            .send()
-            .await
-            .with_context(|| format!("POST {url_str}"))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            // 429 lands as ThrottlingException — feed the per-provider
-            // quota tracker like every other adapter.
-            if status.as_u16() == 429 {
-                let retry_after = parse_retry_after(response.headers());
-                let body_text = response.text().await.unwrap_or_default();
-                return Err(anyhow::Error::new(QuotaError {
-                    provider: "aws_bedrock",
-                    retry_after,
-                    body: body_text.trim().to_string(),
-                }));
-            }
-            let body_text = response
-                .text()
+            let response = self
+                .http
+                .post(parsed_url.clone())
+                .header("content-type", "application/json")
+                .header("host", &host)
+                .header("authorization", signed.authorization.clone())
+                .header("x-amz-date", &signed.x_amz_date)
+                .header("x-amz-content-sha256", &signed.x_amz_content_sha256)
+                .pipe_if(signed.x_amz_security_token.as_ref(), |req, token| {
+                    req.header("x-amz-security-token", token)
+                })
+                .body(body_bytes)
+                .send()
                 .await
-                .unwrap_or_else(|_| "<unreadable body>".into());
-            return Err(map_bedrock_error(status, &body_text, &self.region));
-        }
+                .with_context(|| format!("POST {url_str}"))?;
 
-        let parsed: ConverseResponse = response
-            .json()
-            .await
-            .with_context(|| "parse aws_bedrock Converse response JSON".to_string())?;
+            let status = response.status();
+            if !status.is_success() {
+                // 429 lands as ThrottlingException — feed the per-provider
+                // quota tracker like every other adapter.
+                if status.as_u16() == 429 {
+                    let retry_after = parse_retry_after(response.headers());
+                    let body_text = response.text().await.unwrap_or_default();
+                    return Err(anyhow::Error::new(QuotaError {
+                        provider: "aws_bedrock",
+                        retry_after,
+                        body: body_text.trim().to_string(),
+                    }));
+                }
+                let body_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<unreadable body>".into());
+                return Err(map_bedrock_error(status, &body_text, &self.region));
+            }
 
-        let text = parsed
-            .output
-            .and_then(|o| o.message)
-            .and_then(|m| m.content.into_iter().next())
-            .map(|c| c.text)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "aws_bedrock returned 200 OK but the response has no \
+            let parsed: ConverseResponse = response
+                .json()
+                .await
+                .with_context(|| "parse aws_bedrock Converse response JSON".to_string())?;
+
+            let text = parsed
+                .output
+                .and_then(|o| o.message)
+                .and_then(|m| m.content.into_iter().next())
+                .map(|c| c.text)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "aws_bedrock returned 200 OK but the response has no \
                      output.message.content[].text — likely a content-filter \
                      refusal or guardrail block. Inspect the raw HTTP body via \
                      NEOTH_LOG_LEVEL=debug."
-                )
-            })?;
+                    )
+                })?;
 
-        let latency = started.elapsed();
-        debug!(
-            adapter = "aws_bedrock",
-            model = %model,
-            region = %self.region,
-            response_bytes = text.len(),
-            latency_ms = latency.as_millis(),
-            "bedrock converse completion"
-        );
+            let latency = started.elapsed();
+            debug!(
+                adapter = "aws_bedrock",
+                model = %model,
+                region = %self.region,
+                response_bytes = text.len(),
+                latency_ms = latency.as_millis(),
+                "bedrock converse completion"
+            );
 
-        Ok(Completion {
-            text,
-            model,
-            latency,
-            input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
-            output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
+            Ok(Completion {
+                text,
+                model,
+                latency,
+                input_tokens: parsed.usage.as_ref().map(|u| u.input_tokens),
+                output_tokens: parsed.usage.as_ref().map(|u| u.output_tokens),
+            })
         })
-        }).await
+        .await
     }
 }
 

@@ -280,7 +280,13 @@ mod tests {
     fn redactor_drops_name_url_username_secret() {
         let r = record(
             ImportSource::Bitwarden,
-            vec![entry("PayPal", "https://paypal.com", "alex@example.com", "S3cret!", &["work"])],
+            vec![entry(
+                "PayPal",
+                "https://paypal.com",
+                "alex@example.com",
+                "S3cret!",
+                &["work"],
+            )],
         );
         let payload = redact_credential_import(&r);
 

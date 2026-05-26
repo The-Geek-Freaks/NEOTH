@@ -158,7 +158,11 @@ pub const TOMBSTONE_SENTINEL_PREFIX: &str = "_tombstone.";
 /// sentinel + the UNIQUE active-redaction index dedupes
 /// repeat-forgets.
 pub fn tombstone_sentinel_field(topic: &str) -> String {
-    format!("{}{}", TOMBSTONE_SENTINEL_PREFIX, topic.trim().to_lowercase())
+    format!(
+        "{}{}",
+        TOMBSTONE_SENTINEL_PREFIX,
+        topic.trim().to_lowercase()
+    )
 }
 
 /// Concern-2 fix (Session 24) — true iff `field` is a tombstone
@@ -258,9 +262,8 @@ pub async fn forget_by_topic_with_cluster_propagation(
     //    end-state. Any OTHER error (e.g. schema missing) propagates
     //    so the caller sees a real problem.
     let field = tombstone_sentinel_field(topic);
-    let reason = format!(
-        "forget_by_topic_with_cluster_propagation at ts_unix={now_unix} (source={source})"
-    );
+    let reason =
+        format!("forget_by_topic_with_cluster_propagation at ts_unix={now_unix} (source={source})");
     match crate::profile::redaction::add(
         conn,
         &field,
@@ -496,11 +499,10 @@ mod tests {
         let seg = dir.path().join("cluster.wal");
         let (writer, join) = spawn(seg.clone()).unwrap();
 
-        let report = forget_by_topic_with_cluster_propagation(
-            &conn, "AcmeCorp", 1700, "cli", &writer,
-        )
-        .await
-        .unwrap();
+        let report =
+            forget_by_topic_with_cluster_propagation(&conn, "AcmeCorp", 1700, "cli", &writer)
+                .await
+                .unwrap();
         assert!(
             report.episode_rows >= 1,
             "local wipe must still happen (Concern-2 layers ON TOP of forget_with_audit)",
@@ -555,11 +557,10 @@ mod tests {
             .await
             .expect("first call");
         // Second call must NOT bail with a UNIQUE constraint Err.
-        let report2 = forget_by_topic_with_cluster_propagation(
-            &conn, "AcmeCorp", 1800, "cli", &writer,
-        )
-        .await
-        .expect("second call must be idempotent");
+        let report2 =
+            forget_by_topic_with_cluster_propagation(&conn, "AcmeCorp", 1800, "cli", &writer)
+                .await
+                .expect("second call must be idempotent");
         // Second call's local-wipe rows are 0 because the first call
         // already wiped them — but no Err.
         assert_eq!(report2.episode_rows, 0);

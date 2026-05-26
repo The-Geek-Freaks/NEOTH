@@ -127,101 +127,102 @@ impl Provider for AzureOpenAiAdapter {
     async fn complete(&self, req: Request) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("azure_openai", async {
-        let started = Instant::now();
-        // Azure's `model` field on the request body is overloaded with
-        // the deployment name; per-request override lets advanced
-        // operators target a different deployment from the same chat
-        // call (rare but supported by Azure).
-        let deployment = req
-            .model
-            .clone()
-            .unwrap_or_else(|| self.deployment_name.clone());
+            let started = Instant::now();
+            // Azure's `model` field on the request body is overloaded with
+            // the deployment name; per-request override lets advanced
+            // operators target a different deployment from the same chat
+            // call (rare but supported by Azure).
+            let deployment = req
+                .model
+                .clone()
+                .unwrap_or_else(|| self.deployment_name.clone());
 
-        let mut messages = Vec::new();
-        if let Some(sys) = &req.system {
-            messages.push(ChatMessage {
-                role: "system",
-                content: sys.clone(),
-            });
-        }
-        messages.push(ChatMessage {
-            role: "user",
-            content: req.prompt.clone(),
-        });
-
-        let body = ChatRequest {
-            // Azure's docs mark `model` as optional when the deployment
-            // already encodes it; include it anyway for the v1-compat
-            // path where Azure expects the underlying model name.
-            model: deployment.clone(),
-            messages,
-            stream: false,
-        };
-
-        let url = self.url(&deployment);
-        let response = self
-            .http
-            .post(&url)
-            .header("content-type", "application/json")
-            .header("api-key", self.api_key.expose())
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("POST {url}"))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            if status.as_u16() == 429 {
-                let retry_after = parse_retry_after(response.headers());
-                let body_text = response.text().await.unwrap_or_default();
-                return Err(anyhow::Error::new(QuotaError {
-                    provider: "azure_openai",
-                    retry_after,
-                    body: body_text.trim().to_string(),
-                }));
+            let mut messages = Vec::new();
+            if let Some(sys) = &req.system {
+                messages.push(ChatMessage {
+                    role: "system",
+                    content: sys.clone(),
+                });
             }
-            let body_text = response
-                .text()
+            messages.push(ChatMessage {
+                role: "user",
+                content: req.prompt.clone(),
+            });
+
+            let body = ChatRequest {
+                // Azure's docs mark `model` as optional when the deployment
+                // already encodes it; include it anyway for the v1-compat
+                // path where Azure expects the underlying model name.
+                model: deployment.clone(),
+                messages,
+                stream: false,
+            };
+
+            let url = self.url(&deployment);
+            let response = self
+                .http
+                .post(&url)
+                .header("content-type", "application/json")
+                .header("api-key", self.api_key.expose())
+                .json(&body)
+                .send()
                 .await
-                .unwrap_or_else(|_| "<unreadable body>".into());
-            return Err(map_azure_error(status, &body_text, &deployment));
-        }
+                .with_context(|| format!("POST {url}"))?;
 
-        let parsed: ChatResponse = response
-            .json()
-            .await
-            .with_context(|| "parse azure_openai response JSON".to_string())?;
+            let status = response.status();
+            if !status.is_success() {
+                if status.as_u16() == 429 {
+                    let retry_after = parse_retry_after(response.headers());
+                    let body_text = response.text().await.unwrap_or_default();
+                    return Err(anyhow::Error::new(QuotaError {
+                        provider: "azure_openai",
+                        retry_after,
+                        body: body_text.trim().to_string(),
+                    }));
+                }
+                let body_text = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<unreadable body>".into());
+                return Err(map_azure_error(status, &body_text, &deployment));
+            }
 
-        let text = parsed
-            .choices
-            .into_iter()
-            .next()
-            .map(|c| c.message.content)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "azure_openai returned 200 OK but no choices[].message.content — \
+            let parsed: ChatResponse = response
+                .json()
+                .await
+                .with_context(|| "parse azure_openai response JSON".to_string())?;
+
+            let text = parsed
+                .choices
+                .into_iter()
+                .next()
+                .map(|c| c.message.content)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "azure_openai returned 200 OK but no choices[].message.content — \
                      likely a content-filter refusal. Inspect NEOTH_LOG_LEVEL=debug."
-                )
-            })?;
+                    )
+                })?;
 
-        let latency = started.elapsed();
-        debug!(
-            adapter = "azure_openai",
-            deployment = %deployment,
-            api_version = %self.api_version,
-            response_bytes = text.len(),
-            latency_ms = latency.as_millis(),
-            "azure openai completion"
-        );
+            let latency = started.elapsed();
+            debug!(
+                adapter = "azure_openai",
+                deployment = %deployment,
+                api_version = %self.api_version,
+                response_bytes = text.len(),
+                latency_ms = latency.as_millis(),
+                "azure openai completion"
+            );
 
-        Ok(Completion {
-            text,
-            model: deployment,
-            latency,
-            input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
-            output_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens),
+            Ok(Completion {
+                text,
+                model: deployment,
+                latency,
+                input_tokens: parsed.usage.as_ref().map(|u| u.prompt_tokens),
+                output_tokens: parsed.usage.as_ref().map(|u| u.completion_tokens),
+            })
         })
-        }).await
+        .await
     }
 }
 

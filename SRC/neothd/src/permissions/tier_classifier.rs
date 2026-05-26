@@ -245,8 +245,14 @@ mod tests {
 
     #[test]
     fn decision_snake_case_serde() {
-        assert_eq!(serde_json::to_string(&TierDecision::AutoApprove).unwrap(), "\"auto_approve\"");
-        assert_eq!(serde_json::to_string(&TierDecision::Prompt).unwrap(), "\"prompt\"");
+        assert_eq!(
+            serde_json::to_string(&TierDecision::AutoApprove).unwrap(),
+            "\"auto_approve\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TierDecision::Prompt).unwrap(),
+            "\"prompt\""
+        );
     }
 
     // ── decision matrix — full grid ───────────────────────────────
@@ -428,7 +434,13 @@ mod tests {
 
     #[test]
     fn classify_exec_capable_verbs() {
-        for tool in ["exec.shell", "shell.run", "run.script", "spawn.process", "bash.command"] {
+        for tool in [
+            "exec.shell",
+            "shell.run",
+            "run.script",
+            "spawn.process",
+            "bash.command",
+        ] {
             assert_eq!(classify_tool(tool), ApprovalTier::ExecCapable);
         }
     }

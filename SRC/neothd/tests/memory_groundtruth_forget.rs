@@ -47,14 +47,7 @@ fn forget_topic_revokes_matching_groundtruth_but_keeps_row_addressable() {
     let dir = tempfile::tempdir().unwrap();
     let conn = store::open(&dir.path().join("v.db")).unwrap();
 
-    let gt_id = insert_gt(
-        &conn,
-        "my city is Berlin",
-        &Source::Onboarding,
-        "self",
-        0,
-    )
-    .unwrap();
+    let gt_id = insert_gt(&conn, "my city is Berlin", &Source::Onboarding, "self", 0).unwrap();
     // Unrelated ground truth must survive untouched.
     let other_id = insert_gt(
         &conn,
@@ -145,14 +138,7 @@ fn forget_does_not_revoke_non_matching_groundtruth_rows() {
 fn revoke_hides_groundtruth_from_recall_but_keeps_row_addressable() {
     let dir = tempfile::tempdir().unwrap();
     let conn = store::open(&dir.path().join("v.db")).unwrap();
-    let id = insert_gt(
-        &conn,
-        "my city is Berlin",
-        &Source::Onboarding,
-        "self",
-        100,
-    )
-    .unwrap();
+    let id = insert_gt(&conn, "my city is Berlin", &Source::Onboarding, "self", 100).unwrap();
 
     assert_eq!(count_active(&conn).unwrap(), 1);
 

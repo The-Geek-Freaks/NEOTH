@@ -18,7 +18,9 @@
 use neothd::memory::store;
 use neothd::profile::apply::apply_delta;
 use neothd::profile::delta::{ProfileDelta, RawClaim};
-use neothd::profile::lookup::{top_claims_for_chat, PROFILE_BOUNDARY_HEADER, render_for_synthesis_prompt};
+use neothd::profile::lookup::{
+    PROFILE_BOUNDARY_HEADER, render_for_synthesis_prompt, top_claims_for_chat,
+};
 use neothd::wal::writer;
 
 fn raw_claim(field: &str, value: serde_json::Value, confidence: f32) -> RawClaim {
@@ -51,7 +53,11 @@ async fn apply_delta_inserts_claim_visible_to_top_claims_for_chat() {
 
     let d = delta(
         "ext-1",
-        vec![raw_claim("identity.location", serde_json::json!("Berlin"), 0.9)],
+        vec![raw_claim(
+            "identity.location",
+            serde_json::json!("Berlin"),
+            0.9,
+        )],
     );
     let outcome = apply_delta(&mut conn, &writer, &d, 1_700_000_000)
         .await
@@ -84,13 +90,21 @@ async fn apply_delta_supersede_path_hides_old_value_from_recall() {
 
     let d1 = delta(
         "ext-old",
-        vec![raw_claim("identity.location", serde_json::json!("Berlin"), 0.7)],
+        vec![raw_claim(
+            "identity.location",
+            serde_json::json!("Berlin"),
+            0.7,
+        )],
     );
     apply_delta(&mut conn, &writer, &d1, 100).await.unwrap();
 
     let d2 = delta(
         "ext-new",
-        vec![raw_claim("identity.location", serde_json::json!("Munich"), 0.9)],
+        vec![raw_claim(
+            "identity.location",
+            serde_json::json!("Munich"),
+            0.9,
+        )],
     );
     let outcome = apply_delta(&mut conn, &writer, &d2, 200).await.unwrap();
     assert_eq!(outcome.claims_superseded, 1, "Munich must supersede Berlin");
@@ -117,12 +131,19 @@ async fn apply_delta_below_min_confidence_is_hidden_from_chat_lookup() {
 
     let d = delta(
         "ext-low-conf",
-        vec![raw_claim("identity.role", serde_json::json!("guesser"), 0.4)],
+        vec![raw_claim(
+            "identity.role",
+            serde_json::json!("guesser"),
+            0.4,
+        )],
     );
     apply_delta(&mut conn, &writer, &d, 1).await.unwrap();
 
     let high = top_claims_for_chat(&conn, 0.6, 50).unwrap();
-    assert!(high.is_empty(), "0.4-confidence claim must be invisible at 0.6 floor");
+    assert!(
+        high.is_empty(),
+        "0.4-confidence claim must be invisible at 0.6 floor"
+    );
     let low = top_claims_for_chat(&conn, 0.3, 50).unwrap();
     assert_eq!(low.len(), 1, "0.4-confidence claim visible at 0.3 floor");
 
@@ -141,7 +162,11 @@ async fn apply_delta_is_idempotent_on_repeat_extraction_id() {
 
     let d = delta(
         "ext-repeat",
-        vec![raw_claim("identity.location", serde_json::json!("Berlin"), 0.9)],
+        vec![raw_claim(
+            "identity.location",
+            serde_json::json!("Berlin"),
+            0.9,
+        )],
     );
     let first = apply_delta(&mut conn, &writer, &d, 1).await.unwrap();
     assert_eq!(first.claims_applied, 1);
@@ -218,7 +243,10 @@ async fn empty_extraction_id_is_rejected_by_apply_delta() {
     let mut conn = store::open(&db).unwrap();
     let (writer, join) = writer::spawn(segment).unwrap();
 
-    let bad = delta("", vec![raw_claim("any.field", serde_json::json!("v"), 0.9)]);
+    let bad = delta(
+        "",
+        vec![raw_claim("any.field", serde_json::json!("v"), 0.9)],
+    );
     let r = apply_delta(&mut conn, &writer, &bad, 1).await;
     assert!(r.is_err(), "empty extraction_id must Err");
     let msg = format!("{:?}", r.unwrap_err());

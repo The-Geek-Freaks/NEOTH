@@ -67,15 +67,13 @@ impl TurnJournal {
             );
         }
         let journal_dir = neoth_dir.join(JOURNAL_DIR);
-        std::fs::create_dir_all(&journal_dir).with_context(|| {
-            format!("create journal dir {}", journal_dir.display())
-        })?;
+        std::fs::create_dir_all(&journal_dir)
+            .with_context(|| format!("create journal dir {}", journal_dir.display()))?;
         let path = journal_dir.join(format!("{turn_id}.jsonl"));
         // Truncate-on-open: a stale file from a prior aborted-mid-write
         // run shouldn't poison the new turn's history.
-        std::fs::write(&path, b"").with_context(|| {
-            format!("create journal file {}", path.display())
-        })?;
+        std::fs::write(&path, b"")
+            .with_context(|| format!("create journal file {}", path.display()))?;
         Ok(Self {
             turn_id,
             path,
@@ -369,7 +367,11 @@ mod tests {
         let jd = dir.path().join(JOURNAL_DIR);
         std::fs::create_dir_all(&jd).unwrap();
         std::fs::write(jd.join("README.md"), b"not a journal").unwrap();
-        std::fs::write(jd.join("real.jsonl"), b"{\"event\":\"Started\",\"ts_unix\":1,\"prompt_excerpt\":\"x\"}\n").unwrap();
+        std::fs::write(
+            jd.join("real.jsonl"),
+            b"{\"event\":\"Started\",\"ts_unix\":1,\"prompt_excerpt\":\"x\"}\n",
+        )
+        .unwrap();
         let reports = scan_for_journals(dir.path()).unwrap();
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].turn_id, "real");
@@ -407,7 +409,8 @@ mod tests {
             ts_unix: 1,
             text: "first\nsecond\nthird".into(),
         };
-        j.append(&chunk).expect("serde escape keeps the line intact");
+        j.append(&chunk)
+            .expect("serde escape keeps the line intact");
         let body = std::fs::read_to_string(j.path()).unwrap();
         let lines: Vec<&str> = body.lines().collect();
         assert_eq!(lines.len(), 1, "exactly one line per event, got: {body:?}");

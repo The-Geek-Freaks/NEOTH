@@ -69,8 +69,8 @@ pub async fn run_hooks(args: HooksArgs) -> Result<()> {
             limit,
             segment,
         } => {
-            let segment_path = segment
-                .unwrap_or_else(|| FreedomConfig::default_wal_dir().join("000001.wal"));
+            let segment_path =
+                segment.unwrap_or_else(|| FreedomConfig::default_wal_dir().join("000001.wal"));
             run_trace(&segment_path, &since, limit, &args.output)
         }
     }
@@ -232,9 +232,7 @@ fn parse_since_to_ns(s: &str) -> Result<i64> {
             .unwrap_or(trimmed.len()),
     );
     if digits.is_empty() {
-        anyhow::bail!(
-            "--since needs a leading number (got `{trimmed}`; expected e.g. `2h`)",
-        );
+        anyhow::bail!("--since needs a leading number (got `{trimmed}`; expected e.g. `2h`)",);
     }
     let n: i64 = digits
         .parse()
@@ -248,13 +246,12 @@ fn parse_since_to_ns(s: &str) -> Result<i64> {
             "--since needs a unit suffix (got `{trimmed}`; expected s/m/h/d, \
              e.g. `2h`)",
         ),
-        other => anyhow::bail!(
-            "--since unit `{other}` not recognised (expected s/m/h/d, e.g. `2h`)",
-        ),
+        other => {
+            anyhow::bail!("--since unit `{other}` not recognised (expected s/m/h/d, e.g. `2h`)",)
+        }
     };
-    n.checked_mul(mult_ns).with_context(|| {
-        format!("--since `{trimmed}` overflows i64 nanoseconds")
-    })
+    n.checked_mul(mult_ns)
+        .with_context(|| format!("--since `{trimmed}` overflows i64 nanoseconds"))
 }
 
 /// AR-02 — operator-facing label for the 0x80..=0x83 hook lifecycle
@@ -313,7 +310,10 @@ fn run_trace(
                 segment_path.display(),
                 rows.len(),
             );
-            println!("  {:<14}  {:<16}  {:<19}  payload", "code", "label", "ts_ns");
+            println!(
+                "  {:<14}  {:<16}  {:<19}  payload",
+                "code", "label", "ts_ns"
+            );
             for row in &rows {
                 println!(
                     "  0x{code:02X}            {label:<16}  {ts:<19}  {plen}b",
@@ -346,8 +346,8 @@ pub fn collect_hook_trace(
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader};
 
-    let bytes = std::fs::read(segment_path)
-        .with_context(|| format!("read {}", segment_path.display()))?;
+    let bytes =
+        std::fs::read(segment_path).with_context(|| format!("read {}", segment_path.display()))?;
     if bytes.len() < SEGMENT_HEADER_LEN {
         // Tiny / corrupt segment: return empty rather than bail so the
         // tracer is safe to run against fresh installs with an empty WAL.
@@ -488,16 +488,31 @@ kind = "allow"
 
     #[test]
     fn parse_since_trims_surrounding_whitespace() {
-        assert_eq!(super::parse_since_to_ns("  10m  ").unwrap(), 600_000_000_000);
+        assert_eq!(
+            super::parse_since_to_ns("  10m  ").unwrap(),
+            600_000_000_000
+        );
     }
 
     #[test]
     fn hook_code_label_pins_band() {
         use crate::wal::events::*;
-        assert_eq!(super::hook_code_label(EVENT_TYPE_HOOK_FIRED), Some("HOOK_FIRED"));
-        assert_eq!(super::hook_code_label(EVENT_TYPE_HOOK_BLOCKED), Some("HOOK_BLOCKED"));
-        assert_eq!(super::hook_code_label(EVENT_TYPE_HOOK_REPLACED), Some("HOOK_REPLACED"));
-        assert_eq!(super::hook_code_label(EVENT_TYPE_HOOK_ERROR), Some("HOOK_ERROR"));
+        assert_eq!(
+            super::hook_code_label(EVENT_TYPE_HOOK_FIRED),
+            Some("HOOK_FIRED")
+        );
+        assert_eq!(
+            super::hook_code_label(EVENT_TYPE_HOOK_BLOCKED),
+            Some("HOOK_BLOCKED")
+        );
+        assert_eq!(
+            super::hook_code_label(EVENT_TYPE_HOOK_REPLACED),
+            Some("HOOK_REPLACED")
+        );
+        assert_eq!(
+            super::hook_code_label(EVENT_TYPE_HOOK_ERROR),
+            Some("HOOK_ERROR")
+        );
         assert_eq!(super::hook_code_label(0x7F), None);
         assert_eq!(super::hook_code_label(0x90), None);
     }
@@ -507,7 +522,10 @@ kind = "allow"
         let dir = tempdir().unwrap();
         let segment = dir.path().join("nope.wal");
         let r = super::collect_hook_trace(&segment, 0, 100);
-        assert!(r.is_err(), "missing file must Err — operator decides whether to ignore");
+        assert!(
+            r.is_err(),
+            "missing file must Err — operator decides whether to ignore"
+        );
     }
 
     #[test]

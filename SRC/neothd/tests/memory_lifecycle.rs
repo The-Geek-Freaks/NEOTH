@@ -208,7 +208,10 @@ fn consolidation_pass_walks_every_tier_in_one_call() {
         report.warm_decayed, 2,
         "two pre-existing warm rows decayed (newly-consolidated row was inserted post-decay)",
     );
-    assert_eq!(report.promoted, 1, "0.80 row crossed the 90d boundary above PROMOTE");
+    assert_eq!(
+        report.promoted, 1,
+        "0.80 row crossed the 90d boundary above PROMOTE"
+    );
     assert_eq!(report.warm_archived, 1, "0.30 row crossed below PROMOTE");
 
     // Cold tier — one pre-existing row at importance 0.05. After
@@ -227,7 +230,10 @@ fn consolidation_pass_walks_every_tier_in_one_call() {
     let cold_left: i64 = conn
         .query_row("SELECT count(*) FROM idx_longterm", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(cold_left, 1, "pre-existing cold row swept, promoted row landed");
+    assert_eq!(
+        cold_left, 1,
+        "pre-existing cold row swept, promoted row landed"
+    );
 
     let warm_left: i64 = conn
         .query_row("SELECT count(*) FROM idx_consolidated", [], |r| r.get(0))

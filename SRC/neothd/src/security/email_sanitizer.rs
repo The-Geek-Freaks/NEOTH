@@ -42,9 +42,8 @@ pub const MAX_FILENAME_LEN: usize = 200;
 /// the console device, not a file. Operators on cross-platform
 /// systems can hit this trap; we sanitize on every platform.
 const WINDOWS_RESERVED: &[&str] = &[
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
 ];
 
 /// Suspicious double-extensions that operators encounter in
@@ -77,15 +76,33 @@ pub struct EmailSanitized {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum EmailFinding {
-    CrlfNormalized { count: usize },
+    CrlfNormalized {
+        count: usize,
+    },
     QuotedPrintableSoftWrapDecoded,
     MimeBoundaryStripped,
-    ContentHeaderStripped { header: String },
-    QuotedReplyStripped { lines: usize },
-    FilenamePathTraversal { raw: String },
-    FilenameWindowsReserved { raw: String, base: String },
-    FilenameSuspiciousDoubleExt { raw: String, inner: String, outer: String },
-    FilenameTruncated { from: usize, to: usize },
+    ContentHeaderStripped {
+        header: String,
+    },
+    QuotedReplyStripped {
+        lines: usize,
+    },
+    FilenamePathTraversal {
+        raw: String,
+    },
+    FilenameWindowsReserved {
+        raw: String,
+        base: String,
+    },
+    FilenameSuspiciousDoubleExt {
+        raw: String,
+        inner: String,
+        outer: String,
+    },
+    FilenameTruncated {
+        from: usize,
+        to: usize,
+    },
 }
 
 /// Pipe an email body through stages 1+2. Returns the cleaned
@@ -163,7 +180,11 @@ pub fn sanitize_email_body(input: &str) -> EmailSanitized {
     let mut in_header_block = true;
     for line in body.lines() {
         if in_header_block && line.starts_with("Content-") && line.contains(':') {
-            let header_name = line.split(':').next().unwrap_or("Content-Unknown").to_string();
+            let header_name = line
+                .split(':')
+                .next()
+                .unwrap_or("Content-Unknown")
+                .to_string();
             findings.push(EmailFinding::ContentHeaderStripped {
                 header: header_name,
             });
@@ -192,7 +213,9 @@ pub fn sanitize_email_body(input: &str) -> EmailSanitized {
     let (stripped, quoted_lines) = strip_quoted_reply(&body);
     if quoted_lines > 0 {
         body = stripped;
-        findings.push(EmailFinding::QuotedReplyStripped { lines: quoted_lines });
+        findings.push(EmailFinding::QuotedReplyStripped {
+            lines: quoted_lines,
+        });
     }
 
     EmailSanitized { body, findings }
@@ -201,11 +224,11 @@ pub fn sanitize_email_body(input: &str) -> EmailSanitized {
 fn strip_quoted_reply(body: &str) -> (String, usize) {
     // Anchor patterns (case-insensitive prefix match per line).
     let attribution_prefixes = [
-        "on ",         // "On Mon, May 25..."
-        "am ",         // "Am Montag, ..."
-        "el ",         // "El lunes, ..."
-        "le ",         // "Le lundi, ..."
-        "il ",         // "Il lunedì, ..."
+        "on ", // "On Mon, May 25..."
+        "am ", // "Am Montag, ..."
+        "el ", // "El lunes, ..."
+        "le ", // "Le lundi, ..."
+        "il ", // "Il lunedì, ..."
     ];
     let mut output: Vec<&str> = Vec::new();
     let mut quoted_count = 0;
@@ -219,12 +242,9 @@ fn strip_quoted_reply(body: &str) -> (String, usize) {
         let lower = trimmed.to_lowercase();
 
         // Attribution line followed by `>` cascade — strip both.
-        let is_attribution = attribution_prefixes
-            .iter()
-            .any(|p| lower.starts_with(p))
+        let is_attribution = attribution_prefixes.iter().any(|p| lower.starts_with(p))
             && (lower.contains(" wrote:") || lower.contains(" schrieb") || lower.ends_with(':'));
-        let next_starts_with_gt = i + 1 < lines.len()
-            && lines[i + 1].trim_start().starts_with('>');
+        let next_starts_with_gt = i + 1 < lines.len() && lines[i + 1].trim_start().starts_with('>');
         if is_attribution && next_starts_with_gt {
             quoted_count += 1; // attribution line
             i += 1;
@@ -275,7 +295,9 @@ pub fn safe_attachment_filename(raw: &str) -> (String, Vec<EmailFinding>) {
         .to_string();
     let had_path = basename != raw;
     if had_path || raw.contains("..") {
-        findings.push(EmailFinding::FilenamePathTraversal { raw: raw.to_string() });
+        findings.push(EmailFinding::FilenamePathTraversal {
+            raw: raw.to_string(),
+        });
     }
 
     // Step 2: rebase if empty (e.g. raw was "/" or "..").
@@ -333,10 +355,7 @@ pub fn safe_attachment_filename(raw: &str) -> (String, Vec<EmailFinding>) {
             .and_then(|s| s.to_str())
             .map(|e| format!(".{e}"))
             .unwrap_or_default();
-        let hash = format!(
-            "_{:08x}",
-            xxhash_rust::xxh3::xxh3_64(name.as_bytes())
-        );
+        let hash = format!("_{:08x}", xxhash_rust::xxh3::xxh3_64(name.as_bytes()));
         let budget = MAX_FILENAME_LEN.saturating_sub(hash.len() + ext.len());
         let stem_safe: String = name.chars().take(budget).collect();
         name = format!("{stem_safe}{hash}{ext}");

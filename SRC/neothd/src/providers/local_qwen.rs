@@ -349,81 +349,83 @@ impl Provider for LocalQwenAdapter {
         // failures (e.g. OOM, GPU hang) — repeated crashes stop
         // burning the operator's CPU/GPU on a known-broken path.
         crate::providers::circuit_breaker::run_with_breaker("local_qwen", async {
-        let loaded = Arc::clone(&self.loaded);
-        let tokenizer_path = self.tokenizer_path.clone();
-        let config_path = self.config_path.clone();
-        let weights_path = self.weights_path.clone();
-        let repo = self.repo.clone();
-        let accelerator = self.accelerator;
-        let sampling = self.sampling;
-        let max_new_tokens = self.max_new_tokens;
-        // Everything below is CPU/GPU-bound + blocking (mmap + tensor ops);
-        // run it on a blocking thread so we don't stall tokio's reactor.
-        tokio::task::spawn_blocking(move || -> Result<Completion> {
-            run_forward(
-                loaded,
-                &tokenizer_path,
-                &config_path,
-                &weights_path,
-                accelerator,
-                sampling,
-                max_new_tokens,
-                &repo,
-                &req,
-            )
+            let loaded = Arc::clone(&self.loaded);
+            let tokenizer_path = self.tokenizer_path.clone();
+            let config_path = self.config_path.clone();
+            let weights_path = self.weights_path.clone();
+            let repo = self.repo.clone();
+            let accelerator = self.accelerator;
+            let sampling = self.sampling;
+            let max_new_tokens = self.max_new_tokens;
+            // Everything below is CPU/GPU-bound + blocking (mmap + tensor ops);
+            // run it on a blocking thread so we don't stall tokio's reactor.
+            tokio::task::spawn_blocking(move || -> Result<Completion> {
+                run_forward(
+                    loaded,
+                    &tokenizer_path,
+                    &config_path,
+                    &weights_path,
+                    accelerator,
+                    sampling,
+                    max_new_tokens,
+                    &repo,
+                    &req,
+                )
+            })
+            .await
+            .context("local_qwen forward task join error")?
         })
         .await
-        .context("local_qwen forward task join error")?
-        }).await
     }
 
     async fn stream(&self, req: Request) -> Result<ChunkStream> {
         // GR-04 stream-wrap: same circuit-breaker semantics as `complete`.
         crate::providers::circuit_breaker_stream::run_stream_with_breaker("local_qwen", async {
-        // Phase 2c: real token-by-token streaming. We spawn the sampling
-        // loop on a blocking thread and forward each decoded delta over
-        // an mpsc channel; the returned Stream pumps the receiver. The
-        // final chunk carries `done = true` + token counts so consumers
-        // (cli/chat.rs `--stream`, channel pipeline) can emit a clean
-        // PROVIDER_RESPONSE frame.
-        let loaded = Arc::clone(&self.loaded);
-        let tokenizer_path = self.tokenizer_path.clone();
-        let config_path = self.config_path.clone();
-        let weights_path = self.weights_path.clone();
-        let repo = self.repo.clone();
-        let accelerator = self.accelerator;
-        let sampling = self.sampling;
-        let max_new_tokens = self.max_new_tokens;
+            // Phase 2c: real token-by-token streaming. We spawn the sampling
+            // loop on a blocking thread and forward each decoded delta over
+            // an mpsc channel; the returned Stream pumps the receiver. The
+            // final chunk carries `done = true` + token counts so consumers
+            // (cli/chat.rs `--stream`, channel pipeline) can emit a clean
+            // PROVIDER_RESPONSE frame.
+            let loaded = Arc::clone(&self.loaded);
+            let tokenizer_path = self.tokenizer_path.clone();
+            let config_path = self.config_path.clone();
+            let weights_path = self.weights_path.clone();
+            let repo = self.repo.clone();
+            let accelerator = self.accelerator;
+            let sampling = self.sampling;
+            let max_new_tokens = self.max_new_tokens;
 
-        // Bounded channel. 64 chunks of buffering is plenty for the
-        // typical "model produces tokens faster than consumer drains"
-        // case without unbounded memory growth.
-        let (tx, rx) = tokio::sync::mpsc::channel::<Result<CompletionChunk>>(64);
-        let req = req.clone();
+            // Bounded channel. 64 chunks of buffering is plenty for the
+            // typical "model produces tokens faster than consumer drains"
+            // case without unbounded memory growth.
+            let (tx, rx) = tokio::sync::mpsc::channel::<Result<CompletionChunk>>(64);
+            let req = req.clone();
 
-        tokio::task::spawn_blocking(move || {
-            if let Err(e) = run_stream(
-                loaded,
-                &tokenizer_path,
-                &config_path,
-                &weights_path,
-                accelerator,
-                sampling,
-                max_new_tokens,
-                &repo,
-                &req,
-                &tx,
-            ) {
-                // Best-effort error propagation. If the receiver dropped,
-                // we silently abandon — the consumer has stopped reading.
-                let _ = tx.blocking_send(Err(e));
-            }
-        });
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = run_stream(
+                    loaded,
+                    &tokenizer_path,
+                    &config_path,
+                    &weights_path,
+                    accelerator,
+                    sampling,
+                    max_new_tokens,
+                    &repo,
+                    &req,
+                    &tx,
+                ) {
+                    // Best-effort error propagation. If the receiver dropped,
+                    // we silently abandon — the consumer has stopped reading.
+                    let _ = tx.blocking_send(Err(e));
+                }
+            });
 
-        use tokio_stream::wrappers::ReceiverStream;
-        let stream = ReceiverStream::new(rx);
-        Ok(Box::pin(stream) as ChunkStream)
-        }).await
+            use tokio_stream::wrappers::ReceiverStream;
+            let stream = ReceiverStream::new(rx);
+            Ok(Box::pin(stream) as ChunkStream)
+        })
+        .await
     }
 }
 

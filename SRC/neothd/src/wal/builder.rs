@@ -169,7 +169,9 @@ fn tick_global_hlc(now_ns: u64) -> Hlc {
             current_logical = guard.logical(),
             "WAL: HLC logical counter overflow — resetting physical clock",
         );
-        let recovery = now_ns.saturating_add(1).max(guard.physical_ns().saturating_add(1));
+        let recovery = now_ns
+            .saturating_add(1)
+            .max(guard.physical_ns().saturating_add(1));
         *guard = Hlc::new(recovery, 0).unwrap_or(Hlc::EPOCH);
     }
     *guard

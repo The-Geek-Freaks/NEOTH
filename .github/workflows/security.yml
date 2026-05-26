@@ -41,7 +41,11 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-          key: security-audit-cargo-${{ hashFiles('SRC/neothd/Cargo.lock') }}
+          # Cargo.lock lives at the workspace root (SRC/), not the
+          # neothd member crate. Fixed 2026-05-26 — prior key
+          # SRC/neothd/Cargo.lock didn't exist, so cache never hit
+          # and cargo-audit found no lockfile to scan.
+          key: security-audit-cargo-${{ hashFiles('SRC/Cargo.lock') }}
 
       - name: Install cargo-audit
         uses: taiki-e/install-action@v2
@@ -49,15 +53,30 @@ jobs:
           tool: cargo-audit
 
       - name: Run cargo-audit
-        working-directory: SRC/neothd
-        # SX-04: `set -eo pipefail` is the GHA bash default, so removing
-        # `|| true` makes the pipe propagate cargo-audit's non-zero exit
-        # on RUSTSEC findings instead of silently swallowing CVEs.
+        working-directory: SRC
+        # cargo-audit reads Cargo.lock from the workspace root.
+        # Honours the deny.toml ignore list so the unmaintained-only
+        # advisories there (bincode 1.x, number_prefix, paste,
+        # xsalsa20poly1305, serial) don't fail the audit gate —
+        # they're tracked + migration-planned, not active vulns.
+        # SX-04: `set -eo pipefail` is the GHA bash default, so the
+        # pipe propagates cargo-audit's non-zero exit on RUSTSEC
+        # findings instead of silently swallowing CVEs.
         run: |
-          cargo audit --json 2>/dev/null \
+          cargo audit \
+            --ignore RUSTSEC-2025-0141 \
+            --ignore RUSTSEC-2025-0119 \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2023-0037 \
+            --ignore RUSTSEC-2017-0008 \
+            --json 2>/dev/null \
             | tee /tmp/audit-result.json
-          # Always show human-readable output too
-          cargo audit
+          cargo audit \
+            --ignore RUSTSEC-2025-0141 \
+            --ignore RUSTSEC-2025-0119 \
+            --ignore RUSTSEC-2024-0436 \
+            --ignore RUSTSEC-2023-0037 \
+            --ignore RUSTSEC-2017-0008
 
   deny:
     name: cargo-deny (license + supply chain)
@@ -86,6 +105,9 @@ jobs:
       - name: Run Trivy filesystem scan
         # Pinned to ≥0.35.0 — earlier versions affected by the
         # 2025 supply-chain compromise (Dependabot alert #1).
+        # `.trivyignore` at the repo root mirrors the deny.toml +
+        # cargo-audit ignores so we don't re-fail on the same
+        # unmaintained-only advisories.
         uses: aquasecurity/trivy-action@0.35.0
         with:
           scan-type: 'fs'
@@ -95,6 +117,7 @@ jobs:
           severity: 'HIGH,CRITICAL'
           exit-code: '1'
           ignore-unfixed: false
+          trivyignores: '.trivyignore'
 
       - name: Upload Trivy SARIF to GitHub Security tab
         uses: github/codeql-action/upload-sarif@v3

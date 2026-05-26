@@ -72,8 +72,8 @@ pub fn scan_and_apply(
     if !wal_dir.exists() {
         return Ok(report);
     }
-    for entry in fs::read_dir(wal_dir)
-        .with_context(|| format!("read WAL dir {}", wal_dir.display()))?
+    for entry in
+        fs::read_dir(wal_dir).with_context(|| format!("read WAL dir {}", wal_dir.display()))?
     {
         let entry = entry.context("read WAL dir entry")?;
         let path = entry.path();
@@ -158,7 +158,11 @@ fn is_cpt_candidate(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
-fn process_one(cpt_path: &Path, auth: &CompactionAuthenticator, ts_unix: u64) -> Result<CptOutcome> {
+fn process_one(
+    cpt_path: &Path,
+    auth: &CompactionAuthenticator,
+    ts_unix: u64,
+) -> Result<CptOutcome> {
     match read_and_verify_cpt(cpt_path, auth) {
         Ok(_content) => {
             // Apply: rename .cpt -> .bin (atomic on POSIX + NTFS).
@@ -356,7 +360,12 @@ mod tests {
             v.get("ts_unix").and_then(|x| x.as_u64()),
             Some(1_716_595_700)
         );
-        assert!(v.get("cpt_path").and_then(|x| x.as_str()).unwrap().contains("wal-00000007"));
+        assert!(
+            v.get("cpt_path")
+                .and_then(|x| x.as_str())
+                .unwrap()
+                .contains("wal-00000007")
+        );
         assert!(v.get("quarantine_path").is_some());
     }
 

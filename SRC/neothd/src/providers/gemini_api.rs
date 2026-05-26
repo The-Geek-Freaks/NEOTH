@@ -43,122 +43,123 @@ impl Provider for GeminiAdapter {
     async fn complete(&self, req: Request) -> Result<Completion> {
         // GR-04: circuit breaker — same pattern as openai_api.
         crate::providers::circuit_breaker::run_with_breaker("gemini_api", async {
-        let started = Instant::now();
-        let model = req
-            .model
-            .clone()
-            .unwrap_or_else(|| self.default_model.clone());
+            let started = Instant::now();
+            let model = req
+                .model
+                .clone()
+                .unwrap_or_else(|| self.default_model.clone());
 
-        let mut contents = Vec::new();
-        contents.push(GeminiContent {
-            role: "user".into(),
-            parts: vec![GeminiPart {
-                text: req.prompt.clone(),
-            }],
-        });
+            let mut contents = Vec::new();
+            contents.push(GeminiContent {
+                role: "user".into(),
+                parts: vec![GeminiPart {
+                    text: req.prompt.clone(),
+                }],
+            });
 
-        let body = GeminiRequest {
-            contents,
-            system_instruction: req.system.as_ref().map(|s| GeminiContent {
-                role: "system".into(),
-                parts: vec![GeminiPart { text: s.clone() }],
-            }),
-        };
+            let body = GeminiRequest {
+                contents,
+                system_instruction: req.system.as_ref().map(|s| GeminiContent {
+                    role: "system".into(),
+                    parts: vec![GeminiPart { text: s.clone() }],
+                }),
+            };
 
-        // Pick #33 (Session 14, security audit-fix Security#2): Gemini
-        // accepts the API key either as `?key=...` URL parameter OR as
-        // the `x-goog-api-key` header. The URL form exposes the key to
-        // every layer that observes the request URL: reqwest's debug
-        // logs (`RUST_LOG=reqwest=debug`), transparent HTTP proxies,
-        // SOCKS5 access logs, and any tracing instrumentation that
-        // captures the request URI. The header form leaks only on
-        // mTLS-terminating proxies (a tighter trust boundary). Switch
-        // to the header — the model still goes in the path because
-        // Gemini's URL routing keys off it.
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        );
-
-        let response = self
-            .http
-            .post(&url)
-            .header("x-goog-api-key", self.api_key.expose())
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("POST gemini model={model}"))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            // 429 → typed QuotaError so the dispatcher can update the
-            // quota tracker without re-parsing the response. See
-            // openai_api.rs for the symmetric handling.
-            if status.as_u16() == 429 {
-                let retry_after = parse_retry_after(response.headers());
-                let body = response.text().await.unwrap_or_default();
-                let scrubbed = body.replace(self.api_key.expose(), "[REDACTED]");
-                return Err(anyhow::Error::new(QuotaError {
-                    provider: "gemini_api",
-                    retry_after,
-                    body: scrubbed.trim().to_string(),
-                }));
-            }
-            let body = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "<unreadable body>".into());
-            // Strip API key from URL if it leaks into the error string.
-            let scrubbed = body.replace(self.api_key.expose(), "[REDACTED]");
-            anyhow::bail!(
-                "gemini_api returned HTTP {}: {}",
-                status.as_u16(),
-                scrubbed.trim()
+            // Pick #33 (Session 14, security audit-fix Security#2): Gemini
+            // accepts the API key either as `?key=...` URL parameter OR as
+            // the `x-goog-api-key` header. The URL form exposes the key to
+            // every layer that observes the request URL: reqwest's debug
+            // logs (`RUST_LOG=reqwest=debug`), transparent HTTP proxies,
+            // SOCKS5 access logs, and any tracing instrumentation that
+            // captures the request URI. The header form leaks only on
+            // mTLS-terminating proxies (a tighter trust boundary). Switch
+            // to the header — the model still goes in the path because
+            // Gemini's URL routing keys off it.
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             );
-        }
 
-        let parsed: GeminiResponse = response
-            .json()
-            .await
-            .context("parse gemini response JSON")?;
+            let response = self
+                .http
+                .post(&url)
+                .header("x-goog-api-key", self.api_key.expose())
+                .json(&body)
+                .send()
+                .await
+                .with_context(|| format!("POST gemini model={model}"))?;
 
-        let text = parsed
-            // CDX-07 silent-fail-to-empty fix: a Gemini 200 response
-            // with no candidates / no parts is a safety-block / quota
-            // edge case operators want to see surfaced, not silently
-            // collapsed to "". Force an error so the chat dispatch
-            // logs the failure cause instead of emitting a blank reply.
-            .candidates
-            .into_iter()
-            .next()
-            .and_then(|c| c.content.parts.into_iter().next())
-            .map(|p| p.text)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Gemini returned 200 OK but no candidates[].content.parts[].text — \
+            let status = response.status();
+            if !status.is_success() {
+                // 429 → typed QuotaError so the dispatcher can update the
+                // quota tracker without re-parsing the response. See
+                // openai_api.rs for the symmetric handling.
+                if status.as_u16() == 429 {
+                    let retry_after = parse_retry_after(response.headers());
+                    let body = response.text().await.unwrap_or_default();
+                    let scrubbed = body.replace(self.api_key.expose(), "[REDACTED]");
+                    return Err(anyhow::Error::new(QuotaError {
+                        provider: "gemini_api",
+                        retry_after,
+                        body: scrubbed.trim().to_string(),
+                    }));
+                }
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<unreadable body>".into());
+                // Strip API key from URL if it leaks into the error string.
+                let scrubbed = body.replace(self.api_key.expose(), "[REDACTED]");
+                anyhow::bail!(
+                    "gemini_api returned HTTP {}: {}",
+                    status.as_u16(),
+                    scrubbed.trim()
+                );
+            }
+
+            let parsed: GeminiResponse = response
+                .json()
+                .await
+                .context("parse gemini response JSON")?;
+
+            let text = parsed
+                // CDX-07 silent-fail-to-empty fix: a Gemini 200 response
+                // with no candidates / no parts is a safety-block / quota
+                // edge case operators want to see surfaced, not silently
+                // collapsed to "". Force an error so the chat dispatch
+                // logs the failure cause instead of emitting a blank reply.
+                .candidates
+                .into_iter()
+                .next()
+                .and_then(|c| c.content.parts.into_iter().next())
+                .map(|p| p.text)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Gemini returned 200 OK but no candidates[].content.parts[].text — \
                      likely a safety filter block or quota exhaustion envelope. \
                      Inspect the raw HTTP body via NEOTH_LOG_LEVEL=debug."
-                )
-            })?;
+                    )
+                })?;
 
-        let latency = started.elapsed();
-        debug!(
-            model = %model,
-            response_bytes = text.len(),
-            latency_ms = latency.as_millis(),
-            "gemini completion"
-        );
+            let latency = started.elapsed();
+            debug!(
+                model = %model,
+                response_bytes = text.len(),
+                latency_ms = latency.as_millis(),
+                "gemini completion"
+            );
 
-        Ok(Completion {
-            text,
-            model,
-            latency,
-            input_tokens: parsed.usage_metadata.as_ref().map(|u| u.prompt_token_count),
-            output_tokens: parsed
-                .usage_metadata
-                .as_ref()
-                .map(|u| u.candidates_token_count),
+            Ok(Completion {
+                text,
+                model,
+                latency,
+                input_tokens: parsed.usage_metadata.as_ref().map(|u| u.prompt_token_count),
+                output_tokens: parsed
+                    .usage_metadata
+                    .as_ref()
+                    .map(|u| u.candidates_token_count),
+            })
         })
-        }).await
+        .await
     }
 }
 

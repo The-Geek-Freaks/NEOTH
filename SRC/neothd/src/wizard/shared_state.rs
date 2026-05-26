@@ -29,7 +29,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::installers::detect::DetectReport;
-use crate::wizard::recommend::{ChannelRecommendation, ComplexityLevel, ExperienceLevel, VpnRecommendation};
+use crate::wizard::recommend::{
+    ChannelRecommendation, ComplexityLevel, ExperienceLevel, VpnRecommendation,
+};
 
 /// v0.2-shape fields the wizard wrote before W-06 landed.
 /// Pinned exhaustively — adding a new v0.2-era field needs an
@@ -93,7 +95,10 @@ pub struct V2Fields {
     /// Skipped on serialize when equal to the default (1) so
     /// v0.2 round-trip stays byte-clean — wizard upgrade bumps
     /// to 2 which then appears.
-    #[serde(default = "default_version", skip_serializing_if = "is_default_version")]
+    #[serde(
+        default = "default_version",
+        skip_serializing_if = "is_default_version"
+    )]
     pub state_version: u32,
 }
 

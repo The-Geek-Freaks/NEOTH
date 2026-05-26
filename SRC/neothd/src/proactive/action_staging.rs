@@ -214,10 +214,7 @@ pub fn load_proposal(home: &Path, id: &str) -> Option<ProposedAction> {
 /// status. Files that fail to parse are silently skipped — the
 /// caller iterates whatever survived. Sorted ascending by id (which
 /// starts with unix-seconds, so older proposals come first).
-pub fn list_proposals(
-    home: &Path,
-    status_filter: Option<ProposalStatus>,
-) -> Vec<ProposedAction> {
+pub fn list_proposals(home: &Path, status_filter: Option<ProposalStatus>) -> Vec<ProposedAction> {
     let dir = proposals_dir(home);
     let Ok(read) = fs::read_dir(&dir) else {
         return Vec::new();
@@ -244,7 +241,10 @@ pub fn set_proposal_status(
     operator_note: &str,
 ) -> std::io::Result<ProposedAction> {
     let mut p = load_proposal(home, id).ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, format!("proposal {id} not found"))
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("proposal {id} not found"),
+        )
     })?;
     p.status = new_status;
     p.operator_note = operator_note.to_string();
@@ -359,7 +359,8 @@ mod tests {
     use super::*;
 
     fn sample(kind: ProposalKind, title: &str, ts: i64) -> ProposedAction {
-        let draft = "schedule:\n  cron: \"0 9 * * *\"\n  tz: Europe/Berlin\nprompt: \"Morning briefing\"\n";
+        let draft =
+            "schedule:\n  cron: \"0 9 * * *\"\n  tz: Europe/Berlin\nprompt: \"Morning briefing\"\n";
         let id = make_proposal_id(kind, title, draft, ts);
         ProposedAction {
             id,
@@ -433,7 +434,12 @@ mod tests {
         let leftover_tmp_count = std::fs::read_dir(&dir)
             .unwrap()
             .filter(|e| {
-                e.as_ref().unwrap().path().extension().and_then(|x| x.to_str()) == Some("tmp")
+                e.as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .and_then(|x| x.to_str())
+                    == Some("tmp")
             })
             .count();
         assert_eq!(leftover_tmp_count, 0);

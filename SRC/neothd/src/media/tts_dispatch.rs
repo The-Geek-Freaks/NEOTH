@@ -95,7 +95,9 @@ impl TtsProvider {
     /// Operator-facing one-liner shown in the wizard picker.
     pub fn description(self) -> &'static str {
         match self {
-            Self::Piper => "Local Piper TTS — zero network, runs on CPU, decent quality (recommended)",
+            Self::Piper => {
+                "Local Piper TTS — zero network, runs on CPU, decent quality (recommended)"
+            }
             Self::Coqui => "Local Coqui XTTS — higher quality, 4 GB+ model, slower",
             Self::AzureTts => "Azure TTS — cloud, high quality, requires API key",
             Self::ElevenLabs => "ElevenLabs — cloud, best multilingual, paid",
@@ -193,7 +195,9 @@ pub enum DispatchDecision {
     Use(TtsProvider),
     /// Request was rejected for the named reason — caller surfaces
     /// to the operator instead of attempting synth.
-    Reject { reason: String },
+    Reject {
+        reason: String,
+    },
 }
 
 /// Pure-function dispatcher: given config + request, decide which
@@ -233,7 +237,12 @@ pub fn dispatch_fallback(config: &TtsDispatcherConfig, primary_error: &str) -> D
 /// `<provider>-<voice>-<xxh3-of-text>.<ext>`. Two identical
 /// requests produce the same filename → cache-hit short-circuit.
 pub fn cached_filename(provider: TtsProvider, request: &TtsRequest) -> String {
-    let hash_input = format!("{}|{}|{}", request.text, request.voice_id, request.format.as_str());
+    let hash_input = format!(
+        "{}|{}|{}",
+        request.text,
+        request.voice_id,
+        request.format.as_str()
+    );
     let h = xxhash_rust::xxh3::xxh3_64(hash_input.as_bytes());
     let safe_voice = request
         .voice_id

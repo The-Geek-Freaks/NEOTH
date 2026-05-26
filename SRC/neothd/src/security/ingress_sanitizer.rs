@@ -216,8 +216,8 @@ pub fn sanitize(input: &str, channel: &str) -> SanitizeReport {
 
     // PL-04: paraphrase matrix — catches "set aside all earlier
     // directives" style attacks that no fixed substring covers.
-    if let Some(matched) = pl04_paraphrase_match(&lower)
-        .or_else(|| pl04_paraphrase_match(&normalized_for_scan))
+    if let Some(matched) =
+        pl04_paraphrase_match(&lower).or_else(|| pl04_paraphrase_match(&normalized_for_scan))
     {
         findings.push(Finding::PromptInjectionMarker { pattern: matched });
         return SanitizeReport {

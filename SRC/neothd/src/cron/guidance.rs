@@ -107,8 +107,7 @@ pub fn classify(spec: &JobSpec<'_>) -> Recommendation {
     }
     if has_subshell(spec.command) {
         n8n_reasons.push(
-            "command spawns subshells (`$( )` / backticks) — n8n's node model is clearer"
-                .into(),
+            "command spawns subshells (`$( )` / backticks) — n8n's node model is clearer".into(),
         );
     }
     let est_fires = estimate_fires_per_day(spec.cron_expr);
@@ -305,7 +304,9 @@ mod tests {
                 "expected n8n for: {cmd}",
             );
             assert!(
-                r.reasons().iter().any(|s| s.contains("branching") || s.contains("chains")),
+                r.reasons()
+                    .iter()
+                    .any(|s| s.contains("branching") || s.contains("chains")),
                 "missing branching/chains reason: {:?}",
                 r.reasons(),
             );
@@ -319,7 +320,9 @@ mod tests {
         let pipe = classify(&spec("neoth recall x | jq .", "0 * * * *"));
         assert!(matches!(pipe, Recommendation::UseN8n { .. }));
         assert!(
-            pipe.reasons().iter().any(|s| s.contains("chains multiple processes")),
+            pipe.reasons()
+                .iter()
+                .any(|s| s.contains("chains multiple processes")),
             "got: {:?}",
             pipe.reasons(),
         );
@@ -366,7 +369,11 @@ mod tests {
         assert_eq!(estimate_fires_per_day("* * * * *"), 60 * 24, "every minute");
         assert_eq!(estimate_fires_per_day("0 9,17 * * *"), 2, "twice a day");
         assert_eq!(estimate_fires_per_day("0 9-17 * * *"), 9, "business hours");
-        assert_eq!(estimate_fires_per_day("*/15 * * * *"), 4 * 24, "every 15min");
+        assert_eq!(
+            estimate_fires_per_day("*/15 * * * *"),
+            4 * 24,
+            "every 15min"
+        );
     }
 
     #[test]

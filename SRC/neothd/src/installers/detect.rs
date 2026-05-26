@@ -77,10 +77,7 @@ impl DetectReport {
             None => out.push_str("  gpu: (not detected)\n"),
         }
         if let Some(free) = self.disk_free_bytes {
-            out.push_str(&format!(
-                "  disk free: {} GiB\n",
-                free / 1024 / 1024 / 1024
-            ));
+            out.push_str(&format!("  disk free: {} GiB\n", free / 1024 / 1024 / 1024));
         }
         out
     }
@@ -169,8 +166,8 @@ pub fn assemble_report(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::gpu::{GpuKind, GpuReport};
+    use super::*;
 
     fn fresh_report(ts: u64) -> DetectReport {
         DetectReport {

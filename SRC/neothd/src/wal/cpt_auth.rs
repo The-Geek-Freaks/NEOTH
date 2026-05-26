@@ -195,7 +195,8 @@ mod tests {
         let auth = CompactionAuthenticator::from_master_key(&fixture_master());
         let content = b"compacted segment bytes";
         let tag = auth.sign(content);
-        auth.verify(content, &tag).expect("matching content + tag verifies");
+        auth.verify(content, &tag)
+            .expect("matching content + tag verifies");
     }
 
     #[test]

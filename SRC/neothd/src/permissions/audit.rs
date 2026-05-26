@@ -411,9 +411,18 @@ mod tests {
         write_segment(
             &seg,
             &[
-                (EVENT_TYPE_PERMISSION_GRANTED, &pl("paid_provider_call", "ok", "")),
-                (EVENT_TYPE_PERMISSION_DENIED, &pl("shell_exec", "blocked", "")),
-                (EVENT_TYPE_CONSENT_DECISION, &pl("openai_api", "", "allow_always")),
+                (
+                    EVENT_TYPE_PERMISSION_GRANTED,
+                    &pl("paid_provider_call", "ok", ""),
+                ),
+                (
+                    EVENT_TYPE_PERMISSION_DENIED,
+                    &pl("shell_exec", "blocked", ""),
+                ),
+                (
+                    EVENT_TYPE_CONSENT_DECISION,
+                    &pl("openai_api", "", "allow_always"),
+                ),
                 (EVENT_TYPE_CONSENT_DECISION, &pl("gemini_api", "", "deny")),
                 (EVENT_TYPE_RAW_TEXT, b"unrelated"),
             ],
@@ -421,10 +430,34 @@ mod tests {
         let r = audit_segment(&seg, 0, i64::MAX, 10).unwrap();
         // 4 audit frames; RAW_TEXT excluded.
         assert_eq!(r.entries.len(), 4);
-        assert_eq!(r.by_decision.get(&AuditDecision::Granted).copied().unwrap_or(0), 1);
-        assert_eq!(r.by_decision.get(&AuditDecision::Denied).copied().unwrap_or(0), 1);
-        assert_eq!(r.by_decision.get(&AuditDecision::ConsentAllow).copied().unwrap_or(0), 1);
-        assert_eq!(r.by_decision.get(&AuditDecision::ConsentDeny).copied().unwrap_or(0), 1);
+        assert_eq!(
+            r.by_decision
+                .get(&AuditDecision::Granted)
+                .copied()
+                .unwrap_or(0),
+            1
+        );
+        assert_eq!(
+            r.by_decision
+                .get(&AuditDecision::Denied)
+                .copied()
+                .unwrap_or(0),
+            1
+        );
+        assert_eq!(
+            r.by_decision
+                .get(&AuditDecision::ConsentAllow)
+                .copied()
+                .unwrap_or(0),
+            1
+        );
+        assert_eq!(
+            r.by_decision
+                .get(&AuditDecision::ConsentDeny)
+                .copied()
+                .unwrap_or(0),
+            1
+        );
     }
 
     #[test]
@@ -458,7 +491,10 @@ mod tests {
         write_segment(
             &seg,
             &[
-                (EVENT_TYPE_PERMISSION_GRANTED, &pl("paid_provider_call", "ok", "")),
+                (
+                    EVENT_TYPE_PERMISSION_GRANTED,
+                    &pl("paid_provider_call", "ok", ""),
+                ),
                 (EVENT_TYPE_PROVIDER_REQUEST, b"{\"provider\":\"openai\"}"),
             ],
         );
@@ -473,7 +509,10 @@ mod tests {
         let seg = dir.path().join("000001.wal");
         write_segment(
             &seg,
-            &[(EVENT_TYPE_PERMISSION_DENIED, &pl("shell_exec", "blocked", ""))],
+            &[(
+                EVENT_TYPE_PERMISSION_DENIED,
+                &pl("shell_exec", "blocked", ""),
+            )],
         );
         let r = audit_segment(&seg, 0, i64::MAX, 10).unwrap();
         assert_eq!(r.entries.len(), 1);

@@ -38,7 +38,7 @@ use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use super::webhook::{handle_consult, handle_ingest, ConsultRequest, IngestRequest};
+use super::webhook::{ConsultRequest, IngestRequest, handle_consult, handle_ingest};
 
 /// Configuration for the webhook server.
 #[derive(Debug, Clone)]
@@ -123,10 +123,7 @@ pub async fn spawn_webhook_server(config: WebhookServerConfig) -> Result<ServerH
 }
 
 /// Dispatch one request — pure routing on method+path.
-async fn dispatch(
-    req: Request<Incoming>,
-    cfg: Arc<WebhookServerConfig>,
-) -> Response<Full<Bytes>> {
+async fn dispatch(req: Request<Incoming>, cfg: Arc<WebhookServerConfig>) -> Response<Full<Bytes>> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     let query = req.uri().query().unwrap_or("").to_string();
@@ -226,7 +223,11 @@ fn parse_consult_query(query: &str) -> ConsultRequest {
             _ => {}
         }
     }
-    ConsultRequest { question, max, subdir }
+    ConsultRequest {
+        question,
+        max,
+        subdir,
+    }
 }
 
 /// Minimal URL-decode — handles `+` and `%XX`. Avoids pulling in
@@ -510,7 +511,12 @@ mod tests {
         let body: serde_json::Value = resp.json().await.unwrap();
         let matches = body["matches"].as_array().unwrap();
         assert_eq!(matches.len(), 1);
-        assert!(matches[0]["filename"].as_str().unwrap().contains("acme-may"));
+        assert!(
+            matches[0]["filename"]
+                .as_str()
+                .unwrap()
+                .contains("acme-may")
+        );
         server.shutdown().await;
     }
 

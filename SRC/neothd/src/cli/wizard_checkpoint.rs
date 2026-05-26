@@ -176,8 +176,8 @@ pub fn load_checkpoint(neoth_dir: &Path) -> Result<Option<WizardCheckpoint>> {
         // Treat as "no checkpoint" rather than failing the boot.
         return Ok(None);
     }
-    let parsed: WizardCheckpoint = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse {}", path.display()))?;
+    let parsed: WizardCheckpoint =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
     Ok(Some(parsed))
 }
 
@@ -244,10 +244,12 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut state = WizardState::default();
         state.operator_id = Some("alex".into());
-        state.provider_key =
-            Some(crate::secret::SecretString::new("PROVIDER-SECRET-DEADBEEF".into()));
-        state.telegram_token =
-            Some(crate::secret::SecretString::new("TELEGRAM-TOKEN-BADBADBAD".into()));
+        state.provider_key = Some(crate::secret::SecretString::new(
+            "PROVIDER-SECRET-DEADBEEF".into(),
+        ));
+        state.telegram_token = Some(crate::secret::SecretString::new(
+            "TELEGRAM-TOKEN-BADBADBAD".into(),
+        ));
 
         save_checkpoint(dir.path(), &state).expect("save");
         let raw = std::fs::read_to_string(checkpoint_path(dir.path())).unwrap();

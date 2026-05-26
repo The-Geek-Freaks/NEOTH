@@ -76,8 +76,7 @@ pub fn shrink_safe_write(path: &Path, new_content: &[u8]) -> Result<bool> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create parent dir for {}", path.display()))?;
     }
-    std::fs::write(&tmp, new_content)
-        .with_context(|| format!("write tmp {}", tmp.display()))?;
+    std::fs::write(&tmp, new_content).with_context(|| format!("write tmp {}", tmp.display()))?;
     std::fs::rename(&tmp, path)
         .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))?;
     Ok(bak_written)
@@ -233,7 +232,10 @@ mod tests {
         let bak = bak_path(&target);
         assert!(bak.exists());
         let bak_body = std::fs::read_to_string(&bak).unwrap();
-        assert!(bak_body.contains("language: de"), "bak preserves pre-shrink state");
+        assert!(
+            bak_body.contains("language: de"),
+            "bak preserves pre-shrink state"
+        );
 
         let live = std::fs::read_to_string(&target).unwrap();
         assert_eq!(live, "operator_id: alice\n");
@@ -274,7 +276,10 @@ mod tests {
         // Pin the canonical bak naming so R-06 and shrink_safe_write
         // agree.
         let p = Path::new("/home/alex/.neoth/freedom.yaml");
-        assert_eq!(bak_path(p), PathBuf::from("/home/alex/.neoth/freedom.yaml.bak"));
+        assert_eq!(
+            bak_path(p),
+            PathBuf::from("/home/alex/.neoth/freedom.yaml.bak")
+        );
     }
 
     #[test]
@@ -309,16 +314,25 @@ mod tests {
         let reports = scan_for_baks(dir.path()).unwrap();
         assert_eq!(reports.len(), 3);
 
-        let a = reports.iter().find(|r| r.live_path.ends_with("a.yaml")).unwrap();
+        let a = reports
+            .iter()
+            .find(|r| r.live_path.ends_with("a.yaml"))
+            .unwrap();
         assert_eq!(a.verdict, BakVerdict::LiveOk);
         assert_eq!(a.bak_size, 2);
         assert_eq!(a.live_size, Some(8));
 
-        let b = reports.iter().find(|r| r.live_path.ends_with("b.yaml")).unwrap();
+        let b = reports
+            .iter()
+            .find(|r| r.live_path.ends_with("b.yaml"))
+            .unwrap();
         assert_eq!(b.verdict, BakVerdict::LiveShrunk);
         assert_eq!(b.live_size, Some(1));
 
-        let c = reports.iter().find(|r| r.live_path.ends_with("c.yaml")).unwrap();
+        let c = reports
+            .iter()
+            .find(|r| r.live_path.ends_with("c.yaml"))
+            .unwrap();
         assert_eq!(c.verdict, BakVerdict::LiveMissing);
         assert_eq!(c.live_size, None);
     }
@@ -343,7 +357,10 @@ mod tests {
         std::fs::write(dir.path().join("freedom.yaml.tmp.bak"), b"partial").unwrap();
         std::fs::write(dir.path().join("config.yaml.bak.tmp"), b"partial2").unwrap();
         let reports = scan_for_baks(dir.path()).unwrap();
-        assert!(reports.is_empty(), "torn-write artifacts must not surface as baks");
+        assert!(
+            reports.is_empty(),
+            "torn-write artifacts must not surface as baks"
+        );
     }
 
     #[test]

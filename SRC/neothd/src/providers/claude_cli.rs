@@ -505,45 +505,46 @@ impl Provider for ClaudeCliAdapter {
         // duplicates; the breaker counts each Singleflight outcome
         // once (which is the right denominator for failure-rate).
         crate::providers::circuit_breaker::run_with_breaker("claude_cli", async {
-        // B-9: dedup by (prompt, system, model). Concurrent identical
-        // requests share one upstream spawn for both backends.
-        let backend = self.effective_backend().await;
-        let key = self.dedup_key(&req);
-        let binary = self.binary.clone();
-        let model_default = self.model.clone();
-        let tmux_slot = self.tmux_slot.clone();
-        let idle_timeout_secs = self.idle_timeout_secs;
-        let hard_timeout_secs = self.hard_timeout_secs;
-        let result = self
-            .dedup
-            .do_call(key, move || async move {
-                match backend {
-                    ClaudeBackend::Tmux => {
-                        complete_tmux_uncached(
-                            &tmux_slot,
-                            &binary,
-                            &model_default,
-                            req,
-                            idle_timeout_secs,
-                            hard_timeout_secs,
-                        )
-                        .await
+            // B-9: dedup by (prompt, system, model). Concurrent identical
+            // requests share one upstream spawn for both backends.
+            let backend = self.effective_backend().await;
+            let key = self.dedup_key(&req);
+            let binary = self.binary.clone();
+            let model_default = self.model.clone();
+            let tmux_slot = self.tmux_slot.clone();
+            let idle_timeout_secs = self.idle_timeout_secs;
+            let hard_timeout_secs = self.hard_timeout_secs;
+            let result = self
+                .dedup
+                .do_call(key, move || async move {
+                    match backend {
+                        ClaudeBackend::Tmux => {
+                            complete_tmux_uncached(
+                                &tmux_slot,
+                                &binary,
+                                &model_default,
+                                req,
+                                idle_timeout_secs,
+                                hard_timeout_secs,
+                            )
+                            .await
+                        }
+                        ClaudeBackend::Subprocess | ClaudeBackend::Auto => {
+                            // Auto cannot reach here in practice (resolved
+                            // above) but the exhaustive match keeps future
+                            // variants explicit.
+                            complete_uncached(&binary, &model_default, req).await
+                        }
                     }
-                    ClaudeBackend::Subprocess | ClaudeBackend::Auto => {
-                        // Auto cannot reach here in practice (resolved
-                        // above) but the exhaustive match keeps future
-                        // variants explicit.
-                        complete_uncached(&binary, &model_default, req).await
-                    }
-                }
-            })
-            .await?;
-        // `Singleflight` returns `Arc<Completion>`; clone the inner
-        // value so the caller owns it. Completion is small (string +
-        // counters), so the clone cost is negligible compared to the
-        // dedup win on a concurrent identical request.
-        Ok((*result).clone())
-        }).await
+                })
+                .await?;
+            // `Singleflight` returns `Arc<Completion>`; clone the inner
+            // value so the caller owns it. Completion is small (string +
+            // counters), so the clone cost is negligible compared to the
+            // dedup win on a concurrent identical request.
+            Ok((*result).clone())
+        })
+        .await
     }
 
     /// Streaming: read claude stdout line-by-line and emit each line as a
@@ -559,115 +560,116 @@ impl Provider for ClaudeCliAdapter {
         // `complete` (fast-fail on Open, record success on final
         // done-chunk, record failure on error / premature drop).
         crate::providers::circuit_breaker_stream::run_stream_with_breaker("claude_cli", async {
-        let model = req.model.clone().unwrap_or_else(|| self.model.clone());
-        let prompt = build_prompt_payload(&req);
+            let model = req.model.clone().unwrap_or_else(|| self.model.clone());
+            let prompt = build_prompt_payload(&req);
 
-        let mut child = spawn_claude(
-            &self.binary,
-            // `--verbose` is required by claude-cli for `--print` + `stream-json`
-            // — without it the CLI rejects the combination.
-            &[
-                "--print",
-                "--model",
-                &model,
-                "--output-format",
-                "stream-json",
-                "--verbose",
-            ],
-        )
-        .with_context(|| {
-            format!(
-                "spawn `{} --print --model {}` for streaming",
-                self.binary, model
+            let mut child = spawn_claude(
+                &self.binary,
+                // `--verbose` is required by claude-cli for `--print` + `stream-json`
+                // — without it the CLI rejects the combination.
+                &[
+                    "--print",
+                    "--model",
+                    &model,
+                    "--output-format",
+                    "stream-json",
+                    "--verbose",
+                ],
             )
-        })?;
+            .with_context(|| {
+                format!(
+                    "spawn `{} --print --model {}` for streaming",
+                    self.binary, model
+                )
+            })?;
 
-        // Write prompt to stdin, close so the CLI sees EOF and starts generating.
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(prompt.as_bytes())
-                .await
-                .context("write prompt to claude stdin (stream)")?;
-            stdin
-                .shutdown()
-                .await
-                .context("close claude stdin (stream)")?;
-        }
-
-        let stdout = child
-            .stdout
-            .take()
-            .context("claude CLI stdout pipe missing for stream")?;
-        let reader = BufReader::new(stdout);
-        let mut lines = reader.lines();
-
-        // Build the stream as an async-iter over NDJSON events. Each line
-        // is one Anthropic SSE event reformatted as JSON. We extract
-        // text deltas + final usage; non-text events are ignored.
-        let s = async_stream::try_stream! {
-            let mut input_tokens: Option<u32> = None;
-            let mut output_tokens: Option<u32> = None;
-
-            while let Some(line) = lines.next_line().await.transpose() {
-                let line = line.context("read claude stdout line")?;
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match parse_stream_event(trimmed) {
-                    StreamEvent::TextDelta(text) => {
-                        yield CompletionChunk {
-                            delta: text,
-                            done: false,
-                            input_tokens: None,
-                            output_tokens: None,
-                        };
-                    }
-                    StreamEvent::Usage { input, output } => {
-                        if let Some(v) = input { input_tokens = Some(v); }
-                        if let Some(v) = output { output_tokens = Some(v); }
-                    }
-                    StreamEvent::Ignore => {}
-                    StreamEvent::ParseError(err) => {
-                        // A malformed line is loud — better to surface
-                        // than silently drop, since stream-json is the
-                        // contract between NEOTH and claude-cli.
-                        Err(anyhow::anyhow!(
-                            "claude stream-json parse error on `{}`: {err}",
-                            trimmed.chars().take(120).collect::<String>(),
-                        ))?;
-                    }
-                }
+            // Write prompt to stdin, close so the CLI sees EOF and starts generating.
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin
+                    .write_all(prompt.as_bytes())
+                    .await
+                    .context("write prompt to claude stdin (stream)")?;
+                stdin
+                    .shutdown()
+                    .await
+                    .context("close claude stdin (stream)")?;
             }
 
-            // Drain remaining stderr + check exit status.
-            let output = child
-                .wait_with_output()
-                .await
-                .context("await claude CLI after stream")?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                Err(anyhow::anyhow!(
-                    "claude CLI exited with {:?} during stream: {}",
-                    output.status.code(),
-                    stderr.trim()
-                ))?;
-            }
-            // Final done-chunk with usage populated from the message_delta /
-            // result events we saw mid-stream. Empty delta — the visible
-            // text was already emitted as content_block_delta chunks.
-            yield CompletionChunk {
-                delta: String::new(),
-                done: true,
-                input_tokens,
-                output_tokens,
+            let stdout = child
+                .stdout
+                .take()
+                .context("claude CLI stdout pipe missing for stream")?;
+            let reader = BufReader::new(stdout);
+            let mut lines = reader.lines();
+
+            // Build the stream as an async-iter over NDJSON events. Each line
+            // is one Anthropic SSE event reformatted as JSON. We extract
+            // text deltas + final usage; non-text events are ignored.
+            let s = async_stream::try_stream! {
+                let mut input_tokens: Option<u32> = None;
+                let mut output_tokens: Option<u32> = None;
+
+                while let Some(line) = lines.next_line().await.transpose() {
+                    let line = line.context("read claude stdout line")?;
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    match parse_stream_event(trimmed) {
+                        StreamEvent::TextDelta(text) => {
+                            yield CompletionChunk {
+                                delta: text,
+                                done: false,
+                                input_tokens: None,
+                                output_tokens: None,
+                            };
+                        }
+                        StreamEvent::Usage { input, output } => {
+                            if let Some(v) = input { input_tokens = Some(v); }
+                            if let Some(v) = output { output_tokens = Some(v); }
+                        }
+                        StreamEvent::Ignore => {}
+                        StreamEvent::ParseError(err) => {
+                            // A malformed line is loud — better to surface
+                            // than silently drop, since stream-json is the
+                            // contract between NEOTH and claude-cli.
+                            Err(anyhow::anyhow!(
+                                "claude stream-json parse error on `{}`: {err}",
+                                trimmed.chars().take(120).collect::<String>(),
+                            ))?;
+                        }
+                    }
+                }
+
+                // Drain remaining stderr + check exit status.
+                let output = child
+                    .wait_with_output()
+                    .await
+                    .context("await claude CLI after stream")?;
+                if !output.status.success() {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    Err(anyhow::anyhow!(
+                        "claude CLI exited with {:?} during stream: {}",
+                        output.status.code(),
+                        stderr.trim()
+                    ))?;
+                }
+                // Final done-chunk with usage populated from the message_delta /
+                // result events we saw mid-stream. Empty delta — the visible
+                // text was already emitted as content_block_delta chunks.
+                yield CompletionChunk {
+                    delta: String::new(),
+                    done: true,
+                    input_tokens,
+                    output_tokens,
+                };
             };
-        };
 
-        // The try_stream macro yields `Result<CompletionChunk, anyhow::Error>`
-        // already; wrap into the trait's ChunkStream type.
-        Ok(Box::pin(s) as ChunkStream)
-        }).await
+            // The try_stream macro yields `Result<CompletionChunk, anyhow::Error>`
+            // already; wrap into the trait's ChunkStream type.
+            Ok(Box::pin(s) as ChunkStream)
+        })
+        .await
     }
 }
 

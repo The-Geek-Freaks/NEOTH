@@ -105,10 +105,7 @@ fn render_journal_table(reports: &[JournalReport]) {
         "# {} orphan turn-journal(s) — the prior `neoth chat` run crashed mid-turn",
         reports.len(),
     );
-    println!(
-        "  {:<32} {:<10} {:<10} path",
-        "turn_id", "size", "lines",
-    );
+    println!("  {:<32} {:<10} {:<10} path", "turn_id", "size", "lines",);
     for r in reports {
         println!(
             "  {:<32} {:<10} {:<10} {}",
@@ -119,14 +116,8 @@ fn render_journal_table(reports: &[JournalReport]) {
         );
     }
     println!();
-    println!(
-        "Inspect one: `cat {}`",
-        reports[0].path.display(),
-    );
-    println!(
-        "Discard:     `rm {}`",
-        reports[0].path.display(),
-    );
+    println!("Inspect one: `cat {}`", reports[0].path.display(),);
+    println!("Discard:     `rm {}`", reports[0].path.display(),);
 }
 
 fn render_list_table(reports: &[BakReport]) {
@@ -171,8 +162,7 @@ fn run_restore(live: &std::path::Path, output: &OutputFormat) -> Result<()> {
             bak.display(),
         );
     }
-    let bak_bytes = std::fs::read(&bak)
-        .with_context(|| format!("read bak {}", bak.display()))?;
+    let bak_bytes = std::fs::read(&bak).with_context(|| format!("read bak {}", bak.display()))?;
 
     // If the live file exists, snapshot it BEFORE we overwrite.
     // shrink_safe_write does the right thing: when the bak content
@@ -212,11 +202,7 @@ fn run_restore(live: &std::path::Path, output: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_clean(
-    home: &std::path::Path,
-    skip_confirm: bool,
-    output: &OutputFormat,
-) -> Result<()> {
+fn run_clean(home: &std::path::Path, skip_confirm: bool, output: &OutputFormat) -> Result<()> {
     let reports = scan_for_baks(home).context("scan for bak files")?;
     let candidates: Vec<&BakReport> = reports
         .iter()
@@ -224,7 +210,9 @@ fn run_clean(
         .collect();
 
     if candidates.is_empty() {
-        println!("No stale `.bak` files to clean. (Every bak still represents potentially-lost data.)");
+        println!(
+            "No stale `.bak` files to clean. (Every bak still represents potentially-lost data.)"
+        );
         return Ok(());
     }
 

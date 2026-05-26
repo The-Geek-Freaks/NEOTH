@@ -24,7 +24,7 @@
 //! coverage — no code edits needed.
 
 use neothd::security::ingress_sanitizer::Finding;
-use neothd::security::paperless_ingest::{ingest_ocr_text, IngestError, OcrSource};
+use neothd::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
 use serde::Deserialize;
 use std::{fs, path::PathBuf};
 
@@ -71,9 +71,7 @@ fn load_fixture(path: &PathBuf) -> Fixture {
 fn finding_matches(findings: &[Finding], needle: &str) -> bool {
     let needle_lc = needle.to_lowercase();
     findings.iter().any(|f| match f {
-        Finding::PromptInjectionMarker { pattern } => {
-            pattern.to_lowercase().contains(&needle_lc)
-        }
+        Finding::PromptInjectionMarker { pattern } => pattern.to_lowercase().contains(&needle_lc),
         _ => false,
     })
 }
@@ -117,10 +115,7 @@ fn assert_allow_clean(fx: &Fixture) {
                 injection_findings,
             );
         }
-        Err(e) => panic!(
-            "[{}] allow_clean expected Ok, got Err: {:?}",
-            fx.id, e
-        ),
+        Err(e) => panic!("[{}] allow_clean expected Ok, got Err: {:?}", fx.id, e),
     }
 }
 

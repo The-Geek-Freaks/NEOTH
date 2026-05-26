@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use super::cpt_auth::{CompactionAuthenticator, CPT_HMAC_TAG_LEN};
+use super::cpt_auth::{CPT_HMAC_TAG_LEN, CompactionAuthenticator};
 use super::error::WalError;
 
 /// Suffix appended to a `.cpt` path to derive its sibling HMAC file
@@ -71,26 +71,22 @@ pub fn write_cpt_pair(
     let hmac_tmp = with_suffix(&hmac_path, ".tmp");
 
     // 1-2: write + fsync the .cpt content.
-    write_and_sync(&cpt_tmp, content)
-        .with_context(|| format!("write {}", cpt_tmp.display()))?;
+    write_and_sync(&cpt_tmp, content).with_context(|| format!("write {}", cpt_tmp.display()))?;
 
     // 3-4: compute + write + fsync the HMAC.
     let tag = auth.sign(content);
-    write_and_sync(&hmac_tmp, &tag)
-        .with_context(|| format!("write {}", hmac_tmp.display()))?;
+    write_and_sync(&hmac_tmp, &tag).with_context(|| format!("write {}", hmac_tmp.display()))?;
 
     // 5: rename .hmac.tmp -> .hmac FIRST so a crash here leaves a
     // verifiable .hmac without a matching .cpt — recovery treats
     // orphan .hmac as "no work to do" + cleans up.
-    fs::rename(&hmac_tmp, &hmac_path).with_context(|| {
-        format!("rename {} -> {}", hmac_tmp.display(), hmac_path.display())
-    })?;
+    fs::rename(&hmac_tmp, &hmac_path)
+        .with_context(|| format!("rename {} -> {}", hmac_tmp.display(), hmac_path.display()))?;
 
     // 6: rename .cpt.tmp -> .cpt. After this point the pair is live
     // for the next recovery scan.
-    fs::rename(&cpt_tmp, cpt_path).with_context(|| {
-        format!("rename {} -> {}", cpt_tmp.display(), cpt_path.display())
-    })?;
+    fs::rename(&cpt_tmp, cpt_path)
+        .with_context(|| format!("rename {} -> {}", cpt_tmp.display(), cpt_path.display()))?;
 
     // 7: best-effort parent-dir fsync (unix only — Windows has no
     // equivalent API; the file renames are already durable on NTFS).
@@ -215,7 +211,10 @@ mod tests {
 
         // Pair exists on disk.
         assert!(cpt.exists(), ".cpt must exist after write");
-        assert!(hmac_path_for(&cpt).exists(), ".cpt.hmac must exist after write");
+        assert!(
+            hmac_path_for(&cpt).exists(),
+            ".cpt.hmac must exist after write"
+        );
 
         // Verifies cleanly.
         let recovered = read_and_verify_cpt(&cpt, &auth).expect("valid pair verifies");

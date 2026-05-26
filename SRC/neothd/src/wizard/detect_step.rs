@@ -23,9 +23,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::installers::detect::{
-    assemble_report, load_cache, save_cache, DetectReport,
-};
+use crate::installers::detect::{DetectReport, assemble_report, load_cache, save_cache};
 use crate::installers::gpu::GpuReport;
 use crate::wal::payloads_w08::DetectCompletePayload;
 
@@ -142,8 +140,8 @@ mod tests {
         assert!(first.probed_now);
 
         // Run again 5 min later → cache hit.
-        let second = run_detect_step(home.path(), 1_700_000_300, &DetectStepInputs::default())
-            .unwrap();
+        let second =
+            run_detect_step(home.path(), 1_700_000_300, &DetectStepInputs::default()).unwrap();
         assert!(!second.probed_now);
         assert!(
             second.frame_payload.is_none(),
@@ -163,13 +161,19 @@ mod tests {
         // Now is past TTL.
         let mut inputs2 = sample_inputs();
         inputs2.docker_version = Some("26.0.0".into()); // operator upgraded docker
-        let second =
-            run_detect_step(home.path(), 1_000_000_000 + DETECT_CACHE_TTL_SECS + 1, &inputs2)
-                .unwrap();
+        let second = run_detect_step(
+            home.path(),
+            1_000_000_000 + DETECT_CACHE_TTL_SECS + 1,
+            &inputs2,
+        )
+        .unwrap();
         assert!(second.probed_now);
         let payload = second.frame_payload.unwrap();
         assert_eq!(payload.docker_version.as_deref(), Some("26.0.0"));
-        assert_eq!(payload.probed_at_unix, 1_000_000_000 + DETECT_CACHE_TTL_SECS + 1);
+        assert_eq!(
+            payload.probed_at_unix,
+            1_000_000_000 + DETECT_CACHE_TTL_SECS + 1
+        );
     }
 
     #[test]

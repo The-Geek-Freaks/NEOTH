@@ -374,14 +374,15 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             )
             .await
         }
-        ProfileAction::Pending { limit } => {
-            run_pending_list(&conn, limit, &args.output)
-        }
+        ProfileAction::Pending { limit } => run_pending_list(&conn, limit, &args.output),
         ProfileAction::Approve { extraction_id } => {
             drop(conn); // approve needs a fresh &mut connection.
             run_pending_approve(&db_path, &extraction_id, &args.output).await
         }
-        ProfileAction::Decline { extraction_id, reason } => {
+        ProfileAction::Decline {
+            extraction_id,
+            reason,
+        } => {
             drop(conn);
             run_pending_decline(&db_path, &extraction_id, reason.as_deref(), &args.output).await
         }
@@ -423,10 +424,7 @@ pub struct ConflictClaim {
 /// asserts on the data, not on stdout. Limit caps the group count
 /// (not the claim count per group), matching what an operator wants
 /// to see in one terminal screen.
-pub fn detect_conflicts(
-    conn: &rusqlite::Connection,
-    limit: usize,
-) -> Result<Vec<ConflictGroup>> {
+pub fn detect_conflicts(conn: &rusqlite::Connection, limit: usize) -> Result<Vec<ConflictGroup>> {
     // SQL pulls every active row, grouped by field. The "disagree"
     // check lives in Rust because SQLite has no `JSON_DISTINCT_GROUP`
     // and a stringly-typed compare on value_json catches the canonical
@@ -455,27 +453,28 @@ pub fn detect_conflicts(
     let mut current_field: Option<String> = None;
     let mut current_claims: Vec<ConflictClaim> = Vec::new();
 
-    let flush = |field: Option<String>,
-                 claims: Vec<ConflictClaim>,
-                 groups: &mut Vec<ConflictGroup>| {
-        let Some(field) = field else {
-            return;
+    let flush =
+        |field: Option<String>, claims: Vec<ConflictClaim>, groups: &mut Vec<ConflictGroup>| {
+            let Some(field) = field else {
+                return;
+            };
+            // Only emit groups where ≥ 2 claims disagree on value_json.
+            // Identical-value duplicates are not conflicts — they're just
+            // the extractor re-affirming the same fact, which is healthy.
+            let distinct: std::collections::HashSet<String> =
+                claims.iter().map(|c| c.value_json.to_string()).collect();
+            if claims.len() >= 2 && distinct.len() >= 2 {
+                groups.push(ConflictGroup { field, claims });
+            }
         };
-        // Only emit groups where ≥ 2 claims disagree on value_json.
-        // Identical-value duplicates are not conflicts — they're just
-        // the extractor re-affirming the same fact, which is healthy.
-        let distinct: std::collections::HashSet<String> = claims
-            .iter()
-            .map(|c| c.value_json.to_string())
-            .collect();
-        if claims.len() >= 2 && distinct.len() >= 2 {
-            groups.push(ConflictGroup { field, claims });
-        }
-    };
 
     for (field, extraction_id, value_json, confidence, applied_at) in rows {
         if current_field.as_deref() != Some(field.as_str()) {
-            flush(current_field.take(), std::mem::take(&mut current_claims), &mut groups);
+            flush(
+                current_field.take(),
+                std::mem::take(&mut current_claims),
+                &mut groups,
+            );
             current_field = Some(field);
         }
         let value: serde_json::Value = serde_json::from_str(&value_json)
@@ -630,9 +629,7 @@ fn run_pending_list(
         }
         OutputFormat::Table => {
             if rows.is_empty() {
-                println!(
-                    "No pending profile deltas. Operator-confirmation gate is idle."
-                );
+                println!("No pending profile deltas. Operator-confirmation gate is idle.");
             } else {
                 println!(
                     "{:<32} {:>8} {:>18}",
@@ -680,10 +677,9 @@ async fn run_pending_approve(
     // Spin up a fresh WAL writer for the apply call. Heavy but
     // bounded — operators run approve interactively from a tty
     // session, not in a hot loop.
-    let segment_path = crate::config::FreedomConfig::default_wal_dir()
-        .join("000001.wal");
-    let (writer, _join) = crate::wal::writer::spawn(segment_path)
-        .context("spawn WAL writer for approve")?;
+    let segment_path = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
+    let (writer, _join) =
+        crate::wal::writer::spawn(segment_path).context("spawn WAL writer for approve")?;
 
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -727,9 +723,7 @@ async fn run_pending_approve(
             println!(
                 "approved extraction_id={extraction_id}: applied={}, \
                  reinforced={}, superseded={}",
-                outcome.claims_applied,
-                outcome.claims_reinforced,
-                outcome.claims_superseded,
+                outcome.claims_applied, outcome.claims_reinforced, outcome.claims_superseded,
             );
         }
     }
@@ -753,10 +747,9 @@ async fn run_pending_decline(
         }
     };
 
-    let segment_path = crate::config::FreedomConfig::default_wal_dir()
-        .join("000001.wal");
-    let (writer, _join) = crate::wal::writer::spawn(segment_path)
-        .context("spawn WAL writer for decline")?;
+    let segment_path = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
+    let (writer, _join) =
+        crate::wal::writer::spawn(segment_path).context("spawn WAL writer for decline")?;
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -767,11 +760,9 @@ async fn run_pending_decline(
         now_unix,
         reason,
     );
-    let header = crate::wal::HeaderBuilder::new(
-        crate::profile::approval_gate::DECLINED_EVENT,
-        &payload,
-    )
-    .build();
+    let header =
+        crate::wal::HeaderBuilder::new(crate::profile::approval_gate::DECLINED_EVENT, &payload)
+            .build();
     let _ = writer.try_append_sync(header, payload);
 
     match output {
@@ -805,8 +796,7 @@ fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<
             path.display()
         );
     }
-    let raw = std::fs::read_to_string(&path)
-        .with_context(|| format!("read {}", path.display()))?;
+    let raw = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
     let target_value = if disable { "false" } else { "true" };
 
     // Idempotent surgical edit: scan for an existing
@@ -828,9 +818,7 @@ fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<
                 );
             }
             OutputFormat::Table => {
-                println!(
-                    "profile.require_approval is already {target_value}. No change written."
-                );
+                println!("profile.require_approval is already {target_value}. No change written.");
             }
         }
         return Ok(());
@@ -840,8 +828,14 @@ fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<
     // (flip it), (b) field absent (insert).
     let updated = if raw.contains("require_approval:") {
         // Flip existing line — match either spelling: `true` or `false`.
-        raw.replace("require_approval: true", &format!("require_approval: {target_value}"))
-           .replace("require_approval: false", &format!("require_approval: {target_value}"))
+        raw.replace(
+            "require_approval: true",
+            &format!("require_approval: {target_value}"),
+        )
+        .replace(
+            "require_approval: false",
+            &format!("require_approval: {target_value}"),
+        )
     } else if raw.contains("\nprofile:\n") || raw.starts_with("profile:\n") {
         // Insert under the existing profile: header.
         let needle = "profile:\n";
@@ -1568,7 +1562,9 @@ mod tests {
         );
         // Order check: operator_context first, then preset_addendum.
         let op_pos = system.find("Be brief.").expect("operator block present");
-        let preset_pos = system.find("formal register").expect("preset block present");
+        let preset_pos = system
+            .find("formal register")
+            .expect("preset block present");
         assert!(
             op_pos < preset_pos,
             "operator_context must layer before preset_addendum",
@@ -1879,8 +1875,22 @@ mod tests {
         // Two extractions disagree on identity.location → conflict.
         let dir = tempdir().unwrap();
         let conn = store::open(&dir.path().join("views.db")).unwrap();
-        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.7, 100, "ext-old");
-        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Berlin\"",
+            0.7,
+            100,
+            "ext-old",
+        );
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Munich\"",
+            0.9,
+            200,
+            "ext-new",
+        );
         insert_with_value(&conn, "skills.rust", "\"expert\"", 0.95, 300, "ext-skill");
 
         let groups = super::detect_conflicts(&conn, 50).unwrap();
@@ -1907,18 +1917,49 @@ mod tests {
             [],
         )
         .unwrap();
-        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Munich\"",
+            0.9,
+            200,
+            "ext-new",
+        );
         let groups = super::detect_conflicts(&conn, 50).unwrap();
-        assert!(groups.is_empty(), "superseded rows must not generate conflicts");
+        assert!(
+            groups.is_empty(),
+            "superseded rows must not generate conflicts"
+        );
     }
 
     #[test]
     fn ar_05_resolve_conflict_supersedes_others_and_keeps_chosen() {
         let dir = tempdir().unwrap();
         let conn = store::open(&dir.path().join("views.db")).unwrap();
-        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.7, 100, "ext-old");
-        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
-        insert_with_value(&conn, "identity.location", "\"Hamburg\"", 0.5, 50, "ext-stale");
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Berlin\"",
+            0.7,
+            100,
+            "ext-old",
+        );
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Munich\"",
+            0.9,
+            200,
+            "ext-new",
+        );
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Hamburg\"",
+            0.5,
+            50,
+            "ext-stale",
+        );
 
         let n = super::resolve_conflict(&conn, "identity.location", "ext-new", 999).unwrap();
         assert_eq!(n, 2, "two losers must be superseded");
@@ -1930,7 +1971,9 @@ mod tests {
                  WHERE field = 'identity.location' ORDER BY extraction_id ASC",
             )
             .unwrap()
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?)))
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+            })
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
@@ -1944,7 +1987,10 @@ mod tests {
 
         // Detect-pass after resolve: zero conflicts.
         let after = super::detect_conflicts(&conn, 50).unwrap();
-        assert!(after.is_empty(), "resolved conflict must disappear from detection");
+        assert!(
+            after.is_empty(),
+            "resolved conflict must disappear from detection"
+        );
     }
 
     #[test]
@@ -1954,8 +2000,22 @@ mod tests {
         // error + the table is left alone.
         let dir = tempdir().unwrap();
         let conn = store::open(&dir.path().join("views.db")).unwrap();
-        insert_with_value(&conn, "identity.location", "\"Berlin\"", 0.7, 100, "ext-old");
-        insert_with_value(&conn, "identity.location", "\"Munich\"", 0.9, 200, "ext-new");
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Berlin\"",
+            0.7,
+            100,
+            "ext-old",
+        );
+        insert_with_value(
+            &conn,
+            "identity.location",
+            "\"Munich\"",
+            0.9,
+            200,
+            "ext-new",
+        );
 
         let r = super::resolve_conflict(&conn, "identity.location", "ext-typo", 999);
         assert!(r.is_err(), "unknown extraction_id must Err");

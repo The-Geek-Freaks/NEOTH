@@ -778,12 +778,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 meta_verify_token: verify.expose().to_string(),
                 slack_signing_secret: Vec::new(),
                 pipeline: handler,
-                whatsapp_send_creds: Some(
-                    crate::channels::webhook_listener::WhatsAppSendCreds {
-                        access_token: token.clone(),
-                        phone_number_id: phone.clone(),
-                    },
-                ),
+                whatsapp_send_creds: Some(crate::channels::webhook_listener::WhatsAppSendCreds {
+                    access_token: token.clone(),
+                    phone_number_id: phone.clone(),
+                }),
                 max_concurrent_connections: None,
             };
             let task = tokio::spawn(async move {

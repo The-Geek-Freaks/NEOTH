@@ -28,9 +28,7 @@
 //! the per-module unit tests + M-02 commit message; not duplicated here.
 
 use neothd::memory::store;
-use neothd::memory::tiers::{
-    Tier, hebbian_reinforce_at_tier, hebbian_reinforce_value,
-};
+use neothd::memory::tiers::{Tier, hebbian_reinforce_at_tier, hebbian_reinforce_value};
 use rusqlite::{Connection, params};
 
 const DAY_NS: i64 = 86_400 * 1_000_000_000;
@@ -237,9 +235,7 @@ fn pure_helper_and_db_helper_agree_on_per_tier_math() {
     let dir = tempfile::tempdir().unwrap();
     let conn = store::open(&dir.path().join("v.db")).unwrap();
     let now_ns: u64 = 1;
-    for (tier, seeder) in [
-        (Tier::Hot, &seed_hot as &dyn Fn(&Connection, i64, i64, f64)),
-    ] {
+    for (tier, seeder) in [(Tier::Hot, &seed_hot as &dyn Fn(&Connection, i64, i64, f64))] {
         for old in [0.0, 0.25, 0.5, 0.75, 0.95, 1.0] {
             // Fresh row per old-value because reinforce mutates.
             seeder(&conn, 100, 0, old);

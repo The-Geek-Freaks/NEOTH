@@ -26,8 +26,8 @@ use std::task::{Context, Poll};
 use anyhow::Result;
 use futures_util::Stream;
 
-use super::{ChunkStream, CompletionChunk};
 use super::circuit_breaker::acquire_for;
+use super::{ChunkStream, CompletionChunk};
 
 // ── StreamGuard ──────────────────────────────────────────────────────────────
 
@@ -118,10 +118,7 @@ impl PinnedDrop for StreamGuard {
 ///     }).await
 /// }
 /// ```
-pub async fn run_stream_with_breaker<F>(
-    provider_id: &str,
-    stream_fut: F,
-) -> Result<ChunkStream>
+pub async fn run_stream_with_breaker<F>(provider_id: &str, stream_fut: F) -> Result<ChunkStream>
 where
     F: std::future::Future<Output = Result<ChunkStream>>,
 {
@@ -186,10 +183,9 @@ mod tests {
             Ok(chunk("hi", false)),
             Ok(chunk("", true)),
         ]));
-        let mut s =
-            run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
-                .await
-                .expect("admitted");
+        let mut s = run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
+            .await
+            .expect("admitted");
         // Drain the stream — done-chunk arrives, permit settles success.
         while s.next().await.is_some() {}
         assert_eq!(
@@ -206,10 +202,9 @@ mod tests {
             Ok(chunk("partial", false)),
             Err(anyhow::anyhow!("upstream blew up")),
         ]));
-        let mut s =
-            run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
-                .await
-                .expect("admitted");
+        let mut s = run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
+            .await
+            .expect("admitted");
         while s.next().await.is_some() {}
         assert!(
             consecutive_failures(&id) >= 1,
@@ -220,12 +215,10 @@ mod tests {
     #[tokio::test]
     async fn stream_guard_records_failure_on_premature_drop() {
         let id = unique_provider_id("drop");
-        let inner: ChunkStream =
-            Box::pin(fstream::iter(vec![Ok(chunk("first", false))]));
-        let mut s =
-            run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
-                .await
-                .expect("admitted");
+        let inner: ChunkStream = Box::pin(fstream::iter(vec![Ok(chunk("first", false))]));
+        let mut s = run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
+            .await
+            .expect("admitted");
         // Consume just one chunk, then drop the stream — never reaches
         // a done-chunk; permit's Drop records failure.
         let _ = s.next().await;
@@ -240,12 +233,11 @@ mod tests {
     async fn stream_guard_records_failure_on_exhausted_without_done() {
         let id = unique_provider_id("exhaust");
         let inner: ChunkStream = Box::pin(fstream::iter(vec![
-            Ok(chunk("only", false)),  // no done chunk follows
+            Ok(chunk("only", false)), // no done chunk follows
         ]));
-        let mut s =
-            run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
-                .await
-                .expect("admitted");
+        let mut s = run_stream_with_breaker(&id, async { Ok::<_, anyhow::Error>(inner) })
+            .await
+            .expect("admitted");
         while s.next().await.is_some() {}
         // Stream returned Poll::Ready(None) without a done — failure.
         assert!(
@@ -260,11 +252,10 @@ mod tests {
         // Trip the breaker via the synchronous path. Default
         // BreakerConfig threshold is 5 failures.
         for _ in 0..6 {
-            let _ =
-                crate::providers::circuit_breaker::run_with_breaker(&id, async {
-                    Err::<(), _>(anyhow::anyhow!("fail"))
-                })
-                .await;
+            let _ = crate::providers::circuit_breaker::run_with_breaker(&id, async {
+                Err::<(), _>(anyhow::anyhow!("fail"))
+            })
+            .await;
         }
         // The stream-future MUST NOT be polled when the breaker is Open.
         // `ChunkStream` is a trait object so it doesn't impl Debug; use

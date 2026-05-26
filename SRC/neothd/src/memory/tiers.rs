@@ -323,11 +323,7 @@ mod tests {
     // tier writes to its own backing table, and the warm-tier COALESCE
     // trick handles both retained-event + synthesised summary rows.
 
-    fn insert_consolidated(
-        conn: &Connection,
-        event_id: Option<i64>,
-        importance: f64,
-    ) -> i64 {
+    fn insert_consolidated(conn: &Connection, event_id: Option<i64>, importance: f64) -> i64 {
         conn.execute(
             "INSERT INTO idx_consolidated \
              (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \

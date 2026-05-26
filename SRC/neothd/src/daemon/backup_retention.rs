@@ -187,7 +187,11 @@ mod tests {
 
     #[test]
     fn plan_under_retain_keeps_everything() {
-        let entries = vec![entry("a.tgz", 100), entry("b.tgz", 200), entry("c.tgz", 300)];
+        let entries = vec![
+            entry("a.tgz", 100),
+            entry("b.tgz", 200),
+            entry("c.tgz", 300),
+        ];
         let d = plan_retention(entries, 4);
         assert_eq!(d.kept_count(), 3);
         assert_eq!(d.delete_count(), 0);
@@ -196,7 +200,12 @@ mod tests {
 
     #[test]
     fn plan_at_retain_keeps_everything() {
-        let entries = vec![entry("a", 100), entry("b", 200), entry("c", 300), entry("d", 400)];
+        let entries = vec![
+            entry("a", 100),
+            entry("b", 200),
+            entry("c", 300),
+            entry("d", 400),
+        ];
         let d = plan_retention(entries, 4);
         assert_eq!(d.kept_count(), 4);
         assert_eq!(d.delete_count(), 0);
@@ -233,7 +242,10 @@ mod tests {
         let d = plan_retention(entries, 2);
         // Same mtime → alpha asc; a kept, m kept, z dropped.
         let kept_paths: Vec<PathBuf> = d.kept.iter().map(|e| e.path.clone()).collect();
-        assert_eq!(kept_paths, vec![PathBuf::from("a.tgz"), PathBuf::from("m.tgz")]);
+        assert_eq!(
+            kept_paths,
+            vec![PathBuf::from("a.tgz"), PathBuf::from("m.tgz")]
+        );
         assert_eq!(d.to_delete[0].path, PathBuf::from("z.tgz"));
     }
 
@@ -283,12 +295,14 @@ mod tests {
         std::fs::create_dir(dir.path().join("neoth-trap.tar.gz")).unwrap();
         let entries = scan_backup_dir(dir.path()).unwrap();
         assert_eq!(entries.len(), 1);
-        assert!(entries[0]
-            .path
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .ends_with("001.tar.gz"));
+        assert!(
+            entries[0]
+                .path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("001.tar.gz")
+        );
     }
 
     // ── apply ─────────────────────────────────────────────────────

@@ -50,12 +50,7 @@ fn binary_paperless_ingest_then_consult_chain() {
     // Consult finds it.
     Command::cargo_bin("neothd")
         .unwrap()
-        .args([
-            "paperless",
-            "consult",
-            "Acme invoice from May",
-            "--vault",
-        ])
+        .args(["paperless", "consult", "Acme invoice from May", "--vault"])
         .arg(vault.path())
         .args(["--subdir", "NEOTH"])
         .assert()
@@ -95,12 +90,7 @@ fn binary_paperless_ingest_missing_text_input_exits_nonzero() {
     let vault = tempfile::tempdir().unwrap();
     Command::cargo_bin("neothd")
         .unwrap()
-        .args([
-            "paperless",
-            "ingest",
-            "no-input",
-            "--vault",
-        ])
+        .args(["paperless", "ingest", "no-input", "--vault"])
         .arg(vault.path())
         .assert()
         .failure()
@@ -177,8 +167,7 @@ fn binary_proactive_list_then_accept_then_show_chain() {
         .stdout(str::contains("approved"));
 
     // Persisted via library API.
-    let loaded =
-        neothd::proactive::action_staging::load_proposal(home.path(), &id).unwrap();
+    let loaded = neothd::proactive::action_staging::load_proposal(home.path(), &id).unwrap();
     assert_eq!(
         loaded.status,
         neothd::proactive::action_staging::ProposalStatus::Approved,

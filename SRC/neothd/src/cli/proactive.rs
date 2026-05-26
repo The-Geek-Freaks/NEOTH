@@ -23,8 +23,8 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::proactive::action_staging::{
-    list_proposals, load_proposal, set_proposal_status, sync_proposals_to_obsidian,
-    ProposalStatus, ProposedAction,
+    ProposalStatus, ProposedAction, list_proposals, load_proposal, set_proposal_status,
+    sync_proposals_to_obsidian,
 };
 
 #[derive(Args, Debug, Clone)]
@@ -60,9 +60,7 @@ pub enum ProactiveAction {
         note: String,
     },
     /// Print one proposal's full content + audit fields.
-    Show {
-        id: String,
-    },
+    Show { id: String },
     /// Render proposals into `<vault>/<subdir>/Proposals/<id>.md`.
     SyncVault {
         #[arg(long, default_value = "pending")]
@@ -75,10 +73,7 @@ pub enum ProactiveAction {
 }
 
 pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
-    let home = args
-        .home
-        .clone()
-        .unwrap_or_else(default_neoth_home);
+    let home = args.home.clone().unwrap_or_else(default_neoth_home);
 
     match args.action {
         ProactiveAction::List { status } => {
@@ -112,8 +107,8 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             Ok(())
         }
         ProactiveAction::Show { id } => {
-            let p = load_proposal(&home, &id)
-                .with_context(|| format!("proposal {id} not found"))?;
+            let p =
+                load_proposal(&home, &id).with_context(|| format!("proposal {id} not found"))?;
             print_full_proposal(&p);
             Ok(())
         }
@@ -201,9 +196,7 @@ fn default_vault_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proactive::action_staging::{
-        make_proposal_id, save_proposal, ProposalKind,
-    };
+    use crate::proactive::action_staging::{ProposalKind, make_proposal_id, save_proposal};
 
     fn sample(id: &str, title: &str) -> ProposedAction {
         ProposedAction {
@@ -297,8 +290,14 @@ mod tests {
     #[test]
     fn run_list_pending_shows_only_pending() {
         let home = tempfile::tempdir().unwrap();
-        let pending = sample(&make_proposal_id(ProposalKind::CronJob, "a", "y", 100), "pending one");
-        let mut approved = sample(&make_proposal_id(ProposalKind::CronJob, "b", "y", 200), "approved one");
+        let pending = sample(
+            &make_proposal_id(ProposalKind::CronJob, "a", "y", 100),
+            "pending one",
+        );
+        let mut approved = sample(
+            &make_proposal_id(ProposalKind::CronJob, "b", "y", 200),
+            "approved one",
+        );
         approved.status = ProposalStatus::Approved;
         save_proposal(home.path(), &pending).unwrap();
         save_proposal(home.path(), &approved).unwrap();
@@ -330,9 +329,7 @@ mod tests {
     fn run_show_missing_id_errors() {
         let home = tempfile::tempdir().unwrap();
         let args = ProactiveArgs {
-            action: ProactiveAction::Show {
-                id: "nope".into(),
-            },
+            action: ProactiveAction::Show { id: "nope".into() },
             home: Some(home.path().to_path_buf()),
         };
         let err = run_proactive(args).unwrap_err();

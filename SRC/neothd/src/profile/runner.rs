@@ -179,7 +179,7 @@ pub async fn run_pipeline(
     // Backward-compat: legacy `run_pipeline` (no context) always
     // bypasses the gate and behaves exactly as before.
     if let Some(ctx) = gate_ctx {
-        use crate::profile::approval_gate::{approval_gate, ApprovalOutcome};
+        use crate::profile::approval_gate::{ApprovalOutcome, approval_gate};
         let outcome = approval_gate(
             &guarded,
             ctx.config,

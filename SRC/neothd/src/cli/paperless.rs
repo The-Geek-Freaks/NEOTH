@@ -23,8 +23,8 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
-use crate::paperless::{self, consult::consult, OcrSyncOutcome};
-use crate::security::paperless_ingest::{ingest_ocr_text, IngestError, OcrSource};
+use crate::paperless::{self, OcrSyncOutcome, consult::consult};
+use crate::security::paperless_ingest::{IngestError, OcrSource, ingest_ocr_text};
 
 #[derive(Args, Debug, Clone)]
 pub struct PaperlessArgs {
@@ -71,10 +71,7 @@ pub enum PaperlessAction {
 }
 
 pub fn run_paperless(args: PaperlessArgs) -> Result<()> {
-    let vault = args
-        .vault
-        .clone()
-        .unwrap_or_else(default_vault_path);
+    let vault = args.vault.clone().unwrap_or_else(default_vault_path);
 
     match args.action {
         PaperlessAction::Ingest {

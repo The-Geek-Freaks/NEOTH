@@ -53,7 +53,10 @@ impl LinuxDistro {
             .collect();
         for c in &candidates {
             let lc = c.to_lowercase();
-            if matches!(lc.as_str(), "debian" | "ubuntu" | "linuxmint" | "pop" | "raspbian") {
+            if matches!(
+                lc.as_str(),
+                "debian" | "ubuntu" | "linuxmint" | "pop" | "raspbian"
+            ) {
                 return Self::DebianFamily;
             }
             if matches!(lc.as_str(), "fedora" | "rhel" | "centos" | "rocky" | "alma") {
@@ -62,7 +65,10 @@ impl LinuxDistro {
             if matches!(lc.as_str(), "arch" | "manjaro" | "endeavouros" | "garuda") {
                 return Self::ArchFamily;
             }
-            if matches!(lc.as_str(), "opensuse-tumbleweed" | "opensuse-leap" | "suse" | "opensuse") {
+            if matches!(
+                lc.as_str(),
+                "opensuse-tumbleweed" | "opensuse-leap" | "suse" | "opensuse"
+            ) {
                 return Self::SuseFamily;
             }
         }

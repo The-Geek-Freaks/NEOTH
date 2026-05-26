@@ -201,5 +201,12 @@ async fn replay_all_indexes_segments_in_filename_sort_order() {
         .collect::<rusqlite::Result<_>>()
         .unwrap();
     texts.sort();
-    assert_eq!(texts, vec!["first".to_string(), "second".to_string(), "tenth".to_string()]);
+    assert_eq!(
+        texts,
+        vec![
+            "first".to_string(),
+            "second".to_string(),
+            "tenth".to_string()
+        ]
+    );
 }

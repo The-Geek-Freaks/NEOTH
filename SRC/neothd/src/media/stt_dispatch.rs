@@ -55,7 +55,9 @@ impl SttProvider {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::WhisperRsLocal => "Local whisper.cpp via Rust binding — CPU, no network (recommended)",
+            Self::WhisperRsLocal => {
+                "Local whisper.cpp via Rust binding — CPU, no network (recommended)"
+            }
             Self::OpenAiWhisperApi => "OpenAI Whisper API — best quality, paid + cloud",
             Self::AzureSpeech => "Azure Speech — cloud, regional endpoints, paid",
             Self::Vosk => "Vosk — local offline, smaller memory, lower accuracy than whisper",

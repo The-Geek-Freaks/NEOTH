@@ -63,7 +63,12 @@ impl InstallPath {
     pub fn install_command(self) -> Vec<String> {
         match self {
             Self::Winget => vec!["winget".into(), "install".into(), "ffmpeg".into()],
-            Self::Choco => vec!["choco".into(), "install".into(), "-y".into(), "ffmpeg-full".into()],
+            Self::Choco => vec![
+                "choco".into(),
+                "install".into(),
+                "-y".into(),
+                "ffmpeg-full".into(),
+            ],
             Self::Brew => vec!["brew".into(), "install".into(), "ffmpeg".into()],
             Self::Apt => vec![
                 "sudo".into(),

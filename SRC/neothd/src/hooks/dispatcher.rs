@@ -652,14 +652,8 @@ mod tests {
             },
         };
         let good = allow_hook("good", HookStage::PreProviderCall);
-        let out = run_stage_with_config(
-            HookStage::PreProviderCall,
-            "x",
-            &[bad, good],
-            None,
-            false,
-        )
-        .unwrap();
+        let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, good], None, false)
+            .unwrap();
         match out {
             StageOutcome::Continue { hits, .. } => assert_eq!(hits, vec!["good"]),
             other => panic!("fail_fast=false must skip bad hook, got {other:?}"),
@@ -681,14 +675,8 @@ mod tests {
             action: HookAction::Allow,
         };
         let later = allow_hook("never-runs", HookStage::PreProviderCall);
-        let out = run_stage_with_config(
-            HookStage::PreProviderCall,
-            "x",
-            &[bad, later],
-            None,
-            true,
-        )
-        .unwrap();
+        let out = run_stage_with_config(HookStage::PreProviderCall, "x", &[bad, later], None, true)
+            .unwrap();
         match out {
             StageOutcome::Block { name, reason } => {
                 assert_eq!(name, "typo-matcher");
@@ -710,14 +698,8 @@ mod tests {
         // not strictness in general.
         let h1 = allow_hook("a", HookStage::PreProviderCall);
         let h2 = replace_hook("b", HookStage::PreProviderCall, "foo", "bar");
-        let out = run_stage_with_config(
-            HookStage::PreProviderCall,
-            "foo",
-            &[h1, h2],
-            None,
-            true,
-        )
-        .unwrap();
+        let out = run_stage_with_config(HookStage::PreProviderCall, "foo", &[h1, h2], None, true)
+            .unwrap();
         match out {
             StageOutcome::Continue { body, hits } => {
                 assert_eq!(body, "bar");
