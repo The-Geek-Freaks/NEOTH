@@ -1101,6 +1101,30 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    let updater_skill_task: Option<tokio::task::JoinHandle<()>> = {
+        let writer_for_updater = writer.clone();
+        let home_for_skills = FreedomConfig::default_neoth_home();
+        let cfg = crate::daemon::updater_cron::UpdaterCronConfig::default();
+        let builder: std::sync::Arc<
+            dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
+        > = std::sync::Arc::new(move || {
+            crate::updater::probes::skill_plugin_specs_blocking(
+                home_for_skills.clone(),
+                crate::updater::pipeline::GateDecision::Allow,
+            )
+        });
+        let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
+            cfg,
+            crate::wal::payloads_u04::UpdaterTaskKind::SkillPlugin,
+            builder,
+            writer_for_updater,
+        );
+        if handle.is_some() {
+            info!("updater cron loop spawned: skill_plugin (U-02)");
+        }
+        handle
+    };
+
     // ── 5d.b. Doctor cron loop — EL-01 (Session 25) ──────────────────────
     //
     // Periodic `neoth doctor` ticks → WAL 0x46 DOCTOR_TICK frame per pass +
@@ -1457,6 +1481,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let _ = task.await;
     }
     if let Some(task) = updater_cli_task {
+        task.abort();
+        let _ = task.await;
+    }
+    if let Some(task) = updater_skill_task {
         task.abort();
         let _ = task.await;
     }

@@ -90,6 +90,107 @@ pub fn cli_version_specs_blocking(gate: GateDecision) -> Vec<ComponentSpec> {
     }
 }
 
+// ── U-02 skill_plugin ────────────────────────────────────────────────────────
+
+/// Scan `~/.neoth/skills/<id>/skill.yaml` files + return
+/// (id, version) per skill. Malformed YAMLs skip silently — the
+/// skill registry's own load path surfaces the error elsewhere;
+/// the updater probe stays observability-only.
+pub fn scan_installed_skills(home: &std::path::Path) -> Vec<(String, String)> {
+    let dir = home.join("skills");
+    let Ok(read) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in read.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest_path = path.join("skill.yaml");
+        let Ok(body) = std::fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        if let Ok(m) = serde_yaml::from_str::<crate::skills::schema::SkillManifest>(&body) {
+            out.push((format!("skill:{}", m.id), m.version));
+        }
+    }
+    out
+}
+
+/// Scan `~/.neoth/plugins/<id>/plugin.toml` files + return
+/// (id, version) per plugin. Same defensive shape as
+/// `scan_installed_skills`.
+pub fn scan_installed_plugins(home: &std::path::Path) -> Vec<(String, String)> {
+    let dir = home.join("plugins");
+    let Ok(read) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in read.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let manifest_path = path.join("plugin.toml");
+        let Ok(body) = std::fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        if let Ok(m) = toml::from_str::<crate::wasm_plugin::manifest::PluginManifest>(&body) {
+            out.push((format!("plugin:{}", m.id), m.version));
+        }
+    }
+    out
+}
+
+/// Sentinel error string the U-02 probe writes into
+/// `latest_version: Err(…)` until a real skill/plugin registry
+/// ships. Operators see the WAL audit + the `neoth updater
+/// status` "no upstream resolver" line so the cron's presence is
+/// audited without false-promise of "we know what's latest".
+pub const NO_REGISTRY_RESOLVER_MSG: &str =
+    "no upstream registry yet — U-02b will resolve latest_version via the registry concept";
+
+/// Compose installed skills + plugins into a single
+/// `skill_plugin_specs` list. Every component pairs the current
+/// version with `Err(NO_REGISTRY_RESOLVER_MSG)` so the cron's
+/// `compute_outcome` yields `ComponentStatus::Failed` — honest
+/// audit signal, not a false "up_to_date" claim.
+pub fn skill_plugin_specs_for_home(
+    home: &std::path::Path,
+    gate: GateDecision,
+) -> Vec<ComponentSpec> {
+    let mut installed: Vec<(String, String, Result<String, String>, GateDecision)> = Vec::new();
+    for (name, version) in scan_installed_skills(home) {
+        installed.push((
+            name,
+            version,
+            Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+            gate.clone(),
+        ));
+    }
+    for (name, version) in scan_installed_plugins(home) {
+        installed.push((
+            name,
+            version,
+            Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+            gate.clone(),
+        ));
+    }
+    crate::updater::pipeline::skill_plugin_specs(installed)
+}
+
+/// Sync builder for the U-04 cron-builder closure. The home path
+/// is captured by value so each tick re-reads disk (operator-
+/// added skills between ticks become visible without a daemon
+/// restart).
+pub fn skill_plugin_specs_blocking(
+    home: std::path::PathBuf,
+    gate: GateDecision,
+) -> Vec<ComponentSpec> {
+    skill_plugin_specs_for_home(&home, gate)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +236,75 @@ mod tests {
     fn cli_version_blocking_outside_runtime_returns_empty() {
         let specs = cli_version_specs_blocking(GateDecision::Allow);
         assert!(specs.is_empty());
+    }
+
+    // ── U-02 skill_plugin scanners ───────────────────────────────
+
+    #[test]
+    fn scan_skills_returns_empty_when_dir_missing() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(scan_installed_skills(home.path()).is_empty());
+    }
+
+    #[test]
+    fn scan_skills_lists_one_per_id_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let skills = home.path().join("skills");
+        std::fs::create_dir_all(skills.join("alpha")).unwrap();
+        std::fs::create_dir_all(skills.join("beta")).unwrap();
+        std::fs::write(
+            skills.join("alpha").join("skill.yaml"),
+            "id: alpha\ndescription: A\nversion: 1.2.3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            skills.join("beta").join("skill.yaml"),
+            "id: beta\ndescription: B\nversion: 0.1.0\n",
+        )
+        .unwrap();
+        let mut found = scan_installed_skills(home.path());
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                ("skill:alpha".to_string(), "1.2.3".to_string()),
+                ("skill:beta".to_string(), "0.1.0".to_string()),
+            ],
+        );
+    }
+
+    #[test]
+    fn scan_skills_skips_dirs_without_skill_yaml() {
+        let home = tempfile::tempdir().unwrap();
+        let skills = home.path().join("skills");
+        std::fs::create_dir_all(skills.join("orphan")).unwrap();
+        // No skill.yaml file present.
+        assert!(scan_installed_skills(home.path()).is_empty());
+    }
+
+    #[test]
+    fn scan_plugins_returns_empty_when_dir_missing() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(scan_installed_plugins(home.path()).is_empty());
+    }
+
+    #[test]
+    fn skill_plugin_specs_for_home_pairs_each_with_no_registry_err() {
+        let home = tempfile::tempdir().unwrap();
+        let skills = home.path().join("skills");
+        std::fs::create_dir_all(skills.join("alpha")).unwrap();
+        std::fs::write(
+            skills.join("alpha").join("skill.yaml"),
+            "id: alpha\ndescription: A\nversion: 0.7.0\n",
+        )
+        .unwrap();
+        let specs = skill_plugin_specs_for_home(home.path(), GateDecision::Allow);
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].name, "skill:alpha");
+        assert_eq!(specs[0].current_version, "0.7.0");
+        match &specs[0].latest_version {
+            Err(msg) => assert!(msg.contains("no upstream registry")),
+            Ok(_) => panic!("U-02 must surface no-registry error until U-02b ships"),
+        }
     }
 }
