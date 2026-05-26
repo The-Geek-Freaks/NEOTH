@@ -374,6 +374,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step6f_import_jarvis(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
+    step6g_credential_import(&args, interactive, &neoth_dir).await;
     step7_autonomy(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step7b_auto_update(&args, interactive, &mut state)?;
@@ -2735,6 +2736,143 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
 
     state.steps_completed.push(64);
     Ok(())
+}
+
+/// C-05 (Session 25) — wizard step 6g: credential import.
+///
+/// Iterates the available [`crate::credentials::CredentialImporter`]
+/// impls (Chrome / Firefox + optional Bitwarden JSON export) +
+/// hands the operator-visible outcomes to `run_wizard_step`,
+/// which delegates redaction to the SC-17 typed gate
+/// (`security::credential_redact::redact_credential_import`).
+///
+/// What this step writes to disk:
+///   - Operator-visible summary printed inline.
+///   - `~/.neoth/credentials_import_<ts>.json` sidecar file
+///     containing the [`RedactedCredentialImportPayload`]. The
+///     daemon's next boot picks up the sidecar, emits the
+///     `0xD6 CREDENTIAL_IMPORT` WAL frame, then deletes the
+///     sidecar — same at-least-once semantics the cluster audit
+///     ingester uses.
+///
+/// What this step does NOT do: it never writes the secrets
+/// themselves to disk. The SC-17 typed wrapper makes leaking
+/// secret material via the WAL emit path unrepresentable. Future
+/// secret-store integration (C-06) is the path operators will
+/// use to actually consume the imported credentials.
+///
+/// Non-interactive runs skip the step entirely — credential
+/// import requires explicit operator intent.
+async fn step6g_credential_import(args: &InitArgs, interactive: bool, neoth_dir: &std::path::Path) {
+    info!("wizard step 6g: credential import (C-05)");
+    if !interactive || args.non_interactive {
+        debug!("skipping credential import in non-interactive mode");
+        return;
+    }
+    println!("\n[6g/9] Credential import (optional).");
+    println!("Bitwarden JSON / Chrome / Firefox sources detected on this host can");
+    println!("be discovered + their structure recorded in a redacted audit frame.");
+    println!("**No secret material is ever written to disk by this step.**");
+    println!();
+
+    #[cfg(feature = "wizard")]
+    let opted_in = {
+        match dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Run credential discovery now?")
+            .default(false)
+            .interact()
+        {
+            Ok(b) => b,
+            Err(e) => {
+                warn!(error = %e, "credential-import opt-in prompt failed; skipping step");
+                return;
+            }
+        }
+    };
+    #[cfg(not(feature = "wizard"))]
+    let opted_in = false;
+
+    if !opted_in {
+        println!("Skipped — operator declined.");
+        return;
+    }
+
+    // Optional Bitwarden export path — empty input = no Bitwarden source.
+    #[cfg(feature = "wizard")]
+    let bitwarden_path: Option<std::path::PathBuf> = {
+        match dialoguer::Input::<String>::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Bitwarden JSON export path (blank to skip)")
+            .allow_empty(true)
+            .interact_text()
+        {
+            Ok(s) if s.trim().is_empty() => None,
+            Ok(s) => Some(std::path::PathBuf::from(s.trim())),
+            Err(e) => {
+                warn!(error = %e, "bitwarden path prompt failed; skipping bitwarden source");
+                None
+            }
+        }
+    };
+    #[cfg(not(feature = "wizard"))]
+    let bitwarden_path: Option<std::path::PathBuf> = None;
+
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let importers =
+        crate::credentials::wizard_step::build_wizard_importer_list(bitwarden_path.as_deref());
+    let result =
+        crate::credentials::wizard_step::run_wizard_step(importers, "primary", ts_unix).await;
+
+    if result.summaries.is_empty() {
+        println!("No credential sources were available on this host.");
+        return;
+    }
+
+    println!("\nDiscovered credential sources:");
+    for s in &result.summaries {
+        if s.ok {
+            println!(
+                "  • {} — {} entries, {} warnings",
+                s.importer_name, s.entry_count, s.warning_count,
+            );
+        } else {
+            println!("  • {} — FAILED: {}", s.importer_name, s.error_summary);
+        }
+    }
+    println!(
+        "\nSC-17 redactor pass: services_redacted = {} (entry_count = {})",
+        result.redacted_payload.services_redacted, result.redacted_payload.entry_count,
+    );
+
+    // Sidecar drop — daemon picks up + emits 0xD6 WAL frame on next
+    // boot. Atomic `.tmp` + rename, Windows-safe.
+    if let Err(e) = write_credential_import_sidecar(neoth_dir, ts_unix, &result.redacted_payload) {
+        warn!(error = %e, "credential import sidecar write failed (non-fatal)");
+    } else {
+        println!("Saved redacted import record (operator-private).");
+    }
+}
+
+/// Write the SC-17-redacted credential-import payload to a sidecar
+/// file under `~/.neoth/`. Pure-fn over the home dir + payload so
+/// tests can exercise the disk shape without the wizard prompts.
+fn write_credential_import_sidecar(
+    neoth_dir: &std::path::Path,
+    ts_unix: i64,
+    payload: &crate::security::credential_redact::RedactedCredentialImportPayload,
+) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(neoth_dir)?;
+    let final_path = neoth_dir.join(format!("credentials_import_{ts_unix}.json"));
+    let tmp_path = final_path.with_extension("json.tmp");
+    let body = serde_json::to_vec_pretty(payload).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp_path, &body)?;
+    if final_path.exists() {
+        let _ = std::fs::remove_file(&final_path);
+    }
+    std::fs::rename(&tmp_path, &final_path)?;
+    Ok(final_path)
 }
 
 /// Step 7 — operator picks an autonomy level (Phase 28b R-23).
@@ -5115,5 +5253,62 @@ mod tests {
             &topology,
             &Some(ProviderKind::ClaudeCli)
         ));
+    }
+
+    // ── C-05 (Session 25) credential-import sidecar ────────────────────
+
+    #[test]
+    fn credential_import_sidecar_writes_redacted_payload_only() {
+        // SC-17 invariant: the sidecar carries the redacted projection,
+        // never the secrets. Test pins this contract for the wizard
+        // step's disk shape.
+        use crate::security::credential_redact::{ImportSource, RedactedCredentialImportPayload};
+        let home = tempfile::tempdir().unwrap();
+        let payload = RedactedCredentialImportPayload {
+            source: ImportSource::Bitwarden,
+            entry_count: 3,
+            distinct_tags_sorted: vec!["banking".into(), "work".into()],
+            services_hash: "deadbeefcafebabe".into(),
+            target_vault_id: "primary".into(),
+            ts_unix: 1_700_000_000,
+            services_redacted: true,
+        };
+        let path = write_credential_import_sidecar(home.path(), 1_700_000_000, &payload).unwrap();
+        assert!(path.exists());
+        assert_eq!(
+            path.file_name().and_then(|s| s.to_str()),
+            Some("credentials_import_1700000000.json"),
+        );
+        let body = std::fs::read_to_string(&path).unwrap();
+        // SC-17 keys present; no secret-bearing keys leaked.
+        assert!(body.contains("\"services_redacted\""));
+        assert!(body.contains("\"entry_count\""));
+        assert!(body.contains("\"services_hash\""));
+        assert!(!body.contains("password"));
+        assert!(!body.contains("secret"));
+    }
+
+    #[test]
+    fn credential_import_sidecar_overwrites_existing_atomically() {
+        // Re-running the wizard at the same ts_unix should overwrite,
+        // not leave a `.tmp` companion + not error out on
+        // Windows-style rename-over-existing.
+        use crate::security::credential_redact::{ImportSource, RedactedCredentialImportPayload};
+        let home = tempfile::tempdir().unwrap();
+        let payload = RedactedCredentialImportPayload {
+            source: ImportSource::Bitwarden,
+            entry_count: 0,
+            distinct_tags_sorted: Vec::new(),
+            services_hash: "0000000000000000".into(),
+            target_vault_id: "primary".into(),
+            ts_unix: 100,
+            services_redacted: true,
+        };
+        let first = write_credential_import_sidecar(home.path(), 100, &payload).unwrap();
+        let second = write_credential_import_sidecar(home.path(), 100, &payload).unwrap();
+        assert_eq!(first, second);
+        // No `.tmp` companion leaked.
+        let tmp = home.path().join("credentials_import_100.json.tmp");
+        assert!(!tmp.exists());
     }
 }
