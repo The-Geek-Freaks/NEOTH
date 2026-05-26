@@ -156,6 +156,239 @@ fn format_topics_phrase(topics: &[String]) -> String {
     }
 }
 
+// ── OB-02: persistence + Obsidian vault sync ─────────────────────────────
+//
+// Mirrors the OB-01 dreaming surface: reflections persist as JSONL under
+// `~/.neoth/reflections/<iso-week>.jsonl` (append-only, one reflection
+// per line). The vault sync renders every reflection for an ISO week
+// into `<vault>/<subdir>/Reflections/<iso-week>.md` via the same atomic
+// `.tmp` + rename dance as OB-01.
+
+/// One archived weekly reflection. The shape stays serde-stable so
+/// historical reflections survive schema evolution — any new field
+/// MUST be `#[serde(default)]`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct WeeklyReflection {
+    /// ISO-week tag like `"2026-W21"`. Doubles as the dedup_key
+    /// suffix shared with the [`ProactiveItem`] G-01-mini already
+    /// emits.
+    pub iso_week_tag: String,
+    /// Unix seconds when the reflection was composed.
+    pub generated_ts_unix: i64,
+    /// Top-N topics that fed the reflection body. Kept verbatim so
+    /// Dataview queries can filter on individual topic strings.
+    pub topics: Vec<String>,
+    /// The operator-facing body (German template per the
+    /// REFLECTION_BODY_TEMPLATE).
+    pub body: String,
+    /// Operator-supplied or auto-derived tags. Empty by default.
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+impl WeeklyReflection {
+    /// Render to Obsidian-flavored markdown — YAML frontmatter
+    /// (iso_week / generated_unix / topics / tags) + H1 + ## Body +
+    /// ## Topics list. Field order pinned for Dataview query
+    /// stability.
+    pub fn to_obsidian_md(&self) -> String {
+        let yaml_tags = if self.tags.is_empty() {
+            "tags: []".to_string()
+        } else {
+            let inner = self
+                .tags
+                .iter()
+                .map(|t| format!("\"{}\"", escape_yaml_string(t)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("tags: [{inner}]")
+        };
+        let yaml_topics = if self.topics.is_empty() {
+            "topics: []".to_string()
+        } else {
+            let inner = self
+                .topics
+                .iter()
+                .map(|t| format!("\"{}\"", escape_yaml_string(t)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("topics: [{inner}]")
+        };
+        let topics_body = if self.topics.is_empty() {
+            "(no topics)\n".to_string()
+        } else {
+            self.topics
+                .iter()
+                .map(|t| format!("- {t}\n"))
+                .collect::<String>()
+        };
+        format!(
+            "---\n\
+             iso_week: \"{week}\"\n\
+             generated_unix: {ts}\n\
+             {yaml_topics}\n\
+             {yaml_tags}\n\
+             ---\n\n\
+             # Reflection {week}\n\n\
+             ## Body\n\n\
+             {body}\n\n\
+             ## Topics\n\n\
+             {topics_body}",
+            week = escape_yaml_string(&self.iso_week_tag),
+            ts = self.generated_ts_unix,
+            body = self.body,
+        )
+    }
+}
+
+/// Escape a string for embedding inside a YAML double-quoted scalar.
+/// Same conservative rule as `dreaming::escape_yaml_string`.
+fn escape_yaml_string(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// Directory under `home` that holds the per-week JSONL files.
+pub fn reflections_dir(home: &std::path::Path) -> std::path::PathBuf {
+    home.join("reflections")
+}
+
+/// File for a given ISO-week tag.
+pub fn jsonl_file_for_week(home: &std::path::Path, iso_week: &str) -> std::path::PathBuf {
+    reflections_dir(home).join(format!("{iso_week}.jsonl"))
+}
+
+/// Append one reflection to its ISO-week JSONL. Creates the
+/// reflections dir on demand. Mirrors `dreaming::append_dream`.
+pub fn append_reflection(
+    home: &std::path::Path,
+    reflection: &WeeklyReflection,
+) -> std::io::Result<()> {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+
+    fs::create_dir_all(reflections_dir(home))?;
+    let path = jsonl_file_for_week(home, &reflection.iso_week_tag);
+    let mut line = serde_json::to_vec(reflection).map_err(std::io::Error::other)?;
+    line.push(b'\n');
+    let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+    f.write_all(&line)?;
+    f.flush()?;
+    Ok(())
+}
+
+/// Load every reflection for `iso_week`. Missing file → empty;
+/// malformed lines skipped (corrupted disk doesn't kill the read path).
+pub fn load_reflections_for_week(
+    home: &std::path::Path,
+    iso_week: &str,
+) -> Vec<WeeklyReflection> {
+    use std::fs;
+    let path = jsonl_file_for_week(home, iso_week);
+    let Ok(body) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    body.lines()
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect()
+}
+
+/// Outcome of [`sync_reflections_to_obsidian`]. Same shape as
+/// `DreamSyncOutcome` so a future generic "vault sync" trait can
+/// adopt both without surface churn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReflectionSyncOutcome {
+    pub iso_week_tag: String,
+    pub written: bool,
+    pub target_path: std::path::PathBuf,
+    pub reflection_count: usize,
+    pub bytes_written: usize,
+}
+
+/// OB-02 — collect every reflection for `iso_week_tag` and write a
+/// single Obsidian markdown file to
+/// `<vault>/<subdir>/Reflections/<iso-week>.md`. Multiple
+/// reflections for the same week (rare — typically 1/week, but the
+/// shape handles re-runs) concat with `\n---\n\n` thematic break.
+/// Empty week → no file written; outcome carries `written: false`
+/// so the vault stays clean for quiet weeks.
+pub fn sync_reflections_to_obsidian(
+    neoth_home: &std::path::Path,
+    vault_root: &std::path::Path,
+    subdir: &str,
+    iso_week_tag: &str,
+) -> std::io::Result<ReflectionSyncOutcome> {
+    use std::fs::{self, OpenOptions};
+    use std::io::Write;
+
+    let reflections = load_reflections_for_week(neoth_home, iso_week_tag);
+    let dest_dir = vault_root.join(subdir).join("Reflections");
+    let target_path = dest_dir.join(format!("{iso_week_tag}.md"));
+
+    if reflections.is_empty() {
+        return Ok(ReflectionSyncOutcome {
+            iso_week_tag: iso_week_tag.to_string(),
+            written: false,
+            target_path,
+            reflection_count: 0,
+            bytes_written: 0,
+        });
+    }
+
+    let body: String = reflections
+        .iter()
+        .map(WeeklyReflection::to_obsidian_md)
+        .collect::<Vec<_>>()
+        .join("\n---\n\n");
+
+    fs::create_dir_all(&dest_dir)?;
+    let tmp_path = dest_dir.join(format!("{iso_week_tag}.md.tmp"));
+    {
+        let mut f = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+        f.write_all(body.as_bytes())?;
+        f.flush()?;
+    }
+    // Windows: rename over existing file fails — remove first.
+    if target_path.exists() {
+        fs::remove_file(&target_path)?;
+    }
+    fs::rename(&tmp_path, &target_path)?;
+
+    Ok(ReflectionSyncOutcome {
+        iso_week_tag: iso_week_tag.to_string(),
+        written: true,
+        target_path,
+        reflection_count: reflections.len(),
+        bytes_written: body.len(),
+    })
+}
+
+/// Compose a [`WeeklyReflection`] from the already-extracted topics
+/// + iso_week_tag + timestamp. Mirrors `build_reflection_item` but
+/// returns the archivable record instead of the proactive-queue
+/// item, so cron paths can do both (enqueue + archive) without
+/// duplicating topic-extraction work.
+pub fn build_weekly_reflection(
+    iso_week_tag: &str,
+    topics: &[String],
+    generated_ts_unix: i64,
+) -> Option<WeeklyReflection> {
+    if topics.is_empty() {
+        return None;
+    }
+    let body = REFLECTION_BODY_TEMPLATE.replace("{topics}", &format_topics_phrase(topics));
+    Some(WeeklyReflection {
+        iso_week_tag: iso_week_tag.to_string(),
+        generated_ts_unix,
+        topics: topics.to_vec(),
+        body,
+        tags: Vec::new(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -289,5 +522,205 @@ mod tests {
         let item3 = build_reflection_item("2026-W22", &["wal".into()], 0).unwrap();
         assert!(q.enqueue(item3));
         assert_eq!(q.len(), 2);
+    }
+
+    // ── OB-02: WeeklyReflection + archive + vault sync ─────────────────
+
+    fn make_reflection(week: &str, topics: &[&str]) -> WeeklyReflection {
+        WeeklyReflection {
+            iso_week_tag: week.to_string(),
+            generated_ts_unix: 1_700_000_000,
+            topics: topics.iter().map(|s| (*s).to_string()).collect(),
+            body: "Du hast diese Woche an rust und memory gearbeitet.".to_string(),
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn ob02_to_obsidian_md_has_frontmatter_and_h1() {
+        let r = make_reflection("2026-W21", &["rust", "memory"]);
+        let md = r.to_obsidian_md();
+        assert!(md.starts_with("---\n"), "missing leading YAML delim: {md}");
+        assert!(md.contains("iso_week: \"2026-W21\""));
+        assert!(md.contains("generated_unix: 1700000000"));
+        assert!(md.contains("topics: [\"rust\", \"memory\"]"));
+        assert!(md.contains("tags: []"));
+        assert!(md.contains("# Reflection 2026-W21"));
+        assert!(md.contains("## Body"));
+        assert!(md.contains("## Topics"));
+    }
+
+    #[test]
+    fn ob02_to_obsidian_md_empty_topics_renders_placeholder() {
+        let r = make_reflection("2026-W21", &[]);
+        let md = r.to_obsidian_md();
+        assert!(md.contains("topics: []"));
+        assert!(md.contains("(no topics)"), "missing topics placeholder: {md}");
+    }
+
+    #[test]
+    fn ob02_to_obsidian_md_escapes_quotes_in_topic() {
+        let r = make_reflection("2026-W21", &["that \"thing\""]);
+        let md = r.to_obsidian_md();
+        // The inline topic list must escape the embedded quote.
+        assert!(
+            md.contains("topics: [\"that \\\"thing\\\"\"]"),
+            "quote not escaped in topics: {md}",
+        );
+    }
+
+    #[test]
+    fn ob02_append_and_load_roundtrip() {
+        let home = tempfile::tempdir().unwrap();
+        let r1 = make_reflection("2026-W21", &["rust"]);
+        let r2 = make_reflection("2026-W21", &["memory"]);
+        append_reflection(home.path(), &r1).unwrap();
+        append_reflection(home.path(), &r2).unwrap();
+
+        let loaded = load_reflections_for_week(home.path(), "2026-W21");
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].topics, vec!["rust"]);
+        assert_eq!(loaded[1].topics, vec!["memory"]);
+    }
+
+    #[test]
+    fn ob02_load_missing_week_returns_empty() {
+        let home = tempfile::tempdir().unwrap();
+        let loaded = load_reflections_for_week(home.path(), "1999-W01");
+        assert!(loaded.is_empty());
+    }
+
+    #[test]
+    fn ob02_load_skips_malformed_lines() {
+        let home = tempfile::tempdir().unwrap();
+        let week = "2026-W21";
+        std::fs::create_dir_all(reflections_dir(home.path())).unwrap();
+        let path = jsonl_file_for_week(home.path(), week);
+        let r = make_reflection(week, &["rust"]);
+        let mut body = serde_json::to_string(&r).unwrap();
+        body.push('\n');
+        body.push_str("this is not json\n");
+        body.push_str(&serde_json::to_string(&r).unwrap());
+        body.push('\n');
+        std::fs::write(&path, body).unwrap();
+
+        let loaded = load_reflections_for_week(home.path(), week);
+        assert_eq!(loaded.len(), 2, "malformed line must be skipped");
+    }
+
+    #[test]
+    fn ob02_sync_no_reflections_skips_write() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let out =
+            sync_reflections_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-W21").unwrap();
+        assert!(!out.written);
+        assert_eq!(out.reflection_count, 0);
+        assert!(!out.target_path.exists());
+    }
+
+    #[test]
+    fn ob02_sync_single_reflection_writes_file() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        append_reflection(home.path(), &make_reflection("2026-W21", &["rust"])).unwrap();
+
+        let out =
+            sync_reflections_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-W21").unwrap();
+        assert!(out.written);
+        assert_eq!(out.reflection_count, 1);
+        let body = std::fs::read_to_string(&out.target_path).unwrap();
+        assert!(body.contains("# Reflection 2026-W21"));
+        assert!(body.contains("topics: [\"rust\"]"));
+    }
+
+    #[test]
+    fn ob02_sync_multiple_reflections_joined_with_hr() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        append_reflection(home.path(), &make_reflection("2026-W21", &["rust"])).unwrap();
+        append_reflection(home.path(), &make_reflection("2026-W21", &["memory"])).unwrap();
+
+        let out =
+            sync_reflections_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-W21").unwrap();
+        assert_eq!(out.reflection_count, 2);
+        let body = std::fs::read_to_string(&out.target_path).unwrap();
+        assert!(body.contains("topics: [\"rust\"]"));
+        assert!(body.contains("topics: [\"memory\"]"));
+        assert!(body.contains("\n---\n\n"));
+    }
+
+    #[test]
+    fn ob02_sync_overwrites_stale_existing_file() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let dest_dir = vault.path().join("NEOTH").join("Reflections");
+        std::fs::create_dir_all(&dest_dir).unwrap();
+        std::fs::write(dest_dir.join("2026-W21.md"), "STALE").unwrap();
+
+        append_reflection(home.path(), &make_reflection("2026-W21", &["fresh"])).unwrap();
+        let out =
+            sync_reflections_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-W21").unwrap();
+        let body = std::fs::read_to_string(&out.target_path).unwrap();
+        assert!(!body.contains("STALE"));
+        assert!(body.contains("topics: [\"fresh\"]"));
+    }
+
+    #[test]
+    fn ob02_sync_target_lives_under_vault_subdir_reflections() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        append_reflection(home.path(), &make_reflection("2026-W21", &["t"])).unwrap();
+
+        let out =
+            sync_reflections_to_obsidian(home.path(), vault.path(), "CUSTOM", "2026-W21").unwrap();
+        let expected = vault
+            .path()
+            .join("CUSTOM")
+            .join("Reflections")
+            .join("2026-W21.md");
+        assert_eq!(out.target_path, expected);
+    }
+
+    #[test]
+    fn ob02_sync_bytes_written_matches_file_size() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        append_reflection(home.path(), &make_reflection("2026-W21", &["rust"])).unwrap();
+
+        let out =
+            sync_reflections_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-W21").unwrap();
+        let actual = std::fs::metadata(&out.target_path).unwrap().len() as usize;
+        assert_eq!(actual, out.bytes_written);
+    }
+
+    #[test]
+    fn ob02_build_weekly_reflection_empty_topics_is_none() {
+        let r = build_weekly_reflection("2026-W21", &[], 0);
+        assert!(r.is_none());
+    }
+
+    #[test]
+    fn ob02_build_weekly_reflection_renders_body_with_topics_phrase() {
+        let topics = vec!["rust".to_string(), "memory".to_string()];
+        let r = build_weekly_reflection("2026-W21", &topics, 1_700_000_000).unwrap();
+        assert_eq!(r.iso_week_tag, "2026-W21");
+        assert_eq!(r.generated_ts_unix, 1_700_000_000);
+        assert_eq!(r.topics, topics);
+        assert!(r.body.contains("rust und memory"));
+        assert!(r.tags.is_empty());
+    }
+
+    #[test]
+    fn ob02_no_tmp_file_lingers_after_sync() {
+        let home = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        append_reflection(home.path(), &make_reflection("2026-W21", &["t"])).unwrap();
+
+        let out =
+            sync_reflections_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-W21").unwrap();
+        let dest_dir = out.target_path.parent().unwrap();
+        let leftover = dest_dir.join("2026-W21.md.tmp");
+        assert!(!leftover.exists(), "tmp file leaked: {leftover:?}");
     }
 }
