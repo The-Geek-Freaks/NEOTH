@@ -299,7 +299,7 @@ The point is not "AI writes code once". The point is a coding buddy that remembe
 
 ## Where NEOTH Fits
 
-Different projects optimize for different jobs. OpenHuman pushes UI-first managed convenience and a big integration catalogue. Hermes pushes persistent coding workflow. OpenClaw pushes gateway/tool breadth. NEOTH's advantage is the harder overlap: loyal daily buddy, private memory, coding studio, local automation, plugin trust, and operator runtime in one system.
+Different projects optimize for different jobs. OpenHuman pushes UI-first managed convenience and a big integration catalogue. OpenClaw pushes local Gateway breadth, channel reach, voice, nodes, and live Canvas. Hermes pushes self-improving workflow, skills, subagents, cron, and remote backends. NEOTH's advantage is the harder overlap: loyal daily buddy, private memory, coding studio, local automation, plugin trust, private mesh, and operator runtime in one system.
 
 <img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH positioning map - durable audited memory and operator-grade control" width="100%">
 
@@ -308,43 +308,53 @@ Legend: `✓` core product bet, `◐` supported or adjacent, `−` not a clear p
 | Capability | NEOTH | OpenHuman | Hermes | OpenClaw |
 | :-- | :--: | :--: | :--: | :--: |
 | Simple buddy onboarding | ✓ | ✓ | ◐ | ◐ |
+| Multi-channel gateway | ✓ | ◐ | ✓ | ✓ |
+| Live visual workspace | ✓ | ◐ | ◐ | ✓ |
 | Local-first memory you can inspect | ✓ | ✓ | ◐ | ◐ |
-| Default path avoids hosted control plane | ✓ | ◐ | ◐ | ◐ |
+| Six-layer memory + brain-role routing | ✓ | − | ◐ | − |
 | Evidence-backed profile facts | ✓ | ◐ | ◐ | − |
 | Redaction that blocks re-learning | ✓ | ◐ | − | − |
 | WAL / trust ledger for actions | ✓ | ◐ | ◐ | ◐ |
 | Local profile extraction path | ✓ | ◐ | − | − |
-| First-class coding canvas + Kanban | ✓ | ◐ | ✓ | ◐ |
-| Provider roles / multi-brain routing | ✓ | ◐ | ◐ | ◐ |
-| Capability-scoped WASM plugins | ✓ | ◐ | ◐ | ✓ |
-| n8n + local cron automation | ✓ | ◐ | ◐ | ✓ |
+| Coding canvas + Kanban + review memory | ✓ | ◐ | ◐ | ◐ |
+| Self-improving skill loop | ✓ | ◐ | ✓ | ◐ |
+| Capability-scoped plugin boundary | ✓ | ◐ | ◐ | ◐ |
+| n8n + local cron automation | ✓ | ◐ | ✓ | ✓ |
 | Obsidian as editable scratchpad | ✓ | ✓ | ◐ | ◐ |
-| Private mesh / cluster nodes | ✓ | − | ◐ | ◐ |
+| Private mesh / cluster nodes | ✓ | − | ◐ | ✓ |
 | DAU path and operator depth together | ✓ | ◐ | ◐ | ◐ |
 
-OpenHuman's pitch is strong: fast onboarding, managed model routing, many OAuth integrations, auto-fetch, Memory Tree, Obsidian-style vault, voice, and a friendly UI. NEOTH's answer is different: the convenience layer should not own the trust boundary.
+Their pitches are strong. OpenHuman is the "connect everything fast" product. OpenClaw is the "local Gateway across every channel" product. Hermes is the "agent that learns and runs anywhere" product. NEOTH's answer is different: **bring those powers into one loyal runtime whose memory, actions, plugins, providers, and private network are inspectable by the operator.**
 
-| OpenHuman-style promise | NEOTH's sharper answer |
+| If you like... | You probably want... | Why switch to NEOTH |
+| :-- | :-- | :-- |
+| **OpenHuman** | Friendly onboarding, OAuth integrations, Memory Tree, Obsidian-style notes, managed model routing. | Keep the approachable buddy idea, but move the trust boundary back to the user: local profile learning, explicit provider routing, WAL evidence, redaction semantics, and private mesh instead of managed-backend gravity. |
+| **OpenClaw** | Gateway breadth, many chat channels, voice, nodes, live Canvas, skills, always-on local control. | Keep the action surface, but add deeper loyal memory: six memory layers, profile evidence, reviewable coding plans, Obsidian scratchpad, plugin caps, audit trails, and consent-gated cluster behavior. |
+| **Hermes** | Self-improvement, skill generation, TUI, cron, subagents, remote/serverless backends. | Keep the learning loop, but add DAU-friendly GUI/onboarding, stronger privacy defaults, role-bound brain paths, local profile extraction, Kanban/coding canvas, and operator-readable trust surfaces. |
+
+| Competitor promise | NEOTH's sharper answer |
 | :-- | :-- |
 | **"Connect everything fast."** | Connect deliberately. Every surface shares one policy core, one memory model, and auditable destination history. |
+| **"Gateway across every channel."** | Channel reach is only step one. NEOTH turns channel activity into durable, permissioned memory with evidence and recall. |
+| **"Self-improving agent."** | Self-improvement must be inspectable: proposed skills, reflections, coding learnings, and profile changes belong in readable memory and WAL evidence. |
 | **"Managed routing makes models easy."** | Provider routing is explicit. Local Qwen/Ouro paths handle private learning, and cloud fallback is a visible choice. |
 | **"Memory from your inbox, docs, chats."** | Memory is not just compressed context. Claims carry evidence, confidence, retention, redaction, and provenance. |
+| **"Live canvas / agent workspace."** | NEOTH makes the workspace part of the buddy's long-term project memory: plans, Kanban state, reviews, and decisions survive the session. |
 | **"One-click integrations."** | Integrations are useful only if the operator can inspect what crossed the boundary and revoke it cleanly. |
-| **"A human-feeling assistant."** | NEOTH is not a mascot. It is a loyal buddy with operator-grade controls, code workflow memory, and private mesh reach. |
 | **"All models through one subscription."** | NEOTH optimizes for ownership: bring providers, run local models, route per role, and keep the runtime yours. |
 
 Where NEOTH dominates is the overlap, not a single isolated checkbox:
 
 | Axis | NEOTH advantage |
 | :-- | :-- |
-| **Buddy** | Approachable enough for normal users, serious enough for operators, and loyal to the user's interests instead of a hosted account model. |
+| **Buddy** | Approachable enough for normal users, serious enough for operators, and loyal to the user's interests instead of a hosted account model or channel-only gateway. |
 | **Memory** | Six-layer memory design, profile evidence, redaction semantics, Hindsight summaries, Obsidian mirrors, and WAL-backed recall. |
-| **Coding** | Repo memory, planning canvas, Kanban, worker dispatch, review promotion, and provider roles live in the same buddy, not a separate IDE trick. |
+| **Coding** | Repo memory, planning canvas, Kanban, worker dispatch, review promotion, and provider roles live in the same buddy, not a separate IDE trick or terminal-only loop. |
 | **Privacy** | Local profile extraction, explicit provider routing, consent gates, plugin caps, no silent cloud fallback, and auditable outbound surfaces. |
-| **Ecosystem** | Obsidian, n8n, Paperless, email, calendar, local models, private mesh, chat channels, and plugins share one policy and memory core. |
-| **Sovereignty** | The default 1.0 story is not "trust our backend". It is "run your runtime, inspect your memory, approve your edges, keep your evidence". |
+| **Ecosystem** | Obsidian, n8n, Paperless, email, calendar, local models, private mesh, chat channels, plugins, and coding sessions share one policy and memory core. |
+| **Sovereignty** | The default 1.0 story is not "trust our backend" or "give the main session full host access". It is "run your runtime, inspect your memory, approve your edges, keep your evidence". |
 
-Short version: OpenHuman is closest on consumer-friendly managed memory. Hermes is closest on persistent coding workflow. OpenClaw is closest on gateway breadth and live-canvas energy. NEOTH's bet is the overlap: one local-first buddy with explicit profile learning, WAL-backed audit, coding workflow memory, private mesh, and operator-controlled extensions.
+Short version: OpenHuman is closest on consumer-friendly managed memory. OpenClaw is closest on local Gateway reach and live-canvas energy. Hermes is closest on self-improving agent workflow. NEOTH's bet is the overlap: one local-first buddy with explicit profile learning, WAL-backed audit, coding workflow memory, private mesh, and operator-controlled extensions.
 
 Plain assistants are optimized for single conversations. IDE agents are optimized for one repo session. Vault tools are optimized for notes. NEOTH's job is continuity across all of them.
 
