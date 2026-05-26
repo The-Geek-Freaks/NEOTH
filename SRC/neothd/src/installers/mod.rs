@@ -28,6 +28,7 @@ pub mod oauth_pkce;
 pub mod obs;
 pub mod obsidian;
 pub mod obsidian_vault;
+pub mod paperless;
 pub mod pears;
 pub mod qwen_weights;
 pub mod tmux;
