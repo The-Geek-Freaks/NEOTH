@@ -352,6 +352,8 @@ pub fn parse_window_arg(s: &str, now_ns: i64) -> Result<i64> {
 
 #[cfg(test)]
 mod tests {
+    use rusqlite::params;
+
     use super::*;
     use crate::memory::store;
 

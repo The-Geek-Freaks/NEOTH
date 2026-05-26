@@ -85,6 +85,20 @@ jobs:
             exit 1
           fi
 
+      # neothd-gui pulls Slint's Femtovg backend on Linux, which needs
+      # fontconfig + X11 dev headers via yeslogic-fontconfig-sys + x11rb.
+      # Skip the install on non-Linux runners (Windows + macOS ship the
+      # required libs in their SDK).
+      - name: Install Linux build deps (fontconfig + X11)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libfontconfig1-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxkbcommon-dev
+
       - name: Cache Cargo registry + target
         uses: actions/cache@v4
         with:

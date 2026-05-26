@@ -1,0 +1,12 @@
+# Pin LF line endings for source files. Windows runners' default
+# core.autocrlf=true would otherwise convert *.rs to CRLF on
+# checkout, which trips rustfmt's "incorrect newline style" check.
+# Pinning per-extension also keeps the working tree byte-identical
+# across operating systems.
+*.rs   text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+*.sh   text eol=lf
+*.ps1  text eol=crlf
