@@ -66,6 +66,7 @@ pub mod coding;
 pub mod config;
 pub mod consent;
 pub mod council;
+pub mod credentials;
 pub mod cron;
 pub mod daemon;
 pub mod domain_events;
