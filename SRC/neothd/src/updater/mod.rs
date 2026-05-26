@@ -25,6 +25,7 @@ use tracing::{info, warn};
 // the GitHub-Releases-API path doesn't entangle with the npm-aware
 // installer path.
 pub mod pipeline;
+pub mod probes;
 pub mod self_update;
 
 #[cfg_attr(not(test), allow(unused_imports))]

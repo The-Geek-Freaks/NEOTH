@@ -1049,6 +1049,58 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             (_, None) => None,
         };
 
+    // ── 5d.c. Updater cron loops — U-04 + probes (Session 25) ────────────
+    //
+    // Two parallel updater lanes: NeothSelf (GitHub Releases probe via
+    // `self_update::check_for_update`) + CliVersion (npm registry probe
+    // for claude/codex/gemini via `updater::check_all`). Each lane runs
+    // on its own UpdaterCronConfig with the same 6h default interval.
+    // 0x44 UPDATER_TASK_FIRED + 0x45 UPDATER_TASK_RESULT WAL frames
+    // fire per tick — operators audit via `neoth updater status`.
+    let updater_self_task: Option<tokio::task::JoinHandle<()>> = {
+        let writer_for_updater = writer.clone();
+        let cfg = crate::daemon::updater_cron::UpdaterCronConfig::default();
+        let builder: std::sync::Arc<
+            dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
+        > = std::sync::Arc::new(|| {
+            crate::updater::probes::neoth_self_specs_blocking(
+                crate::updater::pipeline::GateDecision::Allow,
+            )
+        });
+        let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
+            cfg,
+            crate::wal::payloads_u04::UpdaterTaskKind::NeothSelf,
+            builder,
+            writer_for_updater,
+        );
+        if handle.is_some() {
+            info!("updater cron loop spawned: neoth_self (U-01)");
+        }
+        handle
+    };
+
+    let updater_cli_task: Option<tokio::task::JoinHandle<()>> = {
+        let writer_for_updater = writer.clone();
+        let cfg = crate::daemon::updater_cron::UpdaterCronConfig::default();
+        let builder: std::sync::Arc<
+            dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
+        > = std::sync::Arc::new(|| {
+            crate::updater::probes::cli_version_specs_blocking(
+                crate::updater::pipeline::GateDecision::Allow,
+            )
+        });
+        let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
+            cfg,
+            crate::wal::payloads_u04::UpdaterTaskKind::CliVersion,
+            builder,
+            writer_for_updater,
+        );
+        if handle.is_some() {
+            info!("updater cron loop spawned: cli_version (U-03)");
+        }
+        handle
+    };
+
     // ── 5d.b. Doctor cron loop — EL-01 (Session 25) ──────────────────────
     //
     // Periodic `neoth doctor` ticks → WAL 0x46 DOCTOR_TICK frame per pass +
@@ -1393,6 +1445,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Abort the EL-01 doctor cron loop. Same drain-before-writer-close
     // discipline as the regular cron scheduler.
     if let Some(task) = doctor_cron_task {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // Abort the U-04 updater cron loops (neoth_self + cli_version).
+    // Drain before the WAL writer closes so any in-flight tick's
+    // result-frame doesn't get dropped mid-append.
+    if let Some(task) = updater_self_task {
+        task.abort();
+        let _ = task.await;
+    }
+    if let Some(task) = updater_cli_task {
         task.abort();
         let _ = task.await;
     }
