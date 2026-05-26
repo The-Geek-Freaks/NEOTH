@@ -12,6 +12,7 @@ pub mod clock_floor;
 pub mod doctor_cron;
 pub mod export;
 pub mod hardware;
+pub mod updater_cron;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
 pub mod dreaming;
 pub mod healthz;
