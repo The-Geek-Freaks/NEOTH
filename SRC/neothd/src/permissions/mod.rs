@@ -22,6 +22,7 @@
 pub mod audit;
 pub mod confirm;
 pub mod gate;
+pub mod tier_classifier;
 
 pub use gate::{ConfirmStrategy, Gate};
 
