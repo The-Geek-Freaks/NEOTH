@@ -285,6 +285,16 @@ jobs:
   feature-matrix:
     name: feature-flag compile / ${{ matrix.feature }}
     runs-on: ${{ matrix.os }}
+    # 2026-05-26: cudarc 0.13.9's build.rs unconditionally execs `nvcc`
+    # and panics when it's missing — the old comment claiming "nvcc not
+    # actually invoked" was outdated. Free GitHub-hosted runners don't
+    # ship the CUDA toolkit so the qwen-cuda compile-check is expected
+    # to fail. Marking the JOB continue-on-error so a CUDA-host-required
+    # feature doesn't gate the whole matrix; an operator with a CUDA
+    # workstation runs the verification locally (compile + actual GPU
+    # forward-pass). qwen-metal on macOS-14 still runs hard since the
+    # Metal toolchain ships in the Xcode SDK.
+    continue-on-error: ${{ matrix.feature == 'qwen-cuda' }}
     strategy:
       fail-fast: false
       matrix:
@@ -306,10 +316,17 @@ jobs:
             SRC/target
           key: ${{ runner.os }}-feature-${{ matrix.feature }}-${{ hashFiles('SRC/Cargo.lock') }}
 
+      - name: Pre-flight — verify nvcc available (qwen-cuda only)
+        if: matrix.feature == 'qwen-cuda'
+        run: |
+          if command -v nvcc >/dev/null 2>&1; then
+            nvcc --version
+          else
+            echo "::warning::nvcc not on PATH; cudarc build.rs will panic. Skipping qwen-cuda compile-check on this runner (continue-on-error)."
+            exit 0
+          fi
+
       - name: cargo check --features ${{ matrix.feature }}
+        if: matrix.feature != 'qwen-cuda' || hashFiles('/usr/local/cuda/bin/nvcc', '/usr/bin/nvcc') != ''
         working-directory: SRC
-        # `cargo check` is sufficient — we only need the type-check to
-        # confirm the feature-gated code paths against candle's API.
-        # `cargo build` would trigger the actual kernel compile which
-        # needs CUDA / Metal toolchains.
         run: cargo check -p neothd --features ${{ matrix.feature }}
