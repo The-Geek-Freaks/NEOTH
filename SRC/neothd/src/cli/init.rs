@@ -11,7 +11,7 @@ use std::io::IsTerminal;
 use anyhow::{Context, Result};
 use clap::{Args, ValueEnum};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// LLM provider kind. Typed enum (replaces stringly-typed v0.1 alpha).
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -347,6 +347,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
 
     step1_license(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
+    step1b_detect_environment(&args, interactive, &neoth_dir).await;
     step2_operator_id(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step3_language(&args, interactive, &mut state)?;
@@ -775,6 +776,83 @@ fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) ->
 
     state.steps_completed.push(1);
     Ok(())
+}
+
+/// W-04 (Session 25) — wizard environment-detect step. Runs the
+/// installer probes in parallel via `tokio::join!`, hands the
+/// results to [`crate::wizard::detect_step::run_detect_step`] which
+/// handles the 24h cache + atomic save, and prints a one-line
+/// summary so the operator sees what the wizard found.
+///
+/// Non-interactive runs skip the probe pass entirely — probes do
+/// subprocess + filesystem work that adds 2-15s of wall time, and
+/// CI / scripted bring-up paths shouldn't pay that cost (the cache
+/// hit on the next interactive run will fill the snapshot).
+///
+/// Failures are best-effort: a probe that fails returns None for
+/// that field; a cache save IO error logs warn but doesn't abort
+/// the wizard. The whole step is observability + planning input
+/// for downstream steps — losing it never makes the wizard
+/// non-functional.
+async fn step1b_detect_environment(
+    args: &InitArgs,
+    interactive: bool,
+    neoth_dir: &std::path::Path,
+) {
+    info!("wizard step 1b: detect environment (W-04)");
+    if !interactive {
+        debug!("skipping environment detection in non-interactive mode");
+        return;
+    }
+    if args.non_interactive {
+        return;
+    }
+    println!("\n[1b/9] Detecting installed tools...");
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (docker, compose_v2, compose_v1, node_npm, ffmpeg) = tokio::join!(
+        crate::installers::n8n::check_docker_available(),
+        crate::installers::paperless::check_docker_compose_available(),
+        crate::installers::paperless::check_docker_compose_legacy_available(),
+        crate::installers::node::check_node_and_npm(),
+        crate::installers::ffmpeg::check_ffmpeg_available(),
+    );
+    let (node_version, npm_version) = match node_npm {
+        Some((n, m)) => (Some(n), Some(m)),
+        None => (None, None),
+    };
+    let inputs = crate::wizard::detect_step::DetectStepInputs {
+        docker_version: docker,
+        docker_compose_version: compose_v2,
+        docker_compose_legacy_version: compose_v1,
+        npm_version,
+        node_version,
+        git_version: None, // No `installers::git` probe today; follow-up.
+        ffmpeg_version: ffmpeg,
+        gpu: None, // GPU probe needs subprocess + parser orchestration
+        // (out of scope for the W-04 wiring; cached on
+        // first daemon boot).
+        disk_free_bytes: None,
+    };
+    match crate::wizard::detect_step::run_detect_step(neoth_dir, now_unix, &inputs) {
+        Ok(outcome) => {
+            let summary = outcome.report.render_summary();
+            for line in summary.lines() {
+                println!("  {line}");
+            }
+            if outcome.probed_now {
+                println!("  (snapshot saved; daemon will read it on next boot)");
+            } else {
+                println!("  (using cached snapshot from earlier today)");
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "wizard detect step save failed (non-fatal)");
+            println!("  (detection inconclusive — wizard continues without it)");
+        }
+    }
 }
 
 fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
