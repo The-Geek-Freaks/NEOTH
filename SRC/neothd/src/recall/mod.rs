@@ -5,3 +5,4 @@
 //! allowlist extends; cross-reference against `idx_groundtruth`.
 
 pub mod citation_check;
+pub mod conversational;
