@@ -29,6 +29,7 @@ struct Fixture {
     input_text: String,
     expected_defence: String,
     expected_evidence: String,
+    #[allow(dead_code)]
     source: String,
 }
 

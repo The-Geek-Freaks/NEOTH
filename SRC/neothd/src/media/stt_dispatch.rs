@@ -448,11 +448,11 @@ mod tests {
         b.feed_pcm_f32(&vec![0.3; 16_000 / 2]);
         assert!(b.poll_completed_utterance().is_none()); // still talking
         // 1 second of silence (> 750 ms hangover).
-        b.feed_pcm_f32(&vec![0.0; 16_000]);
+        b.feed_pcm_f32(&[0.0; 16_000]);
         let utt = b.poll_completed_utterance();
         assert!(utt.is_some(), "should emit after hangover elapsed");
         let pcm = utt.unwrap();
-        assert!(pcm.len() > 0);
+        assert!(!pcm.is_empty());
     }
 
     #[test]
@@ -491,8 +491,8 @@ mod tests {
     #[test]
     fn buffer_pending_samples_tracks_total_fed() {
         let mut b = LiveTranscriptBuffer::new(16_000);
-        b.feed_pcm_f32(&vec![0.0; 100]);
-        b.feed_pcm_f32(&vec![0.0; 50]);
+        b.feed_pcm_f32(&[0.0; 100]);
+        b.feed_pcm_f32(&[0.0; 50]);
         assert_eq!(b.pending_samples(), 150);
     }
 

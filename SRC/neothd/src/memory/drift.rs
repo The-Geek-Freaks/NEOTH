@@ -319,7 +319,7 @@ mod tests {
         // FORGET_FLOOR < IMMINENT_THRESHOLD < AT_RISK_THRESHOLD.
         // Pinned so a future tier-tuning doesn't invert the bands
         // without also reviewing the report semantics.
-        assert!(FORGET_FLOOR < IMMINENT_THRESHOLD);
-        assert!(IMMINENT_THRESHOLD < AT_RISK_THRESHOLD);
+        const _: () = assert!(FORGET_FLOOR < IMMINENT_THRESHOLD);
+        const _: () = assert!(IMMINENT_THRESHOLD < AT_RISK_THRESHOLD);
     }
 }

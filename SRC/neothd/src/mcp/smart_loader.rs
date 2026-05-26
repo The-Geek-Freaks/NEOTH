@@ -240,7 +240,7 @@ mod tests {
     fn slash_prefix_activates_server() {
         let s = server("filesystem", &["read_file", "list_dir"]);
         let plan = plan_loader("/filesystem read_file foo.txt", &[s]);
-        assert_eq!(plan.decisions[0].active, true);
+        assert!(plan.decisions[0].active);
         assert_eq!(plan.decisions[0].reason, LoadReason::ExplicitReference);
     }
 
@@ -248,7 +248,7 @@ mod tests {
     fn word_boundary_mention_activates_server() {
         let s = server("github", &["create_issue"]);
         let plan = plan_loader("can you use github for this", &[s]);
-        assert_eq!(plan.decisions[0].active, true);
+        assert!(plan.decisions[0].active);
         assert_eq!(plan.decisions[0].reason, LoadReason::ExplicitReference);
     }
 
@@ -259,7 +259,7 @@ mod tests {
         let s = server("github", &["create_issue"]);
         let plan = plan_loader(
             "fetch raw.githubusercontent.com/foo/bar/main.txt",
-            &[s.clone()],
+            std::slice::from_ref(&s),
         );
         // No tool match either → deferred.
         assert!(!plan.decisions[0].active);
@@ -270,7 +270,7 @@ mod tests {
     fn tool_name_substring_activates_server() {
         let s = server("fs_server", &["read_file", "list_dir"]);
         let plan = plan_loader("I need to read_file from the project", &[s]);
-        assert_eq!(plan.decisions[0].active, true);
+        assert!(plan.decisions[0].active);
         assert_eq!(plan.decisions[0].reason, LoadReason::ToolNameMatch);
     }
 
@@ -278,7 +278,7 @@ mod tests {
     fn tool_name_match_is_case_insensitive() {
         let s = server("fs_server", &["read_file"]);
         let plan = plan_loader("READ_FILE the manifest", &[s]);
-        assert_eq!(plan.decisions[0].active, true);
+        assert!(plan.decisions[0].active);
         assert_eq!(plan.decisions[0].reason, LoadReason::ToolNameMatch);
     }
 
@@ -377,7 +377,7 @@ mod tests {
     #[test]
     fn deferred_hint_returns_none_when_every_server_active() {
         let s = server("github", &["list_prs"]);
-        let plan = plan_loader("/github list_prs", &[s.clone()]);
+        let plan = plan_loader("/github list_prs", std::slice::from_ref(&s));
         let hint = render_deferred_hint(&plan, &[s]);
         assert!(hint.is_none());
     }

@@ -1,7 +1,7 @@
 //! Operator-real binary test — spawns the built `neothd` binary +
 //! asserts on stdout / stderr / exit code. Proves the Clap parser
 //! + binary entry + stdio wiring beyond what library-level
-//! `run_paperless(args)` calls reach.
+//!   `run_paperless(args)` calls reach.
 //!
 //! Companion to:
 //!   - `tests/vertical_slice_paperless.rs` — primitive composition

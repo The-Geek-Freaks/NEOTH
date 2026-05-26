@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn p_04_passes_through_null_bool_number_leaves_unchanged() {
-        let v = serde_json::json!({"a": null, "b": true, "c": 42, "d": 3.14});
+        let v = serde_json::json!({"a": null, "b": true, "c": 42, "d": 4.5});
         let out = redact_params_for_log(&v);
         assert_eq!(out, v);
     }

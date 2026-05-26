@@ -457,7 +457,7 @@ mod tests {
         let conn = open_db();
         let now_ns: i64 = 1_700_000_000_000_000_000;
         // 3 episodes about "memory" within the window.
-        insert(&conn, 1, now_ns - 1 * NS_PER_DAY, "memory tier work today");
+        insert(&conn, 1, now_ns - NS_PER_DAY, "memory tier work today");
         insert(&conn, 2, now_ns - 3 * NS_PER_DAY, "memory passing tests");
         insert(&conn, 3, now_ns - 6 * NS_PER_DAY, "memory consolidation");
         // 1 episode about "ancient" OUTSIDE the window — must be excluded.

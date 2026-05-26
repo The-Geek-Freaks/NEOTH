@@ -4930,6 +4930,14 @@ mod tests {
         assert!(state.steps_completed.contains(&58));
     }
 
+    // The std::Mutex env-lock is intentional here: tests in this module
+    // mutate process-global $HOME / $USERPROFILE so they MUST serialise
+    // against each other. An async-aware Mutex would defeat the purpose
+    // (tokio's mutex doesn't poison on panic, so a panicking test could
+    // leave the env corrupted for the next test). The await inside the
+    // critical section is bounded (`step5c_qwen_weights` does no
+    // operator-blocking IO under #[non_interactive=false]).
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn step5c_non_interactive_records_when_flag_set_and_local_qwen() {
         let _env_lock = lock_home_env();

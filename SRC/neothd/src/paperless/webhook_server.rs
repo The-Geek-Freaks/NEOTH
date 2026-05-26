@@ -439,7 +439,7 @@ mod tests {
         assert_eq!(resp.status(), 422);
         let body: serde_json::Value = resp.json().await.unwrap();
         assert_eq!(body["status"], "quarantined");
-        assert!(body["findings"].as_array().unwrap().len() > 0);
+        assert!(!body["findings"].as_array().unwrap().is_empty());
         let paperless_dir = vault.path().join("NEOTH").join("Paperless");
         assert!(!paperless_dir.exists());
         server.shutdown().await;
@@ -487,7 +487,7 @@ mod tests {
         let client = Client::new();
         // First ingest a doc.
         client
-            .post(&format!("http://{}/paperless/ingest", server.bind_addr))
+            .post(format!("http://{}/paperless/ingest", server.bind_addr))
             .bearer_auth("secret-token")
             .json(&serde_json::json!({
                 "doc_id":"acme-may",

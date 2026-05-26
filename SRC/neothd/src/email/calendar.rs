@@ -423,7 +423,7 @@ mod tests {
     // ── create body ───────────────────────────────────────────────
 
     #[test]
-    fn create_event_body_uses_dateTime_for_timestamps() {
+    fn create_event_body_uses_date_time_for_timestamps() {
         let e = event("Meeting", "2026-05-30T09:00:00Z", "2026-05-30T10:00:00Z");
         let body = create_event_body(&e);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
