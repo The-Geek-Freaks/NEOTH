@@ -7,6 +7,7 @@
 //! through it first. Skipping = memory-poisoning surface wide open.
 
 pub mod email_sanitizer;
+pub mod email_threat;
 pub mod ingress_sanitizer;
 pub mod paperless_ingest;
 pub mod redact;
