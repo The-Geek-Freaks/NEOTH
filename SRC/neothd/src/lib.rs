@@ -80,6 +80,7 @@ pub mod permissions;
 pub mod pipeline;
 pub mod policy;
 pub mod domain_events;
+pub mod event_ledger;
 pub mod proactive;
 pub mod profile;
 pub mod reflection;
