@@ -299,6 +299,92 @@ pub fn seed_with_dreams(
     all
 }
 
+/// Outcome of [`sync_dreams_to_obsidian`]. Caller uses `written` to
+/// decide whether to emit a success line or skip the audit row when
+/// the day had no dreams.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DreamSyncOutcome {
+    pub day: String,
+    /// `true` when at least one dream existed and the file was
+    /// written. `false` for empty days — no file is created in that
+    /// case so the operator's vault stays clean.
+    pub written: bool,
+    /// Final on-disk path. For empty days this still reflects where
+    /// the file would have been written — useful for dry-run UIs.
+    pub target_path: PathBuf,
+    pub dream_count: usize,
+    /// Total bytes written. 0 for empty days.
+    pub bytes_written: usize,
+}
+
+/// OB-01 — collect every dream for `day` from the NEOTH home dir
+/// and write a single Obsidian-formatted markdown file to
+/// `<vault>/<subdir>/Dreams/<day>.md`. Multiple dreams for the
+/// same day concatenate with a thematic-break `\n---\n\n` so the
+/// rendered note reads as one daily compilation; the YAML
+/// frontmatter on dream #1 is kept and the rest stack under it.
+///
+/// Atomic write: the body lands in `<file>.tmp` first, then a
+/// rename swaps it into place — operators editing the vault while
+/// NEOTH writes never see a half-flushed file.
+///
+/// Empty-day behaviour: when no dreams exist for `day`, no file is
+/// created. The vault's Dreams folder stays unpolluted by quiet
+/// days. The caller can show a "no dreams on YYYY-MM-DD" line if
+/// needed via the `written: false` return.
+pub fn sync_dreams_to_obsidian(
+    neoth_home: &Path,
+    vault_root: &Path,
+    subdir: &str,
+    day: &str,
+) -> std::io::Result<DreamSyncOutcome> {
+    let dreams = load_dreams_for_day(neoth_home, day);
+    let dreams_dir = vault_root.join(subdir).join("Dreams");
+    let target_path = dreams_dir.join(format!("{day}.md"));
+
+    if dreams.is_empty() {
+        return Ok(DreamSyncOutcome {
+            day: day.to_string(),
+            written: false,
+            target_path,
+            dream_count: 0,
+            bytes_written: 0,
+        });
+    }
+
+    let body: String = dreams
+        .iter()
+        .map(Dream::to_obsidian_md)
+        .collect::<Vec<_>>()
+        .join("\n---\n\n");
+
+    fs::create_dir_all(&dreams_dir)?;
+    let tmp_path = dreams_dir.join(format!("{day}.md.tmp"));
+    // Atomic-rename pattern: write to .tmp, fsync, rename. On Windows
+    // `rename` over an existing file fails — remove the target first.
+    {
+        let mut f = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp_path)?;
+        f.write_all(body.as_bytes())?;
+        f.flush()?;
+    }
+    if target_path.exists() {
+        fs::remove_file(&target_path)?;
+    }
+    fs::rename(&tmp_path, &target_path)?;
+
+    Ok(DreamSyncOutcome {
+        day: day.to_string(),
+        written: true,
+        target_path,
+        dream_count: dreams.len(),
+        bytes_written: body.len(),
+    })
+}
+
 fn format_date_utc(ts_unix: i64) -> String {
     // Same Howard Hinnant civil-from-days algorithm as usage_log.
     let days = ts_unix.div_euclid(86_400);
@@ -932,5 +1018,151 @@ mod tests {
         let d = fixture_dream();
         let md = d.to_obsidian_md();
         assert!(md.contains(&format!("event_count: {}", d.event_ids.len())));
+    }
+
+    // ── OB-01 sync_dreams_to_obsidian ─────────────────────────────────────
+
+    fn make_dream(day: &str, theme: &str, summary: &str, ev_ids: &[i64]) -> Dream {
+        Dream {
+            composed_ts_unix: 1_700_000_000,
+            day: day.to_string(),
+            theme_label: theme.to_string(),
+            summary: summary.to_string(),
+            event_ids: ev_ids.to_vec(),
+            tags: vec![],
+        }
+    }
+
+    #[test]
+    fn ob01_sync_no_dreams_skips_write() {
+        let home = tempdir().unwrap();
+        let vault = tempdir().unwrap();
+        let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
+            .expect("sync ok");
+        assert!(!outcome.written, "empty day must not produce a vault file");
+        assert_eq!(outcome.dream_count, 0);
+        assert!(!outcome.target_path.exists());
+    }
+
+    #[test]
+    fn ob01_sync_single_dream_writes_file() {
+        let home = tempdir().unwrap();
+        let vault = tempdir().unwrap();
+        let d = make_dream("2026-05-26", "morning", "morning routine", &[1, 2]);
+        append_dream(home.path(), &d).unwrap();
+
+        let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
+            .expect("sync ok");
+        assert!(outcome.written);
+        assert_eq!(outcome.dream_count, 1);
+        assert!(outcome.bytes_written > 0);
+        assert!(outcome.target_path.exists());
+
+        let body = std::fs::read_to_string(&outcome.target_path).unwrap();
+        assert!(body.starts_with("---\n")); // YAML frontmatter delimiter
+        assert!(body.contains("theme: \"morning\""));
+        assert!(body.contains("event_id: `1`"));
+    }
+
+    #[test]
+    fn ob01_sync_multiple_dreams_joined_with_hr() {
+        let home = tempdir().unwrap();
+        let vault = tempdir().unwrap();
+        append_dream(
+            home.path(),
+            &make_dream("2026-05-26", "morning", "morning theme", &[1]),
+        )
+        .unwrap();
+        append_dream(
+            home.path(),
+            &make_dream("2026-05-26", "afternoon", "afternoon theme", &[2]),
+        )
+        .unwrap();
+
+        let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
+            .expect("sync ok");
+        assert_eq!(outcome.dream_count, 2);
+
+        let body = std::fs::read_to_string(&outcome.target_path).unwrap();
+        // Both themes appear.
+        assert!(body.contains("theme: \"morning\""), "missing morning: {body}");
+        assert!(
+            body.contains("theme: \"afternoon\""),
+            "missing afternoon: {body}",
+        );
+        // The thematic-break separator joins them.
+        assert!(
+            body.contains("\n---\n\n"),
+            "missing dream-separator HR: {body}",
+        );
+    }
+
+    #[test]
+    fn ob01_sync_writes_atomic_no_dotfile_lingers() {
+        let home = tempdir().unwrap();
+        let vault = tempdir().unwrap();
+        append_dream(
+            home.path(),
+            &make_dream("2026-05-26", "x", "y", &[1]),
+        )
+        .unwrap();
+
+        let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
+            .expect("sync ok");
+        let dreams_dir = outcome.target_path.parent().unwrap();
+        let leftover_tmp = dreams_dir.join("2026-05-26.md.tmp");
+        assert!(!leftover_tmp.exists(), "tmp file must be renamed away");
+    }
+
+    #[test]
+    fn ob01_sync_overwrites_stale_existing_file() {
+        let home = tempdir().unwrap();
+        let vault = tempdir().unwrap();
+        let dreams_dir = vault.path().join("NEOTH").join("Dreams");
+        std::fs::create_dir_all(&dreams_dir).unwrap();
+        let target = dreams_dir.join("2026-05-26.md");
+        std::fs::write(&target, "STALE CONTENT").unwrap();
+
+        append_dream(
+            home.path(),
+            &make_dream("2026-05-26", "fresh", "today", &[42]),
+        )
+        .unwrap();
+        let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
+            .expect("sync ok");
+        assert!(outcome.written);
+
+        let body = std::fs::read_to_string(&outcome.target_path).unwrap();
+        assert!(!body.contains("STALE CONTENT"), "stale content survived");
+        assert!(body.contains("theme: \"fresh\""));
+    }
+
+    #[test]
+    fn ob01_sync_target_path_lives_under_vault_subdir_dreams() {
+        let home = tempdir().unwrap();
+        let vault = tempdir().unwrap();
+        append_dream(home.path(), &make_dream("2026-05-26", "x", "y", &[1])).unwrap();
+
+        let outcome =
+            sync_dreams_to_obsidian(home.path(), vault.path(), "CUSTOM-SUBDIR", "2026-05-26")
+                .unwrap();
+        let expected = vault
+            .path()
+            .join("CUSTOM-SUBDIR")
+            .join("Dreams")
+            .join("2026-05-26.md");
+        assert_eq!(outcome.target_path, expected);
+    }
+
+    #[test]
+    fn ob01_sync_byte_count_matches_file_size() {
+        let home = tempdir().unwrap();
+        let vault = tempdir().unwrap();
+        append_dream(home.path(), &make_dream("2026-05-26", "x", "y", &[1])).unwrap();
+
+        let outcome = sync_dreams_to_obsidian(home.path(), vault.path(), "NEOTH", "2026-05-26")
+            .unwrap();
+        let actual = std::fs::metadata(&outcome.target_path).unwrap().len() as usize;
+        assert_eq!(actual, outcome.bytes_written);
     }
 }
