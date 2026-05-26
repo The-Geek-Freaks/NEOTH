@@ -5,3 +5,4 @@
 //!   - [`recommend`] — W-03 RecommendationEngine.
 
 pub mod recommend;
+pub mod shared_state;
