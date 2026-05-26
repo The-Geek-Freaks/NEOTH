@@ -1049,6 +1049,30 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             (_, None) => None,
         };
 
+    // ── 5d.b. Doctor cron loop — EL-01 (Session 25) ──────────────────────
+    //
+    // Periodic `neoth doctor` ticks → WAL 0x46 DOCTOR_TICK frame per pass +
+    // SidecarNotificationSink dropping a JSON file under
+    // `~/.neoth/notifications/doctor_<ts>.json` whenever the report carries
+    // Warn / Fail findings. GUI notifications panel polls the directory;
+    // future channel-push subscribers can subscribe similarly without
+    // re-running the diagnostic suite.
+    let doctor_cron_task: Option<tokio::task::JoinHandle<()>> = {
+        let home = FreedomConfig::default_neoth_home();
+        let writer_for_doctor = writer.clone();
+        let sink: std::sync::Arc<dyn crate::daemon::doctor_cron::DoctorNotificationSink> =
+            std::sync::Arc::new(crate::daemon::doctor_cron::SidecarNotificationSink::new(
+                home.join("notifications"),
+            ));
+        let cfg = crate::daemon::doctor_cron::DoctorCronConfig::default();
+        let handle =
+            crate::daemon::doctor_cron::spawn_doctor_cron_loop(cfg, home, writer_for_doctor, sink);
+        if handle.is_some() {
+            info!("doctor cron loop spawned (EL-01)");
+        }
+        handle
+    };
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -1362,6 +1386,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Abort the cron scheduler — same reasoning as channels: stop emitting
     // new WAL frames before the writer drains.
     if let Some(task) = cron_task {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // Abort the EL-01 doctor cron loop. Same drain-before-writer-close
+    // discipline as the regular cron scheduler.
+    if let Some(task) = doctor_cron_task {
         task.abort();
         let _ = task.await;
     }

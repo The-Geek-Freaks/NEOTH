@@ -116,6 +116,21 @@ pub async fn run_chat_with(
 
     let prompt = resolve_prompt(&args).await?;
 
+    // OP-02 (Session 25) — next-session seed banner. Read the
+    // most-recent hindsight card + surface its `one_line_summary`
+    // so the operator picks up where they left off. Best-effort:
+    // a missing or empty hindsight dir is the silent default.
+    // Skipping the first_tour greeting case keeps the onboarding
+    // banner clean (operator just finished the wizard — no "since
+    // last time" makes sense).
+    let chat_ts_unix = now_unix() as i64;
+    let current_session_id = crate::memory::hindsight::session_id_for(chat_ts_unix, &prompt);
+    let seed_banner =
+        crate::memory::hindsight::next_session_seed_banner(&first_tour_home, &current_session_id);
+    if !seed_banner.is_empty() {
+        println!("{seed_banner}");
+    }
+
     let wal_dir = FreedomConfig::default_wal_dir();
     let segment_path = args
         .wal_segment
@@ -1695,6 +1710,21 @@ pub async fn run_chat_with(
             }
         }
     }
+
+    // OP-02 (Session 25) — session-end hindsight compression.
+    // Two-turn transcript (operator prompt + agent reply) goes
+    // through `compress_session` + `save_card` so the next
+    // session's seed banner has something to surface. Best-effort:
+    // a write failure logs warn but never aborts the chat exit
+    // path. `chat_ts_unix` + `current_session_id` were both
+    // computed at startup so the same id used in the banner-suppress
+    // check round-trips through the saved card.
+    crate::memory::hindsight::save_session_card_best_effort(
+        &first_tour_home,
+        chat_ts_unix,
+        &prompt,
+        &response_text,
+    );
 
     drop(writer);
     let _ = writer_join.await;

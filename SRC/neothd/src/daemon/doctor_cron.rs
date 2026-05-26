@@ -229,6 +229,164 @@ impl DoctorCronConfig {
     }
 }
 
+// ── EL-01 runtime: cron loop + WAL emit + notification sink ────────────────────
+
+/// Pluggable sink for the chat-notification half of a non-clean
+/// doctor report. Trait-object boxed in the spawn helper so the
+/// daemon can register the operator's preferred channel
+/// (`cli` → tracing logs, `sidecar` → JSON file the GUI polls,
+/// future `telegram` / `keet` → real channel push). The trait is
+/// async so a future Telegram impl can `await` its HTTP send
+/// without blocking the cron loop.
+#[async_trait::async_trait]
+pub trait DoctorNotificationSink: Send + Sync {
+    /// Deliver the non-clean report body. Returning `Err` is
+    /// non-fatal — the cron loop logs + continues. Empty `body`
+    /// (clean report) is never passed to `notify`.
+    async fn notify(&self, body: String) -> Result<(), String>;
+}
+
+/// Default sink — emits the non-clean report via `tracing::warn`.
+/// Operators who run without a configured GUI / channel still see
+/// the doctor's voice in their journalctl / `neoth serve` logs.
+pub struct TracingNotificationSink;
+
+#[async_trait::async_trait]
+impl DoctorNotificationSink for TracingNotificationSink {
+    async fn notify(&self, body: String) -> Result<(), String> {
+        tracing::warn!(target: "neoth::doctor_cron", "doctor finding\n{body}");
+        Ok(())
+    }
+}
+
+/// Sidecar sink — writes the rendered notification body + the
+/// raw report JSON to `<dir>/doctor_<ts_unix>.json`. The GUI's
+/// notifications panel + future channel push subscribers poll the
+/// directory + render entries to the operator. The file write is
+/// atomic via `.tmp` + rename (same pattern as the rest of NEOTH's
+/// on-disk persistence) so a partially-written file is never
+/// observed.
+pub struct SidecarNotificationSink {
+    pub dir: std::path::PathBuf,
+}
+
+impl SidecarNotificationSink {
+    pub fn new(dir: impl Into<std::path::PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+
+    fn record_path(&self, ts_unix: i64) -> std::path::PathBuf {
+        self.dir.join(format!("doctor_{ts_unix}.json"))
+    }
+}
+
+#[async_trait::async_trait]
+impl DoctorNotificationSink for SidecarNotificationSink {
+    async fn notify(&self, body: String) -> Result<(), String> {
+        std::fs::create_dir_all(&self.dir).map_err(|e| format!("mkdir: {e}"))?;
+        let ts_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let final_path = self.record_path(ts_unix);
+        let tmp_path = final_path.with_extension("json.tmp");
+        let payload = serde_json::json!({
+            "ts_unix": ts_unix,
+            "body": body,
+        });
+        let serialised = serde_json::to_vec_pretty(&payload).map_err(|e| format!("serde: {e}"))?;
+        std::fs::write(&tmp_path, &serialised).map_err(|e| format!("write tmp: {e}"))?;
+        // Windows-safe rename: remove the target first if it exists
+        // (Windows refuses rename-over-existing).
+        if final_path.exists() {
+            let _ = std::fs::remove_file(&final_path);
+        }
+        std::fs::rename(&tmp_path, &final_path).map_err(|e| format!("rename: {e}"))?;
+        Ok(())
+    }
+}
+
+/// One cron pass. Pure-fn over the home dir: runs the diagnostic
+/// suite, builds the report, emits the WAL frame, and (when not
+/// clean) hands the rendered notification body to the sink. Exposed
+/// for unit-testing so an integration test can verify the WAL
+/// frame + sidecar drop without spinning up the full tokio loop.
+pub async fn run_doctor_tick(
+    home: &std::path::Path,
+    writer: &crate::wal::writer::WalWriterHandle,
+    sink: &dyn DoctorNotificationSink,
+) -> Result<DoctorCronReport, String> {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let outcomes = crate::cli::doctor::run_all_checks(home);
+    let report = build_report(ts_unix, &outcomes);
+
+    // WAL emit — every tick, clean or not. The audit chain proves
+    // the cron ran, not just "the cron ran AND found things".
+    let payload = serde_json::to_vec(&report).map_err(|e| format!("serde report: {e}"))?;
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_DOCTOR_TICK, &payload)
+            .flags(crate::wal::EventFlags::SYNTHETIC)
+            .build();
+    writer
+        .append(header, payload)
+        .await
+        .map_err(|e| format!("wal append: {e}"))?;
+
+    // Notification path — only for Warn/Fail reports.
+    if !report.is_clean() {
+        let body = render_chat_notification(&report);
+        if let Err(e) = sink.notify(body).await {
+            tracing::warn!(error = %e, "doctor notification sink failed");
+        }
+    }
+    Ok(report)
+}
+
+/// Spawn the cron loop. Returns the JoinHandle so the daemon can
+/// track it alongside the other background tasks. Drop the handle
+/// to cancel cleanly. When `config.enabled == false` the function
+/// returns immediately with `None` so the daemon doesn't accumulate
+/// idle tokio tasks.
+pub fn spawn_doctor_cron_loop(
+    config: DoctorCronConfig,
+    home: std::path::PathBuf,
+    writer: crate::wal::writer::WalWriterHandle,
+    sink: std::sync::Arc<dyn DoctorNotificationSink>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !config.enabled {
+        tracing::info!("doctor cron disabled in config; skipping loop spawn");
+        return None;
+    }
+    let interval = config.interval_duration();
+    Some(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            interval_secs = interval.as_secs(),
+            "doctor cron loop online (EL-01)",
+        );
+        loop {
+            ticker.tick().await;
+            match run_doctor_tick(&home, &writer, sink.as_ref()).await {
+                Ok(report) => {
+                    tracing::debug!(
+                        pass = report.pass_count,
+                        warn = report.warn_count,
+                        fail = report.fail_count,
+                        "doctor tick complete",
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "doctor tick failed");
+                }
+            }
+        }
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -485,5 +643,134 @@ mod tests {
         ] {
             assert!(json.contains(&format!("\"{key}\"")), "missing key {key}");
         }
+    }
+
+    // ── SidecarNotificationSink ───────────────────────────────────
+
+    #[tokio::test]
+    async fn sidecar_sink_writes_file_with_body() {
+        let dir = tempfile::tempdir().unwrap();
+        let sink = SidecarNotificationSink::new(dir.path());
+        sink.notify("doctor saw 1 FAIL".to_string()).await.unwrap();
+        let mut entries: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+            .collect();
+        assert_eq!(entries.len(), 1);
+        let body = std::fs::read_to_string(entries.pop().unwrap().path()).unwrap();
+        assert!(body.contains("doctor saw 1 FAIL"));
+        assert!(body.contains("ts_unix"));
+        // Drift guard: tmp companion must NOT remain after the atomic rename.
+        assert!(
+            !std::fs::read_dir(dir.path()).unwrap().any(|e| e
+                .unwrap()
+                .path()
+                .to_string_lossy()
+                .ends_with(".tmp")),
+        );
+    }
+
+    #[tokio::test]
+    async fn tracing_sink_returns_ok_for_any_body() {
+        let sink = TracingNotificationSink;
+        assert!(sink.notify("anything".to_string()).await.is_ok());
+    }
+
+    // ── run_doctor_tick — WAL frame + sink invocation ─────────────
+
+    /// Recording sink — captures every notify body for assertions.
+    struct RecordingSink {
+        captured: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl RecordingSink {
+        fn new() -> Self {
+            Self {
+                captured: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn bodies(&self) -> Vec<String> {
+            self.captured.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DoctorNotificationSink for RecordingSink {
+        async fn notify(&self, body: String) -> Result<(), String> {
+            self.captured.lock().unwrap().push(body);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn run_doctor_tick_writes_wal_frame_and_returns_report() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = tempfile::tempdir().unwrap();
+        let seg = wal_dir.path().join("doctor.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let sink = RecordingSink::new();
+        let report = run_doctor_tick(home.path(), &writer, &sink).await.unwrap();
+        assert!(report.total_checks > 0, "expected at least one check");
+        // WAL file must exist + be non-empty after the append.
+        let meta = std::fs::metadata(&seg).unwrap();
+        assert!(meta.len() > 0, "WAL file empty after doctor tick");
+    }
+
+    #[tokio::test]
+    async fn run_doctor_tick_does_not_notify_on_clean_report() {
+        // A fresh tempdir HOME means most checks WARN/FAIL (no
+        // freedom.yaml etc.) — so this test exercises the
+        // not-clean branch. The matching clean branch is asserted
+        // via the unit-level `render_chat_notification` returning
+        // empty on clean (already covered above) + the explicit
+        // is_clean short-circuit in run_doctor_tick.
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = tempfile::tempdir().unwrap();
+        let seg = wal_dir.path().join("doctor.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
+        let sink = RecordingSink::new();
+        let report = run_doctor_tick(home.path(), &writer, &sink).await.unwrap();
+        // Either: report is not clean → exactly one notify body.
+        // Or: report is clean → zero bodies.
+        if report.is_clean() {
+            assert!(sink.bodies().is_empty());
+        } else {
+            assert_eq!(sink.bodies().len(), 1);
+            assert!(!sink.bodies()[0].is_empty());
+        }
+    }
+
+    // ── spawn_doctor_cron_loop ────────────────────────────────────
+
+    #[tokio::test]
+    async fn spawn_loop_returns_none_when_disabled() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = tempfile::tempdir().unwrap();
+        let seg = wal_dir.path().join("doctor.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
+        let cfg = DoctorCronConfig {
+            enabled: false,
+            interval_secs: DEFAULT_CRON_INTERVAL_SECS,
+            notify_channel: "cli".into(),
+        };
+        let sink: std::sync::Arc<dyn DoctorNotificationSink> =
+            std::sync::Arc::new(TracingNotificationSink);
+        let handle = spawn_doctor_cron_loop(cfg, home.path().to_path_buf(), writer, sink);
+        assert!(handle.is_none());
+    }
+
+    #[tokio::test]
+    async fn spawn_loop_returns_some_when_enabled() {
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = tempfile::tempdir().unwrap();
+        let seg = wal_dir.path().join("doctor.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
+        let cfg = DoctorCronConfig::default();
+        let sink: std::sync::Arc<dyn DoctorNotificationSink> =
+            std::sync::Arc::new(TracingNotificationSink);
+        let handle = spawn_doctor_cron_loop(cfg, home.path().to_path_buf(), writer, sink);
+        let handle = handle.expect("expected join handle when enabled");
+        handle.abort(); // immediate cancel; ticker has not even fired yet
     }
 }

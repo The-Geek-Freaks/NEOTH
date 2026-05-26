@@ -287,6 +287,88 @@ fn is_safe_session_id(id: &str) -> bool {
         .any(|c| c == '/' || c == '\\' || c == '\0' || c.is_control())
 }
 
+// ── OP-02 runtime helpers: session-end + next-session seed ───────────────────
+
+/// Build a deterministic session-id from the operator's prompt
+/// content + timestamp. xxh3 over the prompt bytes keeps the id
+/// short + greppable while staying unique per session.
+pub fn session_id_for(ts_unix: i64, prompt: &str) -> String {
+    let h = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
+    format!("chat-{ts_unix}-{h:016x}")
+}
+
+/// One-call session-end hook for `neoth chat`: builds the 2-turn
+/// transcript from the operator's prompt + agent's reply, compresses
+/// it, and writes the card under `~/.neoth/hindsight/`. Errors are
+/// returned for the caller's best-effort logging — a write failure
+/// MUST NOT bubble up + abort the chat exit path.
+pub fn save_session_card(
+    home: &Path,
+    ts_unix: i64,
+    prompt: &str,
+    reply: &str,
+) -> std::io::Result<PathBuf> {
+    // Single chat invocation = single round-trip. We model both
+    // halves as one turn each so `compress_session` has something
+    // to derive topics + opening / closing utterances from. The
+    // operator-side turn always lands first (ts_unix), the agent-
+    // side turn lands at +1s so the temporal ordering stays clean
+    // even when the reply arrived sub-second after the prompt.
+    let turns = vec![
+        SessionTurn {
+            ts_unix,
+            role: TurnRole::Operator,
+            text: prompt.to_string(),
+        },
+        SessionTurn {
+            ts_unix: ts_unix + 1,
+            role: TurnRole::Agent,
+            text: reply.to_string(),
+        },
+    ];
+    let session_id = session_id_for(ts_unix, prompt);
+    let card = compress_session(session_id, &turns);
+    save_card(home, &card)
+}
+
+/// Same as [`save_session_card`] but swallows the error + logs a
+/// warning instead. Designed as the final call in the `neoth chat`
+/// happy-path exit: hindsight compression is a soft signal, never a
+/// hard correctness invariant.
+pub fn save_session_card_best_effort(home: &Path, ts_unix: i64, prompt: &str, reply: &str) {
+    if let Err(e) = save_session_card(home, ts_unix, prompt, reply) {
+        tracing::warn!(error = %e, "hindsight save_session_card failed (non-fatal)");
+    }
+}
+
+/// Most-recent hindsight card, by `ended_at_unix` desc. Used as
+/// the next-session seed: the chat startup path consults this +
+/// surfaces the `one_line_summary` as a banner so the next prompt
+/// starts with context. Returns None when no cards exist or when
+/// every card is malformed.
+pub fn latest_card(home: &Path) -> Option<HindsightCard> {
+    list_cards(home).into_iter().next()
+}
+
+/// Render the next-session seed banner. Empty string when there's
+/// no prior card OR the latest card is the same session-id we
+/// just generated (avoids "since last time: <our own prompt>"
+/// when a chat invocation lands within the same second window).
+/// The check against `current_session_id` guards the same-second
+/// edge case in the unit tests.
+pub fn next_session_seed_banner(home: &Path, current_session_id: &str) -> String {
+    let Some(card) = latest_card(home) else {
+        return String::new();
+    };
+    if card.session_id == current_session_id {
+        return String::new();
+    }
+    if card.turn_count == 0 {
+        return String::new();
+    }
+    format!("[neoth] last session: {}", card.one_line_summary)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -576,5 +658,99 @@ mod tests {
         assert_eq!(loaded.operator_turn_count, 3);
         assert_eq!(loaded.opening_utterance, "rust memory hippocampus refactor");
         assert_eq!(loaded.closing_utterance, "rust hippocampus done");
+    }
+
+    // ── OP-02 session-end + next-session seed (Session 25) ───────
+
+    #[test]
+    fn session_id_for_is_deterministic_per_ts_and_prompt() {
+        let a = session_id_for(100, "hello world");
+        let b = session_id_for(100, "hello world");
+        let c = session_id_for(101, "hello world");
+        let d = session_id_for(100, "hello there");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert_ne!(a, d);
+        assert!(a.starts_with("chat-100-"));
+        assert_eq!(a.len(), "chat-100-".len() + 16);
+    }
+
+    #[test]
+    fn save_session_card_writes_card_with_2_turns() {
+        let home = tempfile::tempdir().unwrap();
+        let path = save_session_card(
+            home.path(),
+            1_700_000_000,
+            "rust memory question",
+            "agent reply",
+        )
+        .unwrap();
+        assert!(path.exists());
+        let id = session_id_for(1_700_000_000, "rust memory question");
+        let loaded = load_card(home.path(), &id).unwrap();
+        assert_eq!(loaded.turn_count, 2);
+        assert_eq!(loaded.operator_turn_count, 1);
+        assert_eq!(loaded.agent_turn_count, 1);
+        assert_eq!(loaded.opening_utterance, "rust memory question");
+        assert_eq!(loaded.closing_utterance, "rust memory question");
+    }
+
+    #[test]
+    fn save_session_card_best_effort_does_not_panic_on_missing_parent() {
+        // Pass a clearly-invalid path: a file (not a dir). The
+        // hindsight_dir creation will fail on Linux because we
+        // can't create_dir_all under a file. The helper must
+        // swallow + log instead of panicking.
+        let home = tempfile::tempdir().unwrap();
+        let bogus_file = home.path().join("oops.txt");
+        std::fs::write(&bogus_file, b"i am a file").unwrap();
+        // Use the file path AS the home dir — create_dir_all under
+        // it returns AlreadyExists-as-file (Unix) / NotADirectory.
+        // Either way the helper must not panic.
+        save_session_card_best_effort(&bogus_file, 100, "p", "r");
+    }
+
+    #[test]
+    fn latest_card_returns_most_recent() {
+        let home = tempfile::tempdir().unwrap();
+        save_session_card(home.path(), 100, "older prompt", "older reply").unwrap();
+        save_session_card(home.path(), 200, "newer prompt", "newer reply").unwrap();
+        let latest = latest_card(home.path()).unwrap();
+        assert_eq!(latest.opening_utterance, "newer prompt");
+    }
+
+    #[test]
+    fn latest_card_returns_none_for_empty_dir() {
+        let home = tempfile::tempdir().unwrap();
+        assert!(latest_card(home.path()).is_none());
+    }
+
+    #[test]
+    fn next_session_seed_banner_renders_one_line_summary() {
+        let home = tempfile::tempdir().unwrap();
+        save_session_card(home.path(), 100, "rust memory refactor", "ok").unwrap();
+        let banner = next_session_seed_banner(home.path(), "completely-different-session");
+        assert!(banner.starts_with("[neoth] last session:"));
+        // The compressor's `one_line_summary` is included verbatim.
+        assert!(banner.contains("turns over"));
+    }
+
+    #[test]
+    fn next_session_seed_banner_empty_when_no_prior_card() {
+        let home = tempfile::tempdir().unwrap();
+        let banner = next_session_seed_banner(home.path(), "any-session");
+        assert!(banner.is_empty());
+    }
+
+    #[test]
+    fn next_session_seed_banner_empty_when_current_session_id_matches_latest() {
+        // Same-second edge case: the chat just wrote its own card,
+        // then re-reads on banner-time. Should suppress the
+        // "since last time: <my own prompt>" loop.
+        let home = tempfile::tempdir().unwrap();
+        save_session_card(home.path(), 100, "rust memory", "reply").unwrap();
+        let current_id = session_id_for(100, "rust memory");
+        let banner = next_session_seed_banner(home.path(), &current_id);
+        assert!(banner.is_empty());
     }
 }

@@ -294,6 +294,16 @@ pub const EVENT_TYPE_UPDATER_TASK_FIRED: u8 = 0x44;
 /// `status ∈ up_to_date | upgraded | failed | skipped_by_gate`.
 pub const EVENT_TYPE_UPDATER_TASK_RESULT: u8 = 0x45;
 
+/// EL-01 (v0.5 Session 25): the `neoth doctor` cron task completed
+/// one tick. Payload is the full [`crate::daemon::doctor_cron::DoctorCronReport`]
+/// serialised as JSON — `ts_unix`, counters (`pass_count` /
+/// `warn_count` / `fail_count`), and per-check findings with
+/// `runbook_id` + `suggested_command`. Operators audit "what did
+/// the doctor see when?" by grep'ing for 0x46 frames; the frame
+/// fires on every tick whether clean or not so the audit chain
+/// proves the cron actually ran.
+pub const EVENT_TYPE_DOCTOR_TICK: u8 = 0x46;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit
@@ -1056,6 +1066,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_JOB_SKIPPED_BY_GATE < 0x40 || EVENT_TYPE_JOB_SKIPPED_BY_GATE > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_DOCTOR_TICK < 0x40 || EVENT_TYPE_DOCTOR_TICK > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
