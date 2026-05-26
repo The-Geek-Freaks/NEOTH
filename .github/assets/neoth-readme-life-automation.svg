@@ -1,0 +1,100 @@
+<svg width="1400" height="520" viewBox="0 0 1400 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH life inputs and automation</title>
+  <desc id="desc">NEOTH connects real-life inputs like Paperless, email, calendar, n8n, cron, and Obsidian through approval gates and audited memory.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="48%" r="78%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".62" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="flow" x1="120" y1="260" x2="1280" y2="260">
+      <stop offset="0" stop-color="#ff2a6d"/>
+      <stop offset=".5" stop-color="#00ff80"/>
+      <stop offset="1" stop-color="#05d5ff"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-80%" width="160%" height="260%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1400" height="520" rx="40" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1398" height="518" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="64" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="6">REAL LIFE, UNDER YOUR POLICY</text>
+  <text x="700" y="98" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="15">Documents, messages, calendar, workflows, and notes become useful only after memory, approval, and audit gates.</text>
+
+  <path id="mainFlow" d="M130 266 C 300 190, 430 342, 585 266 C 700 210, 790 210, 910 266 C 1065 342, 1190 190, 1270 266" stroke="url(#flow)" stroke-width="2" fill="none" filter="url(#glow)" opacity=".72"/>
+  <circle r="4" fill="#ff2a6d" filter="url(#glow)">
+    <animateMotion dur="9s" repeatCount="indefinite">
+      <mpath href="#mainFlow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values=".25;1;.25" dur="2.2s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="3.5" fill="#00ff80" filter="url(#glow)">
+    <animateMotion dur="11s" begin="-4s" repeatCount="indefinite">
+      <mpath href="#mainFlow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values=".18;.92;.18" dur="2.8s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="3.5" fill="#05d5ff" filter="url(#glow)">
+    <animateMotion dur="13s" begin="-7s" repeatCount="indefinite">
+      <mpath href="#mainFlow"/>
+    </animateMotion>
+    <animate attributeName="opacity" values=".18;.9;.18" dur="3.1s" repeatCount="indefinite"/>
+  </circle>
+
+  <g class="sans">
+    <rect x="536" y="178" width="328" height="174" rx="36" fill="#050505" fill-opacity=".7" stroke="white" stroke-opacity=".1"/>
+    <text x="700" y="236" text-anchor="middle" fill="white" font-size="31" font-weight="200" letter-spacing="8">NEOTH</text>
+    <text x="700" y="271" text-anchor="middle" fill="#00ff80" font-size="11" letter-spacing="5">MEMORY + POLICY + WAL</text>
+    <text x="700" y="306" text-anchor="middle" fill="#8e8e8e" font-size="12">approve, redact, route, audit</text>
+
+    <g transform="translate(92 150)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#ff2a6d" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#ff2a6d" font-size="11" letter-spacing="4">PAPERLESS</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">OCR docs into memory</text>
+    </g>
+    <g transform="translate(92 278)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#ff2a6d" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#ff2a6d" font-size="11" letter-spacing="4">EMAIL</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">detect, draft, approve</text>
+    </g>
+    <g transform="translate(348 150)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#00ff80" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#00ff80" font-size="11" letter-spacing="4">CALENDAR</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">briefs and scheduling</text>
+    </g>
+    <g transform="translate(348 278)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#00ff80" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#00ff80" font-size="11" letter-spacing="4">OBSIDIAN</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">scratchpad and mirror</text>
+    </g>
+    <g transform="translate(837 150)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#05d5ff" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#05d5ff" font-size="11" letter-spacing="4">N8N</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">localhost workflows</text>
+    </g>
+    <g transform="translate(837 278)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#05d5ff" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#05d5ff" font-size="11" letter-spacing="4">CRON</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">small local routines</text>
+    </g>
+    <g transform="translate(1093 150)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#00ff80" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#00ff80" font-size="11" letter-spacing="4">APPROVAL</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">human gates first</text>
+    </g>
+    <g transform="translate(1093 278)">
+      <rect width="215" height="92" rx="18" fill="#111" stroke="#05d5ff" stroke-opacity=".38"/>
+      <text x="24" y="36" fill="#05d5ff" font-size="11" letter-spacing="4">AUDIT</text>
+      <text x="24" y="66" fill="#ddd" font-size="15">WAL proof trail</text>
+    </g>
+  </g>
+
+  <text x="700" y="456" text-anchor="middle" fill="#666" class="mono" font-size="10" letter-spacing="4">REAL INPUTS DO NOT BECOME REAL ACTIONS WITHOUT POLICY</text>
+</svg>
