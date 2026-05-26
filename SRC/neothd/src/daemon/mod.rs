@@ -7,6 +7,7 @@
 
 pub mod accelerator;
 pub mod backup;
+pub mod backup_retention;
 pub mod clock_floor;
 pub mod export;
 pub mod hardware;
