@@ -6,6 +6,7 @@
 //! is the highest-risk shortcut to skip — every operator-facing message goes
 //! through it first. Skipping = memory-poisoning surface wide open.
 
+pub mod email_sanitizer;
 pub mod ingress_sanitizer;
 pub mod redact;
 pub mod refusal_cause;
