@@ -4,5 +4,6 @@
 //! Modules:
 //!   - [`recommend`] — W-03 RecommendationEngine.
 
+pub mod detect_step;
 pub mod recommend;
 pub mod shared_state;
