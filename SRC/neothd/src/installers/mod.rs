@@ -21,9 +21,14 @@ use tracing::{info, warn};
 
 pub mod detect;
 pub mod faccam_family;
+pub mod ffmpeg;
 pub mod fontconfig;
 pub mod gpu;
+pub mod hysteria2;
 pub mod n8n;
+pub mod ollama;
+pub mod omi;
+pub mod tailscale;
 pub mod n8n_starter_workflows;
 pub mod n8n_workflows;
 pub mod node;
@@ -31,10 +36,12 @@ pub mod oauth_pkce;
 pub mod obs;
 pub mod obsidian;
 pub mod obsidian_vault;
+pub mod obsidian_vault_w02;
 pub mod paperless;
 pub mod pears;
 pub mod qwen_weights;
 pub mod tmux;
+pub mod tmux_w02;
 
 /// One of the three CLIs NEOTH knows how to install.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
