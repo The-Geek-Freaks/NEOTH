@@ -19,6 +19,7 @@
 //! dangerous targets. That matches the `standard` level NEOTH will default
 //! to when the wizard is added.
 
+pub mod audit;
 pub mod confirm;
 pub mod gate;
 
