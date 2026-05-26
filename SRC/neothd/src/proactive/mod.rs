@@ -51,6 +51,8 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+pub mod action_staging;
+
 /// One queued proactive notification. Fields are operator-facing —
 /// the CLI's `neoth proactive list` renders each verbatim, and the
 /// audit trail records the full struct.
