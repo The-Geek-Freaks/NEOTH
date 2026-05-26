@@ -1,0 +1,88 @@
+<svg width="1400" height="520" viewBox="0 0 1400 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH loyalty loop</title>
+  <desc id="desc">NEOTH as a loyal buddy loop: understand, protect, act, improve, with DAU and pro paths.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="48%" r="78%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".6" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="loop" x1="225" y1="260" x2="1175" y2="260">
+      <stop offset="0" stop-color="#00ff80"/>
+      <stop offset=".5" stop-color="#ff2a6d"/>
+      <stop offset="1" stop-color="#05d5ff"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-80%" width="160%" height="260%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1400" height="520" rx="40" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1398" height="518" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="64" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="6">THE LOYALTY LOOP</text>
+  <text x="700" y="98" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="15">NEOTH gets better because it remembers with permission, acts through policy, and stays accountable to you.</text>
+
+  <path id="orbit" d="M315 270 C315 140 1085 140 1085 270 C1085 400 315 400 315 270 Z" stroke="url(#loop)" stroke-width="2" fill="none" filter="url(#glow)" opacity=".7"/>
+  <circle r="4" fill="#00ff80" filter="url(#glow)">
+    <animateMotion dur="11s" repeatCount="indefinite">
+      <mpath href="#orbit"/>
+    </animateMotion>
+    <animate attributeName="opacity" values=".25;1;.25" dur="2.3s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="3.5" fill="#ff2a6d" filter="url(#glow)">
+    <animateMotion dur="13s" begin="-4s" repeatCount="indefinite">
+      <mpath href="#orbit"/>
+    </animateMotion>
+    <animate attributeName="opacity" values=".2;.92;.2" dur="2.8s" repeatCount="indefinite"/>
+  </circle>
+  <circle r="3.5" fill="#05d5ff" filter="url(#glow)">
+    <animateMotion dur="15s" begin="-8s" repeatCount="indefinite">
+      <mpath href="#orbit"/>
+    </animateMotion>
+    <animate attributeName="opacity" values=".18;.9;.18" dur="3.1s" repeatCount="indefinite"/>
+  </circle>
+
+  <g class="sans">
+    <rect x="585" y="190" width="230" height="160" rx="36" fill="#050505" fill-opacity=".72" stroke="white" stroke-opacity=".1"/>
+    <text x="700" y="252" text-anchor="middle" fill="white" font-size="48" font-weight="100" letter-spacing="18">NEOTH</text>
+    <text x="700" y="292" text-anchor="middle" fill="#8e8e8e" font-size="12" letter-spacing="5">YOUR SIDE OF THE STACK</text>
+
+    <g transform="translate(115 178)">
+      <rect width="250" height="118" rx="20" fill="#111" stroke="#00ff80" stroke-opacity=".44"/>
+      <text x="28" y="36" fill="#00ff80" font-size="11" letter-spacing="4">01 / UNDERSTAND</text>
+      <text x="28" y="70" fill="white" font-size="21" font-weight="300">Learns your context</text>
+      <text x="28" y="96" fill="#8b8b8b" font-size="12">style, tools, projects, people</text>
+    </g>
+    <g transform="translate(1035 178)">
+      <rect width="250" height="118" rx="20" fill="#111" stroke="#05d5ff" stroke-opacity=".44"/>
+      <text x="28" y="36" fill="#05d5ff" font-size="11" letter-spacing="4">02 / PROTECT</text>
+      <text x="28" y="70" fill="white" font-size="21" font-weight="300">Keeps boundaries</text>
+      <text x="28" y="96" fill="#8b8b8b" font-size="12">redaction, audit, consent gates</text>
+    </g>
+    <g transform="translate(115 328)">
+      <rect width="250" height="118" rx="20" fill="#111" stroke="#ff2a6d" stroke-opacity=".44"/>
+      <text x="28" y="36" fill="#ff2a6d" font-size="11" letter-spacing="4">03 / ACT</text>
+      <text x="28" y="70" fill="white" font-size="21" font-weight="300">Helps across tools</text>
+      <text x="28" y="96" fill="#8b8b8b" font-size="12">chat, CLI, coding, Obsidian</text>
+    </g>
+    <g transform="translate(1035 328)">
+      <rect width="250" height="118" rx="20" fill="#111" stroke="#00ff80" stroke-opacity=".44"/>
+      <text x="28" y="36" fill="#00ff80" font-size="11" letter-spacing="4">04 / IMPROVE</text>
+      <text x="28" y="70" fill="white" font-size="21" font-weight="300">Gets better visibly</text>
+      <text x="28" y="96" fill="#8b8b8b" font-size="12">WAL-backed self-dev proposals</text>
+    </g>
+  </g>
+
+  <g class="mono" font-size="10" letter-spacing="3">
+    <rect x="460" y="402" width="185" height="34" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".25"/>
+    <text x="552" y="424" text-anchor="middle" fill="#00ff80">DAU: GUI + CHAT</text>
+    <rect x="670" y="402" width="260" height="34" rx="8" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".25"/>
+    <text x="800" y="424" text-anchor="middle" fill="#05d5ff">PRO: CLI + WAL + PLUGINS</text>
+  </g>
+</svg>

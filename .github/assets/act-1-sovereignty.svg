@@ -1,75 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Act I — The Sovereignty">
+<svg width="1400" height="260" viewBox="0 0 1400 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Act I - The Sovereignty</title>
+  <desc id="desc">NEOTH sovereignty section banner: private memory, operator control, local-first trust.</desc>
   <defs>
-    <radialGradient id="act1-bg" cx="50%" cy="50%" r="70%">
-      <stop offset="0%" stop-color="#0d0d0d"/>
-      <stop offset="100%" stop-color="#1a1a1a"/>
+    <radialGradient id="bg" cx="50%" cy="46%" r="82%">
+      <stop offset="0" stop-color="#1a1a1a"/>
+      <stop offset=".62" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
     </radialGradient>
-
-    <linearGradient id="act1-border" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#00ff80" stop-opacity="0.15"/>
-      <stop offset="50%" stop-color="#00ff80" stop-opacity="0.04"/>
-      <stop offset="100%" stop-color="#00ff80" stop-opacity="0.15"/>
+    <linearGradient id="line" x1="130" y1="0" x2="1270" y2="0">
+      <stop offset="0" stop-color="#00ff80" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#00ff80" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#00ff80" stop-opacity="0"/>
     </linearGradient>
-
-    <linearGradient id="act1-trace" x1="0%" x2="100%">
-      <stop offset="0%" stop-color="#00ff80" stop-opacity="0"/>
-      <stop offset="50%" stop-color="#00ff80" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#00ff80" stop-opacity="0"/>
-    </linearGradient>
-
-    <filter id="act1-glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="4" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <filter id="glow" x="-30%" y="-80%" width="160%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
   </defs>
 
-  <!-- Glass Cortex container (40px radius per UIX-DS Noble Curve) -->
-  <rect width="1280" height="320" rx="40" fill="url(#act1-bg)"/>
-  <rect x="0.5" y="0.5" width="1279" height="319" rx="40" 
-        fill="none" stroke="url(#act1-border)" stroke-width="1"/>
+  <rect width="1400" height="260" rx="40" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1398" height="258" rx="39" stroke="white" stroke-opacity=".08"/>
+  <path d="M150 150 C 330 92, 500 208, 700 150 C 900 92, 1070 208, 1250 150" stroke="url(#line)" stroke-width="2" fill="none" filter="url(#glow)">
+    <animate attributeName="opacity" values=".35;.75;.35" dur="6s" repeatCount="indefinite"/>
+  </path>
 
-  <!-- Inner accent line (left vertical) -->
-  <line x1="80" y1="80" x2="80" y2="240" stroke="#00ff80" stroke-width="1" opacity="0.6"/>
+  <text x="92" y="74" fill="#00ff80" class="mono" font-size="11" letter-spacing="6">ACT I / SOVEREIGNTY</text>
+  <text x="92" y="143" fill="white" class="sans" font-size="58" font-weight="100" letter-spacing="14">THE SOVEREIGNTY</text>
+  <text x="96" y="182" fill="#9a9a9a" class="sans" font-size="15" letter-spacing="5">YOUR MEMORY. YOUR RULES. YOUR AUDIT TRAIL.</text>
 
-  <!-- Top-right marker glyph: triangle (sovereignty = apex) -->
-  <g transform="translate(1140, 80)" opacity="0.7">
-    <polygon points="30,0 60,52 0,52" fill="none" stroke="#00ff80" stroke-width="1"/>
-    <polygon points="30,18 48,48 12,48" fill="#00ff80" opacity="0.3"/>
-    <circle cx="30" cy="38" r="2" fill="#00ff80" filter="url(#act1-glow)">
-      <animate attributeName="opacity" values="0.4;1;0.4" dur="3.2s" repeatCount="indefinite"/>
+  <g transform="translate(1115 63)" stroke="#00ff80" stroke-opacity=".72" filter="url(#glow)">
+    <path d="M70 0 L130 104 H10 Z" fill="#00ff80" fill-opacity=".035"/>
+    <path d="M70 28 L104 88 H36 Z" fill="none"/>
+    <circle cx="70" cy="70" r="5" fill="#00ff80" stroke="none">
+      <animate attributeName="opacity" values=".35;1;.35" dur="3s" repeatCount="indefinite"/>
     </circle>
   </g>
 
-  <!-- Act numeral, top-left meta -->
-  <text x="104" y="100" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace"
-        font-size="10" letter-spacing="6" fill="#00ff80">ACT · I · 001</text>
-
-  <!-- Big title -->
-  <text x="104" y="180" font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif"
-        font-weight="100" font-size="76" letter-spacing="14" fill="#ffffff"
-        filter="url(#act1-glow)">THE SOVEREIGNTY</text>
-
-  <!-- Subtitle / manifesto line -->
-  <text x="104" y="220" font-family="-apple-system, 'SF Pro Display', system-ui, sans-serif"
-        font-weight="300" font-size="14" letter-spacing="6" fill="#aaaaaa">
-    AUTHORITY · VISION · THE EMPEROR OF YOUR DATA
-  </text>
-
-  <!-- Bottom trace line, animated -->
-  <line x1="104" y1="260" x2="1176" y2="260" 
-        stroke="url(#act1-trace)" stroke-width="1" opacity="0.5"/>
-  
-  <!-- Bottom metadata strip -->
-  <text x="104" y="284" font-family="'JetBrains Mono', monospace" 
-        font-size="9" letter-spacing="2" fill="#00ff80" opacity="0.6">// neoth knows</text>
-  <text x="1176" y="284" font-family="'JetBrains Mono', monospace" 
-        font-size="9" letter-spacing="2" fill="#aaaaaa" opacity="0.5" text-anchor="end">v1.1 / sovereign</text>
-
-  <!-- Live pulse dot at end of bottom mantra -->
-  <circle cx="210" cy="281" r="2.5" fill="#00ff80" filter="url(#act1-glow)">
-    <animate attributeName="opacity" values="0.3;1;0.3" dur="2.4s" repeatCount="indefinite"/>
-  </circle>
+  <text x="1300" y="222" text-anchor="end" fill="#555" class="mono" font-size="10" letter-spacing="4">LOCAL-FIRST / WAL / CONSENT</text>
 </svg>

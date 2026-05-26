@@ -1,73 +1,44 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Act III — The Engine">
+<svg width="1400" height="260" viewBox="0 0 1400 260" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Act III - The Engine</title>
+  <desc id="desc">NEOTH engine section banner: Rust runtime, memory, council, plugins, private mesh.</desc>
   <defs>
-    <radialGradient id="act3-bg" cx="50%" cy="50%" r="70%">
-      <stop offset="0%" stop-color="#0d0d0d"/>
-      <stop offset="100%" stop-color="#1a1a1a"/>
+    <radialGradient id="bg" cx="50%" cy="46%" r="82%">
+      <stop offset="0" stop-color="#1a1a1a"/>
+      <stop offset=".62" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
     </radialGradient>
-
-    <linearGradient id="act3-border" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#05d5ff" stop-opacity="0.15"/>
-      <stop offset="50%" stop-color="#05d5ff" stop-opacity="0.04"/>
-      <stop offset="100%" stop-color="#05d5ff" stop-opacity="0.15"/>
+    <linearGradient id="line" x1="130" y1="0" x2="1270" y2="0">
+      <stop offset="0" stop-color="#05d5ff" stop-opacity="0"/>
+      <stop offset=".5" stop-color="#05d5ff" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#05d5ff" stop-opacity="0"/>
     </linearGradient>
-
-    <linearGradient id="act3-trace" x1="0%" x2="100%">
-      <stop offset="0%" stop-color="#05d5ff" stop-opacity="0"/>
-      <stop offset="50%" stop-color="#05d5ff" stop-opacity="0.8"/>
-      <stop offset="100%" stop-color="#05d5ff" stop-opacity="0"/>
-    </linearGradient>
-
-    <filter id="act3-glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="4" result="b"/>
-      <feMerge>
-        <feMergeNode in="b"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+    <filter id="glow" x="-30%" y="-80%" width="160%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
   </defs>
 
-  <rect width="1280" height="320" rx="40" fill="url(#act3-bg)"/>
-  <rect x="0.5" y="0.5" width="1279" height="319" rx="40" 
-        fill="none" stroke="url(#act3-border)" stroke-width="1"/>
+  <rect width="1400" height="260" rx="40" fill="url(#bg)"/>
+  <rect x="1" y="1" width="1398" height="258" rx="39" stroke="white" stroke-opacity=".08"/>
+  <path d="M150 150 C 350 80, 520 220, 700 150 C 880 80, 1050 220, 1250 150" stroke="url(#line)" stroke-width="2" fill="none" filter="url(#glow)">
+    <animate attributeName="opacity" values=".35;.76;.35" dur="5.8s" repeatCount="indefinite"/>
+  </path>
 
-  <line x1="80" y1="80" x2="80" y2="240" stroke="#05d5ff" stroke-width="1" opacity="0.6"/>
+  <text x="92" y="74" fill="#05d5ff" class="mono" font-size="11" letter-spacing="6">ACT III / ENGINE</text>
+  <text x="92" y="143" fill="white" class="sans" font-size="58" font-weight="100" letter-spacing="14">THE ENGINE</text>
+  <text x="96" y="182" fill="#9a9a9a" class="sans" font-size="15" letter-spacing="5">RUST CORE. THREE ROLES. SIX MEMORY LAYERS.</text>
 
-  <!-- Marker glyph: crystalline cube (Memory icon per Brand Identity §3.3) -->
-  <g transform="translate(1130, 80)" opacity="0.75">
-    <!-- Isometric cube wireframe -->
-    <g stroke="#05d5ff" stroke-width="1" fill="none">
-      <polygon points="30,4 56,18 56,46 30,60 4,46 4,18"/>
-      <line x1="30" y1="4" x2="30" y2="32"/>
-      <line x1="4" y1="18" x2="30" y2="32"/>
-      <line x1="56" y1="18" x2="30" y2="32"/>
-      <line x1="30" y1="32" x2="30" y2="60"/>
-    </g>
-    <circle cx="30" cy="32" r="2.5" fill="#05d5ff" opacity="0.5" filter="url(#act3-glow)">
-      <animate attributeName="opacity" values="0.2;0.9;0.2" dur="3.6s" repeatCount="indefinite"/>
+  <g transform="translate(1120 70)" stroke="#05d5ff" stroke-opacity=".72" filter="url(#glow)">
+    <path d="M70 0 L126 32 V96 L70 128 L14 96 V32 Z" fill="#05d5ff" fill-opacity=".03"/>
+    <path d="M70 0 V64 M14 32 L70 64 L126 32 M70 64 V128" />
+    <circle cx="70" cy="64" r="5" fill="#05d5ff" stroke="none">
+      <animate attributeName="opacity" values=".32;1;.32" dur="3.2s" repeatCount="indefinite"/>
     </circle>
   </g>
 
-  <text x="104" y="100" font-family="'JetBrains Mono', 'SF Mono', ui-monospace, monospace"
-        font-size="10" letter-spacing="6" fill="#05d5ff">ACT · III · 003</text>
-
-  <text x="104" y="180" font-family="-apple-system, 'SF Pro Display', 'Helvetica Neue', sans-serif"
-        font-weight="100" font-size="76" letter-spacing="14" fill="#ffffff"
-        filter="url(#act3-glow)">THE ENGINE</text>
-
-  <text x="104" y="220" font-family="-apple-system, 'SF Pro Display', system-ui, sans-serif"
-        font-weight="300" font-size="14" letter-spacing="6" fill="#aaaaaa">
-    RUST · WAL · TIERED MEMORY · COUNCIL · QWEN3
-  </text>
-
-  <line x1="104" y1="260" x2="1176" y2="260" 
-        stroke="url(#act3-trace)" stroke-width="1" opacity="0.5"/>
-
-  <text x="104" y="284" font-family="'JetBrains Mono', monospace" 
-        font-size="9" letter-spacing="2" fill="#05d5ff" opacity="0.6">// neoth is your life</text>
-  <text x="1176" y="284" font-family="'JetBrains Mono', monospace" 
-        font-size="9" letter-spacing="2" fill="#aaaaaa" opacity="0.5" text-anchor="end">v1.1 / engine</text>
-
-  <circle cx="240" cy="281" r="2.5" fill="#05d5ff" filter="url(#act3-glow)">
-    <animate attributeName="opacity" values="0.3;1;0.3" dur="2.4s" repeatCount="indefinite"/>
-  </circle>
+  <text x="1300" y="222" text-anchor="end" fill="#555" class="mono" font-size="10" letter-spacing="4">COUNCIL / PLUGINS / PRIVATE MESH</text>
 </svg>
