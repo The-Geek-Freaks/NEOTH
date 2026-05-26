@@ -19,6 +19,7 @@ pub mod bulk_text;
 pub mod consolidate;
 pub mod ctx;
 pub mod decay_task;
+pub mod drift;
 pub mod dimension;
 pub mod embeddings;
 pub mod foreign_import;
