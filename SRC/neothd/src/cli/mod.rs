@@ -39,6 +39,7 @@ pub mod hooks;
 pub mod hysteria;
 pub mod ingest;
 pub mod init;
+pub mod installer;
 pub mod jobs;
 pub mod kanban;
 pub mod keys;
@@ -296,6 +297,14 @@ pub enum Commands {
     /// self-update, U-02 skills+plugins, U-03 CLI versions) wires
     /// in follow-up commits — today's surface is the status view.
     Updater(updater::UpdaterArgs),
+
+    /// W-05b — package-manager fallback chain runner. `--dry-run`
+    /// (default) prints the per-pkg-manager argv preview the
+    /// wizard's step6h already shows. `--execute` actually invokes
+    /// the chain (winget→choco / apt→dnf→pacman / brew) until one
+    /// handle succeeds. Operator-explicit because the execute
+    /// path runs sudo apt install / winget install on the host.
+    Installer(installer::InstallerArgs),
 
     /// Pick #37 (Session 14, Agent #4 design-consensus): trigger the
     /// running `neoth serve` daemon to re-read `freedom.yaml` and
@@ -735,6 +744,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Webhook(args) => {
             webhook::run_webhook(args).await?;
+        }
+        Commands::Installer(args) => {
+            installer::run_installer(args).await?;
         }
         Commands::Updater(args) => {
             updater::run_updater(args)?;
