@@ -280,6 +280,20 @@ pub const EVENT_TYPE_JOB_FAILED: u8 = 0x42;
 /// Payload: `{ job_id, name, reason, current_hour, ts_unix_ms }`.
 pub const EVENT_TYPE_JOB_SKIPPED_BY_GATE: u8 = 0x43;
 
+/// U-04 (2026-05-26): updater cron task fired one check pass.
+/// Emitted by every tick of the self-update / skill+plugin /
+/// CLI-version cron — operators see "the updater ran" even when
+/// no upgrade was needed. Payload: `{ task_kind, ts_unix }` where
+/// `task_kind ∈ neoth_self | skill_plugin | cli_versions`.
+pub const EVENT_TYPE_UPDATER_TASK_FIRED: u8 = 0x44;
+
+/// U-04: updater cron task completed. One frame per
+/// `0x44 UPDATER_TASK_FIRED`. Payload carries the per-component
+/// outcome list — `{ task_kind, ts_unix, duration_ms, components:
+/// [{ name, prior_version?, new_version?, status }] }` where
+/// `status ∈ up_to_date | upgraded | failed | skipped_by_gate`.
+pub const EVENT_TYPE_UPDATER_TASK_RESULT: u8 = 0x45;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit

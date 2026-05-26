@@ -78,6 +78,7 @@ pub mod tour;
 pub mod tts;
 pub mod tweaks;
 pub mod update;
+pub mod updater;
 pub mod usage;
 pub mod verify;
 pub mod wal;
@@ -287,6 +288,14 @@ pub enum Commands {
     /// non-healthz route; refuses to start unauthenticated unless
     /// `--allow-no-auth` is explicitly passed.
     Webhook(webhook::WebhookArgs),
+
+    /// U-01..U-04 updater status + check entry. Subcommands:
+    /// `status`, `check`. Renders the most recent
+    /// `UpdaterTaskResultPayload`s (the WAL 0x45 frames) as a
+    /// readable table. The actual update pipeline (U-01 binary
+    /// self-update, U-02 skills+plugins, U-03 CLI versions) wires
+    /// in follow-up commits — today's surface is the status view.
+    Updater(updater::UpdaterArgs),
 
     /// Pick #37 (Session 14, Agent #4 design-consensus): trigger the
     /// running `neoth serve` daemon to re-read `freedom.yaml` and
@@ -726,6 +735,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Webhook(args) => {
             webhook::run_webhook(args).await?;
+        }
+        Commands::Updater(args) => {
+            updater::run_updater(args)?;
         }
         Commands::Reload(mut args) => {
             args.output = global_output;
