@@ -1,0 +1,8 @@
+{
+  "id": "fp-001",
+  "category": "false_positive_guard",
+  "description": "Plain invoice — must pass sanitizer cleanly with zero findings.",
+  "input_text": "Invoice #12345\nVendor: Acme Co\nDate: 2026-05-26\nLine 1: Paper, 5 reams, 39.95 EUR\nTotal due: 39.95 EUR",
+  "expected_outcome": "allow_clean",
+  "source": "manual_curation"
+}

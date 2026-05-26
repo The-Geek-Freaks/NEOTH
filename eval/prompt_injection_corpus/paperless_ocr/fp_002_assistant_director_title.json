@@ -1,0 +1,8 @@
+{
+  "id": "fp-002",
+  "category": "false_positive_guard",
+  "description": "Letter signed by an 'Assistant Director' — must not match the 'Assistant:' marker because the colon isn't present.",
+  "input_text": "Dear Sir/Madam,\nPlease find enclosed the audit report.\nSincerely,\nAssistant Director of Operations\nA. M. Sample",
+  "expected_outcome": "allow_clean",
+  "source": "manual_curation"
+}

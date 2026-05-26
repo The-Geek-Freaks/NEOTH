@@ -1,0 +1,8 @@
+{
+  "id": "fp-004",
+  "category": "false_positive_guard",
+  "description": "German invoice with Umlauts — NFKC normalization must not flag this as suspicious (decomposed forms are reassembled, not flagged as 'NeededNfkcNormalization' for typical pre-composed input).",
+  "input_text": "Rechnung Nr. 9001\nMüller & Söhne GmbH\nLeistungszeitraum: Mai 2026\nBetrag: 1.299,00 EUR (inkl. MwSt.)\nZahlbar binnen 14 Tagen.",
+  "expected_outcome": "allow_clean",
+  "source": "manual_curation"
+}
