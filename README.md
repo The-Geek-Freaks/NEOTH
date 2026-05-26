@@ -9,9 +9,9 @@
 
 <br>
 
-# NEOTH
+<h1>NEOTH</h1>
 
-## Stop reintroducing yourself to your AI.
+<h2>Stop reintroducing yourself to your AI.</h2>
 
 <p>
   <strong>One private memory. Every approved surface. Evidence you can inspect.</strong>
@@ -275,7 +275,7 @@ neoth cluster status
 
 NEOTH is not another chat UI taped to a repo. It can sit next to your project, remember the repo, plan work on a canvas, split tasks into Kanban, dispatch focused coding sessions, and keep review context from disappearing between runs.
 
-<img src=".github/assets/neoth-readme-coding.svg" alt="NEOTH coding buddy control loop - canvas, Kanban, hemispheres, patch, tests, memory" width="100%">
+<img src=".github/assets/neoth-readme-coding.svg" alt="NEOTH coding buddy pipeline - prompt, planning canvas, Kanban, dispatch, patch, tests, review, repo memory" width="100%">
 
 ```bash
 neoth code "add a migration and tests for the profile baseline event" --dispatch
@@ -298,7 +298,7 @@ The point is not "AI writes code once". The point is a coding buddy that remembe
 
 Different projects optimize for different jobs. NEOTH's advantage is the overlap: loyal daily buddy, private memory, coding studio, and operator runtime in one system.
 
-<img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH product territory map - Buddy, Coding Studio, Operator Runtime, Memory Core" width="100%">
+<img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH positioning map - durable audited memory and operator-grade control" width="100%">
 
 Legend: `✓` native/core focus, `◐` supported or adjacent, `−` not a clear project focus.
 
