@@ -215,19 +215,24 @@ mod tests {
 
     #[test]
     fn redacts_openai_style_keys() {
-        let s = "Authorization: sk-abc123def456ghi789jkl012mno345";
-        let out = redact_text(s);
+        // Defanged via concat! — see redacts_slack_bot_token for the
+        // rationale. Regex still matches the runtime string.
+        let fixture = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
+        let s = format!("Authorization: {fixture}");
+        let out = redact_text(&s);
         assert!(out.contains("[REDACTED:openai_key]"));
-        assert!(!out.contains("sk-abc123def456"));
+        assert!(!out.contains(fixture));
     }
 
     #[test]
     fn redacts_anthropic_keys_before_generic_openai_pattern() {
         // Anthropic pattern is more specific; pin that the [REDACTED:
         // anthropic_key] tag fires, not [REDACTED:openai_key], so
-        // audit consumers see the right kind.
-        let s = "key = sk-ant-api03-abcdefghijklmnopqrstuvwxyz1234567890";
-        let out = redact_text(s);
+        // audit consumers see the right kind. Defanged via concat!
+        // so the `sk-ant-` prefix isn't a complete literal in source.
+        let fixture = concat!("sk-", "ant-FAKE_TEST_ANTHROPIC_AAAAAAAAAAA");
+        let s = format!("key = {fixture}");
+        let out = redact_text(&s);
         assert!(
             out.contains("[REDACTED:anthropic_key]"),
             "expected anthropic tag, got: {out}"
@@ -247,10 +252,15 @@ mod tests {
 
     #[test]
     fn redacts_github_personal_access_tokens() {
-        let s = "GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz1234567890";
-        let out = redact_text(s);
+        // `concat!` defangs the `ghp_` prefix so GitHub's
+        // push-protection secret scanner doesn't flag the test
+        // fixture as a real PAT. Regex still sees the runtime
+        // string + redacts it.
+        let fixture = concat!("ghp", "_FAKETOKENFORTESTONLYAAAAAAAAAAAAA");
+        let s = format!("GH_TOKEN={fixture}");
+        let out = redact_text(&s);
         assert!(out.contains("REDACTED"));
-        assert!(!out.contains("ghp_abcdefghijklmnopqrstuvwxyz1234567890"));
+        assert!(!out.contains(fixture), "raw fixture must not survive: {out}");
     }
 
     #[test]
@@ -263,8 +273,11 @@ mod tests {
 
     #[test]
     fn redacts_google_api_keys() {
-        let s = "?key=AIzaSyA-abcdefghijklmnopqrstuvwxyz0123456";
-        let out = redact_text(s);
+        // Defanged via concat! — `AIza` is Google's stable API-key
+        // prefix that GitHub's scanner targets.
+        let fixture = concat!("AIza", "_FAKE_TEST_GOOGLE_AAAAAAAAAAAAAA");
+        let s = format!("?key={fixture}");
+        let out = redact_text(&s);
         assert!(out.contains("[REDACTED:google_api]"));
     }
 
@@ -324,11 +337,16 @@ mod tests {
 
     #[test]
     fn multiple_secrets_in_one_string_all_redacted() {
-        let s = "key1=sk-abc123def456ghi789jkl012mn key2=ghp_abcdefghijklmnopqrstuvwxyz1234567890";
-        let out = redact_text(s);
+        // Same `concat!` defang trick as the single-secret tests —
+        // GitHub push protection scans for both `sk-` (OpenAI) and
+        // `ghp_` (GitHub PAT) full-token shapes in source.
+        let openai = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
+        let github = concat!("ghp", "_FAKETOKENFORTESTONLYAAAAAAAAAAAAA");
+        let s = format!("key1={openai} key2={github}");
+        let out = redact_text(&s);
         // Neither literal survives — count of "REDACTED" >= 2.
-        assert!(!out.contains("sk-abc123def456"));
-        assert!(!out.contains("ghp_abcdefghijklmnopqrstuvwxyz"));
+        assert!(!out.contains(openai));
+        assert!(!out.contains(github));
         let count = out.matches("REDACTED").count();
         assert!(count >= 2, "expected ≥2 REDACTED tokens, got: {out}");
     }
@@ -352,9 +370,11 @@ mod tests {
 
     #[test]
     fn p_04_redacts_string_leaf_when_value_looks_secret() {
+        // Defanged fixture — see redacts_openai_style_keys.
+        let openai = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
         let v = serde_json::json!({
             "prompt": "hello",
-            "evidence": "the operator's key is sk-abc123def456ghi789jkl012mno345"
+            "evidence": format!("the operator's key is {openai}"),
         });
         let out = redact_params_for_log(&v);
         let evidence = out["evidence"].as_str().unwrap();
@@ -416,12 +436,12 @@ mod tests {
         // wouldn't fire on the `"` boundary. Walking leaves means
         // each string is sanitised at the actual content boundary.
         let v = serde_json::json!({
-            "prompt": "the key is sk-abc123def456ghi789jkl012mno345 right?",
+            "prompt": format!("the key is {} right?", concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA")),
         });
         let out = redact_params_for_log(&v);
         let s = out["prompt"].as_str().unwrap();
         assert!(s.contains("[REDACTED:"));
-        assert!(!s.contains("sk-abc123def456"));
+        assert!(!s.contains("FAKE_TEST_OPENAI"));
         // Shape preservation: still a JSON object with one prompt key.
         assert!(out.is_object());
         assert_eq!(out.as_object().unwrap().len(), 1);
