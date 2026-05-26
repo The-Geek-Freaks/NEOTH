@@ -43,6 +43,31 @@ pub mod writer;
 pub use builder::{HeaderBuilder, make_header};
 pub use types::EventFlags;
 pub use writer::spawn;
+
+/// Concern-1 fix (Session 24) — process-global HLC state.
+///
+/// **Why this exists:** [`builder::HeaderBuilder::build`] pre-fix
+/// created a fresh `Hlc::new(now_ns, 0)` per frame. The HLC algorithm
+/// in [`hlc`] is correct (Kulkarni 2014 textbook + logical-counter
+/// tie-break), but the logical counter never INCREMENTED at any
+/// call site — every call site allocated a new clock starting at
+/// `logical = 0`. Under Windows's 15.6 ms `SystemTime::now()`
+/// quantization, every event in the same window stamped
+/// `(same_ns, 0)` → total-order ties + audit chain forks.
+///
+/// **Contract:** every call site that wants an HLC-stamped header
+/// must reach for this global through
+/// [`builder::HeaderBuilder::build`] (which calls
+/// `hlc_tick_local(&mut guard, now_ns)` internally), or through
+/// the gossip-receive path (which calls `hlc_tick_receive`). Direct
+/// `Hlc::new(now_ns, 0)` is reserved for tests + the EPOCH sentinel.
+///
+/// **Mutex choice:** `std::sync::Mutex::new` is `const` since 1.63
+/// for `Mutex<Hlc>` because `Hlc` is plain-old-data. No `OnceLock`
+/// needed. Poisoned-mutex recovery uses `into_inner()` so a panic
+/// in one frame builder doesn't permanently brick the WAL surface
+/// for the rest of the process.
+pub(crate) static GLOBAL_HLC: std::sync::Mutex<hlc::Hlc> = std::sync::Mutex::new(hlc::Hlc::EPOCH);
 // Re-exports consumed by in-crate tests (recall, chat, serve, indexer suites).
 // Marked allow(unused_imports) because non-test code paths reach these via
 // fully-qualified module paths; the re-export is for ergonomic test imports.

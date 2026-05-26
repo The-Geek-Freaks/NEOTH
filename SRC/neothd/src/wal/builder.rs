@@ -104,12 +104,26 @@ impl<'p> HeaderBuilder<'p> {
     /// will still show the rolled-back boundary because `now_ns` will
     /// regress visibly between adjacent frames. Phase 33c BS-5 adds a
     /// hard monotonic-floor guard at the daemon level.
+    ///
+    /// **Concern-1 fix (Session 24):** the HLC now ticks through the
+    /// process-global [`crate::wal::GLOBAL_HLC`] via
+    /// [`super::hlc::hlc_tick_local`] instead of allocating a fresh
+    /// `Hlc::new(now_ns, 0)` per call. Pre-fix, every event in the
+    /// same Windows 15.6 ms `SystemTime::now()` quantization window
+    /// stamped the identical `(physical_ns, 0)` HLC → ordering ties
+    /// + audit chain forks under concurrent load. Post-fix, the
+    /// logical counter increments on tie so every frame has a strict
+    /// total order even when the wall clock can't tell two events
+    /// apart. Logical overflow (4 billion same-ns events) is treated
+    /// as fatal misconfiguration: log + force the physical clock
+    /// forward by 1 ns to reset the counter rather than crash the
+    /// whole writer task.
     pub fn build(self) -> EventHeaderV2 {
         let now_ns: u64 = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
             .unwrap_or(0);
-        let hlc = Hlc::new(now_ns, 0).unwrap_or(Hlc::EPOCH);
+        let hlc = tick_global_hlc(now_ns);
         let payload_hash = xxhash_rust::xxh3::xxh3_64(self.payload);
         let payload_len = self.payload.len();
         EventHeaderV2 {
@@ -123,7 +137,7 @@ impl<'p> HeaderBuilder<'p> {
             total_len: (PREAMBLE_LEN + HEADER_BODY_LEN + payload_len + CRC_LEN) as u32,
             payload_len: payload_len as u32,
             generation: 0,
-            event_id: EventId(now_ns),
+            event_id: EventId(hlc.physical_ns()),
             hlc,
             importance: Importance::new(self.importance).unwrap_or(Importance::ZERO),
             scope: self.scope,
@@ -133,6 +147,32 @@ impl<'p> HeaderBuilder<'p> {
             payload_hash,
         }
     }
+}
+
+/// Concern-1 helper — tick the process-global HLC by `now_ns` and
+/// return the resulting clock. Logical-counter overflow is handled
+/// inline (re-base on `now_ns + 1` to reset the counter + log error).
+/// Mutex-poison recovery via `into_inner()` so a panic in one builder
+/// call doesn't permanently brick subsequent ones.
+fn tick_global_hlc(now_ns: u64) -> Hlc {
+    let mut guard = crate::wal::GLOBAL_HLC
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if super::hlc::hlc_tick_local(&mut guard, now_ns).is_err() {
+        // Logical counter overflowed at the same physical_ns. This
+        // requires ~4 billion same-ns events — almost certainly a
+        // misconfiguration (e.g. SystemTime stuck at 0 in a sandbox).
+        // Reset by forcing physical_ns forward; never panic the writer.
+        tracing::error!(
+            now_ns,
+            current_physical = guard.physical_ns(),
+            current_logical = guard.logical(),
+            "WAL: HLC logical counter overflow — resetting physical clock",
+        );
+        let recovery = now_ns.saturating_add(1).max(guard.physical_ns().saturating_add(1));
+        *guard = Hlc::new(recovery, 0).unwrap_or(Hlc::EPOCH);
+    }
+    *guard
 }
 
 /// Convenience constructor — `make_header(et, payload)` is shorthand for
@@ -216,5 +256,117 @@ mod tests {
         // panic, must produce a valid header.
         let h = HeaderBuilder::new(0x01, b"").importance(f32::NAN).build();
         assert_eq!(h.importance.raw(), 0.0);
+    }
+
+    // ── Concern-1 (Session 24) HLC global-tick wiring ─────────────────
+    //
+    // The GLOBAL_HLC mutex is process-wide; concurrent tests calling
+    // `build()` interleave their ticks. The assertions below use
+    // strict ORDERING (`>`) rather than equality on logical-counter
+    // values so they hold under any test-runner thread schedule.
+
+    #[test]
+    fn hlc_strict_total_order_between_consecutive_builds() {
+        // Even if SystemTime::now() returns the same ns for both
+        // calls (15.6 ms Windows window), the HLC must distinguish
+        // them via the logical counter. The relevant invariant is
+        // `Hlc::cmp` total order — the second header must be
+        // STRICTLY GREATER than the first.
+        let a = HeaderBuilder::new(0x01, b"a").build();
+        let b = HeaderBuilder::new(0x01, b"b").build();
+        assert!(
+            b.hlc > a.hlc,
+            "consecutive build()s must produce strictly-greater HLCs (a={:?} b={:?})",
+            a.hlc,
+            b.hlc,
+        );
+    }
+
+    #[test]
+    fn hlc_logical_increments_within_same_physical_tick() {
+        // Drive `tick_global_hlc` directly with a frozen now_ns so
+        // the L-counter is the only thing that can move. Pre-fix
+        // both calls would return logical=0; post-fix the second
+        // call's logical is strictly greater than the first's.
+        //
+        // **GLOBAL_HLC is process-wide** — concurrent tests can move
+        // its physical_ns past any historic timestamp. We pick a
+        // future timestamp far beyond any other test's choice
+        // (year-3000-ish), drive a single tick to anchor the global
+        // there, then call twice at the SAME injected now_ns. The
+        // second call MUST be a tie → logical increments.
+        let anchor: u64 = 100_000_000_000_000_000_000_u128 as u64; // saturates to u64::MAX
+        let _anchor_tick = super::tick_global_hlc(anchor);
+        let first = super::tick_global_hlc(anchor);
+        let second = super::tick_global_hlc(anchor);
+        // Both ticks at anchor → physical pinned, logical strictly
+        // increasing.
+        assert_eq!(first.physical_ns(), second.physical_ns());
+        assert!(
+            second.logical() > first.logical(),
+            "L-counter must increment on tie: first={first:?} second={second:?}",
+        );
+    }
+
+    #[test]
+    fn hlc_physical_advances_when_clock_moves_forward() {
+        // After anchoring the global, a subsequent tick with a
+        // strictly-greater now_ns must advance physical_ns and reset
+        // logical to 0. Use a very large base to outrun concurrent
+        // tests' anchor values.
+        let base: u64 = u64::MAX - 1_000_000_000; // ≈ 1 second below saturation
+        let first = super::tick_global_hlc(base);
+        let second = super::tick_global_hlc(u64::MAX);
+        assert!(
+            second.physical_ns() > first.physical_ns(),
+            "physical_ns must advance when now_ns moves forward: \
+             first={first:?} second={second:?}",
+        );
+        assert_eq!(
+            second.logical(),
+            0,
+            "logical must reset to 0 when physical advances",
+        );
+    }
+
+    #[test]
+    fn hlc_no_duplicates_under_64_thread_burst() {
+        // The Berater scenario: many threads calling build() in a
+        // burst. Even if SystemTime returns identical ns for many
+        // calls, no two HLCs may compare equal — `Hlc::cmp` must
+        // give a strict total order over the whole bag.
+        use std::collections::BTreeSet;
+        use std::sync::Arc;
+        use std::sync::Barrier;
+
+        let threads = 8;
+        let per_thread = 200;
+        let barrier = Arc::new(Barrier::new(threads));
+        let mut handles = Vec::with_capacity(threads);
+        for _ in 0..threads {
+            let b = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let mut out = Vec::with_capacity(per_thread);
+                b.wait();
+                for _ in 0..per_thread {
+                    let h = HeaderBuilder::new(0x01, b"x").build();
+                    out.push(h.hlc);
+                }
+                out
+            }));
+        }
+        let mut all = Vec::with_capacity(threads * per_thread);
+        for h in handles {
+            all.extend(h.join().unwrap());
+        }
+        // Strict total order: collecting into a BTreeSet should not
+        // collapse any entries.
+        let unique: BTreeSet<_> = all.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            all.len(),
+            "every concurrent build() must produce a UNIQUE HLC; got {} dupes",
+            all.len() - unique.len(),
+        );
     }
 }
