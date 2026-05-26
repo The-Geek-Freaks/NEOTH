@@ -20,9 +20,14 @@
 //!   secret material. **Held in memory only long enough to push
 //!   into the secret store; the redactor strips every identifying
 //!   field before WAL emission**.
-//! - [`SecretBytes`] — newtype around the secret with `Drop`
-//!   zeroisation + `Debug`/`Display` that doesn't leak the
-//!   contents.
+//! - [`SecretBytes`] — newtype around the secret. Uses the
+//!   `zeroize` crate's `Zeroize` trait in `Drop` (volatile writes,
+//!   compiler-fence-ordered, not plain assignment). `Debug` /
+//!   `Display` print `"<redacted len=N>"`. **Automatic `Clone` is
+//!   intentionally NOT implemented** — every duplication must go
+//!   through the explicit [`SecretBytes::clone_for_storage`] method
+//!   so a reviewer can grep for every site that copies secret
+//!   material. Equality is constant-time.
 //! - [`CredentialImporter`] async trait — `source()` +
 //!   `discover_entries()` + `name()`. Per-source impls (C-02
 //!   Bitwarden, C-03 Chrome, C-04 Firefox) ship in follow-ups.
@@ -39,14 +44,22 @@ use std::fmt;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 pub use crate::security::credential_redact::ImportSource;
 
-/// Secret material the operator imported. `Drop` zeroises the
-/// inner Vec so a leaked instance doesn't leave plaintext in
-/// freed memory. `Debug`/`Display` print `"<redacted len=N>"` —
-/// never the contents — so accidental tracing calls don't leak
+/// Secret material the operator imported. `Drop` calls
+/// `Zeroize::zeroize` on the inner Vec — the `zeroize` crate uses
+/// volatile writes + a compiler fence so the scrub can't be
+/// optimised away (plain `*b = 0` assignment was insufficient,
+/// fixed 2026-05-26). `Debug`/`Display` print `"<redacted len=N>"`
+/// — never the contents — so accidental tracing calls don't leak
 /// secrets.
+///
+/// **No automatic `Clone`** — duplicating a secret is always an
+/// explicit, greppable operation via [`SecretBytes::clone_for_storage`].
+/// This makes "did the codebase accidentally fan out the
+/// password?" answerable with one grep instead of a graph crawl.
 pub struct SecretBytes {
     inner: Vec<u8>,
 }
@@ -57,6 +70,9 @@ impl SecretBytes {
     }
 
     pub fn from_string(s: String) -> Self {
+        // `s.into_bytes()` reuses the String's heap allocation;
+        // the original String's heap region is moved into the
+        // Vec and will be zeroised on Drop.
         Self::new(s.into_bytes())
     }
 
@@ -80,22 +96,23 @@ impl SecretBytes {
     pub fn expose_str(&self) -> Option<&str> {
         std::str::from_utf8(&self.inner).ok()
     }
+
+    /// Explicit duplication for storage handoff (e.g. wizard
+    /// step → secret-store writer). Named to be grep-friendly:
+    /// every site that fans out secret material shows up under
+    /// `clone_for_storage` so reviewers can audit them. Prefer
+    /// borrowing `expose_bytes()` / `expose_str()` over cloning
+    /// whenever possible.
+    pub fn clone_for_storage(&self) -> Self {
+        Self::new(self.inner.clone())
+    }
 }
 
 impl Drop for SecretBytes {
     fn drop(&mut self) {
-        // Manual zeroisation — no zeroize crate dep needed for
-        // the primitive shape. Volatile write semantics aren't
-        // guaranteed via plain assignment but a Drop pass at
-        // least scrubs the heap region before deallocation.
-        for b in self.inner.iter_mut() {
-            // Use a non-volatile write — std::ptr::write_volatile
-            // would be stronger but requires unsafe. Acceptable
-            // tradeoff for the C-01 primitive; C-02 Bitwarden
-            // impl that handles real keys can layer zeroize on
-            // top.
-            *b = 0;
-        }
+        // zeroize::Zeroize: volatile writes + compiler_fence
+        // (SeqCst) — the standard secret-scrub primitive.
+        self.inner.zeroize();
     }
 }
 
@@ -108,12 +125,6 @@ impl fmt::Debug for SecretBytes {
 impl fmt::Display for SecretBytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "<redacted len={}>", self.inner.len())
-    }
-}
-
-impl Clone for SecretBytes {
-    fn clone(&self) -> Self {
-        Self::new(self.inner.clone())
     }
 }
 
@@ -139,7 +150,12 @@ impl Eq for SecretBytes {}
 /// impls; consumed by the SC-17 redactor + the secret-store
 /// write path. **Never serialised to disk in this shape** —
 /// the WAL frame receives the redacted projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Clone` is implemented manually (not derived) because
+/// [`SecretBytes`] intentionally doesn't auto-Clone — every
+/// duplication flows through [`SecretBytes::clone_for_storage`]
+/// so it stays greppable.
+#[derive(Debug, PartialEq, Eq)]
 pub struct ImportedCredential {
     pub source: ImportSource,
     pub name: String,
@@ -147,6 +163,19 @@ pub struct ImportedCredential {
     pub username: String,
     pub secret: SecretBytes,
     pub tags: Vec<String>,
+}
+
+impl Clone for ImportedCredential {
+    fn clone(&self) -> Self {
+        Self {
+            source: self.source,
+            name: self.name.clone(),
+            url: self.url.clone(),
+            username: self.username.clone(),
+            secret: self.secret.clone_for_storage(),
+            tags: self.tags.clone(),
+        }
+    }
 }
 
 impl ImportedCredential {
@@ -287,6 +316,12 @@ pub fn build_import_record(
         .find_map(|o| o.result.as_ref().ok().map(|_| o.source))
         .unwrap_or(ImportSource::WizardPrompt);
 
+    // SC-17: build the redactor input WITHOUT carrying the
+    // secret. The redactor never reads it (the whole point of
+    // the gate), so allocating a fresh `String` from
+    // `SecretBytes` would just be a transient plaintext copy on
+    // the way to /dev/null. Field removed from `CredentialEntry`
+    // 2026-05-26.
     let entries = outcomes
         .iter()
         .filter_map(|o| o.result.as_ref().ok())
@@ -297,11 +332,6 @@ pub fn build_import_record(
                     name: c.name.clone(),
                     url: c.url.clone(),
                     username: c.username.clone(),
-                    secret: c
-                        .secret
-                        .expose_str()
-                        .map(|s| s.to_string())
-                        .unwrap_or_default(),
                     tags: c.tags.clone(),
                 })
         })
@@ -361,9 +391,9 @@ mod tests {
     }
 
     #[test]
-    fn secret_bytes_clone_equals_original_constant_time() {
+    fn secret_bytes_clone_for_storage_equals_original_constant_time() {
         let a = SecretBytes::from_string("hello".to_string());
-        let b = a.clone();
+        let b = a.clone_for_storage();
         assert_eq!(a, b);
     }
 

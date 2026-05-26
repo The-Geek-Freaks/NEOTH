@@ -1,0 +1,28 @@
+# Installer manifest — schema reference:
+# https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/v1.6.0/manifest.installer.1.6.0.json
+#
+# Stub status: the `InstallerSha256` value is a placeholder until a
+# Windows binary is published to GitHub Releases. The release workflow
+# (.github/workflows/release.yml) does not yet build the
+# x86_64-pc-windows-msvc target. Once Windows builds land:
+#   1. Compute the SHA-256 of the published zip.
+#   2. Replace the placeholder below.
+#   3. Open a PR against microsoft/winget-pkgs using this file.
+PackageIdentifier: TheGeekFreaks.NEOTH
+PackageVersion: 0.2.1
+InstallerLocale: en-US
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+- RelativeFilePath: neothd.exe
+  PortableCommandAlias: neoth
+Commands:
+- neoth
+- neothd
+Installers:
+- Architecture: x64
+  InstallerUrl: https://github.com/The-Geek-Freaks/NEOTH/releases/download/v0.2.1/neothd-x86_64-windows.zip
+  InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+ReleaseDate: 2026-05-26
+ManifestType: installer
+ManifestVersion: 1.6.0

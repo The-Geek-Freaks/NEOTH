@@ -1,0 +1,30 @@
+# Default-locale manifest — schema reference:
+# https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/v1.6.0/manifest.defaultLocale.1.6.0.json
+PackageIdentifier: TheGeekFreaks.NEOTH
+PackageVersion: 0.2.1
+PackageLocale: en-US
+Publisher: The Geek Freaks
+PublisherUrl: https://github.com/The-Geek-Freaks
+PublisherSupportUrl: https://github.com/The-Geek-Freaks/NEOTH/issues
+PackageName: NEOTH
+PackageUrl: https://github.com/The-Geek-Freaks/NEOTH
+License: Apache-2.0
+LicenseUrl: https://github.com/The-Geek-Freaks/NEOTH/blob/main/LICENSE
+Copyright: Copyright (c) 2026 The Geek Freaks
+ShortDescription: Local-first personal AI agent
+Description: |-
+  NEOTH is a local-first, single-operator AI agent that owns its memory,
+  its providers, and its audit trail. It pairs a Rust daemon (neothd)
+  with an optional Slint GUI (neothd-gui), connects to local + remote
+  LLM providers, and stores every operator-visible decision in an
+  append-only WAL the operator alone controls.
+Moniker: neoth
+Tags:
+- ai
+- agent
+- llm
+- local-first
+- privacy
+- rust
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

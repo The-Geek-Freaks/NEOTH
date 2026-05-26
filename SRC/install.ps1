@@ -56,10 +56,9 @@ $InstallDir = if ($env:NEOTH_INSTALL_DIR) {
     Join-Path $env:LOCALAPPDATA 'Programs\neoth'
 }
 $VerifySignature = $env:NEOTH_VERIFY_SIGNATURE -eq '1'
-# Replace this with the real owner/repo before publishing the installer.
-$ReleaseUrlTemplate = 'https://github.com/REPLACE-WITH-OWNER/REPLACE-WITH-REPO/releases/download'
+$ReleaseUrlTemplate = 'https://github.com/The-Geek-Freaks/NEOTH/releases/download'
 # Cosign certificate identity regex — matches the release.yml workflow path.
-$CosignIdentityRegex = 'https://github.com/.*/neoth/\.github/workflows/release\.yml@.*'
+$CosignIdentityRegex = 'https://github.com/The-Geek-Freaks/NEOTH/\.github/workflows/release\.yml@.*'
 $CosignOidcIssuer = 'https://token.actions.githubusercontent.com'
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -97,16 +96,6 @@ function Verify-Sha256 {
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
-if ($ReleaseUrlTemplate -like '*REPLACE-WITH-OWNER*') {
-    Write-Info "─────────────────────────────────────────────────────────────────────"
-    Write-Info " The NEOTH release pipeline (V02-01) hasn't shipped yet."
-    Write-Info " This installer is templated and ready to use once the first"
-    Write-Info " GitHub Release exists. Edit `$ReleaseUrlTemplate` in install.ps1"
-    Write-Info " to point at your org/repo before re-running."
-    Write-Info "─────────────────────────────────────────────────────────────────────"
-    exit 1
-}
-
 $Target = Get-Target
 Write-Info "  detected target: $Target"
 Write-Info "  version: $Version"

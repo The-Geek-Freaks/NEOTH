@@ -30,10 +30,9 @@ set -euo pipefail
 NEOTH_VERSION="${NEOTH_VERSION:-latest}"
 NEOTH_INSTALL_DIR="${NEOTH_INSTALL_DIR:-$HOME/.local/bin}"
 NEOTH_VERIFY_SIGNATURE="${NEOTH_VERIFY_SIGNATURE:-0}"
-# Replace this with the real owner/repo before publishing the installer.
-RELEASE_URL_TEMPLATE="https://github.com/REPLACE-WITH-OWNER/REPLACE-WITH-REPO/releases/download"
+RELEASE_URL_TEMPLATE="https://github.com/The-Geek-Freaks/NEOTH/releases/download"
 # Cosign certificate identity regex — matches the release.yml workflow path.
-COSIGN_IDENTITY_REGEX="https://github.com/.*/neoth/\.github/workflows/release\.yml@.*"
+COSIGN_IDENTITY_REGEX="https://github.com/The-Geek-Freaks/NEOTH/\.github/workflows/release\.yml@.*"
 COSIGN_OIDC_ISSUER="https://token.actions.githubusercontent.com"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -78,15 +77,6 @@ require_cmd curl
 require_cmd uname
 require_cmd mkdir
 require_cmd install
-
-if [[ "$RELEASE_URL_TEMPLATE" == *REPLACE-WITH-OWNER* ]]; then
-    info "─────────────────────────────────────────────────────────────────────"
-    info " RELEASE_URL_TEMPLATE in install.sh still has the placeholder."
-    info " Edit it to point at your org/repo before publishing the installer."
-    info " (Release workflow lives in .github/workflows/release.yml.)"
-    info "─────────────────────────────────────────────────────────────────────"
-    exit 1
-fi
 
 TARGET="$(detect_target)"
 info "→ detected target: $TARGET"

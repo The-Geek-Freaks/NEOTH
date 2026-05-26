@@ -79,15 +79,19 @@ impl ImportSource {
 /// One credential entry. The redactor consumes this + drops every
 /// field except `tags` (which it aggregates without naming the
 /// owning entry).
+///
+/// **The plaintext secret intentionally does NOT live here.** The
+/// redactor never reads it; carrying it through this struct would
+/// just allocate a transient plaintext `String` on the way to
+/// /dev/null. Caller keeps the secret in a [`super::super::credentials::SecretBytes`]
+/// outside this redaction path and hands it to the secret-store
+/// writer directly. Field removed 2026-05-26 per Alex's review:
+/// "redaction record rebuilds Strings from secrets".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialEntry {
     pub name: String,
     pub url: String,
     pub username: String,
-    /// Plaintext secret. Held in memory only long enough to push
-    /// into the secret store; the redactor never even looks at
-    /// this field.
-    pub secret: String,
     pub tags: Vec<String>,
 }
 
@@ -188,12 +192,11 @@ pub fn redact_credential_import(
 mod tests {
     use super::*;
 
-    fn entry(name: &str, url: &str, user: &str, secret: &str, tags: &[&str]) -> CredentialEntry {
+    fn entry(name: &str, url: &str, user: &str, tags: &[&str]) -> CredentialEntry {
         CredentialEntry {
             name: name.to_string(),
             url: url.to_string(),
             username: user.to_string(),
-            secret: secret.to_string(),
             tags: tags.iter().map(|s| (*s).to_string()).collect(),
         }
     }
@@ -277,14 +280,13 @@ mod tests {
     // ── redactor ──────────────────────────────────────────────────
 
     #[test]
-    fn redactor_drops_name_url_username_secret() {
+    fn redactor_drops_name_url_username() {
         let r = record(
             ImportSource::Bitwarden,
             vec![entry(
                 "PayPal",
                 "https://paypal.com",
                 "alex@example.com",
-                "S3cret!",
                 &["work"],
             )],
         );
@@ -295,7 +297,6 @@ mod tests {
         assert!(!json.contains("PayPal"));
         assert!(!json.contains("paypal.com"));
         assert!(!json.contains("alex@example.com"));
-        assert!(!json.contains("S3cret!"));
     }
 
     #[test]
@@ -303,9 +304,9 @@ mod tests {
         let r = record(
             ImportSource::Bitwarden,
             vec![
-                entry("a", "", "", "", &[]),
-                entry("b", "", "", "", &[]),
-                entry("c", "", "", "", &[]),
+                entry("a", "", "", &[]),
+                entry("b", "", "", &[]),
+                entry("c", "", "", &[]),
             ],
         );
         let payload = redact_credential_import(&r);
@@ -317,8 +318,8 @@ mod tests {
         let r = record(
             ImportSource::Keepass,
             vec![
-                entry("a", "", "", "", &["work", "banking"]),
-                entry("b", "", "", "", &["personal", "work"]),
+                entry("a", "", "", &["work", "banking"]),
+                entry("b", "", "", &["personal", "work"]),
             ],
         );
         let payload = redact_credential_import(&r);
@@ -332,11 +333,11 @@ mod tests {
     fn redactor_services_hash_proves_repeated_imports() {
         let r1 = record(
             ImportSource::Bitwarden,
-            vec![entry("PayPal", "u", "n", "s", &[])],
+            vec![entry("PayPal", "u", "n", &[])],
         );
         let r2 = record(
             ImportSource::Bitwarden,
-            vec![entry("paypal", "u", "n", "s", &[])], // case-different
+            vec![entry("paypal", "u", "n", &[])], // case-different
         );
         let p1 = redact_credential_import(&r1);
         let p2 = redact_credential_import(&r2);
@@ -347,11 +348,11 @@ mod tests {
     fn redactor_services_hash_differs_on_distinct_imports() {
         let r1 = record(
             ImportSource::Bitwarden,
-            vec![entry("PayPal", "u", "n", "s", &[])],
+            vec![entry("PayPal", "u", "n", &[])],
         );
         let r2 = record(
             ImportSource::Bitwarden,
-            vec![entry("GitHub", "u", "n", "s", &[])],
+            vec![entry("GitHub", "u", "n", &[])],
         );
         let p1 = redact_credential_import(&r1);
         let p2 = redact_credential_import(&r2);
@@ -410,9 +411,23 @@ mod tests {
     fn redactor_unique_tag_dedup_drops_duplicates_within_one_entry() {
         let r = record(
             ImportSource::Bitwarden,
-            vec![entry("a", "", "", "", &["work", "work", "work"])],
+            vec![entry("a", "", "", &["work", "work", "work"])],
         );
         let payload = redact_credential_import(&r);
         assert_eq!(payload.distinct_tags_sorted, vec!["work"]);
+    }
+
+    #[test]
+    fn credential_entry_carries_no_secret_field() {
+        // Drift guard — SC-17 rule says the redactor input MUST
+        // NOT carry plaintext secret material. A future PR that
+        // re-adds `secret: String` to CredentialEntry will fail
+        // this compile-time check via the explicit struct literal.
+        let _e = CredentialEntry {
+            name: String::new(),
+            url: String::new(),
+            username: String::new(),
+            tags: Vec::new(),
+        };
     }
 }
