@@ -399,6 +399,13 @@ tokio        = { version = "1", features = ["test-util", "macros", "rt-multi-thr
 # parser. Matches the same allowlist category as webhook_listener's
 # self-tests (inbound-only — no_outbound_network gate excludes it).
 wiremock     = "0.6"
+# Operator-real CLI tests — spawn the built `neothd` binary + assert
+# on stdout/stderr/exit codes, not just the runner-fn. Proves Clap
+# parsing + binary entry + stdio wiring beyond what library tests
+# can reach. Added 2026-05-26 after Alex flagged the gap between
+# "CLI runner called from test" and "real binary invoked".
+assert_cmd   = "2"
+predicates   = "3"
 # Audit 2026-05-19 (Session 15) — `check_credential_age` doctor diagnostic
 # tests need to age a fresh tempfile by 200/400 days. `std::fs` exposes no
 # mtime setter on stable Rust; `filetime` is the canonical pure-Rust shim

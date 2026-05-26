@@ -33,6 +33,7 @@
 //! sanitizer event + the obsidian note via the same source tag.
 
 pub mod consult;
+pub mod webhook;
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
