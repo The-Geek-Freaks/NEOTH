@@ -22,6 +22,7 @@ use tracing::{info, warn};
 pub mod faccam_family;
 pub mod fontconfig;
 pub mod n8n;
+pub mod n8n_starter_workflows;
 pub mod n8n_workflows;
 pub mod node;
 pub mod oauth_pkce;
