@@ -1,38 +1,73 @@
-<svg width="1400" height="480" viewBox="0 0 1400 480" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">NEOTH product territory</title>
-  <desc id="desc">NEOTH combines Buddy, Coding Studio and Operator Runtime around one memory core.</desc>
+<svg width="1400" height="560" viewBox="0 0 1400 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH market position</title>
+  <desc id="desc">Positioning map comparing NEOTH, Hermes, OpenHuman, and OpenClaw across durable audited memory and operator-grade control.</desc>
   <defs>
-    <filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="glow" x="-30%" y="-80%" width="160%" height="260%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <marker id="axisArrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#666"/>
+    </marker>
     <style>
       .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
       .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-      .title{font-weight:200;letter-spacing:.02em}
     </style>
   </defs>
-  <rect width="1400" height="480" rx="40" fill="#0d0d0d"/>
-  <rect x="1" y="1" width="1398" height="478" rx="39" stroke="white" stroke-opacity=".08"/>
-  <text x="72" y="62" fill="white" class="sans title" font-size="30">NEOTH wins in the overlap.</text>
-  <text x="72" y="92" fill="#9a9a9a" class="sans" font-size="15">Not just chat, not just coding, not just automation: one loyal memory core across all three.</text>
 
-  <path d="M700 116 L1056 374 H344 Z" fill="#ffffff" fill-opacity=".018" stroke="white" stroke-opacity=".08"/>
-  <path d="M700 116 L520 374 H344 Z" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".28"/>
-  <path d="M700 116 L1056 374 H880 Z" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".28"/>
-  <path d="M520 374 H880 L700 116 Z" fill="#05d5ff" fill-opacity=".06" stroke="#05d5ff" stroke-opacity=".22"/>
-  <circle cx="700" cy="286" r="86" fill="#101010" stroke="#00ff80" stroke-opacity=".45" filter="url(#glow)"/>
-  <text x="700" y="276" text-anchor="middle" fill="white" class="sans" font-size="31" font-weight="200" letter-spacing="10">NEOTH</text>
-  <text x="700" y="306" text-anchor="middle" fill="#9a9a9a" class="mono" font-size="10" letter-spacing="3">MEMORY CORE</text>
+  <rect width="1400" height="560" rx="40" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="558" rx="39" stroke="white" stroke-opacity=".08"/>
 
-  <text x="700" y="146" text-anchor="middle" fill="#ff2a6d" class="sans" font-size="22" font-weight="600">Buddy</text>
-  <text x="700" y="171" text-anchor="middle" fill="#9a9a9a" class="sans" font-size="13">loyal, personal, DAU-friendly</text>
-  <text x="424" y="405" text-anchor="middle" fill="#05d5ff" class="sans" font-size="22" font-weight="600">Operator Runtime</text>
-  <text x="424" y="430" text-anchor="middle" fill="#9a9a9a" class="sans" font-size="13">policy, WAL, mesh, automation</text>
-  <text x="976" y="405" text-anchor="middle" fill="#00ff80" class="sans" font-size="22" font-weight="600">Coding Studio</text>
-  <text x="976" y="430" text-anchor="middle" fill="#9a9a9a" class="sans" font-size="13">canvas, Kanban, repo memory</text>
+  <text x="700" y="58" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="5">WHERE NEOTH FITS</text>
+  <text x="700" y="91" text-anchor="middle" fill="#929292" class="sans" font-size="15">Not the loudest single feature. The overlap: daily buddy, durable memory, coding workflow, operator controls.</text>
 
-  <g class="mono" font-size="11" letter-spacing="2.2">
-    <rect x="116" y="188" width="210" height="38" rx="8" fill="#111" stroke="#ff2a6d" stroke-opacity=".32"/><text x="221" y="212" text-anchor="middle" fill="#ff2a6d">DAU PATH</text>
-    <rect x="116" y="242" width="210" height="38" rx="8" fill="#111" stroke="#05d5ff" stroke-opacity=".32"/><text x="221" y="266" text-anchor="middle" fill="#05d5ff">AUDITABLE</text>
-    <rect x="1074" y="188" width="210" height="38" rx="8" fill="#111" stroke="#00ff80" stroke-opacity=".32"/><text x="1179" y="212" text-anchor="middle" fill="#00ff80">ACTION</text>
-    <rect x="1074" y="242" width="210" height="38" rx="8" fill="#111" stroke="#05d5ff" stroke-opacity=".32"/><text x="1179" y="266" text-anchor="middle" fill="#05d5ff">PRIVATE MESH</text>
+  <g transform="translate(145 125)">
+    <rect width="820" height="340" rx="24" fill="#080808" stroke="white" stroke-opacity=".08"/>
+    <path d="M86 278 H750" stroke="#666" stroke-width="1.4" marker-end="url(#axisArrow)"/>
+    <path d="M86 278 V56" stroke="#666" stroke-width="1.4" marker-end="url(#axisArrow)"/>
+    <path d="M86 222 H750 M86 166 H750 M86 110 H750" stroke="white" stroke-opacity=".045"/>
+    <path d="M252 278 V56 M418 278 V56 M584 278 V56" stroke="white" stroke-opacity=".045"/>
+
+    <text x="418" y="324" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="14">single-session assistant</text>
+    <text x="748" y="324" text-anchor="end" fill="#00ff80" class="sans" font-size="14">durable audited memory</text>
+    <text x="36" y="288" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="14" transform="rotate(-90 36 288)">consumer-simple</text>
+    <text x="36" y="78" text-anchor="middle" fill="#05d5ff" class="sans" font-size="14" transform="rotate(-90 36 78)">operator-grade</text>
+
+    <g transform="translate(626 86)" filter="url(#glow)">
+      <circle r="38" fill="#00ff80" fill-opacity=".12" stroke="#00ff80" stroke-opacity=".72"/>
+      <text x="0" y="6" text-anchor="middle" fill="white" class="sans" font-size="17" font-weight="600">NEOTH</text>
+    </g>
+    <g transform="translate(472 116)">
+      <circle r="26" fill="#05d5ff" fill-opacity=".09" stroke="#05d5ff" stroke-opacity=".48"/>
+      <text x="0" y="52" text-anchor="middle" fill="#ddd" class="sans" font-size="15">Hermes</text>
+    </g>
+    <g transform="translate(548 216)">
+      <circle r="26" fill="#ff2a6d" fill-opacity=".09" stroke="#ff2a6d" stroke-opacity=".48"/>
+      <text x="0" y="52" text-anchor="middle" fill="#ddd" class="sans" font-size="15">OpenHuman</text>
+    </g>
+    <g transform="translate(388 136)">
+      <circle r="26" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".42"/>
+      <text x="0" y="52" text-anchor="middle" fill="#ddd" class="sans" font-size="15">OpenClaw</text>
+    </g>
+
+    <g class="mono" font-size="10" letter-spacing="2.4">
+      <rect x="560" y="136" width="164" height="30" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".24"/>
+      <text x="642" y="156" text-anchor="middle" fill="#00ff80">NO YAML PATH</text>
+      <rect x="560" y="176" width="164" height="30" rx="8" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".24"/>
+      <text x="642" y="196" text-anchor="middle" fill="#05d5ff">WAL EVIDENCE</text>
+      <rect x="560" y="216" width="164" height="30" rx="8" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".24"/>
+      <text x="642" y="236" text-anchor="middle" fill="#ff2a6d">BUDDY + CODE + MESH</text>
+    </g>
+  </g>
+
+  <g transform="translate(1020 142)" class="sans">
+    <rect width="290" height="294" rx="24" fill="#101010" stroke="white" stroke-opacity=".09"/>
+    <text x="28" y="42" fill="#00ff80" class="mono" font-size="11" letter-spacing="4">READ THE MAP</text>
+    <text x="28" y="82" fill="white" font-size="21" font-weight="300">NEOTH is not just one lane.</text>
+    <text x="28" y="116" fill="#929292" font-size="14">Hermes is strong on persistent agent workflow.</text>
+    <text x="28" y="150" fill="#929292" font-size="14">OpenHuman is strong on consumer memory and onboarding.</text>
+    <text x="28" y="184" fill="#929292" font-size="14">OpenClaw is strong on gateway breadth and live tools.</text>
+    <path d="M28 214 H262" stroke="white" stroke-opacity=".08"/>
+    <text x="28" y="248" fill="#ddd" font-size="14">NEOTH combines the friendly path with operator-grade audit, memory, code, plugins, and mesh.</text>
   </g>
 </svg>

@@ -1,87 +1,93 @@
 <svg width="1400" height="420" viewBox="0 0 1400 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">NEOTH - Sovereign Buddy</title>
-  <desc id="desc">Animated NEOTH hero with a living neural sine wave and three moving particles.</desc>
+  <title id="title">NEOTH - private Jarvis-like buddy</title>
+  <desc id="desc">Animated NEOTH hero with two neural sine waves and three visible particles for memory, consent, and audit.</desc>
   <defs>
     <radialGradient id="bg" cx="50%" cy="48%" r="78%">
-      <stop offset="0" stop-color="#1a1a1a"/>
-      <stop offset=".52" stop-color="#0d0d0d"/>
+      <stop offset="0" stop-color="#1b1b1b"/>
+      <stop offset=".55" stop-color="#0d0d0d"/>
       <stop offset="1" stop-color="#050505"/>
     </radialGradient>
-    <linearGradient id="pulseGrad" x1="120" y1="0" x2="1280" y2="0">
+    <linearGradient id="greenWave" x1="105" y1="0" x2="1295" y2="0">
       <stop offset="0" stop-color="#00ff80" stop-opacity="0"/>
       <stop offset=".5" stop-color="#00ff80" stop-opacity=".92"/>
       <stop offset="1" stop-color="#00ff80" stop-opacity="0"/>
     </linearGradient>
-    <linearGradient id="blueGrad" x1="120" y1="0" x2="1280" y2="0">
+    <linearGradient id="cyanWave" x1="105" y1="0" x2="1295" y2="0">
       <stop offset="0" stop-color="#05d5ff" stop-opacity="0"/>
-      <stop offset=".5" stop-color="#05d5ff" stop-opacity=".34"/>
+      <stop offset=".5" stop-color="#05d5ff" stop-opacity=".45"/>
       <stop offset="1" stop-color="#05d5ff" stop-opacity="0"/>
     </linearGradient>
-    <filter id="softGlow" x="-20%" y="-80%" width="140%" height="260%">
-      <feGaussianBlur stdDeviation="7" result="blur"/>
+    <filter id="glow" x="-22%" y="-95%" width="144%" height="290%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
       <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
     <style>
       .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
       .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-      .logo{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-weight:100;letter-spacing:34px}
+      .logo{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-weight:200;letter-spacing:26px}
     </style>
   </defs>
 
   <rect width="1400" height="420" rx="40" fill="url(#bg)"/>
-  <rect x="1" y="1" width="1398" height="418" rx="39" stroke="white" stroke-opacity=".07"/>
+  <rect x="1" y="1" width="1398" height="418" rx="39" stroke="white" stroke-opacity=".08"/>
 
-  <circle cx="250" cy="96" r="230" fill="#ff2a6d" opacity=".045" filter="url(#softGlow)">
-    <animate attributeName="opacity" dur="16s" values=".035;.07;.035" repeatCount="indefinite"/>
+  <circle cx="270" cy="92" r="210" fill="#ff2a6d" opacity=".045" filter="url(#glow)">
+    <animate attributeName="opacity" dur="16s" values=".03;.07;.03" repeatCount="indefinite"/>
   </circle>
-  <circle cx="1160" cy="330" r="250" fill="#05d5ff" opacity=".05" filter="url(#softGlow)">
-    <animate attributeName="opacity" dur="18s" values=".035;.075;.035" repeatCount="indefinite"/>
+  <circle cx="1145" cy="325" r="235" fill="#05d5ff" opacity=".052" filter="url(#glow)">
+    <animate attributeName="opacity" dur="18s" values=".035;.078;.035" repeatCount="indefinite"/>
   </circle>
-  <circle cx="700" cy="210" r="220" fill="#00ff80" opacity=".035" filter="url(#softGlow)">
-    <animate attributeName="opacity" dur="13s" values=".025;.055;.025" repeatCount="indefinite"/>
+  <circle cx="700" cy="210" r="205" fill="#00ff80" opacity=".034" filter="url(#glow)">
+    <animate attributeName="opacity" dur="13s" values=".024;.055;.024" repeatCount="indefinite"/>
   </circle>
 
-  <rect x="310" y="108" width="780" height="190" rx="48" fill="#ffffff" fill-opacity=".022" stroke="white" stroke-opacity=".085"/>
-  <rect x="335" y="132" width="730" height="142" rx="38" fill="#050505" fill-opacity=".42" stroke="white" stroke-opacity=".045"/>
+  <rect x="308" y="106" width="784" height="194" rx="48" fill="#ffffff" fill-opacity=".022" stroke="white" stroke-opacity=".09"/>
+  <rect x="334" y="132" width="732" height="142" rx="36" fill="#050505" fill-opacity=".5" stroke="white" stroke-opacity=".052"/>
 
-  <path id="mainPulse" d="M130 208 C 320 76, 496 342, 700 208 C 904 74, 1080 340, 1270 208" stroke="url(#pulseGrad)" stroke-width="2" fill="none" filter="url(#softGlow)">
-    <animate attributeName="d" dur="14s" repeatCount="indefinite"
-      values="M130 208 C 320 76, 496 342, 700 208 C 904 74, 1080 340, 1270 208;
-              M130 208 C 320 340, 496 78, 700 208 C 904 338, 1080 80, 1270 208;
-              M130 208 C 320 76, 496 342, 700 208 C 904 74, 1080 340, 1270 208"/>
-    <animate attributeName="opacity" dur="7s" values=".44;.78;.44" repeatCount="indefinite"/>
+  <path id="memoryWave" d="M108 206 C 304 82, 492 334, 700 206 C 908 78, 1096 334, 1292 206" stroke="url(#greenWave)" stroke-width="2.4" fill="none" filter="url(#glow)">
+    <animate attributeName="d" dur="13s" repeatCount="indefinite"
+      values="M108 206 C 304 82, 492 334, 700 206 C 908 78, 1096 334, 1292 206;
+              M108 206 C 304 330, 492 82, 700 206 C 908 330, 1096 82, 1292 206;
+              M108 206 C 304 82, 492 334, 700 206 C 908 78, 1096 334, 1292 206"/>
+    <animate attributeName="opacity" dur="6s" values=".48;.9;.48" repeatCount="indefinite"/>
   </path>
-  <path id="deepPulse" d="M130 242 C 325 338, 502 132, 700 242 C 898 350, 1075 132, 1270 242" stroke="url(#blueGrad)" stroke-width="1.1" fill="none" opacity=".38">
-    <animate attributeName="d" dur="19s" repeatCount="indefinite"
-      values="M130 242 C 325 338, 502 132, 700 242 C 898 350, 1075 132, 1270 242;
-              M130 242 C 325 138, 502 348, 700 242 C 898 136, 1075 348, 1270 242;
-              M130 242 C 325 338, 502 132, 700 242 C 898 350, 1075 132, 1270 242"/>
+  <path id="auditWave" d="M108 244 C 310 335, 496 134, 700 244 C 904 354, 1090 134, 1292 244" stroke="url(#cyanWave)" stroke-width="1.4" fill="none" opacity=".46" filter="url(#glow)">
+    <animate attributeName="d" dur="18s" repeatCount="indefinite"
+      values="M108 244 C 310 335, 496 134, 700 244 C 904 354, 1090 134, 1292 244;
+              M108 244 C 310 134, 496 354, 700 244 C 904 132, 1090 354, 1292 244;
+              M108 244 C 310 335, 496 134, 700 244 C 904 354, 1090 134, 1292 244"/>
   </path>
 
-  <circle r="3.4" fill="#00ff80" filter="url(#softGlow)">
-    <animateMotion dur="7s" repeatCount="indefinite" rotate="auto">
-      <mpath href="#mainPulse"/>
-    </animateMotion>
-    <animate attributeName="r" dur="2.4s" values="2.5;4.1;2.5" repeatCount="indefinite"/>
-    <animate attributeName="opacity" dur="2.4s" values=".25;1;.25" repeatCount="indefinite"/>
-  </circle>
-  <circle r="3" fill="#ff2a6d" filter="url(#softGlow)">
-    <animateMotion dur="9s" begin="-3s" repeatCount="indefinite" rotate="auto">
-      <mpath href="#mainPulse"/>
-    </animateMotion>
-    <animate attributeName="r" dur="3s" values="2.2;3.7;2.2" repeatCount="indefinite"/>
-    <animate attributeName="opacity" dur="3s" values=".18;.92;.18" repeatCount="indefinite"/>
-  </circle>
-  <circle r="2.8" fill="#05d5ff" filter="url(#softGlow)">
-    <animateMotion dur="11s" begin="-5s" repeatCount="indefinite" rotate="auto">
-      <mpath href="#deepPulse"/>
-    </animateMotion>
-    <animate attributeName="r" dur="3.3s" values="2;3.5;2" repeatCount="indefinite"/>
-    <animate attributeName="opacity" dur="3.3s" values=".16;.9;.16" repeatCount="indefinite"/>
-  </circle>
+  <g filter="url(#glow)">
+    <circle r="6.2" fill="#00ff80">
+      <animateMotion dur="7.8s" begin="-1.2s" repeatCount="indefinite" rotate="auto">
+        <mpath href="#memoryWave"/>
+      </animateMotion>
+      <animate attributeName="r" dur="2.4s" values="5.2;7.2;5.2" repeatCount="indefinite"/>
+      <animate attributeName="opacity" dur="2.4s" values=".55;1;.55" repeatCount="indefinite"/>
+    </circle>
+    <circle r="5.8" fill="#ff2a6d">
+      <animateMotion dur="9.4s" begin="-5s" repeatCount="indefinite" rotate="auto">
+        <mpath href="#memoryWave"/>
+      </animateMotion>
+      <animate attributeName="r" dur="3s" values="4.8;6.8;4.8" repeatCount="indefinite"/>
+      <animate attributeName="opacity" dur="3s" values=".45;.98;.45" repeatCount="indefinite"/>
+    </circle>
+    <circle r="5.6" fill="#05d5ff">
+      <animateMotion dur="11.2s" begin="-8s" repeatCount="indefinite" rotate="auto">
+        <mpath href="#auditWave"/>
+      </animateMotion>
+      <animate attributeName="r" dur="3.2s" values="4.6;6.5;4.6" repeatCount="indefinite"/>
+      <animate attributeName="opacity" dur="3.2s" values=".42;.94;.42" repeatCount="indefinite"/>
+    </circle>
+  </g>
 
-  <text x="718" y="198" text-anchor="middle" fill="#ffffff" class="logo" font-size="92">NEOTH</text>
-  <rect x="622" y="226" width="156" height="1" fill="url(#pulseGrad)" opacity=".9"/>
-  <text x="700" y="262" text-anchor="middle" fill="#a8a8a8" class="sans" font-size="12" letter-spacing="8">NEURAL ENGINE OBLIGATED TO HELP</text>
-  <text x="700" y="360" text-anchor="middle" fill="#666666" class="mono" font-size="10" letter-spacing="4">YOUR BUDDY. YOUR MEMORY. YOUR RULES.</text>
+  <text x="713" y="198" text-anchor="middle" fill="#ffffff" class="logo" font-size="92">NEOTH</text>
+  <rect x="612" y="226" width="176" height="1.2" fill="url(#greenWave)" opacity=".95"/>
+  <text x="700" y="264" text-anchor="middle" fill="#b0b0b0" class="sans" font-size="14" letter-spacing="7">NEURAL ENGINE OBLIGATED TO HELP</text>
+  <g class="mono" font-size="10" letter-spacing="3.2">
+    <text x="418" y="360" text-anchor="middle" fill="#00ff80">MEMORY</text>
+    <text x="700" y="360" text-anchor="middle" fill="#ff2a6d">CONSENT</text>
+    <text x="982" y="360" text-anchor="middle" fill="#05d5ff">AUDIT</text>
+  </g>
 </svg>

@@ -1,49 +1,108 @@
-<svg width="1400" height="480" viewBox="0 0 1400 480" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">NEOTH coding loop</title>
-  <desc id="desc">NEOTH coding buddy loop: plan, split, dispatch, implement, verify, review, promote memory, resume.</desc>
+<svg width="1400" height="560" viewBox="0 0 1400 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH coding workflow</title>
+  <desc id="desc">NEOTH coding buddy pipeline from operator prompt and repo context to planning canvas, Kanban, role dispatch, patch, tests, review promotion, and repo memory.</desc>
   <defs>
-    <linearGradient id="loop" x1="340" y1="160" x2="1060" y2="360">
-      <stop offset="0" stop-color="#00ff80"/>
-      <stop offset=".5" stop-color="#05d5ff"/>
-      <stop offset="1" stop-color="#ff2a6d"/>
-    </linearGradient>
-    <filter id="glow"><feGaussianBlur stdDeviation="7" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#00ff80"/>
+    </marker>
+    <marker id="arrowCyan" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#05d5ff"/>
+    </marker>
+    <marker id="arrowPink" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#ff2a6d"/>
+    </marker>
+    <filter id="glow" x="-25%" y="-80%" width="150%" height="260%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
     <style>
       .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
       .mono{font-family:"SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-      .title{font-weight:200;letter-spacing:.02em}
-      .node{fill:#121212;stroke:white;stroke-opacity:.1}
+      .panel{fill:#111;stroke:white;stroke-opacity:.1}
+      .task{fill:#171717;stroke:white;stroke-opacity:.08}
     </style>
   </defs>
-  <rect width="1400" height="480" rx="40" fill="#0d0d0d"/>
-  <rect x="1" y="1" width="1398" height="478" rx="39" stroke="white" stroke-opacity=".08"/>
-  <text x="72" y="62" fill="white" class="sans title" font-size="30">The coding buddy that remembers the repo.</text>
-  <text x="72" y="92" fill="#9a9a9a" class="sans" font-size="15">Planning, execution, verification and review all feed durable project memory.</text>
 
-  <ellipse cx="700" cy="258" rx="360" ry="138" stroke="url(#loop)" stroke-width="2.4" stroke-opacity=".72" filter="url(#glow)"/>
-  <path d="M1010 218 L1062 258 L1008 296" stroke="#ff2a6d" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect width="1400" height="560" rx="40" fill="#0d0d0d"/>
+  <rect x="1" y="1" width="1398" height="558" rx="39" stroke="white" stroke-opacity=".08"/>
 
-  <g class="sans" font-size="14">
-    <g transform="translate(278 138)"><rect class="node" width="164" height="64" rx="16" stroke="#00ff80" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Plan</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">canvas</text></g>
-    <g transform="translate(508 92)"><rect class="node" width="164" height="64" rx="16" stroke="#00ff80" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Split</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">Kanban</text></g>
-    <g transform="translate(728 92)"><rect class="node" width="164" height="64" rx="16" stroke="#00ff80" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Dispatch</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">role-bound work</text></g>
-    <g transform="translate(958 138)"><rect class="node" width="164" height="64" rx="16" stroke="#00ff80" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Implement</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">patch</text></g>
-    <g transform="translate(958 310)"><rect class="node" width="164" height="64" rx="16" stroke="#05d5ff" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Verify</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">tests + gates</text></g>
-    <g transform="translate(728 356)"><rect class="node" width="164" height="64" rx="16" stroke="#05d5ff" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Review</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">dissent</text></g>
-    <g transform="translate(508 356)"><rect class="node" width="164" height="64" rx="16" stroke="#ff2a6d" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Promote</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">project memory</text></g>
-    <g transform="translate(278 310)"><rect class="node" width="164" height="64" rx="16" stroke="#ff2a6d" stroke-opacity=".38"/><text x="82" y="28" text-anchor="middle" fill="white" font-weight="600">Resume</text><text x="82" y="48" text-anchor="middle" fill="#8d8d8d" font-size="12">no re-explain</text></g>
+  <text x="700" y="58" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="5">CODING THAT REMEMBERS THE REPO</text>
+  <text x="700" y="91" text-anchor="middle" fill="#929292" class="sans" font-size="15">Prompt, plan, Kanban, role dispatch, tests, review and project memory stay in one audited loop.</text>
+
+  <g class="sans">
+    <g transform="translate(56 142)">
+      <rect class="panel" width="205" height="220" rx="22" stroke="#00ff80" stroke-opacity=".34"/>
+      <text x="24" y="38" fill="#00ff80" font-size="12" letter-spacing="4">INPUT</text>
+      <text x="24" y="72" fill="white" font-size="19" font-weight="300">Operator prompt</text>
+      <rect x="22" y="96" width="161" height="34" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".22"/>
+      <text x="34" y="118" fill="#9d9d9d" font-size="12">"add migration + tests"</text>
+      <text x="24" y="158" fill="white" font-size="19" font-weight="300">Repo context</text>
+      <text x="24" y="186" fill="#8b8b8b" font-size="13">files, decisions, bugs</text>
+    </g>
+
+    <g transform="translate(308 120)">
+      <rect class="panel" width="230" height="264" rx="22" stroke="#00ff80" stroke-opacity=".38"/>
+      <text x="24" y="38" fill="#00ff80" font-size="12" letter-spacing="4">PLANNING CANVAS</text>
+      <rect class="task" x="24" y="64" width="182" height="42" rx="10"/>
+      <text x="38" y="90" fill="#ddd" font-size="14">schema migration</text>
+      <rect class="task" x="24" y="118" width="182" height="42" rx="10"/>
+      <text x="38" y="144" fill="#ddd" font-size="14">write WAL event</text>
+      <rect class="task" x="24" y="172" width="182" height="42" rx="10"/>
+      <text x="38" y="198" fill="#ddd" font-size="14">tests + review gates</text>
+      <text x="24" y="242" fill="#777" font-size="12">scope, acceptance, risks</text>
+    </g>
+
+    <g transform="translate(582 108)">
+      <rect class="panel" width="290" height="292" rx="22" stroke="#ff2a6d" stroke-opacity=".35"/>
+      <text x="24" y="38" fill="#ff2a6d" font-size="12" letter-spacing="4">KANBAN</text>
+      <g font-size="11" class="mono" letter-spacing="1.5">
+        <text x="34" y="76" fill="#8a8a8a">TODO</text>
+        <text x="105" y="76" fill="#8a8a8a">IN PROG</text>
+        <text x="190" y="76" fill="#8a8a8a">REVIEW</text>
+      </g>
+      <rect x="24" y="94" width="66" height="118" rx="10" fill="#151515" stroke="#00ff80" stroke-opacity=".22"/>
+      <rect x="104" y="94" width="76" height="118" rx="10" fill="#151515" stroke="#ff2a6d" stroke-opacity=".22"/>
+      <rect x="194" y="94" width="72" height="118" rx="10" fill="#151515" stroke="#05d5ff" stroke-opacity=".22"/>
+      <rect x="34" y="112" width="46" height="20" rx="6" fill="#00ff80" fill-opacity=".12"/>
+      <rect x="34" y="142" width="46" height="20" rx="6" fill="#00ff80" fill-opacity=".12"/>
+      <rect x="116" y="112" width="52" height="20" rx="6" fill="#ff2a6d" fill-opacity=".12"/>
+      <rect x="205" y="112" width="50" height="20" rx="6" fill="#05d5ff" fill-opacity=".12"/>
+      <text x="24" y="256" fill="#ddd" font-size="18" font-weight="300">Visible state</text>
+      <text x="24" y="278" fill="#888" font-size="12">Backlog, Todo, Progress, Review, Done</text>
+    </g>
+
+    <g transform="translate(916 120)">
+      <rect class="panel" width="205" height="264" rx="22" stroke="#05d5ff" stroke-opacity=".36"/>
+      <text x="24" y="38" fill="#05d5ff" font-size="12" letter-spacing="4">ROLE DISPATCH</text>
+      <rect x="24" y="68" width="157" height="70" rx="14" fill="#00ff80" fill-opacity=".07" stroke="#00ff80" stroke-opacity=".26"/>
+      <text x="42" y="98" fill="white" font-size="17" font-weight="300">Fast path</text>
+      <text x="42" y="120" fill="#8c8c8c" font-size="12">small patches</text>
+      <rect x="24" y="158" width="157" height="70" rx="14" fill="#05d5ff" fill-opacity=".07" stroke="#05d5ff" stroke-opacity=".26"/>
+      <text x="42" y="188" fill="white" font-size="17" font-weight="300">Deep path</text>
+      <text x="42" y="210" fill="#8c8c8c" font-size="12">architecture/review</text>
+    </g>
+
+    <g transform="translate(1168 142)">
+      <rect class="panel" width="176" height="220" rx="22" stroke="#05d5ff" stroke-opacity=".34"/>
+      <text x="24" y="38" fill="#05d5ff" font-size="12" letter-spacing="4">OUTPUT</text>
+      <text x="24" y="75" fill="white" font-size="18" font-weight="300">Patch</text>
+      <text x="24" y="106" fill="white" font-size="18" font-weight="300">Tests</text>
+      <text x="24" y="137" fill="white" font-size="18" font-weight="300">Review</text>
+      <text x="24" y="175" fill="#8b8b8b" font-size="13">merge verdict</text>
+      <text x="24" y="197" fill="#8b8b8b" font-size="13">follow-up tasks</text>
+    </g>
   </g>
 
-  <g filter="url(#glow)">
-    <circle cx="700" cy="258" r="86" fill="#101010" stroke="#00ff80" stroke-opacity=".42"/>
-    <text x="700" y="246" text-anchor="middle" fill="white" class="sans" font-size="31" font-weight="200" letter-spacing="9">NEOTH</text>
-    <text x="700" y="276" text-anchor="middle" fill="#9a9a9a" class="mono" font-size="10" letter-spacing="3">REPO MEMORY</text>
-  </g>
+  <path d="M261 252 H305" stroke="#00ff80" stroke-width="2" marker-end="url(#arrowGreen)" filter="url(#glow)"/>
+  <path d="M538 252 H578" stroke="#ff2a6d" stroke-width="2" marker-end="url(#arrowPink)" filter="url(#glow)"/>
+  <path d="M872 252 H912" stroke="#05d5ff" stroke-width="2" marker-end="url(#arrowCyan)" filter="url(#glow)"/>
+  <path d="M1121 252 H1164" stroke="#05d5ff" stroke-width="2" marker-end="url(#arrowCyan)" filter="url(#glow)"/>
 
-  <g class="mono" font-size="11" letter-spacing="2.4">
-    <rect x="102" y="202" width="170" height="38" rx="8" fill="#111" stroke="#00ff80" stroke-opacity=".32"/><text x="187" y="226" text-anchor="middle" fill="#00ff80">CANVAS</text>
-    <rect x="102" y="250" width="170" height="38" rx="8" fill="#111" stroke="#ff2a6d" stroke-opacity=".32"/><text x="187" y="274" text-anchor="middle" fill="#ff2a6d">KANBAN</text>
-    <rect x="1128" y="202" width="170" height="38" rx="8" fill="#111" stroke="#05d5ff" stroke-opacity=".32"/><text x="1213" y="226" text-anchor="middle" fill="#05d5ff">REVIEW</text>
-    <rect x="1128" y="250" width="170" height="38" rx="8" fill="#111" stroke="#ff2a6d" stroke-opacity=".32"/><text x="1213" y="274" text-anchor="middle" fill="#ff2a6d">MEMORY</text>
+  <g transform="translate(310 440)" class="sans">
+    <rect width="780" height="70" rx="22" fill="#101010" stroke="#ff2a6d" stroke-opacity=".32"/>
+    <text x="28" y="31" fill="#ff2a6d" font-size="12" letter-spacing="4">PROMOTE BACK INTO MEMORY</text>
+    <text x="28" y="54" fill="#9a9a9a" font-size="14">decision, test result, review finding, open task, repo-specific preference</text>
+    <text x="748" y="42" text-anchor="end" fill="#05d5ff" class="mono" font-size="11" letter-spacing="3">WAL + REPO MEMORY</text>
   </g>
+  <path d="M1260 362 C 1260 492, 1050 492, 1090 476" stroke="#ff2a6d" stroke-width="2" stroke-dasharray="8 12" marker-end="url(#arrowPink)" opacity=".75"/>
 </svg>
