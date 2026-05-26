@@ -8,6 +8,7 @@
 
 pub mod email_sanitizer;
 pub mod ingress_sanitizer;
+pub mod paperless_ingest;
 pub mod redact;
 pub mod refusal_cause;
 pub mod refusal_detect;

@@ -56,7 +56,7 @@ pub struct SanitizeReport {
     pub channel: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Finding {
     OversizeInput { bytes: usize, limit: usize },
