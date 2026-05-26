@@ -76,6 +76,7 @@ pub mod memory;
 pub mod migrate;
 pub mod models;
 pub mod n8n_api;
+pub mod paperless;
 pub mod permissions;
 pub mod pipeline;
 pub mod policy;
