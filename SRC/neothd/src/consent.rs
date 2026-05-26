@@ -154,6 +154,112 @@ pub fn list_grants(home: &Path) -> Result<Vec<(ProviderKind, String)>> {
     Ok(out)
 }
 
+/// P-02 (Session 24) — tri-state consent decision. Replaces the
+/// implicit two-state (granted-marker-exists vs not) with an
+/// explicit operator choice that the audit chain can record.
+///
+/// - `AllowOnce`: continue this turn only; no marker written; the
+///   next call re-prompts. Useful for one-off cloud bursts the
+///   operator doesn't want to make persistent.
+/// - `AllowAlways`: continue + write the `.granted` marker so
+///   future calls auto-pass. Mirrors the pre-P-02 behaviour.
+/// - `Deny`: abort this turn; no marker written. Operator explicitly
+///   said no; record the audit anchor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConsentDecision {
+    AllowOnce,
+    AllowAlways,
+    Deny,
+}
+
+impl ConsentDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ConsentDecision::AllowOnce => "allow_once",
+            ConsentDecision::AllowAlways => "allow_always",
+            ConsentDecision::Deny => "deny",
+        }
+    }
+
+    /// True when the decision lets the current turn continue.
+    /// `Deny` is the only false branch.
+    pub fn allows(self) -> bool {
+        !matches!(self, ConsentDecision::Deny)
+    }
+
+    /// True when the decision persists to the marker file. Only
+    /// `AllowAlways` flips the bit; the other two leave state alone.
+    pub fn persists(self) -> bool {
+        matches!(self, ConsentDecision::AllowAlways)
+    }
+}
+
+/// Parse an operator-typed answer into a [`ConsentDecision`].
+/// Accepts the canonical strings + a few aliases. Case-insensitive.
+/// Returns `None` for unrecognised input — callers prompt again.
+pub fn parse_decision(s: &str) -> Option<ConsentDecision> {
+    match s.trim().to_lowercase().as_str() {
+        "1" | "once" | "allow once" | "allow_once" | "y" | "yes" => {
+            Some(ConsentDecision::AllowOnce)
+        }
+        "2" | "always" | "allow always" | "allow_always" | "a" => {
+            Some(ConsentDecision::AllowAlways)
+        }
+        "3" | "deny" | "no" | "n" | "d" => Some(ConsentDecision::Deny),
+        _ => None,
+    }
+}
+
+/// P-02 — build the canonical [`EVENT_TYPE_CONSENT_DECISION`] payload
+/// bytes. Pure helper so the prompt path + tests + downstream WAL
+/// consumers agree on shape. Payload:
+/// `{kind, decision, source, ts_unix}`. `source` ∈ `"tty" | "daemon"
+/// | "cli_explicit"` — records WHERE the operator's answer came from
+/// so audit can attribute the decision.
+pub fn consent_decision_payload(
+    kind: ProviderKind,
+    decision: ConsentDecision,
+    source: &str,
+    ts_unix: i64,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "kind": slug(kind),
+        "decision": decision.as_str(),
+        "source": source,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default()
+}
+
+/// P-02 — apply the operator's decision against the on-disk state.
+/// `AllowOnce` + `Deny` leave the marker untouched; `AllowAlways`
+/// writes the marker via the existing [`grant`] path so subsequent
+/// `is_granted` calls pass unconditionally.
+///
+/// Returns whether the marker was actually changed (true for
+/// `AllowAlways` against a non-existent marker; false otherwise).
+/// Useful for the audit anchor's `marker_written` flag.
+pub fn apply_decision(
+    home: &Path,
+    kind: ProviderKind,
+    decision: ConsentDecision,
+) -> Result<bool> {
+    if !is_cloud(kind) {
+        // Non-cloud providers don't gate; apply is a no-op. Keep
+        // the API symmetric so callers can pipe every kind through.
+        return Ok(false);
+    }
+    match decision {
+        ConsentDecision::AllowAlways => {
+            let was_granted = is_granted(home, kind);
+            grant(home, kind)?;
+            Ok(!was_granted)
+        }
+        ConsentDecision::AllowOnce | ConsentDecision::Deny => Ok(false),
+    }
+}
+
 /// Preflight gate called before any cloud-bound provider request. On a TTY,
 /// interactively prompts the operator + records grant. Off a TTY, bails with
 /// the exact CLI to grant consent. Bypass: `NEOTH_CONSENT_BYPASS=1` for CI
@@ -727,5 +833,138 @@ mod tests {
             Some("claude_cli.granted")
         );
         assert!(p.parent().unwrap().ends_with("consent"));
+    }
+
+    // ── P-02 (Session 24) tri-state ConsentDecision ──────────────────
+
+    #[test]
+    fn p_02_decision_helpers_pin_allows_and_persists() {
+        // Drift guard for the two boolean projections of the enum.
+        assert!(ConsentDecision::AllowOnce.allows());
+        assert!(ConsentDecision::AllowAlways.allows());
+        assert!(!ConsentDecision::Deny.allows());
+
+        assert!(!ConsentDecision::AllowOnce.persists());
+        assert!(ConsentDecision::AllowAlways.persists());
+        assert!(!ConsentDecision::Deny.persists());
+    }
+
+    #[test]
+    fn p_02_decision_as_str_pinned_for_audit() {
+        assert_eq!(ConsentDecision::AllowOnce.as_str(), "allow_once");
+        assert_eq!(ConsentDecision::AllowAlways.as_str(), "allow_always");
+        assert_eq!(ConsentDecision::Deny.as_str(), "deny");
+    }
+
+    #[test]
+    fn p_02_parse_decision_accepts_canonical_and_aliases_case_insensitive() {
+        // Canonical
+        assert_eq!(parse_decision("allow_once"), Some(ConsentDecision::AllowOnce));
+        assert_eq!(parse_decision("allow_always"), Some(ConsentDecision::AllowAlways));
+        assert_eq!(parse_decision("deny"), Some(ConsentDecision::Deny));
+        // Numeric (1/2/3 menu picker)
+        assert_eq!(parse_decision("1"), Some(ConsentDecision::AllowOnce));
+        assert_eq!(parse_decision("2"), Some(ConsentDecision::AllowAlways));
+        assert_eq!(parse_decision("3"), Some(ConsentDecision::Deny));
+        // Aliases
+        assert_eq!(parse_decision("YES"), Some(ConsentDecision::AllowOnce));
+        assert_eq!(parse_decision("Always"), Some(ConsentDecision::AllowAlways));
+        assert_eq!(parse_decision("  no  "), Some(ConsentDecision::Deny));
+        assert_eq!(parse_decision("Allow Once"), Some(ConsentDecision::AllowOnce));
+    }
+
+    #[test]
+    fn p_02_parse_decision_returns_none_for_garbage() {
+        assert!(parse_decision("").is_none());
+        assert!(parse_decision("maybe").is_none());
+        assert!(parse_decision("42").is_none());
+    }
+
+    #[test]
+    fn p_02_apply_decision_allow_always_writes_marker() {
+        let tmp = TempDir::new().unwrap();
+        let kind = ProviderKind::OpenaiApi;
+        assert!(!is_granted(tmp.path(), kind));
+        let changed = apply_decision(tmp.path(), kind, ConsentDecision::AllowAlways).unwrap();
+        assert!(changed, "first AllowAlways must flip the bit");
+        assert!(is_granted(tmp.path(), kind));
+        // Second AllowAlways on already-granted state — same outcome,
+        // `changed = false` per the contract.
+        let changed2 = apply_decision(tmp.path(), kind, ConsentDecision::AllowAlways).unwrap();
+        assert!(!changed2, "idempotent AllowAlways must report no change");
+        assert!(is_granted(tmp.path(), kind));
+    }
+
+    #[test]
+    fn p_02_apply_decision_allow_once_does_not_write_marker() {
+        let tmp = TempDir::new().unwrap();
+        let kind = ProviderKind::OpenaiApi;
+        let changed = apply_decision(tmp.path(), kind, ConsentDecision::AllowOnce).unwrap();
+        assert!(!changed);
+        assert!(
+            !is_granted(tmp.path(), kind),
+            "AllowOnce must NOT persist — next call re-prompts",
+        );
+    }
+
+    #[test]
+    fn p_02_apply_decision_deny_does_not_write_marker_or_revoke_existing() {
+        let tmp = TempDir::new().unwrap();
+        let kind = ProviderKind::OpenaiApi;
+        // Deny against fresh state → no marker.
+        apply_decision(tmp.path(), kind, ConsentDecision::Deny).unwrap();
+        assert!(!is_granted(tmp.path(), kind));
+        // Deny against ALREADY-granted state must NOT auto-revoke the
+        // existing grant. Operator who said deny-this-time keeps
+        // their prior allow-always; an explicit `neoth consent revoke`
+        // is the only path to drop the marker. Pin this.
+        grant(tmp.path(), kind).unwrap();
+        apply_decision(tmp.path(), kind, ConsentDecision::Deny).unwrap();
+        assert!(
+            is_granted(tmp.path(), kind),
+            "Deny must not auto-revoke prior AllowAlways — operator uses `consent revoke`",
+        );
+    }
+
+    #[test]
+    fn p_02_apply_decision_non_cloud_kind_is_noop() {
+        let tmp = TempDir::new().unwrap();
+        // Local provider — every decision is a no-op + reports no-change.
+        for d in [
+            ConsentDecision::AllowOnce,
+            ConsentDecision::AllowAlways,
+            ConsentDecision::Deny,
+        ] {
+            let changed = apply_decision(tmp.path(), ProviderKind::LocalQwen, d).unwrap();
+            assert!(!changed, "non-cloud apply must be no-op for {d:?}");
+        }
+        assert!(!consent_dir(tmp.path()).exists());
+    }
+
+    #[test]
+    fn p_02_consent_decision_payload_carries_required_fields() {
+        let bytes = consent_decision_payload(
+            ProviderKind::OpenaiApi,
+            ConsentDecision::AllowAlways,
+            "tty",
+            1_700_000_000,
+        );
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["kind"], "openai_api");
+        assert_eq!(v["decision"], "allow_always");
+        assert_eq!(v["source"], "tty");
+        assert_eq!(v["ts_unix"], 1_700_000_000);
+    }
+
+    #[test]
+    fn p_02_consent_decision_payload_round_trips_via_serde() {
+        // Drift guard for the enum's serde rename. A future refactor
+        // that drops `rename_all = "snake_case"` would break WAL
+        // replay; this test catches it.
+        let json =
+            serde_json::to_string(&ConsentDecision::AllowAlways).unwrap();
+        assert_eq!(json, "\"allow_always\"");
+        let back: ConsentDecision = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, ConsentDecision::AllowAlways);
     }
 }

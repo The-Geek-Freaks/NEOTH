@@ -368,6 +368,23 @@ pub const EVENT_TYPE_COUNCIL_WINNER_SELECTED: u8 = 0x63;
 ///     id that appears on two of the three slots
 pub const EVENT_TYPE_COUNCIL_DIVERSITY_WARNING: u8 = 0x64;
 
+/// P-02 (Session 24) — operator's consent-gate decision. Fires on
+/// every `ensure_granted_or_prompt_tri` call that took an operator
+/// answer (skips re-prompts on already-granted state to keep the
+/// audit log signal-to-noise). Payload:
+/// `{kind, decision, source, ts_unix}`. `decision` ∈
+/// `allow_once | allow_always | deny`. `allow_always` persists a
+/// marker file; the other two leave operator state untouched but
+/// still produce the audit anchor so an operator denying once can
+/// prove they denied even if the next attempt succeeds.
+///
+/// Note on band: PROGRESS spec language said "0x30 CONSENT_DECISION
+/// (claim band)" but 0x30..=0x3F is the channels band. Slot 0x65 is
+/// adjacent to the council/decisions band (0x60..=0x6F) which is the
+/// semantic neighborhood for operator decisions; using it here keeps
+/// the existing channels band intact.
+pub const EVENT_TYPE_CONSENT_DECISION: u8 = 0x65;
+
 // ---- 0x70..=0x7F  Coding workflow (V11 Pick #38, 2026-05-19) --------------
 //
 // Hermes-adapted autonomous software engineering pipeline per
