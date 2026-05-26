@@ -79,6 +79,7 @@ pub mod n8n_api;
 pub mod permissions;
 pub mod pipeline;
 pub mod policy;
+pub mod domain_events;
 pub mod proactive;
 pub mod profile;
 pub mod reflection;
