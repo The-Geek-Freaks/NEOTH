@@ -12,6 +12,8 @@ pub mod adr;
 pub mod agents;
 pub mod arxiv;
 pub mod backup;
+pub mod paperless;
+pub mod proactive;
 pub mod catalog;
 pub mod chat;
 pub mod cloud;
@@ -265,6 +267,17 @@ pub enum Commands {
 
     /// Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2.
     Backup(backup::BackupArgs),
+
+    /// Paperless OCR ingest + consult. Subcommands: `ingest`, `consult`.
+    /// Operator surface for the SC-16/PL-02/PL-03 vertical slice.
+    Paperless(paperless::PaperlessArgs),
+
+    /// Proactive proposal management (OB-03). Subcommands: `list`,
+    /// `accept`, `reject`, `show`, `sync-vault`. NEOTH NEVER edits
+    /// operator config behind their back — `accept` only flips status;
+    /// the operator copy-pastes the draft YAML from the vault note
+    /// into the live config + runs `neoth config reload`.
+    Proactive(proactive::ProactiveArgs),
 
     /// Pick #37 (Session 14, Agent #4 design-consensus): trigger the
     /// running `neoth serve` daemon to re-read `freedom.yaml` and
@@ -695,6 +708,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Backup(mut args) => {
             args.output = global_output;
             backup::run_backup(args).await?;
+        }
+        Commands::Paperless(args) => {
+            paperless::run_paperless(args)?;
+        }
+        Commands::Proactive(args) => {
+            proactive::run_proactive(args)?;
         }
         Commands::Reload(mut args) => {
             args.output = global_output;
