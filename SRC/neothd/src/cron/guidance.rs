@@ -241,7 +241,7 @@ fn field_density(field: &str, max: u32) -> u32 {
             if step == 0 {
                 return 1;
             }
-            return (max + step - 1) / step;
+            return max.div_ceil(step);
         }
     }
     if field.contains(',') {

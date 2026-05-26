@@ -28,7 +28,7 @@
 //! (post-v0.9 PROGRESS placeholder).
 
 use anyhow::Result;
-use rusqlite::{Connection, params};
+use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::memory::regions::{AMYGDALA_THRESHOLD, MemoryRegion};
@@ -172,19 +172,17 @@ pub fn diff_report(
         let bind_refs: Vec<&dyn rusqlite::ToSql> =
             binds.iter().map(|v| v as &dyn rusqlite::ToSql).collect();
         let mut stmt = conn.prepare(&sql)?;
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(bind_refs.iter().copied()), |r| {
-                Ok(DiffRow {
-                    event_id: r.get(0)?,
-                    text: r.get(1)?,
-                    current_importance: r.get(2)?,
-                    ts_ns: r.get(3)?,
-                    last_access_ts: r.get(4)?,
-                    category: DiffCategory::Reinforced,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows
+        stmt.query_map(rusqlite::params_from_iter(bind_refs.iter().copied()), |r| {
+            Ok(DiffRow {
+                event_id: r.get(0)?,
+                text: r.get(1)?,
+                current_importance: r.get(2)?,
+                ts_ns: r.get(3)?,
+                last_access_ts: r.get(4)?,
+                category: DiffCategory::Reinforced,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?
     };
     let reinforced_count = {
         let mut sql = String::from("SELECT count(*) FROM idx_episode WHERE ");

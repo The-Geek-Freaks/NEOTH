@@ -101,9 +101,26 @@ jobs:
         working-directory: SRC
         run: cargo fmt --all -- --check
 
-      - name: cargo clippy --workspace (CDX-08 cross-crate guarantee)
+      # CDX-08 cross-crate guarantee.
+      #
+      # We do NOT pass `--all-features` here: that activates `qwen-cuda`,
+      # whose cudarc dep panics in build.rs when `nvcc` is not on PATH —
+      # which is the case on macOS-14 and Windows-2022 GitHub-hosted
+      # runners. The dedicated `feature-flag compile / qwen-cuda` job
+      # further down covers that feature on a CUDA-capable host.
+      #
+      # Stable toolchain: `-D warnings` (hard gate). Beta toolchain:
+      # `-W warnings` (advisory) — beta catches stabilising clippy
+      # lints early, but they shouldn't block the merge gate.
+      - name: cargo clippy --workspace (stable, hard gate)
+        if: matrix.toolchain == 'stable'
         working-directory: SRC
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" -- -D warnings
+
+      - name: cargo clippy --workspace (beta, advisory)
+        if: matrix.toolchain == 'beta'
+        working-directory: SRC
+        run: cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" -- -W warnings
 
       - name: cargo build --workspace --release
         working-directory: SRC

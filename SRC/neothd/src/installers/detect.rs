@@ -138,6 +138,11 @@ pub fn load_cache(home: &Path, now_unix: u64) -> Option<DetectReport> {
 /// per-installer probe fns are wired; the unit-test path here
 /// exercises the aggregation shape with operator-supplied mock
 /// values.
+// TODO(W-04 follow-up): extract a `DetectAssembleInputs` config struct
+// (mirrors `wizard::detect_step::DetectStepInputs`) so callers don't
+// pass 10 positional args. Keeping the wide signature for now keeps
+// the W-04 wire-up minimal.
+#[allow(clippy::too_many_arguments)]
 pub fn assemble_report(
     probed_at_unix: u64,
     docker_version: Option<String>,

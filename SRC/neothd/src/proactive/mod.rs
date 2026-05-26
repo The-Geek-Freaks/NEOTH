@@ -192,7 +192,7 @@ impl ProactiveQueue {
         // Restore priority-desc order for the caller (the index
         // removal above pulled them in descending-index, which is
         // unrelated to priority).
-        out.sort_by(|a, b| b.priority.cmp(&a.priority));
+        out.sort_by_key(|item| std::cmp::Reverse(item.priority));
         for _ in &out {
             self.drained_at.push(now_unix);
         }

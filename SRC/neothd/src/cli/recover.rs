@@ -63,7 +63,7 @@ pub async fn run_recover(args: RecoverArgs) -> Result<()> {
     let home = args
         .home
         .clone()
-        .unwrap_or_else(|| FreedomConfig::default_neoth_home());
+        .unwrap_or_else(FreedomConfig::default_neoth_home);
 
     if let Some(live) = args.restore.as_deref() {
         return run_restore(live, &args.output);
@@ -127,8 +127,8 @@ fn render_list_table(reports: &[BakReport]) {
     }
     println!("# {} bak file(s) found", reports.len());
     println!(
-        "  {:<48} {:<12} {:<12} {}",
-        "live_path", "live_size", "bak_size", "verdict",
+        "  {:<48} {:<12} {:<12} verdict",
+        "live_path", "live_size", "bak_size",
     );
     for r in reports {
         let live_size = r

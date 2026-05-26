@@ -20,7 +20,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::installers::detect::DetectReport;
-use crate::installers::gpu::GpuKind;
 
 /// Operator's self-declared experience level. Passed in from the
 /// wizard's first-screen prompt (or `freedom.yaml::operator.

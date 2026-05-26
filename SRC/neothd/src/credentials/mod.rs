@@ -43,7 +43,6 @@ pub mod wizard_step;
 use std::fmt;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
 pub use crate::security::credential_redact::ImportSource;

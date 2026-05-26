@@ -49,7 +49,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 pub mod shutdown;

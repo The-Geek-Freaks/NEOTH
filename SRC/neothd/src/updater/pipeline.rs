@@ -19,9 +19,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::wal::payloads_u04::{
-    ComponentOutcome, ComponentStatus, UpdaterTaskKind, UpdaterTaskResultPayload,
-};
+use crate::wal::payloads_u04::{ComponentOutcome, UpdaterTaskKind, UpdaterTaskResultPayload};
 
 /// One component spec — name + current version + how to discover
 /// the latest version. Pure-data so tests construct directly.
@@ -162,6 +160,7 @@ pub fn cli_version_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wal::payloads_u04::ComponentStatus;
 
     fn spec(name: &str, current: &str, latest: Result<&str, &str>) -> ComponentSpec {
         ComponentSpec {

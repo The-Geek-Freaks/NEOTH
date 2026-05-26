@@ -19,7 +19,7 @@
 //! (`folders[]`, `items[]` with `login.username`, `login.password`,
 //! `login.uris[].uri`, `name`, `notes`, `tags?`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

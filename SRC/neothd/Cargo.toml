@@ -46,6 +46,12 @@ wasm-plugin-host = ["dep:wasmtime"]
 # qwen-metal → candle-core compiles its Metal kernels; macOS-only.
 #              Same warn-vs-GPU pattern as qwen-cuda. Apple Silicon
 #              + Intel-with-AMD-GPU Macs both benefit.
+# TOOLCHAIN-GATED — these features pull host-only toolchains (CUDA
+# nvcc / macOS Metal). CI MUST NOT include them in `--all-features`
+# clippy / check runs; the per-feature compile jobs (`feature-flag
+# compile / qwen-cuda` etc.) cover them on the matching OS. cudarc's
+# build.rs panics hard if nvcc is missing, so adding `qwen-cuda` to a
+# generic clippy run breaks every non-CUDA runner.
 qwen-cuda  = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
 qwen-metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
 

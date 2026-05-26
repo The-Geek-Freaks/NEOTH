@@ -18,7 +18,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::installers::detect::DetectReport;
-use crate::installers::gpu::{GpuKind, GpuReport};
+use crate::installers::gpu::GpuKind;
 use crate::security::credential_redact::{ImportSource, RedactedCredentialImportPayload};
 
 /// `0xD5 DETECT_COMPLETE` payload — emit one frame per wizard
@@ -94,10 +94,7 @@ impl DetectCompletePayload {
     /// True when the report indicates an accelerator-class GPU was
     /// detected. Audit shorthand — `WHERE has_accelerator`.
     pub fn has_accelerator(&self) -> bool {
-        match self.gpu_kind.as_deref() {
-            Some(s) if s != GpuKind::Cpu.as_str() => true,
-            _ => false,
-        }
+        matches!(self.gpu_kind.as_deref(), Some(s) if s != GpuKind::Cpu.as_str())
     }
 }
 

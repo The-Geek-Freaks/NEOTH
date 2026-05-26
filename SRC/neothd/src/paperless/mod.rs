@@ -42,7 +42,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::security::ingress_sanitizer::Finding;
-use crate::security::paperless_ingest::{OcrSource, PaperlessOcrPayload};
+use crate::security::paperless_ingest::PaperlessOcrPayload;
 
 /// Outcome of [`sync_ocr_to_obsidian`]. Parallel to
 /// [`crate::daemon::dreaming::DreamSyncOutcome`] so future generic
@@ -205,7 +205,7 @@ mod tests {
     use crate::security::paperless_ingest::ingest_ocr_text;
 
     fn payload(doc_id: &str, raw: &str) -> PaperlessOcrPayload {
-        ingest_ocr_text(raw, OcrSource::PaperlessNgx, doc_id).expect("sanitizer ok")
+        ingest_ocr_text(raw, PaperlessSource::PaperlessNgx, doc_id).expect("sanitizer ok")
     }
 
     #[test]

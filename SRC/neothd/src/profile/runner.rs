@@ -70,6 +70,10 @@ pub enum PipelineRun {
 /// (spec default = 2). `extensions` lets the operator opt into typed
 /// extension categories beyond the base taxonomy. `now_unix` is taken
 /// as a parameter so tests pin daily-counter rollovers.
+// TODO(profile follow-up): extract a `RunPipelineInputs` config struct
+// so the 9-arg signature shrinks; the wide signature mirrors the
+// pipeline's stage inputs 1:1 and is stable across callers.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_pipeline(
     conn: &mut Connection,
     writer: &WalWriterHandle,

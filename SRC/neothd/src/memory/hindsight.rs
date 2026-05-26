@@ -275,7 +275,7 @@ pub fn list_cards(home: &Path) -> Vec<HindsightCard> {
         .filter_map(|e| fs::read_to_string(e.path()).ok())
         .filter_map(|b| serde_json::from_str::<HindsightCard>(&b).ok())
         .collect();
-    out.sort_by(|a, b| b.ended_at_unix.cmp(&a.ended_at_unix));
+    out.sort_by_key(|c| std::cmp::Reverse(c.ended_at_unix));
     out
 }
 

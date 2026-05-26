@@ -123,14 +123,10 @@ impl TurnJournal {
 impl Drop for TurnJournal {
     fn drop(&mut self) {
         // Crash path: leave the file on disk for the recovery scan to find.
-        // Clean path: close() already removed it.
-        if self.finished {
-            // close() already handled deletion; nothing to do.
-            return;
-        }
-        // Best-effort flush via close-on-drop semantics — the file
-        // handle was already dropped at the end of the last `append`
-        // call so the bytes are on disk modulo OS cache.
+        // Clean path: close() already removed it — nothing to do.
+        // Either way, the file handle was already dropped at the end of
+        // the last `append` call so the bytes are on disk modulo OS cache.
+        let _finished = self.finished;
     }
 }
 
