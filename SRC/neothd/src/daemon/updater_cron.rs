@@ -154,10 +154,16 @@ pub fn spawn_updater_cron_loop(
             let b = builder.clone();
             // Catch panics from the builder so a transient
             // network failure doesn't abort the daemon. Spawn
-            // the build on the runtime so the panic boundary
-            // applies via `JoinHandle::is_panicked`.
-            let spec_result =
-                tokio::task::spawn_blocking(move || std::panic::catch_unwind(|| b())).await;
+            // the build on a blocking thread so the panic
+            // boundary applies via spawn_blocking's join. We
+            // know our trait-object builders are unwind-safe
+            // (the closures we pass in carry no interior-
+            // mutability state across the boundary — they
+            // just call probe fns and return a fresh Vec).
+            let spec_result = tokio::task::spawn_blocking(move || {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| b()))
+            })
+            .await;
             let specs = match spec_result {
                 Ok(Ok(v)) => v,
                 Ok(Err(_panic)) => {
