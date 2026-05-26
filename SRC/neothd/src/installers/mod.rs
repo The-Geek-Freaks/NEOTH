@@ -19,8 +19,10 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{info, warn};
 
+pub mod detect;
 pub mod faccam_family;
 pub mod fontconfig;
+pub mod gpu;
 pub mod n8n;
 pub mod n8n_starter_workflows;
 pub mod n8n_workflows;

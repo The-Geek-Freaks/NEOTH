@@ -1,0 +1,413 @@
+//! W-01 — GPU probe primitives.
+//!
+//! Pure-data + classifier surface for the wizard's GPU detection
+//! step. The wizard runs platform-specific subprocess probes
+//! (`nvidia-smi`, `rocm-smi`, `system_profiler SPDisplaysDataType`)
+//! that feed their parsed output into [`classify_from_subprocess`]
+//! which returns a [`GpuReport`]. The W-03 RecommendationEngine
+//! reads [`GpuReport::vram_mib`] to pick the qwen model tier.
+//!
+//! ## Why a primitive + classifier split
+//!
+//! The actual subprocess calls live in OS-specific wrapper code
+//! that's hard to unit-test on the CI host. The classifier here
+//! takes already-captured stdout text + parses it; tests pin
+//! every recognised output shape against real `nvidia-smi`
+//! samples.
+
+use serde::{Deserialize, Serialize};
+
+/// One detected GPU class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GpuKind {
+    /// NVIDIA CUDA — preferred for whisper-rs + qwen GGML on
+    /// Linux/Windows.
+    Cuda,
+    /// AMD ROCm — preferred on Linux when no NVIDIA is present.
+    Rocm,
+    /// Apple Silicon Metal — macOS default; whisper-rs accelerates
+    /// via Metal Performance Shaders.
+    Metal,
+    /// No accelerator detected — CPU fallback. Operator on
+    /// integrated GPU or VM without passthrough lands here.
+    Cpu,
+}
+
+impl GpuKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Cuda => "cuda",
+            Self::Rocm => "rocm",
+            Self::Metal => "metal",
+            Self::Cpu => "cpu",
+        }
+    }
+
+    /// True when this kind supports the qwen2.5 GPU-accelerated
+    /// inference path — W-03's RecommendationEngine consults this
+    /// to decide whether to recommend a GPU-tier model at all.
+    pub fn can_accelerate(self) -> bool {
+        !matches!(self, Self::Cpu)
+    }
+}
+
+/// One GPU's probe result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GpuReport {
+    pub kind: GpuKind,
+    /// VRAM in MiB. `None` when the probe failed to parse a value
+    /// (e.g. `nvidia-smi` query format changed upstream); the
+    /// recommendation engine treats unknown VRAM as "assume
+    /// minimum tier".
+    pub vram_mib: Option<u32>,
+    /// Vendor string verbatim from the probe (`NVIDIA`,
+    /// `Advanced Micro Devices, Inc.`, `Apple`). Operators see this
+    /// in the wizard summary.
+    pub vendor: Option<String>,
+    /// Marketing name (`NVIDIA GeForce RTX 4090`, `Apple M2 Max`).
+    pub name: Option<String>,
+}
+
+impl GpuReport {
+    /// CPU-fallback constructor — used when no GPU probe found
+    /// anything. Operators see this on locked-down VMs and
+    /// integrated-graphics-only laptops.
+    pub fn cpu() -> Self {
+        Self {
+            kind: GpuKind::Cpu,
+            vram_mib: None,
+            vendor: None,
+            name: None,
+        }
+    }
+
+    /// Model-tier recommendation thresholds — keep consts together
+    /// so a future tier shift (qwen3 lands?) edits one location.
+    /// Returns the operator-facing tier name.
+    pub fn recommended_model_tier(&self) -> &'static str {
+        match self.vram_mib {
+            Some(mib) if mib >= 24 * 1024 => "qwen2.5-72b",
+            Some(mib) if mib >= 8 * 1024 => "qwen2.5-7b",
+            // < 8 GiB OR unknown VRAM → cloud fallback. Unknown
+            // VRAM with `kind != Cpu` may still mean a real GPU
+            // (probe format change), but conservatively pick cloud.
+            _ => "cloud",
+        }
+    }
+}
+
+/// Parse an `nvidia-smi --query-gpu=name,memory.total --format=csv,
+/// noheader,nounits` output line into a [`GpuReport`]. One line in,
+/// one report out. Returns `None` for unparsable input.
+pub fn parse_nvidia_smi_line(line: &str) -> Option<GpuReport> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let parts: Vec<&str> = trimmed.split(',').map(|s| s.trim()).collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let name = parts[0].to_string();
+    let vram_mib = parts[1].parse::<u32>().ok()?;
+    Some(GpuReport {
+        kind: GpuKind::Cuda,
+        vram_mib: Some(vram_mib),
+        vendor: Some("NVIDIA".to_string()),
+        name: Some(name),
+    })
+}
+
+/// Parse `rocm-smi --showmeminfo vram --csv` output. Expects a
+/// header line + one data line per GPU. Returns the first GPU's
+/// report (multi-GPU support deferred).
+pub fn parse_rocm_smi_output(output: &str) -> Option<GpuReport> {
+    let mut lines = output.lines().filter(|l| !l.trim().is_empty());
+    let _header = lines.next()?;
+    let data = lines.next()?;
+    let parts: Vec<&str> = data.split(',').map(|s| s.trim()).collect();
+    // rocm-smi shape: `device, vram_total_b, vram_used_b`.
+    if parts.len() < 2 {
+        return None;
+    }
+    let vram_bytes: u64 = parts[1].parse().ok()?;
+    let vram_mib = (vram_bytes / 1024 / 1024) as u32;
+    Some(GpuReport {
+        kind: GpuKind::Rocm,
+        vram_mib: Some(vram_mib),
+        vendor: Some("Advanced Micro Devices, Inc.".to_string()),
+        name: Some(parts[0].to_string()),
+    })
+}
+
+/// Parse macOS `system_profiler SPDisplaysDataType -json` output.
+/// Expects the standard top-level shape:
+/// `{"SPDisplaysDataType": [{"sppci_model": "...", "_name": "..."}]}`.
+/// VRAM on Apple Silicon is shared with system RAM → returns
+/// `None` for the VRAM field (the wizard prompts the operator to
+/// pick a tier manually on Apple Silicon).
+pub fn parse_system_profiler_output(output: &str) -> Option<GpuReport> {
+    let v: serde_json::Value = serde_json::from_str(output).ok()?;
+    let display_list = v.get("SPDisplaysDataType")?.as_array()?;
+    let first = display_list.first()?;
+    let name = first
+        .get("sppci_model")
+        .and_then(|x| x.as_str())
+        .or_else(|| first.get("_name").and_then(|x| x.as_str()))?;
+    Some(GpuReport {
+        kind: GpuKind::Metal,
+        vram_mib: None, // unified memory — not directly probable here
+        vendor: Some("Apple".to_string()),
+        name: Some(name.to_string()),
+    })
+}
+
+/// Top-level classifier: pick the highest-confidence probe output.
+/// Operators on multi-vendor systems (rare; some workstations have
+/// both NVIDIA + integrated AMD) get the CUDA report because that's
+/// what the inference path uses.
+pub fn classify_from_subprocess(
+    nvidia_smi_stdout: Option<&str>,
+    rocm_smi_stdout: Option<&str>,
+    system_profiler_stdout: Option<&str>,
+) -> GpuReport {
+    if let Some(out) = nvidia_smi_stdout {
+        if let Some(r) = out.lines().find_map(parse_nvidia_smi_line) {
+            return r;
+        }
+    }
+    if let Some(out) = rocm_smi_stdout {
+        if let Some(r) = parse_rocm_smi_output(out) {
+            return r;
+        }
+    }
+    if let Some(out) = system_profiler_stdout {
+        if let Some(r) = parse_system_profiler_output(out) {
+            return r;
+        }
+    }
+    GpuReport::cpu()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── enum surface ──────────────────────────────────────────────
+
+    #[test]
+    fn gpu_kind_as_str_pinned() {
+        assert_eq!(GpuKind::Cuda.as_str(), "cuda");
+        assert_eq!(GpuKind::Rocm.as_str(), "rocm");
+        assert_eq!(GpuKind::Metal.as_str(), "metal");
+        assert_eq!(GpuKind::Cpu.as_str(), "cpu");
+    }
+
+    #[test]
+    fn can_accelerate_correct() {
+        assert!(GpuKind::Cuda.can_accelerate());
+        assert!(GpuKind::Rocm.can_accelerate());
+        assert!(GpuKind::Metal.can_accelerate());
+        assert!(!GpuKind::Cpu.can_accelerate());
+    }
+
+    #[test]
+    fn gpu_kind_snake_case_serde() {
+        assert_eq!(serde_json::to_string(&GpuKind::Cuda).unwrap(), "\"cuda\"");
+        assert_eq!(serde_json::to_string(&GpuKind::Rocm).unwrap(), "\"rocm\"");
+        assert_eq!(serde_json::to_string(&GpuKind::Metal).unwrap(), "\"metal\"");
+        assert_eq!(serde_json::to_string(&GpuKind::Cpu).unwrap(), "\"cpu\"");
+    }
+
+    // ── recommended tier ──────────────────────────────────────────
+
+    #[test]
+    fn recommends_72b_at_24gib_plus() {
+        let r = GpuReport {
+            kind: GpuKind::Cuda,
+            vram_mib: Some(24 * 1024),
+            vendor: None,
+            name: None,
+        };
+        assert_eq!(r.recommended_model_tier(), "qwen2.5-72b");
+    }
+
+    #[test]
+    fn recommends_7b_between_8_and_24gib() {
+        for mib in [8 * 1024, 16 * 1024, 24 * 1024 - 1] {
+            let r = GpuReport {
+                kind: GpuKind::Cuda,
+                vram_mib: Some(mib),
+                vendor: None,
+                name: None,
+            };
+            assert_eq!(r.recommended_model_tier(), "qwen2.5-7b");
+        }
+    }
+
+    #[test]
+    fn recommends_cloud_below_8gib() {
+        let r = GpuReport {
+            kind: GpuKind::Cuda,
+            vram_mib: Some(6 * 1024),
+            vendor: None,
+            name: None,
+        };
+        assert_eq!(r.recommended_model_tier(), "cloud");
+    }
+
+    #[test]
+    fn recommends_cloud_for_unknown_vram() {
+        let r = GpuReport::cpu();
+        assert_eq!(r.recommended_model_tier(), "cloud");
+    }
+
+    #[test]
+    fn cpu_constructor_zeros_optional_fields() {
+        let r = GpuReport::cpu();
+        assert_eq!(r.kind, GpuKind::Cpu);
+        assert!(r.vram_mib.is_none());
+        assert!(r.vendor.is_none());
+        assert!(r.name.is_none());
+    }
+
+    // ── nvidia-smi parser ─────────────────────────────────────────
+
+    #[test]
+    fn parse_nvidia_smi_line_extracts_name_and_vram() {
+        let r = parse_nvidia_smi_line("NVIDIA GeForce RTX 4090, 24564").unwrap();
+        assert_eq!(r.kind, GpuKind::Cuda);
+        assert_eq!(r.vram_mib, Some(24_564));
+        assert_eq!(r.name.as_deref(), Some("NVIDIA GeForce RTX 4090"));
+        assert_eq!(r.vendor.as_deref(), Some("NVIDIA"));
+    }
+
+    #[test]
+    fn parse_nvidia_smi_line_handles_whitespace() {
+        let r = parse_nvidia_smi_line("  NVIDIA RTX A6000 ,  48000  ").unwrap();
+        assert_eq!(r.vram_mib, Some(48_000));
+        assert_eq!(r.name.as_deref(), Some("NVIDIA RTX A6000"));
+    }
+
+    #[test]
+    fn parse_nvidia_smi_line_empty_returns_none() {
+        assert!(parse_nvidia_smi_line("").is_none());
+        assert!(parse_nvidia_smi_line("   ").is_none());
+    }
+
+    #[test]
+    fn parse_nvidia_smi_line_missing_vram_returns_none() {
+        assert!(parse_nvidia_smi_line("just one field").is_none());
+    }
+
+    #[test]
+    fn parse_nvidia_smi_line_invalid_vram_returns_none() {
+        assert!(parse_nvidia_smi_line("RTX 4090, twenty four thousand").is_none());
+    }
+
+    // ── rocm-smi parser ───────────────────────────────────────────
+
+    #[test]
+    fn parse_rocm_smi_output_extracts_bytes_to_mib() {
+        // 16 GiB in bytes
+        let output = "device,vram_total_b,vram_used_b\nrx7900xt,17179869184,4194304";
+        let r = parse_rocm_smi_output(output).unwrap();
+        assert_eq!(r.kind, GpuKind::Rocm);
+        assert_eq!(r.vram_mib, Some(16 * 1024));
+        assert_eq!(r.name.as_deref(), Some("rx7900xt"));
+    }
+
+    #[test]
+    fn parse_rocm_smi_output_missing_data_line_returns_none() {
+        assert!(parse_rocm_smi_output("just a header").is_none());
+    }
+
+    #[test]
+    fn parse_rocm_smi_output_malformed_returns_none() {
+        let bad = "device,vram_total_b\nrx,not-a-number";
+        assert!(parse_rocm_smi_output(bad).is_none());
+    }
+
+    // ── system_profiler parser ────────────────────────────────────
+
+    #[test]
+    fn parse_system_profiler_extracts_apple_silicon() {
+        let json = r#"{"SPDisplaysDataType":[{"sppci_model":"Apple M2 Max","_name":"M2 Max"}]}"#;
+        let r = parse_system_profiler_output(json).unwrap();
+        assert_eq!(r.kind, GpuKind::Metal);
+        assert_eq!(r.name.as_deref(), Some("Apple M2 Max"));
+        assert_eq!(r.vendor.as_deref(), Some("Apple"));
+        // Apple unified memory — VRAM probe is None on purpose.
+        assert!(r.vram_mib.is_none());
+    }
+
+    #[test]
+    fn parse_system_profiler_falls_back_to_underscore_name() {
+        // Older macOS versions emit `_name` only.
+        let json = r#"{"SPDisplaysDataType":[{"_name":"M1"}]}"#;
+        let r = parse_system_profiler_output(json).unwrap();
+        assert_eq!(r.name.as_deref(), Some("M1"));
+    }
+
+    #[test]
+    fn parse_system_profiler_empty_array_returns_none() {
+        let json = r#"{"SPDisplaysDataType":[]}"#;
+        assert!(parse_system_profiler_output(json).is_none());
+    }
+
+    #[test]
+    fn parse_system_profiler_malformed_returns_none() {
+        assert!(parse_system_profiler_output("not json").is_none());
+        assert!(parse_system_profiler_output(r#"{"OtherKey":[]}"#).is_none());
+    }
+
+    // ── top-level classifier ──────────────────────────────────────
+
+    #[test]
+    fn classify_prefers_nvidia_when_present() {
+        let r = classify_from_subprocess(
+            Some("RTX 4090, 24000"),
+            Some("device,vram_total_b\nrx,8589934592"),
+            Some(r#"{"SPDisplaysDataType":[{"_name":"M1"}]}"#),
+        );
+        assert_eq!(r.kind, GpuKind::Cuda);
+    }
+
+    #[test]
+    fn classify_falls_back_to_rocm_when_no_nvidia() {
+        let r = classify_from_subprocess(
+            None,
+            Some("device,vram_total_b\nrx,17179869184"),
+            None,
+        );
+        assert_eq!(r.kind, GpuKind::Rocm);
+    }
+
+    #[test]
+    fn classify_falls_back_to_metal_when_no_other_gpu() {
+        let r = classify_from_subprocess(
+            None,
+            None,
+            Some(r#"{"SPDisplaysDataType":[{"_name":"M1"}]}"#),
+        );
+        assert_eq!(r.kind, GpuKind::Metal);
+    }
+
+    #[test]
+    fn classify_falls_back_to_cpu_when_all_probes_silent() {
+        let r = classify_from_subprocess(None, None, None);
+        assert_eq!(r.kind, GpuKind::Cpu);
+        assert!(r.vram_mib.is_none());
+    }
+
+    #[test]
+    fn classify_skips_unparsable_nvidia_smi_and_uses_rocm() {
+        let r = classify_from_subprocess(
+            Some("garbage stdout"),
+            Some("device,vram_total_b\nrx,8589934592"),
+            None,
+        );
+        assert_eq!(r.kind, GpuKind::Rocm);
+    }
+}
