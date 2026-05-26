@@ -129,6 +129,55 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     })
 }
 
+/// Concern-2 fix (Session 24) — sentinel-redaction name prefix.
+///
+/// `forget_by_topic_with_cluster_propagation` writes a row into
+/// `idx_profile_redactions` with `field = "{TOMBSTONE_SENTINEL_PREFIX}{topic_lowercase}"`
+/// alongside the SQLite wipe + 0xF1 WAL frame. This sentinel row:
+///
+/// - Is NOT a real profile field — the `_tombstone.` namespace
+///   never collides with operator dot-paths like `identity.name`
+///   or `skills.rust`.
+/// - Carries `never_recreate = true` so the existing claim-guard
+///   path (`ProfileClaimGuard::check_all`) hard-rejects any future
+///   extraction that mentions the topic, even on this node.
+/// - Will be the source of truth the gossip-receive path consults
+///   when the cluster ships (Phase 5+): an inbound episode/profile
+///   frame whose text matches an active `_tombstone.<topic>` row
+///   gets dropped instead of replayed.
+///
+/// Choosing the sentinel namespace (rather than a new table)
+/// reuses the existing redaction registry's UNIQUE-active index +
+/// the cluster-replication that `idx_profile_redactions` gets for
+/// free when cluster gossip lands.
+pub const TOMBSTONE_SENTINEL_PREFIX: &str = "_tombstone.";
+
+/// Concern-2 fix (Session 24) — derive the canonical sentinel
+/// field name for a tombstone topic. Lowercases the topic so
+/// `forget("Berlin")` + `forget("berlin")` collapse to the same
+/// sentinel + the UNIQUE active-redaction index dedupes
+/// repeat-forgets.
+pub fn tombstone_sentinel_field(topic: &str) -> String {
+    format!("{}{}", TOMBSTONE_SENTINEL_PREFIX, topic.trim().to_lowercase())
+}
+
+/// Concern-2 fix (Session 24) — true iff `field` is a tombstone
+/// sentinel row (i.e. a `_tombstone.<topic>` entry in
+/// `idx_profile_redactions`). The cluster gossip-receive path will
+/// pre-filter inbound frames by checking every active redaction's
+/// `is_tombstone_sentinel(field)` flag before replaying.
+pub fn is_tombstone_sentinel(field: &str) -> bool {
+    field.starts_with(TOMBSTONE_SENTINEL_PREFIX)
+}
+
+/// Concern-2 fix (Session 24) — extract the topic from a tombstone
+/// sentinel field. Returns `None` for non-sentinel fields. Useful
+/// for the gossip-receive matcher that asks "does this inbound
+/// frame's text match any tombstoned topic?".
+pub fn topic_from_sentinel(field: &str) -> Option<&str> {
+    field.strip_prefix(TOMBSTONE_SENTINEL_PREFIX)
+}
+
 /// Like [`forget_by_topic`] but additionally emits a
 /// `EVENT_TYPE_TOMBSTONE_REQUESTED` (0xF1) WAL frame recording the
 /// erasure intent + scope. This is the audit-anchor that survives
@@ -167,6 +216,88 @@ pub async fn forget_by_topic_with_audit(
         .append(header, payload)
         .await
         .context("append TOMBSTONE_REQUESTED WAL frame")?;
+    Ok(report)
+}
+
+/// Concern-2 fix (Session 24) — cluster-aware variant of
+/// [`forget_by_topic_with_audit`]. Same SQLite wipe + 0xF1 WAL
+/// emit, PLUS writes a sentinel redaction row
+/// `_tombstone.<topic>` (via [`crate::profile::redaction::add`])
+/// with `never_recreate = true`. The sentinel:
+///
+/// 1. Blocks LOCAL re-extraction immediately — the existing
+///    `ProfileClaimGuard::check_all` rejects any future delta
+///    containing the topic.
+/// 2. Will be the source of truth the cluster gossip-receive
+///    path checks (Phase 5+) before replaying any inbound
+///    episode/profile frame. A `_tombstone.berlin` row on
+///    node A prevents node B's buffered "Berlin" episodes
+///    from being re-applied when B reconnects.
+///
+/// The pre-existing `forget_by_topic_with_audit` stays for the
+/// pure-local path; this new variant is the right choice anywhere
+/// the operator may be running cluster mode (now or in future).
+///
+/// Idempotency: a repeat call against the same topic is a no-op
+/// for the sentinel (the UNIQUE active-redaction index drops the
+/// duplicate insert silently) but still re-wipes any new SQLite
+/// rows that match + still emits a fresh 0xF1 audit frame.
+pub async fn forget_by_topic_with_cluster_propagation(
+    conn: &Connection,
+    topic: &str,
+    now_unix: i64,
+    source: &str,
+    writer: &crate::wal::writer::WalWriterHandle,
+) -> Result<ForgetReport> {
+    // 1. Local wipe + 0xF1 WAL frame — the existing audit-anchored path.
+    let report = forget_by_topic_with_audit(conn, topic, now_unix, source, writer).await?;
+
+    // 2. Sentinel redaction. Idempotent via the UNIQUE active-redaction
+    //    index; a duplicate insert returns an Err that we deliberately
+    //    swallow because "tombstone already present" is the desired
+    //    end-state. Any OTHER error (e.g. schema missing) propagates
+    //    so the caller sees a real problem.
+    let field = tombstone_sentinel_field(topic);
+    let reason = format!(
+        "forget_by_topic_with_cluster_propagation at ts_unix={now_unix} (source={source})"
+    );
+    match crate::profile::redaction::add(
+        conn,
+        &field,
+        /*never_recreate=*/ true,
+        Some(&reason),
+        source,
+        now_unix,
+    ) {
+        Ok(_id) => {
+            tracing::info!(
+                topic = %topic,
+                field = %field,
+                "Concern-2: tombstone sentinel redaction written; future re-extraction blocked",
+            );
+        }
+        Err(e) => {
+            // The UNIQUE active-redaction index path. Distinguish
+            // "already present" (fine) from any other DB error.
+            // anyhow wraps the rusqlite error in a `with_context`
+            // chain — walk the chain so the UNIQUE-violation match
+            // catches the underlying SQLite error message regardless
+            // of how many context layers anyhow added on top.
+            let is_unique_violation = e.chain().any(|err| {
+                let msg = err.to_string();
+                msg.contains("UNIQUE") || msg.contains("constraint failed")
+            });
+            if !is_unique_violation {
+                return Err(e).context("write tombstone sentinel redaction");
+            }
+            tracing::debug!(
+                topic = %topic,
+                field = %field,
+                "Concern-2: tombstone sentinel already active (repeat forget) — no-op",
+            );
+        }
+    }
+
     Ok(report)
 }
 
@@ -317,5 +448,169 @@ mod tests {
         assert_eq!(payload["source"], "cli");
         assert_eq!(payload["ts_unix"], 1700);
         assert!(payload["episode_rows"].as_i64().unwrap() >= 1);
+    }
+
+    // ── Concern-2 (Session 24) tombstone sentinel + cluster path ──────
+
+    #[test]
+    fn tombstone_sentinel_field_lowercases_and_prefixes() {
+        // Case-collapse is the spec: forget("Berlin") and
+        // forget("BERLIN") + forget("berlin") all collapse to the
+        // SAME sentinel so the UNIQUE active-redaction index dedupes
+        // repeat-forgets cleanly.
+        assert_eq!(tombstone_sentinel_field("Berlin"), "_tombstone.berlin");
+        assert_eq!(tombstone_sentinel_field("BERLIN"), "_tombstone.berlin");
+        assert_eq!(tombstone_sentinel_field("  berlin  "), "_tombstone.berlin");
+    }
+
+    #[test]
+    fn is_tombstone_sentinel_recognises_only_prefixed_fields() {
+        assert!(is_tombstone_sentinel("_tombstone.berlin"));
+        assert!(is_tombstone_sentinel("_tombstone."));
+        assert!(!is_tombstone_sentinel("identity.name"));
+        assert!(!is_tombstone_sentinel("skills.rust"));
+        assert!(!is_tombstone_sentinel(""));
+        // Drift guard: a future profile-field starting with `_` is
+        // NOT a tombstone unless it matches the full prefix.
+        assert!(!is_tombstone_sentinel("_private.x"));
+    }
+
+    #[test]
+    fn topic_from_sentinel_extracts_or_returns_none() {
+        assert_eq!(topic_from_sentinel("_tombstone.berlin"), Some("berlin"));
+        assert_eq!(topic_from_sentinel("_tombstone."), Some(""));
+        assert_eq!(topic_from_sentinel("identity.name"), None);
+    }
+
+    #[tokio::test]
+    async fn cluster_propagation_writes_sentinel_redaction_alongside_wipe() {
+        use crate::wal::events::EVENT_TYPE_TOMBSTONE_REQUESTED;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+        use tokio::fs::read;
+
+        let conn = seed_db();
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("cluster.wal");
+        let (writer, join) = spawn(seg.clone()).unwrap();
+
+        let report = forget_by_topic_with_cluster_propagation(
+            &conn, "AcmeCorp", 1700, "cli", &writer,
+        )
+        .await
+        .unwrap();
+        assert!(
+            report.episode_rows >= 1,
+            "local wipe must still happen (Concern-2 layers ON TOP of forget_with_audit)",
+        );
+
+        // Sentinel redaction landed.
+        let sentinel_field = tombstone_sentinel_field("AcmeCorp");
+        let row = crate::profile::redaction::lookup_active(&conn, &sentinel_field)
+            .unwrap()
+            .expect("sentinel redaction must be present after cluster propagation");
+        assert!(
+            row.never_recreate,
+            "sentinel redaction must carry never_recreate=true so claim-guard blocks future deltas",
+        );
+
+        drop(writer);
+        let _ = join.await;
+
+        // 0xF1 audit frame still emitted (layered ON TOP, not instead).
+        let bytes = read(&seg).await.unwrap();
+        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+        let mut found_0xf1 = false;
+        while !cursor.is_empty() {
+            let frame = decode_frame(cursor).expect("decode frame");
+            if frame.header.event_type == EVENT_TYPE_TOMBSTONE_REQUESTED {
+                found_0xf1 = true;
+                break;
+            }
+            cursor = &cursor[frame.header.total_len as usize..];
+        }
+        assert!(
+            found_0xf1,
+            "cluster-propagation variant must STILL emit the 0xF1 audit anchor",
+        );
+    }
+
+    #[tokio::test]
+    async fn cluster_propagation_is_idempotent_on_repeat_forget() {
+        // Operator runs forget("X"), then forget("X") again. The
+        // sentinel UNIQUE active-redaction index would reject the
+        // second insert; the function must swallow that as "already
+        // tombstoned" not propagate as an error.
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+
+        let conn = seed_db();
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("cluster-repeat.wal");
+        let (writer, join) = spawn(seg).unwrap();
+
+        forget_by_topic_with_cluster_propagation(&conn, "AcmeCorp", 1700, "cli", &writer)
+            .await
+            .expect("first call");
+        // Second call must NOT bail with a UNIQUE constraint Err.
+        let report2 = forget_by_topic_with_cluster_propagation(
+            &conn, "AcmeCorp", 1800, "cli", &writer,
+        )
+        .await
+        .expect("second call must be idempotent");
+        // Second call's local-wipe rows are 0 because the first call
+        // already wiped them — but no Err.
+        assert_eq!(report2.episode_rows, 0);
+        // Sentinel still exactly one active row (UNIQUE index).
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_profile_redactions \
+                 WHERE field = ?1 AND revoked_at IS NULL",
+                rusqlite::params![tombstone_sentinel_field("AcmeCorp")],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "exactly one active sentinel after repeat forget");
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn cluster_propagation_case_collapses_topic_for_sentinel_dedup() {
+        // forget("Berlin") followed by forget("berlin") must produce
+        // ONE sentinel — case-collapse + dedup contract pinned.
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+
+        let conn = seed_db();
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("cluster-case.wal");
+        let (writer, join) = spawn(seg).unwrap();
+
+        forget_by_topic_with_cluster_propagation(&conn, "Berlin", 100, "cli", &writer)
+            .await
+            .unwrap();
+        forget_by_topic_with_cluster_propagation(&conn, "berlin", 200, "cli", &writer)
+            .await
+            .unwrap();
+        forget_by_topic_with_cluster_propagation(&conn, "BERLIN", 300, "cli", &writer)
+            .await
+            .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM idx_profile_redactions \
+                 WHERE field = '_tombstone.berlin' AND revoked_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1, "case-collapse + dedup must yield ONE sentinel");
+
+        drop(writer);
+        let _ = join.await;
     }
 }
