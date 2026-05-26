@@ -12,12 +12,17 @@
 //! this command accepts a `--from-jsonl <path>` flag for the
 //! operator (or test) to feed in a synthetic payload list.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
+use crate::config::FreedomConfig;
+use crate::wal::events::EVENT_TYPE_UPDATER_TASK_RESULT;
+use crate::wal::frame::decode_frame;
+use crate::wal::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
 use crate::wal::payloads_u04::{UpdaterTaskResultPayload, render_updater_status};
+use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
 #[derive(Args, Debug, Clone)]
 pub struct UpdaterArgs {
@@ -28,13 +33,22 @@ pub struct UpdaterArgs {
 #[derive(Subcommand, Debug, Clone)]
 pub enum UpdaterAction {
     /// Print the most recent updater task results in a readable
-    /// table. Wired against a JSONL file today (`--from-jsonl`);
-    /// the live WAL-read path lands when U-01/02/03 surface the
-    /// reader hook.
+    /// table.
+    ///
+    /// Default mode reads from the live WAL at
+    /// `~/.neoth/wal/000001.wal`. Override with `--wal-segment
+    /// <path>` to read a specific segment, or `--from-jsonl
+    /// <path>` for a synthetic file (operator dry-runs +
+    /// integration tests).
     Status {
+        /// Path to a specific WAL segment to scan for
+        /// `0x45 UPDATER_TASK_RESULT` frames. Defaults to
+        /// `~/.neoth/wal/000001.wal`.
+        #[arg(long, value_name = "PATH", conflicts_with = "from_jsonl")]
+        wal_segment: Option<PathBuf>,
         /// Path to a JSONL file containing one
-        /// `UpdaterTaskResultPayload` per line. When omitted, the
-        /// command prints the friendly "no record yet" message.
+        /// `UpdaterTaskResultPayload` per line. Overrides the WAL
+        /// scan when set; used by tests + operator dry-runs.
         #[arg(long, value_name = "PATH")]
         from_jsonl: Option<PathBuf>,
     },
@@ -45,10 +59,16 @@ pub enum UpdaterAction {
 
 pub fn run_updater(args: UpdaterArgs) -> Result<()> {
     match args.action {
-        UpdaterAction::Status { from_jsonl } => {
-            let results = match from_jsonl {
-                Some(path) => load_results_from_jsonl(&path)?,
-                None => Vec::new(),
+        UpdaterAction::Status {
+            wal_segment,
+            from_jsonl,
+        } => {
+            let results = if let Some(path) = from_jsonl {
+                load_results_from_jsonl(&path)?
+            } else {
+                let segment = wal_segment
+                    .unwrap_or_else(|| FreedomConfig::default_wal_dir().join("000001.wal"));
+                load_results_from_wal(&segment)?
             };
             print!("{}", render_updater_status(&results));
             Ok(())
@@ -62,6 +82,53 @@ pub fn run_updater(args: UpdaterArgs) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Scan a WAL segment for `0x45 UPDATER_TASK_RESULT` frames and
+/// deserialize each payload. Frame ordering is preserved, so the
+/// most recent result-per-task is the LAST entry per task_kind
+/// in the returned Vec.
+///
+/// Returns an empty Vec when the segment file doesn't exist
+/// (operator hasn't started `neoth serve` yet) — same friendly
+/// behaviour as the JSONL path.
+pub fn load_results_from_wal(segment_path: &Path) -> Result<Vec<UpdaterTaskResultPayload>> {
+    let bytes = match std::fs::read(segment_path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    if bytes.len() < SEGMENT_HEADER_LEN {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
+    while !cursor.is_empty() {
+        match decode_frame(cursor) {
+            Ok(decoded) => {
+                if decoded.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
+                    if let Ok(payload) =
+                        serde_json::from_slice::<UpdaterTaskResultPayload>(decoded.payload)
+                    {
+                        out.push(payload);
+                    }
+                }
+                // Compute consumed length: preamble + header + reserved
+                // + payload + crc. The frame struct doesn't expose a
+                // single .frame_length() helper, so we compute it here.
+                let reserved_len = decoded.header.reserved_len as usize;
+                let payload_len = decoded.header.payload_len as usize;
+                let consumed =
+                    PREAMBLE_LEN + HEADER_BODY_LEN + reserved_len + payload_len + CRC_LEN;
+                if consumed == 0 || consumed > cursor.len() {
+                    break;
+                }
+                cursor = &cursor[consumed..];
+            }
+            Err(_) => break,
+        }
+    }
+    Ok(out)
 }
 
 /// Load `UpdaterTaskResultPayload` entries from a JSONL file —
@@ -127,12 +194,18 @@ mod tests {
     }
 
     #[test]
-    fn run_status_no_jsonl_prints_bootstrap_hint() {
-        // Just verify no error from the no-args path.
+    fn run_status_with_explicit_missing_wal_prints_bootstrap_hint() {
+        // Point at a tempdir-segment that doesn't exist. The WAL
+        // reader returns empty + render_updater_status prints the
+        // "no record yet" friendly line. No error.
+        let dir = tempfile::tempdir().unwrap();
         let args = UpdaterArgs {
-            action: UpdaterAction::Status { from_jsonl: None },
+            action: UpdaterAction::Status {
+                wal_segment: Some(dir.path().join("nonexistent.wal")),
+                from_jsonl: None,
+            },
         };
-        run_updater(args).expect("status no-jsonl");
+        run_updater(args).expect("status with missing wal");
     }
 
     #[test]
@@ -143,10 +216,66 @@ mod tests {
         std::fs::write(&path, format!("{line}\n")).unwrap();
         let args = UpdaterArgs {
             action: UpdaterAction::Status {
+                wal_segment: None,
                 from_jsonl: Some(path),
             },
         };
         run_updater(args).expect("status with jsonl");
+    }
+
+    #[test]
+    fn load_from_wal_missing_segment_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = load_results_from_wal(&dir.path().join("absent.wal")).unwrap();
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn load_from_wal_too_short_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("short.wal");
+        std::fs::write(&path, [0u8; 5]).unwrap();
+        let r = load_results_from_wal(&path).unwrap();
+        assert!(r.is_empty());
+    }
+
+    #[tokio::test]
+    async fn load_from_wal_returns_emitted_results_only() {
+        // Spawn a WAL writer, emit one 0x45 UPDATER_TASK_RESULT
+        // frame + one 0x10 BOOT frame, scan back. Only the 0x45
+        // payload should round-trip.
+        use crate::wal::events::EVENT_TYPE_BOOT;
+        use crate::wal::{EventFlags, HeaderBuilder};
+
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("u04.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        // Emit one unrelated BOOT frame first.
+        let boot_payload = b"boot";
+        let boot_header = HeaderBuilder::new(EVENT_TYPE_BOOT, boot_payload).build();
+        writer
+            .append(boot_header, boot_payload.to_vec())
+            .await
+            .unwrap();
+
+        // Emit the UPDATER_TASK_RESULT.
+        let payload = sample_result();
+        let body = serde_json::to_vec(&payload).unwrap();
+        let header = HeaderBuilder::new(EVENT_TYPE_UPDATER_TASK_RESULT, &body)
+            .flags(EventFlags::SYNTHETIC)
+            .build();
+        writer.append(header, body).await.unwrap();
+
+        // Tiny wait so fsync flushes; the synchronous fs::read
+        // below otherwise races the writer thread.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        drop(writer);
+
+        let results = load_results_from_wal(&seg).unwrap();
+        assert_eq!(results.len(), 1, "only the 0x45 frame should match");
+        assert_eq!(results[0].task_kind, payload.task_kind);
+        assert_eq!(results[0].ts_unix, payload.ts_unix);
     }
 
     #[test]
