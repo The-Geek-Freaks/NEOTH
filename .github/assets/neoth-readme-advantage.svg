@@ -19,55 +19,81 @@
   <rect x="1" y="1" width="1398" height="558" rx="39" stroke="white" stroke-opacity=".08"/>
 
   <text x="700" y="58" text-anchor="middle" fill="white" class="sans" font-size="34" font-weight="200" letter-spacing="5">WHERE NEOTH FITS</text>
-  <text x="700" y="91" text-anchor="middle" fill="#929292" class="sans" font-size="15">Not the loudest single feature. The overlap: daily buddy, durable memory, coding workflow, operator controls.</text>
+  <text x="700" y="91" text-anchor="middle" fill="#929292" class="sans" font-size="15">The overlap: daily buddy, durable memory, coding workflow and operator controls.</text>
 
-  <g transform="translate(145 125)">
-    <rect width="820" height="340" rx="24" fill="#080808" stroke="white" stroke-opacity=".08"/>
-    <path d="M86 278 H750" stroke="#666" stroke-width="1.4" marker-end="url(#axisArrow)"/>
-    <path d="M86 278 V56" stroke="#666" stroke-width="1.4" marker-end="url(#axisArrow)"/>
-    <path d="M86 222 H750 M86 166 H750 M86 110 H750" stroke="white" stroke-opacity=".045"/>
-    <path d="M252 278 V56 M418 278 V56 M584 278 V56" stroke="white" stroke-opacity=".045"/>
+  <g transform="translate(60 126)">
+    <rect width="870" height="350" rx="24" fill="#080808" stroke="white" stroke-opacity=".08"/>
+    <path d="M88 286 H802" stroke="#666" stroke-width="1.4" marker-end="url(#axisArrow)"/>
+    <path d="M88 286 V56" stroke="#666" stroke-width="1.4" marker-end="url(#axisArrow)"/>
+    <path d="M88 228 H802 M88 170 H802 M88 112 H802" stroke="white" stroke-opacity=".05"/>
+    <path d="M266 286 V56 M444 286 V56 M622 286 V56" stroke="white" stroke-opacity=".05"/>
 
-    <text x="418" y="324" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="14">single-session assistant</text>
-    <text x="748" y="324" text-anchor="end" fill="#00ff80" class="sans" font-size="14">durable audited memory</text>
-    <text x="36" y="288" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="14" transform="rotate(-90 36 288)">consumer-simple</text>
-    <text x="36" y="78" text-anchor="middle" fill="#05d5ff" class="sans" font-size="14" transform="rotate(-90 36 78)">operator-grade</text>
+    <text x="222" y="329" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="14">single-session assistant</text>
+    <text x="800" y="329" text-anchor="end" fill="#00ff80" class="sans" font-size="14">durable audited memory</text>
+    <text x="34" y="292" text-anchor="middle" fill="#8d8d8d" class="sans" font-size="14" transform="rotate(-90 34 292)">consumer-simple</text>
+    <text x="34" y="78" text-anchor="middle" fill="#05d5ff" class="sans" font-size="14" transform="rotate(-90 34 78)">operator-grade</text>
 
-    <g transform="translate(626 86)" filter="url(#glow)">
-      <circle r="38" fill="#00ff80" fill-opacity=".12" stroke="#00ff80" stroke-opacity=".72"/>
+    <text x="172" y="262" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">plain chat</text>
+    <text x="334" y="248" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">vault tools</text>
+    <text x="486" y="92" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">agent workflow</text>
+
+    <g transform="translate(690 82)" filter="url(#glow)">
+      <circle r="40" fill="#00ff80" fill-opacity=".12" stroke="#00ff80" stroke-opacity=".74"/>
       <text x="0" y="6" text-anchor="middle" fill="white" class="sans" font-size="17" font-weight="600">NEOTH</text>
     </g>
-    <g transform="translate(472 116)">
-      <circle r="26" fill="#05d5ff" fill-opacity=".09" stroke="#05d5ff" stroke-opacity=".48"/>
-      <text x="0" y="52" text-anchor="middle" fill="#ddd" class="sans" font-size="15">Hermes</text>
+    <g transform="translate(520 120)">
+      <circle r="27" fill="#05d5ff" fill-opacity=".09" stroke="#05d5ff" stroke-opacity=".5"/>
+      <text x="0" y="54" text-anchor="middle" fill="#ddd" class="sans" font-size="15">Hermes</text>
     </g>
-    <g transform="translate(548 216)">
-      <circle r="26" fill="#ff2a6d" fill-opacity=".09" stroke="#ff2a6d" stroke-opacity=".48"/>
-      <text x="0" y="52" text-anchor="middle" fill="#ddd" class="sans" font-size="15">OpenHuman</text>
+    <g transform="translate(608 230)">
+      <circle r="27" fill="#ff2a6d" fill-opacity=".09" stroke="#ff2a6d" stroke-opacity=".5"/>
+      <text x="0" y="54" text-anchor="middle" fill="#ddd" class="sans" font-size="15">OpenHuman</text>
     </g>
-    <g transform="translate(388 136)">
-      <circle r="26" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".42"/>
-      <text x="0" y="52" text-anchor="middle" fill="#ddd" class="sans" font-size="15">OpenClaw</text>
+    <g transform="translate(408 145)">
+      <circle r="27" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".44"/>
+      <text x="0" y="54" text-anchor="middle" fill="#ddd" class="sans" font-size="15">OpenClaw</text>
     </g>
 
-    <g class="mono" font-size="10" letter-spacing="2.4">
-      <rect x="560" y="136" width="164" height="30" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".24"/>
-      <text x="642" y="156" text-anchor="middle" fill="#00ff80">NO YAML PATH</text>
-      <rect x="560" y="176" width="164" height="30" rx="8" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".24"/>
-      <text x="642" y="196" text-anchor="middle" fill="#05d5ff">WAL EVIDENCE</text>
-      <rect x="560" y="216" width="164" height="30" rx="8" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".24"/>
-      <text x="642" y="236" text-anchor="middle" fill="#ff2a6d">BUDDY + CODE + MESH</text>
+    <g class="mono" font-size="10" letter-spacing="2.3">
+      <rect x="612" y="136" width="166" height="30" rx="8" fill="#00ff80" fill-opacity=".08" stroke="#00ff80" stroke-opacity=".24"/>
+      <text x="695" y="156" text-anchor="middle" fill="#00ff80">NO YAML PATH</text>
+      <rect x="612" y="176" width="166" height="30" rx="8" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".24"/>
+      <text x="695" y="196" text-anchor="middle" fill="#05d5ff">WAL EVIDENCE</text>
+      <rect x="612" y="216" width="166" height="30" rx="8" fill="#ff2a6d" fill-opacity=".08" stroke="#ff2a6d" stroke-opacity=".24"/>
+      <text x="695" y="236" text-anchor="middle" fill="#ff2a6d">BUDDY + CODE + MESH</text>
     </g>
   </g>
 
-  <g transform="translate(1020 142)" class="sans">
-    <rect width="290" height="294" rx="24" fill="#101010" stroke="white" stroke-opacity=".09"/>
-    <text x="28" y="42" fill="#00ff80" class="mono" font-size="11" letter-spacing="4">READ THE MAP</text>
-    <text x="28" y="82" fill="white" font-size="21" font-weight="300">NEOTH is not just one lane.</text>
-    <text x="28" y="116" fill="#929292" font-size="14">Hermes is strong on persistent agent workflow.</text>
-    <text x="28" y="150" fill="#929292" font-size="14">OpenHuman is strong on consumer memory and onboarding.</text>
-    <text x="28" y="184" fill="#929292" font-size="14">OpenClaw is strong on gateway breadth and live tools.</text>
-    <path d="M28 214 H262" stroke="white" stroke-opacity=".08"/>
-    <text x="28" y="248" fill="#ddd" font-size="14">NEOTH combines the friendly path with operator-grade audit, memory, code, plugins, and mesh.</text>
+  <g transform="translate(970 126)" class="sans">
+    <rect width="350" height="350" rx="24" fill="#101010" stroke="white" stroke-opacity=".09"/>
+    <text x="28" y="44" fill="#00ff80" class="mono" font-size="11" letter-spacing="4">READ THE MAP</text>
+    <text x="28" y="82" fill="white" font-size="20" font-weight="300">NEOTH is not just one lane.</text>
+
+    <text x="28" y="122" fill="#929292" font-size="14">
+      <tspan x="28" y="122">Hermes:</tspan>
+      <tspan x="28" y="142">persistent server-agent</tspan>
+      <tspan x="28" y="162">workflow.</tspan>
+    </text>
+
+    <text x="28" y="198" fill="#929292" font-size="14">
+      <tspan x="28" y="198">OpenHuman:</tspan>
+      <tspan x="28" y="218">consumer memory and</tspan>
+      <tspan x="28" y="238">friendly onboarding.</tspan>
+    </text>
+
+    <text x="28" y="274" fill="#929292" font-size="14">
+      <tspan x="28" y="274">OpenClaw:</tspan>
+      <tspan x="28" y="294">gateway breadth, live</tspan>
+      <tspan x="28" y="314">tools and channels.</tspan>
+    </text>
+
+    <path d="M210 110 V330" stroke="white" stroke-opacity=".08"/>
+    <text x="230" y="142" fill="#ddd" font-size="14">
+      <tspan x="230" y="142">NEOTH combines</tspan>
+      <tspan x="230" y="162">friendly setup</tspan>
+      <tspan x="230" y="182">with audit, memory,</tspan>
+      <tspan x="230" y="202">code, plugins and</tspan>
+      <tspan x="230" y="222">private mesh.</tspan>
+    </text>
   </g>
 </svg>
