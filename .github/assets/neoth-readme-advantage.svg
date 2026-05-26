@@ -35,7 +35,7 @@
 
     <text x="172" y="262" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">plain chat</text>
     <text x="334" y="248" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">vault tools</text>
-    <text x="486" y="92" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">agent workflow</text>
+    <text x="486" y="92" fill="#4d4d4d" class="sans" font-size="20" font-weight="200">learning workflow</text>
 
     <g transform="translate(690 82)" filter="url(#glow)">
       <circle r="40" fill="#00ff80" fill-opacity=".12" stroke="#00ff80" stroke-opacity=".74"/>
@@ -71,8 +71,8 @@
 
     <text x="28" y="122" fill="#929292" font-size="14">
       <tspan x="28" y="122">Hermes:</tspan>
-      <tspan x="28" y="142">persistent server-agent</tspan>
-      <tspan x="28" y="162">workflow.</tspan>
+      <tspan x="28" y="142">self-improving skills</tspan>
+      <tspan x="28" y="162">and remote workflow.</tspan>
     </text>
 
     <text x="28" y="198" fill="#929292" font-size="14">
@@ -83,8 +83,8 @@
 
     <text x="28" y="274" fill="#929292" font-size="14">
       <tspan x="28" y="274">OpenClaw:</tspan>
-      <tspan x="28" y="294">gateway breadth, live</tspan>
-      <tspan x="28" y="314">tools and channels.</tspan>
+      <tspan x="28" y="294">gateway breadth, voice,</tspan>
+      <tspan x="28" y="314">nodes and live canvas.</tspan>
     </text>
 
     <path d="M210 110 V330" stroke="white" stroke-opacity=".08"/>
