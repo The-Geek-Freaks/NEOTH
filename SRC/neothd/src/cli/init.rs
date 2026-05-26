@@ -375,6 +375,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step6f_import_jarvis(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step6g_credential_import(&args, interactive, &neoth_dir).await;
+    step6h_install_recommended(&args, interactive, &neoth_dir);
     step7_autonomy(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step7b_auto_update(&args, interactive, &mut state)?;
@@ -2873,6 +2874,94 @@ fn write_credential_import_sidecar(
     }
     std::fs::rename(&tmp_path, &final_path)?;
     Ok(final_path)
+}
+
+/// W-05 (Session 25) — wizard step 6h: install-command preview.
+///
+/// Reads the detect cache produced by `step1b_detect_environment`
+/// (W-04), identifies operator-visible missing dev tools (docker,
+/// node) and renders the per-OS install argv via
+/// `wizard::install_step::FallbackChain::for_host()` +
+/// `dry_run_install_commands`. The operator copies + runs the
+/// commands manually — the wizard NEVER executes privileged
+/// installs on the operator's behalf. This keeps the wizard's
+/// surface "informational" and matches AGENTER's hard rule about
+/// not invoking package managers without explicit go.
+///
+/// Non-interactive runs skip entirely. Operators who want to
+/// audit the chain without prompts use
+/// `neoth wizard install --dry-run` (CLI surface in W-05b).
+fn step6h_install_recommended(args: &InitArgs, interactive: bool, neoth_dir: &std::path::Path) {
+    info!("wizard step 6h: install-command preview (W-05)");
+    if !interactive || args.non_interactive {
+        debug!("skipping install-command preview in non-interactive mode");
+        return;
+    }
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let Some(report) = crate::installers::detect::load_cache(neoth_dir, now_unix) else {
+        debug!("no detect cache; W-05 step has nothing to recommend");
+        return;
+    };
+
+    // Identify the missing tools operators most commonly need
+    // (docker for n8n + paperless; node for n8n; ffmpeg for media
+    // ingest). Each entry: (canonical pkg_id, friendly name,
+    // currently-detected-version Option).
+    let candidates: Vec<(&str, &str, &Option<String>)> = vec![
+        ("Docker.Docker", "Docker", &report.docker_version),
+        ("OpenJS.NodeJS.LTS", "Node.js", &report.node_version),
+        ("Gyan.FFmpeg", "ffmpeg", &report.ffmpeg_version),
+    ];
+    let missing: Vec<(&str, &str)> = candidates
+        .iter()
+        .filter(|(_, _, v)| v.is_none())
+        .map(|(pkg, name, _)| (*pkg, *name))
+        .collect();
+    if missing.is_empty() {
+        debug!("W-05: detect cache reports every recommended tool is already present");
+        return;
+    }
+
+    println!("\n[6h/9] Install-command preview (W-05).");
+    println!("These tools were NOT detected by step 1b. Copy + run the commands");
+    println!("for the package manager you prefer. NEOTH never runs them for you.");
+    println!();
+
+    #[cfg(feature = "wizard")]
+    let opted_in = {
+        match dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Show install commands?")
+            .default(true)
+            .interact()
+        {
+            Ok(b) => b,
+            Err(_) => return,
+        }
+    };
+    #[cfg(not(feature = "wizard"))]
+    let opted_in = true;
+
+    if !opted_in {
+        println!("Skipped — operator declined.");
+        return;
+    }
+
+    let chain = crate::wizard::install_step::FallbackChain::for_host();
+    if chain.is_empty() {
+        println!("(No package-manager chain known for this host — install manually.)");
+        return;
+    }
+    for (pkg_id, friendly) in &missing {
+        println!("• {friendly} ({pkg_id})");
+        let cmds = crate::wizard::install_step::dry_run_install_commands(&chain, pkg_id);
+        for (kind, argv) in cmds {
+            println!("    [{}] {}", kind.as_str(), argv.join(" "));
+        }
+        println!();
+    }
 }
 
 /// Step 7 — operator picks an autonomy level (Phase 28b R-23).
