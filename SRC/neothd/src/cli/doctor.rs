@@ -335,11 +335,12 @@ const CHECK_DOCS: &[CheckDoc] = &[
         name: "node toolchain",
         purpose: "NOOB-UX-6 AIO-compliance probe. Detects whether Node \
                   + npm are on PATH so the wizard's auto-install path \
-                  for claude-cli / gemini-cli / codex actually works. \
-                  Pass when both binaries respond to `--version`; Warn \
-                  when missing AND the operator's freedom.yaml selects \
-                  a Node-CLI-backed provider; silent when the operator \
-                  runs LocalQwen / API-only providers (no Node needed).",
+                  for claude-cli / codex actually works (Antigravity \
+                  CLI ships via shell-script, not npm). Pass when both \
+                  binaries respond to `--version`; Warn when missing \
+                  AND the operator's freedom.yaml selects a Node-CLI- \
+                  backed provider; silent when the operator runs \
+                  LocalQwen / API-only / antigravity providers.",
         common_failures: "Fresh Windows install with no Node — wizard \
                          step 5d picks claude-cli, install_kind spawns \
                          `npm install -g …`, npm not found, operator \
@@ -1044,9 +1045,12 @@ fn probe_version_sync(binary: &str) -> Option<String> {
 }
 
 /// NOOB-UX-6: probe node + npm on PATH. Warn only when the operator
-/// picked a Node-backed CLI provider (claude-cli / gemini-cli /
-/// codex) at the wizard — LocalQwen / API-only operators don't need
-/// npm and shouldn't see yellow.
+/// picked a Node-backed CLI provider (claude-cli / codex) at the
+/// wizard — LocalQwen / API-only / antigravity (shell-script) /
+/// gemini_api (REST) operators don't need npm and shouldn't see
+/// yellow. Antigravity CLI was migrated off npm by Google on
+/// 2026-05-19 so the legacy `gemini_cli` provider_kind no longer
+/// implies npm dependency either.
 fn check_node_toolchain(home: &Path) -> CheckOutcome {
     let needs_npm = freedom_uses_node_cli_provider(home);
     let node_version = probe_version_sync("node");
@@ -1112,8 +1116,12 @@ fn check_tmux_for_claude_cli(home: &Path) -> CheckOutcome {
 }
 
 /// True when `freedom.yaml::provider_kind` is one of the Node-backed
-/// CLIs (claude_cli / gemini_cli / codex). Best-effort: a missing or
-/// unparseable freedom.yaml returns false so the doctor stays quiet.
+/// CLIs (claude_cli / codex). Best-effort: a missing or unparseable
+/// freedom.yaml returns false so the doctor stays quiet. Antigravity
+/// CLI ships via vendor shell-script (not npm), so neither
+/// `antigravity_cli` nor the legacy `gemini_cli` alias counts here —
+/// listing them would emit a false-positive npm-missing warning to
+/// operators who picked the new Google CLI.
 fn freedom_uses_node_cli_provider(home: &Path) -> bool {
     let path = home.join("freedom.yaml");
     let Ok(body) = std::fs::read_to_string(&path) else {
@@ -1126,7 +1134,7 @@ fn freedom_uses_node_cli_provider(home: &Path) -> bool {
         .get("provider_kind")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    matches!(kind, "claude_cli" | "gemini_cli" | "codex")
+    matches!(kind, "claude_cli" | "codex")
 }
 
 /// True when `freedom.yaml::provider_kind == "claude_cli"`. Same
@@ -2577,14 +2585,38 @@ mod tests {
         .unwrap();
         assert!(!freedom_uses_node_cli_provider(dir.path()));
         assert!(!freedom_uses_claude_cli(dir.path()));
-        // Gemini CLI → node-backed yes, claude-cli no.
+        // Antigravity CLI → NOT node-backed (vendor shell-script
+        // install, not npm). Verifies the 2026-05-19 transition fix:
+        // the predicate must NOT flag `gemini_cli` or `antigravity_cli`
+        // as needing npm or the doctor emits a false-positive warning.
         std::fs::write(
             dir.path().join("freedom.yaml"),
             "provider_kind: gemini_cli\n",
         )
         .unwrap();
-        assert!(freedom_uses_node_cli_provider(dir.path()));
+        assert!(
+            !freedom_uses_node_cli_provider(dir.path()),
+            "legacy gemini_cli provider must NOT count as node-backed after antigravity migration",
+        );
         assert!(!freedom_uses_claude_cli(dir.path()));
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "provider_kind: antigravity_cli\n",
+        )
+        .unwrap();
+        assert!(
+            !freedom_uses_node_cli_provider(dir.path()),
+            "antigravity_cli provider must NOT count as node-backed (ships via shell-script)",
+        );
+        assert!(!freedom_uses_claude_cli(dir.path()));
+        // claude_cli still node-backed.
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "provider_kind: claude_cli\n",
+        )
+        .unwrap();
+        assert!(freedom_uses_node_cli_provider(dir.path()));
+        assert!(freedom_uses_claude_cli(dir.path()));
     }
 
     #[tokio::test]

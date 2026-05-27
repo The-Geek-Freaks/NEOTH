@@ -38,34 +38,47 @@ use crate::installers::{ALL as ALL_INSTALLERS, build_cmd};
 #[serde(rename_all = "snake_case")]
 pub enum Component {
     ClaudeCli,
-    GeminiCli,
+    /// Antigravity CLI (`agy`) — replaces the retired gemini-cli per
+    /// Google's 2026-05-19 transition. Serde alias `gemini_cli` keeps
+    /// historical WAL frames + freedom.yaml snapshots that pre-date the
+    /// migration readable; outbound serialization always emits
+    /// `antigravity_cli`.
+    #[serde(alias = "gemini_cli")]
+    AntigravityCli,
     Codex,
 }
 
 impl Component {
-    pub const ALL: &'static [Component] =
-        &[Component::ClaudeCli, Component::GeminiCli, Component::Codex];
+    pub const ALL: &'static [Component] = &[
+        Component::ClaudeCli,
+        Component::AntigravityCli,
+        Component::Codex,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Component::ClaudeCli => "claude_cli",
-            Component::GeminiCli => "gemini_cli",
+            Component::AntigravityCli => "antigravity_cli",
             Component::Codex => "codex",
         }
     }
 
-    pub fn npm_package(self) -> &'static str {
+    /// npm package name when the CLI ships via npm. `None` for CLIs
+    /// distributed via vendor-hosted shell installers (today only
+    /// Antigravity CLI — Google's Go binary that does not publish to
+    /// npm at all).
+    pub fn npm_package(self) -> Option<&'static str> {
         match self {
-            Component::ClaudeCli => "@anthropic-ai/claude-code",
-            Component::GeminiCli => "@google/gemini-cli",
-            Component::Codex => "@openai/codex",
+            Component::ClaudeCli => Some("@anthropic-ai/claude-code"),
+            Component::AntigravityCli => None,
+            Component::Codex => Some("@openai/codex"),
         }
     }
 
     pub fn binary(self) -> &'static str {
         match self {
             Component::ClaudeCli => "claude",
-            Component::GeminiCli => "gemini",
+            Component::AntigravityCli => "agy",
             Component::Codex => "codex",
         }
     }
@@ -127,12 +140,20 @@ async fn npm_latest_version(npm_package: &str) -> Option<String> {
 /// Probe one component. Cheap: at most two short subprocesses.
 pub async fn check_one(component: Component) -> UpdateStatus {
     let installed = binary_version(component.binary()).await;
-    let latest = npm_latest_version(component.npm_package()).await;
+    // Components without an npm channel (Antigravity ships via shell
+    // script only) skip the registry probe — the operator's self-update
+    // path is the vendor installer re-run, surfaced through the doctor
+    // flow instead.
+    let latest = match component.npm_package() {
+        Some(pkg) => npm_latest_version(pkg).await,
+        None => None,
+    };
 
     let update_available = match (&installed, &latest) {
         (Some(i), Some(l)) => i != l,
         // If we don't have the binary at all, "not installed" is not "update
         // available" — operator should run the installer first, not the updater.
+        // Same for shell-script-only CLIs where `latest` is intentionally None.
         _ => false,
     };
 
@@ -151,28 +172,51 @@ pub async fn check_all() -> Vec<UpdateStatus> {
     futures_util::future::join_all(futures).await
 }
 
-/// Run `npm install -g <package>@latest` for the component. Honours the same
-/// cmd-wrapper indirection the `installers` module uses on Windows.
+/// Run the component's auto-update path. For npm-distributed CLIs this
+/// is `npm install -g <pkg>@latest`; for vendor-shell-script CLIs (today
+/// only Antigravity) we re-run the matching upstream installer through
+/// the [`installers`] dispatcher. Honours the same cmd-wrapper
+/// indirection the `installers` module uses on Windows.
 pub async fn apply_one(component: Component) -> Result<()> {
-    let pkg_at_latest = format!("{}@latest", component.npm_package());
-    info!(component = component.name(), pkg = %pkg_at_latest, "updating");
+    if let Some(pkg) = component.npm_package() {
+        let pkg_at_latest = format!("{pkg}@latest");
+        info!(component = component.name(), pkg = %pkg_at_latest, "updating via npm");
 
-    let status = build_cmd("npm", &["install", "-g", &pkg_at_latest])
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .kill_on_drop(true)
-        .status()
-        .await
-        .with_context(|| format!("spawn npm install -g {pkg_at_latest}"))?;
+        let status = build_cmd("npm", &["install", "-g", &pkg_at_latest])
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .status()
+            .await
+            .with_context(|| format!("spawn npm install -g {pkg_at_latest}"))?;
 
-    if !status.success() {
-        anyhow::bail!(
-            "npm install -g {pkg_at_latest} exited with {:?}",
-            status.code()
-        );
+        if !status.success() {
+            anyhow::bail!(
+                "npm install -g {pkg_at_latest} exited with {:?}",
+                status.code()
+            );
+        }
+        return Ok(());
     }
-    Ok(())
+
+    // Shell-script update path: replay the vendor installer. Cheaper than
+    // duplicating the URL constants here — `installers::install_kind`
+    // already knows where each CLI's bootstrap lives.
+    let kind = match component {
+        Component::AntigravityCli => crate::installers::ANTIGRAVITY,
+        // Any future shell-script CLI must add its matching arm; falling
+        // through with a different Component would silently no-op an
+        // update request.
+        Component::ClaudeCli | Component::Codex => {
+            anyhow::bail!(
+                "internal: {} has no npm_package and no shell-script fallback",
+                component.name()
+            );
+        }
+    };
+    info!(component = component.name(), display = kind.display, "updating via vendor shell-script");
+    crate::installers::install_kind(kind).await
 }
 
 /// Convenience: probe all + apply each component flagged `update_available`.
@@ -231,28 +275,71 @@ mod tests {
     }
 
     #[test]
-    fn npm_package_is_scoped_for_each_component() {
+    fn npm_package_is_scoped_or_none() {
+        // npm-strategy CLIs must use a scoped package; shell-script
+        // CLIs (Antigravity) opt out via `None` and verify their
+        // install URLs separately in `installers::tests`.
         for c in Component::ALL {
-            assert!(
-                c.npm_package().starts_with('@'),
-                "{:?} npm_package must be scoped",
-                c
-            );
+            match c.npm_package() {
+                Some(pkg) => assert!(
+                    pkg.starts_with('@'),
+                    "{c:?} npm_package must be scoped, got {pkg}"
+                ),
+                None => {
+                    // The only shell-script CLI today is Antigravity.
+                    // A future shell-script entry would land here too,
+                    // adding another branch is intentional and tracked.
+                    assert!(
+                        matches!(c, Component::AntigravityCli),
+                        "only AntigravityCli has no npm_package, got {c:?}",
+                    );
+                }
+            }
         }
     }
 
     #[test]
-    fn binary_and_npm_package_are_distinct_per_component() {
+    fn binary_and_install_target_are_distinct_per_component() {
         let mut bins = std::collections::HashSet::new();
-        let mut pkgs = std::collections::HashSet::new();
+        let mut targets = std::collections::HashSet::new();
         for c in Component::ALL {
             assert!(bins.insert(c.binary()), "duplicate binary {}", c.binary());
-            assert!(
-                pkgs.insert(c.npm_package()),
-                "duplicate npm package {}",
-                c.npm_package()
-            );
+            // For npm components compare the package; for shell-script
+            // ones use the component name as a stand-in so the set has
+            // distinct entries without claiming an npm slot.
+            let key = c
+                .npm_package()
+                .unwrap_or_else(|| c.name());
+            assert!(targets.insert(key), "duplicate install target {key}");
         }
+    }
+
+    #[test]
+    fn antigravity_replaces_gemini_cli_in_component_table() {
+        // Drift-guard for the 2026-05-19 transition. If a refactor
+        // brings back `gemini` as the binary or `@google/gemini-cli`
+        // as the npm package, gemini-cli stops serving 2026-06-18 so
+        // operators ship broken.
+        let google = Component::ALL
+            .iter()
+            .copied()
+            .find(|c| matches!(c, Component::AntigravityCli))
+            .expect("AntigravityCli variant present");
+        assert_eq!(google.binary(), "agy");
+        assert_eq!(google.name(), "antigravity_cli");
+        assert!(google.npm_package().is_none());
+    }
+
+    #[test]
+    fn gemini_cli_serde_alias_still_loads_old_payloads() {
+        // Old WAL frames + freedom.yaml snapshots stored
+        // `"component":"gemini_cli"` before the rename. Verify the
+        // alias keeps them readable. Outbound serialization always
+        // emits the new name.
+        let parsed: Component = serde_json::from_str("\"gemini_cli\"").unwrap();
+        assert!(matches!(parsed, Component::AntigravityCli));
+        let serialised = serde_json::to_string(&Component::AntigravityCli).unwrap();
+        assert_eq!(serialised, "\"antigravity_cli\"");
     }
 
     #[test]

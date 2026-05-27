@@ -79,7 +79,14 @@ pub struct AcceleratorInfo {
 pub struct ExternalBinaries {
     pub ffmpeg: bool,
     pub claude_cli: bool,
-    pub gemini_cli: bool,
+    /// `agy` binary detection (Antigravity CLI, gemini-cli successor
+    /// per 2026-05-19 transition). The serde field name keeps the
+    /// snapshot schema stable for downstream JSON consumers (doctor,
+    /// neothd-gui) that read older audit reports too — old reports
+    /// with `"gemini_cli": true` simply read as "no agy detected"
+    /// going forward.
+    #[serde(rename = "agy_cli", alias = "gemini_cli")]
+    pub antigravity_cli: bool,
     pub codex_cli: bool,
 }
 
@@ -186,7 +193,7 @@ fn probe_binaries() -> ExternalBinaries {
     ExternalBinaries {
         ffmpeg: is_on_path("ffmpeg"),
         claude_cli: is_on_path("claude"),
-        gemini_cli: is_on_path("gemini"),
+        antigravity_cli: is_on_path("agy"),
         codex_cli: is_on_path("codex"),
     }
 }
@@ -326,10 +333,10 @@ impl HardwareReport {
         );
         let _ = writeln!(
             s,
-            "  Binaries:      ffmpeg={} claude={} gemini={} codex={}",
+            "  Binaries:      ffmpeg={} claude={} agy={} codex={}",
             self.binaries.ffmpeg,
             self.binaries.claude_cli,
-            self.binaries.gemini_cli,
+            self.binaries.antigravity_cli,
             self.binaries.codex_cli,
         );
         let _ = writeln!(

@@ -51,8 +51,8 @@ pub fn neoth_self_specs_blocking(gate: GateDecision) -> Vec<ComponentSpec> {
 
 // ── U-03 cli_version ─────────────────────────────────────────────────────────
 
-/// Probe every CLI we manage (`claude-cli`, `gemini-cli`, `codex`)
-/// and project into a spec list for
+/// Probe every CLI we manage (`claude-cli`, `antigravity-cli`,
+/// `codex`) and project into a spec list for
 /// `run_updater_pass(UpdaterTaskKind::CliVersion, …)`. CLIs that
 /// aren't installed produce no spec entry (matches
 /// `pipeline::cli_version_specs`'s `Option`-skip contract).
@@ -67,17 +67,24 @@ pub async fn cli_version_specs_async(gate: GateDecision) -> Vec<ComponentSpec> {
     let to_pair = |c: Component| -> Option<(String, Result<String, String>)> {
         let s = find(c)?;
         let installed = s.installed.clone()?;
-        let latest = s
-            .latest
-            .clone()
-            .map(Ok)
-            .unwrap_or_else(|| Err(format!("npm view {} version: failed", c.npm_package())));
+        // The error string we surface depends on which channel the CLI
+        // ships through. npm-strategy CLIs surface `npm view <pkg>`
+        // failures; shell-script CLIs (Antigravity) have no upstream
+        // registry yet, so we emit a stable sentinel the operator can
+        // grep for in `neoth updater status`.
+        let latest = s.latest.clone().map(Ok).unwrap_or_else(|| match c.npm_package() {
+            Some(pkg) => Err(format!("npm view {pkg} version: failed")),
+            None => Err(format!(
+                "{} ships via vendor shell-script (no registry probe yet)",
+                c.name()
+            )),
+        });
         Some((installed, latest))
     };
     cli_version_specs(
         to_pair(Component::ClaudeCli),
         to_pair(Component::Codex),
-        to_pair(Component::GeminiCli),
+        to_pair(Component::AntigravityCli),
         &gate,
     )
 }
@@ -218,14 +225,18 @@ mod tests {
 
     #[tokio::test]
     async fn cli_version_probe_yields_spec_only_for_installed_clis() {
-        // CI runners don't have claude/codex/gemini installed by
-        // default, so the expected result is an empty vec. When
-        // operator has them installed, each installed CLI
-        // produces exactly one spec.
+        // CI runners don't have claude/codex/agy installed by default,
+        // so the expected result is an empty vec. When operator has
+        // them installed, each installed CLI produces exactly one
+        // spec. `gemini-cli` alias is accepted for back-compat with
+        // any pre-2026-05-19 frames that ride the wire.
         let specs = cli_version_specs_async(GateDecision::Allow).await;
         for s in &specs {
             assert!(
-                matches!(s.name.as_str(), "claude-cli" | "codex" | "gemini-cli",),
+                matches!(
+                    s.name.as_str(),
+                    "claude-cli" | "codex" | "antigravity-cli" | "gemini-cli",
+                ),
                 "unexpected component name in cli_version probe: {}",
                 s.name,
             );

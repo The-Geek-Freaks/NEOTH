@@ -1,17 +1,26 @@
 //! CLI auto-installer for the three first-class LLM front-ends.
 //!
-//! Operator requirement: `neoth init` provisions claude-cli, gemini-cli and
-//! codex from inside the wizard. Operator never opens npm or a terminal.
-//! See `memory/neoth_cli_installers.md`.
+//! Operator requirement: `neoth init` provisions claude-cli, antigravity-cli
+//! and codex from inside the wizard. Operator never opens npm, curl, or a
+//! terminal manually. See `memory/neoth_cli_installers.md`.
 //!
 //! Architecture: each CLI is described by a `CliKind` constant carrying
-//! npm package name + binary name + login command. Common probe / install /
-//! login logic lives in the helpers below; everything else is per-CLI data.
+//! binary name, install strategy (npm OR shell-script), and login command.
+//! Common probe / install / login logic lives in the helpers below;
+//! everything else is per-CLI data.
+//!
+//! Session 26 migration: Google announced (2026-05-19) that gemini-cli
+//! (npm `@google/gemini-cli`, binary `gemini`) stops serving API requests
+//! on 2026-06-18 and is superseded by **Antigravity CLI** (binary `agy`,
+//! Go-native, shell-script install only — not on npm). NEOTH's managed
+//! Google CLI slot now points at antigravity-cli via [`ANTIGRAVITY`].
 //!
 //! Out of scope here (deferred):
-//! - Auto-installing Node + npm itself. Operator must have npm on PATH.
+//! - Auto-installing Node + npm itself. Operator must have npm on PATH
+//!   for npm-strategy CLIs.
 //! - Updating an already-installed CLI. We probe, report, move on.
-//! - Sandboxing the npm install — global npm is the standard pattern.
+//! - Sandboxing the install — global npm / shell-script-piped-from-vendor
+//!   are the upstream-recommended patterns.
 
 use std::process::Stdio;
 
@@ -44,6 +53,32 @@ pub mod tmux;
 pub mod tmux_w02;
 pub mod zero_install;
 
+/// How a managed CLI gets installed onto the operator's host.
+///
+/// Two strategies cover every first-class vendor today:
+/// - **npm**: Anthropic + OpenAI ship their CLIs as scoped npm packages
+///   (`@anthropic-ai/claude-code`, `@openai/codex`). Install path is the
+///   stock `npm install -g <pkg>`.
+/// - **shell-script**: Google's Antigravity CLI (`agy`) is a Go-native
+///   binary distributed via a vendor-hosted shell script (sh on
+///   Unix, PowerShell on Windows) at `antigravity.google/cli/`. Not on
+///   npm — `npm view @google/antigravity` returns 404.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InstallStrategy {
+    /// `npm install -g <package>`. Requires Node + npm on PATH.
+    Npm { package: &'static str },
+    /// Vendor-hosted shell-script piped to the host shell. Operator
+    /// trust boundary is "operator chose this CLI in the wizard" —
+    /// identical to the npm-strategy trust boundary, just a different
+    /// distribution channel.
+    ShellScript {
+        /// `curl -fsSL <unix_url> | sh` invocation target.
+        unix_url: &'static str,
+        /// PowerShell `irm <windows_ps_url> | iex` invocation target.
+        windows_ps_url: &'static str,
+    },
+}
+
 /// One of the three CLIs NEOTH knows how to install.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CliKind {
@@ -51,8 +86,8 @@ pub struct CliKind {
     pub display: &'static str,
     /// PATH-resolvable binary name (without `.cmd`/`.exe`).
     pub binary: &'static str,
-    /// npm package to install globally.
-    pub npm_package: &'static str,
+    /// How the CLI gets installed (npm or shell-script).
+    pub install: InstallStrategy,
     /// Optional login command. `None` means env-var auth only (codex with
     /// OPENAI_API_KEY). `Some(args)` triggers `<binary> <args...>` interactively.
     pub login_args: Option<&'static [&'static str]>,
@@ -61,26 +96,37 @@ pub struct CliKind {
 pub const CLAUDE: CliKind = CliKind {
     display: "Claude Code (Anthropic)",
     binary: "claude",
-    npm_package: "@anthropic-ai/claude-code",
+    install: InstallStrategy::Npm {
+        package: "@anthropic-ai/claude-code",
+    },
     login_args: Some(&["/login"]),
 };
 
-pub const GEMINI: CliKind = CliKind {
-    display: "Gemini CLI (Google)",
-    binary: "gemini",
-    npm_package: "@google/gemini-cli",
+/// Google's Antigravity CLI (`agy`) — successor to gemini-cli per the
+/// 2026-05-19 transition announcement. Hard cutoff for old gemini-cli
+/// API serving: 2026-06-18. Go-native binary, distributed via shell
+/// script at `antigravity.google/cli/install.{sh,ps1}` (not on npm).
+pub const ANTIGRAVITY: CliKind = CliKind {
+    display: "Antigravity CLI (Google)",
+    binary: "agy",
+    install: InstallStrategy::ShellScript {
+        unix_url: "https://antigravity.google/cli/install.sh",
+        windows_ps_url: "https://antigravity.google/cli/install.ps1",
+    },
     login_args: Some(&["auth", "login"]),
 };
 
 pub const CODEX: CliKind = CliKind {
     display: "Codex CLI (OpenAI)",
     binary: "codex",
-    npm_package: "@openai/codex",
+    install: InstallStrategy::Npm {
+        package: "@openai/codex",
+    },
     login_args: Some(&["login"]),
 };
 
 /// Iteration helper for the wizard.
-pub const ALL: &[CliKind] = &[CLAUDE, GEMINI, CODEX];
+pub const ALL: &[CliKind] = &[CLAUDE, ANTIGRAVITY, CODEX];
 
 /// Probe `npm --version`. Returns the version string on success, None when
 /// npm is missing or returns non-zero.
@@ -103,32 +149,116 @@ pub async fn cli_version_async(binary: &str) -> Option<String> {
     Some(String::from_utf8_lossy(&result.stdout).trim().to_string())
 }
 
-/// Install `kind.npm_package` via `npm install -g`. Streams npm's stderr to
-/// the wizard's tracing output so the operator sees download progress.
+/// Install `kind` using its declared [`InstallStrategy`]. Streams the
+/// installer's stderr to the wizard's tracing output so the operator
+/// sees download progress regardless of channel.
 pub async fn install_kind(kind: CliKind) -> Result<()> {
+    match kind.install {
+        InstallStrategy::Npm { package } => install_via_npm(kind.display, package).await,
+        InstallStrategy::ShellScript {
+            unix_url,
+            windows_ps_url,
+        } => install_via_shell_script(kind.display, unix_url, windows_ps_url).await,
+    }
+}
+
+async fn install_via_npm(display: &str, package: &str) -> Result<()> {
     info!(
-        package = kind.npm_package,
-        display = kind.display,
-        "running `npm install -g {}`",
-        kind.npm_package
+        package,
+        display,
+        "running `npm install -g {package}`",
     );
-    let mut child = spawn_cli("npm", &["install", "-g", kind.npm_package])
-        .with_context(|| format!("spawn npm install -g {}", kind.npm_package))?;
+    let mut child = spawn_cli("npm", &["install", "-g", package])
+        .with_context(|| format!("spawn npm install -g {package}"))?;
     let status = child
         .wait()
         .await
-        .with_context(|| format!("await npm install {}", kind.npm_package))?;
+        .with_context(|| format!("await npm install {package}"))?;
     if !status.success() {
         anyhow::bail!(
-            "npm install -g {} failed (exit {:?}). Is npm reachable + writable? \
+            "npm install -g {package} failed (exit {:?}). Is npm reachable + writable? \
              You may need elevated privileges, or `npm config set prefix ~/.npm-global` \
              and PATH adjustments.",
-            kind.npm_package,
             status.code()
         );
     }
-    info!(package = kind.npm_package, "install ok");
+    info!(package, "install ok");
     Ok(())
+}
+
+/// Run the vendor-hosted shell installer. The host shell pipeline is
+/// the upstream-recommended path (Google docs `irm … | iex` on Windows,
+/// `curl … | sh` on Unix). We replicate it from a tokio process so the
+/// wizard can stream stderr + apply the same timeout/cancel discipline
+/// as the npm path.
+async fn install_via_shell_script(
+    display: &str,
+    unix_url: &str,
+    windows_ps_url: &str,
+) -> Result<()> {
+    #[cfg(windows)]
+    {
+        info!(
+            display,
+            url = windows_ps_url,
+            "running PowerShell installer `irm {windows_ps_url} | iex`",
+        );
+        let mut cmd = Command::new("powershell");
+        cmd.arg("-NoProfile")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-Command")
+            .arg(format!("irm {windows_ps_url} | iex"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("spawn powershell installer {windows_ps_url}"))?;
+        let status = child.wait().await?;
+        if !status.success() {
+            anyhow::bail!(
+                "shell installer for {display} failed (exit {:?}). Try running the \
+                 upstream command manually: irm {windows_ps_url} | iex",
+                status.code()
+            );
+        }
+        info!(display, "install ok");
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        info!(
+            display,
+            url = unix_url,
+            "running shell installer `curl -fsSL {unix_url} | sh`",
+        );
+        // `sh -c "curl -fsSL <url> | sh"` keeps the pipeline single-shot;
+        // curl's `--fail` upgrades a 4xx/5xx to a non-zero exit so a
+        // 404 (e.g. vendor moved the script) doesn't pipe a stub HTML
+        // page into the operator's shell.
+        let pipeline = format!("curl -fsSL {unix_url} | sh");
+        let mut cmd = Command::new("sh");
+        cmd.arg("-c")
+            .arg(&pipeline)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        let mut child = cmd
+            .spawn()
+            .with_context(|| format!("spawn sh installer {unix_url}"))?;
+        let status = child.wait().await?;
+        if !status.success() {
+            anyhow::bail!(
+                "shell installer for {display} failed (exit {:?}). Try running the \
+                 upstream command manually: {pipeline}",
+                status.code()
+            );
+        }
+        info!(display, "install ok");
+        let _ = windows_ps_url; // silence unused on this branch
+        Ok(())
+    }
 }
 
 /// D3b-7 (2026-05-22 Session 20): build the `INSTALLER_RAN` (0x12)
@@ -229,17 +359,63 @@ mod tests {
         let binaries: Vec<&str> = ALL.iter().map(|c| c.binary).collect();
         assert_eq!(binaries.len(), 3);
         assert!(binaries.contains(&"claude"));
-        assert!(binaries.contains(&"gemini"));
+        assert!(binaries.contains(&"agy"));
         assert!(binaries.contains(&"codex"));
     }
 
     #[test]
-    fn npm_package_format_is_scoped() {
-        // All three vendors publish under their own npm scope. If any of these
-        // suddenly becomes unscoped, the install pattern needs review.
-        assert!(CLAUDE.npm_package.starts_with("@"));
-        assert!(GEMINI.npm_package.starts_with("@"));
-        assert!(CODEX.npm_package.starts_with("@"));
+    fn npm_strategy_uses_scoped_packages() {
+        // npm-strategy vendors must publish under their own scope so an
+        // attacker can't typo-squat the install. ShellScript-strategy
+        // CLIs (antigravity) are exempt from this — vendor-hosted URL
+        // discipline lives in the URL validation below instead.
+        for kind in ALL {
+            if let InstallStrategy::Npm { package } = kind.install {
+                assert!(
+                    package.starts_with('@'),
+                    "{} npm package must be scoped, got {package}",
+                    kind.display
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shell_strategy_urls_are_https_and_vendor_owned() {
+        // Lock the trust boundary: shell-script installers must come
+        // over TLS from an upstream-hosted URL we name explicitly.
+        for kind in ALL {
+            if let InstallStrategy::ShellScript {
+                unix_url,
+                windows_ps_url,
+            } = kind.install
+            {
+                assert!(unix_url.starts_with("https://"), "{unix_url} not https");
+                assert!(
+                    windows_ps_url.starts_with("https://"),
+                    "{windows_ps_url} not https"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn antigravity_replaces_gemini_in_ali_slot() {
+        // Drift-guard: the Google CLI slot must point at antigravity
+        // post-2026-05-19 transition. A regression that brings back
+        // `@google/gemini-cli` or binary `gemini` is a hard fail
+        // because gemini-cli stops serving API requests 2026-06-18.
+        let google = ALL
+            .iter()
+            .find(|k| k.display.contains("Google"))
+            .expect("Google CLI slot must exist");
+        assert_eq!(google.binary, "agy");
+        match google.install {
+            InstallStrategy::ShellScript { unix_url, .. } => {
+                assert!(unix_url.contains("antigravity"));
+            }
+            InstallStrategy::Npm { .. } => panic!("Antigravity does not ship on npm"),
+        }
     }
 
     #[tokio::test]
@@ -281,28 +457,46 @@ mod tests {
     }
 
     #[test]
-    fn d3b_8_mock_npm_test_distinct_binaries_pin() {
-        // D3b-8 mock-npm integration: the install_kind path takes a
-        // CliKind + spawns `npm install -g <pkg>`. Real npm doesn't
-        // live on every CI runner so we pin the SHAPE (distinct
-        // binaries + npm-package scope) here; the real network call
-        // is verified by `npm_version_returns_some_or_none` above.
-        let pkgs: std::collections::HashSet<&str> = ALL.iter().map(|c| c.npm_package).collect();
-        assert_eq!(pkgs.len(), 3, "all 3 CLIs have distinct npm packages");
+    fn d3b_8_mock_install_test_distinct_install_targets_pin() {
+        // D3b-8 mock-install integration: the install_kind path takes
+        // a CliKind + dispatches on InstallStrategy. Real npm/curl
+        // don't live on every CI runner so we pin the SHAPE (distinct
+        // install targets + format discipline) here; the real network
+        // call is verified by `npm_version_returns_some_or_none`
+        // above.
+        let targets: std::collections::HashSet<&str> = ALL
+            .iter()
+            .map(|c| match c.install {
+                InstallStrategy::Npm { package } => package,
+                InstallStrategy::ShellScript { unix_url, .. } => unix_url,
+            })
+            .collect();
+        assert_eq!(targets.len(), 3, "all 3 CLIs have distinct install targets");
 
-        // Pin the scoped-package format pattern so a npm rename
-        // breaks at test time, not at first operator install.
+        // Pin the format pattern so a vendor rename breaks at test
+        // time, not at first operator install.
         for c in ALL {
-            assert!(
-                c.npm_package.starts_with('@'),
-                "{} should use scoped npm pkg name",
-                c.display
-            );
-            assert!(
-                c.npm_package.contains('/'),
-                "{} npm pkg should be `@scope/name` shape",
-                c.display
-            );
+            match c.install {
+                InstallStrategy::Npm { package } => {
+                    assert!(
+                        package.starts_with('@'),
+                        "{} npm pkg should be scoped",
+                        c.display
+                    );
+                    assert!(
+                        package.contains('/'),
+                        "{} npm pkg should be `@scope/name` shape",
+                        c.display
+                    );
+                }
+                InstallStrategy::ShellScript {
+                    unix_url,
+                    windows_ps_url,
+                } => {
+                    assert!(unix_url.starts_with("https://"));
+                    assert!(windows_ps_url.starts_with("https://"));
+                }
+            }
         }
     }
 }

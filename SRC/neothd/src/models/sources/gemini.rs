@@ -20,8 +20,12 @@ use crate::models::sources::{FetchResult, ModelSource};
 use crate::secret::SecretString;
 
 const PROVIDER_KEY: &str = "gemini_api";
+
+// Antigravity CLI (`agy`) is the post-2026-05-19 Google CLI that
+// authenticates against the same backend. Used as the CLI probe for
+// the gemini_api catalog's no-API-key fallback.
 const DEFAULT_ENDPOINT: &str = "https://generativelanguage.googleapis.com/v1beta/models";
-const DEFAULT_CLI_BINARY: &str = "gemini";
+const DEFAULT_CLI_BINARY: &str = "agy";
 
 pub struct GeminiSource {
     api_key: Option<SecretString>,
@@ -90,8 +94,10 @@ impl ModelSource for GeminiSource {
             }
         }
         anyhow::bail!(
-            "gemini_api: API key not configured AND `gemini` CLI not detected on PATH. \
-             Set `provider_key` in freedom.yaml OR install Google's Gemini CLI (npm i -g @google/gemini-cli)."
+            "gemini_api: API key not configured AND no Google CLI (`agy`) detected on PATH. \
+             Set `provider_key` in freedom.yaml OR install Antigravity CLI \
+             (curl -fsSL https://antigravity.google/cli/install.sh | sh). The legacy \
+             gemini-cli stops serving API requests on 2026-06-18."
         )
     }
 }

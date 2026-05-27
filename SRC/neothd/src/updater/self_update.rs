@@ -1,7 +1,7 @@
 //! V03-09 — daemon self-update check via GitHub Releases API.
 //!
 //! The parent `updater` module covers operator-installed CLIs
-//! (claude-cli, gemini-cli, codex). This sub-module is the
+//! (claude-cli, antigravity-cli, codex). This sub-module is the
 //! deferred-V2 counterpart for the daemon binary itself.
 //!
 //! Phase 1 (this commit, 2026-05-20): the *check* path only.

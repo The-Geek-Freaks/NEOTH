@@ -130,20 +130,22 @@ pub fn skill_plugin_specs(
 }
 
 /// U-03: build the spec list for the detected-CLI version pass.
-/// Pinned set: claude-cli, codex, gemini-cli. Caller resolves
+/// Pinned set: claude-cli, codex, antigravity-cli. Caller resolves
 /// each component's current+latest via the per-CLI probe in
-/// `installers::node`/`installers::pears`/etc.
+/// `installers::node`/`installers::pears`/etc. The third argument is
+/// still named `antigravity` post-2026-05-19 transition (was `gemini`
+/// when Google shipped gemini-cli via npm).
 pub fn cli_version_specs(
     claude: Option<(String, Result<String, String>)>,
     codex: Option<(String, Result<String, String>)>,
-    gemini: Option<(String, Result<String, String>)>,
+    antigravity: Option<(String, Result<String, String>)>,
     gate: &GateDecision,
 ) -> Vec<ComponentSpec> {
     let mut out = Vec::new();
     for (name, pair) in [
         ("claude-cli", claude),
         ("codex", codex),
-        ("gemini-cli", gemini),
+        ("antigravity-cli", antigravity),
     ] {
         if let Some((current, latest)) = pair {
             out.push(ComponentSpec {
@@ -308,7 +310,7 @@ mod tests {
         assert_eq!(specs.len(), 2);
         let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
         assert!(names.contains(&"claude-cli"));
-        assert!(names.contains(&"gemini-cli"));
+        assert!(names.contains(&"antigravity-cli"));
         assert!(!names.contains(&"codex"));
     }
 

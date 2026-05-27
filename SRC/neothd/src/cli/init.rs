@@ -989,11 +989,14 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
     info!("wizard step 5: provider");
 
     // Detect the three first-class CLIs and offer to install any that are
-    // missing. Memory note: [[neoth-cli-installers]] — operator never opens
-    // npm manually.
+    // missing. Memory note: [[neoth-cli-installers]] — operator never
+    // opens npm or curl manually. Google's Antigravity CLI (`agy`)
+    // replaces the retired gemini-cli per 2026-05-19 transition; legacy
+    // `gemini` binaries still on PATH surface as a doctor warning.
     let mut claude_path = which_binary("claude");
     let mut codex_path = which_binary("codex");
-    let mut gemini_path = which_binary("gemini");
+    let mut antigravity_path = which_binary("agy");
+    let legacy_gemini_path = which_binary("gemini");
 
     if interactive {
         println!("\n[5/7] LLM Provider — detected CLIs:");
@@ -1003,12 +1006,18 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
         );
         println!("  codex:  {}", codex_path.as_deref().unwrap_or("NOT FOUND"));
         println!(
-            "  gemini: {}",
-            gemini_path.as_deref().unwrap_or("NOT FOUND")
+            "  agy:    {}",
+            antigravity_path.as_deref().unwrap_or("NOT FOUND")
         );
+        if let Some(legacy) = legacy_gemini_path.as_deref() {
+            println!(
+                "  ! legacy `gemini` ({legacy}) detected. Google retires gemini-cli \
+                 API on 2026-06-18 — install `agy` to migrate."
+            );
+        }
 
-        if claude_path.is_none() || codex_path.is_none() || gemini_path.is_none() {
-            offer_cli_installs(&mut claude_path, &mut codex_path, &mut gemini_path).await?;
+        if claude_path.is_none() || codex_path.is_none() || antigravity_path.is_none() {
+            offer_cli_installs(&mut claude_path, &mut codex_path, &mut antigravity_path).await?;
         }
     }
 
@@ -1034,7 +1043,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
         // silently shipping a broken install.
         if matches!(default_kind, ProviderKind::Skip) {
             anyhow::bail!(
-                "neoth init: non-interactive mode + no `--provider <kind>` + no claude/codex/gemini \
+                "neoth init: non-interactive mode + no `--provider <kind>` + no claude/codex/agy \
                  binary detected on PATH. The wizard would silently configure provider=`skip` and \
                  `neoth chat` would fail. Pick one:\n  \
                    --provider claude_cli   (install claude CLI first)\n  \
@@ -3772,43 +3781,65 @@ fn dirs_home() -> std::path::PathBuf {
 // belong in `providers/` architecturally — the wizard is just one caller.
 use crate::providers::local_probe::probe_local_bridge_sync;
 
-/// Offer to npm-install the three CLIs that are missing on PATH. Updates the
-/// passed-in path Options in place so the wizard can re-probe after install.
-/// Quiet no-op when all three are already present.
+/// Offer to install the three CLIs that are missing on PATH. Dispatches
+/// on each CLI's [`InstallStrategy`] — npm-strategy CLIs need npm
+/// reachable, shell-script-strategy CLIs (Antigravity) only need
+/// `sh`/PowerShell which we can rely on. Updates the passed-in path
+/// Options in place so the wizard can re-probe after install. Quiet
+/// no-op when all three are already present.
 #[cfg(feature = "wizard")]
 async fn offer_cli_installs(
     claude: &mut Option<String>,
     codex: &mut Option<String>,
-    gemini: &mut Option<String>,
+    antigravity: &mut Option<String>,
 ) -> Result<()> {
     use crate::installers::{
-        ALL, CLAUDE as INST_CLAUDE, CODEX as INST_CODEX, CliKind, GEMINI as INST_GEMINI,
+        ALL, ANTIGRAVITY as INST_ANTIGRAVITY, CLAUDE as INST_CLAUDE, CODEX as INST_CODEX, CliKind,
+        InstallStrategy,
     };
 
-    // npm reachable?
-    let npm = crate::installers::npm_version().await;
-    let Some(npm_v) = npm else {
+    // npm probe is per-strategy now — only required when at least one
+    // missing CLI ships via npm.
+    let npm_v = crate::installers::npm_version().await;
+    let needs_npm = ALL.iter().any(|k| {
+        matches!(k.install, InstallStrategy::Npm { .. })
+            && match k.binary {
+                "claude" => claude.is_none(),
+                "codex" => codex.is_none(),
+                _ => false,
+            }
+    });
+    if needs_npm && npm_v.is_none() {
         println!();
-        println!("  ! npm not found on PATH. To auto-install CLIs, install Node.js first:");
+        println!("  ! npm not found on PATH. To auto-install npm-managed CLIs, install Node.js:");
         println!("    https://nodejs.org/  (the LTS installer ships npm)");
-        println!("  Skipping CLI auto-install for this run.");
-        return Ok(());
-    };
-    println!("\n  npm {npm_v} detected — auto-install available for missing CLIs.");
+        println!("  Shell-script CLIs (Antigravity) can still install — continuing.");
+    } else if let Some(v) = npm_v.as_ref() {
+        println!("\n  npm {v} detected — auto-install available for npm-managed CLIs.");
+    }
 
     for kind in ALL {
         let current = match kind.binary {
             "claude" => claude.clone(),
             "codex" => codex.clone(),
-            "gemini" => gemini.clone(),
+            "agy" => antigravity.clone(),
             _ => None,
         };
         if current.is_some() {
             continue;
         }
+        // Skip npm-strategy CLIs when npm is missing — the message
+        // above already told the operator how to recover.
+        if matches!(kind.install, InstallStrategy::Npm { .. }) && npm_v.is_none() {
+            continue;
+        }
+        let source_hint = match kind.install {
+            InstallStrategy::Npm { package } => format!("npm: {package}"),
+            InstallStrategy::ShellScript { unix_url, .. } => format!("shell: {unix_url}"),
+        };
         let install_it =
             dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt(format!("Install {} ({})?", kind.display, kind.npm_package))
+                .with_prompt(format!("Install {} ({source_hint})?", kind.display))
                 .default(true)
                 .interact()
                 .context("install confirm prompt")?;
@@ -3827,7 +3858,7 @@ async fn offer_cli_installs(
             match kind.binary {
                 "claude" => *claude = resolved.clone(),
                 "codex" => *codex = resolved.clone(),
-                "gemini" => *gemini = resolved.clone(),
+                "agy" => *antigravity = resolved.clone(),
                 _ => {}
             }
             let login_it =
@@ -3849,14 +3880,19 @@ async fn offer_cli_installs(
                 }
             }
         } else {
+            let hint = match kind.install {
+                InstallStrategy::Npm { .. } => "Open a new shell or check your npm prefix.",
+                InstallStrategy::ShellScript { .. } => {
+                    "Open a new shell or check the installer's reported install path."
+                }
+            };
             println!(
-                "  ! {} installed but `{}` is still not on PATH. \
-                 Open a new shell or check your npm prefix.",
+                "  ! {} installed but `{}` is still not on PATH. {hint}",
                 kind.display, kind.binary
             );
         }
-        // Silence unused-CliKind import on cfg with no other use.
-        let _ = (INST_CLAUDE, INST_CODEX, INST_GEMINI);
+        // Silence unused-import on cfg with no other use of these.
+        let _ = (INST_CLAUDE, INST_CODEX, INST_ANTIGRAVITY);
         let _: CliKind = *kind;
     }
     Ok(())
@@ -3868,7 +3904,7 @@ async fn offer_cli_installs(
 async fn offer_cli_installs(
     _claude: &mut Option<String>,
     _codex: &mut Option<String>,
-    _gemini: &mut Option<String>,
+    _antigravity: &mut Option<String>,
 ) -> Result<()> {
     Ok(())
 }

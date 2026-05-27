@@ -268,8 +268,10 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
         // freedom.yaml instead of silently sliding to cloud.
         return Err(anyhow::anyhow!(
             "freedom.yaml::profile.learn_provider = `{learn_name}` is not a recognised provider \
-             slug. Valid: local_qwen, claude_cli, gemini_cli, codex, openai_api, openai_compat, \
-             gemini_api, anthropic_api, aws_bedrock, azure_openai. Edit + re-run `neoth reload`."
+             slug. Valid: local_qwen, local_ouro, claude_cli, openai_api, openai_compat, \
+             gemini_api, aws_bedrock, azure_openai, skip. Edit + re-run `neoth reload`. \
+             (Antigravity CLI surfaces via the same `gemini_api` provider — `agy` is the \
+             operator-side CLI, gemini_api is the upstream REST endpoint it auths against.)"
         ));
     };
     let mut synthetic = config.clone();

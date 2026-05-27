@@ -66,14 +66,19 @@ pub const EVENT_TYPE_BOOT: u8 = 0x10;
 /// Daemon received a shutdown signal and is draining.
 pub const EVENT_TYPE_SHUTDOWN: u8 = 0x11;
 /// D3b-7 (2026-05-22 Session 20): a NEOTH-managed CLI (claude-cli,
-/// gemini-cli, codex) was first-time-installed by `neoth init` wizard
-/// step 5 OR `neoth update --apply`. Distinct from `UPDATE_RAN` (0x13)
-/// which fires on later version bumps — `INSTALLER_RAN` fires when
-/// the binary first lands on the operator's PATH.
+/// antigravity-cli, codex) was first-time-installed by `neoth init`
+/// wizard step 5 OR `neoth update --apply`. Historical frames may
+/// carry `gemini-cli` in `cli_name` — that name was retired
+/// 2026-05-19 in favour of antigravity-cli (binary `agy`). Distinct
+/// from `UPDATE_RAN` (0x13) which fires on later version bumps —
+/// `INSTALLER_RAN` fires when the binary first lands on PATH.
 /// Payload: `{ cli_name, version, login_state, ts_unix }`.
 pub const EVENT_TYPE_INSTALLER_RAN: u8 = 0x12;
-/// A NEOTH-managed component (claude-cli, gemini-cli, codex, obsidian, ...) was
-/// upgraded by the auto-update task or `neoth update --apply`.
+/// A NEOTH-managed component (claude-cli, antigravity-cli, codex,
+/// obsidian, ...) was upgraded by the auto-update task or
+/// `neoth update --apply`. Historical frames may name the legacy
+/// `gemini-cli` component — Component's serde alias maps both
+/// strings to the same variant.
 /// Payload: `{ component, old_version, new_version, status, ts }`.
 pub const EVENT_TYPE_UPDATE_RAN: u8 = 0x13;
 /// WAL segment rolled over (rotated). Emitted by the writer just before

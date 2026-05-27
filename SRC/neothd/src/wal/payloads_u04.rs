@@ -19,8 +19,10 @@ pub enum UpdaterTaskKind {
     NeothSelf,
     /// U-02: skills + plugins re-resolve.
     SkillPlugin,
-    /// U-03: detected CLI environment (claude / codex / gemini)
-    /// version check.
+    /// U-03: detected CLI environment (claude / codex / antigravity)
+    /// version check. Historical frames may carry `gemini-cli` as a
+    /// component name — Component's serde alias maps it to the new
+    /// AntigravityCli variant.
     CliVersions,
 }
 
@@ -405,7 +407,11 @@ mod tests {
             vec![
                 ComponentOutcome::up_to_date("claude-cli", "1.2.3"),
                 ComponentOutcome::upgraded("codex", "0.4.0", "0.5.0"),
-                ComponentOutcome::failed("gemini-cli", "0.1.0", "npm 503"),
+                ComponentOutcome::failed(
+                    "antigravity-cli",
+                    "0.1.0",
+                    "shell-script update path not reachable",
+                ),
             ],
         );
         let s = render_updater_status(&[r]);
@@ -415,8 +421,8 @@ mod tests {
         // upgraded line with arrow.
         assert!(s.contains("↑ codex 0.4.0 → 0.5.0"));
         // failed line with note.
-        assert!(s.contains("✗ gemini-cli 0.1.0"));
-        assert!(s.contains("note: npm 503"));
+        assert!(s.contains("✗ antigravity-cli 0.1.0"));
+        assert!(s.contains("note: shell-script update path not reachable"));
     }
 
     #[test]

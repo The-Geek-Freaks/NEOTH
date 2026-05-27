@@ -2,14 +2,16 @@
 //! 14 Pick #5) CLI-pull path.
 //!
 //! Reality check from 2026-05-18 web research: neither `claude` (Claude
-//! Code CLI) nor `gemini` (Google's Gemini CLI) ships a stable non-
-//! interactive `list-models` subcommand. Both surface model selection
-//! via interactive `/model` slash commands at runtime. Versions, however,
+//! Code CLI) nor `agy` (Google's Antigravity CLI, gemini-cli successor
+//! per 2026-05-19 transition) ships a stable non-interactive
+//! `list-models` subcommand. Both surface model selection via
+//! interactive `/model` slash commands at runtime. Versions, however,
 //! are recoverable via `--version` flags and that's enough signal to:
 //!
 //!   1. Confirm the operator has the CLI installed + reachable in PATH
 //!   2. Surface the operator-canonical aliases (`opus`, `sonnet`, `haiku`
-//!      for Claude; equivalent for Gemini) as a discovery-source result
+//!      for Claude; equivalent for Antigravity / Gemini models) as a
+//!      discovery-source result
 //!   3. Mark the catalog entry as [`SourceOrigin::Cli`] so the operator
 //!      knows the data came from a more trusted (OAuth-authed) surface
 //!
@@ -31,7 +33,7 @@ use anyhow::{Context, Result};
 /// Outcome of a single CLI-presence probe.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CliPresence {
-    /// Binary that was probed (e.g. "claude", "gemini").
+    /// Binary that was probed (e.g. "claude", "agy", "codex").
     pub binary: String,
     /// Version line emitted by the CLI's `--version` command, trimmed.
     /// Operators see this in `neoth catalog show <provider>` so they
@@ -40,7 +42,7 @@ pub struct CliPresence {
 }
 
 /// Cap on how long we wait for a CLI's `--version` to respond. Real CLIs
-/// (claude, gemini, codex) print + exit in <100ms; anything slower than
+/// (claude, agy, codex) print + exit in <100ms; anything slower than
 /// 5s is hung and we skip it rather than block the daemon startup.
 pub const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 

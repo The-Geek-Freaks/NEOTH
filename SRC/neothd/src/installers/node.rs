@@ -1,12 +1,14 @@
 //! NOOB-UX-6 sub-gap (1) — Node + npm install picker primitive.
 //!
-//! NEOTH's wizard auto-installs `claude-cli` + `gemini-cli` + `codex`
-//! via `npm install -g` per `[[neoth-cli-installers]]` memory rule.
-//! That assumes `node` + `npm` are on PATH — the pre-flight bails
-//! with "install Node first" if not. NOOB-UX-6 closes that gap with
-//! the OS-specific Node install path picker (same shape as
-//! `installers/obs.rs` / `installers/obsidian.rs` / `installers/
-//! tmux.rs`).
+//! NEOTH's wizard auto-installs `claude-cli` + `codex` via
+//! `npm install -g` per `[[neoth-cli-installers]]` memory rule (the
+//! third managed CLI, Antigravity, ships through a vendor shell-script
+//! instead of npm and does NOT need this picker). That still assumes
+//! `node` + `npm` are on PATH for the two npm-strategy CLIs — the
+//! pre-flight bails with "install Node first" if not. NOOB-UX-6
+//! closes that gap with the OS-specific Node install path picker
+//! (same shape as `installers/obs.rs` / `installers/obsidian.rs`
+//! / `installers/tmux.rs`).
 //!
 //! Windows: `winget install OpenJS.NodeJS.LTS`
 //! macOS: `brew install node@22` (LTS line)

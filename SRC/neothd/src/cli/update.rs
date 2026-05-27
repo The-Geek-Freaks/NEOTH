@@ -206,10 +206,22 @@ fn render_list(output: OutputFormat) -> Result<()> {
     let rows: Vec<_> = Component::ALL
         .iter()
         .map(|c| {
+            // Components without an npm channel surface the
+            // shell-installer URL instead so the operator can see WHERE
+            // the binary actually comes from.
+            let install_source = c
+                .npm_package()
+                .map(str::to_string)
+                .unwrap_or_else(|| match *c {
+                    Component::AntigravityCli => {
+                        "shell:antigravity.google/cli/install".to_string()
+                    }
+                    _ => "shell:vendor".to_string(),
+                });
             serde_json::json!({
                 "component": c.name(),
                 "binary": c.binary(),
-                "npm_package": c.npm_package(),
+                "install_source": install_source,
             })
         })
         .collect();
@@ -224,14 +236,17 @@ fn render_list(output: OutputFormat) -> Result<()> {
             }
         }
         OutputFormat::Table => {
-            println!("{:<14} {:<10} {:<30}", "component", "binary", "npm_package");
-            println!("{}", "-".repeat(58));
-            for c in Component::ALL {
+            println!(
+                "{:<16} {:<10} {:<40}",
+                "component", "binary", "install_source"
+            );
+            println!("{}", "-".repeat(68));
+            for r in &rows {
                 println!(
-                    "{:<14} {:<10} {:<30}",
-                    c.name(),
-                    c.binary(),
-                    c.npm_package()
+                    "{:<16} {:<10} {:<40}",
+                    r["component"].as_str().unwrap_or("?"),
+                    r["binary"].as_str().unwrap_or("?"),
+                    r["install_source"].as_str().unwrap_or("?"),
                 );
             }
         }

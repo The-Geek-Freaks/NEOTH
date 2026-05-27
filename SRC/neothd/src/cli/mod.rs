@@ -163,7 +163,7 @@ pub enum Commands {
     /// Runs the indexer once before querying.
     Recall(recall::RecallArgs),
 
-    /// Check or apply updates for NEOTH-managed CLIs (claude-cli, gemini-cli, codex).
+    /// Check or apply updates for NEOTH-managed CLIs (claude-cli, antigravity-cli, codex).
     ///
     /// `--check` (default) probes installed vs. latest versions and prints a report.
     /// `--apply` runs `npm install -g <pkg>@latest` for each component that needs it.
