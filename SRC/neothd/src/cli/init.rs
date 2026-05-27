@@ -2431,6 +2431,23 @@ async fn step5c_qwen_weights(
             state.steps_completed.push(58);
             return Ok(());
         }
+        // NOOB-UX gate: Beginner skips the pre-download prompt. The
+        // jargon ("Pre-download", "lazy-download", `huggingface-cli`)
+        // scares non-developers and the safe default (lazy-fetch on
+        // first chat with operator-visible progress) is already the
+        // right answer for the "Alex's mom" cliff. Intermediate and
+        // Advanced still see the prompt + the download recipe.
+        if matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            println!(
+                "[5c/9] Qwen weights will download automatically on your first chat (~{} GB, progress shown).",
+                qwen_weights::DEFAULT_QWEN_DOWNLOAD_GB,
+            );
+            state.steps_completed.push(58);
+            return Ok(());
+        }
         println!(
             "[5c/9] LocalQwen is wired but the {} weights aren't cached yet (~{} GB download).",
             qwen_weights::DEFAULT_QWEN_MODEL_ID,
@@ -2512,21 +2529,35 @@ fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> R
     debug!("wizard step 5d: profile approval gate awareness");
     if interactive {
         println!();
-        println!("[5d/9] Profile-claim approval gate is ON by default.");
-        println!(
-            "  When NEOTH extracts a profile claim ('you live in Berlin', \
-             'your editor is vim'),"
-        );
-        println!(
-            "  it asks you to confirm before writing — protects against \
-             prompt-injection attacks"
-        );
-        println!("  via channel inbound + multi-turn slow-poison chains.");
-        println!(
-            "  Daemon mode (no tty) parks pending claims in \
-             `neoth profile pending` for review."
-        );
-        println!("  Opt out anytime with: `neoth profile migrate-require-approval --disable`");
+        // NOOB-UX gate: Beginner gets a 1-line plain-English summary.
+        // The 6-line technical version ("prompt-injection attacks",
+        // "multi-turn slow-poison chains", "daemon mode no tty",
+        // `neoth profile pending`) is jargon dense — Intermediate +
+        // Advanced still see it so they know the disable command.
+        if matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            println!(
+                "[5d/9] NEOTH will ask before saving facts about you (e.g. 'you live in Berlin')."
+            );
+        } else {
+            println!("[5d/9] Profile-claim approval gate is ON by default.");
+            println!(
+                "  When NEOTH extracts a profile claim ('you live in Berlin', \
+                 'your editor is vim'),"
+            );
+            println!(
+                "  it asks you to confirm before writing — protects against \
+                 prompt-injection attacks"
+            );
+            println!("  via channel inbound + multi-turn slow-poison chains.");
+            println!(
+                "  Daemon mode (no tty) parks pending claims in \
+                 `neoth profile pending` for review."
+            );
+            println!("  Opt out anytime with: `neoth profile migrate-require-approval --disable`");
+        }
     }
     state.steps_completed.push(60); // 5d marker (between 5c=58 and 6=61).
     Ok(())
@@ -2939,6 +2970,20 @@ async fn step6e_n8n_install(
     #[cfg(feature = "wizard")]
     {
         println!();
+        // NOOB-UX gate: Beginner skips the n8n prompt entirely.
+        // n8n is an optional workflow engine — non-developers don't
+        // know what "workflow engine" means and the safe default is
+        // "don't install" (matches `Recommendation::skip_optional_installers`
+        // from wizard/recommend.rs). Intermediate + Advanced still
+        // get the prompt.
+        if matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            println!("[6e/9] Skipped optional workflow-engine install (n8n).");
+            state.steps_completed.push(63);
+            return Ok(());
+        }
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
             .with_prompt("[6e/9] Install n8n (workflow engine, optional)?")
             .default(false)
@@ -3313,6 +3358,24 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
 
     #[cfg(feature = "wizard")]
     {
+        // NOOB-UX gate: Beginner silently takes `Standard` — the
+        // 5-option matrix ("paid calls > €0.50", "policy.yaml
+        // dangerous_targets", "fine-grained matrix") is dense
+        // jargon and Standard is the safe default the panel
+        // already recommends. Intermediate + Advanced see the
+        // full picker.
+        if matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            state.autonomy = AutonomyLevel::Standard;
+            println!(
+                "  [7/9] autonomy: {} (safe default — change anytime in settings)",
+                state.autonomy.as_str(),
+            );
+            state.steps_completed.push(7);
+            return Ok(());
+        }
         let options = [
             (
                 "strict",
@@ -5746,5 +5809,84 @@ mod tests {
         // No `.tmp` companion leaked.
         let tmp = home.path().join("credentials_import_100.json.tmp");
         assert!(!tmp.exists());
+    }
+
+    // ── Session 27: NOOB-UX experience-level gates for step5c/5d/6e/7 ──
+    //
+    // Pattern matches step5b (Session 26): Beginner short-circuits
+    // dialoguer prompts and takes safe defaults silently. The tests
+    // exercise the early-return branch — if it regresses, step6e_n8n /
+    // step7_autonomy would block on stdin instead of completing, which
+    // surfaces as the test hanging the suite. Better to fail fast.
+
+    #[test]
+    fn step5d_beginner_records_marker() {
+        // Beginner sees the 1-line plain-English summary; the marker
+        // still lands so the audit chain has the same shape across
+        // experience levels.
+        let mut state = fixture_state();
+        state.experience_level = crate::wizard::recommend::ExperienceLevel::Beginner;
+        step5d_profile_approval_gate(true, &mut state).expect("step5d Beginner");
+        assert!(
+            state.steps_completed.contains(&60),
+            "step5d marker (60) must be recorded irrespective of experience level",
+        );
+    }
+
+    #[test]
+    fn step5d_intermediate_records_marker() {
+        // Intermediate operators still get the 6-line technical
+        // version; assert the marker still records so future drift
+        // (e.g. early-return-without-marker) is caught.
+        let mut state = fixture_state();
+        state.experience_level = crate::wizard::recommend::ExperienceLevel::Intermediate;
+        step5d_profile_approval_gate(true, &mut state).expect("step5d Intermediate");
+        assert!(state.steps_completed.contains(&60));
+    }
+
+    #[tokio::test]
+    async fn step6e_beginner_skips_n8n_silently() {
+        // Beginner gate MUST short-circuit before dialoguer. If this
+        // regresses, the test hangs on stdin — fail-fast is the goal.
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        let mut state = fixture_state();
+        state.experience_level = crate::wizard::recommend::ExperienceLevel::Beginner;
+        // Interactive=true would normally prompt; the Beginner gate
+        // hits FIRST and short-circuits the dialoguer call.
+        step6e_n8n_install(&args, true, &mut state)
+            .await
+            .expect("step6e Beginner");
+        assert!(
+            !state.install_n8n,
+            "Beginner default is don't-install n8n — operator opts in via settings later",
+        );
+        assert!(state.steps_completed.contains(&63));
+    }
+
+    #[test]
+    fn step7_beginner_takes_standard_silently() {
+        // Beginner skips the 5-option autonomy matrix and lands on
+        // Standard. The 5-option matrix uses jargon (paid-call
+        // thresholds, policy.yaml::dangerous_targets) that scares
+        // non-developers.
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        let mut state = fixture_state();
+        state.experience_level = crate::wizard::recommend::ExperienceLevel::Beginner;
+        state.autonomy = crate::permissions::AutonomyLevel::Strict; // start non-default
+        step7_autonomy(&args, true, &mut state).expect("step7 Beginner");
+        assert_eq!(
+            state.autonomy,
+            crate::permissions::AutonomyLevel::Standard,
+            "Beginner gate must land on Standard regardless of prior state",
+        );
+        assert!(state.steps_completed.contains(&7));
     }
 }
