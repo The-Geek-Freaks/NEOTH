@@ -156,10 +156,25 @@ pub fn scan_installed_skills(home: &std::path::Path) -> Vec<(String, String)> {
         .collect()
 }
 
+/// One scanned plugin row carrying the operator-visible fields the
+/// updater cares about. U-02b parity (Session 27) — mirrors
+/// [`InstalledSkillRow`] so the resolver lane can carry the optional
+/// `source` URL alongside.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledPluginRow {
+    /// Audit-friendly name with `plugin:` prefix.
+    pub name: String,
+    pub version: String,
+    /// `git+https://…` URL the operator declared in `plugin.toml`,
+    /// or `None` when the plugin opted out of auto-update probes.
+    pub source: Option<String>,
+}
+
 /// Scan `~/.neoth/plugins/<id>/plugin.toml` files + return
-/// (id, version) per plugin. Same defensive shape as
-/// `scan_installed_skills`.
-pub fn scan_installed_plugins(home: &std::path::Path) -> Vec<(String, String)> {
+/// [`InstalledPluginRow`] per plugin. Malformed TOMLs skip silently —
+/// the plugin discovery's own load path surfaces the parse error
+/// elsewhere; the updater probe stays observability-only.
+pub fn scan_installed_plugins_rows(home: &std::path::Path) -> Vec<InstalledPluginRow> {
     let dir = home.join("plugins");
     let Ok(read) = std::fs::read_dir(&dir) else {
         return Vec::new();
@@ -175,10 +190,24 @@ pub fn scan_installed_plugins(home: &std::path::Path) -> Vec<(String, String)> {
             continue;
         };
         if let Ok(m) = toml::from_str::<crate::wasm_plugin::manifest::PluginManifest>(&body) {
-            out.push((format!("plugin:{}", m.id), m.version));
+            out.push(InstalledPluginRow {
+                name: format!("plugin:{}", m.id),
+                version: m.version,
+                source: m.source,
+            });
         }
     }
     out
+}
+
+/// Backwards-compatible alias: callers that don't need the source
+/// URL keep the `(name, version)` shape. New callers use
+/// [`scan_installed_plugins_rows`] directly.
+pub fn scan_installed_plugins(home: &std::path::Path) -> Vec<(String, String)> {
+    scan_installed_plugins_rows(home)
+        .into_iter()
+        .map(|r| (r.name, r.version))
+        .collect()
 }
 
 /// Sentinel error string the U-02 probe writes into
@@ -201,10 +230,11 @@ pub const NO_REGISTRY_RESOLVER_MSG: &str =
 /// chain captures "operator hasn't opted into auto-update probes yet"
 /// distinctly from a real resolver failure.
 ///
-/// Plugins (`~/.neoth/plugins/<id>/plugin.toml`) keep the sentinel
-/// pending a matching `source` field addition to PluginManifest —
-/// scoped as a follow-up so this commit stays focused on the skill
-/// path Alex picked option 1 for.
+/// Plugins (`~/.neoth/plugins/<id>/plugin.toml`) get the same
+/// treatment as of Session 27 parity work: a `source` field on the
+/// `PluginManifest` routes through the resolver; plugins without
+/// the field keep the sentinel so the audit chain still
+/// distinguishes "operator hasn't opted in" from "resolver failed".
 pub async fn skill_plugin_specs_for_home_async(
     home: std::path::PathBuf,
     gate: GateDecision,
@@ -218,21 +248,22 @@ pub async fn skill_plugin_specs_for_home_async(
         };
         installed.push((row.name, row.version, latest, gate.clone()));
     }
-    for (name, version) in scan_installed_plugins(&home) {
-        installed.push((
-            name,
-            version,
-            Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
-            gate.clone(),
-        ));
+    let plugin_rows = scan_installed_plugins_rows(&home);
+    for row in plugin_rows {
+        let latest = match row.source.as_deref() {
+            Some(source) => crate::updater::skill_resolver::resolve_latest_version(source).await,
+            None => Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
+        };
+        installed.push((row.name, row.version, latest, gate.clone()));
     }
     crate::updater::pipeline::skill_plugin_specs(installed)
 }
 
 /// Sync wrapper kept for callers that don't have a tokio runtime
-/// handy. Every source-declaring skill yields the sentinel error
-/// because the resolver requires async. Callers in async contexts
-/// MUST switch to [`skill_plugin_specs_for_home_async`].
+/// handy. Every source-declaring skill OR plugin yields the
+/// sentinel error here because the resolver requires async.
+/// Callers in async contexts MUST switch to
+/// [`skill_plugin_specs_for_home_async`].
 pub fn skill_plugin_specs_for_home(
     home: &std::path::Path,
     gate: GateDecision,
@@ -246,10 +277,10 @@ pub fn skill_plugin_specs_for_home(
             gate.clone(),
         ));
     }
-    for (name, version) in scan_installed_plugins(home) {
+    for row in scan_installed_plugins_rows(home) {
         installed.push((
-            name,
-            version,
+            row.name,
+            row.version,
             Err(NO_REGISTRY_RESOLVER_MSG.to_string()),
             gate.clone(),
         ));
@@ -483,6 +514,102 @@ mod tests {
                     !msg.contains("no upstream registry"),
                     "source-declaring skill must NOT surface the sentinel — \
                      resolver must have been called"
+                );
+            }
+            Ok(_) => panic!("unreachable host must surface as Err"),
+        }
+    }
+
+    // ── Session 27 — U-02b plugin parity drift guards ─────────────────
+    //
+    // Same three cases as skills above, mirrored against the plugin
+    // probe. The symmetry is load-bearing: a future PluginManifest
+    // refactor that drops the `source` field would silently break the
+    // resolver lane for plugins, and these tests are the canary.
+
+    #[test]
+    fn scan_installed_plugins_rows_carries_source_when_present() {
+        let home = tempfile::tempdir().unwrap();
+        let plugins = home.path().join("plugins");
+        std::fs::create_dir_all(plugins.join("with_source")).unwrap();
+        std::fs::write(
+            plugins.join("with_source").join("plugin.toml"),
+            "id = \"with_source\"\n\
+             name = \"With Source\"\n\
+             version = \"1.0.0\"\n\
+             source = \"git+https://github.com/example/with-source\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(plugins.join("no_source")).unwrap();
+        std::fs::write(
+            plugins.join("no_source").join("plugin.toml"),
+            "id = \"no_source\"\nname = \"Legacy\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let rows = scan_installed_plugins_rows(home.path());
+        assert_eq!(rows.len(), 2);
+        let with = rows
+            .iter()
+            .find(|r| r.name == "plugin:with_source")
+            .expect("with_source row present");
+        assert_eq!(
+            with.source.as_deref(),
+            Some("git+https://github.com/example/with-source"),
+        );
+        let without = rows
+            .iter()
+            .find(|r| r.name == "plugin:no_source")
+            .expect("no_source row present");
+        assert!(without.source.is_none());
+    }
+
+    #[tokio::test]
+    async fn async_specs_returns_sentinel_for_plugins_without_source() {
+        let home = tempfile::tempdir().unwrap();
+        let plugins = home.path().join("plugins");
+        std::fs::create_dir_all(plugins.join("legacy")).unwrap();
+        std::fs::write(
+            plugins.join("legacy").join("plugin.toml"),
+            "id = \"legacy\"\nname = \"Legacy\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let specs =
+            skill_plugin_specs_for_home_async(home.path().to_path_buf(), GateDecision::Allow).await;
+        assert_eq!(specs.len(), 1);
+        match &specs[0].latest_version {
+            Err(msg) => assert!(
+                msg.contains("no upstream registry"),
+                "plugins without source MUST surface the sentinel, got: {msg}"
+            ),
+            Ok(_) => panic!("source-less plugin must NOT report a real version"),
+        }
+    }
+
+    #[tokio::test]
+    async fn async_specs_attempts_resolver_for_plugins_with_source() {
+        // Same `.invalid` RFC2606 trick as the skills test — proves
+        // the resolver path FIRED for plugins with a `source` field,
+        // independent of network state.
+        let home = tempfile::tempdir().unwrap();
+        let plugins = home.path().join("plugins");
+        std::fs::create_dir_all(plugins.join("with_src")).unwrap();
+        std::fs::write(
+            plugins.join("with_src").join("plugin.toml"),
+            "id = \"with_src\"\n\
+             name = \"With Src\"\n\
+             version = \"1.0.0\"\n\
+             source = \"git+https://nonexistent-host.invalid/owner/repo\"\n",
+        )
+        .unwrap();
+        let specs =
+            skill_plugin_specs_for_home_async(home.path().to_path_buf(), GateDecision::Allow).await;
+        assert_eq!(specs.len(), 1);
+        match &specs[0].latest_version {
+            Err(msg) => {
+                assert!(
+                    !msg.contains("no upstream registry"),
+                    "source-declaring plugin must NOT surface the sentinel — \
+                     resolver must have been called, got: {msg}"
                 );
             }
             Ok(_) => panic!("unreachable host must surface as Err"),

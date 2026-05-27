@@ -464,6 +464,7 @@ mod tests {
             hook_stages: vec![],
             fuel_budget_override: None,
             memory_limit_bytes: None,
+            source: None,
         }
     }
 

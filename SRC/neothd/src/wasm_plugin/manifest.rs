@@ -106,6 +106,15 @@ pub struct PluginManifest {
     pub fuel_budget_override: Option<u64>,
     #[serde(default)]
     pub memory_limit_bytes: Option<usize>,
+    /// U-02b parity (Session 27): upstream source URI the updater
+    /// probes for the latest published version. Same scheme as the
+    /// sibling `SkillManifest::source` — `git+https://github.com/
+    /// <owner>/<repo>` is the only form supported today; the resolver
+    /// shells out to `git ls-remote --tags <url>` and picks the
+    /// highest-sorting semver tag. `None` opts the plugin out of
+    /// auto-update probes (operator manually pulls + replaces).
+    #[serde(default)]
+    pub source: Option<String>,
 }
 
 /// Errors that block a manifest from loading. Operator sees these in
@@ -197,6 +206,7 @@ mod tests {
             hook_stages: vec![HookStage::OnRecallQuery],
             fuel_budget_override: None,
             memory_limit_bytes: None,
+            source: None,
         }
     }
 
