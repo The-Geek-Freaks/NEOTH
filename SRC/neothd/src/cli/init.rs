@@ -90,6 +90,13 @@ pub struct InitArgs {
     #[arg(long)]
     pub accept_license: bool,
 
+    /// NOOB-UX (Session 26) — operator's experience level override.
+    /// `beginner | intermediate | advanced`. Skips the step1c prompt
+    /// when set. Drives whether tech-deep wizard prompts surface or
+    /// silently default. Non-interactive runs default to `beginner`.
+    #[arg(long = "experience-level", value_name = "LEVEL")]
+    pub experience_level_override: Option<String>,
+
     /// Operator identity (2-32 chars, [a-zA-Z0-9_-]).
     #[arg(long, value_name = "ID")]
     pub operator_id: Option<String>,
@@ -238,6 +245,14 @@ pub struct InitArgs {
 /// silent drift when a new provider arm is added without updating match coverage.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WizardState {
+    /// NOOB-UX (Session 26): operator-declared experience level.
+    /// Drives whether tech-deep wizard prompts (accelerator manual
+    /// pick, embedding provider, council recursion depth, etc.)
+    /// appear or get silently defaulted. `Beginner` is the safest
+    /// first-run default — operators who know they want the deep
+    /// flow pick `Advanced` at step 1c.
+    #[serde(default)]
+    pub experience_level: crate::wizard::recommend::ExperienceLevel,
     pub operator_id: Option<String>,
     pub language_primary: Option<String>,
     pub language_code: Option<String>,
@@ -372,6 +387,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step1_license(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step1b_detect_environment(&args, interactive, &neoth_dir).await;
+    step1c_experience_level(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step2_operator_id(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step3_language(&args, interactive, &mut state)?;
@@ -1022,6 +1039,89 @@ fn write_detect_complete_sidecar(
     Ok(final_path)
 }
 
+/// NOOB-UX (Session 26) step 1c — operator picks an experience
+/// level so later steps know how much tech detail to surface.
+///
+/// Beginner is the default + safest pick: every tech-deep prompt
+/// in later steps (accelerator manual pick, embedding provider,
+/// council recursion depth, …) silently uses the detected /
+/// recommended value. Intermediate surfaces those prompts with
+/// reasonable defaults pre-selected. Advanced surfaces everything
+/// with no pre-selection.
+///
+/// Non-interactive runs default to Beginner (CI / scripted bring-
+/// up benefits from minimal surface). Operators who want a
+/// specific level in non-interactive mode can pass
+/// `--experience-level <beginner|intermediate|advanced>` (added
+/// alongside this step).
+fn step1c_experience_level(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    use crate::wizard::recommend::ExperienceLevel;
+    debug!("wizard step 1c: experience level");
+
+    if let Some(ref raw) = args.experience_level_override {
+        let lvl = match raw.to_ascii_lowercase().as_str() {
+            "beginner" => ExperienceLevel::Beginner,
+            "intermediate" => ExperienceLevel::Intermediate,
+            "advanced" => ExperienceLevel::Advanced,
+            other => anyhow::bail!(
+                "invalid --experience-level '{other}'. Expected: beginner | intermediate | advanced"
+            ),
+        };
+        state.experience_level = lvl;
+        return Ok(());
+    }
+    if !interactive {
+        // Safest non-interactive default: hand-holding flow.
+        state.experience_level = ExperienceLevel::Beginner;
+        return Ok(());
+    }
+
+    println!("\n[1c/9] How comfortable are you with terminals + config files?\n");
+    println!("    [B]eginner       Auto-pick every default for you. Hide tech toggles.");
+    println!("    [I]ntermediate   Show toggles with reasonable defaults pre-selected.");
+    println!("    [A]dvanced       Surface every advanced setting. No defaults applied.");
+    println!();
+
+    #[cfg(feature = "wizard")]
+    {
+        let options = [
+            "Beginner (recommended for first-time setup)",
+            "Intermediate (terminal-comfortable)",
+            "Advanced (power user)",
+        ];
+        let picked = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("[1c/9] Pick your experience level")
+            .items(&options)
+            .default(0)
+            .interact()
+            .context("experience-level prompt")?;
+        state.experience_level = match picked {
+            0 => ExperienceLevel::Beginner,
+            1 => ExperienceLevel::Intermediate,
+            _ => ExperienceLevel::Advanced,
+        };
+    }
+    #[cfg(not(feature = "wizard"))]
+    {
+        state.experience_level = ExperienceLevel::Beginner;
+    }
+
+    println!(
+        "  [1c/9] experience: {} — tech-deep prompts will {}.",
+        state.experience_level.as_str(),
+        match state.experience_level {
+            ExperienceLevel::Beginner => "be silently defaulted",
+            ExperienceLevel::Intermediate => "appear with pre-selected defaults",
+            ExperienceLevel::Advanced => "appear without defaults",
+        }
+    );
+    Ok(())
+}
+
 fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
     debug!("wizard step 2: operator_id");
     let default_id = get_os_username();
@@ -1635,13 +1735,31 @@ fn step5b_inference_topology(
             .iter()
             .position(|a| *a == probe.picked)
             .unwrap_or(0);
-        let accel_pick = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("    accelerator (used by local_qwen forward pass)")
-            .items(&accel_labels)
-            .default(default_idx)
-            .interact()
-            .context("accelerator select")?;
-        let chosen_accel = accel_options[accel_pick];
+        // NOOB-UX gate: Beginner-level operators don't see the
+        // manual accelerator pick — auto-detection is almost always
+        // right, and surfacing the choice scares non-developers
+        // (see Session 26 UX review for the screenshot Alex flagged).
+        // Intermediate + Advanced still get the prompt with the
+        // detected pick pre-selected as default.
+        let chosen_accel = if matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            println!(
+                "  [5b/9] accelerator: {} (auto-detected, hidden in beginner mode)",
+                probe.picked.as_str()
+            );
+            probe.picked
+        } else {
+            let accel_pick =
+                dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt("    accelerator (used by local_qwen forward pass)")
+                    .items(&accel_labels)
+                    .default(default_idx)
+                    .interact()
+                    .context("accelerator select")?;
+            accel_options[accel_pick]
+        };
         // Only record an override when the operator picked something OTHER
         // than the detected default — auto-detection is preferred so portable
         // freedom.yaml files survive moving between hosts.
@@ -1650,7 +1768,14 @@ fn step5b_inference_topology(
         } else {
             Some(chosen_accel.as_str().to_string())
         };
-        println!("  [5b/9] accelerator: {}", chosen_accel.as_str());
+        // Beginner-mode already printed the "auto-detected" line above;
+        // re-print only for Intermediate/Advanced who actually picked.
+        if !matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            println!("  [5b/9] accelerator: {}", chosen_accel.as_str());
+        }
 
         // ─── 3. Per-hemisphere providers (only Triplet + Custom) ───────
         // SPEC_hemisphere_provider_selection.md §3: surface a recommended
@@ -1716,20 +1841,31 @@ fn step5b_inference_topology(
         }
 
         // ─── 4. Embedding provider (independent of chat) ───────────────
-        let want_emb = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        // NOOB-UX gate: Beginner skips. Embedding provider is an
+        // optional speed-up for the skill router + ctx-mode re-rank;
+        // operators who don't know what either of those is get a
+        // sensible no-op default.
+        if !matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            let want_emb = dialoguer::Confirm::with_theme(
+                &dialoguer::theme::ColorfulTheme::default(),
+            )
             .with_prompt(
                 "    configure an embedding provider (used by skill router + ctx-mode re-rank)?",
             )
             .default(false)
             .interact()
             .context("embedding-yes/no confirm")?;
-        if want_emb {
-            let emb = prompt_inference_provider(
-                "    embedding provider",
-                Some(InferenceProvider::LocalQwen),
-            )?;
-            state.inference.embedding_provider = Some(emb);
-            println!("  [5b/9] embeddings via {}", emb.as_str());
+            if want_emb {
+                let emb = prompt_inference_provider(
+                    "    embedding provider",
+                    Some(InferenceProvider::LocalQwen),
+                )?;
+                state.inference.embedding_provider = Some(emb);
+                println!("  [5b/9] embeddings via {}", emb.as_str());
+            }
         }
 
         // ─── E-2 Phase 4 (Session 14 Pick #23) — Council recursion depth
@@ -1743,6 +1879,15 @@ fn step5b_inference_topology(
             // we're in the interactive path. Honour it without re-asking.
             let (d, _) = crate::config::inference::HemisphereCouncilDepth::new_clamped(raw);
             d.get()
+        } else if matches!(
+            state.experience_level,
+            crate::wizard::recommend::ExperienceLevel::Beginner
+        ) {
+            // NOOB-UX gate: Beginner gets the safe flat default
+            // silently. Depth>1 is a 3^N cost multiplier — surfacing
+            // it to non-developers risks accidental 81-leaf-call
+            // councils that burn provider quota.
+            1u8
         } else {
             let raw: u8 = dialoguer::Input::with_theme(
                 &dialoguer::theme::ColorfulTheme::default(),

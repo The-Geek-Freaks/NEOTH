@@ -24,11 +24,16 @@ use crate::installers::detect::DetectReport;
 /// Operator's self-declared experience level. Passed in from the
 /// wizard's first-screen prompt (or `freedom.yaml::operator.
 /// experience_level` for non-wizard reloads).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// `Default == Beginner` — when an aborted wizard or a missing field
+/// lands here, the safest first-run flow is the most hand-holding
+/// one. Power operators explicitly pick `Advanced` in step 1c.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExperienceLevel {
     /// "Alex's mom" — never touched a CLI; needs every default
     /// chosen for her + most toggles hidden.
+    #[default]
     Beginner,
     /// Comfortable with a terminal; will edit `freedom.yaml`; wants
     /// recommended defaults but visible toggles.
