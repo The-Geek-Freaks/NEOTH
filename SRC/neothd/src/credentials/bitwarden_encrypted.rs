@@ -186,6 +186,7 @@ pub fn derive_keys_pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> ([u8
 /// Decode a Bitwarden encrypted-string "2.iv|ct|mac" into its three
 /// raw byte fields. Pure-fn — used by both the validator + the data
 /// decrypt paths.
+#[allow(clippy::type_complexity)]
 pub fn parse_encrypted_string(
     s: &str,
 ) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), BitwardenEncryptedError> {

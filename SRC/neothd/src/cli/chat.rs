@@ -3681,6 +3681,7 @@ mod tests {
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
             n8n_api: crate::config::N8nApiConfig::default(),
+            ..Default::default()
         };
 
         let provider = MockProvider {
@@ -3697,6 +3698,7 @@ mod tests {
             temperature: None,
             top_p: None,
             sampling_seed: None,
+            resume_from: None,
         };
 
         run_chat_with(args, config, &provider)
@@ -3834,6 +3836,7 @@ mod tests {
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
             n8n_api: crate::config::N8nApiConfig::default(),
+            ..Default::default()
         };
 
         let provider = MockProvider {
@@ -3850,6 +3853,7 @@ mod tests {
             temperature: None,
             top_p: None,
             sampling_seed: None,
+            resume_from: None,
         };
 
         run_chat_with(args, config, &provider)
@@ -3947,6 +3951,7 @@ mod tests {
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
             n8n_api: crate::config::N8nApiConfig::default(),
+            ..Default::default()
         };
         let args = ChatArgs {
             message: Some("Capital of France?".into()),
@@ -3958,6 +3963,7 @@ mod tests {
             temperature: None,
             top_p: None,
             sampling_seed: None,
+            resume_from: None,
         };
         run_chat_with(args, config, &LocalQwenMock)
             .await
@@ -4079,6 +4085,7 @@ mod tests {
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
             n8n_api: crate::config::N8nApiConfig::default(),
+            ..Default::default()
         };
         let args = ChatArgs {
             message: Some("hi".into()),
@@ -4090,6 +4097,7 @@ mod tests {
             temperature: None,
             top_p: None,
             sampling_seed: None,
+            resume_from: None,
         };
 
         run_chat_with(args, config, &MockStreamProvider)
@@ -4219,6 +4227,7 @@ mod tests {
             proactive: crate::config::ProactiveConfig::default(),
             telemetry: crate::telemetry::TelemetryConfig::default(),
             n8n_api: crate::config::N8nApiConfig::default(),
+            ..Default::default()
         };
         let args = ChatArgs {
             message: Some("trigger".into()),
@@ -4230,6 +4239,7 @@ mod tests {
             temperature: None,
             top_p: None,
             sampling_seed: None,
+            resume_from: None,
         };
 
         let result = run_chat_with(args, config, &FailingProvider).await;

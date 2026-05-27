@@ -298,7 +298,7 @@ pub fn parse_delta(raw: &str, window: &AttributedWindow) -> Result<ProfileDelta>
     let mut delta: ProfileDelta = serde_json::from_str(candidate).with_context(|| {
         format!(
             "profile.extract: parse JSON. First 200 bytes: {}",
-            &candidate.chars().take(200).collect::<String>()
+            candidate.chars().take(200).collect::<String>()
         )
     })?;
     // Fill in any required fields the LLM might have skipped.

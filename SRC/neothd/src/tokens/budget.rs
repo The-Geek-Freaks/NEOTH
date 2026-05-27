@@ -17,7 +17,7 @@ pub fn count_tokens(text: &str) -> u32 {
     // Saturating math: a malformed multi-GB input shouldn't panic
     // the assembly path; cap at u32::MAX.
     let chars = text.chars().count();
-    ((chars + 3) / 4) as u32
+    chars.div_ceil(4) as u32
 }
 
 /// Which named block a `BlockItem` belongs to. Variant order is

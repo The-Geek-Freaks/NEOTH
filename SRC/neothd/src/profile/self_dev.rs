@@ -217,7 +217,7 @@ pub fn propose_adjustments(
 /// — sha2 would be overkill for an operator-readable short id).
 fn stable_id(kind: &str, distinguishing: &str) -> String {
     let mut hash: u32 = 2_166_136_261;
-    for byte in kind.bytes().chain([b':']).chain(distinguishing.bytes()) {
+    for byte in kind.bytes().chain(*b":").chain(distinguishing.bytes()) {
         hash ^= byte as u32;
         hash = hash.wrapping_mul(16_777_619);
     }

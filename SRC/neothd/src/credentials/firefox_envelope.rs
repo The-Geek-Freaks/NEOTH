@@ -193,9 +193,9 @@ pub fn parse_firefox_envelope(b64: &str) -> Result<FirefoxEnvelope, EnvelopeErro
 fn oid_to_algorithm(oid: &simple_asn1::OID) -> FirefoxAlgorithm {
     let aes_256_cbc = oid!(2, 16, 840, 1, 101, 3, 4, 1, 42);
     let triple_des_cbc = oid!(1, 2, 840, 113549, 3, 7);
-    if oid == &aes_256_cbc {
+    if oid == aes_256_cbc {
         FirefoxAlgorithm::Aes256Cbc
-    } else if oid == &triple_des_cbc {
+    } else if oid == triple_des_cbc {
         FirefoxAlgorithm::TripleDesCbc
     } else {
         FirefoxAlgorithm::Unsupported(format_oid_dotted(oid))

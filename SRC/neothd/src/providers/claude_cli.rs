@@ -735,7 +735,7 @@ async fn complete_uncached(binary: &str, model_default: &str, req: Request) -> R
     let envelope: ClaudeJsonEnvelope = serde_json::from_str(stdout.trim()).with_context(|| {
         format!(
             "parse claude --output-format json. Raw stdout (first 400 chars): {}",
-            &stdout.chars().take(400).collect::<String>()
+            stdout.chars().take(400).collect::<String>()
         )
     })?;
 

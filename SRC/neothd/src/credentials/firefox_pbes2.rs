@@ -187,7 +187,7 @@ pub fn parse_pbes2_envelope(der: &[u8]) -> Result<Pbes2Envelope, Pbes2Error> {
         _ => return Err(Pbes2Error::AlgIdNotSequence),
     };
     let id_pbes2 = oid!(1, 2, 840, 113549, 1, 5, 13);
-    if alg_oid != &id_pbes2 {
+    if alg_oid != id_pbes2 {
         return Err(Pbes2Error::UnsupportedAlgorithm {
             got: format_oid_dotted(alg_oid),
         });
@@ -217,7 +217,7 @@ pub fn parse_pbes2_envelope(der: &[u8]) -> Result<Pbes2Envelope, Pbes2Error> {
         _ => return Err(Pbes2Error::KdfAlgIdNotSequence),
     };
     let id_pbkdf2 = oid!(1, 2, 840, 113549, 1, 5, 12);
-    if kdf_oid != &id_pbkdf2 {
+    if kdf_oid != id_pbkdf2 {
         return Err(Pbes2Error::UnsupportedKdf {
             got: format_oid_dotted(kdf_oid),
         });
@@ -263,7 +263,7 @@ pub fn parse_pbes2_envelope(der: &[u8]) -> Result<Pbes2Envelope, Pbes2Error> {
         _ => return Err(Pbes2Error::PrfAlgIdNotSequence),
     };
     let hmac_with_sha256 = oid!(1, 2, 840, 113549, 2, 9);
-    if prf_oid != &hmac_with_sha256 {
+    if prf_oid != hmac_with_sha256 {
         return Err(Pbes2Error::UnsupportedPrf {
             got: format_oid_dotted(prf_oid),
         });
@@ -284,7 +284,7 @@ pub fn parse_pbes2_envelope(der: &[u8]) -> Result<Pbes2Envelope, Pbes2Error> {
         _ => return Err(Pbes2Error::EncAlgIdNotSequence),
     };
     let aes_256_cbc = oid!(2, 16, 840, 1, 101, 3, 4, 1, 42);
-    if enc_oid != &aes_256_cbc {
+    if enc_oid != aes_256_cbc {
         return Err(Pbes2Error::UnsupportedEncryption {
             got: format_oid_dotted(enc_oid),
         });
