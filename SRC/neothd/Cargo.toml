@@ -422,6 +422,18 @@ aes-gcm = "0.10"
 [target.'cfg(target_os = "linux")'.dependencies]
 secret-service = { version = "4", features = ["rt-tokio-crypto-rust"] }
 
+# C-03b macOS (Session 28) — Keychain Services binding for Chrome's
+# AES-128-CBC password envelope. macOS Chrome stores the per-installation
+# AES key password in the operator's Login Keychain under
+# service="Chrome Safe Storage" (or Chromium/Brave variants) with
+# account="Chrome". `security-framework` is Apple's de-facto Rust
+# binding, RustCrypto-adjacent maintenance. AES-CBC decrypt uses
+# PBKDF2-SHA1 iter=1003 (NOT 1 like Linux — pinned hardcoded by
+# Chrome on macOS for legacy compatibility) with the same
+# `saltysalt` salt.
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+
 # B-6 Item 3f (Session 21) — PTY stealth for interactive subprocess.
 # `portable-pty` is the cross-platform PTY crate WezTerm uses (Wez Furlong).
 # It abstracts Windows ConPTY (Win10+) + Linux pty + macOS pty behind one
