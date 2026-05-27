@@ -137,7 +137,16 @@ pub async fn run() -> Result<()> {
     init_tracing()?;
     install_panic_handler();
 
-    info!(version = %env!("CARGO_PKG_VERSION"), "{BANNER}");
+    // Suppress the startup banner when the operator is running the
+    // interactive wizard (`neoth init` on a TTY). The wizard prints
+    // its own welcome banner inside step1_license; layering a
+    // tracing-style `INFO neothd: Neoth ready. Sup.` on top makes
+    // the first impression look like a logspew dump. Other
+    // subcommands keep the banner — it's a useful one-line
+    // ready-to-go signal for daemon/serve flows.
+    if !is_interactive_wizard_invocation() {
+        info!(version = %env!("CARGO_PKG_VERSION"), "{BANNER}");
+    }
 
     // Parse CLI and dispatch. Subcommands own their own shutdown handling —
     // `cli::serve` listens for SIGTERM/Ctrl+C internally and drains the WAL
@@ -147,6 +156,27 @@ pub async fn run() -> Result<()> {
     cli::run(cli).await?;
 
     Ok(())
+}
+
+/// True when `neoth init` is being invoked from a TTY without
+/// `--non-interactive`. Used to silence the tracing-style startup
+/// banner + step-marker info!() calls during the wizard so the
+/// operator sees a clean prompt sequence instead of layered logspew.
+fn is_interactive_wizard_invocation() -> bool {
+    use std::io::IsTerminal;
+    let mut args = std::env::args();
+    let _argv0 = args.next();
+    let mut saw_init = false;
+    let mut non_interactive_flag = false;
+    for a in args {
+        if a == "init" {
+            saw_init = true;
+        }
+        if a == "--non-interactive" {
+            non_interactive_flag = true;
+        }
+    }
+    saw_init && !non_interactive_flag && std::io::stdout().is_terminal()
 }
 
 /// Initialise the global tracing subscriber.
@@ -163,8 +193,18 @@ pub async fn run() -> Result<()> {
 /// `tracing_subscriber::EnvFilter` syntax (`info,neothd=debug`,
 /// `warn,neothd::wal=trace`, etc).
 pub fn init_tracing() -> Result<()> {
-    let filter = EnvFilter::try_from_env("NEOTH_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info,neothd=debug"));
+    // Interactive wizard runs default to `warn` so the operator sees
+    // a clean prompt UX. Explicit NEOTH_LOG override always wins —
+    // power users get the verbose default by setting it themselves.
+    // Long-lived flows (`neoth serve`, `neoth chat`, etc.) keep the
+    // historical `info,neothd=debug` default.
+    let default_filter = if is_interactive_wizard_invocation() {
+        "warn"
+    } else {
+        "info,neothd=debug"
+    };
+    let filter =
+        EnvFilter::try_from_env("NEOTH_LOG").unwrap_or_else(|_| EnvFilter::new(default_filter));
     let format = std::env::var("NEOTH_LOG_FORMAT")
         .unwrap_or_default()
         .to_ascii_lowercase();

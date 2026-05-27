@@ -72,6 +72,20 @@ pub struct InitArgs {
     #[arg(long = "non-interactive")]
     pub non_interactive: bool,
 
+    /// Skip the GUI/CLI mode-selection prompt and hand off to the GUI
+    /// surface. The CLI wizard prints launch instructions for
+    /// `neothd-gui` and exits — the GUI binary owns its own
+    /// onboarding flow with the same freedom.yaml backing.
+    #[arg(long)]
+    pub gui: bool,
+
+    /// Skip the GUI/CLI mode-selection prompt and stay in the
+    /// terminal wizard. Useful for scripted bring-up that pipes
+    /// answers in OR for power users who never want the GUI option
+    /// surfaced. Mutually exclusive with `--gui`.
+    #[arg(long, conflicts_with = "gui")]
+    pub cli: bool,
+
     /// Accept license without prompt. Required with --non-interactive.
     #[arg(long)]
     pub accept_license: bool,
@@ -318,7 +332,7 @@ fn is_interactive(args: &InitArgs) -> bool {
 /// Main entry point for `neoth init`.
 pub async fn run_init(args: InitArgs) -> Result<()> {
     let interactive = is_interactive(&args);
-    info!(interactive, force = args.force, "neoth init starting");
+    debug!(interactive, force = args.force, "neoth init starting");
 
     let neoth_dir = dirs_home().join(".neoth");
     let marker = neoth_dir.join(".initialized");
@@ -345,6 +359,16 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     // on resume. Decline → clear the file + start fresh.
     maybe_resume_from_checkpoint(&neoth_dir, interactive, &mut state)?;
 
+    // Step 0 — operator picks GUI or CLI mode before anything else.
+    // Per the HARD RULE `neoth_gui_first_screen_and_settings_parity`:
+    // NEOTH targets non-developer operators ("noobs") who land on a
+    // mode-selection screen, not a tracing-style logspew. If the
+    // operator picks GUI here we exit the CLI wizard cleanly with a
+    // pointer to `neothd-gui` — the wizard runs in either surface
+    // with parity guarantees on settings.
+    if step0_mode_selection(&args, interactive)?.exit_for_gui() {
+        return Ok(());
+    }
     step1_license(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step1b_detect_environment(&args, interactive, &neoth_dir).await;
@@ -732,8 +756,114 @@ pub fn consume_first_tour_marker(neoth_dir: &std::path::Path) -> Option<String> 
     Some(body)
 }
 
+/// Outcome of the GUI/CLI mode-selection step. Callers branch on
+/// [`Self::exit_for_gui`] to short-circuit the rest of the CLI
+/// wizard when the operator picked the graphical surface.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WizardModeChoice {
+    /// Stay in the terminal wizard. Default for non-interactive runs
+    /// + advanced operators who prefer typing.
+    Cli,
+    /// Operator wants the GUI surface. Wizard prints how to launch
+    /// `neothd-gui` and returns — the GUI binary owns its own
+    /// onboarding flow with the same backing FreedomConfig.
+    Gui,
+}
+
+impl WizardModeChoice {
+    pub fn exit_for_gui(self) -> bool {
+        matches!(self, Self::Gui)
+    }
+}
+
+/// Step 0 — pick GUI vs CLI surface as the very first thing the
+/// operator sees. Closes the HARD RULE
+/// `neoth_gui_first_screen_and_settings_parity` violation flagged
+/// in Session 26's UX review: a fresh `neoth init` run on a TTY
+/// landed straight in a license prompt with tracing INFO lines
+/// interleaved, which fails the "Alex's mom on Win11" sanity test.
+///
+/// Non-interactive runs (CI / scripted bring-up / `--non-interactive`)
+/// always pick CLI silently — there's no operator to ask, and the
+/// scripted flow IS the API surface they want. Operators who want
+/// to script the GUI install pass `--gui` to skip the prompt.
+fn step0_mode_selection(args: &InitArgs, interactive: bool) -> Result<WizardModeChoice> {
+    debug!("wizard step 0: mode selection");
+    if args.gui {
+        print_gui_handoff_banner();
+        return Ok(WizardModeChoice::Gui);
+    }
+    if args.cli {
+        // Operator explicitly opted out of the mode picker.
+        return Ok(WizardModeChoice::Cli);
+    }
+    if !interactive {
+        return Ok(WizardModeChoice::Cli);
+    }
+
+    println!();
+    println!("=================================================================");
+    println!("  Welcome to Neoth.");
+    println!("=================================================================");
+    println!();
+    println!("  How would you like to set up Neoth?");
+    println!();
+    println!("    [GUI]  Graphical wizard — clickable cards, no terminal");
+    println!("           prompts. Recommended for first-time setup.");
+    println!();
+    println!("    [CLI]  Terminal wizard — keyboard-only, scriptable.");
+    println!("           Recommended for developers, SSH sessions, and");
+    println!("           anything you want to automate later.");
+    println!();
+
+    #[cfg(feature = "wizard")]
+    {
+        let options = ["GUI (recommended)", "CLI (terminal wizard)"];
+        let picked = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt("Pick your setup surface")
+            .items(&options)
+            .default(0)
+            .interact()
+            .context("mode-selection prompt")?;
+        match picked {
+            0 => {
+                print_gui_handoff_banner();
+                Ok(WizardModeChoice::Gui)
+            }
+            _ => Ok(WizardModeChoice::Cli),
+        }
+    }
+    #[cfg(not(feature = "wizard"))]
+    {
+        // No `dialoguer` available → silent CLI fallback. Operators
+        // who want GUI on a wizard-less build pass `--gui` explicitly.
+        let _ = args;
+        Ok(WizardModeChoice::Cli)
+    }
+}
+
+/// Render the operator-facing handoff message when the GUI surface
+/// is picked. Kept separate so non-interactive `--gui` runs and the
+/// interactive Select both print identical instructions.
+fn print_gui_handoff_banner() {
+    println!();
+    println!("=================================================================");
+    println!("  Launch the GUI wizard:");
+    println!();
+    println!("    neothd-gui");
+    println!();
+    println!("  The graphical wizard uses the same freedom.yaml + WAL backing");
+    println!("  store as the CLI, so anything you configure there is visible");
+    println!("  to `neoth chat` + `neoth serve` afterwards. To come back to");
+    println!("  this terminal wizard at any point, run:");
+    println!();
+    println!("    neoth init --cli");
+    println!("=================================================================");
+    println!();
+}
+
 fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 1: license");
+    debug!("wizard step 1: license");
 
     println!("\n=================================================================");
     println!(
@@ -801,7 +931,7 @@ async fn step1b_detect_environment(
     interactive: bool,
     neoth_dir: &std::path::Path,
 ) {
-    info!("wizard step 1b: detect environment (W-04)");
+    debug!("wizard step 1b: detect environment (W-04)");
     if !interactive {
         debug!("skipping environment detection in non-interactive mode");
         return;
@@ -858,7 +988,7 @@ async fn step1b_detect_environment(
 }
 
 fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 2: operator_id");
+    debug!("wizard step 2: operator_id");
     let default_id = get_os_username();
 
     let id = if let Some(ref id) = args.operator_id {
@@ -903,7 +1033,7 @@ fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState
 }
 
 fn step3_language(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 3: language");
+    debug!("wizard step 3: language");
     validate_bcp47(&args.language)?;
     let default_code = args
         .code_language
@@ -950,7 +1080,7 @@ fn step3_language(args: &InitArgs, interactive: bool, state: &mut WizardState) -
 }
 
 fn step4_role(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 4: role");
+    debug!("wizard step 4: role");
     let role = if let Some(r) = args.role {
         r
     } else if !interactive {
@@ -986,7 +1116,7 @@ fn step4_role(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Re
 }
 
 async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 5: provider");
+    debug!("wizard step 5: provider");
 
     // Detect the three first-class CLIs and offer to install any that are
     // missing. Memory note: [[neoth-cli-installers]] — operator never
@@ -1308,7 +1438,7 @@ fn step5b_inference_topology(
     use crate::config::inference::{HemisphereSlot, InferenceProvider, TopologyMode};
     use crate::daemon::accelerator;
 
-    info!("wizard step 5b: inference topology");
+    debug!("wizard step 5b: inference topology");
 
     // Auto-detect runs in both interactive and non-interactive paths so we
     // log what we found. Cheap (<500ms total) — see daemon::accelerator.
@@ -2070,7 +2200,7 @@ async fn step5c_qwen_weights(
 ) -> Result<()> {
     use crate::installers::qwen_weights;
 
-    info!("wizard step 5c: qwen weights");
+    debug!("wizard step 5c: qwen weights");
 
     if !inference_uses_local_qwen(&state.inference, &state.provider_kind) {
         // Operator picked cloud-only — no LocalQwen path = nothing to
@@ -2199,7 +2329,7 @@ fn inference_uses_local_qwen(
 /// `neoth profile migrate-require-approval --disable` if they
 /// genuinely want auto-apply.
 fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 5d: profile approval gate awareness");
+    debug!("wizard step 5d: profile approval gate awareness");
     if interactive {
         println!();
         println!("[5d/8] Profile-claim approval gate is ON by default.");
@@ -2223,7 +2353,7 @@ fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> R
 }
 
 async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 6: channel");
+    debug!("wizard step 6: channel");
 
     // K-4b (Session 21): probe `pear` once so the prompt copy reflects
     // whether Keet is reachable as the preferred primary. The probe is
@@ -2307,7 +2437,7 @@ async fn step6b_keet_pairing(
     interactive: bool,
     state: &mut WizardState,
 ) -> Result<()> {
-    info!("wizard step 6b: keet pairing");
+    debug!("wizard step 6b: keet pairing");
 
     if !interactive {
         // CI / cloud-init operators configure Keet by editing
@@ -2418,7 +2548,7 @@ async fn step6c_obsidian_install(
 ) -> Result<()> {
     use crate::installers::obsidian;
 
-    info!("wizard step 6c: obsidian install");
+    debug!("wizard step 6c: obsidian install");
 
     let already = obsidian::detect_obsidian_install();
     if already {
@@ -2501,7 +2631,7 @@ fn step6d_obsidian_vault_bootstrap_with_home(
 ) -> Result<()> {
     use crate::installers::obsidian_vault;
 
-    info!("wizard step 6d: obsidian vault bootstrap");
+    debug!("wizard step 6d: obsidian vault bootstrap");
 
     let resolve_vault = || -> Option<std::path::PathBuf> {
         match home_override {
@@ -2597,7 +2727,7 @@ async fn step6e_n8n_install(
 ) -> Result<()> {
     use crate::installers::n8n;
 
-    info!("wizard step 6e: n8n install");
+    debug!("wizard step 6e: n8n install");
 
     if !interactive {
         if !args.install_n8n {
@@ -2674,7 +2804,7 @@ async fn step6e_n8n_install(
 /// auto-applies — migrating 12 stores is heavyweight + irreversible
 /// once the WAL frames land.
 fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 6f: jarvis import intent");
+    debug!("wizard step 6f: jarvis import intent");
 
     let path = if !interactive {
         args.import_jarvis.clone()
@@ -2774,7 +2904,7 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
 /// Non-interactive runs skip the step entirely — credential
 /// import requires explicit operator intent.
 async fn step6g_credential_import(args: &InitArgs, interactive: bool, neoth_dir: &std::path::Path) {
-    info!("wizard step 6g: credential import (C-05)");
+    debug!("wizard step 6g: credential import (C-05)");
     if !interactive || args.non_interactive {
         debug!("skipping credential import in non-interactive mode");
         return;
@@ -2901,7 +3031,7 @@ fn write_credential_import_sidecar(
 /// audit the chain without prompts use
 /// `neoth wizard install --dry-run` (CLI surface in W-05b).
 fn step6h_install_recommended(args: &InitArgs, interactive: bool, neoth_dir: &std::path::Path) {
-    info!("wizard step 6h: install-command preview (W-05)");
+    debug!("wizard step 6h: install-command preview (W-05)");
     if !interactive || args.non_interactive {
         debug!("skipping install-command preview in non-interactive mode");
         return;
@@ -2984,7 +3114,7 @@ fn step6h_install_recommended(args: &InitArgs, interactive: bool, neoth_dir: &st
 fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
     use crate::permissions::AutonomyLevel;
 
-    info!("wizard step 7: autonomy");
+    debug!("wizard step 7: autonomy");
 
     // Non-interactive path: --autonomy flag wins, otherwise default.
     if !interactive {
@@ -3091,7 +3221,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
 /// flags later (not yet wired — would land alongside other
 /// non-interactive wizard knobs).
 fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 7b: auto-update");
+    debug!("wizard step 7b: auto-update");
 
     if !interactive {
         // Default = enabled:false, auto_apply:false. Already set
@@ -3171,7 +3301,7 @@ fn step7c_wasm_plugin_activation(
     neoth_dir: &std::path::Path,
     state: &mut WizardState,
 ) -> Result<()> {
-    info!("wizard step 7c: wasm plugin activation");
+    debug!("wizard step 7c: wasm plugin activation");
 
     let plugins_root = neoth_dir.join("plugins");
     let report = crate::wasm_plugin::discovery::discover(&plugins_root);
@@ -3295,7 +3425,7 @@ fn step7c_wasm_plugin_activation(
 }
 
 fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
-    info!("wizard step 8: summary");
+    debug!("wizard step 8: summary");
     // Step 7 (autonomy) already pushed `7`; pushing again here corrupted
     // `.initialized.steps_completed` so a partial-resume couldn't tell
     // whether step 7 had actually run. Step 8 is its own marker.
