@@ -40,4 +40,8 @@ Body sections:
 
 ## Index
 
-- [ADR-001 — Slint as the GUI framework](001-slint-gui-framework.md)
+- [ADR-001 — Slint as the GUI framework](001-slint-gui-framework.md) — Accepted.
+- [ADR-002 — R-2 Keet/Hyperswarm port strategy](002-r2-port-strategy.md) — Accepted (port-as-you-go, no Node subprocess).
+- [ADR-003 — R-02 Phase 3 dream-composition cadence](003-r02-phase3-dream-cadence.md) — Proposed (opt-in `neoth dream now` default + opt-in nightly cron, pending Day-14b).
+- [ADR-004 — R-02 Phase 3 embedding model selection](004-r02-phase3-embedding-model.md) — Proposed (Qwen3-Q8 default + BGE-M3 opt-in fallback, gated on Day-14b `embed()` surface).
+- [ADR-005 — R-02 Phase 3 channel-ingress privacy boundary](005-r02-phase3-privacy-boundary.md) — Accepted (episodes-only, no counterparty-leak via clustering).
