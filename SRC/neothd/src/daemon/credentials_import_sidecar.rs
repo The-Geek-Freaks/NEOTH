@@ -18,82 +18,42 @@
 //! pins that the redactor's output type has no secret-bearing
 //! fields.
 //!
-//! Sibling pattern: [`crate::cluster::audit_sidecar`] for cluster
-//! confirm/revoke; [`crate::daemon::installer_audit_sidecar`] for
-//! installer-run audits.
+//! Session 27 refactor: the filesystem helpers moved into the
+//! generic [`crate::daemon::sidecar`] module. The typed wrappers
+//! below keep the `cli::serve` call sites unchanged.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
+use crate::daemon::sidecar::SidecarPayload;
 use crate::security::credential_redact::RedactedCredentialImportPayload;
 
-/// Lexicographic prefix that identifies a credential-import sidecar.
-/// Anything else in the home dir is ignored.
-const FILENAME_PREFIX: &str = "credentials_import_";
+impl SidecarPayload for RedactedCredentialImportPayload {
+    const FILENAME_PREFIX: &'static str = "credentials_import_";
+}
 
 /// List every pending credential-import sidecar in chronological
-/// order (filename embeds `ts_unix` so lexicographic == chronological
-/// when callers pad the timestamp consistently). Missing home dir →
-/// empty vec, NOT an error: pre-wizard fresh installs land here.
+/// order. Thin typed wrapper around
+/// [`crate::daemon::sidecar::list_pending`].
 pub fn list_pending(home: &Path) -> Result<Vec<(PathBuf, RedactedCredentialImportPayload)>> {
-    if !home.exists() {
-        return Ok(Vec::new());
-    }
-    let mut entries: Vec<PathBuf> = fs::read_dir(home)
-        .with_context(|| format!("read {}", home.display()))?
-        .filter_map(|r| r.ok())
-        .map(|e| e.path())
-        .filter(|p| is_credentials_sidecar(p))
-        .collect();
-    entries.sort();
-    let mut out = Vec::with_capacity(entries.len());
-    for path in entries {
-        let body = match fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-        let parsed = match serde_json::from_str::<RedactedCredentialImportPayload>(&body) {
-            Ok(v) => v,
-            Err(_) => continue, // Malformed → skip + leave in place
-        };
-        out.push((path, parsed));
-    }
-    Ok(out)
+    crate::daemon::sidecar::list_pending::<RedactedCredentialImportPayload>(home)
 }
 
 /// Remove a sidecar after the WAL writer accepted its frame.
 /// Idempotent — missing file → `Ok(false)`.
-pub fn remove_sidecar(path: &Path) -> Result<bool> {
-    if !path.exists() {
-        return Ok(false);
-    }
-    fs::remove_file(path).with_context(|| format!("remove {}", path.display()))?;
-    Ok(true)
-}
+pub use crate::daemon::sidecar::remove_sidecar;
 
 /// Compose the bytes the WAL writer appends as the `0xD6
-/// CREDENTIAL_IMPORT` frame payload. Re-serialises so the WAL frame
-/// is independent of any pretty-print or field-order quirks of the
-/// file on disk — the WAL body is the canonical record.
+/// CREDENTIAL_IMPORT` frame payload.
 pub fn build_wal_frame_body(payload: &RedactedCredentialImportPayload) -> Vec<u8> {
-    serde_json::to_vec(payload).unwrap_or_default()
-}
-
-fn is_credentials_sidecar(p: &Path) -> bool {
-    if p.extension().and_then(|x| x.to_str()) != Some("json") {
-        return false;
-    }
-    p.file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.starts_with(FILENAME_PREFIX))
-        .unwrap_or(false)
+    crate::daemon::sidecar::build_wal_frame_body(payload)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::tempdir;
 
     fn sample_payload() -> RedactedCredentialImportPayload {
