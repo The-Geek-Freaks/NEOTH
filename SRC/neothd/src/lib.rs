@@ -101,6 +101,11 @@ pub mod skills;
 pub mod slash;
 pub mod sub_agents;
 pub mod telemetry;
+/// Round-3 v0.4 ARCH-04 — block-layer prompt token-cap enforcement
+/// + graceful degradation policy (D oldest 50% → C lowest-importance
+/// 50% → Conductor truncation; never touches A/B/E). Returns the
+/// per-block diff for the WAL `0x2F BUDGET_EXCEEDED` audit emit-site.
+pub mod tokens;
 pub mod tools;
 pub mod transport;
 pub mod tweaks;

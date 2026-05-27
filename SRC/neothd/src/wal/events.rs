@@ -199,6 +199,24 @@ pub const EVENT_TYPE_INGEST_EXTRACTED: u8 = 0x2C;
 /// with a preceding 0x2C `INGEST_EXTRACTED` (or a channel-side counterpart
 /// once Telegram/Keet land the image-attachment path).
 pub const EVENT_TYPE_EMBED_PERSISTED: u8 = 0x2D;
+/// Round-3 v0.4 ARCH-04 — prompt-assembly block-layer hard token cap
+/// triggered + graceful degradation applied. Emitted once per
+/// PROVIDER_REQUEST that needed truncation. The matching
+/// PROVIDER_REQUEST carries the new paired fields
+/// `prompt_token_estimate` (pre-truncation) + `prompt_token_actual`
+/// (post-truncation); this event captures the per-block diff.
+///
+/// Payload (JSON):
+///   - `cap`: u32 — operator's configured cap
+///   - `original_total`: u32 — pre-degradation token estimate
+///   - `new_total`: u32 — post-degradation token estimate
+///   - `dropped_d_count`: u32 — episode/recall items removed (oldest first)
+///   - `dropped_c_count`: u32 — profile-context items removed (lowest-importance first)
+///   - `conductor_truncated`: bool — did we eat into Conductor.plan/spec?
+///   - `request_id`: String — matches the downstream PROVIDER_REQUEST
+///
+/// Pre-condition for KF-08 (token-cap-aware adaptive layering).
+pub const EVENT_TYPE_BUDGET_EXCEEDED: u8 = 0x2F;
 
 // ---- 0x30..=0x3F  Channels ------------------------------------------------
 
@@ -1067,6 +1085,8 @@ const _: () = {
     let _ =
         [(); 1][(EVENT_TYPE_EMBED_PERSISTED < 0x20 || EVENT_TYPE_EMBED_PERSISTED > 0x2F) as usize];
     let _ =
+        [(); 1][(EVENT_TYPE_BUDGET_EXCEEDED < 0x20 || EVENT_TYPE_BUDGET_EXCEEDED > 0x2F) as usize];
+    let _ =
         [(); 1][(EVENT_TYPE_CHANNEL_INGRESS < 0x30 || EVENT_TYPE_CHANNEL_INGRESS > 0x3F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CHANNEL_EGRESS < 0x30 || EVENT_TYPE_CHANNEL_EGRESS > 0x3F) as usize];
@@ -1246,6 +1266,7 @@ mod tests {
             ("LOCAL_INFERENCE_END", EVENT_TYPE_LOCAL_INFERENCE_END),
             ("INGEST_EXTRACTED", EVENT_TYPE_INGEST_EXTRACTED),
             ("EMBED_PERSISTED", EVENT_TYPE_EMBED_PERSISTED),
+            ("BUDGET_EXCEEDED", EVENT_TYPE_BUDGET_EXCEEDED),
             ("CHANNEL_INGRESS", EVENT_TYPE_CHANNEL_INGRESS),
             ("CHANNEL_EGRESS", EVENT_TYPE_CHANNEL_EGRESS),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
