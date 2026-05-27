@@ -184,6 +184,17 @@ fn render_verify_outcome(segments: &[PathBuf], outcome: &VerifyOutcome, output: 
 }
 
 /// Enumerate `*.wal` segments under `dir`, sorted by sequence number.
+///
+/// GR-07 (Session 27): the segment writer pins `{:06}.wal` zero-
+/// padded filenames at the single emit site
+/// [`crate::wal::writer`] (`format!("{:06}.wal", next_seq)`) plus
+/// [`crate::cli::wal`] (`format!("{:06}.wal", seq)`). With that
+/// invariant lexicographic sort == numeric sort for sequences
+/// 0..=999_999 (which is ~125 GB at the 128 MB segment cap — i.e.
+/// well past any realistic operator lifetime). A future writer
+/// that drops the padding would silently re-order this list; the
+/// `is_zero_padded_segment_name` drift test in `wal::writer` tests
+/// pins the format contract.
 fn list_segments(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     if !dir.exists() {

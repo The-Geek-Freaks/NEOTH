@@ -96,12 +96,15 @@ pub fn meta_challenge_response(query: &str, operator_verify_token: &str) -> Meta
     let mut mode = None;
     let mut token = None;
     let mut challenge = None;
-    // Reviewer-2 P2 (2026-05-20): duplicate-key semantics pinned.
-    // Last-write-wins matches URL Standard / URLSearchParams + the
-    // Meta verify handshake spec, but is explicit-documented here so
-    // future maintainers don't accidentally swap it for first-wins.
-    // A duplicate key in a real handshake is anomalous — log a warn
-    // so the operator notices misbehaving proxies / Meta config drift.
+    // Reviewer-2 P2 (2026-05-20) + GR-08 (Session 27): duplicate-key
+    // semantics pinned. RFC 3986 §3.4 defines the query string syntax
+    // but is deliberately silent on duplicate-key resolution — it's
+    // an application-layer concern. We follow WHATWG URLSearchParams
+    // (last-write-wins) which is also what the Meta verify handshake
+    // spec assumes. Explicit-documented here so future maintainers
+    // don't accidentally swap it for first-wins. A duplicate key in
+    // a real handshake is anomalous — log a warn so the operator
+    // notices misbehaving proxies / Meta config drift.
     let mut duplicate_seen: Vec<&str> = Vec::new();
     for pair in query.split('&') {
         let Some((k, v)) = pair.split_once('=') else {

@@ -1488,8 +1488,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // refresh) have spawned. Mirrors the OnShutdown firing on the other
     // side of the wait loop. Each fired hook writes a HOOK_FIRED WAL
     // frame so the audit log shows that configured boot actions ran.
-    // Block at this stage logs + skips (a hook that hard-stops boot would
-    // need explicit operator escalation — defer to v0.4).
+    //
+    // GR-06 (Session 27): `Block` outcome semantics pinned. A
+    // `StageOutcome::Block` at this stage is LOGGED via warn! and
+    // ignored — the daemon stays booted. This is intentional: at
+    // the `on_session_start` stage the daemon has already opened
+    // every channel + spawned cron tasks + bound its HTTP listener;
+    // tearing those down because a single operator-defined hook
+    // returned Block would surface as a half-booted daemon that
+    // never gets to its idle wait loop. Hooks that need to abort
+    // boot belong at an earlier stage (no such stage exists today —
+    // operator escalation deferred until v0.4 or a real ask). The
+    // warn! message names the hook + the reason so the operator
+    // sees the intent without it being load-bearing on the
+    // daemon's liveness.
     {
         let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
         let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
@@ -1534,10 +1546,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 }
             }
             Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+                // Documented Block semantics: daemon continues. See the
+                // module-doc above the hook block for the rationale.
                 warn!(
                     hook = %name,
                     reason = %reason,
-                    "on_session_start hook returned Block; ignored (daemon already booted)"
+                    "on_session_start hook returned Block; ignored — daemon continues (subsystems already spawned)"
                 );
             }
             Err(e) => warn!(error = %e, "OnSessionStart hook dispatch failed"),
