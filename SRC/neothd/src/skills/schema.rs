@@ -34,6 +34,16 @@ pub struct SkillManifest {
     /// Project homepage URL — appears in `neoth skills list` table output.
     #[serde(default)]
     pub homepage: Option<String>,
+    /// U-02b (Session 26): upstream source URI the updater probes for
+    /// the latest published version. `git+https://github.com/<owner>/
+    /// <repo>` is the only scheme supported today — the resolver
+    /// shells out to `git ls-remote --tags <url>` and picks the
+    /// highest-sorting semver tag. `None` opts the skill out of
+    /// auto-update probes (operator manually pulls + replaces).
+    /// Future schemes (`registry+https://skills.neoth.dev/v1/<id>`)
+    /// land in a follow-up commit when a community registry exists.
+    #[serde(default)]
+    pub source: Option<String>,
     /// QM-3 (2026-05-22) MODE_REGISTRY pattern. Optional list of named
     /// modes a skill ships — each carries its own system-prompt delta,
     /// spectrum, oversight level, and trigger phrases. Backward-compat:
@@ -182,6 +192,12 @@ impl Skill {
     pub fn homepage(&self) -> Option<&str> {
         self.manifest.homepage.as_deref()
     }
+
+    /// U-02b — operator-declared upstream source for the updater
+    /// resolver. `None` opts the skill out of auto-update probes.
+    pub fn source(&self) -> Option<&str> {
+        self.manifest.source.as_deref()
+    }
 }
 
 #[cfg(test)]
@@ -323,6 +339,7 @@ homepage: "https://example.com/morning-news"
             author: Some("alex".into()),
             tags: vec!["one".into(), "two".into()],
             homepage: Some("https://x".into()),
+            source: None,
             modes: vec![],
             enabled: true,
         };

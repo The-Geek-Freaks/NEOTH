@@ -162,6 +162,7 @@ mod tests {
                 author: None,
                 tags: vec![],
                 homepage: None,
+                source: None,
                 modes,
                 enabled: true,
             },

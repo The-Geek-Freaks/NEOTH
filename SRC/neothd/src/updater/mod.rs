@@ -27,6 +27,7 @@ use tracing::{info, warn};
 pub mod pipeline;
 pub mod probes;
 pub mod self_update;
+pub mod skill_resolver;
 
 #[cfg_attr(not(test), allow(unused_imports))]
 use crate::installers::{ALL as ALL_INSTALLERS, build_cmd};
