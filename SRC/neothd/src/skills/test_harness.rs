@@ -202,6 +202,7 @@ mod tests {
                 enabled: true,
             },
             path: PathBuf::from("/tmp/test-skill/skill.yaml"),
+            content_hash: String::new(),
         }
     }
 

@@ -240,6 +240,7 @@ mod tests {
                 enabled,
             },
             path: PathBuf::from(format!("/tmp/{id}/skill.yaml")),
+            content_hash: String::new(),
         }
     }
 
@@ -774,6 +775,7 @@ mod tests {
                 enabled,
             },
             path: PathBuf::from(format!("/tmp/{id}/skill.yaml")),
+            content_hash: String::new(),
         }
     }
 

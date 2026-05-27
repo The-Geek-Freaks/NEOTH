@@ -64,7 +64,7 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
                 }
 
                 match parse_one(&yaml_path).await {
-                    Ok(manifest) => {
+                    Ok((manifest, raw_yaml)) => {
                         if manifest.id != dir_name {
                             warn!(
                                 dir = %dir_name,
@@ -75,11 +75,17 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
                             continue;
                         }
                         let overrode = by_id.contains_key(&manifest.id);
+                        // ARCH-07 — content_hash = SHA-256(yaml || template).
+                        let content_hash = crate::skills::versioning::skill_content_hash_hex(
+                            &raw_yaml,
+                            &manifest.system_prompt,
+                        );
                         debug!(
                             id = %manifest.id,
                             keywords = manifest.trigger_keywords.len(),
                             enabled = manifest.enabled,
                             overrode_bundled = overrode,
+                            content_hash = %content_hash,
                             "loaded user skill"
                         );
                         by_id.insert(
@@ -87,6 +93,7 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
                             Skill {
                                 manifest,
                                 path: yaml_path,
+                                content_hash,
                             },
                         );
                     }
@@ -128,6 +135,12 @@ fn parse_bundled_skills() -> std::collections::HashMap<String, Skill> {
                     .map(|s| s.trim().to_lowercase())
                     .filter(|s| !s.is_empty())
                     .collect();
+                // ARCH-07 — bundled skill content_hash uses the
+                // already-in-memory yaml body (no re-read needed).
+                let content_hash = crate::skills::versioning::skill_content_hash_hex(
+                    yaml_body,
+                    &manifest.system_prompt,
+                );
                 out.insert(
                     manifest.id.clone(),
                     Skill {
@@ -136,6 +149,7 @@ fn parse_bundled_skills() -> std::collections::HashMap<String, Skill> {
                         // marker path so downstream consumers can tell
                         // bundled from user-installed.
                         path: PathBuf::from(format!("<bundled>/{expected_id}/skill.yaml")),
+                        content_hash,
                     },
                 );
             }
@@ -151,7 +165,10 @@ fn parse_bundled_skills() -> std::collections::HashMap<String, Skill> {
     out
 }
 
-async fn parse_one(yaml_path: &Path) -> Result<SkillManifest> {
+/// Returns the parsed manifest AND the raw yaml body. The body is
+/// needed by [`load_all`] to compute the ARCH-07 `content_hash =
+/// SHA-256(yaml || template)` at load time.
+async fn parse_one(yaml_path: &Path) -> Result<(SkillManifest, String)> {
     let body = fs::read_to_string(yaml_path)
         .await
         .with_context(|| format!("read {}", yaml_path.display()))?;
@@ -173,7 +190,7 @@ async fn parse_one(yaml_path: &Path) -> Result<SkillManifest> {
         .map(|s| s.trim().to_lowercase())
         .filter(|s| !s.is_empty())
         .collect();
-    Ok(manifest)
+    Ok((manifest, body))
 }
 
 #[cfg(test)]

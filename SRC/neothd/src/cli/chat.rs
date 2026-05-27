@@ -202,12 +202,37 @@ pub async fn run_chat_with(
     );
 
     // ── PROVIDER_REQUEST (hashed metadata) ────────────────────────────────
+    //
+    // ARCH-07 / Round-3 v0.4 — `prompt_bundle_hash` field added.
+    // Computed via `skills::versioning::compute_prompt_bundle_hash`
+    // over the minimal block set currently visible at this site
+    // (Block::A = operator-explicit --system if set, Block::E =
+    // operator's current message). As the prompt assembler grows to
+    // explicitly emit Block::B (active skill prompts), Block::C
+    // (profile context), Block::D (recall episodes), this set
+    // extends — the hash naturally evolves with the bundle shape.
+    // Replay-determinism contract (ARCH-02 test_prompt_bundle_replay_
+    // determinism): same bundle → same hash, deterministically.
+    let mut bundle_entries: Vec<crate::skills::versioning::BundleBlockEntry<'_>> = Vec::new();
+    if let Some(sys) = args.system.as_deref().filter(|s| !s.is_empty()) {
+        bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
+            block: crate::skills::versioning::BundleBlock::A,
+            content: sys,
+        });
+    }
+    bundle_entries.push(crate::skills::versioning::BundleBlockEntry {
+        block: crate::skills::versioning::BundleBlock::E,
+        content: &prompt,
+    });
+    let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
+
     let req_payload = serde_json::to_vec(&serde_json::json!({
         "operator_id": config.operator_id,
         "provider": provider.name(),
         "model": args.model.clone().or_else(|| config.provider_model.clone()),
         "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
         "prompt_bytes": prompt.len(),
+        "prompt_bundle_hash": prompt_bundle_hash,
         "ts_unix": now_unix(),
     }))?;
     let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);

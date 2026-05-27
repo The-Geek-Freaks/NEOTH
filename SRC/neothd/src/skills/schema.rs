@@ -158,6 +158,15 @@ fn default_true() -> bool {
 pub struct Skill {
     pub manifest: SkillManifest,
     pub path: PathBuf,
+    /// Round-3 v0.4 ARCH-07 — `SHA-256(yaml || system_prompt)` 64-char
+    /// hex computed at load time by `skills::loader::load_all`. A
+    /// reviewer can recompute this against the on-disk file to verify
+    /// "the skill that injected at turn T was definitely the file
+    /// the audit log claims". Default empty for back-compat with
+    /// callers constructing Skill manually (e.g. tests); loader-built
+    /// instances always populate it.
+    #[serde(default)]
+    pub content_hash: String,
 }
 
 impl Skill {
@@ -346,6 +355,7 @@ homepage: "https://example.com/morning-news"
         let s = Skill {
             manifest,
             path: PathBuf::from("/tmp/x"),
+            content_hash: String::new(),
         };
         assert_eq!(s.author(), Some("alex"));
         assert_eq!(s.tags(), &["one".to_string(), "two".to_string()]);
