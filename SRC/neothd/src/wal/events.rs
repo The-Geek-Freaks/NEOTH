@@ -697,6 +697,21 @@ pub const EVENT_TYPE_PROFILE_DELTA_APPROVED: u8 = 0xB6;
 /// Payload (JSON): `{ extraction_id, declined_at_ts_unix, claim_count, reason: Option<String> }`
 pub const EVENT_TYPE_PROFILE_DELTA_DECLINED: u8 = 0xB7;
 
+/// ADV-04 (Session 28) — `profile.apply` dropped a per-claim insert
+/// because the field has an active `never_recreate=1` redaction.
+/// Defence-in-depth complement to the Stage-5 guard's `FieldRedacted`
+/// reason — a delta can pass the guard, get parked in
+/// `idx_profile_pending`, then have a redaction added by the operator
+/// between approval-gate parking + `neoth profile approve` running
+/// `apply_delta`; this frame proves the apply step honoured the
+/// fresh redaction instead of resurrecting the claim.
+///
+/// Payload (JSON): `{ extraction_id, field, redaction_id, asserted_by,
+/// guard_version, ts_unix }`. NB: deliberately no `value_json` — the
+/// operator redacted the field because they don't want any value of
+/// it preserved, and the audit frame mirrors that.
+pub const EVENT_TYPE_PROFILE_REDACT_BLOCKED: u8 = 0xB8;
+
 // ---- 0xF0..=0xFF  Operator / system ---------------------------------------
 
 /// Daemon refused a WAL write because `~/.neoth/` exceeded the configured
@@ -1178,6 +1193,8 @@ const _: () = {
         || EVENT_TYPE_PROFILE_DELTA_BLOCKED > 0xBF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT < 0xB0
         || EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT > 0xBF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PROFILE_REDACT_BLOCKED < 0xB0
+        || EVENT_TYPE_PROFILE_REDACT_BLOCKED > 0xBF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -1348,6 +1365,7 @@ mod tests {
                 EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT,
             ),
             ("PROFILE_DELTA_BLOCKED", EVENT_TYPE_PROFILE_DELTA_BLOCKED),
+            ("PROFILE_REDACT_BLOCKED", EVENT_TYPE_PROFILE_REDACT_BLOCKED),
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),

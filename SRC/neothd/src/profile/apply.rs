@@ -66,8 +66,8 @@ use rusqlite::{Connection, params};
 
 use crate::profile::delta::{ProfileDelta, RawClaim};
 use crate::wal::events::{
-    EVENT_TYPE_PROFILE_DELTA, EVENT_TYPE_PROFILE_DELTA_BLOCKED, EVENT_TYPE_PROFILE_REINFORCED,
-    EVENT_TYPE_PROFILE_SUPERSEDED,
+    EVENT_TYPE_PROFILE_DELTA, EVENT_TYPE_PROFILE_DELTA_BLOCKED, EVENT_TYPE_PROFILE_REDACT_BLOCKED,
+    EVENT_TYPE_PROFILE_REINFORCED, EVENT_TYPE_PROFILE_SUPERSEDED,
 };
 use crate::wal::writer::WalWriterHandle;
 
@@ -85,6 +85,14 @@ pub struct ApplyOutcome {
     /// same field). The old row gets `superseded_at = now`; the new
     /// row is inserted alongside as a fresh `PROFILE_DELTA`.
     pub claims_superseded: usize,
+    /// ADV-04 (Session 28) — number of per-claim inserts skipped
+    /// because the field has an active `never_recreate=1` redaction.
+    /// Defence-in-depth complement to the Stage-5 guard: a delta can
+    /// pass the guard then sit in `idx_profile_pending` while the
+    /// operator adds a redaction; this counter proves the apply step
+    /// honoured the fresh redaction. Each skipped claim emits one
+    /// `EVENT_TYPE_PROFILE_REDACT_BLOCKED` frame for the audit trail.
+    pub claims_redact_blocked: usize,
     /// True if this delta had been seen before — skipped via the
     /// extraction_id check.
     pub idempotent_skip: bool,
@@ -129,6 +137,7 @@ pub async fn apply_delta(
             claims_applied: 0,
             claims_reinforced: 0,
             claims_superseded: 0,
+            claims_redact_blocked: 0,
             idempotent_skip: true,
         });
     }
@@ -151,6 +160,7 @@ pub async fn apply_delta(
     let mut applied = 0usize;
     let mut reinforced = 0usize;
     let mut superseded = 0usize;
+    let mut redact_blocked = 0usize;
     // We collect per-claim decisions inside the tx, then emit WAL
     // frames AFTER the commit. That ordering means a tx-failure leaves
     // the WAL untouched (no audit row for a write that never landed).
@@ -158,6 +168,27 @@ pub async fn apply_delta(
 
     let tx = conn.transaction().context("begin apply tx")?;
     for claim in &delta.claims {
+        // ADV-04 (Session 28) — redaction recheck. The Stage-5 guard
+        // already filtered redacted fields, BUT a delta can sit in
+        // `idx_profile_pending` between approval-gate parking and
+        // operator-driven `neoth profile approve`; an operator who
+        // adds a redaction in that window expects the apply step to
+        // honour it. We re-lookup the active redaction per claim,
+        // drop the insert + emit a `PROFILE_REDACT_BLOCKED` audit
+        // frame post-commit when one is present. Cheap (single
+        // indexed row lookup) + idempotent (no row written so retry
+        // is a no-op).
+        if let Some(redaction) = crate::profile::redaction::lookup_active(&tx, &claim.field)?
+            && redaction.never_recreate
+        {
+            redact_blocked += 1;
+            to_emit.push(ClaimEvent::RedactBlocked {
+                field: claim.field.clone(),
+                redaction_id: redaction.id,
+                asserted_by: redaction.asserted_by.clone(),
+            });
+            continue;
+        }
         let prior = lookup_active_for_field(&tx, &claim.field)?;
         let value_json = serde_json::to_string(&claim.value_json).unwrap_or_else(|_| "null".into());
         match prior {
@@ -249,6 +280,7 @@ pub async fn apply_delta(
         claims_applied: applied,
         claims_reinforced: reinforced,
         claims_superseded: superseded,
+        claims_redact_blocked: redact_blocked,
         idempotent_skip: false,
     })
 }
@@ -384,6 +416,24 @@ fn serialise_claim_event(
             .context("serialise PROFILE_SUPERSEDED payload")?;
             Ok((EVENT_TYPE_PROFILE_SUPERSEDED, payload))
         }
+        ClaimEvent::RedactBlocked {
+            field,
+            redaction_id,
+            asserted_by,
+        } => {
+            // NB: no `value_json` in this payload — operator redacted
+            // the field because they don't want any value preserved.
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "extraction_id": extraction_id,
+                "field": field,
+                "redaction_id": redaction_id,
+                "asserted_by": asserted_by,
+                "guard_version": guard_version,
+                "ts_unix": now_unix,
+            }))
+            .context("serialise PROFILE_REDACT_BLOCKED payload")?;
+            Ok((EVENT_TYPE_PROFILE_REDACT_BLOCKED, payload))
+        }
     }
 }
 
@@ -471,6 +521,14 @@ enum ClaimEvent {
         old_value_hash: u64,
         new_value_hash: u64,
     },
+    /// ADV-04 (Session 28) — claim was dropped because the field has
+    /// an active `never_recreate=1` redaction at apply time. Audit-
+    /// only — no row is written in `idx_profile`.
+    RedactBlocked {
+        field: String,
+        redaction_id: i64,
+        asserted_by: String,
+    },
 }
 
 async fn emit_claim_event(
@@ -536,6 +594,28 @@ async fn emit_claim_event(
                 .append(header, payload)
                 .await
                 .context("append PROFILE_SUPERSEDED frame")?;
+            Ok(())
+        }
+        ClaimEvent::RedactBlocked {
+            field,
+            redaction_id,
+            asserted_by,
+        } => {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "extraction_id": extraction_id,
+                "field": field,
+                "redaction_id": redaction_id,
+                "asserted_by": asserted_by,
+                "guard_version": guard_version,
+                "ts_unix": now_unix,
+            }))
+            .context("serialise PROFILE_REDACT_BLOCKED payload")?;
+            let header =
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_PROFILE_REDACT_BLOCKED, &payload).build();
+            writer
+                .append(header, payload)
+                .await
+                .context("append PROFILE_REDACT_BLOCKED frame")?;
             Ok(())
         }
     }
@@ -713,6 +793,95 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_profile", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 2);
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    // ── ADV-04 (Session 28) — apply-step redaction recheck ─────────────
+
+    #[tokio::test]
+    async fn apply_drops_claim_when_field_is_redacted_at_apply_time() {
+        // Operator-asserted redaction for `identity.location` is added
+        // AFTER the delta was queued (mirrors the
+        // approval-gate-parking-then-redaction race window). The
+        // apply step MUST honour the fresh redaction + skip the
+        // insert + emit a PROFILE_REDACT_BLOCKED audit frame.
+        let (_dir, mut conn, writer, join) = setup().await;
+
+        // Seed an active redaction for one of the two delta fields.
+        let redaction_id = crate::profile::redaction::add(
+            &conn,
+            "identity.location",
+            true, // never_recreate
+            Some("operator wiped"),
+            "alex",
+            1,
+        )
+        .unwrap();
+        assert!(redaction_id > 0);
+
+        // Apply the standard 2-claim delta (one field is redacted,
+        // the other is not).
+        let out = apply_delta(&mut conn, &writer, &delta(), 2).await.unwrap();
+
+        // identity.location → blocked; skills.rust → applied.
+        assert_eq!(out.claims_applied, 1);
+        assert_eq!(out.claims_redact_blocked, 1);
+        assert!(!out.idempotent_skip);
+
+        // Exactly one row landed — the non-redacted one.
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM idx_profile", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
+        let surviving_field: String = conn
+            .query_row("SELECT field FROM idx_profile", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(surviving_field, "skills.rust");
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn apply_skips_all_when_every_field_is_redacted() {
+        // Both delta fields redacted at apply time → zero rows
+        // written + two skip counters + zero idempotency hit (this is
+        // a first-attempt apply that just happens to skip every
+        // claim, not a re-apply).
+        let (_dir, mut conn, writer, join) = setup().await;
+        crate::profile::redaction::add(&conn, "identity.location", true, None, "alex", 1).unwrap();
+        crate::profile::redaction::add(&conn, "skills.rust", true, None, "alex", 1).unwrap();
+
+        let out = apply_delta(&mut conn, &writer, &delta(), 2).await.unwrap();
+        assert_eq!(out.claims_applied, 0);
+        assert_eq!(out.claims_redact_blocked, 2);
+        assert!(!out.idempotent_skip);
+
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM idx_profile", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn apply_honours_only_active_never_recreate_redactions() {
+        // A revoked redaction (or one with never_recreate=false) must
+        // NOT block the apply — the recheck pairs both flags so a
+        // soft "I redacted this once, then changed my mind" cannot
+        // accidentally pin the field forever.
+        let (_dir, mut conn, writer, join) = setup().await;
+        // never_recreate=false → must not block.
+        crate::profile::redaction::add(&conn, "identity.location", false, None, "alex", 1).unwrap();
+
+        let out = apply_delta(&mut conn, &writer, &delta(), 2).await.unwrap();
+        // Both claims land — the redaction was advisory-only.
+        assert_eq!(out.claims_applied, 2);
+        assert_eq!(out.claims_redact_blocked, 0);
 
         drop(writer);
         let _ = join.await;
