@@ -30,6 +30,8 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
+#[cfg(target_os = "windows")]
+use crate::credentials::ImportedCredential;
 use crate::credentials::{CredentialImporter, DiscoveredCredentials, ImportSource};
 
 /// Path to the operator's Chrome `Login Data` SQLite file on the
@@ -96,9 +98,11 @@ pub fn is_login_data_locked() -> bool {
     false
 }
 
-/// Importer impl. Today returns no credentials — only a warning
-/// per-discover so operators know the surface exists but the
-/// decrypt path is gated.
+/// Importer impl. Per-OS decrypt dispatched at compile time:
+///   - Windows → DPAPI + AES-256-GCM (C-03b chunk Windows, Session 28)
+///   - Linux → Secret Service + AES-128-CBC (C-03b chunk Linux, future)
+///   - macOS → Keychain + AES-128-CBC (C-03b chunk macOS, future)
+///   - Other → returns the C-03b-deferred warning, zero entries.
 pub struct ChromeImporter;
 
 #[async_trait]
@@ -107,41 +111,107 @@ impl CredentialImporter for ChromeImporter {
         ImportSource::WizardPrompt
     }
 
+    #[cfg(target_os = "windows")]
     fn name(&self) -> &'static str {
-        "Chrome Login Data (decrypt gated to C-03b)"
+        "Chrome Login Data (DPAPI + AES-256-GCM)"
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn name(&self) -> &'static str {
+        "Chrome Login Data (decrypt gated to C-03b for this OS)"
     }
 
     async fn is_available(&self) -> bool {
         // Available iff the Login Data file exists. If it does,
-        // we can at least warn about it; decrypt happens when
-        // C-03b lands.
+        // we can at least warn about it; the per-OS decrypt path
+        // takes over from there.
         chrome_login_data_path()
             .map(|p| p.exists())
             .unwrap_or(false)
     }
 
     async fn discover_entries(&self) -> Result<DiscoveredCredentials, String> {
-        let mut warnings = vec![format!(
-            "Chrome Login Data found at {:?} but decrypt is gated. \
-             C-03b ships the DPAPI/Secret-Service/Keychain wire-up; \
-             today the importer returns zero credentials so operators \
-             see the surface without false-success.",
-            chrome_login_data_path(),
-        )];
-        if is_login_data_locked() {
-            warnings.push(
-                "Chrome is currently running — close it before \
-                 the C-03b decrypt path runs (the SQLite would be \
-                 locked + reads return WAL-only)."
-                    .to_string(),
-            );
+        #[cfg(target_os = "windows")]
+        {
+            discover_entries_windows().await
         }
-        Ok(DiscoveredCredentials {
-            source: ImportSource::WizardPrompt,
-            entries: Vec::new(),
-            warnings,
-        })
+        #[cfg(not(target_os = "windows"))]
+        {
+            discover_entries_deferred().await
+        }
     }
+}
+
+#[cfg(target_os = "windows")]
+async fn discover_entries_windows() -> Result<DiscoveredCredentials, String> {
+    use crate::credentials::chrome_windows::discover_chrome_credentials_windows;
+
+    let login_data = chrome_login_data_path()
+        .ok_or_else(|| "Chrome Login Data path unavailable on this host".to_string())?;
+    let local_state = chrome_default_profile_root()
+        .ok_or_else(|| "Chrome user-data-dir unavailable on this host".to_string())?
+        .join("Local State");
+
+    let mut warnings = Vec::new();
+    if is_login_data_locked() {
+        warnings.push(
+            "Chrome is currently running — close it before importing. \
+             The SQLite would be locked and rows may be missing the latest \
+             unflushed write."
+                .to_string(),
+        );
+    }
+
+    let (creds, decrypt_warnings) = tokio::task::spawn_blocking(move || {
+        discover_chrome_credentials_windows(&login_data, &local_state)
+    })
+    .await
+    .map_err(|e| format!("blocking task join failed: {e}"))?
+    .map_err(|e| format!("Chrome (Windows) decrypt failed: {e}"))?;
+    warnings.extend(decrypt_warnings);
+
+    let entries: Vec<ImportedCredential> = creds
+        .into_iter()
+        .map(|c| {
+            ImportedCredential::new(
+                ImportSource::WizardPrompt,
+                c.origin_url.clone(),
+                c.origin_url,
+                c.username,
+                c.password,
+                vec!["chrome".to_string()],
+            )
+        })
+        .collect();
+
+    Ok(DiscoveredCredentials {
+        source: ImportSource::WizardPrompt,
+        entries,
+        warnings,
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+async fn discover_entries_deferred() -> Result<DiscoveredCredentials, String> {
+    let mut warnings = vec![format!(
+        "Chrome Login Data found at {:?} but decrypt is gated for \
+         this OS. C-03b ships per-OS decrypt — Windows landed Session 28; \
+         Linux (Secret Service) and macOS (Keychain) follow.",
+        chrome_login_data_path(),
+    )];
+    if is_login_data_locked() {
+        warnings.push(
+            "Chrome is currently running — close it before \
+             the C-03b decrypt path runs (the SQLite would be \
+             locked + reads return WAL-only)."
+                .to_string(),
+        );
+    }
+    Ok(DiscoveredCredentials {
+        source: ImportSource::WizardPrompt,
+        entries: Vec::new(),
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -189,13 +259,13 @@ mod tests {
         let _ = imp.is_available().await;
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn importer_discover_returns_warning_not_error() {
         let imp = ChromeImporter;
         let d = imp.discover_entries().await.expect("must not error");
-        // Always zero entries until C-03b.
+        // Non-Windows: zero entries + warning explaining the gated decrypt.
         assert!(d.entries.is_empty());
-        // Always at least one warning explaining the gated decrypt.
         assert!(!d.warnings.is_empty());
         assert!(
             d.warnings[0].contains("C-03b"),
@@ -204,10 +274,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn importer_name_mentions_gated_decrypt() {
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn importer_discover_surfaces_error_or_credentials_on_windows() {
+        // Windows path is live as of C-03b Session 28. On a CI
+        // runner without Chrome installed, the Login Data file is
+        // absent → discover surfaces Err. On a dev machine with
+        // Chrome installed, it surfaces Ok(entries). Either is
+        // valid; what we check is that the call doesn't panic.
         let imp = ChromeImporter;
-        assert!(imp.name().contains("gated"));
+        let _ = imp.discover_entries().await;
+    }
+
+    #[test]
+    fn importer_name_signals_implementation_state() {
+        let imp = ChromeImporter;
+        let name = imp.name();
+        // Drift guard: name must mention the algorithm on Windows
+        // (live) or "gated" on other OSes (deferred).
+        #[cfg(target_os = "windows")]
+        assert!(
+            name.contains("AES-256-GCM") || name.contains("DPAPI"),
+            "Windows name must signal live decrypt: {name}"
+        );
+        #[cfg(not(target_os = "windows"))]
+        assert!(
+            name.contains("gated"),
+            "non-Windows name must signal gated: {name}"
+        );
     }
 
     #[test]

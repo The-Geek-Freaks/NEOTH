@@ -401,6 +401,15 @@ libc        = "0.2"
 # Win32_Security_Authorization: E-11 SetEntriesInAclW + SetNamedSecurityInfoW + BuildExplicitAccessWithNameW (2026-05-24).
 # Win32_Storage_FileSystem: E-12 FlushFileBuffers WAL durability (2026-05-24).
 windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foundation", "Win32_Security_Cryptography", "Win32_Security_Authorization", "Win32_Storage_FileSystem"] }
+# C-03b Windows (Session 28) — AES-256-GCM decrypt for Chrome's v10/v11
+# password envelope. Chrome wraps the per-blob password in a 3-byte
+# version prefix + 12-byte nonce + ciphertext + 16-byte tag; the
+# operator's symmetric key lives DPAPI-wrapped in `Local State`. Only
+# Windows uses GCM — the Linux + macOS paths use AES-128-CBC and reuse
+# the `aes 0.8` + `cbc 0.1` crates already in the cross-platform
+# dependency block for C-04b. Pinning `aes-gcm` Windows-only keeps
+# the dep graph clean on non-Chrome-decrypt platforms.
+aes-gcm = "0.10"
 
 # B-6 Item 3f (Session 21) — PTY stealth for interactive subprocess.
 # `portable-pty` is the cross-platform PTY crate WezTerm uses (Wez Furlong).
