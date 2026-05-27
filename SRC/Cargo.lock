@@ -4955,8 +4955,9 @@ dependencies = [
 
 [[package]]
 name = "neothd"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
+ "aes",
  "anyhow",
  "arc-swap",
  "assert_cmd",
@@ -4968,6 +4969,7 @@ dependencies = [
  "candle-core",
  "candle-nn",
  "candle-transformers",
+ "cbc",
  "chrono",
  "chrono-tz",
  "ciborium",
@@ -4998,6 +5000,7 @@ dependencies = [
  "notify",
  "num_enum",
  "opendal",
+ "pbkdf2",
  "pdf-extract",
  "pdfium-render",
  "peeroxide",
@@ -5011,7 +5014,10 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha1",
  "sha2",
+ "simple_asn1",
+ "subtle",
  "symphonia",
  "sysinfo",
  "tar",
@@ -5041,7 +5047,7 @@ dependencies = [
 
 [[package]]
 name = "neothd-gui"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -5922,6 +5928,16 @@ name = "pastey"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
+
+[[package]]
+name = "pbkdf2"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
+dependencies = [
+ "digest",
+ "hmac",
+]
 
 [[package]]
 name = "pdf-extract"
@@ -7572,6 +7588,18 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "simple_asn1"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d585997b0ac10be3c5ee635f1bab02d512760d14b7c468801ac8a01d9ae5f1d"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror 2.0.18",
+ "time",
+]
 
 [[package]]
 name = "simplecss"

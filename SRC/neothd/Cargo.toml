@@ -216,6 +216,13 @@ notify = "8"
 # sha256(canonical_request)). No `ring` C-dep, no aws-sdk-* heavy dep.
 hmac   = "0.12"
 sha2   = "0.10"
+# C-04b Phase 2 chunk 2b (Session 28) — NSS `key4.db` master-key
+# extraction. The PBKDF2 input is not the raw primary password but
+# `SHA-1(global_salt || password)`; this is NSS's KDF preamble and
+# is required for interop with every existing Firefox install. Used
+# solely inside `credentials::firefox_key4db::derive_intermediate_key`
+# — never for password hashing or anything new.
+sha1   = "0.10"
 # C-3 Phase 2 (Session 14) — hex encoding of SHA256/HMAC outputs for the
 # SigV4 canonical request + Authorization header. Single-purpose crate,
 # already transitive in the dep graph; explicit pin keeps the BEDROCK
