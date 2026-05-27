@@ -43,7 +43,7 @@ pub fn list_pending(home: &Path) -> Result<Vec<(PathBuf, DetectCompletePayload)>
         .with_context(|| format!("read {}", home.display()))?
         .filter_map(|r| r.ok())
         .map(|e| e.path())
-        .filter(is_detect_complete_sidecar)
+        .filter(|p| is_detect_complete_sidecar(p))
         .collect();
     entries.sort();
     let mut out = Vec::with_capacity(entries.len());
@@ -79,7 +79,7 @@ pub fn build_wal_frame_body(payload: &DetectCompletePayload) -> Vec<u8> {
     serde_json::to_vec(payload).unwrap_or_default()
 }
 
-fn is_detect_complete_sidecar(p: &PathBuf) -> bool {
+fn is_detect_complete_sidecar(p: &Path) -> bool {
     if p.extension().and_then(|x| x.to_str()) != Some("json") {
         return false;
     }
