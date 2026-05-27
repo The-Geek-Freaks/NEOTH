@@ -36,6 +36,11 @@
 //!   redacts via the SC-17 gate before emission.
 
 pub mod bitwarden;
+/// C-02b (Session 28) — encrypted (password-protected) Bitwarden
+/// export decrypt path. PBKDF2-SHA256 → HKDF-Expand-SHA256 →
+/// AES-256-CBC + HMAC-SHA256 envelope. Returns the unencrypted JSON
+/// of vault items ready for `bitwarden::parse_export_str`.
+pub mod bitwarden_encrypted;
 pub mod chrome;
 #[cfg(target_os = "linux")]
 pub mod chrome_linux;
