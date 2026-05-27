@@ -297,10 +297,14 @@ pub fn safe_attachment_filename(raw: &str) -> (String, Vec<EmailFinding>) {
         .rsplit(|c: char| c == '/' || c == '\\')
         .next()
         .unwrap_or("");
+    // Path::file_name returns None for `..`, `.`, `/`, and `""`. In
+    // those cases we keep the previous "" fallback so a literal `..`
+    // input still funnels to `untitled` rather than leaking the
+    // traversal marker into the output filename.
     let basename = Path::new(pre_basename)
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or(pre_basename)
+        .unwrap_or("")
         .to_string();
     let had_path = basename != raw;
     if had_path || raw.contains("..") {

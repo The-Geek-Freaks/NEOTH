@@ -449,6 +449,17 @@ impl EmbeddingIndex {
         if top_k == 0 || self.meta.is_empty() {
             return Vec::new();
         }
+        // HNSW's recall depends on graph connectivity. With ≤ HNSW_M
+        // (16) indexed vectors the graph is degenerate — random
+        // layer-assignment can leave one or more nodes unreachable
+        // from the entry point, so an `hnsw.search` for k>indexed-1
+        // returns fewer than expected. Fall back to brute-force over
+        // `self.raw` while the corpus is below the threshold, which
+        // is also where brute-force is fastest anyway.
+        if self.meta.len() <= HNSW_M {
+            return self.find_similar_brute_force(query, top_k);
+        }
+
         let ef = HNSW_EF_SEARCH.max(top_k);
         let neighbours = self.hnsw.search(query, top_k, ef);
         let mut hits: Vec<SimilarHit> = neighbours
@@ -478,6 +489,48 @@ impl EmbeddingIndex {
         });
         hits.truncate(top_k);
         hits
+    }
+
+    /// Exact cosine-similarity scan over `self.raw`. Used by
+    /// [`find_similar_hnsw`] when the corpus is small enough that
+    /// HNSW's approximate recall drops below 100% — see the
+    /// `find_similar_hnsw` body for the threshold rationale.
+    fn find_similar_brute_force(&self, query: &[f32], top_k: usize) -> Vec<SimilarHit> {
+        // Caller invariant: vectors are L2-normalised at insert time,
+        // so dot product equals cosine similarity. We accept the
+        // caller's contract here rather than re-normalising on every
+        // search.
+        let dot = |a: &[f32], b: &[f32]| -> f32 {
+            a.iter()
+                .zip(b.iter())
+                .map(|(x, y)| x * y)
+                .sum::<f32>()
+                .clamp(-1.0, 1.0)
+        };
+        let mut scored: Vec<(f32, &VectorMeta)> = self
+            .raw
+            .iter()
+            .map(|(_, meta, vec)| (dot(query, vec), meta))
+            .collect();
+        // Descending by similarity, ties broken by created_at DESC
+        // to match find_similar_hnsw.
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(b.1.created_at.cmp(&a.1.created_at))
+        });
+        scored
+            .into_iter()
+            .take(top_k)
+            .map(|(sim, m)| SimilarHit {
+                id: m.id,
+                source_kind: m.source_kind.clone(),
+                source_ref: m.source_ref.clone(),
+                model: m.model.clone(),
+                similarity: sim,
+                created_at: m.created_at,
+            })
+            .collect()
     }
 
     /// Number of indexed vectors.
