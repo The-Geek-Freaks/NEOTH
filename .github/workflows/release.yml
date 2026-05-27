@@ -69,6 +69,23 @@ jobs:
             use_cross: false
             archive_ext: tar.gz
 
+          # Windows x86_64 — R-08 Session 28: zero-install Windows
+          # path needs a release artifact for install-binary.ps1 +
+          # the winget submission to point at. .zip not tar.gz per
+          # Windows convention + winget's NestedInstallerType:
+          # portable default handling.
+          - target: x86_64-pc-windows-msvc
+            os: windows-2022
+            use_cross: false
+            archive_ext: zip
+
+          # Windows aarch64 (ARM laptops — Surface Pro X, Snapdragon
+          # X Elite). Native build on windows-2022 runners.
+          - target: aarch64-pc-windows-msvc
+            os: windows-2022
+            use_cross: false
+            archive_ext: zip
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -116,23 +133,45 @@ jobs:
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           TARGET="${{ matrix.target }}"
+          ARCHIVE_EXT="${{ matrix.archive_ext }}"
           ARCHIVE_NAME="neothd-${VERSION}-${TARGET}"
-          BINARY_PATH="SRC/target/${TARGET}/release/neothd"
+
+          # Binary name + extension differ on Windows. R-08 (Session
+          # 28): branch on $TARGET so install-binary.{sh,ps1} +
+          # winget can both pull the right archive shape.
+          if [[ "$TARGET" == *windows* ]]; then
+            BINARY_NAME="neothd.exe"
+          else
+            BINARY_NAME="neothd"
+          fi
+          BINARY_PATH="SRC/target/${TARGET}/release/${BINARY_NAME}"
 
           mkdir -p "dist/${ARCHIVE_NAME}"
-          cp "${BINARY_PATH}" "dist/${ARCHIVE_NAME}/neothd"
+          cp "${BINARY_PATH}" "dist/${ARCHIVE_NAME}/${BINARY_NAME}"
           cp README.md "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
           cp LICENSE-MIT "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
           cp LICENSE-APACHE "dist/${ARCHIVE_NAME}/" 2>/dev/null || true
 
           cd dist
-          tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}/"
+          if [[ "$ARCHIVE_EXT" == "zip" ]]; then
+            # Windows path — 7-Zip ships on every windows-2022 runner
+            # and produces a true ZIP that matches the winget
+            # NestedInstallerType: portable expectation.
+            7z a -tzip "${ARCHIVE_NAME}.zip" "${ARCHIVE_NAME}/" >/dev/null
+            ARCHIVE_FILE="${ARCHIVE_NAME}.zip"
+          else
+            tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}/"
+            ARCHIVE_FILE="${ARCHIVE_NAME}.tar.gz"
+          fi
 
-          SHA256=$(sha256sum "${ARCHIVE_NAME}.tar.gz" | cut -d' ' -f1)
-          echo "${SHA256}  ${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+          # SHA-256 — sha256sum is available on Linux + macOS + Git-
+          # for-Windows bash. The output goes to a .sha256 sidecar
+          # that install-binary.{sh,ps1} verify against.
+          SHA256=$(sha256sum "${ARCHIVE_FILE}" | cut -d' ' -f1)
+          echo "${SHA256}  ${ARCHIVE_FILE}" > "${ARCHIVE_FILE}.sha256"
 
-          echo "archive=${ARCHIVE_NAME}.tar.gz" >> "$GITHUB_OUTPUT"
-          echo "checksum=${ARCHIVE_NAME}.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          echo "archive=${ARCHIVE_FILE}" >> "$GITHUB_OUTPUT"
+          echo "checksum=${ARCHIVE_FILE}.sha256" >> "$GITHUB_OUTPUT"
           echo "archive_name=${ARCHIVE_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Upload archive artifact

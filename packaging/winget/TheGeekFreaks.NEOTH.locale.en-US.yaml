@@ -1,0 +1,38 @@
+PackageIdentifier: TheGeekFreaks.NEOTH
+PackageVersion: 0.3.0
+PackageLocale: en-US
+Publisher: TheGeekFreaks
+PublisherUrl: https://github.com/The-Geek-Freaks
+PublisherSupportUrl: https://github.com/The-Geek-Freaks/NEOTH/issues
+PackageName: NEOTH
+PackageUrl: https://github.com/The-Geek-Freaks/NEOTH
+License: MIT OR Apache-2.0
+LicenseUrl: https://github.com/The-Geek-Freaks/NEOTH/blob/main/LICENSE
+ShortDescription: Personal AI agent — Neoth knows.
+Description: |
+  NEOTH is a personal AI agent that runs locally. It learns from your
+  interactions, stores memory tier-aware (hot / warm / cold + ground
+  truth), supports council-style multi-provider deliberation, ingests
+  credentials from existing password managers + browsers (Bitwarden,
+  Chrome, Firefox), and exposes a CLI + GUI surface for chat,
+  recall, code workflows, and operator-controlled automation.
+
+  Privacy-first by design: every cloud-provider call is gated by
+  explicit operator consent; no telemetry phones home; the wizard
+  walks first-time operators through the full setup with explained
+  trade-offs.
+Moniker: neoth
+Tags:
+  - agent
+  - ai
+  - assistant
+  - chat
+  - llm
+  - local-first
+  - memory
+  - personal
+  - privacy
+  - rust
+ReleaseNotesUrl: https://github.com/The-Geek-Freaks/NEOTH/releases
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0
