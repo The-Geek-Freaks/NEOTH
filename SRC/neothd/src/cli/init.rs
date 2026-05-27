@@ -886,7 +886,7 @@ fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) ->
     #[cfg(feature = "wizard")]
     {
         let accept = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("[1/7] Do you accept the license?")
+            .with_prompt("[1/9] Do you accept the license?")
             .default(false)
             .interact()
             .context("license confirmation prompt")?;
@@ -900,7 +900,7 @@ fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) ->
     {
         if !args.accept_license {
             anyhow::bail!(
-                "[1/7] Interactive license prompt requires the `wizard` feature. \
+                "[1/9] Interactive license prompt requires the `wizard` feature. \
                  Re-run with --accept-license or rebuild with `--features wizard`."
             );
         }
@@ -1009,7 +1009,7 @@ fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState
             loop {
                 let input: String =
                     dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                        .with_prompt("[2/7] Operator identity (2-32 chars, [a-zA-Z0-9_-])")
+                        .with_prompt("[2/9] Operator identity (2-32 chars, [a-zA-Z0-9_-])")
                         .default(default_id.clone())
                         .interact_text()
                         .context("operator-id input")?;
@@ -1048,7 +1048,7 @@ fn step3_language(args: &InitArgs, interactive: bool, state: &mut WizardState) -
         {
             let primary: String =
                 dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt("[3/7] Primary language (BCP-47, e.g. en, de, zh-CN)")
+                    .with_prompt("[3/9] Primary language (BCP-47, e.g. en, de, zh-CN)")
                     .default(args.language.clone())
                     .validate_with(|input: &String| {
                         validate_bcp47(input).map_err(|e| e.to_string())
@@ -1057,7 +1057,7 @@ fn step3_language(args: &InitArgs, interactive: bool, state: &mut WizardState) -
                     .context("language input")?;
             let code: String =
                 dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                    .with_prompt("[3/7] Code-comment language (BCP-47)")
+                    .with_prompt("[3/9] Code-comment language (BCP-47)")
                     .default(primary.clone())
                     .validate_with(|input: &String| {
                         validate_bcp47(input).map_err(|e| e.to_string())
@@ -1098,7 +1098,7 @@ fn step4_role(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Re
             ];
             let labels: Vec<&str> = CHOICES.iter().map(|(_, l)| *l).collect();
             let idx = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("[4/7] Operator role (shapes profile inference defaults)")
+                .with_prompt("[4/9] Operator role (shapes profile inference defaults)")
                 .items(&labels)
                 .default(0)
                 .interact()
@@ -1129,7 +1129,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
     let legacy_gemini_path = which_binary("gemini");
 
     if interactive {
-        println!("\n[5/7] LLM Provider — detected CLIs:");
+        println!("\n[5/9] LLM Provider — detected CLIs:");
         println!(
             "  claude: {}",
             claude_path.as_deref().unwrap_or("NOT FOUND")
@@ -1207,7 +1207,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                 .position(|(k, _)| *k == default_kind)
                 .unwrap_or(0);
             let idx = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("[5/7] LLM provider kind")
+                .with_prompt("[5/9] LLM provider kind")
                 .items(&labels)
                 .default(default_idx)
                 .interact()
@@ -1299,7 +1299,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                             &dialoguer::theme::ColorfulTheme::default(),
                         )
                         .with_prompt(format!(
-                            "[5/7] {} endpoint (full URL incl. /v1)",
+                            "[5/9] {} endpoint (full URL incl. /v1)",
                             match kind {
                                 ProviderKind::OpenaiApi => "OpenAI API",
                                 _ => "OpenAI-compat (local bridge / vLLM / LM Studio)",
@@ -1399,7 +1399,7 @@ fn prompt_provider_key(
         };
         let key: String =
             dialoguer::Password::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt(format!("[5/7] {label}"))
+                .with_prompt(format!("[5/9] {label}"))
                 .allow_empty_password(matches!(kind, ProviderKind::OpenaiCompat))
                 .interact()
                 .context("provider key input")?;
@@ -1557,20 +1557,20 @@ fn step5b_inference_topology(
             .collect();
         let default_idx = topology_default_idx_for_probe(&probe);
         let pick = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("[5b/8] Hemisphere LLM topology")
+            .with_prompt("[5b/9] Hemisphere LLM topology")
             .items(&labels)
             .default(default_idx)
             .interact()
             .context("topology mode select")?;
         state.inference.mode = modes[pick].0;
         let is_local_only_preset = matches!(modes[pick].1, "local-only");
-        println!("  [5b/8] mode: {}", modes[pick].1);
+        println!("  [5b/9] mode: {}", modes[pick].1);
         // Apply the local-only preset BEFORE the per-hemisphere loop —
         // the loop's gate on `Triplet|Custom` would otherwise overwrite
         // these with the per-role prompts.
         if is_local_only_preset {
             apply_local_only_preset(&mut state.inference);
-            println!("  [5b/8] hemispheres (local-only preset):");
+            println!("  [5b/9] hemispheres (local-only preset):");
             println!("      left        provider=local_qwen  model=(adapter default)");
             println!("      right       provider=local_qwen  model=(adapter default)");
             println!("      cerebellum  provider=local_qwen  model=(adapter default)");
@@ -1615,7 +1615,7 @@ fn step5b_inference_topology(
         } else {
             Some(chosen_accel.as_str().to_string())
         };
-        println!("  [5b/8] accelerator: {}", chosen_accel.as_str());
+        println!("  [5b/9] accelerator: {}", chosen_accel.as_str());
 
         // ─── 3. Per-hemisphere providers (only Triplet + Custom) ───────
         // SPEC_hemisphere_provider_selection.md §3: surface a recommended
@@ -1665,7 +1665,7 @@ fn step5b_inference_topology(
             }
             // Render summary so the operator confirms what they just
             // bound. Matches `neoth hemispheres show` table format.
-            println!("  [5b/8] hemispheres:");
+            println!("  [5b/9] hemispheres:");
             for (label, slot) in [
                 ("left      ", &state.inference.left),
                 ("right     ", &state.inference.right),
@@ -1694,7 +1694,7 @@ fn step5b_inference_topology(
                 Some(InferenceProvider::LocalQwen),
             )?;
             state.inference.embedding_provider = Some(emb);
-            println!("  [5b/8] embeddings via {}", emb.as_str());
+            println!("  [5b/9] embeddings via {}", emb.as_str());
         }
 
         // ─── E-2 Phase 4 (Session 14 Pick #23) — Council recursion depth
@@ -1713,7 +1713,7 @@ fn step5b_inference_topology(
                 &dialoguer::theme::ColorfulTheme::default(),
             )
             .with_prompt(
-                "[5b/8] Council recursion depth (1=flat default, 2..=4 enables fractal sub-councils)",
+                "[5b/9] Council recursion depth (1=flat default, 2..=4 enables fractal sub-councils)",
             )
             .default(1u8)
             .validate_with(|v: &u8| {
@@ -1738,7 +1738,7 @@ fn step5b_inference_topology(
             let proceed =
                 dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt(format!(
-                        "[5b/8] Proceed with hemisphere_council_depth={depth_choice}?"
+                        "[5b/9] Proceed with hemisphere_council_depth={depth_choice}?"
                     ))
                     .default(false)
                     .interact()
@@ -1746,7 +1746,7 @@ fn step5b_inference_topology(
             if proceed {
                 depth_choice
             } else {
-                println!("  [5b/8] reverted to depth=1 (flat council)");
+                println!("  [5b/9] reverted to depth=1 (flat council)");
                 1
             }
         } else {
@@ -1757,11 +1757,11 @@ fn step5b_inference_topology(
         state.inference.hemisphere_council_depth = clamped_depth;
         if was_clamped {
             println!(
-                "  [5b/8] depth clamped to MAX_HEMISPHERE_COUNCIL_DEPTH={}",
+                "  [5b/9] depth clamped to MAX_HEMISPHERE_COUNCIL_DEPTH={}",
                 crate::config::inference::MAX_HEMISPHERE_COUNCIL_DEPTH,
             );
         }
-        println!("  [5b/8] hemisphere_council_depth: {}", clamped_depth.get(),);
+        println!("  [5b/9] hemisphere_council_depth: {}", clamped_depth.get(),);
     }
     #[cfg(not(feature = "wizard"))]
     {
@@ -2176,9 +2176,9 @@ fn provider_kind_to_inference(
 /// Pure-fn so the K-4b restructure can be unit-tested without a TTY.
 pub(crate) fn k4b_telegram_prompt_text(pear_present: bool) -> &'static str {
     if pear_present {
-        "[6/8] Set up Telegram as a FALLBACK channel? (Keet is preferred primary; default: no)"
+        "[6/9] Set up Telegram as a FALLBACK channel? (Keet is preferred primary; default: no)"
     } else {
-        "[6/8] Set up a Telegram bot now? (optional, can add later)"
+        "[6/9] Set up a Telegram bot now? (optional, can add later)"
     }
 }
 
@@ -2247,12 +2247,12 @@ async fn step5c_qwen_weights(
     {
         println!();
         if cached {
-            println!("[5c/8] Qwen weights already cached (~/.cache/huggingface/hub/). Skipping.");
+            println!("[5c/9] Qwen weights already cached (~/.cache/huggingface/hub/). Skipping.");
             state.steps_completed.push(58);
             return Ok(());
         }
         println!(
-            "[5c/8] LocalQwen is wired but the {} weights aren't cached yet (~{} GB download).",
+            "[5c/9] LocalQwen is wired but the {} weights aren't cached yet (~{} GB download).",
             qwen_weights::DEFAULT_QWEN_MODEL_ID,
             qwen_weights::DEFAULT_QWEN_DOWNLOAD_GB,
         );
@@ -2332,7 +2332,7 @@ fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> R
     debug!("wizard step 5d: profile approval gate awareness");
     if interactive {
         println!();
-        println!("[5d/8] Profile-claim approval gate is ON by default.");
+        println!("[5d/9] Profile-claim approval gate is ON by default.");
         println!(
             "  When NEOTH extracts a profile claim ('you live in Berlin', \
              'your editor is vim'),"
@@ -2401,7 +2401,7 @@ async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardSta
         state.telegram_token = Some(crate::secret::SecretString::from(t.as_str()));
         state.telegram_user_id = args.telegram_user_id;
     } else if interactive {
-        println!("  [6/7] Telegram skipped. Add later: `neoth channel add telegram`");
+        println!("  [6/9] Telegram skipped. Add later: `neoth channel add telegram`");
     }
 
     state.steps_completed.push(6);
@@ -2456,7 +2456,7 @@ async fn step6b_keet_pairing(
             // already wired in step 6). Surface the install path so
             // they know how to come back to this.
             println!();
-            println!("[6b/8] Keet pairing skipped — `pear` runtime not on PATH.");
+            println!("[6b/9] Keet pairing skipped — `pear` runtime not on PATH.");
             let path = crate::installers::pears::recommend_install_path(false);
             let cmd = crate::installers::pears::install_command(path);
             if !cmd.is_empty() {
@@ -2468,7 +2468,7 @@ async fn step6b_keet_pairing(
         }
 
         let set_up = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("[6b/8] `pear` runtime detected. Pair Keet now? (optional)")
+            .with_prompt("[6b/9] `pear` runtime detected. Pair Keet now? (optional)")
             .default(false)
             .interact()
             .context("keet pairing confirm")?;
@@ -2578,7 +2578,7 @@ async fn step6c_obsidian_install(
     #[cfg(feature = "wizard")]
     {
         println!();
-        println!("[6c/8] Obsidian (vault archive — see step 6d) is not installed.");
+        println!("[6c/9] Obsidian (vault archive — see step 6d) is not installed.");
         let install = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
             .with_prompt("Install Obsidian now? (recommended for the NEOTH-Vault archive)")
             .default(true)
@@ -2659,7 +2659,7 @@ fn step6d_obsidian_vault_bootstrap_with_home(
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "<HOME unset>".to_string());
             println!();
-            println!("[6d/8] Bootstrap a NEOTH-Vault at: {default_label}");
+            println!("[6d/9] Bootstrap a NEOTH-Vault at: {default_label}");
             let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt("Create the vault now? (skip if you already have one)")
                 .default(true)
@@ -2760,7 +2760,7 @@ async fn step6e_n8n_install(
     {
         println!();
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("[6e/8] Install n8n (workflow engine, optional)?")
+            .with_prompt("[6e/9] Install n8n (workflow engine, optional)?")
             .default(false)
             .interact()
             .context("n8n install confirm")?;
@@ -2812,7 +2812,7 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
         #[cfg(feature = "wizard")]
         {
             let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("[6f/8] Migrate an existing Jarvis HIPPOCAMPUS_CORE.md into NEOTH?")
+                .with_prompt("[6f/9] Migrate an existing Jarvis HIPPOCAMPUS_CORE.md into NEOTH?")
                 .default(false)
                 .interact()
                 .context("jarvis import confirm")?;
@@ -3170,7 +3170,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
             .position(|(_, l, _)| *l == AutonomyLevel::Standard)
             .unwrap_or(1);
         let choice = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
-            .with_prompt("[7/8] How autonomous should NEOTH be?")
+            .with_prompt("[7/9] How autonomous should NEOTH be?")
             .items(&labels)
             .default(default_idx)
             .interact()
@@ -3190,7 +3190,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
                     .interact()
                     .context("full-level confirm")?;
             if !confirmed {
-                println!("  [7/8] Falling back to `standard`.");
+                println!("  [7/9] Falling back to `standard`.");
                 state.autonomy = AutonomyLevel::Standard;
             } else {
                 state.autonomy = AutonomyLevel::Full;
@@ -3198,7 +3198,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
         } else {
             state.autonomy = picked;
         }
-        println!("  [7/8] autonomy: {}", state.autonomy.as_str());
+        println!("  [7/9] autonomy: {}", state.autonomy.as_str());
     }
     #[cfg(not(feature = "wizard"))]
     {
@@ -3234,7 +3234,7 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
     {
         let check = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
             .with_prompt(
-                "[7b/8] Allow NEOTH to check GitHub for newer releases? (no background traffic until you say yes)",
+                "[7b/9] Allow NEOTH to check GitHub for newer releases? (no background traffic until you say yes)",
             )
             .default(false)
             .interact()
@@ -3251,7 +3251,7 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
                 .context("auto-update apply confirm")?;
             state.auto_update.auto_apply = apply;
             println!(
-                "  [7b/8] auto_update: enabled={} auto_apply={} channel={}",
+                "  [7b/9] auto_update: enabled={} auto_apply={} channel={}",
                 state.auto_update.enabled, state.auto_update.auto_apply, state.auto_update.channel,
             );
         } else {
@@ -3259,7 +3259,7 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
             // if a prior wizard run had flipped them on.
             state.auto_update.enabled = false;
             state.auto_update.auto_apply = false;
-            println!("  [7b/8] auto_update: disabled");
+            println!("  [7b/9] auto_update: disabled");
         }
     }
     #[cfg(not(feature = "wizard"))]
@@ -3373,7 +3373,7 @@ fn step7c_wasm_plugin_activation(
     {
         println!();
         println!(
-            "[7c/8] {} WASM plugin(s) discovered under ~/.neoth/plugins/.",
+            "[7c/9] {} WASM plugin(s) discovered under ~/.neoth/plugins/.",
             report.loaded.len()
         );
         println!("       Default is PENDING (skipped at daemon boot until you opt in).");
@@ -3387,7 +3387,7 @@ fn step7c_wasm_plugin_activation(
 
         let picked =
             dialoguer::MultiSelect::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("[7c/8] Activate plugins (space to toggle, Enter to confirm)")
+                .with_prompt("[7c/9] Activate plugins (space to toggle, Enter to confirm)")
                 .items(&labels)
                 .interact()
                 .context("wasm plugin multiselect")?;
@@ -3410,7 +3410,7 @@ fn step7c_wasm_plugin_activation(
                 .insert(plugin.manifest.id.clone(), state_val);
         }
         println!(
-            "  [7c/8] {} plugin(s) Active, {} Disabled.",
+            "  [7c/9] {} plugin(s) Active, {} Disabled.",
             active_count, disabled_count,
         );
     }
@@ -3449,7 +3449,7 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
         Some(ProviderKind::AzureOpenAi) => "azure_openai",
         Some(ProviderKind::Skip) | None => "(none)",
     };
-    println!("\n[8/8] Setup Complete\n");
+    println!("\n[9/9] Setup Complete\n");
     println!(
         "  Operator:  {}",
         state.operator_id.as_deref().unwrap_or("(not set)")
@@ -5197,12 +5197,12 @@ mod tests {
 
     #[test]
     fn k4b_prompt_keeps_step_label_consistent_across_modes() {
-        // Both variants must carry the same `[6/8]` step label so the
+        // Both variants must carry the same `[6/9]` step label so the
         // wizard transcript stays parseable — operators (or automated
-        // probes) grepping for "[6/8]" find it regardless of the pear
+        // probes) grepping for "[6/9]" find it regardless of the pear
         // detection outcome.
-        assert!(k4b_telegram_prompt_text(true).contains("[6/8]"));
-        assert!(k4b_telegram_prompt_text(false).contains("[6/8]"));
+        assert!(k4b_telegram_prompt_text(true).contains("[6/9]"));
+        assert!(k4b_telegram_prompt_text(false).contains("[6/9]"));
     }
 
     // ── K-4 channel-ordering tests (Session 21) ─────────────────────
