@@ -20,11 +20,13 @@
 //!
 //! Session 27 ships the building blocks: per-OS profile root
 //! discovery + `profiles.ini` parse + `logins.json` JSON read +
-//! the AES-256-CBC decrypt primitive with KAT-pinned tests. The
-//! ASN.1 envelope decode + the `key4.db` master-key extraction
-//! land in Session 28 — see `PLAN/HANDOFF_C04b_SESSION28.md` for
-//! the remaining steps + crate picks (`simple_asn1` for the BER
-//! parse, `rusqlite` already in tree).
+//! the AES-256-CBC decrypt primitive with KAT-pinned tests +
+//! the ASN.1 SECITEM envelope decoder (module
+//! [`crate::credentials::firefox_envelope`] — runtime OID
+//! dispatch for AES-256-CBC + legacy 3DES envelopes). The
+//! `key4.db` master-key extraction + the importer wiring land
+//! in Session 28 — see `PLAN/HANDOFF_C04b_SESSION28.md` chunks
+//! 2 + 3 for the remaining ~6-7h of work.
 
 use std::path::PathBuf;
 
@@ -243,11 +245,13 @@ impl CredentialImporter for FirefoxImporter {
 
     async fn discover_entries(&self) -> Result<DiscoveredCredentials, String> {
         let mut warnings = vec![format!(
-            "Firefox profile root found at {:?}. C-04b Phase 1 shipped the \
-             logins.json parser + AES-256-CBC decrypt primitive (Session 27); \
-             Phase 2 lands the key4.db master-key extraction + ASN.1 envelope \
-             unwrap. Today the importer returns zero entries to avoid \
-             false-success — operator-visible audit stays honest.",
+            "Firefox profile root found at {:?}. C-04b Phase 1 + Phase 2 \
+             chunk 1 shipped Session 27: logins.json parser + AES-256-CBC \
+             decrypt primitive + ASN.1 SECITEM envelope decoder are all in \
+             tree. Phase 2 chunk 2 (key4.db master-key extraction) + chunk 3 \
+             (importer wiring) land Session 28. Today the importer returns \
+             zero entries to avoid false-success — operator-visible audit \
+             stays honest.",
             firefox_profile_root(),
         )];
         // Attempt to read profiles.ini to surface profile count.

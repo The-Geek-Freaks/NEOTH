@@ -20,13 +20,27 @@ explicitly.
 ## What's still open
 
 Phase 2 wires the AES-CBC primitive to real ciphertext from a live
-Firefox install. The remaining ~1.5 day of work splits into three
-self-contained chunks; each is testable independently.
+Firefox install. **Chunk 1 (ASN.1 envelope decode) shipped Session 27;**
+chunks 2 + 3 remain (~6-7h). Both are testable independently.
 
-### 1. ASN.1 SECITEM envelope decode (~3-4h)
+### 1. ASN.1 SECITEM envelope decode — ✅ shipped Session 27 (chunk 1)
 
-Every `encryptedUsername` / `encryptedPassword` field in `logins.json`
-is base64 of an ASN.1 BER SEQUENCE:
+Module at [`credentials/firefox_envelope.rs`](../SRC/neothd/src/credentials/firefox_envelope.rs).
+Exposes:
+
+- `FirefoxAlgorithm` enum (Aes256Cbc / TripleDesCbc / Unsupported(String))
+- `FirefoxEnvelope { key_id, algorithm, iv, ciphertext }`
+- `parse_firefox_envelope(b64) -> Result<FirefoxEnvelope, EnvelopeError>`
+- `EnvelopeError` taxonomy (10 variants — every structural failure
+  surfaces a distinct enum variant; importer collapses them to one
+  Err shape before reaching the audit chain)
+
+8 unit tests with hand-rolled BER fixtures pin the wire format.
+Cargo dep added: `simple_asn1 = "0.6"`.
+
+**Reference (for chunk 2 callers):** every `encryptedUsername` /
+`encryptedPassword` field in `logins.json` is base64 of an ASN.1
+BER SEQUENCE:
 
 ```
 SEQUENCE                              -- PKCS#7 EncryptedData

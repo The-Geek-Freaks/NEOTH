@@ -239,6 +239,15 @@ cbc    = { version = "0.1", features = ["block-padding"] }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 subtle = "2"
 
+# C-04b Phase 2 chunk 1 (Session 27) — ASN.1 BER decode for the
+# Firefox SECITEM envelope wrapping each encrypted logins.json
+# field. Pure-Rust, single-shape parse — we only destructure
+# SEQUENCE { OCTET STRING, SEQUENCE { OID, OCTET STRING },
+# OCTET STRING }. Algorithm dispatched at runtime by OID so
+# both AES-256-CBC (modern) and 3DES-EDE-CBC (legacy) envelopes
+# round-trip through the same parser.
+simple_asn1 = "0.6"
+
 # K-Repo-Map Phase 1 (Session 14 Pick #13) — fast filesystem walker that
 # honours .gitignore / .ignore / .neothignore semantics, parallel by
 # default, used in NEOTH's first-pass code-map scan. Pure Rust, no

@@ -38,6 +38,7 @@
 pub mod bitwarden;
 pub mod chrome;
 pub mod firefox;
+pub mod firefox_envelope;
 pub mod wizard_step;
 
 use std::fmt;
