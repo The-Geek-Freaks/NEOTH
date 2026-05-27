@@ -1234,6 +1234,131 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     };
     info!("cluster audit sidecar ingester spawned (5s tick)");
 
+    // ── W-05d installer_ran sidecar ingester (Session 26) ─────────────────
+    // `neoth installer apply --yes` drops `~/.neoth/installer_ran_<ts>.json`
+    // after a successful install. This task polls every 5s, reads
+    // pending sidecars, appends a `0x12 INSTALLER_RAN` WAL frame per
+    // sidecar, and removes the file. At-least-once semantics: a crash
+    // between WAL append + file remove leaves the file for the next
+    // tick to retry; the WAL writer dedupes by event_id.
+    let installer_audit_task: tokio::task::JoinHandle<()> = {
+        let writer_for_installer = writer.clone();
+        let home = FreedomConfig::default_neoth_home();
+        tokio::spawn(async move {
+            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+            loop {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                let pending = match crate::daemon::installer_audit_sidecar::list_pending(&home) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "installer_ran sidecar list failed");
+                        continue;
+                    }
+                };
+                for (path, payload) in pending {
+                    let body =
+                        crate::daemon::installer_audit_sidecar::build_wal_frame_body(&payload);
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_INSTALLER_RAN,
+                        &body,
+                    )
+                    .build();
+                    match writer_for_installer.append(header, body).await {
+                        Ok(_) => {
+                            if let Err(e) =
+                                crate::daemon::installer_audit_sidecar::remove_sidecar(&path)
+                            {
+                                warn!(
+                                    error = %e,
+                                    path = %path.display(),
+                                    "installer_ran sidecar remove failed after WAL append"
+                                );
+                            } else {
+                                info!(
+                                    cli_name = payload.cli_name.as_str(),
+                                    version = payload.version.as_str(),
+                                    pkg_mgr = payload.pkg_mgr.as_str(),
+                                    "installer_ran frame appended to WAL"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                path = %path.display(),
+                                "installer_ran WAL append failed; sidecar retained for next tick"
+                            );
+                        }
+                    }
+                }
+            }
+        })
+    };
+    info!("installer_ran sidecar ingester spawned (5s tick)");
+
+    // ── C-05d credentials_import sidecar ingester (Session 26) ────────────
+    // `neoth init` wizard step 6g drops
+    // `~/.neoth/credentials_import_<ts>.json` after the SC-17 redactor
+    // produced its payload. This task polls every 5s, reads pending
+    // sidecars, appends a `0xD6 CREDENTIAL_IMPORT` WAL frame per
+    // sidecar, and removes the file. The payload is already redacted
+    // by the time it lands on disk — this loop never touches raw
+    // secret material.
+    let credentials_import_task: tokio::task::JoinHandle<()> = {
+        let writer_for_credentials = writer.clone();
+        let home = FreedomConfig::default_neoth_home();
+        tokio::spawn(async move {
+            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+            loop {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                let pending = match crate::daemon::credentials_import_sidecar::list_pending(&home) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "credentials_import sidecar list failed");
+                        continue;
+                    }
+                };
+                for (path, payload) in pending {
+                    let body =
+                        crate::daemon::credentials_import_sidecar::build_wal_frame_body(&payload);
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_CREDENTIAL_IMPORT,
+                        &body,
+                    )
+                    .build();
+                    match writer_for_credentials.append(header, body).await {
+                        Ok(_) => {
+                            if let Err(e) =
+                                crate::daemon::credentials_import_sidecar::remove_sidecar(&path)
+                            {
+                                warn!(
+                                    error = %e,
+                                    path = %path.display(),
+                                    "credentials_import sidecar remove failed after WAL append"
+                                );
+                            } else {
+                                info!(
+                                    source = payload.source.as_str(),
+                                    entry_count = payload.entry_count,
+                                    target_vault_id = payload.target_vault_id.as_str(),
+                                    "credentials_import frame appended to WAL"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                path = %path.display(),
+                                "credentials_import WAL append failed; sidecar retained for next tick"
+                            );
+                        }
+                    }
+                }
+            }
+        })
+    };
+    info!("credentials_import sidecar ingester spawned (5s tick)");
+
     // ── Self-dev outbox drain (P-04 follow-on, Session 21) ────────────────
     // CLI commands `neoth self-dev accept/decline/propose` run
     // without an in-process WAL writer (daemon owns the segment
@@ -1509,6 +1634,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // audit frame, the WAL writer dedupes by frame hash).
     cluster_audit_task.abort();
     let _ = cluster_audit_task.await;
+
+    // Abort the installer_ran + credentials_import sidecar ingesters.
+    // Same at-least-once contract — any sidecars still on disk get
+    // ingested on the next daemon start.
+    installer_audit_task.abort();
+    let _ = installer_audit_task.await;
+    credentials_import_task.abort();
+    let _ = credentials_import_task.await;
 
     // Final-drain the self-dev outbox BEFORE aborting the task so
     // CLI events queued in the last 5s land in the WAL instead of

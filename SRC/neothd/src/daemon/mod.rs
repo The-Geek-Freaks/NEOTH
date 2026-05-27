@@ -9,9 +9,11 @@ pub mod accelerator;
 pub mod backup;
 pub mod backup_retention;
 pub mod clock_floor;
+pub mod credentials_import_sidecar;
 pub mod doctor_cron;
 pub mod export;
 pub mod hardware;
+pub mod installer_audit_sidecar;
 pub mod updater_cron;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
 pub mod dreaming;
