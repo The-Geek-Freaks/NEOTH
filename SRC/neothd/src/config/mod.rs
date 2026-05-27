@@ -1340,6 +1340,28 @@ pub struct SkillsConfig {
     /// CLI eval invocations.
     #[serde(default)]
     pub eval_session_active: bool,
+    /// ARCH-07 (Session 28) — pinned content_hash per skill_id. When
+    /// a skill is loaded, the loader's computed `content_hash` is
+    /// compared against the operator's pinned hash; mismatch drops
+    /// the skill from injection + emits one
+    /// `EVENT_TYPE_SKILL_INJECT_SKIPPED` (0x29) with
+    /// `reason = hash_mismatch` + both expected + actual hashes in
+    /// the payload. Operator's defence against "someone or something
+    /// silently edited my skill's system_prompt".
+    ///
+    /// Format in freedom.yaml:
+    /// ```yaml
+    /// skills:
+    ///   pinned_hashes:
+    ///     code-reviewer: "abc123…"
+    ///     security-reviewer: "def456…"
+    /// ```
+    /// Empty map = no integrity check (default behaviour — opt-in).
+    /// Skills NOT in the map are not gated (operator pins what they
+    /// care about; bundled skills can drift across NEOTH releases
+    /// without pinning every one).
+    #[serde(default)]
+    pub pinned_hashes: std::collections::HashMap<String, String>,
 }
 
 impl SkillsConfig {

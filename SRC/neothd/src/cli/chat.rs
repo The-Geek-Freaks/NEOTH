@@ -426,7 +426,7 @@ pub async fn run_chat_with(
     // so every inbound surface reaches the same context layering.
 
     // Arc<Vec<Skill>> snapshot — derefs to &[Skill] for the router.
-    let installed_skills = match registry_res {
+    let raw_installed_skills = match registry_res {
         Ok(reg) => reg.snapshot_owned(),
         Err(e) => {
             tracing::warn!(
@@ -435,6 +435,68 @@ pub async fn run_chat_with(
             );
             std::sync::Arc::new(Vec::new())
         }
+    };
+
+    // ── ARCH-07 (Session 28) — pinned-hash integrity gate ─────────────────
+    //
+    // Compare each loaded skill's actual content_hash against the
+    // operator's `freedom.yaml::skills.pinned_hashes` map. Mismatches
+    // get one `SKILL_INJECT_SKIPPED` (0x29) WAL frame with reason
+    // `hash_mismatch` + both expected + actual hashes in the payload
+    // + are filtered out of the working `installed_skills` Arc so
+    // every downstream router / mode-registry / injection path sees
+    // them as if uninstalled. Skills NOT in the pinned map pass
+    // through unchanged — operator pins what they care about; bundled
+    // skills can drift across NEOTH releases without pinning every
+    // one.
+    //
+    // Best-effort emit: WAL writer failure logs warn + continues. The
+    // skill is STILL dropped on failure (integrity comes first; the
+    // missing audit frame is the next-tick problem, not a reason to
+    // let a tampered skill through).
+    let installed_skills = if config.skills.pinned_hashes.is_empty() {
+        raw_installed_skills.clone()
+    } else {
+        let verdicts = crate::skills::versioning::check_pinned_hashes(
+            raw_installed_skills
+                .iter()
+                .map(|s| (s.id(), s.content_hash.as_str())),
+            &config.skills.pinned_hashes,
+        );
+        let mut kept: Vec<crate::skills::Skill> = Vec::new();
+        for (skill, verdict) in raw_installed_skills.iter().zip(verdicts.iter()) {
+            match verdict.verdict {
+                crate::skills::versioning::PinnedHashOutcome::Allowed => {
+                    kept.push(skill.clone());
+                }
+                crate::skills::versioning::PinnedHashOutcome::Mismatch => {
+                    warn!(
+                        skill = %verdict.skill_id,
+                        expected = ?verdict.expected_hash,
+                        actual = %verdict.actual_hash,
+                        "skill pinned-hash mismatch — dropping from injection (ARCH-07)"
+                    );
+                    let payload = serde_json::to_vec(&serde_json::json!({
+                        "skill_id": verdict.skill_id,
+                        "content_hash": verdict.actual_hash,
+                        "expected_hash": verdict.expected_hash,
+                        "reason": crate::skills::versioning::SkillSkipReason::HashMismatch.as_str(),
+                        "prompt_bundle_hash": prompt_bundle_hash,
+                        "ts_unix": now_unix(),
+                    }))
+                    .unwrap_or_default();
+                    let header = crate::wal::make_header(EVENT_TYPE_SKILL_INJECT_SKIPPED, &payload);
+                    if let Err(e) = writer.append(header, payload).await {
+                        warn!(
+                            skill = %verdict.skill_id,
+                            error = %e,
+                            "SKILL_INJECT_SKIPPED (hash_mismatch) emit failed (non-fatal)"
+                        );
+                    }
+                }
+            }
+        }
+        std::sync::Arc::new(kept)
     };
 
     // Round-3 v0.4 ARCH-07 — eval-session skill suppression. When

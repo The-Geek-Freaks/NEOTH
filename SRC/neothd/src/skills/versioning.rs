@@ -177,6 +177,71 @@ pub enum SkillSkipReason {
     FeatureOff,
 }
 
+/// ARCH-07 (Session 28) — one pinned-hash verdict per skill. Returned
+/// by [`check_pinned_hashes`] so the caller can act per-skill (emit
+/// the WAL audit frame with the expected + actual hashes + drop the
+/// mismatched skill from the injection list).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedHashVerdict {
+    pub skill_id: String,
+    /// `None` when no pin exists for this skill — the verdict is
+    /// `Allowed` regardless of actual_hash content (operator pins what
+    /// they care about; un-pinned skills float free).
+    pub expected_hash: Option<String>,
+    pub actual_hash: String,
+    pub verdict: PinnedHashOutcome,
+}
+
+/// Outcome of one pinned-hash check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PinnedHashOutcome {
+    /// No pin OR pin matches actual — skill is allowed through.
+    Allowed,
+    /// Pin exists + actual differs — skill MUST be dropped from
+    /// injection + a `SkillSkipReason::HashMismatch` audit frame
+    /// emitted by the caller.
+    Mismatch,
+}
+
+/// ARCH-07 (Session 28) — compute the pinned-hash verdict for each
+/// `(skill_id, actual_hash)` pair against the operator's
+/// `freedom.yaml::skills.pinned_hashes` map. Pure-fn; no IO. Returns
+/// one [`PinnedHashVerdict`] per input in the same order so the caller
+/// can zip against the original Skill list. Empty `pinned` map is the
+/// identity case — every verdict is `Allowed`.
+///
+/// Case-sensitive compare: pinned hashes come from
+/// `skill_content_hash_hex` which always produces lowercase hex, and
+/// the loader's computed hash uses the same fn — a config typo with
+/// uppercase letters fails Mismatch (a feature, not a bug: forces
+/// the operator to copy-paste the exact hash from the loader log
+/// rather than retyping).
+pub fn check_pinned_hashes<'a, I>(
+    skills: I,
+    pinned: &std::collections::HashMap<String, String>,
+) -> Vec<PinnedHashVerdict>
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    skills
+        .into_iter()
+        .map(|(skill_id, actual_hash)| {
+            let expected = pinned.get(skill_id);
+            let verdict = match expected {
+                None => PinnedHashOutcome::Allowed,
+                Some(exp) if exp == actual_hash => PinnedHashOutcome::Allowed,
+                Some(_) => PinnedHashOutcome::Mismatch,
+            };
+            PinnedHashVerdict {
+                skill_id: skill_id.to_string(),
+                expected_hash: expected.cloned(),
+                actual_hash: actual_hash.to_string(),
+                verdict,
+            }
+        })
+        .collect()
+}
+
 impl SkillSkipReason {
     /// Canonical snake_case string for the WAL payload.
     pub fn as_str(self) -> &'static str {
@@ -380,5 +445,88 @@ mod tests {
         );
         assert_eq!(SkillSkipReason::HashMismatch.as_str(), "hash_mismatch");
         assert_eq!(SkillSkipReason::FeatureOff.as_str(), "feature_off");
+    }
+
+    // ── check_pinned_hashes (ARCH-07 pinned-hash guard) ────────────
+
+    #[test]
+    fn pinned_hash_empty_map_allows_every_skill() {
+        let pinned = std::collections::HashMap::new();
+        let verdicts =
+            check_pinned_hashes([("code-reviewer", "abc"), ("security", "def")], &pinned);
+        assert_eq!(verdicts.len(), 2);
+        assert!(
+            verdicts
+                .iter()
+                .all(|v| v.verdict == PinnedHashOutcome::Allowed)
+        );
+        assert!(verdicts.iter().all(|v| v.expected_hash.is_none()));
+    }
+
+    #[test]
+    fn pinned_hash_matching_pin_allows_skill() {
+        let mut pinned = std::collections::HashMap::new();
+        pinned.insert("code-reviewer".to_string(), "abc".to_string());
+        let verdicts = check_pinned_hashes([("code-reviewer", "abc")], &pinned);
+        assert_eq!(verdicts.len(), 1);
+        assert_eq!(verdicts[0].verdict, PinnedHashOutcome::Allowed);
+        assert_eq!(verdicts[0].expected_hash.as_deref(), Some("abc"));
+        assert_eq!(verdicts[0].actual_hash, "abc");
+    }
+
+    #[test]
+    fn pinned_hash_drift_returns_mismatch_verdict() {
+        let mut pinned = std::collections::HashMap::new();
+        pinned.insert("code-reviewer".to_string(), "expected_hash".to_string());
+        let verdicts = check_pinned_hashes([("code-reviewer", "actual_drift")], &pinned);
+        assert_eq!(verdicts[0].verdict, PinnedHashOutcome::Mismatch);
+        assert_eq!(verdicts[0].expected_hash.as_deref(), Some("expected_hash"));
+        assert_eq!(verdicts[0].actual_hash, "actual_drift");
+    }
+
+    #[test]
+    fn pinned_hash_skill_not_in_map_passes_through() {
+        // Operator pins some skills but not others — un-pinned skills
+        // must NOT be blocked. Pin-what-you-care-about ergonomics.
+        let mut pinned = std::collections::HashMap::new();
+        pinned.insert("security".to_string(), "h1".to_string());
+        let verdicts =
+            check_pinned_hashes([("code-reviewer", "any_hash"), ("security", "h1")], &pinned);
+        assert_eq!(verdicts[0].verdict, PinnedHashOutcome::Allowed);
+        assert!(verdicts[0].expected_hash.is_none());
+        assert_eq!(verdicts[1].verdict, PinnedHashOutcome::Allowed);
+        assert_eq!(verdicts[1].expected_hash.as_deref(), Some("h1"));
+    }
+
+    #[test]
+    fn pinned_hash_case_sensitive_compare() {
+        // hex_encode_lower always lowercases — an uppercase entry in
+        // freedom.yaml is a config typo + MUST surface as Mismatch
+        // (forces operator to copy-paste exact hash, not retype).
+        let mut pinned = std::collections::HashMap::new();
+        pinned.insert("code-reviewer".to_string(), "ABC123".to_string());
+        let verdicts = check_pinned_hashes([("code-reviewer", "abc123")], &pinned);
+        assert_eq!(verdicts[0].verdict, PinnedHashOutcome::Mismatch);
+    }
+
+    #[test]
+    fn pinned_hash_preserves_input_order() {
+        // Caller relies on zip-by-index — the verdicts MUST come back
+        // in input order regardless of HashMap iteration order.
+        let mut pinned = std::collections::HashMap::new();
+        pinned.insert("a".to_string(), "h_a".to_string());
+        pinned.insert("c".to_string(), "h_c".to_string());
+        let verdicts =
+            check_pinned_hashes([("a", "h_a"), ("b", "anything"), ("c", "wrong")], &pinned);
+        assert_eq!(
+            verdicts
+                .iter()
+                .map(|v| v.skill_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "c"]
+        );
+        assert_eq!(verdicts[0].verdict, PinnedHashOutcome::Allowed);
+        assert_eq!(verdicts[1].verdict, PinnedHashOutcome::Allowed); // unpinned
+        assert_eq!(verdicts[2].verdict, PinnedHashOutcome::Mismatch);
     }
 }
