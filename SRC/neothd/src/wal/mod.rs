@@ -28,6 +28,11 @@ pub mod redact;
 pub mod segment_header;
 pub mod snapshot;
 pub mod types;
+/// Round-3 v0.4 QU-08 — derived read-only views over the WAL
+/// indexer's SQLite tables. Starts with `episode` (60-min temporal-
+/// window grouping over `idx_episode`); more views land per
+/// follow-up items.
+pub mod views;
 #[cfg(windows)]
 pub mod win_acl;
 #[cfg(windows)]
