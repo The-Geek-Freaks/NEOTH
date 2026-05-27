@@ -4761,6 +4761,7 @@ mod tests {
 
     fn fixture_state() -> WizardState {
         WizardState {
+            experience_level: crate::wizard::recommend::ExperienceLevel::Beginner,
             operator_id: Some("alice".to_string()),
             language_primary: Some("en".to_string()),
             language_code: Some("en".to_string()),
