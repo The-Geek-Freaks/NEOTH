@@ -26,10 +26,23 @@ use neothd::wal::segment_header::SegmentHeader;
 /// frames + the canonical SegmentHeader prelude. `seq` is the
 /// `segment_seq` stamp; the rest of the header fields are test-
 /// neutral zeros.
+///
+/// Inserts a 1µs sleep between `make_header` calls because event_id
+/// is derived from `SystemTime::now().as_nanos()` and macOS' clock
+/// can report identical nanoseconds across two back-to-back calls.
+/// Two frames with the same event_id collide on the `INSERT OR
+/// IGNORE` in `indexer::index_frame`, dropping silently — flake
+/// surfaced on `macos-14 / beta` for CI run 26503714055. A microsecond
+/// gap is enough to force the wallclock forward on every supported
+/// platform and is well below the human-perceptible test duration
+/// budget.
 fn write_segment(path: &std::path::Path, seq: u64, payloads: &[&[u8]]) {
     let mut out = Vec::new();
     out.extend_from_slice(&SegmentHeader::new(0, seq, 0, 0, [0u8; 16]).to_le_bytes());
-    for payload in payloads {
+    for (i, payload) in payloads.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_micros(1));
+        }
         let header = make_header(EVENT_TYPE_RAW_TEXT, payload);
         out.extend_from_slice(&encode_frame(&header, payload));
     }
