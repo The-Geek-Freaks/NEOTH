@@ -27,6 +27,48 @@ pub struct ProfileClaim {
     pub confidence: f64,
 }
 
+/// ADV-05 (Session 28): drop claims whose top-level category appears
+/// in `disabled_categories`. Pure-fn filter applied AFTER
+/// [`top_claims_for_chat`] so the SQL surface stays unchanged + the
+/// gate composes with any other post-query filter. Returns the
+/// retained claims in their original order.
+///
+/// The category derivation matches `extension_registry::category_of`
+/// (top segment before the first `.`); `disabled_categories` items
+/// compare case-sensitively because the registry stores categories
+/// case-sensitively. An empty `disabled_categories` slice is the
+/// no-op identity transform.
+pub fn filter_pii_disabled(
+    claims: Vec<ProfileClaim>,
+    disabled_categories: &[String],
+) -> Vec<ProfileClaim> {
+    if disabled_categories.is_empty() {
+        return claims;
+    }
+    claims
+        .into_iter()
+        .filter(|c| {
+            let category =
+                crate::profile::extension_registry::TypedExtensionRegistry::category_of(&c.field);
+            !disabled_categories.iter().any(|d| d == category)
+        })
+        .collect()
+}
+
+/// ADV-05 (Session 28): convenience wrapper that runs
+/// [`top_claims_for_chat`] + [`filter_pii_disabled`] in one call. Most
+/// callers want both; keep this as the canonical entry point so a
+/// future caller can't accidentally skip the PII gate.
+pub fn top_claims_for_chat_with_pii_gate(
+    conn: &Connection,
+    min_confidence: f64,
+    limit: usize,
+    disabled_categories: &[String],
+) -> Result<Vec<ProfileClaim>> {
+    let claims = top_claims_for_chat(conn, min_confidence, limit)?;
+    Ok(filter_pii_disabled(claims, disabled_categories))
+}
+
 /// Pull up to `limit` live, non-redacted profile claims with confidence
 /// ≥ `min_confidence`, ordered confidence descending then field
 /// ascending (stable across equal-confidence ties). Returns an empty
@@ -447,5 +489,107 @@ mod tests {
             "open/close mismatch — element nesting is corrupt: {xml_body}"
         );
         assert_eq!(open_count, 2, "expected exactly 2 claim elements rendered");
+    }
+
+    // ── ADV-05 (Session 28): PII category gate ─────────────────────
+
+    fn claim(field: &str, value_json: &str, conf: f64) -> ProfileClaim {
+        ProfileClaim {
+            field: field.into(),
+            value_json: value_json.into(),
+            confidence: conf,
+        }
+    }
+
+    #[test]
+    fn filter_pii_disabled_is_noop_when_categories_empty() {
+        let claims = vec![
+            claim("identity.location", "\"Berlin\"", 0.9),
+            claim("skills.rust", "\"5y\"", 0.8),
+        ];
+        let filtered = filter_pii_disabled(claims.clone(), &[]);
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered, claims);
+    }
+
+    #[test]
+    fn filter_pii_disabled_drops_matching_category() {
+        let claims = vec![
+            claim("identity.location", "\"Berlin\"", 0.9),
+            claim("skills.rust", "\"5y\"", 0.8),
+            claim("identity.name", "\"Alex\"", 0.95),
+        ];
+        let disabled = vec!["identity".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].field, "skills.rust");
+    }
+
+    #[test]
+    fn filter_pii_disabled_preserves_input_order() {
+        let claims = vec![
+            claim("skills.rust", "\"5y\"", 0.8),
+            claim("identity.location", "\"Berlin\"", 0.9),
+            claim("preferences.editor", "\"vim\"", 0.85),
+        ];
+        let disabled = vec!["identity".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|c| c.field.as_str())
+                .collect::<Vec<_>>(),
+            vec!["skills.rust", "preferences.editor"]
+        );
+    }
+
+    #[test]
+    fn filter_pii_disabled_supports_multiple_categories() {
+        let claims = vec![
+            claim("identity.location", "\"Berlin\"", 0.9),
+            claim("skills.rust", "\"5y\"", 0.8),
+            claim("health.steps_per_day", "9000", 0.7),
+            claim("preferences.editor", "\"vim\"", 0.85),
+        ];
+        let disabled = vec!["identity".to_string(), "health".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|c| c.field.as_str())
+                .collect::<Vec<_>>(),
+            vec!["skills.rust", "preferences.editor"]
+        );
+    }
+
+    #[test]
+    fn filter_pii_disabled_keeps_topless_field_when_not_listed() {
+        // Field with no dot — `category_of` returns the whole string.
+        let claims = vec![claim("greeting", "\"hi\"", 0.9)];
+        let disabled = vec!["identity".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn filter_pii_disabled_drops_topless_field_when_listed_verbatim() {
+        let claims = vec![claim("flatfield", "\"v\"", 0.9)];
+        let disabled = vec!["flatfield".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn top_claims_for_chat_with_pii_gate_composes_confidence_and_category() {
+        let conn = open_test_db();
+        insert_claim(&conn, "identity.location", "\"Berlin\"", 0.9, 1, None);
+        insert_claim(&conn, "skills.rust", "\"5y\"", 0.8, 2, None);
+        insert_claim(&conn, "skills.python", "\"low\"", 0.4, 3, None); // below 0.6
+        let disabled = vec!["identity".to_string()];
+        let claims = top_claims_for_chat_with_pii_gate(&conn, 0.6, 10, &disabled).unwrap();
+        // Below-threshold + identity-disabled both filtered → only
+        // skills.rust survives.
+        assert_eq!(claims.len(), 1);
+        assert_eq!(claims[0].field, "skills.rust");
     }
 }

@@ -897,6 +897,28 @@ pub struct ProfileConfig {
     /// operator action.
     #[serde(default = "default_profile_require_approval")]
     pub require_approval: bool,
+    /// ADV-05 (Session 28): PII categories that MUST NOT be injected
+    /// into the Block-B prompt context, even if `idx_profile` holds
+    /// active high-confidence claims for them. Today disabling a
+    /// category in extraction stops NEW claims from landing, but
+    /// historical rows continue to leak into Block-B for the
+    /// row's full TTL (~276 days). This gate lets the operator
+    /// say "stop using anything you know about my location" + have
+    /// the effect take hold on the NEXT chat turn, not 9 months
+    /// from now.
+    ///
+    /// Values are top-level category names (`identity` / `health` /
+    /// `location` / `relationships` / etc.); they match the segment
+    /// returned by `crate::profile::extension_registry::TypedExtensionRegistry::category_of`.
+    /// Empty default → backwards-compatible with existing freedom.yaml
+    /// files (no fields skipped).
+    ///
+    /// To wipe the underlying rows (not just hide them from
+    /// injection) the operator runs `neoth memory --forget <topic>`
+    /// or `neoth profile redact`; this flag is the soft / reversible
+    /// counterpart.
+    #[serde(default)]
+    pub pii_categories_disabled: Vec<String>,
 }
 
 impl Default for ProfileConfig {
@@ -907,6 +929,7 @@ impl Default for ProfileConfig {
             learn_provider: default_profile_learn_provider(),
             allow_cloud_fallback: default_profile_allow_cloud_fallback(),
             require_approval: default_profile_require_approval(),
+            pii_categories_disabled: Vec::new(),
         }
     }
 }

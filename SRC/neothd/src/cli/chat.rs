@@ -2555,10 +2555,18 @@ fn profile_block_for_callosum_sync() -> Option<String> {
     const MAX_CLAIMS: usize = 8;
     let db_path = crate::memory::store::default_path();
     let conn = crate::memory::store::open(&db_path).ok()?;
-    let claims = crate::profile::lookup::top_claims_for_chat(
+    // ADV-05 (Session 28): load the operator's freedom.yaml so the PII
+    // gate honours `profile.pii_categories_disabled`. Fall back to an
+    // empty slice when config can't load — the gate is opt-in, so the
+    // safe default is "no filter" (matches v1.0 behaviour pre-ADV-05).
+    let disabled_categories = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.profile.pii_categories_disabled)
+        .unwrap_or_default();
+    let claims = crate::profile::lookup::top_claims_for_chat_with_pii_gate(
         &conn,
         crate::profile::injection::DEFAULT_INJECTION_FLOOR,
         MAX_CLAIMS,
+        &disabled_categories,
     )
     .ok()?;
     if claims.is_empty() {
