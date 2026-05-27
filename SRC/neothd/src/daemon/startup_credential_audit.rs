@@ -58,12 +58,12 @@ pub struct CredentialFinding {
     pub secret_excerpt: String,
 }
 
-/// Per-pattern minimum match-length below which we treat the hit as
-/// noise (avoids flagging `Bearer x` short tokens or `sk-` literal
-/// prefixes that appear in docs). The redact module's regexes
-/// already enforce `{20,}` for most patterns; this is the secondary
-/// guard for the few that don't.
-const MIN_SECRET_LENGTH: usize = 16;
+/// Cap on excerpt length surfaced in audit output. 12 chars is
+/// enough for the operator to recognise WHICH key (the prefix
+/// shape `sk-ant-` / `ghp_` / `AKIA` survives) without being a
+/// useful leak — the high-entropy tail (where the actual secret
+/// material lives) is truncated + replaced with an ellipsis.
+const AUDIT_EXCERPT_CHARS: usize = 12;
 
 /// Run the full scan: file paths + (optionally) git remote URLs.
 /// Returns the combined finding list; the caller logs each entry as
@@ -195,44 +195,25 @@ struct SecretHit {
 }
 
 /// Match `line` against every pattern in the redact module's PATTERNS
-/// table. Returns one [`SecretHit`] per distinct kind that matched;
-/// duplicate-kind hits on the same line collapse to the first match
-/// so the operator doesn't see N lines for one .bashrc.
+/// table via [`crate::security::redact::find_secret_kinds`] — exact
+/// byte-precise hits, NOT a diff of the redacted output. Each hit's
+/// excerpt is the matched substring's leading `AUDIT_EXCERPT_CHARS`
+/// chars + ellipsis (enough to recognise the prefix shape without
+/// being a useful leak).
+///
+/// Duplicate-kind hits on the same line collapse to the first match
+/// so the operator doesn't see N lines for one `.bashrc`.
 fn match_secret_kinds(line: &str) -> Vec<SecretHit> {
     let mut hits: Vec<SecretHit> = Vec::new();
-    // We use `redact::PATTERNS` indirectly via the public surface:
-    // `redact_text` returns a string with every match replaced by
-    // `[REDACTED:<kind>]`. Diff the input vs output to learn WHICH
-    // kinds fired without re-implementing the regex set.
-    let redacted = crate::security::redact::redact_text(line);
-    if redacted == line {
-        return hits;
-    }
-    // Walk the redacted text + every `[REDACTED:<kind>]` token is a
-    // hit. The kind label is the substring inside the brackets.
-    let mut cursor = 0;
-    while let Some(idx) = redacted[cursor..].find("[REDACTED:") {
-        let start = cursor + idx + "[REDACTED:".len();
-        let Some(end_rel) = redacted[start..].find(']') else {
-            break;
-        };
-        let kind = &redacted[start..start + end_rel];
-        // Find the corresponding excerpt in the ORIGINAL line by
-        // tracking how much we've consumed.
-        let excerpt_source = line
-            .split_whitespace()
-            .find(|w| {
-                w.len() >= MIN_SECRET_LENGTH || matches!(kind, "anthropic_key" | "openai_key")
-            })
-            .unwrap_or(line);
-        let excerpt = excerpt_source.chars().take(12).collect::<String>() + "…";
-        if !hits.iter().any(|h| h.kind == kind) {
-            hits.push(SecretHit {
-                kind: kind.to_string(),
-                excerpt,
-            });
+    for m in crate::security::redact::find_secret_kinds(line) {
+        if hits.iter().any(|h| h.kind == m.kind) {
+            continue;
         }
-        cursor = start + end_rel + 1;
+        let excerpt = m.text.chars().take(AUDIT_EXCERPT_CHARS).collect::<String>() + "…";
+        hits.push(SecretHit {
+            kind: m.kind.to_string(),
+            excerpt,
+        });
     }
     hits
 }
@@ -324,10 +305,37 @@ mod tests {
             "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n",
         );
         let findings = run_credential_scan(&[p], false).unwrap();
+        // NB: name pinned to the PATTERNS table in security::redact
+        // (line 73 — `aws_key`, not `aws_access_key`). A future
+        // pattern-name rename trips this test deliberately.
         assert!(
-            findings.iter().any(|f| f.secret_kind == "aws_access_key"),
-            "expected aws_access_key in {:?}",
+            findings.iter().any(|f| f.secret_kind == "aws_key"),
+            "expected aws_key in {:?}",
             findings,
+        );
+    }
+
+    #[test]
+    fn excerpt_is_the_actual_match_not_a_sibling_token() {
+        // Precision test: the line has a long whitespace-bounded
+        // token BEFORE the secret. With the diff-vs-redact approach
+        // the excerpt could land on the wrong token; with the
+        // find_secret_kinds API it MUST land on the secret itself.
+        let dir = TempDir::new().unwrap();
+        let p = write_file(
+            &dir,
+            "mixed.env",
+            "innocent_long_token_for_padding=ABCDEFGHIJKLMNOPQRST GITHUB_TOKEN=ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
+        );
+        let findings = run_credential_scan(&[p], false).unwrap();
+        let ghp = findings
+            .iter()
+            .find(|f| f.secret_kind == "github_pat")
+            .expect("github_pat hit");
+        assert!(
+            ghp.secret_excerpt.starts_with("ghp_"),
+            "excerpt must be the actual secret match, not a sibling token; got {}",
+            ghp.secret_excerpt,
         );
     }
 

@@ -121,6 +121,69 @@ pub fn redact_text(input: &str) -> String {
     out
 }
 
+/// One exact secret-pattern hit. Used by audit callers (HO-06
+/// startup credential scanner) that need to report the matched
+/// span back to the operator with precision — `redact_text`
+/// erases the position, so callers that want "ghp_AAAA…" excerpts
+/// MUST use this surface instead of diffing redacted vs original.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecretMatch {
+    /// Stable wire-form pattern label (`anthropic_key`, `aws_key`,
+    /// `github_pat`, etc. — exact strings used in the PATTERNS
+    /// table; audit consumers can grep `[REDACTED:<kind>]` traces
+    /// and pin the same name here).
+    pub kind: &'static str,
+    /// Byte offsets into the input string. `text` below is the
+    /// substring at `[start..end]`; the caller may use the range
+    /// directly to highlight in source views.
+    pub start: usize,
+    pub end: usize,
+    /// The matched substring, owned so the caller doesn't have to
+    /// keep the input alive while logging/displaying.
+    pub text: String,
+}
+
+/// HO-06 (Session 28) — return every secret-shape hit in `input`
+/// with exact byte spans + the matched substring. Walks every
+/// pattern in PATTERNS in declaration order, collects ALL matches
+/// (not just the first per pattern), de-duplicates overlapping
+/// matches by keeping the most-specific (first-declared) winner.
+///
+/// **Why exact spans matter for audit**: the operator-facing
+/// finding needs to identify WHICH key was matched (first 8 chars
+/// is enough to distinguish keys but not enough to leak). Diffing
+/// `redact_text` output against the input doesn't recover the
+/// match position, so audit excerpts ended up grabbing the longest
+/// whitespace-bounded token from the line — usually the secret,
+/// sometimes a sibling token by accident. This API removes that
+/// ambiguity.
+pub fn find_secret_kinds(input: &str) -> Vec<SecretMatch> {
+    let mut hits: Vec<SecretMatch> = Vec::new();
+    for p in PATTERNS.iter() {
+        for m in p.re.find_iter(input) {
+            // Drop any hit that overlaps an already-recorded hit
+            // — the first-declared pattern wins (PATTERNS lists
+            // most-specific shapes first; without this skip the
+            // generic `openai_key` would re-match `anthropic_key`
+            // spans).
+            let overlaps = hits
+                .iter()
+                .any(|h| !(m.end() <= h.start || m.start() >= h.end));
+            if overlaps {
+                continue;
+            }
+            hits.push(SecretMatch {
+                kind: p.name,
+                start: m.start(),
+                end: m.end(),
+                text: m.as_str().to_string(),
+            });
+        }
+    }
+    hits.sort_by_key(|h| h.start);
+    hits
+}
+
 /// Convenience for the common "redact this single value if it
 /// looks secret" path. Returns the original string when no
 /// pattern matched; useful when the caller wants to know whether
