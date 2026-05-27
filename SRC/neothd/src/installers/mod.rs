@@ -220,6 +220,7 @@ async fn install_via_shell_script(
             );
         }
         info!(display, "install ok");
+        let _ = unix_url; // silence unused on the Windows branch
         Ok(())
     }
     #[cfg(not(windows))]
