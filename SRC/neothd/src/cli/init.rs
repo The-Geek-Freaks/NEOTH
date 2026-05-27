@@ -976,6 +976,16 @@ async fn step1b_detect_environment(
             }
             if outcome.probed_now {
                 println!("  (snapshot saved; daemon will read it on next boot)");
+                // W-04 follow-up (Session 26): drop a 0xD5 sidecar so
+                // the daemon's ingester emits the DETECT_COMPLETE
+                // audit frame. The wizard has no WAL writer of its
+                // own — at-least-once via sidecar matches the
+                // installer_ran + credentials_import path.
+                if let Some(payload) = outcome.frame_payload.as_ref() {
+                    if let Err(e) = write_detect_complete_sidecar(neoth_dir, now_unix, payload) {
+                        warn!(error = %e, "detect_complete sidecar write failed (non-fatal)");
+                    }
+                }
             } else {
                 println!("  (using cached snapshot from earlier today)");
             }
@@ -985,6 +995,31 @@ async fn step1b_detect_environment(
             println!("  (detection inconclusive — wizard continues without it)");
         }
     }
+}
+
+/// W-04 follow-up (Session 26): write the
+/// [`DetectCompletePayload`](crate::wal::payloads_w08::DetectCompletePayload)
+/// to a sidecar file under `~/.neoth/`. The daemon's
+/// `detect_complete_sidecar` ingester picks it up on next tick,
+/// emits the `0xD5 DETECT_COMPLETE` WAL frame, then deletes the
+/// sidecar. Atomic via `.tmp` + rename, Windows-safe.
+fn write_detect_complete_sidecar(
+    neoth_dir: &std::path::Path,
+    ts_unix: u64,
+    payload: &crate::wal::payloads_w08::DetectCompletePayload,
+) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(neoth_dir)?;
+    // Zero-padded timestamp so lexicographic == chronological order
+    // when the ingester walks the home dir.
+    let final_path = neoth_dir.join(format!("detect_complete_{ts_unix:020}.json"));
+    let tmp_path = final_path.with_extension("json.tmp");
+    let body = serde_json::to_vec_pretty(payload).map_err(std::io::Error::other)?;
+    std::fs::write(&tmp_path, &body)?;
+    if final_path.exists() {
+        let _ = std::fs::remove_file(&final_path);
+    }
+    std::fs::rename(&tmp_path, &final_path)?;
+    Ok(final_path)
 }
 
 fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {

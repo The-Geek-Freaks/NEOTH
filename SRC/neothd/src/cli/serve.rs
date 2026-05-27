@@ -1359,6 +1359,65 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     };
     info!("credentials_import sidecar ingester spawned (5s tick)");
 
+    // ── W-04 follow-up: detect_complete sidecar ingester (Session 26) ─────
+    // The wizard's step1b drops `~/.neoth/detect_complete_<ts>.json`
+    // after a fresh probe pass produced a `DetectCompletePayload`.
+    // Same 5s poll + at-least-once contract as the installer +
+    // credentials ingesters above.
+    let detect_complete_task: tokio::task::JoinHandle<()> = {
+        let writer_for_detect = writer.clone();
+        let home = FreedomConfig::default_neoth_home();
+        tokio::spawn(async move {
+            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+            loop {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                let pending = match crate::daemon::detect_complete_sidecar::list_pending(&home) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        warn!(error = %e, "detect_complete sidecar list failed");
+                        continue;
+                    }
+                };
+                for (path, payload) in pending {
+                    let body =
+                        crate::daemon::detect_complete_sidecar::build_wal_frame_body(&payload);
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_DETECT_COMPLETE,
+                        &body,
+                    )
+                    .build();
+                    match writer_for_detect.append(header, body).await {
+                        Ok(_) => {
+                            if let Err(e) =
+                                crate::daemon::detect_complete_sidecar::remove_sidecar(&path)
+                            {
+                                warn!(
+                                    error = %e,
+                                    path = %path.display(),
+                                    "detect_complete sidecar remove failed after WAL append"
+                                );
+                            } else {
+                                info!(
+                                    probed_at_unix = payload.probed_at_unix,
+                                    has_accelerator = payload.has_accelerator(),
+                                    "detect_complete frame appended to WAL"
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                path = %path.display(),
+                                "detect_complete WAL append failed; sidecar retained for next tick"
+                            );
+                        }
+                    }
+                }
+            }
+        })
+    };
+    info!("detect_complete sidecar ingester spawned (5s tick)");
+
     // ── Self-dev outbox drain (P-04 follow-on, Session 21) ────────────────
     // CLI commands `neoth self-dev accept/decline/propose` run
     // without an in-process WAL writer (daemon owns the segment
@@ -1642,6 +1701,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let _ = installer_audit_task.await;
     credentials_import_task.abort();
     let _ = credentials_import_task.await;
+    detect_complete_task.abort();
+    let _ = detect_complete_task.await;
 
     // Final-drain the self-dev outbox BEFORE aborting the task so
     // CLI events queued in the last 5s land in the WAL instead of

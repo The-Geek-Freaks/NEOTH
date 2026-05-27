@@ -10,6 +10,7 @@ pub mod backup;
 pub mod backup_retention;
 pub mod clock_floor;
 pub mod credentials_import_sidecar;
+pub mod detect_complete_sidecar;
 pub mod doctor_cron;
 pub mod export;
 pub mod hardware;
