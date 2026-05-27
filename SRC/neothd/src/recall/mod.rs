@@ -6,3 +6,8 @@
 
 pub mod citation_check;
 pub mod conversational;
+/// Round-3 v0.4 QU-11 / ARS-6 — multi-session pipeline recovery via
+/// the `MODE_CHECKPOINT` WAL frame. Operator-facing entry point is
+/// `cli/chat.rs` `resume from <hash>` (small wrapper around
+/// [`reconstruct::reconstruct_from_checkpoint`]).
+pub mod reconstruct;

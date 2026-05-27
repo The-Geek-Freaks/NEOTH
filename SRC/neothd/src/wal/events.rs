@@ -530,6 +530,18 @@ pub const EVENT_TYPE_GROUNDTRUTH_REVOKED: u8 = 0x98;
 /// Ground-truth rows imported from a foreign-agent source. Payload:
 /// `{source, count, ts}`.
 pub const EVENT_TYPE_GROUNDTRUTH_IMPORTED: u8 = 0x99;
+/// Round-3 v0.4 QU-11 / ARS-6 — multi-session pipeline checkpoint.
+/// Snapshot of the chat session's resumable state (provider target,
+/// council mode, hemisphere routing, MCP scope) emitted before any
+/// long-running pipeline so a future `neoth chat resume from
+/// <checkpoint_hash>` can hydrate the same context. The QU-11 spec
+/// originally suggested `0xB3` but that slot was claimed by
+/// `EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT` (R-22 Phase 3 drift anchor)
+/// before QU-11 landed; `0x9A` is the next free slot in the Hippocampus
+/// memory-ops band (0x90..=0x9F), which fits semantically — session-
+/// state recovery is fundamentally a memory-recall operation.
+/// Payload: `{checkpoint_hash, session_id, mode, ts}`.
+pub const EVENT_TYPE_MODE_CHECKPOINT: u8 = 0x9A;
 
 // ---- 0xA0..=0xAF  Permissions / autonomy (R-23) ---------------------------
 
@@ -1109,6 +1121,8 @@ const _: () = {
         [(EVENT_TYPE_GROUNDTRUTH_REVOKED < 0x90 || EVENT_TYPE_GROUNDTRUTH_REVOKED > 0x9F) as usize];
     let _ = [(); 1][(EVENT_TYPE_GROUNDTRUTH_IMPORTED < 0x90
         || EVENT_TYPE_GROUNDTRUTH_IMPORTED > 0x9F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_MODE_CHECKPOINT < 0x90 || EVENT_TYPE_MODE_CHECKPOINT > 0x9F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PERMISSION_GRANTED < 0xA0 || EVENT_TYPE_PERMISSION_GRANTED > 0xAF) as usize];
     let _ = [(); 1]
@@ -1282,6 +1296,7 @@ mod tests {
             ("GROUNDTRUTH_ADDED", EVENT_TYPE_GROUNDTRUTH_ADDED),
             ("GROUNDTRUTH_REVOKED", EVENT_TYPE_GROUNDTRUTH_REVOKED),
             ("GROUNDTRUTH_IMPORTED", EVENT_TYPE_GROUNDTRUTH_IMPORTED),
+            ("MODE_CHECKPOINT", EVENT_TYPE_MODE_CHECKPOINT),
             ("PERMISSION_GRANTED", EVENT_TYPE_PERMISSION_GRANTED),
             ("PERMISSION_DENIED", EVENT_TYPE_PERMISSION_DENIED),
             ("LEVEL_ELEVATED", EVENT_TYPE_LEVEL_ELEVATED),
