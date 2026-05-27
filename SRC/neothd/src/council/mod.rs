@@ -32,6 +32,14 @@ pub mod callosum;
 pub mod dissent;
 pub mod diversity;
 pub mod eval;
+/// Round-3 v0.4 ADV-12 — Council factual-contradiction check using
+/// `[GROUND_TRUTH]…[/GROUND_TRUTH]` tags + ground-truth-based
+/// scoring (not hemisphere agreement). Structural fix that closes
+/// the `test_all_three_agree_and_wrong` adversarial gap — three
+/// hemispheres echoing the same wrong fact previously read as
+/// "high confidence" (0 dissent); now the ground-truth check
+/// catches it independently.
+pub mod factual_check;
 pub mod last_ts;
 pub mod orchestrator;
 pub mod quality_score;
