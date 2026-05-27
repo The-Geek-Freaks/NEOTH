@@ -67,6 +67,10 @@ pub mod reload;
 pub mod rollback;
 pub mod schema;
 pub mod search;
+/// Round-3 v0.4 SC-04 — `neoth security audit` operator-facing
+/// security-posture aggregator. Runs HMAC key + WAL segment +
+/// memory drift + credential sidecar checks in one pass.
+pub mod security;
 pub mod self_dev;
 pub mod self_dev_outbox;
 pub mod serve;
@@ -325,6 +329,13 @@ pub enum Commands {
     /// Reads every segment, recomputes the tag over each window, and
     /// reports any mismatches.
     Verify(verify::VerifyArgs),
+
+    /// Round-3 v0.4 SC-04 — operator-facing security posture
+    /// aggregator. `neoth security audit` runs every available
+    /// security check (HMAC key + WAL segment health + memory drift
+    /// + credential sidecar) and prints a pass/warn/fail checklist.
+    /// Exit code 1 iff any check FAILed; warnings don't change exit.
+    Security(security::SecurityArgs),
 
     /// Daemon-state snapshot — WAL bytes, tier counts, channels, autonomy.
     /// Phase 33c BS-1. Pure read, no IPC, no daemon required.
@@ -857,6 +868,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Verify(mut args) => {
             args.output = global_output;
             verify::run_verify(args).await?;
+        }
+        Commands::Security(args) => {
+            // SC-04: security audit aggregator has its own output
+            // shape (checklist with status markers), so it doesn't
+            // share the global_output channel-switch.
+            security::run_security(args).await?;
         }
         Commands::Profile(mut args) => {
             args.output = global_output;
