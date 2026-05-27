@@ -47,6 +47,13 @@ pub mod classifier;
 pub mod decomposer;
 pub mod dispatcher;
 pub mod feed;
+/// Round-3 v0.4 — coding-intent auto-detection for `neoth chat`.
+/// Bilingual EN/DE heuristic that flags "build a function" /
+/// "fix the bug in" / "schreib mir einen Test" patterns so the
+/// chat dispatcher can auto-route to the coding workflow instead
+/// of replying with a single chat turn. Operator opt-out via
+/// `NEOTH_NO_AUTO_CODE=1` env var.
+pub mod intent;
 pub mod model_profile;
 pub mod plan_writer;
 pub mod provider_worker;

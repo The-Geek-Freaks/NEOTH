@@ -160,6 +160,51 @@ pub async fn run_chat_with(
 
     let prompt = resolve_prompt(&args).await?;
 
+    // Round-3 v0.4 — coding-intent auto-dispatch. When the prompt
+    // looks like a coding request (bilingual EN/DE heuristic: verb
+    // at front + programming-noun anchor; see
+    // `coding::intent::detect_coding_intent`), route through the
+    // dedicated coding workflow (`cli::code::run_code`) instead of
+    // a single-turn chat reply. The coding workflow opens a kanban
+    // session + decomposes + dispatches to the hemisphere worker +
+    // runs patch+test loop — much better operator outcome than
+    // chat-only for "build me X" requests.
+    //
+    // Operator opt-out: `NEOTH_NO_AUTO_CODE=1` env var disables
+    // auto-dispatch entirely. Low-confidence detections (verb XOR
+    // noun, not both) print an offer banner but still run the chat
+    // turn — only High confidence auto-dispatches.
+    if crate::coding::intent::should_auto_dispatch(&prompt) {
+        let intent = crate::coding::intent::detect_coding_intent(&prompt)
+            .expect("should_auto_dispatch returned true so detect must return Some");
+        println!("{}", crate::coding::intent::format_dispatch_banner(&intent));
+        let code_args = crate::cli::code::CodeArgs {
+            prompt: prompt.clone(),
+            db: None,
+            source_channel: "chat".to_string(),
+            no_assign: false,
+            dispatch: false, // operator runs `neoth kanban` after to drive dispatch
+            apply: None,
+            output: crate::cli::OutputFormat::default(),
+        };
+        return crate::cli::code::run_code(code_args).await;
+    } else if let Some(intent) = crate::coding::intent::detect_coding_intent(&prompt) {
+        // Low-confidence: print an offer banner + continue with chat.
+        println!(
+            "[neoth] coding intent detected at low confidence (verb={:?} noun={:?}). \
+             Try `neoth code \"{}\"` for the dedicated coding workflow.",
+            intent.matched_verb.as_deref().unwrap_or("?"),
+            intent.matched_noun.as_deref().unwrap_or("?"),
+            prompt
+                .lines()
+                .next()
+                .unwrap_or(&prompt)
+                .chars()
+                .take(60)
+                .collect::<String>(),
+        );
+    }
+
     // OP-02 (Session 25) — next-session seed banner. Read the
     // most-recent hindsight card + surface its `one_line_summary`
     // so the operator picks up where they left off. Best-effort:
