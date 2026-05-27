@@ -300,12 +300,23 @@ pub fn dispatch_session_with_apply(
         store::patch_task_status(conn, task.task_id, TaskStatus::InProgress, now_ns)
             .context("transition Backlog → InProgress")?;
 
+        // SD-02 (Round-3 v0.4) — emit 0x77 KANBAN_TASK_PROGRESS at
+        // pick-up. progress_pct=0, message="dispatched". Best-
+        // effort; no-op when wal_writer is None (CLI one-shot
+        // without --apply doesn't thread a writer through).
+        let writer_for_progress = apply_config.and_then(|cfg| cfg.wal_writer.as_deref());
+        emit_kanban_task_progress_wal(writer_for_progress, &task, 0, "dispatched");
+
         let exec_result = worker.execute(&task);
         match exec_result {
             Ok(o) if o.review_ready() => {
                 // Q2 streaming: batched — one TASK_COMPLETED frame at
-                // end. 30s heartbeat (WAL 0x77 KANBAN_TASK_PROGRESS)
-                // lands in a later sprint via a background task.
+                // end. SD-02 (Round-3 v0.4) added 0x77 KANBAN_TASK_PROGRESS
+                // heartbeats at task pick-up (above) + review-ready
+                // (below) so `neoth kanban watch` shows progress
+                // between status changes. 30s background heartbeat
+                // (mid-execute) lands in a future sprint.
+                emit_kanban_task_progress_wal(writer_for_progress, &task, 100, "review_ready");
                 apply_outcome(conn, &task, &o)?;
 
                 // Pick #6 Phase 4: opt-in real-apply path. When the
@@ -632,6 +643,48 @@ fn emit_patch_apply_failed_wal(
             task_id = task.task_id.raw(),
             error = %e,
             "WAL emit for PATCH_APPLY_FAILED failed"
+        );
+    }
+}
+
+/// SD-02 (Round-3 v0.4) — emit `0x77 KANBAN_TASK_PROGRESS` into the
+/// WAL at task-lifecycle progress points. Best-effort — emission
+/// failures log at warn level but never abort the dispatcher;
+/// progress frames are operator-visible signal, not load-bearing
+/// state.
+///
+/// `progress_pct` is the operator-readable completion estimate
+/// (0 = picked up, 100 = review-ready). `message` is a free-form
+/// one-liner the kanban watch surface renders ("dispatching" /
+/// "review_ready" / "tests_running"). Bilingual messages welcome.
+fn emit_kanban_task_progress_wal(
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    task: &KanbanTask,
+    progress_pct: u8,
+    message: &str,
+) {
+    let Some(writer) = writer else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "task_id": task.task_id.raw(),
+        "session_id": task.session_id.raw(),
+        "hemisphere": task.hemisphere.as_str(),
+        "progress_pct": progress_pct,
+        "message": message,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_KANBAN_TASK_PROGRESS,
+        &payload,
+    );
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(
+            task_id = task.task_id.raw(),
+            error = %e,
+            "WAL emit for KANBAN_TASK_PROGRESS failed (non-fatal)"
         );
     }
 }
