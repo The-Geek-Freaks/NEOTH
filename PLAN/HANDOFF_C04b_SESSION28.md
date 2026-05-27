@@ -20,8 +20,24 @@ explicitly.
 ## What's still open
 
 Phase 2 wires the AES-CBC primitive to real ciphertext from a live
-Firefox install. **Chunk 1 (ASN.1 envelope decode) shipped Session 27;**
-chunks 2 + 3 remain (~6-7h). Both are testable independently.
+Firefox install. **Chunk 1 (ASN.1 envelope decode) + chunk 2a
+(PBKDF2 derive + password-check verifier) shipped Session 27;**
+chunks 2b + 3 remain (~5-6h). Both are testable independently.
+
+The Session 27 building blocks now in tree:
+
+- `credentials::firefox_envelope` — base64 → ASN.1 BER → typed
+  `FirefoxEnvelope { key_id, algorithm, iv, ciphertext }`
+- `credentials::firefox_key4db::derive_masking_key_pbkdf2_sha256`
+  — PBKDF2-SHA256 KAT-pinned wrapper
+- `credentials::firefox_key4db::verify_password_check` — constant-
+  time gate against the canonical `b"password-check"` plaintext
+- `credentials::firefox::decrypt_aes256_cbc_pkcs7` — AES-256-CBC
+  primitive with NIST SP 800-38A KAT
+
+Chunk 2b just needs to read 2 columns from key4.db, decode the
+PBES2 envelope to extract salt+iters+iv+ciphertext, then call
+the four building blocks in order. No new crates required.
 
 ### 1. ASN.1 SECITEM envelope decode — ✅ shipped Session 27 (chunk 1)
 
