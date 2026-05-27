@@ -477,6 +477,11 @@ predicates   = "3"
 # mtime setter on stable Rust; `filetime` is the canonical pure-Rust shim
 # and already lives in the dep graph transitively, so this pin is zero-cost.
 filetime     = "0.2"
+# Round-3 v0.4 GR-11 (Session 28) — property/fuzz testing for the
+# webhook signature canonicalization + timestamp-window logic in
+# `channels::webhook_verify`. Pure-Rust, no proc-macro chain
+# explosion; lives at dev-dep so it doesn't ship with the binary.
+proptest     = "1"
 
 # Day-2 followups will add:
 # memmap2 (mmap reader), hmac + sha2 (compaction HMAC), dateparser
