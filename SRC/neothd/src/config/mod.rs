@@ -233,6 +233,20 @@ pub struct FreedomConfig {
     /// lets operators flip it OFF without recompiling.
     #[serde(default)]
     pub plugins: PluginsConfig,
+    /// EL-01 follow-up (Session 26): operator-tunable interval for the
+    /// daemon's doctor cron loop. Default mirrors the hardcoded
+    /// `DEFAULT_CRON_INTERVAL_SECS = 3600` (1h tick). Operators who
+    /// want the doctor to run more aggressively or want to silence
+    /// the tick entirely flip this without recompiling.
+    #[serde(default)]
+    pub doctor: DoctorConfig,
+    /// U-04 follow-up (Session 26): operator-tunable interval for the
+    /// three updater cron lanes (neoth_self, cli_version, skill_plugin).
+    /// Default mirrors the hardcoded `DEFAULT_UPDATER_INTERVAL_SECS =
+    /// 6h tick`. All three lanes share the interval today; per-lane
+    /// override lands when an operator asks for it.
+    #[serde(default)]
+    pub updater: UpdaterConfig,
     /// AR-03 (Session 24) — per-stage hook chain composition. Keyed
     /// by stage name (`"pre_pipeline"` / `"pre_provider_call"` / etc).
     /// Today carries one field, `fail_fast`, that flips the
@@ -580,6 +594,77 @@ impl Default for WasmPluginsConfig {
         Self {
             enabled: default_wasm_plugins_enabled(),
             activations: std::collections::BTreeMap::new(),
+        }
+    }
+}
+
+/// EL-01 follow-up (Session 26): operator-tunable doctor cron knobs.
+/// Mirrors the daemon-side `DoctorCronConfig` shape but lives here so
+/// `freedom.yaml::doctor.interval_secs` deserialises without the
+/// config layer pulling in the daemon crate (circular).
+///
+/// Default mirrors `daemon::doctor_cron::DEFAULT_CRON_INTERVAL_SECS`
+/// (1h tick). Operator-facing fields only — pluggable notification
+/// sink stays out of the schema until an operator asks for it.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DoctorConfig {
+    /// Master runtime switch. `false` disables the doctor cron loop
+    /// entirely without recompiling, per the
+    /// `neoth-features-default-on-runtime-toggle` rule.
+    #[serde(default = "default_doctor_enabled")]
+    pub enabled: bool,
+    /// Tick interval in seconds. Clamped to a 60s floor downstream so
+    /// an accidental `0` doesn't tight-loop the daemon.
+    #[serde(default = "default_doctor_interval_secs")]
+    pub interval_secs: u64,
+}
+
+fn default_doctor_enabled() -> bool {
+    true
+}
+
+fn default_doctor_interval_secs() -> u64 {
+    3600
+}
+
+impl Default for DoctorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_doctor_enabled(),
+            interval_secs: default_doctor_interval_secs(),
+        }
+    }
+}
+
+/// U-04 follow-up (Session 26): operator-tunable updater cron knobs.
+/// Mirrors the daemon-side `UpdaterCronConfig` shape; same circular-
+/// dep reason for living in the config crate.
+///
+/// Default mirrors `daemon::updater_cron::DEFAULT_UPDATER_INTERVAL_SECS`
+/// (6h tick). All three updater lanes (neoth_self, cli_version,
+/// skill_plugin) share the interval today — per-lane override lands
+/// when an operator asks for it.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct UpdaterConfig {
+    #[serde(default = "default_updater_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_updater_interval_secs")]
+    pub interval_secs: u64,
+}
+
+fn default_updater_enabled() -> bool {
+    true
+}
+
+fn default_updater_interval_secs() -> u64 {
+    6 * 3600
+}
+
+impl Default for UpdaterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_updater_enabled(),
+            interval_secs: default_updater_interval_secs(),
         }
     }
 }

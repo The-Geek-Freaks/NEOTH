@@ -1065,9 +1065,19 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // on its own UpdaterCronConfig with the same 6h default interval.
     // 0x44 UPDATER_TASK_FIRED + 0x45 UPDATER_TASK_RESULT WAL frames
     // fire per tick — operators audit via `neoth updater status`.
+    // U-04 follow-up (Session 26): operator-tunable updater interval
+    // via freedom.yaml::updater.{enabled,interval_secs}. All three
+    // lanes share the same knob today; per-lane override is a future
+    // schema bump. Build the shared cron config once + clone into
+    // each spawn site so the lanes stay independent join-handles.
+    let updater_cron_cfg = crate::daemon::updater_cron::UpdaterCronConfig {
+        enabled: config.updater.enabled,
+        interval_secs: config.updater.interval_secs,
+    };
+
     let updater_self_task: Option<tokio::task::JoinHandle<()>> = {
         let writer_for_updater = writer.clone();
-        let cfg = crate::daemon::updater_cron::UpdaterCronConfig::default();
+        let cfg = updater_cron_cfg.clone();
         let builder: std::sync::Arc<
             dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
         > = std::sync::Arc::new(|| {
@@ -1089,7 +1099,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     let updater_cli_task: Option<tokio::task::JoinHandle<()>> = {
         let writer_for_updater = writer.clone();
-        let cfg = crate::daemon::updater_cron::UpdaterCronConfig::default();
+        let cfg = updater_cron_cfg.clone();
         let builder: std::sync::Arc<
             dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
         > = std::sync::Arc::new(|| {
@@ -1112,7 +1122,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let updater_skill_task: Option<tokio::task::JoinHandle<()>> = {
         let writer_for_updater = writer.clone();
         let home_for_skills = FreedomConfig::default_neoth_home();
-        let cfg = crate::daemon::updater_cron::UpdaterCronConfig::default();
+        let cfg = updater_cron_cfg.clone();
         let builder: std::sync::Arc<
             dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
         > = std::sync::Arc::new(move || {
@@ -1148,11 +1158,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             std::sync::Arc::new(crate::daemon::doctor_cron::SidecarNotificationSink::new(
                 home.join("notifications"),
             ));
-        let cfg = crate::daemon::doctor_cron::DoctorCronConfig::default();
+        // EL-01 follow-up (Session 26): read the operator's tunable
+        // doctor knobs from freedom.yaml. Missing fields default per
+        // `DoctorConfig::default()` so pre-EL-01 configs still load.
+        let cfg = crate::daemon::doctor_cron::DoctorCronConfig {
+            enabled: config.doctor.enabled,
+            interval_secs: config.doctor.interval_secs,
+            notify_channel: "cli".to_string(),
+        };
+        let interval_secs = cfg.interval_secs;
+        let enabled = cfg.enabled;
         let handle =
             crate::daemon::doctor_cron::spawn_doctor_cron_loop(cfg, home, writer_for_doctor, sink);
         if handle.is_some() {
-            info!("doctor cron loop spawned (EL-01)");
+            info!(interval_secs, "doctor cron loop spawned (EL-01)");
+        } else if !enabled {
+            info!("doctor cron disabled via freedom.yaml::doctor.enabled = false");
         }
         handle
     };
