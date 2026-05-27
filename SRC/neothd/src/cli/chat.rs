@@ -65,6 +65,21 @@ pub struct ChatArgs {
     /// > 0` to make a non-greedy call replayable. Unused on cloud providers.
     #[arg(long, value_name = "SEED")]
     pub sampling_seed: Option<u64>,
+
+    /// Round-3 v0.4 QU-11 / ARS-6 — resume a prior session from a
+    /// `MODE_CHECKPOINT` (WAL `0x9A`) snapshot. Takes the 12-char
+    /// checkpoint hash (or any unique prefix) printed by the prior
+    /// session at checkpoint-emission time. NEOTH looks up the
+    /// snapshot via `recall::reconstruct::reconstruct_from_checkpoint`,
+    /// prints a one-line resume banner ("resuming session X / phase Y
+    /// / provider Z"), and prepends a typed RESUME-CONTEXT block to
+    /// the chat's system prompt so the assistant knows the prior
+    /// pipeline shape. Full pipeline-state rehydration (re-scoping
+    /// MCP servers, restoring council hemisphere routing) lands as
+    /// a follow-up — this surface unblocks the operator-facing
+    /// `chat resume from <hash>` workflow today.
+    #[arg(long = "resume-from", value_name = "HASH")]
+    pub resume_from: Option<String>,
 }
 
 pub async fn run_chat(args: ChatArgs) -> Result<()> {
@@ -98,7 +113,7 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
 /// Inner entry point that takes a pre-built `Provider`. Used by `run_chat`
 /// in production and by integration tests that supply a mock implementation.
 pub async fn run_chat_with(
-    args: ChatArgs,
+    mut args: ChatArgs,
     config: FreedomConfig,
     provider: &dyn crate::providers::Provider,
 ) -> Result<()> {
@@ -112,6 +127,25 @@ pub async fn run_chat_with(
     let first_tour_home = crate::config::FreedomConfig::default_neoth_home();
     if let Some(greeting) = crate::cli::init::consume_first_tour_marker(&first_tour_home) {
         println!("[neoth] {greeting}");
+    }
+
+    // Round-3 v0.4 QU-11 / ARS-6 — if `--resume-from <hash>` is set,
+    // hydrate the prior session's `MODE_CHECKPOINT` snapshot from
+    // views.db + prepend a RESUME-CONTEXT block to the system prompt
+    // so the assistant knows the prior pipeline shape. Failures
+    // (missing checkpoint, unreadable views.db, hash mismatch) print
+    // a one-line warning + proceed without the context — the operator
+    // still gets a chat turn, just without the resume hydration.
+    if let Some(hash_prefix) = args.resume_from.clone() {
+        match hydrate_resume_context(&hash_prefix, args.system.as_deref()) {
+            Ok((banner, combined_system)) => {
+                println!("{banner}");
+                args.system = Some(combined_system);
+            }
+            Err(why) => {
+                println!("[neoth] resume-from `{hash_prefix}` failed: {why}");
+            }
+        }
     }
 
     let prompt = resolve_prompt(&args).await?;
@@ -3258,6 +3292,59 @@ fn now_unix() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// Round-3 v0.4 QU-11 / ARS-6 — load a `MODE_CHECKPOINT` snapshot by
+/// hash prefix and render a (operator-banner, system-prompt-block)
+/// pair. The system-prompt block carries a typed RESUME-CONTEXT
+/// section so the assistant knows the prior pipeline shape; it gets
+/// prepended to any operator-supplied `--system` text.
+///
+/// Best-effort: any failure mode (missing views.db, no matching
+/// checkpoint, hash-mismatch, parse error) surfaces as
+/// `Err(String)` so the caller can print a single warning + proceed
+/// without the resume hydration. The operator still gets a chat
+/// turn — just without the prior context.
+fn hydrate_resume_context(
+    hash_prefix: &str,
+    existing_system: Option<&str>,
+) -> Result<(String, String), String> {
+    let views_path = crate::memory::store::default_path();
+    let conn = crate::memory::store::open(&views_path)
+        .map_err(|e| format!("views.db open failed: {e}"))?;
+    let cp = crate::recall::reconstruct::reconstruct_from_checkpoint(&conn, hash_prefix)
+        .map_err(|e| format!("checkpoint lookup failed: {e}"))?;
+    let mcp_scope = if cp.scoped_mcp_servers.is_empty() {
+        "(default scope)".to_string()
+    } else {
+        cp.scoped_mcp_servers.join(", ")
+    };
+    let banner = format!(
+        "[neoth] resuming session={} phase={} provider={} council={} hash={}",
+        cp.session_id, cp.phase, cp.provider_target, cp.council_mode, cp.checkpoint_hash,
+    );
+    let resume_block = format!(
+        "RESUME-CONTEXT\n\
+         Prior session id: {session_id}\n\
+         Prior pipeline phase: {phase}\n\
+         Prior provider target: {provider_target}\n\
+         Prior council mode: {council_mode}\n\
+         Prior MCP servers in scope: {mcp_scope}\n\
+         Checkpoint hash: {checkpoint_hash}\n\
+         Checkpoint timestamp (unix): {ts_unix}\n",
+        session_id = cp.session_id,
+        phase = cp.phase,
+        provider_target = cp.provider_target,
+        council_mode = cp.council_mode,
+        mcp_scope = mcp_scope,
+        checkpoint_hash = cp.checkpoint_hash,
+        ts_unix = cp.ts_unix,
+    );
+    let combined = match existing_system {
+        Some(s) if !s.trim().is_empty() => format!("{resume_block}\n{s}"),
+        _ => resume_block,
+    };
+    Ok((banner, combined))
 }
 
 #[cfg(test)]
