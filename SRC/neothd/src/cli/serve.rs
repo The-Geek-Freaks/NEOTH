@@ -579,6 +579,52 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     }
 
+    // ── 5a-creds. Startup credential-pattern audit (HO-06) ─────────────────
+    //
+    // Walks `~/.neoth/policy.yaml::startup_audit_scan_paths` for
+    // `ghp_` / `sk-` / `AKIA` / Bearer shapes + (when
+    // `forbid_inline_tokens_in_remotes`) `git remote -v` for inline
+    // `user:token@host` URLs. Warn-only — never fails boot. Empty
+    // scan-paths + flag-off → silent no-op.
+    //
+    // Best-effort: policy.yaml load failure or scanner errors log
+    // warn + continue. This is hygiene + recommendation, not load-
+    // bearing on liveness.
+    match crate::policy::PolicyConfig::load() {
+        Ok(policy) => {
+            if !policy.startup_audit_scan_paths.is_empty() || policy.forbid_inline_tokens_in_remotes
+            {
+                match crate::daemon::startup_credential_audit::run_credential_scan(
+                    &policy.startup_audit_scan_paths,
+                    policy.forbid_inline_tokens_in_remotes,
+                ) {
+                    Ok(findings) if findings.is_empty() => {
+                        info!("startup credential audit: clean (0 findings)");
+                    }
+                    Ok(findings) => {
+                        warn!(
+                            count = findings.len(),
+                            "startup credential audit: {} finding(s); rotate or move to keychain",
+                            findings.len()
+                        );
+                        for f in &findings {
+                            warn!(
+                                finding = %crate::daemon::startup_credential_audit::format_finding(f),
+                                "credential pattern detected"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "startup credential audit failed; non-fatal");
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "policy.yaml load failed; skipping startup credential audit");
+        }
+    }
+
     // ── 5a-hysteria. Hysteria encrypted egress (R-3) ───────────────────────
     //
     // MUST run BEFORE provider construction below. The providers'

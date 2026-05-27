@@ -39,6 +39,13 @@ pub mod proactive_dispatcher;
 /// tick frequency.
 pub mod reflection_cron;
 pub mod sidecar;
+/// HO-06 (Session 28) — credential-pattern scanner that walks
+/// operator-listed paths at daemon boot for `ghp_` / `sk-` / `AKIA`
+/// shapes (re-uses `security::redact::PATTERNS`). Optional git
+/// remote URL check for inline `user:token@host` patterns. Warn-
+/// only — never fails boot on a finding (operators legitimately
+/// keep API keys in shell rc files).
+pub mod startup_credential_audit;
 pub mod updater_cron;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
 pub mod dreaming;

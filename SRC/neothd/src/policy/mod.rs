@@ -40,6 +40,27 @@ pub struct PolicyConfig {
     /// case-sensitive substring (not glob, not regex — operator readability
     /// trumps cleverness; regex landing later if a real need shows up).
     pub dangerous_patterns: Vec<String>,
+    /// HO-06 (Session 28) — file paths the startup credential-pattern
+    /// scanner walks looking for `ghp_` / `sk-` / `AKIA` / Bearer
+    /// shapes. Each path can be a file OR a directory; directories
+    /// are walked one level deep (operator who wants recursion lists
+    /// the subdir explicitly — keeps the scan O(visible-files) at
+    /// daemon boot). Empty default → the scanner is a no-op until
+    /// the operator opts in.
+    ///
+    /// Typical contents: `~/.bashrc` / `~/.zshrc` / `~/.config/git/config` /
+    /// project-specific `.env` paths.
+    #[serde(default)]
+    pub startup_audit_scan_paths: Vec<PathBuf>,
+    /// HO-06 (Session 28) — when true, the credential scanner also
+    /// checks every git remote URL in the current process's working
+    /// directory for inline `https://user:token@host/...` patterns.
+    /// Useful for catching the classic mistake where a token leaks
+    /// into a remote URL via copy/paste from a setup tutorial.
+    /// Default false (opt-in) so a fresh install doesn't shell out
+    /// to git on every boot.
+    #[serde(default)]
+    pub forbid_inline_tokens_in_remotes: bool,
 }
 
 impl PolicyConfig {
