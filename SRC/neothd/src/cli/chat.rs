@@ -19,17 +19,15 @@ use crate::config::FreedomConfig;
 use crate::providers::{self, CompletionChunk, Request};
 use crate::wal::events::{
     EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE,
-    EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_RAW_TEXT, EVENT_TYPE_SKILL_INJECT_SKIPPED,
 };
 use crate::wal::spawn as wal_spawn;
 
 /// Round-3 v0.4 ARCH-04 integration — default pre-flight token cap
-/// for the prompt bundle. 100_000 tokens covers Opus 4.7 (200k
-/// context) + Sonnet 4.6 (200k) + Gemini 3 (1M) operators with
-/// significant headroom for response tokens. Operators on smaller-
-/// context models (Gemini Flash 32k, local Qwen3-4B 8k) hit the
-/// BUDGET_EXCEEDED warn path. Will become operator-tunable via
-/// `freedom.yaml::tokens.max_per_request` in the follow-on slice.
+/// fallback for tests that don't supply a `FreedomConfig`. Production
+/// callers read `config.tokens.max_per_request` (defaults to 100_000
+/// via `crate::config::TokensConfig::default_max_per_request`).
+#[cfg(test)]
 const DEFAULT_PROMPT_TOKEN_CAP: u32 = 100_000;
 
 #[derive(Args, Debug, Clone)]
@@ -285,12 +283,12 @@ pub async fn run_chat_with(
     //
     // Convert the bundle entries we just built (Block::A + Block::E
     // today; B/C/D extend as the assembler grows) into the matching
-    // BlockItem shape + run enforce_budget. The cap is a sensible
-    // default (DEFAULT_PROMPT_TOKEN_CAP = 100_000) until the
-    // freedom.yaml::tokens.max_per_request operator-config field
-    // lands (separate slice). Operators on tight-context models
-    // (e.g. Gemini Flash 32k) hit the warn path; operators on
-    // Opus 4.7 (200k) won't trip the default.
+    // BlockItem shape + run enforce_budget. The cap reads from
+    // `config.tokens.max_per_request` (operator-tunable via
+    // `freedom.yaml::tokens.max_per_request`; defaults to 100_000
+    // per `TokensConfig::default_max_per_request`). Operators on
+    // tight-context models (e.g. Gemini Flash 32k) lower the cap;
+    // operators on Opus 4.7 (200k) keep the default.
     //
     // Today's call site only carries A + E — both undegradable per
     // ARCH-04 policy — so `enforce_budget` either returns None (under
@@ -319,9 +317,8 @@ pub async fn run_chat_with(
             .collect();
         let estimate: u32 = items.iter().map(|i| i.tokens).sum();
         let mut items_mut = items;
-        if let Some(detail) =
-            crate::tokens::budget::enforce_budget(&mut items_mut, DEFAULT_PROMPT_TOKEN_CAP)
-        {
+        let cap = config.tokens.max_per_request;
+        if let Some(detail) = crate::tokens::budget::enforce_budget(&mut items_mut, cap) {
             // Emit BUDGET_EXCEEDED audit frame BEFORE PROVIDER_REQUEST
             // so the audit-chain consumer sees them in cause-then-
             // effect order. Best-effort emit — a WAL write failure
@@ -440,6 +437,42 @@ pub async fn run_chat_with(
         }
     };
 
+    // Round-3 v0.4 ARCH-07 — eval-session skill suppression. When
+    // `config.skills.should_suppress_for_eval()` is true, every
+    // installed skill gets a SKILL_INJECT_SKIPPED frame
+    // (reason=`eval_session`) + the skill layer is forced to None
+    // so the prompt bundle stays free of behavioural skill prompts.
+    // Operators benchmarking the bare-model baseline use this to
+    // ensure the eval isn't biased by an active skill.
+    let eval_suppress = config.skills.should_suppress_for_eval();
+    if eval_suppress {
+        for s in installed_skills.iter().filter(|s| s.manifest.enabled) {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "skill_id": s.id(),
+                "content_hash": s.content_hash,
+                "reason": crate::skills::versioning::SkillSkipReason::EvalSession.as_str(),
+                "prompt_bundle_hash": prompt_bundle_hash,
+                "ts_unix": now_unix(),
+            }))
+            .unwrap_or_default();
+            let header = crate::wal::make_header(EVENT_TYPE_SKILL_INJECT_SKIPPED, &payload);
+            if let Err(e) = writer.append(header, payload).await {
+                warn!(
+                    skill = s.id(),
+                    error = %e,
+                    "SKILL_INJECT_SKIPPED emit failed (non-fatal)"
+                );
+            }
+        }
+        info!(
+            count = installed_skills
+                .iter()
+                .filter(|s| s.manifest.enabled)
+                .count(),
+            "eval-session active — all skills suppressed per ARCH-07"
+        );
+    }
+
     // QM-3 + QM-23 (2026-05-22 Session 20): ModeRegistry trigger_phrases
     // beat the broader skill keyword scan when they hit. The matched
     // mode's `system_prompt_delta` layers on top of the parent skill's
@@ -447,80 +480,85 @@ pub async fn run_chat_with(
     // `skills::route` Stage-1 keyword scan + Stage-2 embedding re-rank.
     let mode_registry = crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
         .unwrap_or_default();
-    let mode_hit = mode_registry.match_trigger(&prompt);
-    let (skill_layer, used_skill_id): (Option<String>, Option<String>) =
-        if let Some(resolved) = mode_hit {
-            let parent = installed_skills
-                .iter()
-                .find(|s| s.id() == resolved.skill_id);
-            info!(
-                mode = %resolved.mode.id,
-                skill = %resolved.skill_id,
-                spectrum = %resolved.mode.spectrum.as_str(),
-                oversight = %resolved.mode.oversight.as_str(),
-                "mode activated via ModeRegistry"
-            );
-            let layer = match parent {
-                Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
-                    "{}\n\n{}",
-                    p.system_prompt(),
-                    resolved.mode.system_prompt_delta
-                )),
-                Some(p) => Some(p.system_prompt().to_string()),
-                None if !resolved.mode.system_prompt_delta.is_empty() => {
-                    Some(resolved.mode.system_prompt_delta.clone())
-                }
-                None => None,
-            };
-            // Mode activation is its own audit path — review-gate
-            // dispatching via /agent is the explicit operator path,
-            // so no used_skill_id surfaces here (mirrors the prior
-            // `_skill_match` discard).
-            (layer, None)
-        } else {
-            // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
-            // Runs ONLY when keyword Stage-1 missed AND the operator
-            // configured `freedom.yaml::inference.embedding_provider`.
-            let mut skill_match = crate::skills::route(&prompt, &installed_skills);
-            if skill_match.is_none() {
-                if let Some(embed_provider) =
-                    crate::providers::embed_provider_from_config(&config).await
-                {
-                    if let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
-                        &prompt,
-                        &installed_skills,
-                        embed_provider.as_ref(),
-                    )
-                    .await
-                    {
-                        info!(
-                            skill = skill.id(),
-                            cosine = score,
-                            "skill activated via Stage-2 embedding re-rank"
-                        );
-                        skill_match = Some(crate::skills::router::RouteMatch {
-                            skill,
-                            matched_keywords: Vec::new(),
-                            embedding_score: Some(score),
-                        });
-                    }
-                }
+    let mode_hit = if eval_suppress {
+        None
+    } else {
+        mode_registry.match_trigger(&prompt)
+    };
+    let (skill_layer, used_skill_id): (Option<String>, Option<String>) = if eval_suppress {
+        (None, None)
+    } else if let Some(resolved) = mode_hit {
+        let parent = installed_skills
+            .iter()
+            .find(|s| s.id() == resolved.skill_id);
+        info!(
+            mode = %resolved.mode.id,
+            skill = %resolved.skill_id,
+            spectrum = %resolved.mode.spectrum.as_str(),
+            oversight = %resolved.mode.oversight.as_str(),
+            "mode activated via ModeRegistry"
+        );
+        let layer = match parent {
+            Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
+                "{}\n\n{}",
+                p.system_prompt(),
+                resolved.mode.system_prompt_delta
+            )),
+            Some(p) => Some(p.system_prompt().to_string()),
+            None if !resolved.mode.system_prompt_delta.is_empty() => {
+                Some(resolved.mode.system_prompt_delta.clone())
             }
-            if let Some(m) = &skill_match {
-                if m.embedding_score.is_none() {
-                    info!(
-                        skill = m.skill.id(),
-                        matched_keywords = ?m.matched_keywords,
-                        "skill activated"
-                    );
-                }
-            }
-            let layer = skill_match
-                .as_ref()
-                .map(|m| m.skill.system_prompt().to_string());
-            let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
-            (layer, id)
+            None => None,
         };
+        // Mode activation is its own audit path — review-gate
+        // dispatching via /agent is the explicit operator path,
+        // so no used_skill_id surfaces here (mirrors the prior
+        // `_skill_match` discard).
+        (layer, None)
+    } else {
+        // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
+        // Runs ONLY when keyword Stage-1 missed AND the operator
+        // configured `freedom.yaml::inference.embedding_provider`.
+        let mut skill_match = crate::skills::route(&prompt, &installed_skills);
+        if skill_match.is_none() {
+            if let Some(embed_provider) =
+                crate::providers::embed_provider_from_config(&config).await
+            {
+                if let Some((skill, score)) = crate::skills::router::route_stage2_embedding(
+                    &prompt,
+                    &installed_skills,
+                    embed_provider.as_ref(),
+                )
+                .await
+                {
+                    info!(
+                        skill = skill.id(),
+                        cosine = score,
+                        "skill activated via Stage-2 embedding re-rank"
+                    );
+                    skill_match = Some(crate::skills::router::RouteMatch {
+                        skill,
+                        matched_keywords: Vec::new(),
+                        embedding_score: Some(score),
+                    });
+                }
+            }
+        }
+        if let Some(m) = &skill_match {
+            if m.embedding_score.is_none() {
+                info!(
+                    skill = m.skill.id(),
+                    matched_keywords = ?m.matched_keywords,
+                    "skill activated"
+                );
+            }
+        }
+        let layer = skill_match
+            .as_ref()
+            .map(|m| m.skill.system_prompt().to_string());
+        let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+        (layer, id)
+    };
 
     // ── MCP tool catalogue (Step 1 of autonomous routing) ─────────────────
     // No-op when `~/.neoth/mcp_servers.yaml` is missing/empty. Pick #34

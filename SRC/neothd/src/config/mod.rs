@@ -125,6 +125,19 @@ pub struct FreedomConfig {
     /// per-deployment via `neoth init --force` or by editing freedom.yaml.
     #[serde(default)]
     pub review_gate_enabled: bool,
+    /// Round-3 v0.4 ARCH-07 — LOWKEY skill versioning + eval-session
+    /// suppression toggle. Wizard pre-populates with defaults; operators
+    /// edit freedom.yaml::skills.disabled_for_eval_sessions = true when
+    /// running eval baselines that must not be biased by active skills.
+    #[serde(default)]
+    pub skills: SkillsConfig,
+    /// Round-3 v0.4 ARCH-04 — operator-tunable token cap for the
+    /// prompt-bundle pre-flight check. Default 100_000 covers Opus 4.7
+    /// + Sonnet 4.6 + Gemini 3 with response headroom; operators on
+    /// tighter-context models (Gemini Flash 32k, local Qwen3-4B 8k)
+    /// lower this to match.
+    #[serde(default)]
+    pub tokens: TokensConfig,
     /// R-5 Obsidian vault auto-sync: when set, the daemon mirrors
     /// `~/.neoth/archive/sessions/<day>/<file>.md` into the operator's
     /// vault on a schedule. `None` = task off (operator still runs
@@ -1273,6 +1286,133 @@ fn warn_if_world_readable(path: &Path) {
                 path.display()
             );
         }
+    }
+}
+
+// ─── Round-3 v0.4 ARCH-07 / ARCH-04 sub-configs ────────────────────────────
+
+/// Round-3 v0.4 ARCH-07 — LOWKEY skill versioning + eval-session
+/// suppression operator-config.
+///
+/// `disabled_for_eval_sessions`: when `true` AND the daemon is
+/// running in an eval session (env `NEOTH_EVAL_SESSION=1` or
+/// `freedom.yaml::eval_session_active = true`), all skill injection
+/// into the prompt bundle is suppressed + emits
+/// `EVENT_TYPE_SKILL_INJECT_SKIPPED` (WAL `0x29`) per skipped skill.
+/// Operators running benchmark suites use this to ensure the eval
+/// baseline isn't biased by behavioural skills.
+///
+/// `eval_session_active`: marker flag operators flip when starting
+/// an eval run. Persists across daemon restarts so a long eval
+/// suite doesn't accidentally reset.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SkillsConfig {
+    /// Suppress skill injection during eval sessions.
+    /// Default false — operators opt in for eval runs.
+    #[serde(default)]
+    pub disabled_for_eval_sessions: bool,
+    /// Whether the daemon is currently in an eval session. Operators
+    /// flip on before starting a benchmark suite + flip off after.
+    /// Also honoured via env `NEOTH_EVAL_SESSION=1` for one-shot
+    /// CLI eval invocations.
+    #[serde(default)]
+    pub eval_session_active: bool,
+}
+
+impl SkillsConfig {
+    /// True iff skills should be suppressed for this turn (config flag
+    /// AND eval mode active OR env var). Pure-fn so the skill router
+    /// can short-circuit without re-reading env.
+    pub fn should_suppress_for_eval(&self) -> bool {
+        let env_active = std::env::var("NEOTH_EVAL_SESSION")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        self.disabled_for_eval_sessions && (self.eval_session_active || env_active)
+    }
+}
+
+/// Round-3 v0.4 ARCH-04 — operator-tunable token cap for the
+/// prompt-bundle pre-flight check.
+///
+/// `max_per_request`: total token cap across all blocks (A+B+C+D+E)
+/// before degradation fires. Default 100_000 covers Opus 4.7 (200k
+/// context) + Sonnet 4.6 (200k) + Gemini 3 (1M) with significant
+/// response headroom. Operators on smaller-context models lower this
+/// to match. The hardcoded `cli::chat::DEFAULT_PROMPT_TOKEN_CAP` falls
+/// back to this value when callers don't pass an override.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TokensConfig {
+    /// Total token cap per provider request before
+    /// `tokens::budget::enforce_budget` degradation policy fires.
+    #[serde(default = "TokensConfig::default_max_per_request")]
+    pub max_per_request: u32,
+}
+
+impl Default for TokensConfig {
+    fn default() -> Self {
+        Self {
+            max_per_request: Self::default_max_per_request(),
+        }
+    }
+}
+
+impl TokensConfig {
+    pub fn default_max_per_request() -> u32 {
+        100_000
+    }
+}
+
+#[cfg(test)]
+mod sub_config_tests {
+    use super::*;
+
+    #[test]
+    fn skills_config_default_eval_disabled() {
+        let cfg = SkillsConfig::default();
+        assert!(!cfg.disabled_for_eval_sessions);
+        assert!(!cfg.eval_session_active);
+        assert!(!cfg.should_suppress_for_eval());
+    }
+
+    #[test]
+    fn skills_config_suppress_requires_both_flags() {
+        let mut cfg = SkillsConfig::default();
+        cfg.disabled_for_eval_sessions = true;
+        // Without eval_session_active OR env → still false.
+        unsafe { std::env::remove_var("NEOTH_EVAL_SESSION") };
+        assert!(!cfg.should_suppress_for_eval());
+        cfg.eval_session_active = true;
+        assert!(cfg.should_suppress_for_eval());
+    }
+
+    #[test]
+    fn skills_config_suppress_honours_env_var() {
+        let mut cfg = SkillsConfig::default();
+        cfg.disabled_for_eval_sessions = true;
+        cfg.eval_session_active = false;
+        unsafe { std::env::set_var("NEOTH_EVAL_SESSION", "1") };
+        assert!(cfg.should_suppress_for_eval());
+        unsafe { std::env::remove_var("NEOTH_EVAL_SESSION") };
+    }
+
+    #[test]
+    fn tokens_config_default_is_100k() {
+        assert_eq!(TokensConfig::default().max_per_request, 100_000);
+        assert_eq!(TokensConfig::default_max_per_request(), 100_000);
+    }
+
+    #[test]
+    fn tokens_config_serde_round_trip_with_default() {
+        let json = r#"{}"#;
+        let cfg: TokensConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.max_per_request, 100_000);
+    }
+
+    #[test]
+    fn tokens_config_serde_round_trip_with_override() {
+        let json = r#"{"max_per_request": 8192}"#;
+        let cfg: TokensConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.max_per_request, 8192);
     }
 }
 
