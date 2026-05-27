@@ -1224,6 +1224,30 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "proactive drain loop spawned (G-01 consumer half — Round-3 v0.4)"
     );
 
+    // ── 5d-quartus. G-02 surfacing cron — "Knows things about you you
+    //               don't know" producer (Round-3 v0.4) ──
+    //
+    // Daily scan of `idx_profile` for high-confidence claims newer
+    // than the novelty window; each gets rendered as a bilingual
+    // ProactiveItem + enqueued into the same ProactiveQueue the
+    // proactive_dispatcher (above) drains. Per-claim dedup_key
+    // (`g02:<field>:<value_hash>`) prevents re-enqueue churn even
+    // if the cron fires more frequently than the default 24h.
+    //
+    // Quiet no-op on fresh installs (no views.db yet) so first-week
+    // wizard logs stay clean.
+    let g02_surfacing_cron_handle = {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        crate::daemon::g02_surfacing_cron::spawn_g02_surfacing_cron_loop(
+            home,
+            crate::daemon::g02_surfacing_cron::G02_CRON_INTERVAL_SECS,
+        )
+    };
+    info!(
+        interval_secs = crate::daemon::g02_surfacing_cron::G02_CRON_INTERVAL_SECS,
+        "G-02 surfacing cron loop spawned (Round-3 v0.4)"
+    );
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -1851,6 +1875,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // — operator sees it on next drain cycle.
     proactive_dispatcher_handle.abort();
     let _ = proactive_dispatcher_handle.await;
+
+    // Round-3 v0.4 G-02 — surfacing cron loop. Reads idx_profile +
+    // writes proactive_queue.json (atomic .tmp + rename). Mid-tick
+    // abort leaves the queue file untouched + per-claim dedup_key
+    // means the next boot's first tick re-finds the same novel
+    // claims + re-enqueues are no-ops.
+    g02_surfacing_cron_handle.abort();
+    let _ = g02_surfacing_cron_handle.await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

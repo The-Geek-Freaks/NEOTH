@@ -45,6 +45,12 @@ pub mod redaction;
 pub mod runner;
 pub mod self_dev;
 pub mod snapshot;
+/// Round-3 v0.4 G-02 — "Knows things about you you don't know"
+/// proactive surfacing. Finds active high-confidence claims newer
+/// than the cron window + turns them into ProactiveItems that flow
+/// through the G-01 consumer drain → JSONL sidecar → channel
+/// adapters chain shipped earlier this session.
+pub mod surfacing;
 pub mod temporal_guard;
 pub mod timestamp_check;
 pub mod types;

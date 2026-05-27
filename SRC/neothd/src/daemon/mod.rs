@@ -13,6 +13,14 @@ pub mod credentials_import_sidecar;
 pub mod detect_complete_sidecar;
 pub mod doctor_cron;
 pub mod export;
+/// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
+/// `idx_profile` for novel high-confidence claims via
+/// `profile::surfacing::find_novel_high_confidence_claims` +
+/// renders each as a bilingual `ProactiveItem` for the G-01
+/// drain → sidecar chain. Per-claim dedup_key in the item itself
+/// caps re-enqueue noise; the cron just stays out of the LLM
+/// extractor's way (Stage 3 deferred).
+pub mod g02_surfacing_cron;
 pub mod hardware;
 pub mod installer_audit_sidecar;
 /// Round-3 v0.4 G-01 consumer half — periodic drain of
