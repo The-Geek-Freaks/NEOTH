@@ -337,7 +337,7 @@ fn format_oid_dotted(oid: &simple_asn1::OID) -> String {
 /// Pinned strictly to NSS's emitted shape: the PRF AlgorithmIdentifier
 /// is always present (hmacWithSHA256), the encryption is AES-256-CBC,
 /// the IV inner is always 14 bytes.
-#[cfg(any(test, feature = "credentials-test-helpers"))]
+#[cfg(test)]
 pub fn encode_pbes2_envelope_for_tests(
     kdf_salt: &[u8],
     kdf_iters: u32,
@@ -396,7 +396,7 @@ pub fn encode_pbes2_envelope_for_tests(
     out
 }
 
-#[cfg(any(test, feature = "credentials-test-helpers"))]
+#[cfg(test)]
 fn push_length(out: &mut Vec<u8>, len: usize) {
     if len < 0x80 {
         out.push(len as u8);
@@ -412,34 +412,34 @@ fn push_length(out: &mut Vec<u8>, len: usize) {
     }
 }
 
-#[cfg(any(test, feature = "credentials-test-helpers"))]
+#[cfg(test)]
 fn push_sequence(out: &mut Vec<u8>, body: &[u8]) {
     out.push(0x30);
     push_length(out, body.len());
     out.extend_from_slice(body);
 }
 
-#[cfg(any(test, feature = "credentials-test-helpers"))]
+#[cfg(test)]
 fn push_octet_string(out: &mut Vec<u8>, bytes: &[u8]) {
     out.push(0x04);
     push_length(out, bytes.len());
     out.extend_from_slice(bytes);
 }
 
-#[cfg(any(test, feature = "credentials-test-helpers"))]
+#[cfg(test)]
 fn push_oid_bytes(out: &mut Vec<u8>, encoded: &[u8]) {
     out.push(0x06);
     push_length(out, encoded.len());
     out.extend_from_slice(encoded);
 }
 
-#[cfg(any(test, feature = "credentials-test-helpers"))]
+#[cfg(test)]
 fn push_null(out: &mut Vec<u8>) {
     out.push(0x05);
     out.push(0x00);
 }
 
-#[cfg(any(test, feature = "credentials-test-helpers"))]
+#[cfg(test)]
 fn push_integer_u32(out: &mut Vec<u8>, value: u32) {
     // Minimal DER INTEGER: drop leading zero bytes, add one if MSB
     // of top byte is set (to keep the value positive).

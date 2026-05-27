@@ -70,8 +70,12 @@ pub const DPAPI_PREFIX: &[u8] = b"DPAPI";
 /// operator-visible wizard warnings + drift-guard tests.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ChromeWindowsError {
-    #[error("Local State JSON file read failed at {path}: {source}")]
-    LocalStateRead { path: String, source: String },
+    // NB: `io_error` not `source` — thiserror auto-detects a field
+    // named `source` as a `#[source]` error-chain pointer + requires
+    // it to impl `std::error::Error`. We carry the error as a String
+    // (no original `io::Error` retained) so use a non-magic name.
+    #[error("Local State JSON file read failed at {path}: {io_error}")]
+    LocalStateRead { path: String, io_error: String },
     #[error("Local State JSON parse failed: {0}")]
     LocalStateJson(String),
     #[error("Local State encrypted_key field base64 decode failed: {0}")]
@@ -119,7 +123,7 @@ pub fn read_local_state_aes_key(local_state_path: &Path) -> Result<[u8; 32], Chr
     let body = std::fs::read_to_string(local_state_path).map_err(|e| {
         ChromeWindowsError::LocalStateRead {
             path: local_state_path.display().to_string(),
-            source: e.to_string(),
+            io_error: e.to_string(),
         }
     })?;
     parse_and_unwrap_aes_key(&body)
