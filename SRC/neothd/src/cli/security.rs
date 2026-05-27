@@ -53,6 +53,46 @@ pub enum SecurityCommand {
     /// all-clear, 1 if any check FAILed (warnings don't change
     /// exit). Matches the `neoth doctor` semantics.
     Audit(AuditArgs),
+    /// SC-09 (Session 28) — export the WAL HMAC compaction key to
+    /// `<output>` in plaintext for disaster-recovery purposes
+    /// (machine swap, Windows reinstall, DPAPI unwrap failure).
+    ///
+    /// **What this is for**: per `PLAN/RUNBOOK_dpapi_hmac_recovery.md`,
+    /// the WAL HMAC key on Windows is DPAPI-wrapped + bound to the
+    /// current user account + machine identity. When any of those
+    /// three change (machine swap / Windows reinstall in place /
+    /// MS-account ↔ local-account switch), CryptUnprotectData fails
+    /// + the operator's compaction-marker audit chain can't be
+    /// verified. A plaintext backup taken BEFORE such an event lets
+    /// the operator re-wrap the key on the new identity (Tier 1
+    /// recovery — full audit-chain continuity preserved).
+    ///
+    /// **What this is NOT for**: routine use. The plaintext file
+    /// loses the per-user DACL + DPAPI binding the in-place key has.
+    /// The runbook warns operators to store the backup in their
+    /// password manager / hardware token / sealed vault — NOT on the
+    /// same disk as `~/.neoth`.
+    BackupHmacKey(BackupHmacKeyArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct BackupHmacKeyArgs {
+    /// Plaintext destination path. The file is written mode-0600
+    /// (Unix) so it's only readable by the operator account. Refused
+    /// if the path already exists unless `--force` is also passed
+    /// (defence against silent overwrite of an older backup).
+    #[arg(long, value_name = "PATH")]
+    pub output: PathBuf,
+    /// Overwrite `--output` if it already exists. Without this flag
+    /// the command fails fast — accidentally re-running this command
+    /// with the same `--output` shouldn't blow away an older backup
+    /// taken at a different rotation.
+    #[arg(long)]
+    pub force: bool,
+    /// Override the `~/.neoth` home dir (mostly for tests). Defaults
+    /// to the operator's actual `~/.neoth`.
+    #[arg(long, value_name = "DIR")]
+    pub home: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -153,7 +193,105 @@ pub async fn run_security(args: SecurityArgs) -> Result<()> {
             }
             Ok(())
         }
+        SecurityCommand::BackupHmacKey(a) => run_backup_hmac_key(&a),
     }
+}
+
+/// SC-09 (Session 28) — write the operator's WAL HMAC compaction key
+/// to `args.output` in plaintext. Handles the DPAPI unwrap on Windows
+/// (via `wal::compaction::load_or_init_key`); the operator sees the
+/// raw bytes regardless of how they're stored on disk.
+///
+/// **Operator-visible warnings are deliberate**: this path is the
+/// ONE place NEOTH legitimately emits a plaintext copy of the
+/// HMAC key. Every line of stderr is one the operator should read.
+pub fn run_backup_hmac_key(args: &BackupHmacKeyArgs) -> Result<()> {
+    let home = args
+        .home
+        .clone()
+        .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
+
+    // Refuse overwrite unless --force. Catches the muscle-memory
+    // mistake of re-running the same command (which would silently
+    // replace an older backup that referred to a different key
+    // rotation epoch).
+    if args.output.exists() && !args.force {
+        anyhow::bail!(
+            "refusing to overwrite existing backup at {}; pass --force to replace",
+            args.output.display()
+        );
+    }
+
+    let key_path = home.join("wal").join("hmac.key");
+    if !key_path.exists() {
+        anyhow::bail!(
+            "no HMAC key at {} — run `neothd init` first or wait for the first WAL frame to be written",
+            key_path.display()
+        );
+    }
+    let key_bytes = crate::wal::compaction::load_or_init_key(&key_path)?;
+
+    // Ensure the parent dir exists so a fresh `--output ~/safe/key`
+    // works without the operator pre-mkdiring.
+    if let Some(parent) = args.output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("create backup parent {}: {e}", parent.display()))?;
+        }
+    }
+
+    write_backup_file(&args.output, &key_bytes)?;
+
+    // stderr-only warnings — stdout is reserved for the operator-
+    // visible success line so scripts that capture stdout get a
+    // clean confirmation.
+    eprintln!();
+    eprintln!("[neoth security] PLAINTEXT BACKUP WRITTEN");
+    eprintln!("[neoth security]   path:    {}", args.output.display());
+    eprintln!(
+        "[neoth security]   bytes:   {} (mode-0600 on Unix)",
+        key_bytes.len()
+    );
+    eprintln!("[neoth security]");
+    eprintln!("[neoth security] This file is the unwrapped HMAC key that protects your");
+    eprintln!("[neoth security] WAL compaction markers. Anyone with read access can forge");
+    eprintln!("[neoth security] historical audit-chain checkpoints.");
+    eprintln!("[neoth security]");
+    eprintln!("[neoth security] Recommended: move to a password manager / hardware token");
+    eprintln!("[neoth security]   immediately; do NOT leave on the same disk as ~/.neoth.");
+    eprintln!("[neoth security]   See PLAN/RUNBOOK_dpapi_hmac_recovery.md for the full recovery");
+    eprintln!("[neoth security]   playbook (Tier 1 — re-wrap on new machine).");
+
+    println!("backup written: {}", args.output.display());
+    Ok(())
+}
+
+/// Write the plaintext key bytes mode-0600 on Unix. Windows DACL
+/// tightening would mirror the SC-08 plan and is deferred — for
+/// now the operator gets the default ACL on the destination,
+/// which matches what they get for any other plaintext file
+/// they create. The stderr warning above tells them to move it.
+fn write_backup_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::Write;
+
+    // Open with write-only + create + truncate semantics. mode-0600
+    // applied via OpenOptions on Unix; the `mode()` call is a no-op
+    // on non-Unix targets but compiles via the cfg.
+    let mut open = std::fs::OpenOptions::new();
+    open.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600);
+    }
+    let mut f = open
+        .open(path)
+        .map_err(|e| anyhow::anyhow!("open backup path {}: {e}", path.display()))?;
+    f.write_all(bytes)
+        .map_err(|e| anyhow::anyhow!("write backup bytes to {}: {e}", path.display()))?;
+    f.flush()
+        .map_err(|e| anyhow::anyhow!("flush backup file {}: {e}", path.display()))?;
+    Ok(())
 }
 
 /// Collect the audit report without printing — pure-fn variant so
@@ -619,5 +757,158 @@ mod tests {
         // drift absent (Warn), sidecars none (Ok). Exit code 1 due
         // to the HMAC fail.
         assert_eq!(report.exit_code(), 1);
+    }
+
+    // ── SC-09 backup-hmac-key ─────────────────────────────────────
+
+    fn seed_hmac_key(home: &Path) -> std::path::PathBuf {
+        // Generate a real key via load_or_init_key so the test
+        // exercises the unwrap path the operator would hit.
+        let key_path = home.join("wal").join("hmac.key");
+        crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        key_path
+    }
+
+    #[test]
+    fn backup_refuses_when_no_hmac_key_present() {
+        let home = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let args = BackupHmacKeyArgs {
+            output: out.path().join("missing.key"),
+            force: false,
+            home: Some(home.path().to_path_buf()),
+        };
+        let err = run_backup_hmac_key(&args).unwrap_err();
+        assert!(
+            err.to_string().contains("no HMAC key at"),
+            "expected missing-key error; got {err}"
+        );
+        assert!(
+            !args.output.exists(),
+            "no backup file may be created when source missing"
+        );
+    }
+
+    #[test]
+    fn backup_writes_plaintext_key_when_source_present() {
+        let home = TempDir::new().unwrap();
+        seed_hmac_key(home.path());
+        let out = TempDir::new().unwrap();
+        let dest = out.path().join("backup.key");
+        let args = BackupHmacKeyArgs {
+            output: dest.clone(),
+            force: false,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_backup_hmac_key(&args).unwrap();
+        assert!(dest.exists(), "backup file must be created");
+        let bytes = std::fs::read(&dest).unwrap();
+        // load_or_init_key returns ≥16 bytes (the under-16 check
+        // refuses weak keys); a fresh key is exactly 32.
+        assert!(bytes.len() >= 16, "key must be at least 16 bytes");
+    }
+
+    #[test]
+    fn backup_refuses_to_overwrite_existing_without_force() {
+        let home = TempDir::new().unwrap();
+        seed_hmac_key(home.path());
+        let out = TempDir::new().unwrap();
+        let dest = out.path().join("backup.key");
+        // Pre-create a sentinel file at the destination.
+        std::fs::write(&dest, b"older-backup-sentinel").unwrap();
+        let args = BackupHmacKeyArgs {
+            output: dest.clone(),
+            force: false,
+            home: Some(home.path().to_path_buf()),
+        };
+        let err = run_backup_hmac_key(&args).unwrap_err();
+        assert!(
+            err.to_string().contains("refusing to overwrite"),
+            "expected overwrite-refusal; got {err}"
+        );
+        // Sentinel must still be there — no clobber.
+        let body = std::fs::read(&dest).unwrap();
+        assert_eq!(body, b"older-backup-sentinel");
+    }
+
+    #[test]
+    fn backup_overwrites_with_force_flag() {
+        let home = TempDir::new().unwrap();
+        seed_hmac_key(home.path());
+        let out = TempDir::new().unwrap();
+        let dest = out.path().join("backup.key");
+        std::fs::write(&dest, b"older-backup").unwrap();
+        let args = BackupHmacKeyArgs {
+            output: dest.clone(),
+            force: true,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_backup_hmac_key(&args).unwrap();
+        let body = std::fs::read(&dest).unwrap();
+        assert_ne!(body, b"older-backup", "old content must be replaced");
+        assert!(body.len() >= 16, "new content is the real key bytes");
+    }
+
+    #[test]
+    fn backup_round_trip_matches_load_or_init_key() {
+        // Backup bytes MUST equal what `load_or_init_key` returns —
+        // proves an operator can later import the backup back via
+        // a future `rewrap-hmac-key` slice. Drift guard against any
+        // accidental transformation in write_backup_file (e.g.
+        // line-ending munging).
+        let home = TempDir::new().unwrap();
+        let key_path = seed_hmac_key(home.path());
+        let expected = crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        let out = TempDir::new().unwrap();
+        let dest = out.path().join("backup.key");
+        let args = BackupHmacKeyArgs {
+            output: dest.clone(),
+            force: false,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_backup_hmac_key(&args).unwrap();
+        let backup_bytes = std::fs::read(&dest).unwrap();
+        assert_eq!(
+            backup_bytes, expected,
+            "backup bytes must match unwrapped HMAC key bytes round-trip"
+        );
+    }
+
+    #[test]
+    fn backup_creates_missing_parent_directory() {
+        let home = TempDir::new().unwrap();
+        seed_hmac_key(home.path());
+        let out = TempDir::new().unwrap();
+        // Destination two dirs deep — parent doesn't exist yet.
+        let dest = out.path().join("nested").join("sub").join("k.key");
+        let args = BackupHmacKeyArgs {
+            output: dest.clone(),
+            force: false,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_backup_hmac_key(&args).unwrap();
+        assert!(dest.exists(), "parent dirs must be created on demand");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backup_file_is_mode_0600_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+        let home = TempDir::new().unwrap();
+        seed_hmac_key(home.path());
+        let out = TempDir::new().unwrap();
+        let dest = out.path().join("backup.key");
+        let args = BackupHmacKeyArgs {
+            output: dest.clone(),
+            force: false,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_backup_hmac_key(&args).unwrap();
+        let meta = std::fs::metadata(&dest).unwrap();
+        let mode = meta.permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "backup file MUST be mode-0600 (operator-only); got {mode:o}"
+        );
     }
 }
