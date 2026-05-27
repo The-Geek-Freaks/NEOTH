@@ -173,6 +173,50 @@ pub fn archive_session(
     Ok(())
 }
 
+/// HO-02 (Session 28) — abandon every `idx_kanban_session` row that's
+/// been stuck in `Planning` status for longer than `stale_after_ns`.
+/// Returns the number of rows touched.
+///
+/// Why this matters: Cerebellum opens a session row + decomposes via
+/// LLM before flipping to `Running`. If the dispatcher crashes (or
+/// the daemon is restarted) mid-decompose, that session sits in
+/// Planning forever — `neoth kanban list` shows it as actionable, but
+/// no worker will pick it up. The reaper sweeps these on dispatcher
+/// startup so the operator sees a clean slate.
+///
+/// Default cut-off is `1 hour` (3_600 * 1_000_000_000 ns) — well past
+/// the longest legitimate decompose (Cerebellum LLM call + JSON parse
+/// + per-task insert; even on cold local Qwen this completes inside
+/// 90s). Operator-tunable via the caller (no freedom.yaml knob yet —
+/// add when an operator hits a false-positive abandon).
+///
+/// Marks the row with the canonical `summary` "stale planning session
+/// reaped on startup" so an operator running `neoth kanban show <id>`
+/// after the fact sees why their old planning attempt vanished. The
+/// `Abandoned` terminal status means `neoth kanban list` (without
+/// `--all`) hides it from the actionable view.
+pub fn reap_stale_planning_sessions(
+    conn: &Connection,
+    now_ns: u64,
+    stale_after_ns: u64,
+) -> Result<usize> {
+    let cut_off = now_ns.saturating_sub(stale_after_ns) as i64;
+    let n = conn
+        .execute(
+            "UPDATE idx_kanban_session \
+             SET status = ?1, summary = ?2 \
+             WHERE status = ?3 AND created_ns <= ?4",
+            params![
+                SessionStatus::Abandoned.as_str(),
+                "stale planning session reaped on startup",
+                SessionStatus::Planning.as_str(),
+                cut_off,
+            ],
+        )
+        .context("update idx_kanban_session for stale-planning reap")?;
+    Ok(n)
+}
+
 // ── Task CRUD ──────────────────────────────────────────────────────────────
 
 /// Insert one task row for the given session. Initial status is
@@ -872,5 +916,88 @@ mod tests {
             names.contains(&"idx_kanban_comment_task".to_string()),
             "comment→task index must exist"
         );
+    }
+
+    // ── HO-02 (Session 28): stale-planning reaper ──────────────────
+
+    const STALE_CUTOFF_NS: u64 = 3_600 * 1_000_000_000;
+
+    #[test]
+    fn reaper_abandons_planning_session_older_than_cutoff() {
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        // Insert a planning session created 2 hours ago — must be reaped.
+        let now_ns: u64 = 10 * 3600 * 1_000_000_000;
+        let created_ns: u64 = now_ns - 2 * 3600 * 1_000_000_000;
+        let session_id =
+            insert_session(&conn, created_ns, "old prompt", "h1", "cli", None).unwrap();
+        let n = reap_stale_planning_sessions(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
+        assert_eq!(n, 1);
+        let fetched = get_session(&conn, session_id).unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Abandoned);
+        assert_eq!(
+            fetched.summary.as_deref(),
+            Some("stale planning session reaped on startup")
+        );
+    }
+
+    #[test]
+    fn reaper_leaves_fresh_planning_session_untouched() {
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        // Planning session created 1 minute ago — fresh, must NOT be
+        // reaped (someone might be decomposing it right now).
+        let now_ns: u64 = 10 * 3600 * 1_000_000_000;
+        let created_ns: u64 = now_ns - 60 * 1_000_000_000;
+        let session_id =
+            insert_session(&conn, created_ns, "fresh prompt", "h2", "cli", None).unwrap();
+        let n = reap_stale_planning_sessions(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
+        assert_eq!(n, 0);
+        let fetched = get_session(&conn, session_id).unwrap().unwrap();
+        assert_eq!(fetched.status, SessionStatus::Planning);
+    }
+
+    #[test]
+    fn reaper_ignores_already_running_or_done_sessions() {
+        // Sweep MUST be `status = Planning`-scoped — a running or done
+        // session past the cut-off is NOT a leak, it's just history.
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        let now_ns: u64 = 10 * 3600 * 1_000_000_000;
+        let created_ns: u64 = now_ns - 2 * 3600 * 1_000_000_000;
+        let s_planning = insert_session(&conn, created_ns, "p1", "h1", "cli", None).unwrap();
+        let s_done = insert_session(&conn, created_ns, "p2", "h2", "cli", None).unwrap();
+        archive_session(&conn, s_done, SessionStatus::Done, None, None).unwrap();
+        let n = reap_stale_planning_sessions(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
+        // Only the planning row gets reaped — the done row stays Done.
+        assert_eq!(n, 1);
+        assert_eq!(
+            get_session(&conn, s_planning).unwrap().unwrap().status,
+            SessionStatus::Abandoned
+        );
+        assert_eq!(
+            get_session(&conn, s_done).unwrap().unwrap().status,
+            SessionStatus::Done
+        );
+    }
+
+    #[test]
+    fn reaper_returns_zero_on_empty_db() {
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        let n = reap_stale_planning_sessions(&conn, 1_000_000_000, STALE_CUTOFF_NS).unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn reaper_handles_now_smaller_than_cutoff_without_panic() {
+        // Edge: a fresh-install clock that hasn't ticked yet — `now`
+        // is smaller than `stale_after`. saturating_sub keeps the
+        // cut-off at 0 + no rows match (every created_ns is > 0).
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        let _ = insert_session(&conn, 5_000, "p", "h", "cli", None).unwrap();
+        let n = reap_stale_planning_sessions(&conn, 100, STALE_CUTOFF_NS).unwrap();
+        assert_eq!(n, 0);
     }
 }

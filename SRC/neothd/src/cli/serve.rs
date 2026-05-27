@@ -525,6 +525,60 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     };
 
+    // ── 5a-kanban. Stale-planning reaper — HO-02 (Session 28) ──────────────
+    //
+    // Cerebellum opens a session row + decomposes via LLM before
+    // flipping to Running. A dispatcher crash / daemon restart
+    // mid-decompose leaves the row stuck in Planning forever — the
+    // operator sees it on `neoth kanban list` but no worker will
+    // ever pick it up. Sweep on each daemon startup so the operator
+    // sees a clean slate.
+    //
+    // 1-hour cut-off is well past the longest legitimate decompose
+    // (Cerebellum LLM call + JSON parse + per-task insert; ~90s on
+    // cold local Qwen). Best-effort: failure to open views.db here
+    // is logged and continues — the reaper is hygiene, not load-
+    // bearing on liveness.
+    {
+        const STALE_CUTOFF_NS: u64 = 3_600 * 1_000_000_000;
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        match store::open(&store::default_path()) {
+            Ok(conn) => {
+                // ensure_schema is idempotent + cheap; covers the
+                // fresh-install case where the kanban tables haven't
+                // been created yet.
+                if let Err(e) = crate::coding::store::ensure_schema(&conn) {
+                    warn!(error = %e, "kanban schema ensure failed at reaper; skipping sweep");
+                } else {
+                    match crate::coding::store::reap_stale_planning_sessions(
+                        &conn,
+                        now_ns,
+                        STALE_CUTOFF_NS,
+                    ) {
+                        Ok(0) => {
+                            tracing::debug!("kanban stale-planning reaper: nothing to abandon")
+                        }
+                        Ok(n) => {
+                            info!(
+                                reaped = n,
+                                "kanban stale-planning reaper abandoned {n} session(s)"
+                            )
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "kanban stale-planning reaper failed; non-fatal")
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "stale-planning reaper: cannot open views.db; skipping");
+            }
+        }
+    }
+
     // ── 5a-hysteria. Hysteria encrypted egress (R-3) ───────────────────────
     //
     // MUST run BEFORE provider construction below. The providers'
