@@ -414,7 +414,7 @@ mod tests {
         let a = vec![assertion("birthday", "March"), assertion("city", "Berlin")];
         // First assertion: correct. Second: contradicted.
         let resp = "birthday is in March. city is not Berlin.";
-        let out = factual_contradiction_check(&resp, &a, DEFAULT_NEGATION_MARKERS, 80);
+        let out = factual_contradiction_check(resp, &a, DEFAULT_NEGATION_MARKERS, 80);
         assert_eq!(out.contradicting_phrases.len(), 1);
         assert_eq!(out.contradicting_phrases[0].0, "city");
     }
@@ -448,7 +448,7 @@ mod tests {
         // Drift guard: ensure both EN + DE high-frequency markers
         // are in the list so a future trim doesn't accidentally drop
         // one language's coverage.
-        let all: Vec<&str> = DEFAULT_NEGATION_MARKERS.iter().copied().collect();
+        let all: Vec<&str> = DEFAULT_NEGATION_MARKERS.to_vec();
         assert!(all.contains(&"not"), "EN: 'not' missing");
         assert!(all.contains(&"never"), "EN: 'never' missing");
         assert!(all.contains(&"nicht"), "DE: 'nicht' missing");
