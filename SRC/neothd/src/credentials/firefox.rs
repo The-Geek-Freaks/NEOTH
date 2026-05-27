@@ -32,7 +32,12 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-use crate::credentials::{CredentialImporter, DiscoveredCredentials, ImportSource};
+use crate::credentials::firefox_envelope::{FirefoxAlgorithm, parse_firefox_envelope};
+use crate::credentials::firefox_key4db::extract_master_key_from_file;
+use crate::credentials::{
+    CredentialImporter, DiscoveredCredentials, ImportSource, ImportedCredential,
+};
+use crate::secret::SecretString;
 
 /// Per-OS Firefox profile-root directory.
 pub fn firefox_profile_root() -> Option<PathBuf> {
@@ -223,11 +228,40 @@ pub fn decrypt_aes256_cbc_pkcs7(
 
 // ─── Importer ─────────────────────────────────────────────────────────────
 
-/// Importer impl. C-04b Phase 1 (Session 27) ships JSON parse + the
-/// AES-256-CBC decrypt primitive. Phase 2 (Session 28) lands the
-/// `key4.db` master-key extraction + ASN.1 envelope unwrap so this
-/// surfaces real entries instead of "deferred" warnings.
-pub struct FirefoxImporter;
+/// Importer impl. C-04b Phase 1 (Session 27) shipped JSON parse + the
+/// AES-256-CBC decrypt primitive. Phase 2 chunk 1 + 2a (Session 27)
+/// shipped the SECITEM envelope decoder + PBKDF2-SHA256 KAT-pinned
+/// derivation + the password-check verifier. Phase 2 chunk 2b + 3
+/// (Session 28, this revision) ships the `key4.db` master-key
+/// extraction + the end-to-end importer wiring: real entries flow out
+/// of `discover_entries`, the operator's primary password (empty by
+/// default) gates the unwrap.
+pub struct FirefoxImporter {
+    /// Operator's Firefox primary password. For installs without a
+    /// primary password set (vast majority), pass an empty
+    /// `SecretString`; the SHA1 KDF preamble still produces a stable
+    /// intermediate key. Stored as `SecretString` so the Drop scrub +
+    /// `Debug` redaction prevent accidental leak through trace logs.
+    primary_password: SecretString,
+}
+
+impl FirefoxImporter {
+    /// Construct with the operator's Firefox primary password. The
+    /// wizard's chunk-3 path prompts via dialoguer (interactive mode)
+    /// or accepts an empty `SecretString` (non-interactive mode).
+    pub fn new(primary_password: SecretString) -> Self {
+        Self { primary_password }
+    }
+
+    /// Convenience constructor for installs without a primary password
+    /// (the default for ~all Firefox installs — most operators never
+    /// set one). The wizard chunk-3 path defaults to this when
+    /// `--non-interactive` is set OR when the operator skips the
+    /// primary-password prompt.
+    pub fn with_no_primary_password() -> Self {
+        Self::new(SecretString::new(String::new()))
+    }
+}
 
 #[async_trait]
 impl CredentialImporter for FirefoxImporter {
@@ -236,7 +270,7 @@ impl CredentialImporter for FirefoxImporter {
     }
 
     fn name(&self) -> &'static str {
-        "Firefox logins.json + key4.db (master-key path lands Session 28)"
+        "Firefox logins.json + key4.db (AES-256-CBC end-to-end)"
     }
 
     async fn is_available(&self) -> bool {
@@ -244,32 +278,124 @@ impl CredentialImporter for FirefoxImporter {
     }
 
     async fn discover_entries(&self) -> Result<DiscoveredCredentials, String> {
+        let profile_root =
+            firefox_profile_root().ok_or_else(|| "unsupported OS for Firefox path".to_string())?;
+        let ini_path = profile_root.join("profiles.ini");
+        let ini_body = tokio::fs::read_to_string(&ini_path)
+            .await
+            .map_err(|e| format!("profiles.ini read failed at {ini_path:?}: {e}"))?;
+        let profile_subpath = pick_default_profile(&ini_body)
+            .ok_or_else(|| "no default Firefox profile found in profiles.ini".to_string())?;
+        let profile_path = profile_root.join(&profile_subpath);
+
+        let logins_path = profile_path.join("logins.json");
+        let logins_body = tokio::fs::read_to_string(&logins_path)
+            .await
+            .map_err(|e| format!("logins.json read failed at {logins_path:?}: {e}"))?;
+        let logins = parse_logins_json(&logins_body)?;
+
+        let key4_path = profile_path.join("key4.db");
+        let master_key = extract_master_key_from_file(&key4_path, self.primary_password.expose())
+            .map_err(|e| format!("key4.db master-key extract failed: {e}"))?;
+
+        // Modern Firefox uses AES-256-CBC for SECITEM entries; this
+        // path requires ≥32 bytes of master-key material. Legacy
+        // 3DES paths (24-byte master key) surface as a warning + skip
+        // — they were the pre-NSS-3.40 norm and operators on those
+        // installs need to migrate via Firefox itself first.
+        if master_key.len() < 32 {
+            return Err(format!(
+                "Firefox master key is {} bytes — the AES-256-CBC path needs ≥32. \
+                 Likely a legacy 3DES profile; have Firefox migrate it first.",
+                master_key.len()
+            ));
+        }
+        let aes_key: [u8; 32] = master_key[..32]
+            .try_into()
+            .expect("slice len checked above");
+
+        let mut entries = Vec::new();
         let mut warnings = vec![format!(
-            "Firefox profile root found at {:?}. C-04b Phase 1 + Phase 2 \
-             chunk 1 shipped Session 27: logins.json parser + AES-256-CBC \
-             decrypt primitive + ASN.1 SECITEM envelope decoder are all in \
-             tree. Phase 2 chunk 2 (key4.db master-key extraction) + chunk 3 \
-             (importer wiring) land Session 28. Today the importer returns \
-             zero entries to avoid false-success — operator-visible audit \
-             stays honest.",
-            firefox_profile_root(),
+            "Firefox profile '{}' ({} entries to decrypt)",
+            profile_subpath,
+            logins.logins.len()
         )];
-        // Attempt to read profiles.ini to surface profile count.
-        if let Some(ini_path) = profiles_ini_path() {
-            if let Ok(body) = tokio::fs::read_to_string(&ini_path).await {
-                let profiles = parse_profiles_ini(&body);
-                warnings.push(format!("found {} Firefox profile(s)", profiles.len()));
-                if let Some(default) = pick_default_profile(&body) {
-                    warnings.push(format!("default profile: {default}"));
+        for login in &logins.logins {
+            match decrypt_login_entry(&aes_key, login) {
+                Ok((username, password)) => {
+                    entries.push(ImportedCredential::new(
+                        ImportSource::WizardPrompt,
+                        login.hostname.clone(),
+                        login.hostname.clone(),
+                        username,
+                        password,
+                        vec!["firefox".to_string()],
+                    ));
+                }
+                Err(why) => {
+                    warnings.push(format!("skipped entry for {}: {why}", login.hostname));
                 }
             }
         }
+
         Ok(DiscoveredCredentials {
             source: ImportSource::WizardPrompt,
-            entries: Vec::new(),
+            entries,
             warnings,
         })
     }
+}
+
+/// Decrypt one `logins.json` entry. Both `encryptedUsername` and
+/// `encryptedPassword` are base64-wrapped ASN.1 SECITEM envelopes
+/// (decoded by [`parse_firefox_envelope`]); the AES-256-CBC primitive
+/// from chunk 1 unwraps each one using the master key recovered by
+/// [`extract_master_key_from_file`].
+///
+/// Returns the (username, password) pair as UTF-8 strings on success.
+/// Surfaces a descriptive error per failure mode — the importer
+/// catches + folds into a per-entry warning so a single malformed
+/// row doesn't abort the whole import.
+fn decrypt_login_entry(
+    aes_key: &[u8; 32],
+    login: &FirefoxLoginEntry,
+) -> Result<(String, String), String> {
+    let username_env = parse_firefox_envelope(&login.encrypted_username)
+        .map_err(|e| format!("username envelope parse failed: {e}"))?;
+    let password_env = parse_firefox_envelope(&login.encrypted_password)
+        .map_err(|e| format!("password envelope parse failed: {e}"))?;
+
+    if username_env.algorithm != FirefoxAlgorithm::Aes256Cbc {
+        return Err(format!(
+            "unsupported username algorithm {:?}",
+            username_env.algorithm
+        ));
+    }
+    if password_env.algorithm != FirefoxAlgorithm::Aes256Cbc {
+        return Err(format!(
+            "unsupported password algorithm {:?}",
+            password_env.algorithm
+        ));
+    }
+    let username_iv: [u8; 16] = username_env
+        .iv
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("username IV not 16 bytes (got {})", username_env.iv.len()))?;
+    let password_iv: [u8; 16] = password_env
+        .iv
+        .as_slice()
+        .try_into()
+        .map_err(|_| format!("password IV not 16 bytes (got {})", password_env.iv.len()))?;
+    let username_bytes = decrypt_aes256_cbc_pkcs7(aes_key, &username_iv, &username_env.ciphertext)
+        .map_err(|e| format!("username decrypt failed: {e}"))?;
+    let password_bytes = decrypt_aes256_cbc_pkcs7(aes_key, &password_iv, &password_env.ciphertext)
+        .map_err(|e| format!("password decrypt failed: {e}"))?;
+    let username =
+        String::from_utf8(username_bytes).map_err(|e| format!("username not UTF-8: {e}"))?;
+    let password =
+        String::from_utf8(password_bytes).map_err(|e| format!("password not UTF-8: {e}"))?;
+    Ok((username, password))
 }
 
 #[cfg(test)]
@@ -359,29 +485,51 @@ mod tests {
 
     #[tokio::test]
     async fn importer_is_available_returns_bool_without_panic() {
-        let imp = FirefoxImporter;
+        let imp = FirefoxImporter::with_no_primary_password();
         let _ = imp.is_available().await;
     }
 
     #[tokio::test]
-    async fn importer_discover_returns_warning_not_error() {
-        let imp = FirefoxImporter;
-        let d = imp.discover_entries().await.expect("must not error");
-        assert!(d.entries.is_empty());
-        assert!(!d.warnings.is_empty());
-        assert!(d.warnings[0].contains("C-04b"));
+    async fn importer_discover_surfaces_error_when_no_profile_exists() {
+        // Without a real Firefox profile at the canonical path
+        // (CI runner has none), discover_entries surfaces an error
+        // — NOT silently zero entries. The wizard caller folds
+        // this into a per-source diagnostic via ImporterOutcome.
+        let imp = FirefoxImporter::with_no_primary_password();
+        if imp.is_available().await {
+            // Real profile detected on the dev machine. Skip the
+            // negative-case check; the importer may legitimately
+            // surface either Ok(entries) or Err(reason) depending
+            // on the operator's primary-password state.
+            return;
+        }
+        let result = imp.discover_entries().await;
+        assert!(
+            result.is_err(),
+            "no profile available → discover MUST surface an error so the wizard \
+             can fold it into a per-source diagnostic, got Ok"
+        );
     }
 
     #[test]
-    fn importer_name_mentions_session_28_followup() {
-        let imp = FirefoxImporter;
-        // Drift guard: the name must signal that decrypt isn't live
-        // yet so a wizard log line doesn't look like a working import.
+    fn importer_name_describes_aes_256_cbc_path() {
+        let imp = FirefoxImporter::with_no_primary_password();
+        // Drift guard: the name must mention the actual algorithm
+        // so wizard logs surface the correct path. If we ever wire
+        // 3DES fallback, the name must change to reflect it.
         assert!(
-            imp.name().contains("Session 28") || imp.name().contains("master-key"),
-            "name must signal in-progress state: {}",
+            imp.name().contains("AES-256-CBC") || imp.name().contains("key4.db"),
+            "name must describe the real algorithm: {}",
             imp.name(),
         );
+    }
+
+    #[test]
+    fn importer_constructors_compile() {
+        // Smoke test: both constructors return values the wizard
+        // can box into a `Vec<Box<dyn CredentialImporter>>`.
+        let _empty = FirefoxImporter::with_no_primary_password();
+        let _explicit = FirefoxImporter::new(SecretString::new("pw".to_string()));
     }
 
     // ── C-04b Phase 1 (Session 27) — logins.json parser ────────────

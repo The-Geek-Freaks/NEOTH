@@ -95,7 +95,16 @@ pub fn build_wizard_importer_list(
         out.push(Box::new(BitwardenJsonImporter::new(path)));
     }
     out.push(Box::new(ChromeImporter));
-    out.push(Box::new(FirefoxImporter));
+    // C-04b Phase 2 chunk 3 (Session 28) — the Firefox importer
+    // now carries the operator's primary password. The wizard's
+    // step-6 default path constructs with no-primary-password (the
+    // vast-majority install case); the interactive prompt branch
+    // calls `FirefoxImporter::new(SecretString::new(prompt))` when
+    // the operator has a primary password set. The non-interactive
+    // path always uses `with_no_primary_password()` — operators
+    // with a primary-password-protected profile must use the
+    // interactive wizard or rerun with a future SC-flagged env-var.
+    out.push(Box::new(FirefoxImporter::with_no_primary_password()));
     out
 }
 
