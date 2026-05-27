@@ -213,9 +213,7 @@ fn render_list(output: OutputFormat) -> Result<()> {
                 .npm_package()
                 .map(str::to_string)
                 .unwrap_or_else(|| match *c {
-                    Component::AntigravityCli => {
-                        "shell:antigravity.google/cli/install".to_string()
-                    }
+                    Component::AntigravityCli => "shell:antigravity.google/cli/install".to_string(),
                     _ => "shell:vendor".to_string(),
                 });
             serde_json::json!({

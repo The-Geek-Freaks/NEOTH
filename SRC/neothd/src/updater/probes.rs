@@ -72,13 +72,17 @@ pub async fn cli_version_specs_async(gate: GateDecision) -> Vec<ComponentSpec> {
         // failures; shell-script CLIs (Antigravity) have no upstream
         // registry yet, so we emit a stable sentinel the operator can
         // grep for in `neoth updater status`.
-        let latest = s.latest.clone().map(Ok).unwrap_or_else(|| match c.npm_package() {
-            Some(pkg) => Err(format!("npm view {pkg} version: failed")),
-            None => Err(format!(
-                "{} ships via vendor shell-script (no registry probe yet)",
-                c.name()
-            )),
-        });
+        let latest = s
+            .latest
+            .clone()
+            .map(Ok)
+            .unwrap_or_else(|| match c.npm_package() {
+                Some(pkg) => Err(format!("npm view {pkg} version: failed")),
+                None => Err(format!(
+                    "{} ships via vendor shell-script (no registry probe yet)",
+                    c.name()
+                )),
+            });
         Some((installed, latest))
     };
     cli_version_specs(

@@ -215,7 +215,11 @@ pub async fn apply_one(component: Component) -> Result<()> {
             );
         }
     };
-    info!(component = component.name(), display = kind.display, "updating via vendor shell-script");
+    info!(
+        component = component.name(),
+        display = kind.display,
+        "updating via vendor shell-script"
+    );
     crate::installers::install_kind(kind).await
 }
 
@@ -307,9 +311,7 @@ mod tests {
             // For npm components compare the package; for shell-script
             // ones use the component name as a stand-in so the set has
             // distinct entries without claiming an npm slot.
-            let key = c
-                .npm_package()
-                .unwrap_or_else(|| c.name());
+            let key = c.npm_package().unwrap_or_else(|| c.name());
             assert!(targets.insert(key), "duplicate install target {key}");
         }
     }

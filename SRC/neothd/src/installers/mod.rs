@@ -163,11 +163,7 @@ pub async fn install_kind(kind: CliKind) -> Result<()> {
 }
 
 async fn install_via_npm(display: &str, package: &str) -> Result<()> {
-    info!(
-        package,
-        display,
-        "running `npm install -g {package}`",
-    );
+    info!(package, display, "running `npm install -g {package}`",);
     let mut child = spawn_cli("npm", &["install", "-g", package])
         .with_context(|| format!("spawn npm install -g {package}"))?;
     let status = child
