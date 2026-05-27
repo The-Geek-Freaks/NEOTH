@@ -1178,6 +1178,31 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── 5d-bis. Reflection cron — G-01 (Round-3 v0.4 cron wiring) ────
+    //
+    // Weekly Day-7 reflection: glues `crate::reflection`
+    // (G-01-mini producer) + `crate::proactive::ProactiveQueue`
+    // (G-01a substrate). Ticks every 24h by default — the per-week
+    // dedup_key in the built item keeps actual emissions to one per
+    // ISO week regardless of tick frequency, so daily ticks just
+    // provide recovery if a daemon restart misses Sunday's tick.
+    //
+    // No freedom.yaml gate yet (planned config: `reflection.cron_
+    // interval_secs`); ships always-on at 24h. Operators who don't
+    // want proactive reflections can drain the proactive_queue.json
+    // before the consumer-side reads it.
+    let reflection_cron_handle = {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        crate::daemon::reflection_cron::spawn_reflection_cron_loop(
+            home,
+            crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
+        )
+    };
+    info!(
+        interval_secs = crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
+        "reflection cron loop spawned (G-01 wiring — Round-3 v0.4)"
+    );
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -1789,6 +1814,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         task.abort();
         let _ = task.await;
     }
+
+    // Round-3 v0.4 G-01 — reflection cron loop. Reads views.db +
+    // writes proactive_queue.json; mid-tick abort leaves the queue
+    // file untouched (writer is atomic .tmp + rename) so the next
+    // boot sees a consistent state.
+    reflection_cron_handle.abort();
+    let _ = reflection_cron_handle.await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

@@ -15,6 +15,13 @@ pub mod doctor_cron;
 pub mod export;
 pub mod hardware;
 pub mod installer_audit_sidecar;
+/// Round-3 v0.4 G-01 cron-wiring — periodic reflection-builder tick
+/// that glues `reflection::build_reflection_item` (G-01-mini) +
+/// `proactive::ProactiveQueue::enqueue` (G-01a). Ticks every 24h
+/// (operator-tunable); the per-week dedup_key in the reflection
+/// item itself keeps emissions to one per ISO week regardless of
+/// tick frequency.
+pub mod reflection_cron;
 pub mod sidecar;
 pub mod updater_cron;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
