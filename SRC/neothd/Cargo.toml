@@ -227,6 +227,18 @@ hex    = "0.4"
 # token stored at ~/.neoth/n8n_api_token.
 base64 = "0.22"
 
+# C-04b Phase 1 (Session 27) — Firefox `logins.json` decrypt.
+# Firefox stores credentials in PBES2 envelopes (PBKDF2-SHA256 +
+# AES-256-CBC). The Session 26 handoff incorrectly suggested
+# AES-256-GCM; Firefox / NSS has used CBC for `key4.db` since
+# the format-4 switch (NSS 3.40+). All RustCrypto family — no
+# openssl, no `ring`. `subtle` for constant-time HMAC compare
+# during PBKDF2 verification.
+aes    = "0.8"
+cbc    = { version = "0.1", features = ["block-padding"] }
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+subtle = "2"
+
 # K-Repo-Map Phase 1 (Session 14 Pick #13) — fast filesystem walker that
 # honours .gitignore / .ignore / .neothignore semantics, parallel by
 # default, used in NEOTH's first-pass code-map scan. Pure Rust, no
