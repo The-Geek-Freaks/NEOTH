@@ -411,6 +411,17 @@ windows-sys = { version = "0.59", features = ["Win32_System_Memory", "Win32_Foun
 # the dep graph clean on non-Chrome-decrypt platforms.
 aes-gcm = "0.10"
 
+# C-03b Linux (Session 28) — Secret Service (DBus) client for Chrome's
+# AES-128-CBC password envelope. Chrome on Linux stores the symmetric
+# key inside the operator's login keyring (GNOME Keyring or KWallet)
+# under a known schema attribute; AES-CBC decrypt uses PBKDF2-SHA1
+# iter=1 with the hardcoded "saltysalt" salt. The `secret-service`
+# crate is pure-Rust (transitively depends on `zbus`, also pure-Rust
+# UNIX sockets — no libdbus C-dep needed). The tokio feature gives us
+# async compatibility with the rest of the daemon.
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "4", features = ["rt-tokio-crypto-rust"] }
+
 # B-6 Item 3f (Session 21) — PTY stealth for interactive subprocess.
 # `portable-pty` is the cross-platform PTY crate WezTerm uses (Wez Furlong).
 # It abstracts Windows ConPTY (Win10+) + Linux pty + macOS pty behind one

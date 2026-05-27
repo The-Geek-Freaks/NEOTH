@@ -37,6 +37,8 @@
 
 pub mod bitwarden;
 pub mod chrome;
+#[cfg(target_os = "linux")]
+pub mod chrome_linux;
 #[cfg(target_os = "windows")]
 pub mod chrome_windows;
 pub mod firefox;

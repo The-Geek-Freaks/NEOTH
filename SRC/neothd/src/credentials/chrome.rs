@@ -30,7 +30,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use crate::credentials::ImportedCredential;
 use crate::credentials::{CredentialImporter, DiscoveredCredentials, ImportSource};
 
@@ -100,7 +100,7 @@ pub fn is_login_data_locked() -> bool {
 
 /// Importer impl. Per-OS decrypt dispatched at compile time:
 ///   - Windows → DPAPI + AES-256-GCM (C-03b chunk Windows, Session 28)
-///   - Linux → Secret Service + AES-128-CBC (C-03b chunk Linux, future)
+///   - Linux → Secret Service + AES-128-CBC (C-03b chunk Linux, Session 28)
 ///   - macOS → Keychain + AES-128-CBC (C-03b chunk macOS, future)
 ///   - Other → returns the C-03b-deferred warning, zero entries.
 pub struct ChromeImporter;
@@ -116,7 +116,12 @@ impl CredentialImporter for ChromeImporter {
         "Chrome Login Data (DPAPI + AES-256-GCM)"
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    fn name(&self) -> &'static str {
+        "Chrome Login Data (Secret Service + AES-128-CBC)"
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     fn name(&self) -> &'static str {
         "Chrome Login Data (decrypt gated to C-03b for this OS)"
     }
@@ -135,7 +140,11 @@ impl CredentialImporter for ChromeImporter {
         {
             discover_entries_windows().await
         }
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        {
+            discover_entries_linux().await
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         {
             discover_entries_deferred().await
         }
@@ -191,12 +200,55 @@ async fn discover_entries_windows() -> Result<DiscoveredCredentials, String> {
     })
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+async fn discover_entries_linux() -> Result<DiscoveredCredentials, String> {
+    use crate::credentials::chrome_linux::discover_chrome_credentials_linux;
+
+    let login_data = chrome_login_data_path()
+        .ok_or_else(|| "Chrome Login Data path unavailable on this host".to_string())?;
+
+    let mut warnings = Vec::new();
+    if is_login_data_locked() {
+        warnings.push(
+            "Chrome is currently running — close it before importing. \
+             The SQLite would be locked and rows may be missing the latest \
+             unflushed write."
+                .to_string(),
+        );
+    }
+
+    let (creds, decrypt_warnings) = discover_chrome_credentials_linux(&login_data)
+        .await
+        .map_err(|e| format!("Chrome (Linux) decrypt failed: {e}"))?;
+    warnings.extend(decrypt_warnings);
+
+    let entries: Vec<ImportedCredential> = creds
+        .into_iter()
+        .map(|c| {
+            ImportedCredential::new(
+                ImportSource::WizardPrompt,
+                c.origin_url.clone(),
+                c.origin_url,
+                c.username,
+                c.password,
+                vec!["chrome".to_string()],
+            )
+        })
+        .collect();
+
+    Ok(DiscoveredCredentials {
+        source: ImportSource::WizardPrompt,
+        entries,
+        warnings,
+    })
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 async fn discover_entries_deferred() -> Result<DiscoveredCredentials, String> {
     let mut warnings = vec![format!(
         "Chrome Login Data found at {:?} but decrypt is gated for \
-         this OS. C-03b ships per-OS decrypt — Windows landed Session 28; \
-         Linux (Secret Service) and macOS (Keychain) follow.",
+         this OS. C-03b ships per-OS decrypt — Windows + Linux landed \
+         Session 28; macOS (Keychain) follows.",
         chrome_login_data_path(),
     )];
     if is_login_data_locked() {
@@ -259,12 +311,12 @@ mod tests {
         let _ = imp.is_available().await;
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     #[tokio::test]
     async fn importer_discover_returns_warning_not_error() {
         let imp = ChromeImporter;
         let d = imp.discover_entries().await.expect("must not error");
-        // Non-Windows: zero entries + warning explaining the gated decrypt.
+        // Non-Windows/Linux: zero entries + warning explaining the gated decrypt.
         assert!(d.entries.is_empty());
         assert!(!d.warnings.is_empty());
         assert!(
@@ -274,13 +326,13 @@ mod tests {
         );
     }
 
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     #[tokio::test]
-    async fn importer_discover_surfaces_error_or_credentials_on_windows() {
-        // Windows path is live as of C-03b Session 28. On a CI
-        // runner without Chrome installed, the Login Data file is
-        // absent → discover surfaces Err. On a dev machine with
-        // Chrome installed, it surfaces Ok(entries). Either is
+    async fn importer_discover_surfaces_error_or_credentials_on_live_os() {
+        // Live decrypt path on Windows + Linux (C-03b Session 28).
+        // On a CI runner without Chrome installed, the Login Data
+        // file is absent → discover surfaces Err. On a dev machine
+        // with Chrome installed, it surfaces Ok(entries). Either is
         // valid; what we check is that the call doesn't panic.
         let imp = ChromeImporter;
         let _ = imp.discover_entries().await;
@@ -290,17 +342,22 @@ mod tests {
     fn importer_name_signals_implementation_state() {
         let imp = ChromeImporter;
         let name = imp.name();
-        // Drift guard: name must mention the algorithm on Windows
-        // (live) or "gated" on other OSes (deferred).
+        // Drift guard: name must mention the algorithm on live OSes
+        // (Windows + Linux) or "gated" on others (deferred).
         #[cfg(target_os = "windows")]
         assert!(
             name.contains("AES-256-GCM") || name.contains("DPAPI"),
             "Windows name must signal live decrypt: {name}"
         );
-        #[cfg(not(target_os = "windows"))]
+        #[cfg(target_os = "linux")]
+        assert!(
+            name.contains("AES-128-CBC") || name.contains("Secret Service"),
+            "Linux name must signal live decrypt: {name}"
+        );
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
         assert!(
             name.contains("gated"),
-            "non-Windows name must signal gated: {name}"
+            "fallback OS name must signal gated: {name}"
         );
     }
 
