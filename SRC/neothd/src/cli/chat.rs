@@ -18,9 +18,19 @@ use tracing::{info, warn};
 use crate::config::FreedomConfig;
 use crate::providers::{self, CompletionChunk, Request};
 use crate::wal::events::{
-    EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
+    EVENT_TYPE_BUDGET_EXCEEDED, EVENT_TYPE_PROVIDER_REQUEST, EVENT_TYPE_PROVIDER_RESPONSE,
+    EVENT_TYPE_RAW_TEXT,
 };
 use crate::wal::spawn as wal_spawn;
+
+/// Round-3 v0.4 ARCH-04 integration — default pre-flight token cap
+/// for the prompt bundle. 100_000 tokens covers Opus 4.7 (200k
+/// context) + Sonnet 4.6 (200k) + Gemini 3 (1M) operators with
+/// significant headroom for response tokens. Operators on smaller-
+/// context models (Gemini Flash 32k, local Qwen3-4B 8k) hit the
+/// BUDGET_EXCEEDED warn path. Will become operator-tunable via
+/// `freedom.yaml::tokens.max_per_request` in the follow-on slice.
+const DEFAULT_PROMPT_TOKEN_CAP: u32 = 100_000;
 
 #[derive(Args, Debug, Clone)]
 pub struct ChatArgs {
@@ -226,6 +236,81 @@ pub async fn run_chat_with(
     });
     let prompt_bundle_hash = crate::skills::versioning::prompt_bundle_hash_hex(&bundle_entries);
 
+    // ── ARCH-04 integration: pre-flight block-layer budget check ─────────
+    //
+    // Convert the bundle entries we just built (Block::A + Block::E
+    // today; B/C/D extend as the assembler grows) into the matching
+    // BlockItem shape + run enforce_budget. The cap is a sensible
+    // default (DEFAULT_PROMPT_TOKEN_CAP = 100_000) until the
+    // freedom.yaml::tokens.max_per_request operator-config field
+    // lands (separate slice). Operators on tight-context models
+    // (e.g. Gemini Flash 32k) hit the warn path; operators on
+    // Opus 4.7 (200k) won't trip the default.
+    //
+    // Today's call site only carries A + E — both undegradable per
+    // ARCH-04 policy — so `enforce_budget` either returns None (under
+    // cap, no-op) or Some(detail) with `new_total > cap` (operator-
+    // visible "your prompt exceeds the cap; tighten Block::A/E"
+    // signal). When the assembler emits Block::B/C/D the degradation
+    // policy starts firing for real.
+    let prompt_token_estimate: u32 = {
+        use crate::tokens::budget::{Block, BlockItem, count_tokens};
+        let items: Vec<BlockItem> = bundle_entries
+            .iter()
+            .map(|e| BlockItem {
+                block: match e.block {
+                    crate::skills::versioning::BundleBlock::A => Block::A,
+                    crate::skills::versioning::BundleBlock::B => Block::B,
+                    crate::skills::versioning::BundleBlock::C => Block::C,
+                    crate::skills::versioning::BundleBlock::D => Block::D,
+                    crate::skills::versioning::BundleBlock::E => Block::E,
+                    crate::skills::versioning::BundleBlock::Conductor => Block::Conductor,
+                },
+                importance: 0.5,
+                ts_ns: 0,
+                tokens: count_tokens(e.content),
+                content: e.content.to_string(),
+            })
+            .collect();
+        let estimate: u32 = items.iter().map(|i| i.tokens).sum();
+        let mut items_mut = items;
+        if let Some(detail) =
+            crate::tokens::budget::enforce_budget(&mut items_mut, DEFAULT_PROMPT_TOKEN_CAP)
+        {
+            // Emit BUDGET_EXCEEDED audit frame BEFORE PROVIDER_REQUEST
+            // so the audit-chain consumer sees them in cause-then-
+            // effect order. Best-effort emit — a WAL write failure
+            // here MUST NOT abort the chat turn (the audit signal is
+            // operator-visible via tracing::warn fallback).
+            warn!(
+                cap = detail.cap,
+                original_total = detail.original_total,
+                new_total = detail.new_total,
+                dropped_d = detail.dropped_d_count,
+                dropped_c = detail.dropped_c_count,
+                conductor_truncated = detail.conductor_truncated,
+                "prompt-bundle exceeded token cap; degradation applied (or A/B/E-only — operator should tighten)"
+            );
+            let budget_payload = serde_json::to_vec(&serde_json::json!({
+                "cap": detail.cap,
+                "original_total": detail.original_total,
+                "new_total": detail.new_total,
+                "dropped_d_count": detail.dropped_d_count,
+                "dropped_c_count": detail.dropped_c_count,
+                "conductor_truncated": detail.conductor_truncated,
+                "prompt_bundle_hash": prompt_bundle_hash,
+                "ts_unix": now_unix(),
+            }))
+            .unwrap_or_default();
+            let budget_header =
+                crate::wal::make_header(EVENT_TYPE_BUDGET_EXCEEDED, &budget_payload);
+            if let Err(e) = writer.append(budget_header, budget_payload).await {
+                warn!(error = %e, "BUDGET_EXCEEDED WAL emit failed (non-fatal)");
+            }
+        }
+        estimate
+    };
+
     let req_payload = serde_json::to_vec(&serde_json::json!({
         "operator_id": config.operator_id,
         "provider": provider.name(),
@@ -233,6 +318,7 @@ pub async fn run_chat_with(
         "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
         "prompt_bytes": prompt.len(),
         "prompt_bundle_hash": prompt_bundle_hash,
+        "prompt_token_estimate": prompt_token_estimate,
         "ts_unix": now_unix(),
     }))?;
     let req_header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &req_payload);
