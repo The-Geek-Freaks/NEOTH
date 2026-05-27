@@ -1203,6 +1203,27 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "reflection cron loop spawned (G-01 wiring — Round-3 v0.4)"
     );
 
+    // ── 5d-tris. Proactive drain cron — G-01 consumer half (Round-3 v0.4) ──
+    //
+    // Drains items the reflection_cron (above) enqueued into the
+    // ProactiveQueue + appends each to `~/.neoth/proactive_delivered.jsonl`
+    // for operator inspection. Ticks every 5min; per-tick cap of 3
+    // smooths bursty producers. Future channel adapters (Telegram /
+    // Slack / Keet) consume the same sidecar for at-least-once
+    // delivery semantics — the daemon-side drain stays channel-
+    // agnostic.
+    let proactive_dispatcher_handle = {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        crate::daemon::proactive_dispatcher::spawn_proactive_drain_loop(
+            home,
+            crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
+        )
+    };
+    info!(
+        interval_secs = crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
+        "proactive drain loop spawned (G-01 consumer half — Round-3 v0.4)"
+    );
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -1821,6 +1842,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // boot sees a consistent state.
     reflection_cron_handle.abort();
     let _ = reflection_cron_handle.await;
+
+    // Round-3 v0.4 G-01 consumer half — proactive drain loop.
+    // Drains queue + appends to JSONL sidecar; the JSONL sidecar
+    // is append-only so a mid-tick abort either landed the line
+    // (delivered) or didn't (next tick re-picks the item). Worst
+    // case: one item is dropped from a tick that aborted mid-flight
+    // — operator sees it on next drain cycle.
+    proactive_dispatcher_handle.abort();
+    let _ = proactive_dispatcher_handle.await;
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

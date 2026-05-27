@@ -15,6 +15,14 @@ pub mod doctor_cron;
 pub mod export;
 pub mod hardware;
 pub mod installer_audit_sidecar;
+/// Round-3 v0.4 G-01 consumer half — periodic drain of
+/// `proactive::ProactiveQueue` into a `proactive_delivered.jsonl`
+/// sidecar. Operators tail the sidecar OR future channel adapters
+/// subscribe to it for at-least-once delivery semantics. Ticks
+/// every 5min (PROACTIVE_DRAIN_INTERVAL_SECS); per-tick cap
+/// PROACTIVE_PER_TICK_CAP = 3 caps the notification storm even if
+/// the queue's daily budget is wider.
+pub mod proactive_dispatcher;
 /// Round-3 v0.4 G-01 cron-wiring — periodic reflection-builder tick
 /// that glues `reflection::build_reflection_item` (G-01-mini) +
 /// `proactive::ProactiveQueue::enqueue` (G-01a). Ticks every 24h
