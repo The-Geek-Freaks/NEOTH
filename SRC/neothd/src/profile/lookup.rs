@@ -27,22 +27,30 @@ pub struct ProfileClaim {
     pub confidence: f64,
 }
 
-/// ADV-05 (Session 28): drop claims whose top-level category appears
-/// in `disabled_categories`. Pure-fn filter applied AFTER
-/// [`top_claims_for_chat`] so the SQL surface stays unchanged + the
-/// gate composes with any other post-query filter. Returns the
-/// retained claims in their original order.
+/// ADV-05 + ADV-06 (Session 28): drop claims whose top-level category
+/// OR specific sub-field path appears in `disabled_entries`. Pure-fn
+/// filter applied AFTER [`top_claims_for_chat`] so the SQL surface
+/// stays unchanged + the gate composes with any other post-query
+/// filter. Returns the retained claims in their original order.
 ///
-/// The category derivation matches `extension_registry::category_of`
-/// (top segment before the first `.`); `disabled_categories` items
-/// compare case-sensitively because the registry stores categories
-/// case-sensitively. An empty `disabled_categories` slice is the
+/// Match semantics — an entry `E` blocks claim with field `F` when:
+///   1. `E == category_of(F)` (top-level category match — ADV-05 use
+///      case: "ban all of `identity.*`" via entry `"identity"`); OR
+///   2. `E == F` (exact-field match — ADV-06 use case: "ban only
+///      `identity.location` while keeping `identity.role` enabled"); OR
+///   3. `F` starts with `format!("{E}.")` (dotted-prefix match — entry
+///      `"identity.location"` also catches a future
+///      `"identity.location.country"` sub-claim without needing the
+///      operator to enumerate every leaf).
+///
+/// All comparisons are case-sensitive because the registry stores
+/// categories case-sensitively. Empty `disabled_entries` is the
 /// no-op identity transform.
 pub fn filter_pii_disabled(
     claims: Vec<ProfileClaim>,
-    disabled_categories: &[String],
+    disabled_entries: &[String],
 ) -> Vec<ProfileClaim> {
-    if disabled_categories.is_empty() {
+    if disabled_entries.is_empty() {
         return claims;
     }
     claims
@@ -50,7 +58,9 @@ pub fn filter_pii_disabled(
         .filter(|c| {
             let category =
                 crate::profile::extension_registry::TypedExtensionRegistry::category_of(&c.field);
-            !disabled_categories.iter().any(|d| d == category)
+            !disabled_entries.iter().any(|d| {
+                d == category || d == c.field.as_str() || c.field.starts_with(&format!("{d}."))
+            })
         })
         .collect()
 }
@@ -577,6 +587,79 @@ mod tests {
         let disabled = vec!["flatfield".to_string()];
         let filtered = filter_pii_disabled(claims, &disabled);
         assert!(filtered.is_empty());
+    }
+
+    // ── ADV-06 (Session 28): sub-field granularity ─────────────────
+
+    #[test]
+    fn filter_pii_disabled_drops_exact_subfield_match() {
+        // Operator wants `identity.location` blocked but
+        // `identity.role` to keep flowing into Block-B.
+        let claims = vec![
+            claim("identity.location", "\"Berlin\"", 0.9),
+            claim("identity.role", "\"developer\"", 0.85),
+            claim("identity.name", "\"Alex\"", 0.95),
+        ];
+        let disabled = vec!["identity.location".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|c| c.field.as_str())
+                .collect::<Vec<_>>(),
+            vec!["identity.role", "identity.name"]
+        );
+    }
+
+    #[test]
+    fn filter_pii_disabled_subfield_match_supports_dotted_prefix() {
+        // Entry `identity.location` should also block a future
+        // sub-leaf like `identity.location.country` without the
+        // operator enumerating every leaf path.
+        let claims = vec![
+            claim("identity.location", "\"Berlin\"", 0.9),
+            claim("identity.location.country", "\"DE\"", 0.85),
+            claim("identity.role", "\"dev\"", 0.85),
+        ];
+        let disabled = vec!["identity.location".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        // Only identity.role survives.
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].field, "identity.role");
+    }
+
+    #[test]
+    fn filter_pii_disabled_subfield_does_not_prefix_match_partial_segment() {
+        // Entry `identity.loc` must NOT block `identity.location`
+        // (the dotted boundary stops accidental prefix collisions).
+        let claims = vec![claim("identity.location", "\"Berlin\"", 0.9)];
+        let disabled = vec!["identity.loc".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn filter_pii_disabled_mixed_category_and_subfield_entries() {
+        // Operator deny-list combines: ban all of `health` (category-
+        // level, ADV-05) + ban specifically `identity.location`
+        // (sub-field, ADV-06) while keeping the rest of `identity`.
+        let claims = vec![
+            claim("identity.location", "\"Berlin\"", 0.9),
+            claim("identity.role", "\"developer\"", 0.85),
+            claim("skills.rust", "\"5y\"", 0.8),
+            claim("health.steps", "10000", 0.7),
+            claim("health.sleep_score", "85", 0.7),
+        ];
+        let disabled = vec!["health".to_string(), "identity.location".to_string()];
+        let filtered = filter_pii_disabled(claims, &disabled);
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|c| c.field.as_str())
+                .collect::<Vec<_>>(),
+            vec!["identity.role", "skills.rust"]
+        );
     }
 
     #[test]
