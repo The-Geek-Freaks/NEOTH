@@ -162,8 +162,13 @@ pub async fn install_kind(kind: CliKind) -> Result<()> {
     }
 }
 
-async fn install_via_npm(display: &str, package: &str) -> Result<()> {
-    info!(package, display, "running `npm install -g {package}`",);
+// NB: parameter named `cli_name` rather than `display` because the
+// `info!` / `warn!` macros from `tracing` resolve a bare `display`
+// identifier as the `tracing::field::display` value-formatter function,
+// not as the local variable — see E0277 on the qwen-metal job for
+// run 26503528842.
+async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
+    info!(package, cli_name, "running `npm install -g {package}`");
     let mut child = spawn_cli("npm", &["install", "-g", package])
         .with_context(|| format!("spawn npm install -g {package}"))?;
     let status = child
@@ -178,7 +183,7 @@ async fn install_via_npm(display: &str, package: &str) -> Result<()> {
             status.code()
         );
     }
-    info!(package, "install ok");
+    info!(package, cli_name, "install ok");
     Ok(())
 }
 
@@ -188,14 +193,14 @@ async fn install_via_npm(display: &str, package: &str) -> Result<()> {
 /// wizard can stream stderr + apply the same timeout/cancel discipline
 /// as the npm path.
 async fn install_via_shell_script(
-    display: &str,
+    cli_name: &str,
     unix_url: &str,
     windows_ps_url: &str,
 ) -> Result<()> {
     #[cfg(windows)]
     {
         info!(
-            display,
+            cli_name,
             url = windows_ps_url,
             "running PowerShell installer `irm {windows_ps_url} | iex`",
         );
@@ -214,19 +219,19 @@ async fn install_via_shell_script(
         let status = child.wait().await?;
         if !status.success() {
             anyhow::bail!(
-                "shell installer for {display} failed (exit {:?}). Try running the \
+                "shell installer for {cli_name} failed (exit {:?}). Try running the \
                  upstream command manually: irm {windows_ps_url} | iex",
                 status.code()
             );
         }
-        info!(display, "install ok");
+        info!(cli_name, "install ok");
         let _ = unix_url; // silence unused on the Windows branch
         Ok(())
     }
     #[cfg(not(windows))]
     {
         info!(
-            display,
+            cli_name,
             url = unix_url,
             "running shell installer `curl -fsSL {unix_url} | sh`",
         );
@@ -247,12 +252,12 @@ async fn install_via_shell_script(
         let status = child.wait().await?;
         if !status.success() {
             anyhow::bail!(
-                "shell installer for {display} failed (exit {:?}). Try running the \
+                "shell installer for {cli_name} failed (exit {:?}). Try running the \
                  upstream command manually: {pipeline}",
                 status.code()
             );
         }
-        info!(display, "install ok");
+        info!(cli_name, "install ok");
         let _ = windows_ps_url; // silence unused on this branch
         Ok(())
     }
