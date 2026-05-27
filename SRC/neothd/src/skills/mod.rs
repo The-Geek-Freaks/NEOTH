@@ -26,6 +26,12 @@ pub mod registry;
 pub mod router;
 pub mod schema;
 pub mod test_harness;
+/// Round-3 v0.4 ARCH-07 — LOWKEY skill versioning + prompt-bundle
+/// hashing primitives. SHA-256(yaml||template) per-skill fingerprint
+/// + SHA-256(BlockA..E) per-PROVIDER_REQUEST bundle hash + the
+/// SkillSkipReason enum the WAL `0x29 SKILL_INJECT_SKIPPED` payload
+/// carries. Prerequisite for ARCH-02 replay-determinism test.
+pub mod versioning;
 
 pub use loader::load_all;
 pub use registry::SkillRegistry;

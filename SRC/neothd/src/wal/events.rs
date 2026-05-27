@@ -179,6 +179,20 @@ pub const EVENT_TYPE_PROVIDER_STREAM_CHUNK: u8 = 0x23;
 /// Emitted at most once per 429 — repeat 429s inside an active backoff window
 /// extend the window in place without spamming the WAL.
 pub const EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED: u8 = 0x24;
+/// Round-3 v0.4 ARCH-07 — LOWKEY skill injection was SKIPPED for the
+/// current turn (operator-disabled / disabled_for_eval_sessions /
+/// content_hash mismatch against the pinned baseline). Sits in the
+/// provider-lifecycle band because the skip influences which prompt
+/// blocks reach PROVIDER_REQUEST.
+///
+/// Payload (JSON):
+///   - `skill_id`: stable ID of the skipped skill
+///   - `content_hash`: 64-char hex SHA-256 of the skill's yaml||template
+///   - `reason`: one of `"eval_session"` / `"operator_disabled"` /
+///                `"hash_mismatch"` / `"feature_off"`
+///   - `request_id`: matches the downstream PROVIDER_REQUEST that
+///                   ran without the skill's injection
+pub const EVENT_TYPE_SKILL_INJECT_SKIPPED: u8 = 0x29;
 
 /// Local Qwen3 forward-pass started. Phase 33e AP-2 — gives the Day-37
 /// trace test something to observe so the local-inference path satisfies
@@ -1086,6 +1100,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_EMBED_PERSISTED < 0x20 || EVENT_TYPE_EMBED_PERSISTED > 0x2F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_BUDGET_EXCEEDED < 0x20 || EVENT_TYPE_BUDGET_EXCEEDED > 0x2F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_SKILL_INJECT_SKIPPED < 0x20
+        || EVENT_TYPE_SKILL_INJECT_SKIPPED > 0x2F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CHANNEL_INGRESS < 0x30 || EVENT_TYPE_CHANNEL_INGRESS > 0x3F) as usize];
     let _ =
@@ -1267,6 +1283,7 @@ mod tests {
             ("INGEST_EXTRACTED", EVENT_TYPE_INGEST_EXTRACTED),
             ("EMBED_PERSISTED", EVENT_TYPE_EMBED_PERSISTED),
             ("BUDGET_EXCEEDED", EVENT_TYPE_BUDGET_EXCEEDED),
+            ("SKILL_INJECT_SKIPPED", EVENT_TYPE_SKILL_INJECT_SKIPPED),
             ("CHANNEL_INGRESS", EVENT_TYPE_CHANNEL_INGRESS),
             ("CHANNEL_EGRESS", EVENT_TYPE_CHANNEL_EGRESS),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
