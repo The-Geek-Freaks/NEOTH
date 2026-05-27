@@ -46,6 +46,11 @@ pub mod cerebellum_provider;
 pub mod classifier;
 pub mod decomposer;
 pub mod dispatcher;
+/// QU-01 EarlyStopDetector — pure-fn detectors of degenerate worker
+/// behaviour (repetition loops, greeting regressions, patch spirals).
+/// Composes with [`retry`] — retry decides strategy rotation, early
+/// stop decides whether to bail out of the rotation entirely.
+pub mod early_stop;
 pub mod feed;
 /// Round-3 v0.4 — coding-intent auto-detection for `neoth chat`.
 /// Bilingual EN/DE heuristic that flags "build a function" /
@@ -117,6 +122,15 @@ pub use provider_worker::{
 // before giving up. Per `PLAN/SMALLCODE_INTEGRATION_PLAN_2026-05-21.md`.
 #[allow(unused_imports)]
 pub use retry::{DEFAULT_MAX_ATTEMPTS, RetryStrategy, WorkerRetryPolicy};
+// QU-01 (Session 28): EarlyStopDetector — pure-fn detectors for
+// repetition loops, greeting regressions, patch spirals. Composes
+// with WorkerRetryPolicy; retry rotates strategy, early-stop bails
+// out of the rotation when the worker is degenerate.
+#[allow(unused_imports)]
+pub use early_stop::{
+    DEFAULT_PATCH_SPIRAL_CEILING, GREETING_REGRESSION_MARKERS, PatchSpiralTracker,
+    REPETITION_LOOP_MIN_SAMPLES, is_greeting_regression, is_repetition_loop,
+};
 // Smallcode port #2 (2026-05-21): per-model capability profiles —
 // `ModelProfile` + `ToolFormat` table + fuzzy matcher. Drives
 // tool-call formatting (port #3's 2-stage router gates off
