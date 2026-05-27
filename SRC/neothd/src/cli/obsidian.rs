@@ -368,6 +368,13 @@ fn validate_subdir(subdir: &Path) -> Result<()> {
         if s.contains(':') {
             anyhow::bail!("subdir contains a `:` (drive-relative or UNC pattern rejected)");
         }
+        // Backslash never appears in a legitimate cross-platform subdir.
+        // On Unix, `PathBuf` keeps `\\server\share` as one Normal component,
+        // so the multi-component check below misses UNC inputs. Reject `\`
+        // outright to catch UNC + Windows separators on every host.
+        if s.contains('\\') {
+            anyhow::bail!("subdir contains a `\\` (UNC or Windows separator rejected)");
+        }
     } else {
         anyhow::bail!("subdir is not valid UTF-8");
     }

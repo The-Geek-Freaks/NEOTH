@@ -1150,6 +1150,15 @@ impl FreedomConfig {
 }
 
 fn neoth_home() -> PathBuf {
+    // `NEOTH_HOME` overrides everything — used by CI, integration tests,
+    // and operators who keep `~/.neoth` on a non-default mount. The
+    // override IS the home dir (no `.neoth` suffix appended). HOME /
+    // USERPROFILE fallback keeps the long-standing default.
+    if let Ok(explicit) = std::env::var("NEOTH_HOME") {
+        if !explicit.is_empty() {
+            return PathBuf::from(explicit);
+        }
+    }
     let home = std::env::var("HOME")
         .map(PathBuf::from)
         .or_else(|_| std::env::var("USERPROFILE").map(PathBuf::from))

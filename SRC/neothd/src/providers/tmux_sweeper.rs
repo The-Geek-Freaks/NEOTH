@@ -38,7 +38,7 @@ pub struct SweepDecision {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SweepAction {
-    /// Session was killed because `idle_secs > ttl`.
+    /// Session was killed because `idle_secs >= ttl`.
     Killed,
     /// Session is below TTL; left alone.
     Kept,
@@ -76,7 +76,11 @@ pub async fn sweep_once_on_socket(
     let mut decisions = Vec::with_capacity(sessions.len());
     for (name, activity_ts) in sessions {
         let idle_secs = now.saturating_sub(activity_ts);
-        if idle_secs > idle_ttl.as_secs() {
+        // `>=` so TTL=0 means "kill every match regardless of activity"
+        // (used by `live_sweeper_kills_idle_sessions_over_ttl`). Also
+        // fixes the off-by-one on TTL=60: 60s-idle sessions get killed
+        // instead of having to wait until 61s.
+        if idle_secs >= idle_ttl.as_secs() {
             let action = match kill_session_on_socket(&name, socket).await {
                 Ok(_) => SweepAction::Killed,
                 Err(_) => SweepAction::AlreadyGone,

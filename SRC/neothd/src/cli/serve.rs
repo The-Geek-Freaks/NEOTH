@@ -57,7 +57,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ── 0. Home-dir isolation (Phase 33c BS-9) ──────────────────────────────
     // Refuse to start if `~/.neoth/` is readable by other users on this
     // host. WAL frames + ground-truth rows are operator-private.
-    crate::daemon::isolation::check_home_isolation(&FreedomConfig::default_neoth_home())?;
+    //
+    // One-shot mode (smoke checks + integration tests) skips this guard
+    // for the same reason it skips the PID lock at line 84: those run
+    // against ephemeral tempdirs or shared CI runners where the home
+    // dir's permissions are out of NEOTH's control. The long-lived
+    // daemon path is the only place the invariant matters.
+    if !args.one_shot {
+        crate::daemon::isolation::check_home_isolation(&FreedomConfig::default_neoth_home())?;
+    }
 
     // ── 0a. Clock rollback guard (Phase 33c BS-5) ───────────────────────────
     // Bail before any WAL write if the system clock is far behind the

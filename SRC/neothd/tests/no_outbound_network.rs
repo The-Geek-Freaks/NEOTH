@@ -115,7 +115,15 @@ const ALLOWED_PREFIXES: &[&str] = &[
 ];
 
 const FORBIDDEN_PATTERNS: &[&str] = &[
-    "reqwest::Client",
+    // Construction sites only — `use reqwest::Client;` in a test
+    // module is not a network call, only `::new(` / `::builder(`
+    // actually open a connection. Tightening the patterns to the
+    // call sites lets us drop the test-module-skip heuristic in the
+    // walker without losing coverage of real outbound dialers.
+    "reqwest::Client::new(",
+    "reqwest::Client::builder(",
+    "reqwest::Client::default(",
+    "reqwest::ClientBuilder::new(",
     "reqwest::get(",
     "reqwest::Url::parse",
     "hyper::client::",

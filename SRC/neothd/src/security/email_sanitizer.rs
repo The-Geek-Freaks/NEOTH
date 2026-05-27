@@ -288,10 +288,19 @@ pub fn safe_attachment_filename(raw: &str) -> (String, Vec<EmailFinding>) {
     let mut findings = Vec::new();
 
     // Step 1: strip any path component — take basename only.
-    let basename = Path::new(raw)
+    // `Path::file_name` on a `\\`-separated string returns the whole
+    // string on Unix targets (the path crate honors `/` only there),
+    // which lets a crafted email attachment `..\..\Windows\config`
+    // slip through the traversal check on a Linux operator's mail
+    // pipeline. Pre-split on BOTH separators before handing to Path.
+    let pre_basename: &str = raw
+        .rsplit(|c: char| c == '/' || c == '\\')
+        .next()
+        .unwrap_or("");
+    let basename = Path::new(pre_basename)
         .file_name()
         .and_then(|s| s.to_str())
-        .unwrap_or("")
+        .unwrap_or(pre_basename)
         .to_string();
     let had_path = basename != raw;
     if had_path || raw.contains("..") {
