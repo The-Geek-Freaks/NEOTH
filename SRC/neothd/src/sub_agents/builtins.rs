@@ -234,7 +234,7 @@ mod tests {
         // A future refactor that adds a fourth verdict or renames
         // one MUST update this test deliberately.
         let agents = built_in_agents();
-        let s = agents
+        let s = &agents
             .iter()
             .find(|a| a.name == "reality-checker")
             .expect("reality-checker must ship")
