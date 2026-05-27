@@ -112,15 +112,30 @@ pub enum KanbanAction {
         all: Option<i64>,
     },
     /// Scan the WAL directory for kanban event frames + render the
-    /// activity feed. One-shot today; live tail (`--follow`) lands
-    /// in Pick #5b.
+    /// activity feed. Default is one-shot (print the last `limit`
+    /// entries + exit). `--follow` keeps the process attached to the
+    /// directory + tails new frames as the WAL writer lands them,
+    /// rescanning every `--interval-ms`. Exits on Ctrl+C.
     Watch {
         /// Override the WAL directory. Defaults to `~/.neoth/wal`.
         #[arg(long)]
         wal_dir: Option<PathBuf>,
-        /// Print at most this many entries (newest-last).
+        /// Print at most this many entries (newest-last). In `--follow`
+        /// mode this caps the initial backlog dump; subsequent deltas
+        /// are not capped because each tick's delta is typically tiny.
         #[arg(long, default_value_t = 100)]
         limit: usize,
+        /// Stream new kanban frames as the WAL writer lands them.
+        /// Re-scans the WAL directory every `--interval-ms` + prints
+        /// only entries newer than the last printed frame's HLC
+        /// timestamp. Exits cleanly on Ctrl+C.
+        #[arg(long, default_value_t = false)]
+        follow: bool,
+        /// Re-scan cadence in milliseconds for `--follow`. Default
+        /// 1500ms — close to operator real-time without hammering the
+        /// disk during an idle session. Ignored without `--follow`.
+        #[arg(long, default_value_t = 1500)]
+        interval_ms: u64,
     },
 }
 
@@ -172,9 +187,18 @@ pub async fn run_kanban(args: KanbanArgs) -> Result<()> {
                 summary.as_deref(),
             )
         }
-        KanbanAction::Watch { wal_dir, limit } => {
+        KanbanAction::Watch {
+            wal_dir,
+            limit,
+            follow,
+            interval_ms,
+        } => {
             let dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
-            run_watch(&dir, limit, args.output)
+            if follow {
+                run_watch_follow(&dir, limit, interval_ms, args.output).await
+            } else {
+                run_watch(&dir, limit, args.output)
+            }
         }
         KanbanAction::Review {
             task_id,
@@ -521,6 +545,126 @@ fn run_watch(wal_dir: &PathBuf, limit: usize, output: OutputFormat) -> Result<()
         return Ok(());
     }
     for entry in &entries {
+        println!("{}", entry.format());
+    }
+    Ok(())
+}
+
+/// `--follow` live tail: print the backlog up to `limit`, then loop
+/// re-scanning every `interval_ms` and printing entries strictly newer
+/// than the last printed `ts_ns`. Exits cleanly on Ctrl+C. The pure
+/// delta-filter logic lives in [`filter_new_entries`] so the loop is
+/// thin + the filtering rule is unit-testable without spinning up
+/// tokio or writing real WAL segments.
+///
+/// Output modes:
+///   - `Table`: each new entry rendered with `FeedEntry::format`.
+///   - `Json` / `Jsonl`: each new entry serialised as one JSON object
+///     per line (true JSONL during tail — caller can pipe to `jq -c`
+///     without buffering).
+async fn run_watch_follow(
+    wal_dir: &PathBuf,
+    initial_limit: usize,
+    interval_ms: u64,
+    output: OutputFormat,
+) -> Result<()> {
+    use std::io::Write;
+    use tokio::time::{Duration, sleep};
+
+    // Floor the interval so a `--interval-ms 0` typo can't pin a CPU
+    // to 100% spinning on the WAL directory. 100ms is well below any
+    // operator-perceptible delay (kanban frames land at human-scale
+    // cadence — a worker minute, not a disk-write microsecond).
+    let interval = Duration::from_millis(interval_ms.max(100));
+
+    // Initial backlog dump — same shape as one-shot so the operator
+    // sees the session-so-far before the tail begins.
+    let initial = scan_wal_dir_for_kanban_feed(wal_dir, initial_limit)?;
+    let json_mode = matches!(output, OutputFormat::Json | OutputFormat::Jsonl);
+    if initial.is_empty() {
+        if !json_mode {
+            // Table-mode hint so the operator knows the tail is live
+            // even when no frames exist yet.
+            println!("(no kanban frames in {} yet — waiting…)", wal_dir.display());
+        }
+    } else {
+        for entry in &initial {
+            print_feed_entry(entry, json_mode)?;
+        }
+    }
+    let mut last_seen_ts_ns = initial.last().map(|e| e.ts_ns);
+    // Always flush after the backlog dump so the operator's terminal
+    // shows immediately — the tail loop below polls every interval so
+    // unflushed stdout would otherwise wait the full interval.
+    let _ = std::io::stdout().flush();
+
+    // Race ctrl_c against the tail tick. On Windows ctrl_c() handles
+    // CTRL_C_EVENT + CTRL_BREAK_EVENT; on Unix it handles SIGINT.
+    let shutdown = tokio::signal::ctrl_c();
+    tokio::pin!(shutdown);
+    loop {
+        tokio::select! {
+            _ = &mut shutdown => {
+                // Quiet exit — no goodbye line in JSONL mode so the
+                // downstream pipe sees a clean EOF without a trailing
+                // non-JSON marker.
+                if !json_mode {
+                    println!();
+                    println!("(tail stopped)");
+                }
+                return Ok(());
+            }
+            _ = sleep(interval) => {
+                // Re-scan with a generous cap (10k) — we only print
+                // the delta after filter_new_entries so the operator
+                // never sees the backlog twice. Cap exists purely as
+                // a panic-room ceiling for catastrophic WAL growth
+                // mid-tail.
+                let scanned = scan_wal_dir_for_kanban_feed(wal_dir, 10_000)?;
+                let deltas = filter_new_entries(scanned, last_seen_ts_ns);
+                if let Some(latest) = deltas.last() {
+                    last_seen_ts_ns = Some(latest.ts_ns);
+                }
+                for entry in &deltas {
+                    print_feed_entry(entry, json_mode)?;
+                }
+                if !deltas.is_empty() {
+                    let _ = std::io::stdout().flush();
+                }
+            }
+        }
+    }
+}
+
+/// Pure delta-filter. `entries` is the full re-scan result sorted by
+/// `ts_ns` ascending (per `scan_wal_dir_for_kanban_feed`'s contract).
+/// Returns every entry strictly newer than `last_seen_ts_ns`, in the
+/// same order. When `last_seen_ts_ns` is `None` (cursor not yet set —
+/// first scan returned empty), every entry counts as new.
+///
+/// Ties on identical `ts_ns` are intentionally treated as "already
+/// seen" rather than re-printed. The WAL writer's HLC component is
+/// monotonic so identical-ns collisions only happen across processes;
+/// inside one process the per-tick delta is unambiguous.
+fn filter_new_entries(entries: Vec<FeedEntry>, last_seen_ts_ns: Option<u64>) -> Vec<FeedEntry> {
+    match last_seen_ts_ns {
+        None => entries,
+        Some(cursor) => entries.into_iter().filter(|e| e.ts_ns > cursor).collect(),
+    }
+}
+
+/// Render one feed entry per the active output mode. Extracted so the
+/// initial backlog dump + the per-tick delta print share one rule.
+fn print_feed_entry(entry: &FeedEntry, json_mode: bool) -> Result<()> {
+    if json_mode {
+        // One JSON per line — true JSONL during tail so downstream
+        // pipes (`jq -c`, log forwarders, etc.) get a record-per-line
+        // contract instead of one giant array that never closes.
+        println!(
+            "{}",
+            serde_json::to_string(entry).context("serialise feed entry")?
+        );
+    } else {
         println!("{}", entry.format());
     }
     Ok(())
@@ -888,6 +1032,60 @@ mod tests {
         ));
         let entries = scan_wal_dir_for_kanban_feed(&missing, 100).unwrap();
         assert!(entries.is_empty());
+    }
+
+    fn entry_at(ts_ns: u64) -> FeedEntry {
+        FeedEntry {
+            ts_ns,
+            event_type: 0x70,
+            actor: "left".into(),
+            message: format!("entry at {ts_ns}"),
+        }
+    }
+
+    #[test]
+    fn filter_new_entries_returns_all_when_cursor_unset() {
+        // No prior cursor → every entry counts as new (first scan
+        // returned empty → cursor is None → tail dumps initial batch).
+        let entries = vec![entry_at(100), entry_at(200), entry_at(300)];
+        let out = filter_new_entries(entries.clone(), None);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out, entries);
+    }
+
+    #[test]
+    fn filter_new_entries_drops_entries_at_or_before_cursor() {
+        // Cursor at 200 → entry at 100 + 200 are not new; 300 is.
+        let entries = vec![entry_at(100), entry_at(200), entry_at(300)];
+        let out = filter_new_entries(entries, Some(200));
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].ts_ns, 300);
+    }
+
+    #[test]
+    fn filter_new_entries_returns_empty_when_no_new_frames() {
+        // Cursor caught up to the latest entry → next tick has nothing
+        // to print.
+        let entries = vec![entry_at(100), entry_at(200), entry_at(300)];
+        let out = filter_new_entries(entries, Some(300));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn filter_new_entries_preserves_input_ordering() {
+        // Pure filter must NOT reorder — caller relies on
+        // scan_wal_dir_for_kanban_feed's ts-asc contract.
+        let entries = vec![entry_at(10), entry_at(20), entry_at(30), entry_at(40)];
+        let out = filter_new_entries(entries, Some(15));
+        let timestamps: Vec<u64> = out.iter().map(|e| e.ts_ns).collect();
+        assert_eq!(timestamps, vec![20, 30, 40]);
+    }
+
+    #[test]
+    fn filter_new_entries_handles_empty_input() {
+        // Empty re-scan with a live cursor → empty delta, no panic.
+        let out = filter_new_entries(Vec::new(), Some(500));
+        assert!(out.is_empty());
     }
 
     #[test]
