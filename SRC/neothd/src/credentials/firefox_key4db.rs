@@ -46,11 +46,7 @@ pub const PASSWORD_CHECK_PLAINTEXT: &[u8] = b"password-check";
 /// Returns a 32-byte key suitable for AES-256-CBC. The output
 /// length is fixed because every NSS code path expects 32 bytes;
 /// surfacing a different length would only be a footgun.
-pub fn derive_masking_key_pbkdf2_sha256(
-    password: &[u8],
-    salt: &[u8],
-    iterations: u32,
-) -> [u8; 32] {
+pub fn derive_masking_key_pbkdf2_sha256(password: &[u8], salt: &[u8], iterations: u32) -> [u8; 32] {
     let mut key = [0u8; 32];
     // pbkdf2_hmac is infallible in pbkdf2 0.12 — no Result wrap.
     pbkdf2::pbkdf2_hmac::<Sha256>(password, salt, iterations, &mut key);
@@ -75,11 +71,7 @@ pub fn verify_password_check(
     iv: &[u8; 16],
     check_ciphertext: &[u8],
 ) -> bool {
-    match crate::credentials::firefox::decrypt_aes256_cbc_pkcs7(
-        masking_key,
-        iv,
-        check_ciphertext,
-    ) {
+    match crate::credentials::firefox::decrypt_aes256_cbc_pkcs7(masking_key, iv, check_ciphertext) {
         Ok(plaintext) => plaintext.ct_eq(PASSWORD_CHECK_PLAINTEXT).into(),
         Err(_) => false,
     }
