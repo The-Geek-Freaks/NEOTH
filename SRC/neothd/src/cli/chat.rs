@@ -547,6 +547,11 @@ pub async fn run_chat_with(
     } else {
         mode_registry.match_trigger(&prompt)
     };
+    // SC-11 — captured in the skill branch below; stays None for the
+    // eval-suppressed / mode-activation / no-skill paths (no skill →
+    // no tool-allowlist gate). Owned so it outlives the match block to
+    // the MCP dispatch call.
+    let mut skill_tool_allowlist: Option<Vec<String>> = None;
     let (skill_layer, used_skill_id): (Option<String>, Option<String>) = if eval_suppress {
         (None, None)
     } else if let Some(resolved) = mode_hit {
@@ -619,6 +624,10 @@ pub async fn run_chat_with(
             .as_ref()
             .map(|m| m.skill.system_prompt().to_string());
         let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+        // SC-11 — the matched skill's tool_allowlist scopes the MCP gate.
+        skill_tool_allowlist = skill_match
+            .as_ref()
+            .map(|m| m.skill.manifest.tool_allowlist.clone());
         (layer, id)
     };
 
@@ -1419,6 +1428,9 @@ pub async fn run_chat_with(
             )
         } else if use_loop {
             info!(reason = %autoroute_decision.reason(), "MCP autoroute enabled — running dispatch loop");
+            // SC-11 — scope the MCP gate to the matched skill's
+            // tool_allowlist (empty/None ⇒ no skill-level restriction).
+            let skill_allowlist = skill_tool_allowlist.as_deref();
             let outcome = match run_mcp_dispatch_loop(
                 provider,
                 req.clone(),
@@ -1426,6 +1438,7 @@ pub async fn run_chat_with(
                 config.autonomy,
                 &writer,
                 Some(&config.rollback),
+                skill_allowlist,
             )
             .await
             {
@@ -3456,6 +3469,10 @@ pub(crate) async fn run_mcp_dispatch_loop(
     autonomy: crate::permissions::AutonomyLevel,
     writer: &crate::wal::writer::WalWriterHandle,
     rollback_policy: Option<&crate::config::RollbackConfig>,
+    // SC-11 — the active skill's tool_allowlist (None when no skill
+    // matched this turn). Threaded down to the MCP gate so a matched
+    // skill scopes which tools the model may call.
+    skill_allowlist: Option<&[String]>,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -3547,6 +3564,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         autonomy,
         Some(writer),
         rollback_policy,
+        skill_allowlist,
     )
     .await
 }

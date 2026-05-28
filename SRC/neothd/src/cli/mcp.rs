@@ -202,6 +202,15 @@ async fn run_call(
                     autonomy.as_str()
                 );
             }
+            // SC-11 — `neoth mcp call` invokes a tool directly (no skill
+            // context), so `invoke_with_audit` never produces this; the
+            // arm exists only to keep the match exhaustive after the
+            // variant was added for the skill-scoped dispatch path.
+            Err(GateError::SkillAllowlistBlocked { .. }) => {
+                anyhow::bail!(
+                    "MCP `{server_id}::{tool}` blocked by an active skill's tool_allowlist"
+                );
+            }
             Err(GateError::Mcp(e)) => return Err(e.into()),
             Err(GateError::Wal(e)) => return Err(e),
         };

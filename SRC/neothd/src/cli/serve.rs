@@ -2807,6 +2807,10 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     autonomy,
                     &writer,
                     None,
+                    // SC-11 — the channel/daemon dispatch path does not
+                    // route skills the way `neoth chat` does, so no
+                    // skill-scoped tool_allowlist applies here yet.
+                    None,
                 )
                 .await
                 {

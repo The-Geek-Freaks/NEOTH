@@ -50,6 +50,15 @@ pub enum GateError {
     #[error("MCP `{server}::{tool}` blocked by allowlist (tool not listed)")]
     NotInAllowlist { server: String, tool: String },
 
+    /// SC-11 (A5 HIGH-05): the active skill declares a non-empty
+    /// `tool_allowlist` and this tool isn't in it. The server-level
+    /// `allow_tools` may permit the tool, but the matched skill scopes
+    /// the model to the narrower set it legitimately needs — so an
+    /// over-eager or prompt-injected model can't reach tools outside
+    /// the skill's declared surface.
+    #[error("MCP `{server}::{tool}` blocked by the active skill's tool_allowlist")]
+    SkillAllowlistBlocked { server: String, tool: String },
+
     /// Reviewer-1 P1-A (2026-05-20): server config has neither an
     /// `allow_tools` list nor `trust_all_tools: true`. Secure-by-
     /// default denies every tool call until the operator opts in. The
@@ -378,6 +387,52 @@ async fn emit_called(
     Ok(())
 }
 
+/// SC-11 — enforce the ACTIVE SKILL's `tool_allowlist` at the MCP gate,
+/// in addition to the server-level `allow_tools`. Called from the
+/// dispatch loop (where the matched skill is in scope) BEFORE
+/// [`invoke_with_audit`].
+///
+/// Semantics:
+///   - `None` (no skill matched this turn) ⇒ `Ok(())` — no skill gate.
+///   - `Some(empty)` (skill declares no tool restriction — the default
+///     for skills that don't set `tool_allowlist`) ⇒ `Ok(())`.
+///   - `Some(non-empty)` ⇒ the tool MUST appear in the list, else
+///     `SkillAllowlistBlocked`.
+///
+/// The server-level allowlist in `invoke_with_audit` still runs after
+/// this — both layers must pass. A rejection is audited via the same
+/// `MCP_TOOL_REJECTED` (0xC0) frame as every other gate denial, so the
+/// WAL replay shows skill-scoped blocks alongside server-scoped ones.
+pub async fn enforce_skill_allowlist(
+    skill_allowlist: Option<&[String]>,
+    server: &str,
+    tool: &str,
+    writer: Option<&WalWriterHandle>,
+    now_unix: i64,
+) -> Result<(), GateError> {
+    let Some(list) = skill_allowlist else {
+        return Ok(());
+    };
+    if list.is_empty() || list.iter().any(|t| t == tool) {
+        return Ok(());
+    }
+    if let Some(w) = writer {
+        emit_reject(
+            w,
+            server,
+            tool,
+            "tool not in active skill's tool_allowlist",
+            now_unix,
+        )
+        .await
+        .map_err(GateError::Wal)?;
+    }
+    Err(GateError::SkillAllowlistBlocked {
+        server: server.to_string(),
+        tool: tool.to_string(),
+    })
+}
+
 async fn emit_reject(
     writer: &WalWriterHandle,
     server: &str,
@@ -418,6 +473,45 @@ mod tests {
             allow_tools: allow.map(|v| v.into_iter().map(String::from).collect()),
             trust_all_tools: false,
         }
+    }
+
+    // ── SC-11 enforce_skill_allowlist ──────────────────────────────
+    // writer=None ⇒ no WAL emit, so these exercise the pure gate
+    // decision without a live writer.
+
+    #[tokio::test]
+    async fn skill_allowlist_none_or_empty_imposes_no_restriction() {
+        // No skill matched this turn.
+        assert!(
+            enforce_skill_allowlist(None, "srv", "anything", None, 0)
+                .await
+                .is_ok()
+        );
+        // Skill matched but declares no tool_allowlist (the default) —
+        // must NOT restrict, else every existing skill breaks.
+        let empty: Vec<String> = vec![];
+        assert!(
+            enforce_skill_allowlist(Some(&empty), "srv", "anything", None, 0)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn skill_allowlist_nonempty_gates_to_listed_tools_only() {
+        let list = vec!["fetch".to_string(), "channel-send".to_string()];
+        // Listed tool passes.
+        assert!(
+            enforce_skill_allowlist(Some(&list), "srv", "fetch", None, 0)
+                .await
+                .is_ok()
+        );
+        // Unlisted tool is blocked with the skill-scoped variant — even
+        // though the server allowlist (checked later) might permit it.
+        let err = enforce_skill_allowlist(Some(&list), "srv", "delete_everything", None, 0)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, GateError::SkillAllowlistBlocked { .. }));
     }
 
     #[test]

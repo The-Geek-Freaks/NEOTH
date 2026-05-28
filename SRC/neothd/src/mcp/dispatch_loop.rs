@@ -73,6 +73,7 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
     autonomy: AutonomyLevel,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
+    skill_allowlist: Option<&[String]>,
 ) -> Result<LoopOutcome> {
     run_tool_loop_with_cap(
         driver,
@@ -81,6 +82,7 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         autonomy,
         writer,
         rollback_policy,
+        skill_allowlist,
         DEFAULT_MAX_ITERATIONS,
     )
     .await
@@ -95,6 +97,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     autonomy: AutonomyLevel,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
+    skill_allowlist: Option<&[String]>,
     max_iterations: u32,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
@@ -123,7 +126,16 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         let mut iteration_had_success = false;
         let mut tool_result_blocks = Vec::new();
         for call in &extraction.calls {
-            match dispatch_one(call, servers, autonomy, writer, rollback_policy).await {
+            match dispatch_one(
+                call,
+                servers,
+                autonomy,
+                writer,
+                rollback_policy,
+                skill_allowlist,
+            )
+            .await
+            {
                 Ok(rendered) => {
                     successful_calls += 1;
                     iteration_had_success = true;
@@ -168,6 +180,7 @@ async fn dispatch_one(
     autonomy: AutonomyLevel,
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
+    skill_allowlist: Option<&[String]>,
 ) -> std::result::Result<String, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -176,16 +189,32 @@ async fn dispatch_one(
             list_enabled_ids(servers)
         ));
     };
+    // SC-11 — the active skill's tool_allowlist gates BEFORE we even
+    // spawn the server (no point starting an MCP subprocess for a tool
+    // the matched skill isn't allowed to call). Empty/None ⇒ no
+    // restriction; the server-level allowlist still runs inside
+    // invoke_with_audit afterwards.
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if let Err(e) = crate::mcp::gate::enforce_skill_allowlist(
+        skill_allowlist,
+        &call.server,
+        &call.tool,
+        writer,
+        now_unix,
+    )
+    .await
+    {
+        return Err(format!("dispatch `{}::{}`: {e}", call.server, call.tool));
+    }
     let mut client = crate::mcp::client::McpClient::spawn_with_timeout(
         cfg,
         Duration::from_secs(crate::mcp::client::DEFAULT_REQUEST_TIMEOUT.as_secs()),
     )
     .await
     .map_err(|e| format!("spawn MCP server `{}`: {e}", call.server))?;
-    let now_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
     let result = crate::mcp::gate::invoke_with_audit(
         &mut client,
         cfg,
@@ -327,6 +356,7 @@ mod tests {
             AutonomyLevel::Standard,
             None,
             None,
+            None,
         )
         .await
         .unwrap();
@@ -354,6 +384,7 @@ mod tests {
             "fetch X".into(),
             &servers,
             AutonomyLevel::Standard,
+            None,
             None,
             None,
         )
@@ -389,6 +420,7 @@ mod tests {
             AutonomyLevel::Standard,
             None,
             None,
+            None,
             5,
         )
         .await
@@ -411,6 +443,7 @@ mod tests {
             "x".into(),
             &servers,
             AutonomyLevel::Standard,
+            None,
             None,
             None,
         )
