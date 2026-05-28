@@ -89,9 +89,12 @@ mod tests {
         assert!(err.to_string().contains("unknown web_search provider"));
     }
 
+    // Holds crate::test_env::lock() across the run_search().await; the
+    // awaited code never re-locks it, so the bounded hold is safe.
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn search_missing_api_key_errors() {
-        // SAFETY: test-only env clear, single-threaded by default.
+        let _env = crate::test_env::lock();
         unsafe { std::env::remove_var("NEOTH_WEB_SEARCH_KEY") };
         let args = SearchArgs {
             query: "rust".to_string(),

@@ -276,16 +276,26 @@ mod tests {
         assert!(r.is_err());
     }
 
-    #[tokio::test]
-    async fn extract_surfaces_missing_ffmpeg_with_helpful_message() {
-        // Override PATH so the spawn fails with NotFound. SAFETY:
-        // process-wide env mutation; race-prone against concurrent
-        // tests that spawn other subprocesses. PATH is restored
-        // promptly to keep the window small. The duplicate
-        // path-mutation test for `extract_thumbnail` was deleted in
-        // favour of the live ffmpeg `#[ignore]` test above — running
-        // both raised the race-window to a degree the worktree test
-        // could observe.
+    // Sync `#[test]` + block_on so the env lock isn't held across an
+    // `.await` (clippy::await_holding_lock under -D warnings).
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime")
+            .block_on(fut)
+    }
+
+    #[test]
+    fn extract_surfaces_missing_ffmpeg_with_helpful_message() {
+        // Override PATH so the spawn fails with NotFound. Hold the
+        // crate-wide env lock — PATH is process-global and an empty
+        // PATH breaks ANY concurrent subprocess spawn. (The lock
+        // serialises against other env tests; the residual race vs
+        // arbitrary subprocess-spawning tests is why the duplicate
+        // PATH test was already deleted + the live ffmpeg test is
+        // `#[ignore]`.)
+        let _env = crate::test_env::lock();
         let prev = std::env::var("PATH").ok();
         unsafe {
             std::env::set_var("PATH", "");
@@ -296,7 +306,7 @@ mod tests {
             mime: "video/mp4".into(),
             data: b"fake".to_vec(),
         };
-        let r = extractor.extract(&asset).await;
+        let r = block_on(extractor.extract(&asset));
         unsafe {
             match prev {
                 Some(v) => std::env::set_var("PATH", v),

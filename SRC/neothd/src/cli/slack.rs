@@ -167,11 +167,25 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[tokio::test]
-    async fn slack_test_errors_when_credentials_missing() {
+    // These tests mutate the process-global HOME/USERPROFILE, so they
+    // hold crate::test_env::lock() for the whole body. Plain `#[test]`
+    // + a synchronous block_on (not `#[tokio::test]`) so the
+    // std::sync::MutexGuard isn't held across an `.await`
+    // (clippy::await_holding_lock under -D warnings).
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime")
+            .block_on(fut)
+    }
+
+    #[test]
+    fn slack_test_errors_when_credentials_missing() {
         // Point HOME at a tempdir so the credentials loader sees no
         // file + returns the default empty struct, then our explicit
         // check fires with the actionable message.
+        let _env = crate::test_env::lock();
         let dir = tempdir().unwrap();
         let prev_home = std::env::var("HOME").ok();
         let prev_user = std::env::var("USERPROFILE").ok();
@@ -183,7 +197,7 @@ mod tests {
             action: SlackAction::Test,
             output: OutputFormat::Json,
         };
-        let r = run_slack(args).await;
+        let r = block_on(run_slack(args));
         if let Some(v) = prev_home {
             unsafe { std::env::set_var("HOME", v) };
         } else {
@@ -202,10 +216,11 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn slack_send_errors_with_actionable_message_when_bot_token_missing() {
+    #[test]
+    fn slack_send_errors_with_actionable_message_when_bot_token_missing() {
         // Same HOME-redirect dance as the test above so we deterministically
         // see an empty credentials.yaml.
+        let _env = crate::test_env::lock();
         let dir = tempdir().unwrap();
         let prev_home = std::env::var("HOME").ok();
         let prev_user = std::env::var("USERPROFILE").ok();
@@ -220,7 +235,7 @@ mod tests {
             },
             output: OutputFormat::Json,
         };
-        let r = run_slack(args).await;
+        let r = block_on(run_slack(args));
         if let Some(v) = prev_home {
             unsafe { std::env::set_var("HOME", v) };
         } else {

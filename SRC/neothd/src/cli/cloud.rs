@@ -253,10 +253,22 @@ mod tests {
         assert!(!mirrored.exists(), "dry-run must not write the file");
     }
 
-    #[tokio::test]
-    async fn run_sync_errors_when_no_dest_configured() {
+    // Sync `#[test]` + block_on (not `#[tokio::test]`) so the
+    // crate::test_env::lock() guard isn't held across an `.await`
+    // (clippy::await_holding_lock under -D warnings).
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime")
+            .block_on(fut)
+    }
+
+    #[test]
+    fn run_sync_errors_when_no_dest_configured() {
         // No --dest, freedom.yaml empty → should bail. Run with a
         // bogus HOME so the load returns None.
+        let _env = crate::test_env::lock();
         let tmp = tempdir().unwrap();
         let prev_home = std::env::var("HOME").ok();
         let prev_user = std::env::var("USERPROFILE").ok();
@@ -264,7 +276,7 @@ mod tests {
             std::env::set_var("HOME", tmp.path());
             std::env::set_var("USERPROFILE", tmp.path());
         }
-        let r = run_sync(None, None, true, &OutputFormat::Json).await;
+        let r = block_on(run_sync(None, None, true, &OutputFormat::Json));
         if let Some(v) = prev_home {
             unsafe { std::env::set_var("HOME", v) };
         } else {

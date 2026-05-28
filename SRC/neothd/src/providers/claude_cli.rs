@@ -1403,6 +1403,7 @@ mod tests {
         // When NEOTH runs as a subprocess of claude-code itself, those
         // markers must not pass to the child claude — would confuse the
         // CLI into thinking it's re-entering its parent session.
+        let _env = crate::test_env::lock();
         unsafe {
             std::env::set_var("CLAUDECODE", "1");
             std::env::set_var("CLAUDE_CODE_SESSION_ID", "abc-123");
@@ -1421,6 +1422,7 @@ mod tests {
     fn scrub_drops_tmux_vars_for_subprocess_path() {
         // Subprocess claude must not see TMUX env or it renders
         // box-drawing chrome that corrupts --print JSON output.
+        let _env = crate::test_env::lock();
         unsafe {
             std::env::set_var("TMUX", "/tmp/tmux-1000/default,1234,0");
             std::env::set_var("TMUX_PANE", "%1");
@@ -1458,6 +1460,7 @@ mod tests {
         // mid-warm-session would freeze the pane for 30s + break
         // running prompts. Operator concerns are real but tractable
         // out-of-band (separate `npm i -g @anthropic-ai/claude-code`).
+        let _env = crate::test_env::lock();
         unsafe {
             std::env::set_var("DISABLE_AUTOUPDATER", "0");
         }

@@ -96,9 +96,9 @@ mod tests {
 
     #[test]
     fn build_client_works_without_proxy() {
-        // No env mutation — relies on the test runner leaving the proxy
-        // unset (the default). If a malicious external setting interferes
-        // the worst-case is a connect-time failure, not a parse failure.
+        // Serialize the NEOTH_HTTP_PROXY removal against other env tests
+        // (crate::test_env) so a concurrent setter can't reintroduce it.
+        let _env = crate::test_env::lock();
         unsafe { std::env::remove_var("NEOTH_HTTP_PROXY") };
         let client = build_client();
         assert!(client.is_ok());

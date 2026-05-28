@@ -3832,8 +3832,13 @@ mod tests {
     use tempfile::tempdir;
     use tokio::fs::read;
 
+    // Sets NEOTH_CONSENT_BYPASS (process-global) — hold the crate-wide
+    // env lock across the run_serve().await so it can't race another env
+    // test. The awaited serve path never re-locks it (bounded hold).
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn serve_one_shot_writes_boot_frame() {
+        let _env = crate::test_env::lock();
         // Arrange: freedom.yaml + segment paths in temp dir
         let dir = tempdir().unwrap();
         let cfg_path = dir.path().join("freedom.yaml");
