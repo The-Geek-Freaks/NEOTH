@@ -26,7 +26,7 @@ use tracing::{info, warn};
 
 use crate::coding::retry::WorkerRetryPolicy;
 use crate::coding::store;
-use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTask, TaskStatus};
+use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus};
 use crate::coding::worker::{Worker, WorkerOutcome};
 use crate::security::redact::redact_text;
 
