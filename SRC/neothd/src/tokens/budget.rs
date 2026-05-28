@@ -421,12 +421,35 @@ mod tests {
             item(Block::Conductor, 0.5, 0, 200),
             item(Block::E, 0.5, 0, 50),
         ];
-        // Total 700, cap 350 → degrade through all three steps.
+        // Total 700, cap 350 → exercise all three degradation steps.
         let detail = enforce_budget(&mut items, 350).expect("must trigger");
+        // The point of this fixture is that every step fires in order
+        // (D present, C present, Conductor present).
         assert!(
-            detail.dropped_d_count > 0 || detail.dropped_c_count > 0 || detail.conductor_truncated
+            detail.dropped_d_count > 0,
+            "step 1 (drop oldest-50% D) must fire"
         );
-        assert!(detail.new_total <= detail.cap || items.iter().all(|i| !i.block.is_degradable()));
+        assert!(
+            detail.dropped_c_count > 0,
+            "step 2 (drop lowest-50% C) must fire"
+        );
+        assert!(
+            detail.conductor_truncated,
+            "step 3 (truncate Conductor) must fire"
+        );
+        // The policy is a SINGLE graceful pass (drop oldest-50% D, drop
+        // lowest-50% C, halve Conductor once) — not loop-until-fit, as
+        // `conductor_truncated_last_resort` pins (it leaves new_total >
+        // cap with a still-degradable Conductor). So here `new_total`
+        // can also still exceed the cap with degradable items left; the
+        // BudgetExceededDetail reports that over-count to the operator.
+        // We only require that degradation made real progress.
+        assert!(
+            detail.new_total < detail.original_total,
+            "degradation must reduce the total ({} → {})",
+            detail.original_total,
+            detail.new_total
+        );
     }
 
     // ── Per-block accounting ──────────────────────────────────────
