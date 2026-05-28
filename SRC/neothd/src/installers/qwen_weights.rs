@@ -205,6 +205,7 @@ mod tests {
     fn check_weights_cached_returns_false_for_empty_cache_dir() {
         // Synthetic env: point HOME / USERPROFILE at a tempdir + the
         // expected cache dir doesn't exist → false.
+        let _env = crate::test_env::lock();
         let temp = tempfile::tempdir().unwrap();
         let prev_home = std::env::var_os("HOME");
         let prev_userprofile = std::env::var_os("USERPROFILE");
@@ -232,6 +233,7 @@ mod tests {
         // Synthetic cache dir with an `.incomplete` sibling — the
         // probe must NOT report "cached" because hf-hub treats that
         // as an interrupted download. Operator gets the resume prompt.
+        let _env = crate::test_env::lock();
         let temp = tempfile::tempdir().unwrap();
         let cache_root = temp.path().join(".cache").join("huggingface").join("hub");
         let model_dir = cache_root.join("models--Qwen--Qwen2.5-3B-Instruct");

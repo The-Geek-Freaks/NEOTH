@@ -4471,13 +4471,13 @@ mod tests {
     /// Every test that calls `set_var("HOME"/"USERPROFILE", ...)`
     /// MUST take this lock at function entry; release on drop
     /// happens after the restore-prev block.
-    static HOME_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    /// Wrapper that hides the `PoisonError` recovery boilerplate —
-    /// a previously-panicking test poisoned the mutex but the data
-    /// inside is `()`, so reuse it unconditionally.
+    /// Delegates to the CRATE-WIDE env lock (crate::test_env) so init's
+    /// HOME/USERPROFILE tests serialise against EVERY env test in the
+    /// crate, not just each other. (Was a file-local HOME_ENV_LOCK,
+    /// which only serialised within init.rs → a split-mechanism race
+    /// vs pidfile/mode/code_map; the SC-11-era sweep unified it.)
     fn lock_home_env() -> std::sync::MutexGuard<'static, ()> {
-        HOME_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+        crate::test_env::lock()
     }
 
     #[test]

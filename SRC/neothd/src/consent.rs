@@ -564,6 +564,7 @@ mod tests {
 
     #[test]
     fn ensure_granted_or_prompt_honours_bypass_env() {
+        let _env = crate::test_env::lock();
         let tmp = TempDir::new().unwrap();
         // SAFETY: tests run single-threaded for env mutation via cargo's
         // default --test-threads, but mark it explicitly with serial_test

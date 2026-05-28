@@ -438,6 +438,7 @@ tls:
         // Force every search path to miss by setting NEOTH_HYSTERIA_BIN
         // to a non-existent file. We don't unset PATH because that would
         // break the rest of the test process.
+        let _env = crate::test_env::lock();
         let prev = std::env::var("NEOTH_HYSTERIA_BIN").ok();
         // SAFETY: test-only env mutation. The test process is the sole
         // toucher of this variable for the duration of this test; no

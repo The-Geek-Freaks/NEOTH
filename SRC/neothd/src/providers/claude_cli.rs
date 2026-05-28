@@ -1121,6 +1121,10 @@ mod tests {
 
     #[test]
     fn scrub_drops_harness_prefixes() {
+        // Serialize against other env-mutating tests — scrub_outbound_env
+        // reads the WHOLE process env, so a concurrent set_var elsewhere
+        // would race. See crate::test_env.
+        let _env = crate::test_env::lock();
         // Set a few harness vars + a control var, ensure only harness ones
         // disappear from the scrubbed list.
         unsafe {

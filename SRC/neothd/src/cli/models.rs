@@ -263,7 +263,10 @@ mod tests {
     fn prune_missing_dir_is_noop() {
         // Use a temp HOME so we don't trash the operator's real cache.
         let tmp = tempfile::TempDir::new().unwrap();
-        // SAFETY: test-only env mutation, single-threaded by default.
+        // Serialize HOME/USERPROFILE mutation against every other env
+        // test (see crate::test_env) — they all race on the shared
+        // process env under the multi-threaded runner.
+        let _env = crate::test_env::lock();
         let prev_home = std::env::var("HOME").ok();
         let prev_user = std::env::var("USERPROFILE").ok();
         unsafe { std::env::set_var("HOME", tmp.path()) };

@@ -626,22 +626,17 @@ mod tests {
     /// snapshots. Pick #22 / #25 / earlier CLI tests all share this
     /// lock so they queue up cleanly under `cargo test` (with or
     /// without `--test-threads=1`).
-    fn env_mutex() -> &'static std::sync::Mutex<()> {
-        static CELL: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        CELL.get_or_init(|| std::sync::Mutex::new(()))
-    }
-
     fn with_temp_home<F, R>(f: F) -> R
     where
         F: FnOnce() -> R,
     {
-        // Hold the env-mutex for the duration of the test body so the
-        // process-wide HOME / USERPROFILE manipulation cannot race
-        // with another concurrent temp-home test. Poison recovery: if
-        // a prior test panicked while holding the lock, we still want
-        // the next test to proceed against a fresh tempdir — `into_inner`
-        // exposes the data even from a poisoned guard.
-        let guard = env_mutex().lock().unwrap_or_else(|p| p.into_inner());
+        // Hold the CRATE-WIDE env lock (crate::test_env) for the test
+        // body so HOME / USERPROFILE manipulation cannot race another
+        // env test ANYWHERE in the crate — not just other code_map
+        // tests. (Previously a code_map-local mutex, which only
+        // serialised within this file → a split-mechanism race against
+        // pidfile/mode/etc. SC-11-era sweep unified it.)
+        let guard = crate::test_env::lock();
         let dir = tempdir().unwrap();
         let prior_home = std::env::var("HOME").ok();
         let prior_user = std::env::var("USERPROFILE").ok();
