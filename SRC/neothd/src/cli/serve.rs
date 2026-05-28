@@ -3670,18 +3670,28 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
     // reach the engine. Unknown ids and `Pending` ids fall through to
     // the operator-visible bootstrap-skipped log line — they show up in
     // `neoth plugin list` so flipping them on is one command away.
-    let activations: std::collections::BTreeMap<
-        String,
-        crate::wasm_plugin::discovery::PluginActivation,
-    > = match FreedomConfig::load_from_default_path() {
-        Ok(cfg) => cfg.plugins.wasm.activations.clone(),
+    #[allow(clippy::type_complexity)]
+    let (activations, pinned_hashes, require_all_pinned): (
+        std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivation>,
+        std::collections::BTreeMap<String, String>,
+        bool,
+    ) = match FreedomConfig::load_from_default_path() {
+        Ok(cfg) => (
+            cfg.plugins.wasm.activations.clone(),
+            cfg.plugins.wasm.pinned_hashes.clone(),
+            cfg.plugins.wasm.require_all_pinned,
+        ),
         Err(e) => {
             warn!(
                 error = %e,
-                "freedom.yaml load failed during plugin activation gate; \
+                "freedom.yaml load failed during plugin activation/integrity gate; \
                  treating ALL discovered plugins as Pending (none auto-instantiate)"
             );
-            std::collections::BTreeMap::new()
+            (
+                std::collections::BTreeMap::new(),
+                std::collections::BTreeMap::new(),
+                false,
+            )
         }
     };
     // home is reserved for future per-home credential lookup; suppress
@@ -3692,10 +3702,29 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
     let pre_filter = report.loaded.len();
     let mut skipped_pending: Vec<String> = Vec::new();
     let mut skipped_disabled: Vec<String> = Vec::new();
+    // SC-03 — Active plugins that fail the integrity gate (pinned-hash
+    // mismatch / unpinned-when-required) are refused before reaching the
+    // engine. Collected separately so the operator sees a SECURITY skip,
+    // not a benign Pending one.
+    let mut skipped_integrity: Vec<String> = Vec::new();
+    let integrity_policy = crate::wasm_plugin::discovery::IntegrityPolicy {
+        pinned: &pinned_hashes,
+        require_all_pinned,
+    };
     report.loaded.retain(|p| {
         let state = activations.get(&p.manifest.id).copied().unwrap_or_default();
         match state {
-            crate::wasm_plugin::discovery::PluginActivation::Active => true,
+            crate::wasm_plugin::discovery::PluginActivation::Active => {
+                // Active is necessary but not sufficient — the binary
+                // must also pass the operator's pin policy.
+                match crate::wasm_plugin::discovery::verify_integrity(p, &integrity_policy) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        skipped_integrity.push(format!("{}: {e}", p.manifest.id));
+                        false
+                    }
+                }
+            }
             crate::wasm_plugin::discovery::PluginActivation::Pending => {
                 skipped_pending.push(p.manifest.id.clone());
                 false
@@ -3706,6 +3735,24 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
             }
         }
     });
+    if !skipped_integrity.is_empty() {
+        warn!(
+            integrity_rejected = ?skipped_integrity,
+            "plugins REFUSED by SC-03 integrity gate (pinned-hash mismatch or \
+             unpinned under require_all_pinned) — NOT instantiated"
+        );
+    }
+    // SC-03 — surface the inactive-gate state so an operator running
+    // Active plugins doesn't assume tamper-protection they haven't
+    // configured. Active plugins are live but no pin gates them.
+    if pinned_hashes.is_empty() && !require_all_pinned && !report.loaded.is_empty() {
+        warn!(
+            active = ?report.loaded_ids(),
+            "SC-03 integrity gate INACTIVE — Active plugins are running unpinned. \
+             Run `neoth plugin list` to read each plugin.wasm hash, then pin trusted \
+             values in freedom.yaml::plugins.wasm.pinned_hashes"
+        );
+    }
     if !skipped_pending.is_empty() {
         info!(
             pending = ?skipped_pending,

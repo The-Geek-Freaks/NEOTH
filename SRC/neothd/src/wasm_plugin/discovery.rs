@@ -31,6 +31,14 @@ pub struct DiscoveredPlugin {
     pub dir: PathBuf,
     pub manifest: PluginManifest,
     pub wasm_bytes: Vec<u8>,
+    /// SC-03 — lowercase-hex SHA-256 of `wasm_bytes`, computed at load.
+    /// The operator pins the value they trust in
+    /// `freedom.yaml::plugins.wasm.pinned_hashes[<id>]`; the daemon's
+    /// [`verify_integrity`] gate refuses to instantiate a plugin whose
+    /// on-disk bytes don't match the pin (tamper / supply-chain swap
+    /// detection). Surfaced by `neoth plugin list` so the operator
+    /// knows what to pin. Mirrors the skills `content_hash` (ARCH-07).
+    pub content_hash: String,
 }
 
 /// D-102 (Session 21, 2026-05-23, 6/6 agent panel) — per-plugin operator
@@ -111,6 +119,23 @@ pub enum DiscoveryError {
         got: String,
         expected: String,
     },
+    /// SC-03 — the on-disk `plugin.wasm` SHA-256 doesn't match the
+    /// operator's pinned hash. Tamper / supply-chain swap.
+    #[error(
+        "plugin {dir:?}: plugin.wasm hash mismatch — pinned {expected}, got {got} \
+         (tamper? re-pin in freedom.yaml::plugins.wasm.pinned_hashes if intentional)"
+    )]
+    HashMismatch {
+        dir: PathBuf,
+        expected: String,
+        got: String,
+    },
+    /// SC-03 — `require_all_pinned` is set and this plugin has no pin.
+    #[error(
+        "plugin {dir:?}: no pinned hash and plugins.wasm.require_all_pinned=true — \
+         pin {got} in freedom.yaml::plugins.wasm.pinned_hashes to allow it"
+    )]
+    HashUnpinned { dir: PathBuf, got: String },
 }
 
 /// Aggregate report of one discovery pass.
@@ -196,11 +221,79 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
         dir: dir.to_path_buf(),
         kind: e.kind(),
     })?;
+    let content_hash = sha256_hex(&wasm_bytes);
     Ok(DiscoveredPlugin {
         dir: dir.to_path_buf(),
         manifest,
         wasm_bytes,
+        content_hash,
     })
+}
+
+/// Lowercase-hex SHA-256 of a byte slice. Shared by load + the
+/// integrity gate so the pinned-vs-computed comparison is over an
+/// identical encoding.
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(64);
+    const TABLE: &[u8; 16] = b"0123456789abcdef";
+    for b in digest {
+        hex.push(TABLE[(b >> 4) as usize] as char);
+        hex.push(TABLE[(b & 0x0f) as usize] as char);
+    }
+    hex
+}
+
+/// SC-03 — operator policy for plugin-binary integrity, sourced from
+/// `freedom.yaml::plugins.wasm`. Opt-in-secure: an empty `pinned` map
+/// with `require_all_pinned = false` (the default) imposes NO gate, so
+/// existing unsigned plugins keep loading. The operator opts into
+/// tamper-protection by pinning the hashes they trust.
+#[derive(Clone, Copy, Debug)]
+pub struct IntegrityPolicy<'a> {
+    /// plugin id → expected lowercase-hex SHA-256 of `plugin.wasm`.
+    pub pinned: &'a std::collections::BTreeMap<String, String>,
+    /// When true, a plugin with NO pin is rejected (`HashUnpinned`)
+    /// instead of loaded — "deny anything I haven't explicitly trusted".
+    pub require_all_pinned: bool,
+}
+
+/// SC-03 — verify one discovered plugin against the operator's pin
+/// policy. Called by the daemon BEFORE instantiating the plugin (the
+/// hostcall surface is the attack vector, so the gate fires at
+/// instantiation, not at the read-only `plugins list`).
+///
+///   - pin present + matches    → `Ok(())`
+///   - pin present + mismatch   → `HashMismatch` (tamper / swap)
+///   - no pin + require_all     → `HashUnpinned`
+///   - no pin + !require_all    → `Ok(())` (back-compat default)
+///
+/// The compare is a plain string equality: both sides are SHA-256 of
+/// PUBLIC plugin bytes (no secret), so there is no timing channel to
+/// protect — unlike the credential-store HMAC checks.
+pub fn verify_integrity(
+    plugin: &DiscoveredPlugin,
+    policy: &IntegrityPolicy<'_>,
+) -> Result<(), DiscoveryError> {
+    match policy.pinned.get(&plugin.manifest.id) {
+        Some(expected) => {
+            if expected.eq_ignore_ascii_case(&plugin.content_hash) {
+                Ok(())
+            } else {
+                Err(DiscoveryError::HashMismatch {
+                    dir: plugin.dir.clone(),
+                    expected: expected.clone(),
+                    got: plugin.content_hash.clone(),
+                })
+            }
+        }
+        None if policy.require_all_pinned => Err(DiscoveryError::HashUnpinned {
+            dir: plugin.dir.clone(),
+            got: plugin.content_hash.clone(),
+        }),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -367,5 +460,97 @@ mod tests {
         let r = discover(dir.path());
         assert_eq!(r.loaded.len(), 1);
         assert_eq!(r.rejected.len(), 0);
+    }
+
+    // ── SC-03 integrity gate ───────────────────────────────────────
+
+    use std::collections::BTreeMap;
+
+    fn discovered(id: &str, wasm: &[u8]) -> DiscoveredPlugin {
+        let dir = tempdir().unwrap();
+        write_plugin(
+            dir.path(),
+            id,
+            &format!("id = \"{id}\"\nname = \"x\"\nversion = \"0.1.0\"\n"),
+            wasm,
+        );
+        let mut r = discover(dir.path());
+        r.loaded.pop().expect("one loaded plugin")
+    }
+
+    #[test]
+    fn sha256_hex_is_64_lowercase_hex_and_stable() {
+        let h = sha256_hex(MINIMAL_WASM);
+        assert_eq!(h.len(), 64);
+        assert!(
+            h.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert_eq!(h, sha256_hex(MINIMAL_WASM), "stable for identical input");
+        assert_ne!(h, sha256_hex(b"different"), "differs for different input");
+    }
+
+    #[test]
+    fn load_populates_content_hash() {
+        let p = discovered("hashme", MINIMAL_WASM);
+        assert_eq!(p.content_hash, sha256_hex(MINIMAL_WASM));
+    }
+
+    #[test]
+    fn verify_integrity_no_pin_default_allows() {
+        let p = discovered("free", MINIMAL_WASM);
+        let pinned = BTreeMap::new();
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+        };
+        assert!(verify_integrity(&p, &policy).is_ok());
+    }
+
+    #[test]
+    fn verify_integrity_no_pin_require_all_rejects() {
+        let p = discovered("free", MINIMAL_WASM);
+        let pinned = BTreeMap::new();
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: true,
+        };
+        assert!(matches!(
+            verify_integrity(&p, &policy),
+            Err(DiscoveryError::HashUnpinned { .. })
+        ));
+    }
+
+    #[test]
+    fn verify_integrity_pin_match_allows_mismatch_rejects() {
+        let p = discovered("pinned", MINIMAL_WASM);
+        let good = sha256_hex(MINIMAL_WASM);
+
+        let mut ok_map = BTreeMap::new();
+        ok_map.insert("pinned".to_string(), good.clone());
+        assert!(
+            verify_integrity(
+                &p,
+                &IntegrityPolicy {
+                    pinned: &ok_map,
+                    require_all_pinned: true,
+                }
+            )
+            .is_ok(),
+            "matching pin loads even under require_all_pinned"
+        );
+
+        let mut bad_map = BTreeMap::new();
+        bad_map.insert("pinned".to_string(), "deadbeef".to_string());
+        assert!(matches!(
+            verify_integrity(
+                &p,
+                &IntegrityPolicy {
+                    pinned: &bad_map,
+                    require_all_pinned: false,
+                }
+            ),
+            Err(DiscoveryError::HashMismatch { .. })
+        ));
     }
 }

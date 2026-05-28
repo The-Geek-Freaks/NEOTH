@@ -77,16 +77,23 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
     let report = discover(&plugins_root);
     let activations = load_activations()?;
 
-    let mut rows: Vec<(String, PluginActivation, String)> = report
+    // (id, state, name, content_hash) — SC-03 surfaces the sha256 so
+    // the operator can pin it in freedom.yaml::plugins.wasm.pinned_hashes.
+    let mut rows: Vec<(String, PluginActivation, String, String)> = report
         .loaded
         .iter()
         .map(|p| {
             let state = activations.get(&p.manifest.id).copied().unwrap_or_default();
-            (p.manifest.id.clone(), state, p.manifest.name.clone())
+            (
+                p.manifest.id.clone(),
+                state,
+                p.manifest.name.clone(),
+                p.content_hash.clone(),
+            )
         })
         .collect();
     if only_pending {
-        rows.retain(|(_, s, _)| *s == PluginActivation::Pending);
+        rows.retain(|(_, s, _, _)| *s == PluginActivation::Pending);
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -94,11 +101,12 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
         OutputFormat::Json | OutputFormat::Jsonl => {
             let payload: Vec<serde_json::Value> = rows
                 .iter()
-                .map(|(id, state, name)| {
+                .map(|(id, state, name, hash)| {
                     json!({
                         "id": id,
                         "name": name,
                         "activation": state.as_str(),
+                        "sha256": hash,
                     })
                 })
                 .collect();
@@ -117,11 +125,34 @@ fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool)
                 }
                 return Ok(());
             }
-            println!("{:<24}  {:<10}  NAME", "ID", "STATE");
-            println!("{:<24}  {:<10}  ----", "--", "-----");
-            for (id, state, name) in &rows {
-                println!("{:<24}  {:<10}  {}", id, state.as_str(), name);
+            println!(
+                "{:<20}  {:<9}  {:<18}  SHA256 (plugin.wasm)",
+                "ID", "STATE", "NAME"
+            );
+            println!(
+                "{:<20}  {:<9}  {:<18}  -------------------",
+                "--", "-----", "----"
+            );
+            for (id, state, name, hash) in &rows {
+                // First 16 hex chars are enough to eyeball; full value
+                // is in `--output json` for copy-paste into the pin map.
+                let short = hash.get(..16).unwrap_or(hash.as_str());
+                println!(
+                    "{:<20}  {:<9}  {:<18}  {}…",
+                    id,
+                    state.as_str(),
+                    name,
+                    short
+                );
             }
+            println!();
+            println!(
+                "SC-03: pin a trusted hash with `neoth plugin list --output json` (full sha256)"
+            );
+            println!(
+                "       → freedom.yaml::plugins.wasm.pinned_hashes.<id>; the daemon then refuses"
+            );
+            println!("       to run a plugin whose plugin.wasm doesn't match.");
             if only_pending {
                 println!();
                 println!("Run `neoth plugin enable <id>` to activate.");

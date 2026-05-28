@@ -585,6 +585,20 @@ pub struct WasmPluginsConfig {
     #[serde(default)]
     pub activations:
         std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivation>,
+    /// SC-03 — operator-pinned `plugin.wasm` SHA-256 hashes, keyed by
+    /// manifest id (lowercase hex). Before instantiating a plugin the
+    /// daemon recomputes the hash and refuses to run it on a mismatch
+    /// (tamper / supply-chain swap). Empty by default → no gate; the
+    /// operator pins the hashes they trust (surfaced by `neoth plugin
+    /// list`). Opt-in-secure: existing unsigned plugins keep loading
+    /// until the operator pins them.
+    #[serde(default)]
+    pub pinned_hashes: std::collections::BTreeMap<String, String>,
+    /// SC-03 — when true, a plugin with NO pinned hash is refused
+    /// instead of loaded ("deny anything I haven't explicitly
+    /// trusted"). Default `false` for back-compat.
+    #[serde(default)]
+    pub require_all_pinned: bool,
 }
 
 fn default_wasm_plugins_enabled() -> bool {
@@ -607,6 +621,8 @@ impl Default for WasmPluginsConfig {
         Self {
             enabled: default_wasm_plugins_enabled(),
             activations: std::collections::BTreeMap::new(),
+            pinned_hashes: std::collections::BTreeMap::new(),
+            require_all_pinned: false,
         }
     }
 }
@@ -1961,6 +1977,8 @@ mod tests {
                 wasm: WasmPluginsConfig {
                     enabled: false,
                     activations: std::collections::BTreeMap::new(),
+                    pinned_hashes: std::collections::BTreeMap::new(),
+                    require_all_pinned: false,
                 },
             },
             ..Default::default()
