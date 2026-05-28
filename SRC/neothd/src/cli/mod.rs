@@ -20,6 +20,7 @@ pub mod cluster;
 pub mod code;
 pub mod code_map;
 pub mod completions;
+pub mod connect;
 pub mod consent;
 pub mod cost;
 pub mod council;
@@ -619,6 +620,11 @@ pub enum Commands {
         action: ProviderAction,
     },
 
+    /// UX-01 — discover messaging channels + how to connect them.
+    /// Read-only post-wizard on-ramp: shows which channels (Telegram,
+    /// Slack, WhatsApp, …) are connected + the steps to wire the rest.
+    Connect(connect::ConnectArgs),
+
     /// Manage channels (Telegram, WhatsApp, etc.) (Day 7+).
     #[command(hide = true)]
     Channel {
@@ -878,6 +884,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Profile(mut args) => {
             args.output = global_output;
             profile::run_profile(args).await?;
+        }
+        Commands::Connect(mut args) => {
+            args.output = global_output;
+            connect::run_connect(args)?;
         }
         Commands::Quota(mut args) => {
             args.output = global_output;
