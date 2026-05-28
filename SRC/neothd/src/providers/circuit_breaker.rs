@@ -478,10 +478,20 @@ pub mod persist {
             return Ok(0);
         }
         let body = fs::read_to_string(&path)?;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        // Fail-safe: a `now = 0` default underflows `now - last_seen_ts_unix`
+        // to a large negative number, defeating the staleness skip — so EVERY
+        // persisted row (even months-old) would be restored as if fresh,
+        // potentially forcing healthy providers Open after a clock fault.
+        // Surface the error; the caller logs it non-fatally and skips restore
+        // (clean breakers are the safe default).
+        let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => d.as_secs() as i64,
+            Err(e) => {
+                return Err(std::io::Error::other(format!(
+                    "system clock is before UNIX_EPOCH ({e}); skipping breaker restore"
+                )));
+            }
+        };
         let mut restored = 0usize;
         for line in body.lines() {
             let Ok(row) = serde_json::from_str::<BreakerPersistedRow>(line) else {

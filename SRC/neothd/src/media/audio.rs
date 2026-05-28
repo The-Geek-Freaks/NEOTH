@@ -192,7 +192,20 @@ fn decode_from_bytes(bytes: Vec<u8>, mime: &str) -> Result<DecodedAudio, Extract
         })?;
     let track_id = track.id;
     let codec_params = track.codec_params.clone();
-    let original_sr = codec_params.sample_rate.unwrap_or(0);
+    // A missing/zero sample rate must NOT silently fall through to "skip
+    // resampling" — that would hand Whisper raw audio at whatever rate the
+    // codec actually decoded (8 kHz, 48 kHz, …) while claiming 16 kHz, yielding
+    // a garbage transcript stored as if correct. Fail fast like the
+    // no-default-track guard above.
+    let original_sr = match codec_params.sample_rate {
+        Some(sr) if sr > 0 => sr,
+        _ => {
+            return Err(ExtractionError::Backend {
+                backend: "audio",
+                reason: "codec reported no/zero sample rate; cannot resample to 16 kHz".into(),
+            });
+        }
+    };
     let channels = codec_params.channels.map(|c| c.count()).unwrap_or(1);
 
     let mut decoder = symphonia::default::get_codecs()
@@ -251,7 +264,7 @@ fn decode_from_bytes(bytes: Vec<u8>, mime: &str) -> Result<DecodedAudio, Extract
         }
     }
 
-    let resampled = if original_sr == TARGET_SAMPLE_RATE || original_sr == 0 {
+    let resampled = if original_sr == TARGET_SAMPLE_RATE {
         decoded_mono
     } else {
         linear_resample(&decoded_mono, original_sr, TARGET_SAMPLE_RATE)

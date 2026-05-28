@@ -180,7 +180,15 @@ pub fn decode_payload(raw: &str) -> DecodedWebhook {
                 if text.body.is_empty() {
                     continue;
                 }
-                let ts_unix: u64 = m.timestamp.parse().unwrap_or(0);
+                // WhatsApp Cloud API always sends a numeric `timestamp`. A
+                // parse failure means a corrupt/adversarial payload — skip it
+                // rather than ingest a fabricated 1970-epoch record that would
+                // mis-order or get dropped by retention downstream. Consistent
+                // with the non-text / empty-body skips above (boundary
+                // validation, not a swallowed error).
+                let Ok(ts_unix) = m.timestamp.parse::<u64>() else {
+                    continue;
+                };
                 let display = name_lookup.get(m.from.as_str()).map(|s| s.to_string());
                 messages.push(InboundMessage {
                     channel: ChannelKind::WhatsAppBusiness,
@@ -257,6 +265,35 @@ mod tests {
                 assert_eq!(m.raw_ts_ms, Some(1_700_000_000_000));
             }
             other => panic!("expected Messages, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_skips_text_message_with_unparseable_timestamp() {
+        // A corrupt/adversarial non-numeric `timestamp` must NOT be ingested
+        // with a fabricated 1970-epoch ts (which would mis-order or get dropped
+        // by retention downstream). The message is skipped → NoMessages.
+        let raw = r#"{
+            "object": "whatsapp_business_account",
+            "entry": [{
+                "id": "W",
+                "changes": [{
+                    "field": "messages",
+                    "value": {
+                        "messages": [{
+                            "from": "4915",
+                            "id": "wamid.BADTS",
+                            "timestamp": "not-a-number",
+                            "type": "text",
+                            "text": {"body": "hello"}
+                        }]
+                    }
+                }]
+            }]
+        }"#;
+        match decode_payload(raw) {
+            DecodedWebhook::NoMessages { .. } => {}
+            other => panic!("expected NoMessages (bad-ts skipped), got {other:?}"),
         }
     }
 

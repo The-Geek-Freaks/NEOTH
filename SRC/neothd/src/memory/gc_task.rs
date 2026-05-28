@@ -57,10 +57,19 @@ pub async fn run_once(db_path: &std::path::Path) -> Result<gc::GcReport> {
     let db = db_path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<gc::GcReport> {
         let mut conn = store::open(&db)?;
-        let now_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
-            .unwrap_or(0);
+        // Fail-safe skip on clock failure (mirrors M-03 in decay_task): a
+        // `now_ns = 0` default makes `cutoff = now - TTL` nonsensical, so the
+        // GC pass would operate on a garbage window. Surface the error instead
+        // — the periodic loop logs a warning and retries on the next tick.
+        let now_ns = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => i64::try_from(d.as_nanos()).unwrap_or(i64::MAX),
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "system clock is before UNIX_EPOCH ({e}); skipping GC pass — \
+                     check BIOS battery / NTP / VM clock"
+                ));
+            }
+        };
         gc::run_pass(&mut conn, now_ns, gc::DEFAULT_TTL_NS)
     })
     .await?
