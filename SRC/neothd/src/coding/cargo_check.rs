@@ -213,6 +213,27 @@ pub fn format_for_retry(diags: &[CargoDiagnostic]) -> String {
     buf
 }
 
+/// QU-05 dispatcher entry point. Given the captured stdout of
+/// `cargo check --message-format=json` run in the task worktree,
+/// return a retry hint when there were hard errors, or `None` when
+/// the check was clean (no errors — the caller must NOT re-inject an
+/// empty hint, and a clean check means the patch is review-ready).
+///
+/// Composes [`parse_cargo_check_json`] + [`has_errors`] +
+/// [`format_for_retry`]: one call the dispatcher's Phase-4 loop makes
+/// after a failing `cargo check`, feeding the result into
+/// `store::append_task_description_hint` so the next worker attempt
+/// sees its own compiler diagnostics. Pure — the subprocess run that
+/// produces `stdout` is the integration layer's job.
+pub fn retry_hint_from_cargo_json(stdout: &str) -> Option<String> {
+    let diags = parse_cargo_check_json(stdout);
+    if has_errors(&diags) {
+        Some(format_for_retry(&diags))
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,7 +297,10 @@ mod tests {
     #[test]
     fn has_errors_distinguishes_error_from_warning() {
         let only_warn = parse_cargo_check_json(warning_line());
-        assert!(!has_errors(&only_warn), "a lone warning is not a hard error");
+        assert!(
+            !has_errors(&only_warn),
+            "a lone warning is not a hard error"
+        );
         let with_error = parse_cargo_check_json(&format!("{}\n{}", warning_line(), e0425_line()));
         assert!(has_errors(&with_error));
     }
@@ -356,5 +380,23 @@ mod tests {
     #[test]
     fn constants_canonical() {
         assert_eq!(MAX_REINJECTED_DIAGNOSTICS, 5);
+    }
+
+    #[test]
+    fn retry_hint_some_when_errors_present() {
+        let hint = retry_hint_from_cargo_json(e0425_line()).expect("errors → Some");
+        assert!(hint.contains("E0425"));
+        assert!(hint.contains("failed `cargo check`"));
+    }
+
+    #[test]
+    fn retry_hint_none_when_clean_or_warning_only() {
+        // No diagnostics at all (clean check, only build-finished).
+        let clean = r#"{"reason":"build-finished","success":true}"#;
+        assert!(retry_hint_from_cargo_json(clean).is_none());
+        // Warnings alone do not block — no retry hint.
+        assert!(retry_hint_from_cargo_json(warning_line()).is_none());
+        // Empty stdout.
+        assert!(retry_hint_from_cargo_json("").is_none());
     }
 }

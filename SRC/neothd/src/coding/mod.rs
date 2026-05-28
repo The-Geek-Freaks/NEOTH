@@ -42,6 +42,11 @@
 
 pub mod analyze;
 pub mod brainstorm;
+/// QU-05 (Session 28) — `cargo check --message-format=json` diagnostic
+/// parser for the validate→fix→escalate loop. Pure-fn half: parse the
+/// captured JSON stream into structured diagnostics + format them for
+/// re-injection into the next worker attempt's prompt.
+pub mod cargo_check;
 pub mod cerebellum_provider;
 pub mod classifier;
 pub mod decomposer;
@@ -130,6 +135,15 @@ pub use retry::{DEFAULT_MAX_ATTEMPTS, RetryStrategy, WorkerRetryPolicy};
 pub use early_stop::{
     DEFAULT_PATCH_SPIRAL_CEILING, GREETING_REGRESSION_MARKERS, PatchSpiralTracker,
     REPETITION_LOOP_MIN_SAMPLES, is_greeting_regression, is_repetition_loop,
+};
+// QU-05 (Session 28): cargo-check JSON diagnostic parser + retry-hint
+// formatter. The dispatcher's Phase-4 test loop feeds the parser the
+// captured `cargo check --message-format=json` stdout + re-injects
+// `retry_hint_from_cargo_json`'s output into the next worker attempt.
+#[allow(unused_imports)]
+pub use cargo_check::{
+    CargoDiagnostic, MAX_REINJECTED_DIAGNOSTICS, errors_only, format_for_retry, has_errors,
+    parse_cargo_check_json, retry_hint_from_cargo_json,
 };
 // Smallcode port #2 (2026-05-21): per-model capability profiles —
 // `ModelProfile` + `ToolFormat` table + fuzzy matcher. Drives
