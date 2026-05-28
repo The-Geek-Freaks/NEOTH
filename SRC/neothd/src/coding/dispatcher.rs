@@ -901,18 +901,25 @@ fn handle_retryable_failure(
         // The dispatcher's next loop pass will pick the task up
         // again from Backlog with the hint visible to the worker.
         let strategy = retry_policy.pick_strategy(task.task_id);
-        let hint = strategy.hint();
+        // QU-05 — re-inject the actual failure diagnosis (compiler /
+        // test output) alongside the generic strategy nudge. Before
+        // this, the worker only saw "[retry hint: split the file]"
+        // and never its own error, so it kept reproducing the same
+        // break. `diagnosis` is already redacted (line above) so a
+        // leaked secret in an error string never reaches the task
+        // description (which `neoth kanban` renders + the WAL anchors).
+        let hint = reinjection_hint(strategy.hint(), &diagnosis);
         info!(
             task_id = task.task_id.raw(),
             attempt = attempt,
             strategy = strategy.as_str(),
             diagnosis = %diagnosis,
-            "worker attempt failed; retrying with strategy hint"
+            "worker attempt failed; retrying with strategy hint + diagnosis"
         );
         // Best-effort hint persistence — failure to append doesn't
         // block the retry, just means the next attempt runs without
         // the hint.
-        if let Err(e) = store::append_task_description_hint(conn, task.task_id, hint) {
+        if let Err(e) = store::append_task_description_hint(conn, task.task_id, &hint) {
             tracing::warn!(
                 task_id = task.task_id.raw(),
                 error = %e,
@@ -952,6 +959,41 @@ fn now_unix_ns() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+/// QU-05 — cap on the failure diagnostic re-injected into the next
+/// attempt's task description. A `cargo check` / test failure can dump
+/// kilobytes; the worker only needs the head to know what to fix, and
+/// the description also renders in `neoth kanban` views + anchors in
+/// the WAL, so an unbounded dump would bloat both.
+const REINJECTED_DIAGNOSIS_CAP: usize = 1_500;
+
+/// QU-05 — build the retry hint appended to the task description before
+/// the next attempt. Combines the generic strategy nudge ("split the
+/// file" / "rewrite the section") with the actual failure diagnosis so
+/// the worker sees *what* broke, not just *how* to retry. `diagnosis`
+/// MUST already be redacted by the caller; this only bounds its length
+/// at a UTF-8 char boundary so a multi-byte rustc arrow (`-->`) or a
+/// German error message can't panic the slice.
+fn reinjection_hint(strategy_hint: &str, diagnosis: &str) -> String {
+    let diag = diagnosis.trim();
+    if diag.is_empty() {
+        return strategy_hint.to_string();
+    }
+    let bounded = if diag.len() > REINJECTED_DIAGNOSIS_CAP {
+        // Walk back to the nearest UTF-8 char boundary at/below the cap
+        // so a multi-byte char straddling it can't panic the slice.
+        // (`str::floor_char_boundary` would be cleaner but is only
+        // stable since 1.91; MSRV is 1.86.)
+        let mut end = REINJECTED_DIAGNOSIS_CAP;
+        while end > 0 && !diag.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}\n…(diagnostic truncated)", &diag[..end])
+    } else {
+        diag.to_string()
+    };
+    format!("{strategy_hint}\n[previous attempt failed]:\n{bounded}")
 }
 
 /// QU-01 Phase 3 — cap on the per-task recent-output ring. Only the
@@ -2010,5 +2052,46 @@ mod tests {
             crate::coding::early_stop::is_repetition_loop(&refs3),
             "3 identical samples must trip the repetition-loop detector"
         );
+    }
+
+    // ── QU-05 reinjection_hint ─────────────────────────────────────
+
+    #[test]
+    fn reinjection_hint_combines_strategy_and_diagnosis() {
+        let h = reinjection_hint(
+            "[retry hint: split the file]",
+            "error[E0425]: cannot find value `x`",
+        );
+        assert!(h.contains("[retry hint: split the file]"));
+        assert!(h.contains("[previous attempt failed]:"));
+        assert!(h.contains("E0425"));
+    }
+
+    #[test]
+    fn reinjection_hint_falls_back_to_strategy_when_diagnosis_empty() {
+        // An empty / whitespace-only diagnosis must not produce a
+        // dangling "[previous attempt failed]:" header with no body.
+        assert_eq!(reinjection_hint("[hint]", ""), "[hint]");
+        assert_eq!(reinjection_hint("[hint]", "   \n\t "), "[hint]");
+    }
+
+    #[test]
+    fn reinjection_hint_truncates_long_diagnosis_at_char_boundary() {
+        // A multi-byte char straddling the cap must not panic the
+        // byte slice. Build a diagnosis well past the cap of
+        // multi-byte arrows + umlauts (rustc emits `-->`, German
+        // error text emits ä/ö/ü).
+        let diag = "ü-->".repeat(2000); // ~10 KB, all multi-byte heavy
+        let h = reinjection_hint("[hint]", &diag);
+        assert!(h.contains("(diagnostic truncated)"));
+        // Bounded: strategy hint + header + cap + truncation marker.
+        assert!(h.len() < REINJECTED_DIAGNOSIS_CAP + 200);
+    }
+
+    #[test]
+    fn reinjection_hint_short_diagnosis_not_truncated() {
+        let h = reinjection_hint("[hint]", "boom");
+        assert!(h.contains("boom"));
+        assert!(!h.contains("truncated"));
     }
 }
