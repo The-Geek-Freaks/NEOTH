@@ -42,19 +42,3 @@ Hermes users already like agent growth and skills. NEOTH should say:
 > Keep the learning loop. Add a real personal buddy, stronger local privacy
 > defaults, visual coding planning, and memory you can audit.
 
-## README positioning
-
-Use this language:
-
-- "Hermes Agent is strong for CLI-first self-improving agent workflows."
-- "NEOTH turns that energy into a private buddy that DAUs can start and pros
-  can operate deeply."
-
-Avoid this language:
-
-- "Hermes is not serious."
-- "Self-improvement is bad."
-- "CLI products are obsolete."
-
-The sharper claim is: NEOTH gives the learning loop a clearer trust model and
-a friendlier first mile.
