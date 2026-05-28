@@ -83,6 +83,7 @@ pub mod telemetry;
 pub mod tour;
 pub mod tts;
 pub mod tweaks;
+pub mod undo;
 pub mod update;
 pub mod updater;
 pub mod usage;
@@ -625,6 +626,11 @@ pub enum Commands {
     /// Slack, WhatsApp, …) are connected + the steps to wire the rest.
     Connect(connect::ConnectArgs),
 
+    /// UX-03 — show the last N state-mutating WAL frames + how to
+    /// reverse each. Read-only discovery; the confirm-gated
+    /// auto-reverser is a separate step.
+    Undo(undo::UndoArgs),
+
     /// Manage channels (Telegram, WhatsApp, etc.) (Day 7+).
     #[command(hide = true)]
     Channel {
@@ -888,6 +894,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Connect(mut args) => {
             args.output = global_output;
             connect::run_connect(args)?;
+        }
+        Commands::Undo(mut args) => {
+            args.output = global_output;
+            undo::run_undo(args)?;
         }
         Commands::Quota(mut args) => {
             args.output = global_output;
