@@ -1,24 +1,29 @@
 //! Stage 5 — `profile_claim_guard`. The unified gate from
-//! `PLAN/SPEC_profile_claim_guard.md`. Five checks against five distinct
-//! risks (H1 / H2 / H5 / M1 / M2).
+//! `PLAN/SPEC_profile_claim_guard.md` (SPEC-07). Five checks against
+//! five distinct risks (H1 / H2 / H5 / M1 / M2) — ALL SHIPPED.
 //!
-//! What ships today: **H1** (require first-person window) and **H5**
-//! (daily LLM-call cap). Both run without new persistent state — H1
-//! reads the attributed window we already produce, H5 keeps an in-
-//! memory counter the operator-side `DailyQuota` will subsume.
+//! `profile::runner` Stage 5 calls [`ProfileClaimGuard::check_all`] with
+//! the full set:
+//!   - **H1** require first-person window — rejects a delta whose
+//!     attributed window isn't first-person.
+//!   - **H2** redaction registry — consults `idx_profile_redactions`
+//!     (migration v7→v8; `profile::redaction` add/revoke/lookup; the
+//!     pipeline loads it via `runner::load_active_redactions`). Any
+//!     redacted field rejects the whole delta.
+//!   - **H5** daily LLM-call cap — in-memory [`DailyLlmCounter`].
+//!   - **M1** timestamp normalization —
+//!     [`crate::profile::timestamp_check`] `TimestampPolicy::from_window`
+//!     clamps claim timestamps to the attributed-window anchor range
+//!     (+ padding).
+//!   - **M2** typed extension registry —
+//!     [`crate::profile::extension_registry::TypedExtensionRegistry`]
+//!     gates each claim's top-level category.
 //!
-//! What's deferred:
-//!   - **H2** redaction registry — needs `idx_profile_redactions` table
-//!     + insert/lookup API. Lands when the schema migration ships.
-//!   - **M1** timestamp normalization — needs chrono date-parser + the
-//!     attributed-window anchor timestamps. Lands when stage 3 emits
-//!     `RawClaim::value_json` with timestamp-shaped values.
-//!   - **M2** typed extension registry — needs
-//!     `~/.neoth/profile_extensions.toml` loader. Lands alongside the
-//!     `neoth profile register-category` CLI.
-//!
-//! The struct + outcome enum + spec-aligned `GuardReason` variants are
-//! pinned here so the deferred checks plug in without refactor.
+//! Rejections emit the `0xB4 PROFILE_DELTA_BLOCKED` audit frame so the
+//! operator can `neoth wal show --type 0xB4` to see why a delta was
+//! refused. (Earlier revisions of this doc described H2/M1/M2 as
+//! "deferred" — that was the Phase-1 state; the maximal `check_all`
+//! wiring landed via the H2 schema migration + ADV-13 timestamp work.)
 
 use std::collections::HashMap;
 use std::sync::Mutex;
