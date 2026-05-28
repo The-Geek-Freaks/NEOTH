@@ -271,14 +271,19 @@ pub fn parse_and_decrypt(body: &str, password: &str) -> Result<String, Bitwarden
     let envelope = parse_envelope_json(body)?;
     let (enc_key, mac_key) =
         derive_keys_pbkdf2(password.as_bytes(), &envelope.salt, envelope.kdf_iterations);
-    // Step 1: validator round-trip. encKeyValidation contains a
-    // self-referential encrypted ciphertext — when decrypted, the
-    // plaintext bytes equal the SAME encKeyValidation string. A
-    // wrong password fails HMAC or PKCS#7 unpad here.
-    let validator_pt = decrypt_encrypted_string(&envelope.enc_key_validation, &enc_key, &mac_key)?;
-    if validator_pt != envelope.enc_key_validation.as_bytes() {
-        return Err(BitwardenEncryptedError::WrongPassword);
-    }
+    // Step 1: password pre-check via the validator EncString. Its
+    // HMAC-SHA256 is keyed by `mac_key`, so `decrypt_encrypted_string`
+    // returns `WrongPassword` (constant-time MAC mismatch) the moment
+    // the derived keys are wrong — that `?` IS the password check, and
+    // it's cryptographic (not the ~255/256 PKCS#7-padding heuristic).
+    //
+    // We do NOT compare the plaintext to the encKeyValidation string
+    // itself: that would demand a ciphertext whose decryption equals
+    // its own string form — an unconstructable fixed point that no
+    // real export (or any encryptor) can produce, so the old check
+    // rejected every valid vault. Mirrors Bitwarden's own importer,
+    // which treats a MAC-valid decrypt as proof of the password.
+    let _validator_pt = decrypt_encrypted_string(&envelope.enc_key_validation, &enc_key, &mac_key)?;
     // Step 2: the actual vault data.
     let data_pt = decrypt_encrypted_string(&envelope.data, &enc_key, &mac_key)?;
     String::from_utf8(data_pt).map_err(|e| {
@@ -331,14 +336,12 @@ mod tests {
     ) -> String {
         let (enc_key, mac_key) = derive_keys_pbkdf2(password.as_bytes(), salt.as_bytes(), iters);
         let iv: [u8; 16] = [0xAB; 16];
-        // encKeyValidation: decrypt-yields-itself contract.
-        let validator_plain = String::new(); // placeholder; we'll loop
-        // Two-step: build the validator with placeholder, get its
-        // actual encrypted string, then USE that string as its own
-        // plaintext + re-encrypt. Saves a hand-derived constant.
-        let validator = build_encrypted_string(validator_plain.as_bytes(), &enc_key, &mac_key, &iv);
-        let validator_self_referential =
-            build_encrypted_string(validator.as_bytes(), &enc_key, &mac_key, &iv);
+        // encKeyValidation: a normally-encrypted marker. Its only job
+        // is to be HMAC-verifiable under the derived keys so the
+        // importer can reject a wrong password before touching the
+        // (larger) data field — no self-referential fixed point.
+        let validator =
+            build_encrypted_string(b"neoth-bitwarden-validator", &enc_key, &mac_key, &iv);
         let iv2: [u8; 16] = [0xCD; 16];
         let data_enc = build_encrypted_string(data_plaintext.as_bytes(), &enc_key, &mac_key, &iv2);
         format!(
@@ -350,7 +353,7 @@ mod tests {
                 "kdfIterations": {iters},
                 "kdfMemory": null,
                 "kdfParallelism": null,
-                "encKeyValidation_DO_NOT_EDIT": "{validator_self_referential}",
+                "encKeyValidation_DO_NOT_EDIT": "{validator}",
                 "data": "{data_enc}"
             }}"#
         )
