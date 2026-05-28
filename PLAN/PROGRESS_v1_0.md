@@ -275,7 +275,7 @@ A1 binding: **PL-04 + PL-05 hard pre-condition before any EM-\* item merges.** A
 
 ### v0.9 — UX gaps from A4
 
-- [ ] **UX-01** `neoth connect` discovery command for post-wizard channel on-ramp. — A4 F2-1 — 1d
+- [x] **UX-01** `neoth connect` discovery command for post-wizard channel on-ramp. — A4 F2-1 — 1d — ✅ **Shipped 2026-05-28 Session 28b** (`1cd086e`). New `cli/connect.rs` — operator-facing read-only discovery: `connect_rows(&Credentials)` classifies telegram (token → connected) / slack (both xoxb-+xapp- → connected, one → partial) / whatsapp (full inbound set → connected, token-only → outbound partial) / discord+keet (experimental — impl ships but no credentials.yaml field yet). Mirrors `doctor::check_channels_wiring` field-for-field so the two never disagree. `neoth connect` lists all 5 with an "N of M connected" summary; `neoth connect <channel>` prints the row + a detailed multi-line on-ramp; table + JSON. New top-level `Commands::Connect` (operator-visible; `neoth channel` stays hidden/operational). 6 pure-fn tests (status transitions per credential presence + details known/unknown + json). Verified: clippy -D warnings clean + ran the real binary (`neoth connect` 5-channel table + `neoth connect telegram` BotFather on-ramp).
 - [ ] **UX-02** "Memory is working" session-start signal — single line "I remember N things from last time." — A4 F2-2 — 0.5d
 - [ ] **UX-03** `neoth undo` last 5 mutating WAL frames with timestamps + select rollback. — A4 F3-3 — 2d
 - [ ] **UX-04** `neoth profile show` with human-readable knobs + per-key `neoth config set` hints. — A4 F4-1 — 1.5d
