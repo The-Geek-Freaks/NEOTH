@@ -102,6 +102,19 @@ pub async fn run_pipeline(
     // observability hook, not a gate.
     warn_if_cloud_provider_used_for_profile_extraction_once(provider.name());
 
+    // SPEC-04 (Session 28) — provider-target audit frame. Records
+    // which provider is about to see the operator's raw conversation
+    // window + whether it's on-device. The warn above is ephemeral
+    // (one-shot per process); this frame is the DURABLE per-turn
+    // record so a privacy-posture regression stays visible in the
+    // audit chain even if the operator later flips the config back.
+    // Best-effort: an emit failure must NOT abort extraction (the
+    // privacy floor is enforced upstream by from_config_for_learn,
+    // not by this audit frame). Emitted BEFORE Stage 3 so a crash
+    // mid-extract still leaves the "we were about to use provider X"
+    // record.
+    emit_extract_target_audit(writer, provider.name(), trigger_event_id, now_unix as i64).await;
+
     // Stage 1 — window_extract.
     let window = extract_window(conn, trigger_event_id, turns_back)
         .context("pipeline stage 1: window_extract")?;
@@ -245,6 +258,58 @@ static V10_07_PROVIDER_WARNED: std::sync::atomic::AtomicBool =
 /// the data stays on-device — no privacy concern under H3.
 fn is_local_inference_provider(name: &str) -> bool {
     matches!(name, "local_qwen" | "hermes" | "openclaw")
+}
+
+/// SPEC-04 (Session 28) — stable wire label for the `target` field in
+/// the `PROFILE_EXTRACT_TARGET` audit frame. `"local"` when the
+/// provider runs on-device (no privacy concern under H3), `"cloud"`
+/// otherwise. Pure-fn so the local/cloud decision is unit-testable
+/// without spinning up a WAL writer; the labels are the operator-
+/// facing strings `neoth privacy audit` + WAL consumers grep, so a
+/// rename must be deliberate.
+fn extract_target_label(provider_name: &str) -> &'static str {
+    if is_local_inference_provider(provider_name) {
+        "local"
+    } else {
+        "cloud"
+    }
+}
+
+/// SPEC-04 (Session 28) — emit one `PROFILE_EXTRACT_TARGET` (0x2E)
+/// audit frame recording the provider + its on/off-device
+/// classification for this extraction turn. Best-effort: a WAL write
+/// failure logs a warn + returns (never aborts extraction — the
+/// privacy floor is enforced upstream, this frame is the audit trail
+/// not the gate). Target classification reuses
+/// [`is_local_inference_provider`] so the audit + the one-shot warn
+/// agree on what counts as "local".
+async fn emit_extract_target_audit(
+    writer: &WalWriterHandle,
+    provider_name: &str,
+    trigger_event_id: i64,
+    now_unix: i64,
+) {
+    let target = extract_target_label(provider_name);
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "trigger_event_id": trigger_event_id,
+        "provider": provider_name,
+        "target": target,
+        "ts_unix": now_unix,
+    })) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "serialise PROFILE_EXTRACT_TARGET payload failed; skipping audit frame");
+            return;
+        }
+    };
+    let header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_PROFILE_EXTRACT_TARGET,
+        &payload,
+    )
+    .build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "append PROFILE_EXTRACT_TARGET frame failed (non-fatal)");
+    }
 }
 
 /// One-shot WARN when `run_pipeline` is called with a cloud provider.

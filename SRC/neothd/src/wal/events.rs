@@ -213,6 +213,32 @@ pub const EVENT_TYPE_INGEST_EXTRACTED: u8 = 0x2C;
 /// with a preceding 0x2C `INGEST_EXTRACTED` (or a channel-side counterpart
 /// once Telegram/Keet land the image-attachment path).
 pub const EVENT_TYPE_EMBED_PERSISTED: u8 = 0x2D;
+/// SPEC-04 (Session 28) — profile-extraction provider-target audit
+/// frame. Emitted once per `profile::run_pipeline` invocation, BEFORE
+/// the Stage-3 extract LLM call, recording which provider will handle
+/// the operator's raw conversation window + whether that provider is
+/// on-device (`local`) or off-device (`cloud`). Gives an auditor
+/// durable proof-in-the-WAL of the privacy posture for every
+/// extraction turn — the `neoth privacy audit` CLI reports the
+/// *current* config; this frame records what *actually happened* per
+/// turn, so a posture regression is visible in the audit chain even
+/// if the config was later flipped back.
+///
+/// **Band note**: the SPEC text proposed `0x3A/0x3B/0x3C` but that
+/// band (`0x30..=0x3F`) is Channels. Provider-target audit is a
+/// provider-lifecycle concern, so it lands in `0x20..=0x2F` next to
+/// PROVIDER_REQUEST / LOCAL_INFERENCE_START. One event with a typed
+/// `target` field replaces the 3 proposed codes (local/cloud/skipped
+/// collapse to one frame shape).
+///
+/// Payload (JSON):
+///   - `trigger_event_id`: i64 — the RAW_TEXT event that triggered
+///     this extraction (correlates the audit frame to the turn)
+///   - `provider`: String — `Provider::name()` of the extract provider
+///   - `target`: String — `"local"` (on-device, no privacy concern)
+///     or `"cloud"` (off-device; operator's raw window leaves the box)
+///   - `ts_unix`: i64
+pub const EVENT_TYPE_PROFILE_EXTRACT_TARGET: u8 = 0x2E;
 /// Round-3 v0.4 ARCH-04 — prompt-assembly block-layer hard token cap
 /// triggered + graceful degradation applied. Emitted once per
 /// PROVIDER_REQUEST that needed truncation. The matching
@@ -1113,6 +1139,8 @@ const _: () = {
         [(EVENT_TYPE_INGEST_EXTRACTED < 0x20 || EVENT_TYPE_INGEST_EXTRACTED > 0x2F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_EMBED_PERSISTED < 0x20 || EVENT_TYPE_EMBED_PERSISTED > 0x2F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PROFILE_EXTRACT_TARGET < 0x20
+        || EVENT_TYPE_PROFILE_EXTRACT_TARGET > 0x2F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_BUDGET_EXCEEDED < 0x20 || EVENT_TYPE_BUDGET_EXCEEDED > 0x2F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SKILL_INJECT_SKIPPED < 0x20
@@ -1299,6 +1327,7 @@ mod tests {
             ("LOCAL_INFERENCE_END", EVENT_TYPE_LOCAL_INFERENCE_END),
             ("INGEST_EXTRACTED", EVENT_TYPE_INGEST_EXTRACTED),
             ("EMBED_PERSISTED", EVENT_TYPE_EMBED_PERSISTED),
+            ("PROFILE_EXTRACT_TARGET", EVENT_TYPE_PROFILE_EXTRACT_TARGET),
             ("BUDGET_EXCEEDED", EVENT_TYPE_BUDGET_EXCEEDED),
             ("SKILL_INJECT_SKIPPED", EVENT_TYPE_SKILL_INJECT_SKIPPED),
             ("CHANNEL_INGRESS", EVENT_TYPE_CHANNEL_INGRESS),
