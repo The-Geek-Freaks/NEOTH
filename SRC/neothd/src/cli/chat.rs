@@ -218,6 +218,14 @@ pub async fn run_chat_with(
         println!("{seed_banner}");
     }
 
+    // UX-02 — "memory is working" session-start signal. One line telling
+    // the operator NEOTH carried context across runs. Best-effort +
+    // naturally silent on a fresh install (zero memories → None), which
+    // also keeps the post-wizard first-tour banner clean.
+    if let Some(line) = session_memory_signal() {
+        println!("{line}");
+    }
+
     let wal_dir = FreedomConfig::default_wal_dir();
     let segment_path = args
         .wal_segment
@@ -3576,6 +3584,35 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// UX-02 — render the "memory is working" line from a total memory
+/// count. `None` when nothing is remembered yet, so a fresh install
+/// stays silent (no "since last time" on the first ever run).
+fn memory_signal_line(total: i64) -> Option<String> {
+    if total <= 0 {
+        return None;
+    }
+    Some(format!(
+        "I remember {total} thing{} from last time.",
+        if total == 1 { "" } else { "s" }
+    ))
+}
+
+/// UX-02 — count what NEOTH carried across sessions (the three episodic
+/// memory tiers + ground-truth assertions) and render the session-start
+/// signal. Best-effort: any missing/unreadable views.db or query error
+/// collapses to `None` (silent) — this is a friendly banner, never a
+/// hard dependency of the chat path.
+fn session_memory_signal() -> Option<String> {
+    use crate::memory::consolidate::count_in_tier;
+    use crate::memory::tiers::Tier;
+    let conn = crate::memory::store::open(&crate::memory::store::default_path()).ok()?;
+    let total = count_in_tier(&conn, Tier::Hot).unwrap_or(0)
+        + count_in_tier(&conn, Tier::Warm).unwrap_or(0)
+        + count_in_tier(&conn, Tier::Cold).unwrap_or(0)
+        + crate::memory::groundtruth::count_active(&conn).unwrap_or(0);
+    memory_signal_line(total)
+}
+
 /// Round-3 v0.4 QU-11 / ARS-6 — load a `MODE_CHECKPOINT` snapshot by
 /// hash prefix and render a (operator-banner, system-prompt-block)
 /// pair. The system-prompt block carries a typed RESUME-CONTEXT
@@ -3640,6 +3677,26 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
     use tokio::fs::read;
+
+    // ── UX-02 memory-signal line ───────────────────────────────────
+
+    #[test]
+    fn memory_signal_line_silences_zero_and_pluralizes() {
+        assert_eq!(memory_signal_line(0), None, "fresh install stays silent");
+        assert_eq!(
+            memory_signal_line(-3),
+            None,
+            "defensive: non-positive → None"
+        );
+        assert_eq!(
+            memory_signal_line(1).unwrap(),
+            "I remember 1 thing from last time."
+        );
+        assert_eq!(
+            memory_signal_line(42).unwrap(),
+            "I remember 42 things from last time."
+        );
+    }
 
     // ── K-Perf-3 v1 2026-05-17: spawn_blocking wrap of profile_block_for_callosum ──
 
