@@ -271,7 +271,7 @@ mod tests {
             ".bashrc",
             "export ANTHROPIC_KEY=sk-ant-api03-AAAAAAAAAAAAAAAAAAAAAAAA\n",
         );
-        let findings = run_credential_scan(&[p.clone()], false).unwrap();
+        let findings = run_credential_scan(std::slice::from_ref(&p), false).unwrap();
         assert!(!findings.is_empty(), "expected at least one finding");
         assert!(
             findings.iter().any(|f| f.secret_kind == "anthropic_key"),
