@@ -219,18 +219,39 @@ pub fn factual_contradiction_check(
         let keyword_in_window = window.contains(&keyword_lower);
         if !keyword_in_window {
             missing_keywords.push(assertion.subject.clone());
+            // No keyword present → nothing to negate. Skip the
+            // negation check so a negation belonging to a *different*
+            // clause can't flag a subject whose keyword is simply
+            // absent.
+            continue;
         }
+
+        // A negation contradicts the assertion only when it sits in the
+        // connective span BETWEEN the subject and its keyword ("X is
+        // not Y") — per the module contract ("no negation-marker
+        // precedes the keyword within a small window"). Searching the
+        // whole ±window let a negation in a neighbouring clause about a
+        // *different* subject ("… city is not Berlin") leak into this
+        // subject's verdict, breaking the per-subject independence the
+        // council depends on. Bound the search to the subject↔keyword
+        // span (covers both textual orders). All four offsets land on
+        // substring-match boundaries, so the slice is UTF-8 safe.
+        let kw_abs = win_start + window.find(&keyword_lower).expect("contains ⇒ find");
+        let subj_end = subject_pos + subject_lower.len();
+        let span_start = subj_end.min(kw_abs);
+        let span_end = (subject_pos.max(kw_abs + keyword_lower.len())).min(lower.len());
+        let connective = &lower[span_start..span_end.max(span_start)];
 
         for marker in negation_markers {
             let marker_lower = marker.to_lowercase();
-            if window.contains(&marker_lower) {
-                // Capture an operator-readable snippet from the
-                // ORIGINAL response (not the lowercased) so the
-                // audit log preserves casing.
-                let orig_win_end = win_end.min(response.len());
-                let orig_win_start = win_start.min(orig_win_end);
-                // Char-boundary-safe slicing of the original.
-                let snippet = safe_slice(response, orig_win_start, orig_win_end);
+            if connective.contains(&marker_lower) {
+                // Snippet from the ORIGINAL response (not lowercased)
+                // so the audit log preserves casing.
+                let snippet = safe_slice(
+                    response,
+                    span_start.min(response.len()),
+                    span_end.min(response.len()),
+                );
                 contradicting_phrases.push((assertion.subject.clone(), snippet));
                 break; // one negation marker per assertion is enough
             }
