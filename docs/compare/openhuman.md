@@ -1,0 +1,61 @@
+# NEOTH vs OpenHuman
+
+OpenHuman's public pitch is strong: a friendly personal AI with local memory,
+managed services where useful, desktop installers, a UI-first onboarding path,
+and a broad integration story.
+
+NEOTH should win users who like that idea but want the trust boundary moved
+back to their machine.
+
+Baseline sources:
+
+- <https://github.com/tinyhumansai/openhuman>
+- <https://tinyhumans.gitbook.io/>
+
+## Short version
+
+| If you want... | Pick |
+| :-- | :-- |
+| Managed convenience, OAuth-heavy integrations, and a polished consumer-first path | OpenHuman |
+| Local-first loyalty, fail-closed profile extraction, coding workflow, plugin caps, WAL audit, and private mesh | NEOTH |
+
+## Capability comparison
+
+| Area | NEOTH | OpenHuman |
+| :-- | :-- | :-- |
+| Product center | Private buddy plus operator runtime | Personal AI with UI-first managed convenience |
+| Normal-user onboarding | GUI wizard, no YAML happy path | Strong UI-first onboarding |
+| Managed backend dependency | None by default | Managed services used for account/model/integration convenience by default |
+| Memory | Six-layer local memory with evidence-linked profile facts | Memory Tree and local vault concepts |
+| Profile extraction | Local/fail-closed by policy | Local plus managed path depending on configuration |
+| Privacy audit | WAL-backed audit, provider destinations, profile evidence, plugin hostcalls | Privacy story exists, but trust boundary includes managed services |
+| Coding workflow | Canvas, Kanban, repo memory, checks, review promotion | Not the primary differentiator |
+| Automation | Built-in cron and localhost n8n | Integration-centric |
+| Plugins | Skills plus WASM capability sandbox | Integration/tool ecosystem |
+| Private mesh | LAN/mDNS, Tailscale, Hysteria, Keet-style path | Not core |
+| Best user | Wants a loyal assistant that can grow from simple GUI into serious local control | Wants consumer convenience and many managed integrations fast |
+
+## Migration angle
+
+OpenHuman users already understand the "personal AI that remembers me" pitch.
+Do not fight that. NEOTH should say:
+
+> Keep the friendly buddy idea. Remove the managed-backend gravity.
+
+## README positioning
+
+Use this language:
+
+- "OpenHuman is great if you want the fastest friendly managed path."
+- "NEOTH is for users who want that same approachable buddy, but with local
+  memory proof, fail-closed profile extraction, coding workflow, and private
+  operator control."
+
+Avoid this language:
+
+- "OpenHuman is insecure."
+- "OpenHuman cannot be private."
+- "Managed equals bad."
+
+The sharper claim is more defensible: NEOTH optimizes for user-owned trust
+boundaries first.

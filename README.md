@@ -1,123 +1,65 @@
-<!--
-  NEOTH README - public 1.0 release narrative.
-  This describes the intended public release surface, not an intermediate private build snapshot.
--->
-
 <div align="center">
 
-<img src=".github/assets/neoth-readme-hero.svg" alt="NEOTH - Stop reintroducing yourself to your AI" width="100%">
-
-<br>
+<img src=".github/assets/neoth-readme-hero.svg" alt="NEOTH - your private AI buddy" width="100%">
 
 <h1>NEOTH</h1>
 
-<h2>Stop reintroducing yourself to your AI.</h2>
+<h3>Your private AI buddy. Loyal to you. Useful everywhere.</h3>
 
 <p>
-  <strong>One private memory. Every approved surface. Evidence you can inspect.</strong>
+  <strong>One memory. Three brain paths. Six memory layers. Local-first by default.</strong>
 </p>
 
 <p>
-  NEOTH is your private Jarvis-like buddy: useful for daily life, serious enough
-  for operators, local-first by default. It remembers with permission, works
-  across chat, code, Obsidian, Paperless, email, calendar, n8n, and your private
-  mesh, and every sensitive action leaves an audit trail.
+  NEOTH is the personal AI system for people who want a real assistant, not a
+  forgetful chatbot. It remembers what you approve, helps in daily life, codes
+  seriously, connects to your tools, runs on your own machine, and leaves proof
+  for every sensitive decision.
 </p>
 
 <p>
-  <strong>Your buddy. Your memory. Your rules. No managed-backend gravity.</strong>
-</p>
-
-<p>
-  <a href="#try-it-in-60-seconds"><strong>Try it</strong></a>
-  -
-  <a href="#why-neoth">Why NEOTH</a>
-  -
-  <a href="#release-surface">Release Surface</a>
-  -
-  <a href="#privacy-and-trust">Privacy</a>
-  -
-  <a href="#coding-buddy">Coding Buddy</a>
-  -
-  <a href="#where-neoth-fits">Comparison</a>
-  -
-  <a href="#the-engine">Engine</a>
-  -
-  <a href="#docs">Docs</a>
+  <a href="#install"><strong>Install</strong></a>
+  · <a href="#why-neoth">Why NEOTH</a>
+  · <a href="#demo-loops">Demos</a>
+  · <a href="#for-normal-users-and-pros">DAUs + Pros</a>
+  · <a href="#privacy">Privacy</a>
+  · <a href="#coding-buddy">Coding</a>
+  · <a href="#comparison">Comparison</a>
+  · <a href="#docs">Docs</a>
 </p>
 
 <p>
   <a href="https://github.com/The-Geek-Freaks/NEOTH/actions">
-    <img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/The-Geek-Freaks/NEOTH/ci.yml?branch=main&style=flat-square&label=build&color=00ff80&labelColor=0d0d0d">
+    <img alt="Build" src="https://img.shields.io/github/actions/workflow/status/The-Geek-Freaks/NEOTH/ci.yml?branch=main&style=flat-square&label=build&color=00ff80&labelColor=0d0d0d">
   </a>
-  <a href="https://www.rust-lang.org">
-    <img alt="Rust 1.86+" src="https://img.shields.io/badge/rust-1.86%2B-00ff80?style=flat-square&labelColor=0d0d0d&logo=rust&logoColor=00ff80">
-  </a>
-  <a href="#privacy-and-trust">
-    <img alt="Local-first memory" src="https://img.shields.io/badge/local--first-memory-ff2a6d?style=flat-square&labelColor=0d0d0d">
-  </a>
-  <a href="#try-it-in-60-seconds">
-    <img alt="No YAML happy path" src="https://img.shields.io/badge/no_YAML-happy_path-00ff80?style=flat-square&labelColor=0d0d0d">
+  <a href="#privacy">
+    <img alt="Local first" src="https://img.shields.io/badge/local--first-default-00ff80?style=flat-square&labelColor=0d0d0d">
   </a>
   <a href="#coding-buddy">
     <img alt="Coding buddy" src="https://img.shields.io/badge/coding-canvas_%2B_kanban-05d5ff?style=flat-square&labelColor=0d0d0d">
   </a>
+  <a href="#privacy">
+    <img alt="Fail closed" src="https://img.shields.io/badge/fail--closed-privacy-ff2a6d?style=flat-square&labelColor=0d0d0d">
+  </a>
   <a href="#license">
-    <img alt="License MIT or Apache 2.0" src="https://img.shields.io/badge/license-MIT_OR_Apache--2.0-05d5ff?style=flat-square&labelColor=0d0d0d">
+    <img alt="License" src="https://img.shields.io/badge/license-MIT_OR_Apache--2.0-05d5ff?style=flat-square&labelColor=0d0d0d">
   </a>
 </p>
 
 </div>
 
-## Try it in 60 seconds
-
-For normal users:
-
-```bash
-cargo install neoth
-neoth gui
-```
-
-For terminal-first operators:
-
-```bash
-cargo install neoth
-neoth init
-neoth chat "Remember that I prefer direct answers and work mostly in Rust."
-neoth recall "how do I like answers?"
-neoth privacy audit --last 7d
-```
-
-You should see the remembered preference with evidence, confidence, and auditable destination history. The first run asks who you are, which provider or local model to use, what NEOTH may remember, which surfaces it may connect, and how much autonomy it gets.
-
-YAML stays optional. The buddy is the default.
-
-### What you can verify
-
-```bash
-neoth privacy audit --last 30d
-neoth profile show --evidence
-neoth wal verify
-neoth plugin audit
-neoth n8n status
-neoth kanban watch
-neoth cluster status
-```
-
-<img src=".github/assets/neoth-readme-flow.svg" alt="NEOTH first-run flow - install, wizard, memory, surfaces, action, audit" width="100%">
-
-| Path | What happens |
-| :-- | :-- |
-| **I just want a helpful AI** | Open the GUI, choose local-first defaults, connect a chat app, and talk normally. |
-| **I want a serious operator stack** | Use the CLI, local models, provider routing, plugins, WAL audit, private mesh, and coding dispatch. |
-| **I want privacy proof** | Inspect profile facts, provider destinations, redactions, plugin capabilities, and WAL evidence. |
-
 ## Install
 
-Public release:
+One-command install:
 
 ```bash
 cargo install neoth
+```
+
+Start the app:
+
+```bash
+neoth gui
 ```
 
 From source:
@@ -127,341 +69,250 @@ git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH/SRC
 cargo install --path neothd
 cargo install --path neothd-gui
+neoth gui
 ```
 
-Linux/macOS no-sudo installer:
+No-sudo script install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
 ```
 
-Windows:
+Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
+neoth gui
 ```
 
-Windows source builds use MSVC (`x86_64-pc-windows-msvc`). Use `scripts/cargo-msvc.ps1` for local source builds; GNU/MinGW is unsupported for the plugin registry path.
+Then run the health check:
 
-| Requirement | Why |
+```bash
+neoth doctor
+neoth doctor --explain "freedom.yaml"
+```
+
+The wizard asks normal questions: who you are, what NEOTH may remember, whether
+you want local-only or cloud providers, which channels to connect, and how much
+autonomy NEOTH gets. YAML is optional. The happy path is a GUI path.
+
+<img src=".github/assets/neoth-readme-flow.svg" alt="NEOTH first-run flow" width="100%">
+
+## Demo Loops
+
+| First run | Memory proof |
 | :-- | :-- |
-| Rust 1.86+ | Source builds and cargo install. |
-| 2 GB free disk | WAL, SQLite views, cache, and local profile data. |
-| 4 GB+ VRAM recommended | Local Qwen/Ouro path. CPU fallback works slower. |
-| One provider or local model | Claude, OpenAI, Gemini-compatible, Qwen, or Ouro. |
+| <img src=".github/assets/neoth-demo-install.gif" alt="NEOTH install and wizard demo loop" width="100%"> | <img src=".github/assets/neoth-demo-memory.gif" alt="NEOTH memory and evidence demo loop" width="100%"> |
+
+| Coding buddy | Privacy audit |
+| :-- | :-- |
+| <img src=".github/assets/neoth-demo-coding.gif" alt="NEOTH coding canvas and kanban demo loop" width="100%"> | <img src=".github/assets/neoth-demo-privacy.gif" alt="NEOTH local fail-closed privacy demo loop" width="100%"> |
 
 ## Why NEOTH
 
-<img src=".github/assets/act-1-sovereignty.svg" alt="Act I - The Sovereignty" width="100%">
+Most AI tools are brilliant strangers. They can answer one prompt, but they do
+not really know you, cannot prove what they remembered, and quietly move the
+trust boundary to someone else's backend.
 
-Most assistants are brilliant strangers. They answer one prompt, vanish, and make you rebuild context from zero.
+NEOTH is built around a different promise:
 
-NEOTH is built around **continuity and loyalty**. It learns your preferences, projects, routines, people, tools, infrastructure, decisions, and coding style only inside boundaries you control.
+> The AI should be loyal to the user, not to a platform.
 
-It is not here to harvest you, lock you in, route your life through a managed account, or make you trust a black box because the UI is friendly. It is here to help the operator: **you**.
+That means:
 
-> A chatbot impresses you once. A buddy gets useful over months.
-
-Managed convenience is easy to demo. Sovereignty is harder: local memory, explicit destinations, capability-scoped plugins, evidence-backed profile facts, redaction that sticks, private mesh nodes you approve, and an audit trail you can inspect after the magic happens.
-
-<img src=".github/assets/neoth-readme-loyalty-loop.svg" alt="NEOTH loyalty loop - understand, protect, act, improve" width="100%">
-
-### What NEOTH does every day
-
-| Moment | Without NEOTH | With NEOTH |
-| :-- | :-- | :-- |
-| You start a new chat | You explain yourself again. | NEOTH already knows your approved style, tools, active projects, and constraints. |
-| You switch from laptop to phone | Context splits across apps. | Same buddy through GUI, CLI, phone channels, team chat, Obsidian, and private mesh. |
-| You forget a past decision | You search old chats manually. | Ask what you decided, when, and what evidence led there. |
-| You change your mind | Old assumptions linger. | Redact, correct, pause, or re-learn profile facts. |
-| You ask something high-impact | One model may bluff confidently. | NEOTH can trigger deeper roles and surface disagreement. |
-| You want privacy proof | You trust a black box. | Run `neoth privacy audit` and inspect memory, destinations, and plugin access. |
-
-### One buddy across surfaces
-
-<img src=".github/assets/neoth-readme-surfaces.svg" alt="NEOTH buddy surfaces across CLI, GUI, chat apps, Obsidian, coding sessions, local models, plugins, and private mesh" width="100%">
-
-| For normal users | For operators |
+| Principle | What it means in practice |
 | :-- | :-- |
-| Guided setup, plain privacy choices, no YAML happy path. | Rust core, CLI, WAL, provider routing, local models, plugins, and audits. |
-| Talk through GUI, phone channels, chat apps, or your knowledge base. | Script workflows, inspect memory, route models, verify logs, and pair private nodes. |
-| Ask like a person: "remember this", "what did we decide?", "summarize my week". | Use `neoth recall`, `neoth privacy audit`, `neoth wal verify`, `neoth code`, and `neoth kanban watch`. |
+| **Your memory** | Profile facts, project context, decisions, and recall live in your NEOTH home. |
+| **Your consent** | Sensitive profile changes, provider routes, plugins, and external actions are inspectable. |
+| **Your tools** | CLI, GUI, chat channels, Obsidian, Paperless, email, calendar, n8n, local models, and private mesh. |
+| **Your proof** | WAL-backed audit, evidence-linked profile facts, plugin capability logs, and privacy commands. |
+| **Your upgrade path** | Starts simple, scales into a serious operator runtime without switching products. |
 
-## Release Surface
+<img src=".github/assets/neoth-readme-loyalty-loop.svg" alt="NEOTH loyalty loop" width="100%">
 
-This is the intended public 1.0 surface: simple enough for normal users, explicit enough for pros.
+## For Normal Users And Pros
 
-| Area | 1.0 public surface | Notes |
-| :-- | :-- | :-- |
-| **Core** | GUI, CLI, profile memory, recall, privacy audit | Happy path requires no YAML. |
-| **Channels** | Telegram, WhatsApp Business, Slack Socket Mode | WhatsApp requires Meta setup and public HTTPS. |
-| **Extended channels** | Discord and Keet | Same channel adapter contract; Keet is the private-channel path. |
-| **Local models** | Qwen for profile extraction, Ouro as optional thinking model | Cloud fallback for profile extraction is off unless explicitly enabled. |
-| **Coding** | `neoth code`, planning canvas, Kanban, repo memory, review promotion | Operator-focused, visible, resumable. |
-| **Automation** | Built-in cron plus n8n localhost API | Same policy and audit core. |
-| **Life inputs** | Paperless, email, calendar, files, images, audio, video | Ingested into permissioned memory and recall views. |
-| **Plugins** | Skills as data, WASM plugins with capability gates | No ambient filesystem or network access. |
-| **Plugin trust** | Signatures, revocation list, capability ledger, hostcall WAL trail | Extensions stay inspectable after install. |
-| **Private mesh** | LAN/mDNS, Tailscale, Hysteria, Keet, consent-gated nodes | Pairing requires operator approval. |
-| **No hosted control plane by default** | Bring your own providers, local models, local vault, local audit | Convenience should not require surrendering the runtime. |
+NEOTH is deliberately not only for developers. The core product is a buddy that
+can be used by a normal person, while still staying deep enough for a senior
+operator.
 
-## Life Inputs And Automation
-
-The core DAU promise is not "another chat box". NEOTH can remember and act around the real surfaces where life happens, while keeping approvals and audit trails visible.
-
-<img src=".github/assets/neoth-readme-life-automation.svg" alt="NEOTH life inputs and automation - Paperless, email, calendar, n8n, cron, Obsidian, approval and audit" width="100%">
-
-| Surface | What NEOTH does | Boundary |
-| :-- | :-- | :-- |
-| **Paperless** | Turns OCR documents into grounded memory, notes, and recallable facts. | Prompt-injection gates and evidence tracking. |
-| **Email** | Detects important messages, drafts replies, and remembers decisions. | Approval before send or durable profile changes. |
-| **Calendar** | Reads schedule context, creates briefs, and proposes changes. | Operator-gated writes and destination audit. |
-| **n8n** | Runs localhost workflows through a bearer-protected API. | Loopback by default, WAL audit for workflow calls. |
-| **Cron** | Handles small local routines without forcing a workflow UI. | Same policy core as channels and plugins. |
-| **Obsidian** | Keeps an operator-owned scratchpad: decisions, reflections, proposed actions, coding handoffs, and readable memory. | You can inspect the vault without NEOTH. |
-
-Two concrete journeys:
-
-| User | Flow |
+| If you are a normal user | If you are a pro |
 | :-- | :-- |
-| **Normal user** | Install -> chat app -> approved profile memory -> Paperless/email/calendar context -> morning brief -> privacy audit. |
-| **Pro operator** | CLI -> repo memory -> coding canvas/Kanban -> plugin -> n8n workflow -> WAL audit -> private mesh. |
+| Open the GUI and talk normally. | Use the CLI, local models, WAL, policies, plugins, and cluster commands. |
+| Say "remember this" and approve what matters. | Inspect exact evidence, confidence, provider destination, and redaction state. |
+| Connect Telegram, Slack, WhatsApp, Obsidian, Paperless, email, and calendar. | Script workflows, bind n8n, define hooks, use MCP, and review plugin capabilities. |
+| Ask "what did we decide?" and get useful recall. | Run `neoth recall`, `neoth wal verify`, `neoth privacy audit`, `neoth plugin audit`. |
+| Let NEOTH explain setup problems in plain language. | Pipe `neoth doctor --output json` into CI or fleet checks. |
 
-## Privacy And Trust
+<img src=".github/assets/neoth-readme-surfaces.svg" alt="NEOTH surfaces" width="100%">
 
-<img src=".github/assets/neoth-readme-trust-stack.svg" alt="NEOTH trust stack - operator override, policy gates, profile memory, local learning, WAL evidence" width="100%">
+## What NEOTH Does
 
-NEOTH treats the operator as the customer, not the data source.
-
-| Trust default | What it means |
+| Area | 1.0 behavior |
 | :-- | :-- |
-| **Permissioned memory** | Profile claims have evidence, confidence, redaction semantics, and operator-visible provenance. |
-| **Local profile learning** | Qwen/Ouro can extract profile facts locally. No silent cloud fallback for private learning. |
-| **Audited destinations** | Provider requests, plugin access, channel ingress, and memory writes are visible. |
-| **Redaction guard** | Redacted profile facts are blocked from recreation unless you explicitly allow relearning. |
-| **Plugin boundaries** | WASM plugins run with fuel limits, memory caps, timeouts, and hostcall allowlists. |
-| **Operator override** | You can pause learning, inspect state, remove facts, and verify WAL integrity. |
+| **Buddy** | Keeps a durable personal profile, remembers approved facts, adapts to your style, and asks before crossing trust boundaries. |
+| **Brain** | Routes work through role-bound brain paths for fast answers, deeper reasoning, and verification. |
+| **Memory** | Uses six memory layers: episode, profile, ground truth, consolidated, long-term, and external vault context. |
+| **Daily life** | Ingests Paperless documents, email, calendar, notes, files, images, audio, and video into reviewable memory. |
+| **Coding** | Plans work, tracks tasks on a canvas/Kanban board, runs checks, learns repo context, and promotes reviewed decisions into memory. |
+| **Automation** | Runs small local cron jobs and bigger localhost n8n workflows through the same policy and audit layer. |
+| **Channels** | Talks through GUI, CLI, Telegram, WhatsApp Business, Slack Socket Mode, Discord, and Keet-style private channels. |
+| **Private mesh** | Pairs nodes over LAN/mDNS, Tailscale, Hysteria, and consent-gated cluster discovery. |
+| **Plugins** | Loads skills and WASM plugins behind capability gates, signature checks, revocation, and hostcall audit. |
+| **Doctor** | Explains broken setup, missing keys, model cache problems, channel wiring, disk issues, plugin state, provider flapping, and cluster discovery. |
+
+## Privacy
+
+<img src=".github/assets/neoth-readme-private-mesh.svg" alt="NEOTH private mesh" width="100%">
+
+NEOTH is local-first and fail-closed by design.
+
+| Guarantee | How to verify |
+| :-- | :-- |
+| **No silent profile extraction to cloud** | `neoth privacy audit --last 30d` |
+| **No silent provider fallback** | `neoth providers status` and `neoth privacy audit --destinations` |
+| **No ambient plugin power** | `neoth plugin audit` |
+| **No invisible memory mutation** | `neoth profile pending` and `neoth profile show --evidence` |
+| **No unverifiable history** | `neoth wal verify` |
+| **No accidental channel writes** | approval policy plus WAL events for outbound actions |
+
+Local-only mode is a first-class path:
 
 ```bash
+neoth preset activate fully-local
+neoth preset apply fully-local
+neoth doctor
 neoth privacy audit --last 30d
-neoth profile show --evidence
-neoth profile redact identity.location
-neoth wal verify
 ```
 
-Private does not mean "trust us". Private means you can check.
-
-### Obsidian and private mesh
-
-NEOTH should fit into the knowledge system and network you already trust, not force everything into one app.
-
-<img src=".github/assets/neoth-readme-private-mesh.svg" alt="NEOTH private mesh across Obsidian, LAN, Tailscale, Hysteria, Keet, and cluster nodes" width="100%">
-
-| Surface | What it is for |
-| :-- | :-- |
-| **Obsidian vault** | Human-readable memory mirror, project notes, decisions, skills, and long-term knowledge. |
-| **LAN / mDNS** | Home and office discovery. |
-| **Tailscale / WireGuard** | Private device mesh for laptop, workstation, home server, and travel machines. |
-| **Hysteria** | Restricted-network relay path with explicit health, policy, and privacy behavior. |
-| **Keet** | Peer-to-peer channel path for users who want less platform gravity. |
-| **Cluster pairing** | Consent-gated NEOTH nodes with topology, capability scope, WAL events, and operator approval. |
-
-```bash
-neoth cluster discover
-neoth cluster confirm <peer>
-neoth cluster status
-```
+Read the full privacy model in [docs/privacy.md](docs/privacy.md).
 
 ## Coding Buddy
 
-<img src=".github/assets/act-2-buddy.svg" alt="Act II - The Buddy" width="100%">
+<img src=".github/assets/neoth-readme-coding.svg" alt="NEOTH coding buddy" width="100%">
 
-NEOTH is not another chat UI taped to a repo. It can sit next to your project, remember the repo, plan work on a canvas, split tasks into Kanban, dispatch focused coding sessions, and keep review context from disappearing between runs.
+NEOTH is not a coding toy bolted onto a chat app. The coding path is designed
+for visible planning, reviewable execution, and memory that improves future
+work.
 
-<img src=".github/assets/neoth-readme-coding.svg" alt="NEOTH coding buddy pipeline - prompt, planning canvas, Kanban, dispatch, patch, tests, review, repo memory" width="100%">
+| Step | What NEOTH does |
+| :-- | :-- |
+| **Plan** | Turns a request into a scoped plan, risk list, and acceptance checks. |
+| **Map** | Reads repo context, prior decisions, docs, issue state, and coding memory. |
+| **Track** | Keeps backlog, todo, in-progress, review, done, blocked, and archived states visible. |
+| **Execute** | Runs local checks, cargo/test/lint loops, and targeted implementation flows. |
+| **Review** | Separates code generation from review, promotes only validated decisions into memory. |
+| **Improve** | Learns repo conventions and recurring fixes without swallowing secrets or unapproved facts. |
+
+Operator commands:
 
 ```bash
-neoth code "add a migration and tests for the profile baseline event" --dispatch
+neoth code "plan the auth refactor"
 neoth kanban watch
-neoth recall "why did we choose the WAL profile schema?"
+neoth code check
+neoth recall "why did we choose this storage layout?"
 ```
 
-| Workflow | What NEOTH does |
+## Brain And Memory
+
+<img src=".github/assets/neoth-readme-brain.svg" alt="NEOTH brain and memory" width="100%">
+
+NEOTH uses role separation because a loyal assistant should not treat every task
+as one giant prompt.
+
+| System | Job |
 | :-- | :-- |
-| **Plan** | Turns a prompt into scoped tasks, dependencies, acceptance criteria, and a reviewable coding canvas. |
-| **Dispatch** | Sends small, obvious tasks to the fast role and ambiguous architecture or review work to the deep role. |
-| **Track** | Keeps Backlog, Todo, In Progress, Review, Done, Blocked, and Archived visible in GUI and CLI Kanban views. |
-| **Implement** | Works against repo context, remembered decisions, provider routing, and local/project constraints. |
-| **Review** | Promotes findings, dissent, tests, and design decisions into durable memory instead of losing them in chat. |
-| **Resume** | Recalls prior bugs, migrations, tradeoffs, and open threads without making you re-explain the repo. |
+| **Left path** | Fast, pragmatic help, routing, daily buddy work, small tasks. |
+| **Right path** | Deeper reasoning, planning, alternatives, difficult code and architecture. |
+| **Corpus callosum** | Arbitration, evidence collection, contradiction handling, consensus, escalation. |
+| **Six memory layers** | Short recall, personal profile, ground truth anchors, consolidated facts, long-term knowledge, external vault context. |
 
-The point is not "AI writes code once". The point is a coding buddy that remembers the project, coordinates roles, improves its plans, and gives the operator a visible control surface.
+The point is not mystical branding. The point is operational separation: fast
+tasks stay fast, serious tasks get more scrutiny, and durable memory gets
+evidence instead of vibes.
 
-## Where NEOTH Fits
+## Comparison
 
-Different projects optimize for different jobs. OpenHuman pushes UI-first managed convenience and a big integration catalogue. OpenClaw pushes local Gateway breadth, channel reach, voice, nodes, and live Canvas. Hermes pushes self-improving workflow, skills, subagents, cron, and remote backends. NEOTH's advantage is the harder overlap: loyal daily buddy, private memory, coding studio, local automation, plugin trust, private mesh, and operator runtime in one system.
+Different projects optimize for different jobs. NEOTH's bet is the harder
+overlap: a DAU-friendly buddy, serious coding partner, local-first memory
+system, private mesh, and inspectable operator runtime in one product.
 
-<img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH positioning map - durable audited memory and operator-grade control" width="100%">
+<img src=".github/assets/neoth-readme-advantage.svg" alt="NEOTH advantage map" width="100%">
 
-Legend: `✓` core product bet, `◐` supported or adjacent, `−` not a clear public focus.
-
-| Capability | NEOTH | OpenHuman | Hermes | OpenClaw |
+| Capability | NEOTH | OpenHuman | OpenClaw | Hermes Agent |
 | :-- | :--: | :--: | :--: | :--: |
-| Simple buddy onboarding | ✓ | ✓ | ◐ | ◐ |
-| Multi-channel gateway | ✓ | ◐ | ✓ | ✓ |
-| Live visual workspace | ✓ | ◐ | ◐ | ✓ |
-| Local-first memory you can inspect | ✓ | ✓ | ◐ | ◐ |
-| Six-layer memory + brain-role routing | ✓ | − | ◐ | − |
-| Evidence-backed profile facts | ✓ | ◐ | ◐ | − |
-| Redaction that blocks re-learning | ✓ | ◐ | − | − |
-| WAL / trust ledger for actions | ✓ | ◐ | ◐ | ◐ |
-| Local profile extraction path | ✓ | ◐ | − | − |
-| Coding canvas + Kanban + review memory | ✓ | ◐ | ◐ | ◐ |
-| Self-improving skill loop | ✓ | ◐ | ✓ | ◐ |
-| Capability-scoped plugin boundary | ✓ | ◐ | ◐ | ◐ |
-| n8n + local cron automation | ✓ | ◐ | ✓ | ✓ |
-| Obsidian as editable scratchpad | ✓ | ✓ | ◐ | ◐ |
-| Private mesh / cluster nodes | ✓ | − | ◐ | ✓ |
-| DAU path and operator depth together | ✓ | ◐ | ◐ | ◐ |
+| GUI-first normal-user onboarding | **Yes** | Yes | Partial | Partial |
+| CLI/operator path | **Yes** | Partial | Yes | Yes |
+| Local-first memory as default product shape | **Yes** | Partial | Yes | Yes |
+| Fail-closed profile extraction | **Yes** | Partial | Partial | Partial |
+| Evidence-linked profile facts | **Yes** | Partial | Partial | Partial |
+| WAL/audit trail for sensitive actions | **Yes** | Partial | Partial | Partial |
+| Six-layer memory model | **Yes** | No | No | Partial |
+| Three role-bound brain paths | **Yes** | No | Partial | Partial |
+| Coding canvas + Kanban | **Yes** | Partial | Canvas-focused | CLI-focused |
+| Obsidian/vault workflow | **Yes** | Yes | File-based | Context-file based |
+| Paperless/email/calendar as memory inputs | **Yes** | Integrations | Skills/tools | Tools/skills |
+| n8n localhost automation | **Yes** | No | Partial | Cron/tools |
+| WASM plugin capability sandbox | **Yes** | No | Skills | Skills/tools |
+| Private mesh with Tailscale/Hysteria/Keet path | **Yes** | No | Gateway/nodes | Gateway/platforms |
+| Built for DAUs and pros at the same time | **Yes** | DAU-heavy | Power-user-heavy | Operator-heavy |
 
-Their pitches are strong. OpenHuman is the "connect everything fast" product. OpenClaw is the "local Gateway across every channel" product. Hermes is the "agent that learns and runs anywhere" product. NEOTH's answer is different: **bring those powers into one loyal runtime whose memory, actions, plugins, providers, and private network are inspectable by the operator.**
+Read the detailed migration pages:
 
-| If you like... | You probably want... | Why switch to NEOTH |
-| :-- | :-- | :-- |
-| **OpenHuman** | Friendly onboarding, OAuth integrations, Memory Tree, Obsidian-style notes, managed model routing. | Keep the approachable buddy idea, but move the trust boundary back to the user: local profile learning, explicit provider routing, WAL evidence, redaction semantics, and private mesh instead of managed-backend gravity. |
-| **OpenClaw** | Gateway breadth, many chat channels, voice, nodes, live Canvas, skills, always-on local control. | Keep the action surface, but add deeper loyal memory: six memory layers, profile evidence, reviewable coding plans, Obsidian scratchpad, plugin caps, audit trails, and consent-gated cluster behavior. |
-| **Hermes** | Self-improvement, skill generation, TUI, cron, subagents, remote/serverless backends. | Keep the learning loop, but add DAU-friendly GUI/onboarding, stronger privacy defaults, role-bound brain paths, local profile extraction, Kanban/coding canvas, and operator-readable trust surfaces. |
+- [NEOTH vs OpenHuman](docs/compare/openhuman.md)
+- [NEOTH vs OpenClaw](docs/compare/openclaw.md)
+- [NEOTH vs Hermes Agent](docs/compare/hermes.md)
 
-| Competitor promise | NEOTH's sharper answer |
-| :-- | :-- |
-| **"Connect everything fast."** | Connect deliberately. Every surface shares one policy core, one memory model, and auditable destination history. |
-| **"Gateway across every channel."** | Channel reach is only step one. NEOTH turns channel activity into durable, permissioned memory with evidence and recall. |
-| **"Self-improving agent."** | Self-improvement must be inspectable: proposed skills, reflections, coding learnings, and profile changes belong in readable memory and WAL evidence. |
-| **"Managed routing makes models easy."** | Provider routing is explicit. Local Qwen/Ouro paths handle private learning, and cloud fallback is a visible choice. |
-| **"Memory from your inbox, docs, chats."** | Memory is not just compressed context. Claims carry evidence, confidence, retention, redaction, and provenance. |
-| **"Live canvas / agent workspace."** | NEOTH makes the workspace part of the buddy's long-term project memory: plans, Kanban state, reviews, and decisions survive the session. |
-| **"One-click integrations."** | Integrations are useful only if the operator can inspect what crossed the boundary and revoke it cleanly. |
-| **"All models through one subscription."** | NEOTH optimizes for ownership: bring providers, run local models, route per role, and keep the runtime yours. |
+## Doctor
 
-Where NEOTH dominates is the overlap, not a single isolated checkbox:
-
-| Axis | NEOTH advantage |
-| :-- | :-- |
-| **Buddy** | Approachable enough for normal users, serious enough for operators, and loyal to the user's interests instead of a hosted account model or channel-only gateway. |
-| **Memory** | Six-layer memory design, profile evidence, redaction semantics, Hindsight summaries, Obsidian mirrors, and WAL-backed recall. |
-| **Coding** | Repo memory, planning canvas, Kanban, worker dispatch, review promotion, and provider roles live in the same buddy, not a separate IDE trick or terminal-only loop. |
-| **Privacy** | Local profile extraction, explicit provider routing, consent gates, plugin caps, no silent cloud fallback, and auditable outbound surfaces. |
-| **Ecosystem** | Obsidian, n8n, Paperless, email, calendar, local models, private mesh, chat channels, plugins, and coding sessions share one policy and memory core. |
-| **Sovereignty** | The default 1.0 story is not "trust our backend" or "give the main session full host access". It is "run your runtime, inspect your memory, approve your edges, keep your evidence". |
-
-Short version: OpenHuman is closest on consumer-friendly managed memory. OpenClaw is closest on local Gateway reach and live-canvas energy. Hermes is closest on self-improving agent workflow. NEOTH's bet is the overlap: one local-first buddy with explicit profile learning, WAL-backed audit, coding workflow memory, private mesh, and operator-controlled extensions.
-
-Plain assistants are optimized for single conversations. IDE agents are optimized for one repo session. Vault tools are optimized for notes. NEOTH's job is continuity across all of them.
-
-## The Engine
-
-<img src=".github/assets/act-3-engine.svg" alt="Act III - The Engine" width="100%">
-
-The engine exists to make the buddy trustworthy: memory is explicit, actions are gated, providers are routed, and every important transition can leave an audit trace.
-
-<img src=".github/assets/neoth-readme-system.svg" alt="NEOTH control plane - surfaces, trust gates, runtime, memory and WAL" width="100%">
-
-<img src=".github/assets/neoth-readme-brain.svg" alt="NEOTH three role-bound hemispheres and six memory layers" width="100%">
-
-### Three role-bound brain paths
-
-| Role | Job | Why it matters |
-| :-- | :-- | :-- |
-| **Fast path** | Routine answers, small fixes, implementation, cheap model routing. | Keeps normal help responsive. |
-| **Deep path** | Architecture, risk spotting, review, synthesis, hard questions. | Handles work where a shallow answer is not enough. |
-| **Coordinator** | Message passing, dissent, tool outcomes, Kanban state, provider routing. | Makes the roles coordinate instead of becoming disconnected agents. |
-
-### Six memory layers
-
-| Layer | Job |
-| :-- | :-- |
-| **L1 Hot working set** | Current session, active canvas, active task state. |
-| **L2 Warm cache** | Recent recall, high-use facts, short-term project context. |
-| **L3 Episodic memory** | Conversations, events, timelines, decisions. |
-| **L4 Semantic memory** | Embeddings, concepts, files, images, audio, video, related knowledge. |
-| **L5 Knowledge and skills** | Lessons, routines, skill packs, tool success, provider habits. |
-| **L6 Obsidian / vault mirror** | Human-readable long-term archive and operator-owned knowledge base. |
-
-### Common commands
+Setup errors should not feel like archaeology.
 
 ```bash
-neoth init
-neoth gui
-neoth chat "what should I focus on today?"
-neoth recall "the build failure from Tuesday"
-neoth status
 neoth doctor
-neoth privacy audit
-neoth model list
-neoth plugin list
-neoth cluster status
-neoth code "plan the next migration" --dispatch
-neoth kanban watch
-neoth profile show --evidence
+neoth doctor --list-checks
+neoth doctor --explain "channels wiring"
+neoth doctor --explain "model caches"
+neoth doctor --output json
 ```
+
+`neoth doctor` checks config, credentials, profile database, WAL, HMAC key,
+disk space, local model caches, channel wiring, Node-backed providers, tmux for
+Claude CLI, plugin host state, provider flapping, usage caps, cluster registry,
+and mDNS announcer behavior. Warn/fail output points to the exact `--explain`
+runbook so beginners get plain fixes and pros get scriptable diagnostics.
 
 ## Docs
 
-| File | Purpose |
+| Need | Doc |
 | :-- | :-- |
-| [docs/getting-started.md](docs/getting-started.md) | First run, first chat, first channel. |
-| [docs/install.md](docs/install.md) | Platform-specific install notes. |
-| [docs/architecture.md](docs/architecture.md) | Runtime architecture and trust model. |
-| [docs/cli-reference.md](docs/cli-reference.md) | Every command. |
-| [docs/configuration.md](docs/configuration.md) | `freedom.yaml`, credentials, policy. |
-| [docs/profile.md](docs/profile.md) | Profile memory, evidence, redaction, and recall behavior. |
-| [docs/providers.md](docs/providers.md) | Claude, OpenAI, Gemini, local models. |
-| [docs/channels.md](docs/channels.md) | Telegram, WhatsApp, Slack, Discord, Keet. |
-| [docs/local-models.md](docs/local-models.md) | Qwen, Ouro, CLIP, Whisper. |
-| [docs/plugins.md](docs/plugins.md) | Skills and WASM plugins. |
-| [docs/council.md](docs/council.md) | Multi-model council design. |
-| [docs/cron-vs-n8n.md](docs/cron-vs-n8n.md) | When to use built-in cron vs the n8n localhost API. |
-| [docs/n8n-api.md](docs/n8n-api.md) | Loopback HTTP API: endpoints, bearer auth, audit trail, curl examples. |
-| [docs/faq.md](docs/faq.md) | Product FAQ and tradeoffs. |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | Fix common setup problems. |
+| Start from zero | [docs/quickstart.md](docs/quickstart.md) |
+| Install paths | [docs/install.md](docs/install.md) |
+| Privacy proof | [docs/privacy.md](docs/privacy.md) |
+| CLI reference | [docs/cli-reference.md](docs/cli-reference.md) |
+| Channels | [docs/channels.md](docs/channels.md) |
+| Local models | [docs/local-models.md](docs/local-models.md) |
+| Providers | [docs/providers.md](docs/providers.md) |
+| Plugins | [docs/plugins.md](docs/plugins.md) |
+| Architecture | [docs/architecture.md](docs/architecture.md) |
+| Release notes | [docs/release-notes-v1.0.md](docs/release-notes-v1.0.md) |
+| Security policy | [SECURITY.md](SECURITY.md) |
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
+
+## Release Shape
+
+NEOTH 1.0 is for one operator first: your machine, your memory, your private
+tools, your approved network. It is not a hosted SaaS account, not a team
+multi-tenant product, and not a black-box model router.
+
+What works and what intentionally stays out of 1.0 is tracked in
+[docs/release-notes-v1.0.md](docs/release-notes-v1.0.md).
 
 ## Contributing
 
-NEOTH is strict because the memory surface is sensitive.
-
-```bash
-cd SRC
-cargo fmt --all
-cargo clippy --workspace --tests -- -D warnings
-cargo test --workspace
-```
-
-| Rule | Reason |
-| :-- | :-- |
-| No silent network surfaces | "Never phones home" must stay mechanically testable. |
-| No unbounded plugin power | Every hostcall needs a declared capability. |
-| No vague memory writes | Profile claims need evidence and redaction semantics. |
-| No hostile setup | If a user must edit YAML for the happy path, the UX failed. |
-
-See [CONTRIBUTING.md](CONTRIBUTING.md), [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [SECURITY.md](SECURITY.md).
+Small, focused PRs are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md), run
+the checks, and keep the product promise intact: simple for normal users,
+serious for operators, loyal to the user.
 
 ## License
 
-Licensed under either:
-
-- MIT License ([LICENSE-MIT](LICENSE-MIT))
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
-
-at your option.
-
-<br>
-
-<div align="center">
-
-<strong>NEOTH - Neural Engine Obligated To Help</strong>
-
-<br><br>
-
-<code>cargo install neoth && neoth gui</code>
-
-</div>
+NEOTH is dual-licensed under MIT OR Apache-2.0.
