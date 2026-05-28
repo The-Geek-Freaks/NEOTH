@@ -323,6 +323,37 @@ pub fn dispatch_session_with_apply(
 
         let exec_result = worker.execute(&task);
         match exec_result {
+            // QU-01 harte-Kritik fix (Session 28): a refusal can
+            // arrive STRUCTURALLY review-ready — the worker emits
+            // "Sorry, I can't help with that" as non-empty
+            // patch_text, so `review_ready()` is true even though
+            // the content is a refusal. Without this arm, the
+            // no-`--apply` path below promotes it straight to Review
+            // (the apply path would catch it on `git apply` rejection,
+            // but the no-apply path never looked at content). Route
+            // any review-ready-but-refusal outcome into the failure
+            // path so `handle_retryable_failure`'s greeting-regression
+            // check fires + the task lands Blocked instead of landing
+            // a refusal as Review material.
+            Ok(o)
+                if o.review_ready()
+                    && (crate::coding::early_stop::is_greeting_regression(&o.patch_text)
+                        || crate::coding::early_stop::is_greeting_regression(&o.summary)) =>
+            {
+                patch_spiral.record(task.task_id, false);
+                record_recent_output(&mut recent_outputs, task.task_id, &worker_output_text(&o));
+                let recent = recent_output_refs(&recent_outputs, task.task_id);
+                let _ = handle_retryable_failure(
+                    conn,
+                    &task,
+                    &mut retry_policy,
+                    &mut patch_spiral,
+                    &recent,
+                    &mut outcome,
+                    "worker reply was a refusal disguised as patch output",
+                    Some(&o),
+                );
+            }
             Ok(o) if o.review_ready() => {
                 // Q2 streaming: batched — one TASK_COMPLETED frame at
                 // end. SD-02 (Round-3 v0.4) added 0x77 KANBAN_TASK_PROGRESS
@@ -1781,35 +1812,40 @@ mod tests {
     }
 
     #[test]
-    fn greeting_regression_bypasses_retry_rotation_and_blocks() {
-        // Worker keeps returning a refusal. Without QU-01 wire-in
-        // the retry-policy would burn 3 attempts on it before
-        // landing Blocked. WITH wire-in: first failure detects
-        // greeting-regression + transitions straight to Blocked.
+    fn refusal_disguised_as_patch_blocks_even_without_apply() {
+        // QU-01 harte-Kritik fix (Session 28): a refusal that arrives
+        // as non-empty patch_text is STRUCTURALLY review-ready, so the
+        // pre-fix dispatcher promoted it to Review on the no-`--apply`
+        // path (the apply path would have caught it on git-apply
+        // rejection, but no-apply never inspected content). The new
+        // pre-check routes any review-ready-but-refusal outcome into
+        // the failure path so greeting-regression fires + the task
+        // lands Blocked — NOT Review — even with apply_config = None.
         let (_dir, conn) = fresh_db();
         let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
         store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(Hemisphere::Left, Box::new(RefusalWorker));
-        // Enable apply path so the worker's "patch" goes through
-        // apply_patch_via_worktree + fails (refusal text isn't a
-        // valid diff) — that's the call site that surfaces
-        // diagnosis + partial_outcome to handle_retryable_failure.
-        // Actually NO apply path: the structural outcome looks
-        // review-ready (non-empty patch_text), the dispatcher
-        // promotes to Review on the non-apply path. Test the
-        // detector via the empty-outcome route instead.
+        // NO apply path (apply_config = None) — this is the exact
+        // edge Alex flagged.
         let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
             .expect("dispatch");
-        // With apply_config = None + a non-empty patch_text the
-        // dispatcher treats this as completed-no-apply. The
-        // greeting-regression detector only fires on the
-        // retryable-failure path, so this test pins that the
-        // refusal flow DOES still reach Review when no apply
-        // happens (dispatcher's apply-or-promote contract).
         assert_eq!(outcome.tasks_attempted, 1);
-        assert_eq!(outcome.tasks_completed, 1);
+        assert_eq!(
+            outcome.tasks_completed, 0,
+            "a refusal-as-patch must NOT count as completed"
+        );
+        assert_eq!(
+            outcome.tasks_blocked, 1,
+            "refusal-as-patch must land Blocked via greeting-regression"
+        );
+        // Task ends Blocked, not Review.
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(task.status, TaskStatus::Blocked);
     }
 
     /// Worker that returns an empty outcome (no patch, no tests) but
