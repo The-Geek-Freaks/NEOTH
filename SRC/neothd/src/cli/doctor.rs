@@ -636,6 +636,18 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
                     .filter(|o| o.status == CheckStatus::Fail)
                     .count(),
             );
+            if !args.quiet && (any_fail || any_warn) {
+                println!(
+                    "next: run `neoth doctor --explain <check>` for the exact cause and fix steps"
+                );
+                for o in outcomes
+                    .iter()
+                    .filter(|o| o.status == CheckStatus::Fail || o.status == CheckStatus::Warn)
+                    .take(5)
+                {
+                    println!("      neoth doctor --explain \"{}\"", o.name);
+                }
+            }
         }
     }
 
