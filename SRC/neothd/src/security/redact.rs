@@ -116,8 +116,15 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
 /// and OSC (`\x1b]…`) are matched before the generic two-byte escape
 /// catch-all so `\x1b]` opens an OSC rather than being eaten as a
 /// lone escape.
+///
+/// The OSC terminator is OPTIONAL (`(?:\x07|\x1b\\)?`) so an
+/// UNTERMINATED OSC — a capture truncated mid-sequence at EOF, or a
+/// stray `\x1b]` — is still fully consumed rather than leaving its
+/// body bytes in the output. The body excludes `\n` so a stray
+/// `\x1b]` can never swallow more than its own line (matches terminal
+/// OSC semantics while bounding the blast radius on malformed input).
 static ANSI_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])").unwrap()
+    Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b\n]*(?:\x07|\x1b\\)?|[@-Z\\-_])").unwrap()
 });
 
 /// One or more consecutive `../` or `..\` path-traversal segments
@@ -652,6 +659,35 @@ mod tests {
         // emits these for clickable error codes.
         let s = "see \x1b]8;;https://example.com\x07E0425\x1b]8;;\x07 here";
         assert_eq!(strip_ansi(s), "see E0425 here");
+    }
+
+    #[test]
+    fn qu_04_strip_ansi_consumes_unterminated_osc() {
+        // ANSI-OSC-1 (review fix): a capture truncated mid-OSC at EOF
+        // (no BEL/ST terminator) must still be fully stripped, not leave
+        // its body bytes behind.
+        let s = "prefix \x1b]0;truncated-title";
+        assert_eq!(strip_ansi(s), "prefix ");
+    }
+
+    #[test]
+    fn qu_04_strip_ansi_unterminated_osc_bounded_at_newline() {
+        // A stray `\x1b]` must not swallow more than its own line — the
+        // OSC body excludes `\n`, so the following line survives intact.
+        let s = "\x1b]0;stray-osc\nreal content line";
+        assert_eq!(strip_ansi(s), "\nreal content line");
+    }
+
+    #[test]
+    fn qu_04_sanitize_tool_output_drops_secret_hidden_in_unterminated_osc() {
+        // A secret smuggled into an (unterminated) OSC title is terminal
+        // metadata, not content — strip_ansi removes the whole sequence,
+        // so the secret never reaches the output at all.
+        let fixture = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
+        let s = format!("log \x1b]0;{fixture}");
+        let out = sanitize_tool_output(&s);
+        assert!(!out.contains(fixture), "secret survived: {out:?}");
+        assert!(!out.contains('\x1b'), "escape bytes survived: {out:?}");
     }
 
     #[test]
