@@ -720,7 +720,13 @@ async fn run_pending_approve(
         &approved_payload,
     )
     .build();
-    let _ = writer.try_append_sync(header, approved_payload);
+    if let Err(e) = writer.try_append_sync(header, approved_payload) {
+        tracing::warn!(
+            error = %e,
+            extraction_id,
+            "WAL append of APPROVED profile-delta audit frame failed"
+        );
+    }
 
     let outcome = crate::profile::apply::apply_delta(&mut conn, &writer, &delta, now_unix as i64)
         .await
@@ -784,7 +790,13 @@ async fn run_pending_decline(
     let header =
         crate::wal::HeaderBuilder::new(crate::profile::approval_gate::DECLINED_EVENT, &payload)
             .build();
-    let _ = writer.try_append_sync(header, payload);
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(
+            error = %e,
+            extraction_id,
+            "WAL append of DECLINED profile-delta audit frame failed"
+        );
+    }
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {

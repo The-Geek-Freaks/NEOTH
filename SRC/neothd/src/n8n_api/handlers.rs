@@ -388,7 +388,9 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
         &req_payload,
     )
     .build();
-    let _ = state.writer.append(req_header, req_payload).await;
+    if let Err(e) = state.writer.append(req_header, req_payload).await {
+        tracing::warn!(error = %e, request_id = %ctx.request_id, "n8n_api provider_request WAL append failed");
+    }
 
     match provider.complete(request).await {
         Ok(comp) => {
@@ -407,7 +409,9 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
                 &resp_payload,
             )
             .build();
-            let _ = state.writer.append(resp_header, resp_payload).await;
+            if let Err(e) = state.writer.append(resp_header, resp_payload).await {
+                tracing::warn!(error = %e, request_id = %ctx.request_id, "n8n_api provider_response WAL append failed");
+            }
             HandlerOutcome::ok_json(
                 serde_json::to_value(ProviderCallResponse {
                     completion: comp.text,
@@ -430,7 +434,9 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
                 &err_payload,
             )
             .build();
-            let _ = state.writer.append(err_header, err_payload).await;
+            if let Err(append_err) = state.writer.append(err_header, err_payload).await {
+                tracing::warn!(error = %append_err, request_id = %ctx.request_id, "n8n_api provider_error WAL append failed");
+            }
             HandlerOutcome::error(
                 ApiErrorCode::UpstreamError,
                 format!("provider call failed: {e}"),

@@ -310,7 +310,7 @@ A1 binding: **PL-04 + PL-05 hard pre-condition before any EM-\* item merges.** A
 
 ### v1.0 — Anti-pattern cleanups (A5 §6)
 
-- [ ] **AP-01..08** 8 anti-patterns from logic audit — silent WAL drops / unwrap_or-0 / misleading Result signatures / hardcoded table names / shared-resource-as-value / unobservable side effects / runtime-format SQL / test-without-integration. **Several already covered by M-01..M-06 + AR-01 above; remaining ~4 items here.** — 5d aggregated
+- [~] **AP-01..08** 8 anti-patterns from logic audit — silent WAL drops / unwrap_or-0 / misleading Result signatures / hardcoded table names / shared-resource-as-value / unobservable side effects / runtime-format SQL / test-without-integration. **Several already covered by M-01..M-06 + AR-01 above; remaining ~4 items here.** — 5d aggregated — **partial 2026-05-28 Session 28b**: ✅ **silent-WAL-drops sub-item closed** — converted all 6 `let _ = …append(…)` audit-frame drops to observable `warn!`-on-error (the codebase pattern at n8n handlers.rs:288/491): `cli/profile.rs` APPROVED+DECLINED profile-delta frames (×2), `n8n_api/handlers.rs` PROVIDER_REQUEST/RESPONSE/ERROR (×3), `n8n_api/server.rs` N8N_REQUEST "every attempt is durable" audit frame (×1). ✅ **runtime-format-SQL sub-item verified clean** — only 3 `format!("…{table}")` hits exist, all test-only with hardcoded table-name arrays (`&["idx_episode",…]`), zero attacker-controlled interpolation, no injection vector (table names can't be SQL-parameterized anyway). Remaining: unwrap_or-0 / misleading-Result-signatures / hardcoded-table-names / shared-resource-as-value (overlaps F4-02) / test-without-integration.
 
 ### v1.0 — Framework 4.1 reconciliation (A3 + A5)
 

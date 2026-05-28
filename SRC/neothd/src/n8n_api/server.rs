@@ -215,7 +215,9 @@ async fn serve(
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_N8N_REQUEST, &audit_payload)
             .build();
     let writer_for_audit = state.writer.clone();
-    let _ = writer_for_audit.append(audit_header, audit_payload).await;
+    if let Err(e) = writer_for_audit.append(audit_header, audit_payload).await {
+        tracing::warn!(error = %e, request_id = %request_id, "n8n_api N8N_REQUEST audit WAL append failed");
+    }
 
     // Auth: cooldown lockout first, then token check.
     if state.cooldown.is_locked(&peer_ip, now) {
