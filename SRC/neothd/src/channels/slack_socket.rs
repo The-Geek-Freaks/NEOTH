@@ -384,6 +384,8 @@ mod tests {
             text: Some(text.into()),
             media: None,
             reply_to: None,
+            message_id: None,
+            edit_unix: None,
             mention_kind: None,
             channel_ts_unix: 1_700_000_000,
             raw_ts_ms: None,

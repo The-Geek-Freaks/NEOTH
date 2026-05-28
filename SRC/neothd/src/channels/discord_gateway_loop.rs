@@ -402,12 +402,13 @@ async fn forward_message(
         text: Some(msg.content.clone()),
         media: None,
         reply_to: None,
+        message_id: Some(msg.message_id.clone()),
+        edit_unix: None,
         mention_kind: None,
         channel_ts_unix: now_unix_secs(),
         raw_ts_ms: None,
         human_uuid: None,
     };
-    let _ = msg.message_id; // unused field in current InboundMessage shape
     match handler(inbound).await {
         Ok(Some(out)) => match sender {
             Some(sender) => {

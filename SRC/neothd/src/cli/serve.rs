@@ -2117,6 +2117,45 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
         let config_for_handler = reload_controller.latest();
         let views_conn = views_conn.clone();
         Box::pin(async move {
+            // ── SD-03: edited-message audit (WAL 0x38 CHANNEL_EDIT) ────────
+            // An inbound edit is observed-only: record a hashed audit frame
+            // and return WITHOUT re-running the provider pipeline (no reply,
+            // no cost, no permission gate). No raw text in the payload (PII) —
+            // mirror the CHANNEL_INGRESS hash contract (xxh3-64).
+            // `edit_unix.is_some()` is the edit signal set by the adapter.
+            // Schema note: `sender_display` is deliberately omitted (PII); only
+            // the numeric `sender_id` is recorded. Do not add it.
+            if let Some(edit_ts_unix) = inbound.edit_unix {
+                let new_text = inbound.text.as_deref().unwrap_or("");
+                match serde_json::to_vec(&serde_json::json!({
+                    "channel": inbound.channel,
+                    "chat_id": inbound.chat_id,
+                    "message_id": inbound.message_id,
+                    "sender_id": inbound.sender_id,
+                    "new_text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(new_text.as_bytes()),
+                    "new_text_bytes": new_text.len(),
+                    "edit_ts_unix": edit_ts_unix,
+                    "ts_unix": inbound.channel_ts_unix,
+                })) {
+                    Ok(edit_payload) => {
+                        let edit_header = crate::wal::make_header(
+                            crate::wal::events::EVENT_TYPE_CHANNEL_EDIT,
+                            &edit_payload,
+                        );
+                        if let Err(e) = writer.append(edit_header, edit_payload).await {
+                            warn!(error = %e, "WAL append CHANNEL_EDIT (0x38) frame failed");
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "serialize CHANNEL_EDIT (0x38) frame failed"),
+                }
+                info!(
+                    channel = inbound.channel.as_str(),
+                    sender = %inbound.sender_id,
+                    "inbound message edit recorded (audit-only, no re-run)"
+                );
+                return Ok(::std::option::Option::None);
+            }
+
             // R-9 multimodal: if the inbound message carries a media
             // attachment, run it through the extraction pipeline first.
             // The result either replaces `text` (audio → transcript) or

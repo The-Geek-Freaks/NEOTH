@@ -124,19 +124,91 @@ impl Channel for TelegramChannel {
 
         let handler = Arc::new(handler);
         let allowed = self.allowed_user_id;
+        // SD-03: bounded dedup so a repeated edited-message delivery (Telegram
+        // can re-send the same edit across poll cycles) emits 0x38 only once.
+        let dedup = Arc::new(std::sync::Mutex::new(EditDedup::new(EDIT_DEDUP_CAP)));
 
-        teloxide::repl(bot.clone(), move |bot: Bot, msg: Message| {
-            let handler = Arc::clone(&handler);
-            async move {
-                let result = handle_one_message(bot, msg, handler, allowed).await;
-                if let Err(e) = result {
-                    tracing::warn!(error = %e, "Telegram message handler error");
-                }
-                respond(())
-            }
-        })
-        .await;
+        // SD-03: teloxide::repl only delivers *new* Messages. Edited messages
+        // arrive as `UpdateKind::EditedMessage` and are dropped by repl. A
+        // Dispatcher with explicit `filter_message` + `filter_edited_message`
+        // branches handles both — and the handler-tree description makes the
+        // long-poll listener opt into `allowed_updates = [..,edited_message]`
+        // automatically (teloxide derives it from the branch set).
+        let h_msg = Arc::clone(&handler);
+        let h_edit = Arc::clone(&handler);
+        let dedup_edit = Arc::clone(&dedup);
+
+        let schema = dptree::entry()
+            .branch(Update::filter_message().endpoint(
+                move |bot: Bot, msg: Message| {
+                    let handler = Arc::clone(&h_msg);
+                    async move {
+                        if let Err(e) = handle_one_message(bot, msg, handler, allowed).await {
+                            tracing::warn!(error = %e, "Telegram message handler error");
+                        }
+                        respond(())
+                    }
+                },
+            ))
+            .branch(Update::filter_edited_message().endpoint(
+                move |bot: Bot, msg: Message| {
+                    let handler = Arc::clone(&h_edit);
+                    let dedup = Arc::clone(&dedup_edit);
+                    async move {
+                        if let Err(e) =
+                            handle_edited_message(bot, msg, handler, allowed, dedup).await
+                        {
+                            tracing::warn!(error = %e, "Telegram edited-message handler error");
+                        }
+                        respond(())
+                    }
+                },
+            ));
+
+        Dispatcher::builder(bot, schema)
+            .enable_ctrlc_handler()
+            .build()
+            .dispatch()
+            .await;
         Ok(())
+    }
+}
+
+/// SD-03 edit-dedup capacity. Telegram rarely redelivers an edit, but a
+/// long-running daemon must bound the memory: oldest key evicted at capacity.
+const EDIT_DEDUP_CAP: usize = 512;
+
+/// Bounded FIFO set of `(message_id, edit_ts_unix)` keys. A *new* edit to the
+/// same message (later `edit_date`) is a distinct key, so it is recorded again.
+struct EditDedup {
+    seen: std::collections::HashSet<(i64, i64)>,
+    order: std::collections::VecDeque<(i64, i64)>,
+    cap: usize,
+}
+
+impl EditDedup {
+    fn new(cap: usize) -> Self {
+        Self {
+            seen: std::collections::HashSet::with_capacity(cap),
+            order: std::collections::VecDeque::with_capacity(cap),
+            cap,
+        }
+    }
+
+    /// `true` when `key` is newly recorded (caller should emit 0x38); `false`
+    /// when it was already seen (duplicate delivery → skip the audit frame).
+    fn check_and_insert(&mut self, key: (i64, i64)) -> bool {
+        if self.seen.contains(&key) {
+            return false;
+        }
+        if self.order.len() >= self.cap {
+            if let Some(old) = self.order.pop_front() {
+                self.seen.remove(&old);
+            }
+        }
+        self.seen.insert(key);
+        self.order.push_back(key);
+        true
     }
 }
 
@@ -211,6 +283,8 @@ async fn handle_one_message(
         text,
         media,
         reply_to: None,
+        message_id: Some(msg.id.0.to_string()),
+        edit_unix: None,
         mention_kind: None,
         channel_ts_unix: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -248,6 +322,93 @@ async fn handle_one_message(
         }
     }
 
+    Ok(())
+}
+
+/// SD-03: handle a Telegram *edited* message. Audit-only — builds an
+/// `InboundMessage` flagged with `edit_unix` and hands it to the pipeline,
+/// which records a hashed WAL `0x38 CHANNEL_EDIT` frame and returns `Ok(None)`
+/// (no provider re-run, no reply). Allowlist is enforced first, identical to
+/// new messages; duplicate edit deliveries are dropped via `dedup`.
+async fn handle_edited_message(
+    _bot: Bot,
+    msg: Message,
+    handler: Arc<PipelineHandler>,
+    allowed_user_id: Option<u64>,
+    dedup: Arc<std::sync::Mutex<EditDedup>>,
+) -> Result<()> {
+    let Some(from) = msg.from.as_ref() else {
+        return Ok(());
+    };
+
+    // Allowlist FIRST — same contract as new messages: rejected edits are
+    // logged + dropped, never acknowledged (information leak).
+    if let Some(allowed) = allowed_user_id {
+        if from.id.0 != allowed {
+            tracing::warn!(
+                from_id = from.id.0,
+                allowed_id = allowed,
+                "Telegram edit dropped: sender not on allowlist"
+            );
+            return Ok(());
+        }
+    }
+
+    // A genuine `EditedMessage` always carries `edit_date`. If Telegram omits
+    // it (malformed/unexpected update), drop rather than emit a degenerate
+    // `edit_ts_unix: 0` audit frame — audit hygiene over best-effort logging.
+    let Some(edit_unix) = msg.edit_date().map(|d| d.timestamp()) else {
+        tracing::warn!(
+            message_id = msg.id.0,
+            "Telegram edit dropped: update had no edit_date"
+        );
+        return Ok(());
+    };
+    let key = (i64::from(msg.id.0), edit_unix);
+    {
+        // Poison-tolerant: dedup is best-effort audit hygiene, never a
+        // correctness gate. Recover the inner set on a poisoned lock.
+        let mut guard = dedup.lock().unwrap_or_else(|p| p.into_inner());
+        if !guard.check_and_insert(key) {
+            // Duplicate delivery of an already-audited edit. Drop silently.
+            return Ok(());
+        }
+    }
+
+    let text = msg
+        .text()
+        .map(|s| s.to_string())
+        .or_else(|| msg.caption().map(|s| s.to_string()));
+
+    let inbound = InboundMessage {
+        channel: ChannelKind::Telegram,
+        chat_id: msg.chat.id.to_string(),
+        thread_id: msg.thread_id.map(|t| t.0.to_string()),
+        sender_id: from.id.0.to_string(),
+        sender_display: from
+            .username
+            .clone()
+            .or_else(|| Some(from.first_name.clone())),
+        text,
+        // Edits are audited by text-hash only; we do not re-download media.
+        media: None,
+        reply_to: None,
+        message_id: Some(msg.id.0.to_string()),
+        edit_unix: Some(edit_unix),
+        mention_kind: None,
+        channel_ts_unix: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+        raw_ts_ms: Some(msg.date.timestamp() * 1000),
+        human_uuid: None,
+    };
+
+    // Audit-only: the pipeline emits 0x38 and returns Ok(None). No reply is
+    // sent for an edit — surfacing one would be noise + a side channel.
+    if let Err(e) = handler(inbound).await {
+        tracing::warn!(error = %e, "pipeline error for Telegram edited message");
+    }
     Ok(())
 }
 
@@ -401,5 +562,43 @@ mod tests {
         // the trait default `NotSupported { feature: "send_proactive" }`.
         let msg = format!("{err}");
         assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
+    }
+
+    // ── SD-03 EditDedup ────────────────────────────────────────────────────
+    #[test]
+    fn edit_dedup_first_sight_is_new_repeat_is_dup() {
+        let mut d = EditDedup::new(8);
+        assert!(d.check_and_insert((100, 1_700_000_000)), "first sight = new");
+        assert!(
+            !d.check_and_insert((100, 1_700_000_000)),
+            "same (msg_id, edit_ts) = duplicate"
+        );
+    }
+
+    #[test]
+    fn edit_dedup_later_edit_to_same_message_is_new() {
+        let mut d = EditDedup::new(8);
+        assert!(d.check_and_insert((100, 1_700_000_000)));
+        // A *new* edit to the same message carries a later edit_date → fresh.
+        assert!(
+            d.check_and_insert((100, 1_700_000_050)),
+            "later edit_date on same message must be a distinct event"
+        );
+    }
+
+    #[test]
+    fn edit_dedup_evicts_oldest_at_capacity() {
+        let mut d = EditDedup::new(2);
+        assert!(d.check_and_insert((1, 0)));
+        assert!(d.check_and_insert((2, 0)));
+        // Inserting a third evicts the oldest (1, 0).
+        assert!(d.check_and_insert((3, 0)));
+        // (1, 0) was evicted → seen as new again.
+        assert!(
+            d.check_and_insert((1, 0)),
+            "evicted key must be treated as new on re-sight"
+        );
+        // (3, 0) still present → duplicate.
+        assert!(!d.check_and_insert((3, 0)), "recent key still deduped");
     }
 }

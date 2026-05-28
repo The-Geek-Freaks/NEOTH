@@ -168,6 +168,8 @@ pub fn decode_frame(raw: &str) -> DecodedFrame {
                 text: Some(body),
                 media: None,
                 reply_to: None,
+                message_id: None,
+                edit_unix: None,
                 mention_kind: None,
                 channel_ts_unix: secs,
                 raw_ts_ms: Some(ms),

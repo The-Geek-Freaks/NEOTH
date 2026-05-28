@@ -163,6 +163,15 @@ pub struct InboundMessage {
     pub media: Option<MediaPayload>,
     /// Channel-native id of the message this one replies to.
     pub reply_to: Option<MessageId>,
+    /// Channel-native id of THIS message. Populated by adapters that expose a
+    /// stable per-message id (Telegram `message_id`). Drives the SD-03 edit
+    /// audit path (WAL 0x38 `CHANNEL_EDIT`) and future reply-threading. `None`
+    /// for adapters that do not surface one.
+    pub message_id: Option<String>,
+    /// SD-03: `Some(edit_ts_unix)` marks this as an *edited* inbound message.
+    /// The pipeline records a hashed audit frame (WAL 0x38 `CHANNEL_EDIT`) and
+    /// does NOT re-run the provider. `None` = a normal new message.
+    pub edit_unix: Option<i64>,
     /// How the bot was addressed (DM → None, group native @ → Some(Native), …).
     pub mention_kind: Option<MentionKind>,
     /// Wall-clock timestamp the channel transport assigned to the message
@@ -744,6 +753,8 @@ mod tests {
             text: None,
             media: None,
             reply_to: None,
+            message_id: None,
+            edit_unix: None,
             mention_kind: None,
             channel_ts_unix: 0,
             raw_ts_ms: None,
@@ -763,6 +774,8 @@ mod tests {
             text: None,
             media: None,
             reply_to: None,
+            message_id: None,
+            edit_unix: None,
             mention_kind: None,
             channel_ts_unix: 0,
             raw_ts_ms: None,
