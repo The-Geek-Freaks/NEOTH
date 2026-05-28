@@ -915,15 +915,69 @@ fn handle_retryable_failure(
             .context("re-queue task to Backlog for retry")?;
         // Don't count as blocked or completed yet — the dispatcher's
         // budget cap will end the loop if we churn too long.
+    } else if task.hemisphere == Hemisphere::Left {
+        // QU-05 ESCALATE — a Left (fast) worker exhausted its retry
+        // budget. Hand the task to the Right (deep) hemisphere ONCE
+        // with a fresh budget before giving up. The hemisphere field
+        // itself doubles as the escalation marker: a task already on
+        // Right/Cerebellum falls through to the Blocked arm below, so
+        // there's no Left⇄Right ping-pong. (WorkerOutcome is a struct,
+        // not the enum the spec assumed, so escalate rides this
+        // hemisphere-reassign path, not a `WorkerOutcome::Escalate`
+        // variant.)
+        match store::patch_task_hemisphere(conn, task.task_id, Hemisphere::Right, None, None) {
+            Ok(()) => {
+                warn!(
+                    task_id = task.task_id.raw(),
+                    attempt = attempt,
+                    escalate = "left_to_right",
+                    diagnosis = %diagnosis,
+                    "Left worker retry ceiling hit; escalating task to Right hemisphere"
+                );
+                // Fresh retry budget on the new hemisphere + re-inject
+                // the last diagnosis so the deep worker sees what the
+                // fast one could not converge on.
+                retry_policy.reset(task.task_id);
+                let hint = reinjection_hint(
+                    "[escalated to the deep worker — the fast worker could not converge]",
+                    &diagnosis,
+                );
+                let _ = store::append_task_description_hint(conn, task.task_id, &hint);
+                if let Some(o) = partial_outcome {
+                    let _ = store::attach_task_artifact(
+                        conn,
+                        task.task_id,
+                        Some(&o.patch_path),
+                        Some(o.tests),
+                    );
+                }
+                // Re-queue; the next loop pass re-reads the task with
+                // hemisphere=Right and binds the Right worker. Not
+                // counted blocked/completed — it gets another shot.
+                let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Backlog, now_ns);
+            }
+            Err(e) => {
+                // Reassign failed — fall back to Blocked rather than
+                // re-queueing onto a stale hemisphere.
+                tracing::warn!(
+                    task_id = task.task_id.raw(),
+                    error = %e,
+                    "escalate hemisphere reassign failed; blocking task"
+                );
+                outcome.tasks_blocked += 1;
+                let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+            }
+        }
     } else {
-        // Ceiling hit — give up + transition to Blocked.
+        // Ceiling hit on Right/Cerebellum — no deeper hemisphere to
+        // escalate to. Give up + transition to Blocked.
         let strategy = retry_policy.pick_strategy(task.task_id);
         warn!(
             task_id = task.task_id.raw(),
             attempt = attempt,
             final_strategy = strategy.as_str(),
             diagnosis = %diagnosis,
-            "worker retry ceiling hit; task transitioned to Blocked"
+            "worker retry ceiling hit (no deeper hemisphere); task transitioned to Blocked"
         );
         outcome.tasks_blocked += 1;
         let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
@@ -1132,6 +1186,25 @@ mod tests {
         }
     }
 
+    /// A worker that fails with a DISTINCT message each call. Reaching
+    /// the retry ceiling this way exercises the ceiling/escalate path
+    /// without tripping the QU-01 repetition-loop early-stop (which
+    /// needs byte-identical output across attempts and would otherwise
+    /// Block first).
+    struct VaryingFailWorker {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Worker for VaryingFailWorker {
+        fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+            let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            anyhow::bail!("distinct failure #{n}")
+        }
+        fn name(&self) -> &'static str {
+            "varying-fail-worker"
+        }
+    }
+
     fn fresh_db() -> (tempfile::TempDir, Connection) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("views.db");
@@ -1200,6 +1273,76 @@ mod tests {
             .unwrap();
         assert_eq!(task.task_id, task_id);
         assert_eq!(task.status, TaskStatus::Review);
+    }
+
+    #[test]
+    fn left_ceiling_escalates_to_right_then_completes() {
+        // QU-05 escalate: a Left worker that always fails exhausts its
+        // retry budget; the dispatcher hands the task to the Right
+        // hemisphere with a fresh budget. A green Right worker then
+        // completes it → Review, never Blocked.
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(VaryingFailWorker {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        workers.bind(
+            Hemisphere::Right,
+            Box::new(CannedWorker {
+                outcome: green_outcome(),
+                name: "test-right",
+            }),
+        );
+        let outcome =
+            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(task.hemisphere, Hemisphere::Right, "escalated Left → Right");
+        assert_eq!(task.status, TaskStatus::Review, "Right worker completed it");
+        assert_eq!(outcome.tasks_completed, 1);
+        assert_eq!(
+            outcome.tasks_blocked, 0,
+            "never blocked — escalation rescued it"
+        );
+    }
+
+    #[test]
+    fn right_ceiling_blocks_without_further_escalation() {
+        // A task that fails on the Right (deepest) hemisphere has
+        // nowhere to escalate → Blocked after the ceiling, with no
+        // ping-pong back to Left.
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Right, None, None).unwrap();
+
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Right,
+            Box::new(VaryingFailWorker {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }),
+        );
+        let outcome =
+            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+
+        let task = store::list_tasks_for_session(&conn, session_id)
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(task.hemisphere, Hemisphere::Right, "stays Right");
+        assert_eq!(task.status, TaskStatus::Blocked);
+        assert_eq!(outcome.tasks_blocked, 1);
     }
 
     #[test]
