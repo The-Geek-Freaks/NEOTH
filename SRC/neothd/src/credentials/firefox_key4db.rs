@@ -666,12 +666,15 @@ mod tests {
 
     #[test]
     fn derive_intermediate_key_known_answer_test_empty_password() {
-        // SHA1("salt") = 0a4d55a8d778e5022fab701977c5d840bbc486d0.
-        // Empty password concatenated with the salt is just SHA1(salt).
+        // SHA1("salt") = b295d117135a9763da282e7dae73a5ca7d3e5b11
+        // (verified against sha1sum / openssl / python hashlib — the
+        // prior literal 0a4d55a8… was simply a wrong KAT, not a code
+        // bug). Empty password concatenated with the salt is just
+        // SHA1(salt).
         let got = derive_intermediate_key(b"salt", b"");
         let expected: [u8; 20] = [
-            0x0a, 0x4d, 0x55, 0xa8, 0xd7, 0x78, 0xe5, 0x02, 0x2f, 0xab, 0x70, 0x19, 0x77, 0xc5,
-            0xd8, 0x40, 0xbb, 0xc4, 0x86, 0xd0,
+            0xb2, 0x95, 0xd1, 0x17, 0x13, 0x5a, 0x97, 0x63, 0xda, 0x28, 0x2e, 0x7d, 0xae, 0x73,
+            0xa5, 0xca, 0x7d, 0x3e, 0x5b, 0x11,
         ];
         assert_eq!(got, expected, "SHA1('salt' || '') KAT must match");
     }

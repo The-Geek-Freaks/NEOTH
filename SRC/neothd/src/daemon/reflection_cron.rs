@@ -177,7 +177,13 @@ mod tests {
     #[test]
     fn iso_week_tag_same_within_one_week() {
         // Same Monday + same Friday should land on the same ISO week.
-        let monday = 1_767_398_400; // 2026-01-05 00:00:00 UTC (Mon)
+        // 2026-01-05 is the first Monday of ISO week 2026-W02
+        // (2026-01-01 is a Thursday → Jan 1 itself is in W01, and W02
+        // runs Mon Jan 5 – Sun Jan 11). The prior literal here was
+        // 1_767_398_400 = Sat 2026-01-03, which is still in W01 and
+        // whose +4-day Friday crossed into W02 — a wrong fixture, not
+        // a code bug.
+        let monday = 1_767_571_200; // 2026-01-05 00:00:00 UTC (Mon)
         let friday = monday + 4 * 24 * 3600;
         assert_eq!(
             iso_week_tag_from_unix(monday),

@@ -427,7 +427,12 @@ mod tests {
 
     #[test]
     fn contains_word_avoids_substring_matches() {
-        assert!(contains_word("write tests", "test"));
+        // Positive control: standalone word matches.
+        assert!(contains_word("write a test", "test"));
+        // Negative: "test" inside "tests" / "attestation" must NOT match
+        // — that's the whole point. The noun list carries "tests" as its
+        // own entry, so detection of "write tests" doesn't lean on this.
+        assert!(!contains_word("write tests", "test"));
         assert!(!contains_word("attestation document", "test"));
         assert!(contains_word("bug fix", "bug"));
         assert!(!contains_word("bugbear", "bug"));
