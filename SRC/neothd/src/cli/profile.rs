@@ -42,6 +42,12 @@ pub enum ProfileAction {
     /// This is what the extractor's `existing_profile_summary` input
     /// would render in the prompt to keep the LLM grounded.
     Summary,
+    /// UX-04 — show the active *behavioural* knobs (the resolved
+    /// preset's verbosity / formality / clarifying / disclaimer-trim
+    /// plus the autonomy level), each with the concrete command or
+    /// file to change it. Complements `show` (which lists profile
+    /// *claims*); this is "how is NEOTH tuned + how do I retune it?".
+    Knobs,
     /// List redaction rows from `idx_profile_redactions` — fields the
     /// operator has marked `never_recreate` so the extractor pipeline
     /// can't re-introduce them. Active rows first, revoked rows next.
@@ -273,6 +279,21 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
         ProfileAction::Summary => {
             let rows = load_summary(&conn)?;
             render_summary(&rows, &args.output)
+        }
+        ProfileAction::Knobs => {
+            let home = FreedomConfig::default_neoth_home();
+            // Active preset → its tuning matrix. None (never applied) →
+            // LOWKEY, the recommended default the daemon falls back to.
+            let active =
+                load_active_preset(&home).unwrap_or(crate::profile::presets::ProfilePreset::Lowkey);
+            // Autonomy is a freedom.yaml knob; default Standard when the
+            // config is unreadable (matches AutonomyLevel::default()).
+            let autonomy = FreedomConfig::load_from_default_path()
+                .map(|c| c.autonomy)
+                .unwrap_or_default();
+            let rows = knob_rows(active, autonomy);
+            render_knobs(&rows, &args.output);
+            Ok(())
         }
         ProfileAction::Redactions => {
             let rows = crate::profile::redaction::list_all(&conn)?;
@@ -1360,10 +1381,168 @@ async fn run_preset_sub(sub: PresetSub, output: &OutputFormat) -> Result<()> {
     }
 }
 
+// ── UX-04: behavioural-knobs view ──────────────────────────────────────────
+
+/// One operator-facing behavioural knob: its current value + the
+/// concrete command/file to change it. No fictional `neoth config set`
+/// — the hints point at the real mechanism (preset apply / freedom.yaml).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnobRow {
+    pub knob: &'static str,
+    pub value: String,
+    pub change_hint: String,
+}
+
+fn verbosity_str(v: crate::profile::presets::Verbosity) -> &'static str {
+    use crate::profile::presets::Verbosity::*;
+    match v {
+        Terse => "terse",
+        Normal => "normal",
+        Detailed => "detailed",
+    }
+}
+
+fn formality_str(f: crate::profile::presets::Formality) -> &'static str {
+    use crate::profile::presets::Formality::*;
+    match f {
+        Casual => "casual",
+        Professional => "professional",
+        Strict => "strict",
+    }
+}
+
+/// Build the behavioural-knob rows from the resolved preset + autonomy.
+/// Pure — the four tuning knobs are PRESET-BUNDLED (they move together
+/// when the operator applies a preset), so their change-hint points at
+/// `neoth profile preset apply`; autonomy is an independent freedom.yaml
+/// knob.
+pub fn knob_rows(
+    active: crate::profile::presets::ProfilePreset,
+    autonomy: crate::permissions::AutonomyLevel,
+) -> Vec<KnobRow> {
+    let d = crate::profile::presets::apply_preset(active);
+    let preset_hint =
+        "change: `neoth profile preset apply <lowkey|formal|deepdive|tutor|opsec>`".to_string();
+    let bundled = "(bundled with the active preset)".to_string();
+    vec![
+        KnobRow {
+            knob: "preset",
+            value: active.as_str().to_string(),
+            change_hint: preset_hint,
+        },
+        KnobRow {
+            knob: "verbosity",
+            value: verbosity_str(d.verbosity).to_string(),
+            change_hint: bundled.clone(),
+        },
+        KnobRow {
+            knob: "formality",
+            value: formality_str(d.formality).to_string(),
+            change_hint: bundled.clone(),
+        },
+        KnobRow {
+            knob: "ask_clarifying",
+            value: d.ask_clarifying.to_string(),
+            change_hint: bundled.clone(),
+        },
+        KnobRow {
+            knob: "trim_disclaimers",
+            value: d.trim_disclaimers.to_string(),
+            change_hint: bundled,
+        },
+        KnobRow {
+            knob: "autonomy",
+            value: autonomy.as_str().to_string(),
+            change_hint:
+                "change: edit ~/.neoth/freedom.yaml → `autonomy: <strict|standard|elevated|full>`"
+                    .to_string(),
+        },
+    ]
+}
+
+fn render_knobs(rows: &[KnobRow], output: &OutputFormat) {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let arr: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "knob": r.knob,
+                        "value": r.value,
+                        "change_hint": r.change_hint,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string())
+            );
+        }
+        OutputFormat::Table => {
+            println!("Behavioural knobs (how NEOTH is tuned):\n");
+            for r in rows {
+                println!("  {:<17} {:<14} {}", r.knob, r.value, r.change_hint);
+            }
+            println!(
+                "\nThe four preset knobs move together — apply a different preset to retune them."
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::params;
+
+    // ── UX-04 knob_rows ────────────────────────────────────────────
+    // `ProfilePreset` is already in scope via `use super::*`; only
+    // `AutonomyLevel` needs importing here.
+    use crate::permissions::AutonomyLevel;
+
+    #[test]
+    fn knob_rows_reflects_lowkey_preset() {
+        let rows = knob_rows(ProfilePreset::Lowkey, AutonomyLevel::Standard);
+        let get = |k: &str| rows.iter().find(|r| r.knob == k).unwrap();
+        assert_eq!(get("preset").value, "lowkey");
+        assert_eq!(get("verbosity").value, "terse");
+        assert_eq!(get("formality").value, "casual");
+        assert_eq!(get("ask_clarifying").value, "false");
+        assert_eq!(get("trim_disclaimers").value, "false");
+        assert_eq!(get("autonomy").value, "standard");
+    }
+
+    #[test]
+    fn knob_rows_reflects_deepdive_and_opsec_deltas() {
+        let dd = knob_rows(ProfilePreset::Deepdive, AutonomyLevel::Elevated);
+        let dd_get = |k: &str| dd.iter().find(|r| r.knob == k).unwrap();
+        assert_eq!(dd_get("verbosity").value, "detailed");
+        assert_eq!(dd_get("ask_clarifying").value, "true");
+        assert_eq!(dd_get("autonomy").value, "elevated");
+
+        let op = knob_rows(ProfilePreset::Opsec, AutonomyLevel::Full);
+        let op_get = |k: &str| op.iter().find(|r| r.knob == k).unwrap();
+        assert_eq!(op_get("trim_disclaimers").value, "true");
+        assert_eq!(op_get("autonomy").value, "full");
+    }
+
+    #[test]
+    fn knob_rows_hints_reference_real_mechanisms_not_config_set() {
+        // No fictional `neoth config set`; hints point at the real
+        // preset-apply command + freedom.yaml.
+        let rows = knob_rows(ProfilePreset::Lowkey, AutonomyLevel::Standard);
+        let preset = rows.iter().find(|r| r.knob == "preset").unwrap();
+        assert!(preset.change_hint.contains("neoth profile preset apply"));
+        let autonomy = rows.iter().find(|r| r.knob == "autonomy").unwrap();
+        assert!(autonomy.change_hint.contains("freedom.yaml"));
+        for r in &rows {
+            assert!(
+                !r.change_hint.contains("neoth config set"),
+                "no fictional config-set command in `{}` hint",
+                r.knob
+            );
+        }
+    }
     use tempfile::tempdir;
 
     fn insert(
