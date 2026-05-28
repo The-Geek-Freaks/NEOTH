@@ -226,6 +226,11 @@ mod tests {
 
     #[test]
     fn default_pidfile_lives_under_neoth_home() {
+        // Reads the process-global NEOTH_HOME via default_pidfile();
+        // take the env lock so a concurrent setter (cli::mode tests)
+        // can't swap NEOTH_HOME to a tempdir mid-read. See
+        // crate::test_env.
+        let _env = crate::test_env::lock();
         let p = default_pidfile();
         assert!(p.to_string_lossy().contains(".neoth"));
         assert_eq!(p.file_name().and_then(|s| s.to_str()), Some("neothd.pid"),);

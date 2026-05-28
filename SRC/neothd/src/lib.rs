@@ -47,6 +47,29 @@
 // dead_code is allowed crate-wide during the Day-2..Day-30 ramp-up.
 #![allow(dead_code)]
 
+/// Process-global serialization lock for tests that mutate or read the
+/// real process environment (`NEOTH_HOME`, `NEOTH_NO_AUTO_CODE`, …).
+/// `std::env::set_var`/`remove_var` are process-wide, so under cargo's
+/// default multi-threaded test runner a setter in one module races a
+/// reader in another (e.g. `cli::mode` sets `NEOTH_HOME` to a tempdir
+/// while `daemon::pidfile` reads `default_pidfile()`). Both ends take
+/// this lock for their whole body:
+/// `let _env = crate::test_env::lock();`. The CI Windows job runs
+/// `--test-threads=1` so it was always safe there; this closes the
+/// Unix-job flake. Poison-tolerant — a test that panics while holding
+/// the lock must not wedge every other env test.
+#[cfg(test)]
+pub(crate) mod test_env {
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    pub(crate) fn lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
 use anyhow::Result;
 use clap::Parser;
 // clippy::unused_imports is wrong on `warn` here -- the `warn!`

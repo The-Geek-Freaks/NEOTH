@@ -199,10 +199,26 @@ fn char_truncate(s: &str, n: usize) -> String {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn run_mode_list_does_not_error_on_empty_skills_dir() {
+    // These two mutate the process-global `NEOTH_HOME`, so they take
+    // the crate-wide env lock (see `crate::test_env`) to serialize
+    // against any other env-touching test (e.g. `daemon::pidfile`).
+    // Plain `#[test]` + a manually-driven current-thread runtime, NOT
+    // `#[tokio::test]`: holding a `std::sync::MutexGuard` across an
+    // `.await` trips `clippy::await_holding_lock` under `-D warnings`,
+    // so we keep the await inside a synchronous `block_on`.
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime")
+            .block_on(fut)
+    }
+
+    #[test]
+    fn run_mode_list_does_not_error_on_empty_skills_dir() {
         // No user-installed skills + bundled set still loads via R3-P0.
         // List subcommand prints without panicking.
+        let _env = crate::test_env::lock();
         let args = ModeArgs {
             action: ModeAction::List,
             output: OutputFormat::Table,
@@ -210,11 +226,11 @@ mod tests {
         // Run inside a tempdir env so we don't touch the real ~/.neoth
         let dir = tempfile::tempdir().unwrap();
         let prior = std::env::var_os("NEOTH_HOME");
-        // SAFETY: tests are single-threaded per default. We restore prior.
+        // SAFETY: env lock held for the whole body; we restore prior.
         unsafe {
             std::env::set_var("NEOTH_HOME", dir.path());
         }
-        let result = run_mode(args).await;
+        let result = block_on(run_mode(args));
         unsafe {
             match prior {
                 Some(v) => std::env::set_var("NEOTH_HOME", v),
@@ -227,8 +243,9 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn run_mode_match_returns_ok_for_unmatched_text() {
+    #[test]
+    fn run_mode_match_returns_ok_for_unmatched_text() {
+        let _env = crate::test_env::lock();
         let args = ModeArgs {
             action: ModeAction::Match {
                 text: "completely unrelated prompt".into(),
@@ -237,10 +254,11 @@ mod tests {
         };
         let dir = tempfile::tempdir().unwrap();
         let prior = std::env::var_os("NEOTH_HOME");
+        // SAFETY: env lock held for the whole body; we restore prior.
         unsafe {
             std::env::set_var("NEOTH_HOME", dir.path());
         }
-        let result = run_mode(args).await;
+        let result = block_on(run_mode(args));
         unsafe {
             match prior {
                 Some(v) => std::env::set_var("NEOTH_HOME", v),

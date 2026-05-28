@@ -1421,6 +1421,10 @@ mod sub_config_tests {
 
     #[test]
     fn skills_config_suppress_requires_both_flags() {
+        // Mutates the process-global NEOTH_EVAL_SESSION — take the
+        // crate env lock so it can't race the sibling test below (or
+        // any other env test) under the multi-threaded runner.
+        let _env = crate::test_env::lock();
         let mut cfg = SkillsConfig::default();
         cfg.disabled_for_eval_sessions = true;
         // Without eval_session_active OR env → still false.
@@ -1432,6 +1436,7 @@ mod sub_config_tests {
 
     #[test]
     fn skills_config_suppress_honours_env_var() {
+        let _env = crate::test_env::lock();
         let mut cfg = SkillsConfig::default();
         cfg.disabled_for_eval_sessions = true;
         cfg.eval_session_active = false;

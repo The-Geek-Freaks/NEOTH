@@ -448,22 +448,24 @@ mod tests {
 
     #[test]
     fn should_auto_dispatch_true_for_high_confidence() {
-        // Save + restore env var so the test is hermetic.
-        // SAFETY: tests touching env vars run with --test-threads=1
-        // OR rely on the test runner; this test is best-effort and
-        // doesn't assert against other tests' env state.
+        // NEOTH_NO_AUTO_CODE is process-global; take the env lock so
+        // these three should_auto_dispatch tests don't race each other
+        // under the multi-threaded runner. See crate::test_env.
+        let _env = crate::test_env::lock();
         unsafe { std::env::remove_var("NEOTH_NO_AUTO_CODE") };
         assert!(should_auto_dispatch("build a function for me"));
     }
 
     #[test]
     fn should_auto_dispatch_false_for_low_confidence() {
+        let _env = crate::test_env::lock();
         unsafe { std::env::remove_var("NEOTH_NO_AUTO_CODE") };
         assert!(!should_auto_dispatch("build something cool"));
     }
 
     #[test]
     fn should_auto_dispatch_false_when_env_opt_out() {
+        let _env = crate::test_env::lock();
         unsafe { std::env::set_var("NEOTH_NO_AUTO_CODE", "1") };
         assert!(!should_auto_dispatch("build a function for me"));
         unsafe { std::env::remove_var("NEOTH_NO_AUTO_CODE") };
