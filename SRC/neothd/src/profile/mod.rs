@@ -42,6 +42,7 @@ pub mod inline_extract_trigger;
 pub mod lookup;
 pub mod presets;
 pub mod redaction;
+pub mod relative_time;
 pub mod runner;
 pub mod self_dev;
 pub mod snapshot;

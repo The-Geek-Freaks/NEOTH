@@ -102,6 +102,13 @@ fn render_user_prompt(window: &AttributedWindow) -> String {
             SegmentOrigin::Unknown => "unknown-origin",
         };
         let scrubbed = scrub_boundary_chars(&seg.segment.text);
+        // ADV-13: resolve relative time expressions ("3 years ago",
+        // "vor 2 Wochen") to absolute yyyy-mm-dd against THIS segment's
+        // real ts_ns before the extractor LLM sees them — so dated claims
+        // anchor on conversation-time, not the model's training "now".
+        // Deterministic (fixed ts_ns) so the G.1 same-window-same-prompt
+        // contract holds.
+        let normalized = crate::profile::relative_time::normalize_segment(&scrubbed, seg.segment.ts_ns);
         out.push_str(&block_open);
         out.push('\n');
         out.push_str(&format!(
@@ -109,7 +116,7 @@ fn render_user_prompt(window: &AttributedWindow) -> String {
             seg.segment.event_id,
             seg.attribution.as_str(),
             origin,
-            scrubbed,
+            normalized,
         ));
         out.push_str(&block_close);
         out.push_str("\n\n");
