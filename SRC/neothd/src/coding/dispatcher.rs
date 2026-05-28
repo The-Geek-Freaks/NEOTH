@@ -28,7 +28,7 @@ use crate::coding::retry::WorkerRetryPolicy;
 use crate::coding::store;
 use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus};
 use crate::coding::worker::{Worker, WorkerOutcome};
-use crate::security::redact::redact_text;
+use crate::security::redact::sanitize_tool_output;
 
 /// Map of hemisphere → bound worker. The dispatcher consults this for
 /// every BACKLOG task; if no worker is bound for the task's
@@ -794,8 +794,12 @@ fn handle_retryable_failure(
     // Diagnosis strings ride into `tracing::info!`/`warn!` which the
     // WAL subscriber persists durably. Provider-error messages can
     // carry an API key in a URL query string, a Bearer header, or a
-    // leaked .env line. Redact before logging — see `security::redact`.
-    let diagnosis = redact_text(diagnosis);
+    // leaked .env line; cargo/test output arrives ANSI-colourised.
+    // sanitize_tool_output strips the escape bytes THEN redacts secret
+    // shapes (QU-04) — see `security::redact`. One canonical pass here
+    // covers every downstream consumer of `diagnosis` (early-stop log
+    // markers, the re-injection hint, the Blocked-reason emit).
+    let diagnosis = sanitize_tool_output(diagnosis);
 
     // ── QU-01 (Session 28) — early-stop detectors before retry ────────────
     //

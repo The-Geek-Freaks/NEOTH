@@ -25,6 +25,7 @@
 //!   - `cli::serve` PROVIDER_RESPONSE frame body
 //!   - Anywhere we emit a frame that's `text-typed` from external IO
 
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use regex::Regex;
@@ -104,6 +105,81 @@ static PATTERNS: LazyLock<Vec<Pattern>> = LazyLock::new(|| {
         },
     ]
 });
+
+/// ANSI escape sequences (QU-04). Tool output — `cargo`, `git`, test
+/// runners — colourises by default, so a coding worker's captured
+/// stdout/stderr arrives studded with `\x1b[...m` SGR codes plus the
+/// occasional cursor-move (CSI) or hyperlink (OSC). Left raw they
+/// land verbatim in WAL frames + the activity feed, where the escape
+/// bytes are noise at best and can corrupt a naive terminal renderer
+/// at worst. The alternation order is load-bearing: CSI (`\x1b[…`)
+/// and OSC (`\x1b]…`) are matched before the generic two-byte escape
+/// catch-all so `\x1b]` opens an OSC rather than being eaten as a
+/// lone escape.
+static ANSI_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])").unwrap()
+});
+
+/// One or more consecutive `../` or `..\` path-traversal segments
+/// (QU-04). A run like `../../../` collapses to a single marker so
+/// the neutralised output stays readable. Bare `..` with no
+/// separator is intentionally NOT matched — it's a legitimate token
+/// in prose ("wait..") and in version ranges; only the directory-
+/// separator-bearing form is a traversal primitive.
+static PATH_TRAVERSAL_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:\.\.[\\/])+").unwrap());
+
+/// Strip every ANSI escape sequence from `input` (QU-04). Pure
+/// function, borrows when there's nothing to strip. Use this on any
+/// captured terminal output BEFORE it rides into a WAL frame or the
+/// operator activity feed — see [`sanitize_tool_output`] for the
+/// combined ANSI-then-secret pass.
+pub fn strip_ansi(input: &str) -> Cow<'_, str> {
+    ANSI_RE.replace_all(input, "")
+}
+
+/// Centralised tool-output sanitiser (QU-04). The single canonical
+/// surface for any text-typed external IO — captured tool stdout,
+/// provider error strings, plugin trap messages — on its way to a
+/// durable WAL frame or the activity feed. Composes [`strip_ansi`]
+/// (terminal-control noise) THEN [`redact_text`] (secret shapes).
+///
+/// Why ANSI first: a colourised secret (`\x1b[31msk-…\x1b[0m`) would
+/// otherwise have escape bytes wedged inside the token, breaking the
+/// `\b` word-boundary the secret regexes anchor on. Stripping the
+/// control bytes first lets the secret patterns see a clean token.
+///
+/// Path-traversal neutralisation is deliberately NOT part of this
+/// pass — `cargo`/`rustc` diagnostics legitimately print relative
+/// paths (`--> ../src/foo.rs`) and rewriting them would corrupt the
+/// audit trail. Callers that handle UNTRUSTED paths (e.g. a plugin
+/// echoing an operator-supplied path into a file op) call
+/// [`neutralize_path_traversal`] explicitly at that boundary.
+pub fn sanitize_tool_output(input: &str) -> String {
+    let no_ansi = strip_ansi(input);
+    redact_text(&no_ansi)
+}
+
+/// Returns true when `input` contains at least one `../` or `..\`
+/// path-traversal segment (QU-04). Cheap substring check for callers
+/// that want to branch (reject vs neutralise) before paying for the
+/// regex rewrite in [`neutralize_path_traversal`].
+pub fn contains_path_traversal(input: &str) -> bool {
+    input.contains("../") || input.contains("..\\")
+}
+
+/// Replace every run of `../` / `..\` traversal segments with a
+/// single `[REDACTED:path_traversal]` marker (QU-04). Pure function,
+/// borrows when there's nothing to neutralise. The marker matches
+/// the module's `[REDACTED:<kind>]` convention so audit consumers can
+/// grep traversal hits the same way they grep secret hits.
+///
+/// This is an OPT-IN boundary tool, not part of [`sanitize_tool_output`]
+/// — see that function's doc for why blanket traversal-rewriting
+/// would corrupt legitimate compiler-diagnostic paths.
+pub fn neutralize_path_traversal(input: &str) -> Cow<'_, str> {
+    PATH_TRAVERSAL_RE.replace_all(input, "[REDACTED:path_traversal]")
+}
 
 /// Redact every known secret pattern in the input. Returns a new
 /// String; the input is never mutated. Multiple patterns may match
@@ -242,34 +318,41 @@ fn redact_value(value: &serde_json::Value, field_hint: &str) -> serde_json::Valu
     }
 }
 
-/// Case-insensitive field-name match against the standard set of
-/// secret-bearing keys. Public for callers that want the same
-/// rule applied to a single field check outside the recursive
-/// walker.
+/// QU-04 deny-list: field names whose VALUE is always redacted
+/// regardless of whether the value itself matches a secret-shape
+/// pattern. A 4-char `api_key` value is too short to trip any
+/// regex in PATTERNS, but the field name alone tells us it's
+/// sensitive. Entries are lowercase; [`is_sensitive_field_name`]
+/// lowercases the candidate before comparing.
+pub const ALWAYS_REDACT_KEYS: &[&str] = &[
+    "api_key",
+    "apikey",
+    "token",
+    "access_token",
+    "refresh_token",
+    "bearer",
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "authorization",
+    "auth",
+    "cookie",
+    "x-api-key",
+    "x_api_key",
+    "client_secret",
+    "private_key",
+    "session_id",
+    "session",
+];
+
+/// Case-insensitive field-name match against [`ALWAYS_REDACT_KEYS`],
+/// the standard set of secret-bearing keys. Public for callers that
+/// want the same rule applied to a single field check outside the
+/// recursive walker.
 pub fn is_sensitive_field_name(name: &str) -> bool {
-    const SENSITIVE: &[&str] = &[
-        "api_key",
-        "apikey",
-        "token",
-        "access_token",
-        "refresh_token",
-        "bearer",
-        "password",
-        "passwd",
-        "pwd",
-        "secret",
-        "authorization",
-        "auth",
-        "cookie",
-        "x-api-key",
-        "x_api_key",
-        "client_secret",
-        "private_key",
-        "session_id",
-        "session",
-    ];
     let lower = name.to_ascii_lowercase();
-    SENSITIVE.iter().any(|s| lower == *s)
+    ALWAYS_REDACT_KEYS.iter().any(|s| lower == *s)
 }
 
 #[cfg(test)]
@@ -544,6 +627,123 @@ mod tests {
                 !is_sensitive_field_name(s),
                 "expected `{s}` to NOT be sensitive",
             );
+        }
+    }
+
+    // ── QU-04 (Session 28b) strip_ansi / sanitize_tool_output ─────────
+
+    #[test]
+    fn qu_04_strip_ansi_removes_sgr_colour_codes() {
+        let s = "\x1b[31mERROR\x1b[0m: build failed";
+        assert_eq!(strip_ansi(s), "ERROR: build failed");
+    }
+
+    #[test]
+    fn qu_04_strip_ansi_removes_csi_cursor_moves() {
+        // CSI cursor-up (`\x1b[2A`) + clear-line (`\x1b[K`) — common in
+        // progress-bar tool output.
+        let s = "line1\x1b[2A\x1b[Kline2";
+        assert_eq!(strip_ansi(s), "line1line2");
+    }
+
+    #[test]
+    fn qu_04_strip_ansi_removes_osc_hyperlink() {
+        // OSC 8 hyperlink terminated by BEL (`\x07`) — modern cargo
+        // emits these for clickable error codes.
+        let s = "see \x1b]8;;https://example.com\x07E0425\x1b]8;;\x07 here";
+        assert_eq!(strip_ansi(s), "see E0425 here");
+    }
+
+    #[test]
+    fn qu_04_strip_ansi_borrows_when_no_escapes() {
+        // Pure passthrough must not allocate — assert we got the
+        // Borrowed variant back, not an owned copy.
+        let s = "plain text, no escapes";
+        match strip_ansi(s) {
+            Cow::Borrowed(b) => assert_eq!(b, s),
+            Cow::Owned(_) => panic!("expected Borrowed for escape-free input"),
+        }
+    }
+
+    #[test]
+    fn qu_04_sanitize_tool_output_strips_ansi_then_redacts_secret() {
+        // A colourised secret: the SGR codes sit INSIDE the token, so
+        // a raw `redact_text` would miss it (the `\b` boundary breaks
+        // on `\x1b`). sanitize_tool_output strips ANSI first.
+        let fixture = concat!("sk-", "FAKE_TEST_OPENAI_AAAAAAAAAAAAAA");
+        let s = format!("key: \x1b[33m{fixture}\x1b[0m done");
+        let out = sanitize_tool_output(&s);
+        assert!(out.contains("[REDACTED:openai_key]"), "got: {out}");
+        assert!(!out.contains(fixture));
+        assert!(!out.contains('\x1b'), "ANSI bytes survived: {out:?}");
+    }
+
+    #[test]
+    fn qu_04_sanitize_tool_output_passes_clean_text_through() {
+        let s = "compiling neothd v0.4.0\n   Finished in 3.2s";
+        assert_eq!(sanitize_tool_output(s), s);
+    }
+
+    #[test]
+    fn qu_04_sanitize_tool_output_preserves_relative_compiler_paths() {
+        // Drift guard for the design choice: path-traversal
+        // neutralisation is NOT in the sanitize path, so a legit
+        // `--> ../src/foo.rs` diagnostic survives intact.
+        let s = "error[E0425]\n  --> ../src/foo.rs:12:5";
+        assert_eq!(sanitize_tool_output(s), s);
+    }
+
+    // ── QU-04 path-traversal helpers ──────────────────────────────────
+
+    #[test]
+    fn qu_04_contains_path_traversal_detects_both_separators() {
+        assert!(contains_path_traversal("../etc/passwd"));
+        assert!(contains_path_traversal("..\\windows\\system32"));
+        assert!(contains_path_traversal("a/b/../../c"));
+    }
+
+    #[test]
+    fn qu_04_contains_path_traversal_false_for_clean_and_bare_dots() {
+        assert!(!contains_path_traversal("src/main.rs"));
+        // Bare ".." with no separator is prose / a version token, not
+        // a traversal primitive.
+        assert!(!contains_path_traversal("wait.. what"));
+        assert!(!contains_path_traversal("1.0..2.0"));
+    }
+
+    #[test]
+    fn qu_04_neutralize_path_traversal_collapses_run_to_single_marker() {
+        let out = neutralize_path_traversal("../../../etc/passwd");
+        assert_eq!(out, "[REDACTED:path_traversal]etc/passwd");
+    }
+
+    #[test]
+    fn qu_04_neutralize_path_traversal_handles_backslash() {
+        let out = neutralize_path_traversal("..\\..\\secret.txt");
+        assert_eq!(out, "[REDACTED:path_traversal]secret.txt");
+    }
+
+    #[test]
+    fn qu_04_neutralize_path_traversal_borrows_when_clean() {
+        let s = "src/main.rs has no traversal";
+        match neutralize_path_traversal(s) {
+            Cow::Borrowed(b) => assert_eq!(b, s),
+            Cow::Owned(_) => panic!("expected Borrowed for traversal-free input"),
+        }
+    }
+
+    #[test]
+    fn qu_04_always_redact_keys_is_lowercase_and_drives_field_guard() {
+        assert!(!ALWAYS_REDACT_KEYS.is_empty());
+        for k in ALWAYS_REDACT_KEYS {
+            assert_eq!(
+                *k,
+                k.to_ascii_lowercase(),
+                "deny-list entries must be lowercase: {k}"
+            );
+            // Every deny-list entry must be recognised by the public
+            // guard (pins the const ↔ function wiring).
+            assert!(is_sensitive_field_name(k), "guard missed deny-list key {k}");
         }
     }
 }
