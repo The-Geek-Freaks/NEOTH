@@ -35,27 +35,3 @@ Baseline sources:
 | Private mesh | LAN/mDNS, Tailscale, Hysteria, Keet-style path | Not core |
 | Best user | Wants a loyal assistant that can grow from simple GUI into serious local control | Wants consumer convenience and many managed integrations fast |
 
-## Migration angle
-
-OpenHuman users already understand the "personal AI that remembers me" pitch.
-Do not fight that. NEOTH should say:
-
-> Keep the friendly buddy idea. Remove the managed-backend gravity.
-
-## README positioning
-
-Use this language:
-
-- "OpenHuman is great if you want the fastest friendly managed path."
-- "NEOTH is for users who want that same approachable buddy, but with local
-  memory proof, fail-closed profile extraction, coding workflow, and private
-  operator control."
-
-Avoid this language:
-
-- "OpenHuman is insecure."
-- "OpenHuman cannot be private."
-- "Managed equals bad."
-
-The sharper claim is more defensible: NEOTH optimizes for user-owned trust
-boundaries first.
