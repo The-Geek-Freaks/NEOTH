@@ -233,6 +233,84 @@ impl TestOutcome {
     }
 }
 
+/// Captured result of one child-process run: the exit status
+/// (`None` == timed out + killed) plus the fully-drained stdout +
+/// stderr byte streams.
+struct CapturedRun {
+    exit: Option<std::process::ExitStatus>,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+/// Drain a child pipe to completion on its own thread so a full pipe
+/// buffer can't deadlock the parent's wait loop. Generic over
+/// stdout/stderr (both are `Read + Send`).
+fn drain_pipe<R: std::io::Read + Send + 'static>(
+    pipe: Option<R>,
+) -> Option<std::thread::JoinHandle<std::io::Result<Vec<u8>>>> {
+    pipe.map(|mut p| {
+        std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
+            let mut buf = Vec::new();
+            p.read_to_end(&mut buf)?;
+            Ok(buf)
+        })
+    })
+}
+
+/// Spawn `program args` in `cwd`, drain both pipes off threads, and
+/// poll for completion with a wall-clock `timeout` (100 ms ticks).
+/// A timed-out child is killed + reaped; `exit` is then `None`.
+/// `Err` only on spawn failure — a non-zero exit is a normal
+/// `CapturedRun`, not an error, so callers classify it themselves.
+fn spawn_and_capture(
+    program: &str,
+    args: &[&str],
+    cwd: &Path,
+    timeout: std::time::Duration,
+    ctx: &str,
+) -> Result<CapturedRun> {
+    let mut child = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .with_context(|| format!("spawn {ctx} in {}", cwd.display()))?;
+
+    let stdout_join = drain_pipe(child.stdout.take());
+    let stderr_join = drain_pipe(child.stderr.take());
+
+    let started = std::time::Instant::now();
+    let exit = loop {
+        match child.try_wait().context("child try_wait")? {
+            Some(status) => break Some(status),
+            None => {
+                if started.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    };
+
+    let stdout = stdout_join
+        .and_then(|j| j.join().ok())
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    let stderr = stderr_join
+        .and_then(|j| j.join().ok())
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+
+    Ok(CapturedRun {
+        exit,
+        stdout,
+        stderr,
+    })
+}
+
 /// Spawn the operator-configured test command inside a
 /// worktree. `cmd` is split on whitespace into argv — operators
 /// who need shell features wrap in a script. The wall-clock
@@ -254,67 +332,16 @@ pub fn run_test_cmd(
     }
     let (program, args) = parts.split_first().expect("non-empty by guard");
 
-    let mut child = Command::new(program)
-        .args(args)
-        .current_dir(worktree)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .with_context(|| format!("spawn test command `{cmd}` in {}", worktree.display()))?;
+    let run = spawn_and_capture(
+        program,
+        args,
+        worktree,
+        timeout,
+        &format!("test command `{cmd}`"),
+    )?;
+    let log_path = write_test_log(worktree, cmd, &run.stdout, &run.stderr, &run.exit);
 
-    // Drain stdout + stderr off threads so the child can't
-    // block on a full pipe buffer. A long-running test that
-    // emits >64 KiB to stdout without us reading would
-    // deadlock the wait() loop otherwise.
-    let stdout_pipe = child.stdout.take();
-    let stderr_pipe = child.stderr.take();
-    let stdout_join = stdout_pipe.map(|mut p| {
-        std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-            let mut buf = Vec::new();
-            use std::io::Read;
-            p.read_to_end(&mut buf)?;
-            Ok(buf)
-        })
-    });
-    let stderr_join = stderr_pipe.map(|mut p| {
-        std::thread::spawn(move || -> std::io::Result<Vec<u8>> {
-            let mut buf = Vec::new();
-            use std::io::Read;
-            p.read_to_end(&mut buf)?;
-            Ok(buf)
-        })
-    });
-
-    // Poll wait_timeout via try_wait + sleep — std doesn't ship
-    // a real timeout on Child::wait. We sleep in 100ms ticks
-    // which is responsive enough for a 5-minute default cap.
-    let started = std::time::Instant::now();
-    let exit_status = loop {
-        match child.try_wait().context("test command try_wait")? {
-            Some(status) => break Some(status),
-            None => {
-                if started.elapsed() >= timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    break None;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(100));
-            }
-        }
-    };
-
-    let stdout_bytes = stdout_join
-        .and_then(|j| j.join().ok())
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-    let stderr_bytes = stderr_join
-        .and_then(|j| j.join().ok())
-        .and_then(|r| r.ok())
-        .unwrap_or_default();
-
-    let log_path = write_test_log(worktree, cmd, &stdout_bytes, &stderr_bytes, &exit_status);
-
-    let Some(status) = exit_status else {
+    let Some(status) = run.exit else {
         return Ok(TestOutcome::Failed {
             reason: format!(
                 "timed out after {}s — full log: {}",
@@ -329,7 +356,7 @@ pub fn run_test_cmd(
     } else {
         // Tail of stderr is the most operator-useful summary;
         // full streams sit in the log file for inspection.
-        let tail = String::from_utf8_lossy(&stderr_bytes);
+        let tail = String::from_utf8_lossy(&run.stderr);
         let trimmed = tail.trim();
         let head = if trimmed.is_empty() {
             format!("exit code {}", status.code().unwrap_or(-1))
@@ -337,13 +364,18 @@ pub fn run_test_cmd(
             // Cap inline reason at ~400 chars — the WAL frame's
             // `reason` field passes through the dispatcher's
             // redact_text + we don't want a 64 KiB compiler dump
-            // inline.
+            // inline. Walk back to a UTF-8 char boundary so a
+            // multibyte rustc arrow (`-->`) at the cut can't panic.
             let max = 400;
             if trimmed.len() > max {
-                let mut s = trimmed[..max].to_string();
+                let mut end = max;
+                while end > 0 && !trimmed.is_char_boundary(end) {
+                    end -= 1;
+                }
+                let mut s = trimmed[..end].to_string();
                 s.push_str(&format!(
                     "... ({} more bytes — see {})",
-                    trimmed.len() - max,
+                    trimmed.len() - end,
                     log_path.display()
                 ));
                 s
@@ -353,6 +385,71 @@ pub fn run_test_cmd(
         };
         Ok(TestOutcome::Failed { reason: head })
     }
+}
+
+/// QU-05 — run `cargo check --message-format=json` inside a task
+/// worktree and parse the structured diagnostics. The Rust analogue
+/// of smallcode's `node --check` post-write pass: the dispatcher
+/// feeds [`CargoCheckRun::diagnostics`] into
+/// [`crate::coding::cargo_check::retry_hint_from_cargo_json`] so a
+/// failing check re-injects rustc's own errors (capped, deduped) into
+/// the next worker attempt.
+///
+/// `cmd` is the operator's configured cargo-check command (e.g.
+/// `"cargo check"` or `"cargo check --workspace"`); its flags are
+/// forwarded verbatim and `--message-format=json` is appended unless
+/// the operator already set a `--message-format`.
+///
+/// `Err` only on spawn failure. A non-zero exit / timeout / compile
+/// errors are reported in the returned `CargoCheckRun` (`passed =
+/// false`) so the caller routes through the retry path without
+/// panicking — same contract as [`run_test_cmd`].
+pub fn run_cargo_check_json(
+    worktree: &Path,
+    cmd: &str,
+    timeout: std::time::Duration,
+) -> Result<CargoCheckRun> {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.is_empty() {
+        anyhow::bail!("empty cargo-check command");
+    }
+    let (program, op_args) = parts.split_first().expect("non-empty by guard");
+    let mut args: Vec<&str> = op_args.to_vec();
+    if !args.iter().any(|a| a.starts_with("--message-format")) {
+        args.push("--message-format=json");
+    }
+    let run = spawn_and_capture(program, &args, worktree, timeout, cmd)?;
+    let log_path = write_test_log(worktree, cmd, &run.stdout, &run.stderr, &run.exit);
+    // rustc emits the JSON diagnostic objects on stdout; the final
+    // "could not compile" line goes to stderr.
+    let diagnostics =
+        crate::coding::cargo_check::parse_cargo_check_json(&String::from_utf8_lossy(&run.stdout));
+    let timed_out = run.exit.is_none();
+    // passed = clean exit AND no hard errors in the JSON. A timeout
+    // (exit None) is never a pass.
+    let passed = run.exit.map(|s| s.success()).unwrap_or(false)
+        && !crate::coding::cargo_check::has_errors(&diagnostics);
+    Ok(CargoCheckRun {
+        passed,
+        timed_out,
+        diagnostics,
+        log_path,
+    })
+}
+
+/// Outcome of one [`run_cargo_check_json`] invocation.
+#[derive(Debug, Clone)]
+pub struct CargoCheckRun {
+    /// `cargo check` exited 0 AND no hard errors were parsed.
+    pub passed: bool,
+    /// The wall-clock timeout fired (child was killed). `passed` is
+    /// always false in this case; `diagnostics` holds whatever was
+    /// captured before the kill.
+    pub timed_out: bool,
+    /// Parsed compiler diagnostics (errors + warnings), in emit order.
+    pub diagnostics: Vec<crate::coding::cargo_check::CargoDiagnostic>,
+    /// Path to the persisted full-output log for operator inspection.
+    pub log_path: PathBuf,
 }
 
 /// Persist the test command's full output streams under
@@ -749,5 +846,39 @@ mod tests {
         }
 
         let _ = cleanup_worktree(&repo, &wt, true);
+    }
+
+    // ── run_cargo_check_json ───────────────────────────────────────
+
+    fn cargo_available() -> bool {
+        Command::new("cargo")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn run_cargo_check_json_on_dir_without_manifest_is_not_passed() {
+        if !cargo_available() {
+            eprintln!("skipping: cargo not on PATH");
+            return;
+        }
+        // A bare tempdir (under the system temp, no parent Cargo.toml)
+        // → `cargo check` errors "could not find Cargo.toml": spawn
+        // succeeds, exit is non-zero, so passed == false and the run
+        // did not time out. Proves the glue without needing a full
+        // crate fixture (the JSON parse + spawn capture are covered by
+        // their own tests).
+        let dir = tempdir().unwrap();
+        let run = run_cargo_check_json(
+            dir.path(),
+            "cargo check",
+            std::time::Duration::from_secs(60),
+        )
+        .expect("spawn cargo");
+        assert!(!run.passed, "no-manifest check must not be a pass");
+        assert!(!run.timed_out, "should error fast, not time out");
+        assert!(run.log_path.exists(), "full-output log must be written");
     }
 }

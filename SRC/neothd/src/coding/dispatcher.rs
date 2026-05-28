@@ -582,30 +582,7 @@ fn apply_patch_via_worktree(
             // non-zero exit routes through the retry-policy
             // path the same way a git apply rejection does.
             let result = if let Some(cmd) = cfg.test_cmd.as_deref() {
-                match crate::coding::worktree::run_test_cmd(&worktree_path, cmd, cfg.test_timeout) {
-                    Ok(crate::coding::worktree::TestOutcome::Passed) => {
-                        info!(
-                            task_id = task.task_id.raw(),
-                            cmd = cmd,
-                            "tests passed in worktree"
-                        );
-                        Ok(())
-                    }
-                    Ok(crate::coding::worktree::TestOutcome::Failed { reason }) => Err((
-                        "tests",
-                        format!(
-                            "tests failed in worktree for task {} ({cmd}): {reason}",
-                            task.task_id.raw()
-                        ),
-                    )),
-                    Err(e) => Err((
-                        "tests",
-                        format!(
-                            "test-command spawn failed for task {} ({cmd}): {e}",
-                            task.task_id.raw()
-                        ),
-                    )),
-                }
+                run_worktree_tests(&worktree_path, cmd, cfg.test_timeout, task)
             } else {
                 Ok(())
             };
@@ -959,6 +936,80 @@ fn now_unix_ns() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+/// QU-05 — true when the operator's test command is a `cargo check`
+/// invocation, so the dispatcher routes through the structured-JSON
+/// diagnostic path (rustc's parsed errors re-injected into the next
+/// attempt) instead of the generic stderr-tail path. Matches `cargo
+/// check [flags…]`; not `cargo test` / `cargo build` / a wrapper
+/// script.
+fn is_cargo_check_cmd(cmd: &str) -> bool {
+    let mut it = cmd.split_whitespace();
+    matches!((it.next(), it.next()), (Some("cargo"), Some("check")))
+}
+
+/// QU-05 — run the post-apply test command inside the task worktree.
+/// A `cargo check` routes through `run_cargo_check_json` so a failing
+/// check re-injects rustc's parsed, capped diagnostics as the
+/// `diagnosis` that `handle_retryable_failure` appends to the next
+/// attempt's prompt; any other command runs generically (stderr tail).
+/// `Ok(())` = pass; `Err((stage, diagnosis))` = fail / spawn error,
+/// routed through `emit_patch_apply_failed_wal` + the retry path.
+fn run_worktree_tests(
+    worktree: &std::path::Path,
+    cmd: &str,
+    timeout: Duration,
+    task: &KanbanTask,
+) -> std::result::Result<(), (&'static str, String)> {
+    use crate::coding::{cargo_check, worktree};
+    let tid = task.task_id.raw();
+    if is_cargo_check_cmd(cmd) {
+        match worktree::run_cargo_check_json(worktree, cmd, timeout) {
+            Ok(run) if run.passed => {
+                info!(task_id = tid, cmd = cmd, "cargo check passed in worktree");
+                Ok(())
+            }
+            Ok(run) => {
+                let detail = if cargo_check::has_errors(&run.diagnostics) {
+                    cargo_check::format_for_retry(&run.diagnostics)
+                } else if run.timed_out {
+                    format!(
+                        "cargo check timed out — full log: {}",
+                        run.log_path.display()
+                    )
+                } else {
+                    format!(
+                        "cargo check failed without parseable errors — full log: {}",
+                        run.log_path.display()
+                    )
+                };
+                Err((
+                    "tests",
+                    format!("cargo check failed for task {tid}:\n{detail}"),
+                ))
+            }
+            Err(e) => Err((
+                "tests",
+                format!("cargo check spawn failed for task {tid}: {e}"),
+            )),
+        }
+    } else {
+        match worktree::run_test_cmd(worktree, cmd, timeout) {
+            Ok(worktree::TestOutcome::Passed) => {
+                info!(task_id = tid, cmd = cmd, "tests passed in worktree");
+                Ok(())
+            }
+            Ok(worktree::TestOutcome::Failed { reason }) => Err((
+                "tests",
+                format!("tests failed in worktree for task {tid} ({cmd}): {reason}"),
+            )),
+            Err(e) => Err((
+                "tests",
+                format!("test-command spawn failed for task {tid} ({cmd}): {e}"),
+            )),
+        }
+    }
 }
 
 /// QU-05 — cap on the failure diagnostic re-injected into the next
@@ -2093,5 +2144,26 @@ mod tests {
         let h = reinjection_hint("[hint]", "boom");
         assert!(h.contains("boom"));
         assert!(!h.contains("truncated"));
+    }
+
+    // ── QU-05 is_cargo_check_cmd routing ───────────────────────────
+
+    #[test]
+    fn is_cargo_check_cmd_matches_check_with_and_without_flags() {
+        assert!(is_cargo_check_cmd("cargo check"));
+        assert!(is_cargo_check_cmd("cargo check --workspace"));
+        assert!(is_cargo_check_cmd("  cargo   check   --all-targets "));
+    }
+
+    #[test]
+    fn is_cargo_check_cmd_rejects_other_commands() {
+        assert!(!is_cargo_check_cmd("cargo test"));
+        assert!(!is_cargo_check_cmd("cargo build"));
+        assert!(!is_cargo_check_cmd("pytest -q"));
+        assert!(!is_cargo_check_cmd("cargo"));
+        assert!(!is_cargo_check_cmd(""));
+        // A wrapper script named "cargo-check" must NOT match — it's a
+        // single token, not `cargo` + `check`.
+        assert!(!is_cargo_check_cmd("cargo-check"));
     }
 }
