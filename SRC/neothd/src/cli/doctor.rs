@@ -477,6 +477,26 @@ const CHECK_DOCS: &[CheckDoc] = &[
               you intentionally accept the subprocess path, set \
               `freedom.yaml::claude_cli.backend: subprocess`.",
     },
+    CheckDoc {
+        name: "refusal recovery",
+        purpose: "SPEC-10 LOWKEY refusal-recovery health. When the model \
+                  refuses a legitimate request, `try_recover` reframes the \
+                  prompt + retries (up to `max_attempts`) per detected \
+                  cause. Doctor warns when recovery is ENABLED but can \
+                  never fire — every applicable reframing disabled, or \
+                  `max_attempts = 0` — i.e. a silent no-op that looks \
+                  active but does nothing.",
+        common_failures: "All LOWKEY reframings added to \
+                         `refusal_recovery.disabled_reframings`; \
+                         `max_attempts: 0` set by hand; recovery left \
+                         enabled but effectively dead.",
+        fix: "Re-enable a reframing: `neoth refusal enable <id>` (list them \
+              with `neoth refusal reframings`). Restore retries: set \
+              `refusal_recovery.max_attempts: 2` in freedom.yaml. To turn \
+              recovery off on purpose, set `refusal_recovery.enabled: \
+              false` — doctor then passes quietly. Dry-run a refusal with \
+              `neoth refusal test \"<refusal text>\"`.",
+    },
 ];
 
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
@@ -686,7 +706,79 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_provider_flapping(home),
         check_cluster_registry(home),
         check_cluster_mdns_announcer(home),
+        check_refusal_recovery(home),
     ]
+}
+
+/// SPEC-10 refusal-recovery health. Recovery reframes + retries when the
+/// model refuses a legitimate request. The footgun this catches: a
+/// config where recovery is left ENABLED but can never actually fire —
+/// every applicable LOWKEY reframing disabled, or `max_attempts = 0` —
+/// so refusals silently surface verbatim despite recovery "being on".
+///
+/// PASS: recovery off by operator choice (deliberate); recovery active
+/// with ≥1 reframing enabled + max_attempts ≥ 1; freedom.yaml unreadable
+/// (recovery falls back to healthy defaults — the missing-config WARN is
+/// owned by `check_freedom_yaml`, not duplicated here).
+/// WARN: enabled but a no-op (all reframings disabled, or max_attempts=0).
+fn check_refusal_recovery(home: &Path) -> CheckOutcome {
+    let name = "refusal recovery";
+    let cfg = match crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")) {
+        Ok(c) => c,
+        Err(_) => {
+            return CheckOutcome {
+                name,
+                status: CheckStatus::Pass,
+                detail: "freedom.yaml unreadable — recovery uses defaults \
+                         (enabled, 0 reframings disabled, max_attempts=2)"
+                    .to_string(),
+            };
+        }
+    };
+    let rr = &cfg.refusal_recovery;
+    let catalogue = crate::security::refusal_reframings::default_catalogue();
+    let total = catalogue.len();
+    let enabled_count = catalogue
+        .iter()
+        .filter(|r| !rr.disabled_reframings.iter().any(|d| d == r.id()))
+        .count();
+
+    if !rr.enabled {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: "off by operator config (refusal_recovery.enabled=false) — \
+                     refusals surface verbatim"
+                .to_string(),
+        };
+    }
+    if rr.max_attempts == 0 {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Warn,
+            detail: "ENABLED but max_attempts=0 → recovery never retries \
+                     (silent no-op). Set refusal_recovery.max_attempts ≥ 1."
+                .to_string(),
+        };
+    }
+    if enabled_count == 0 {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "ENABLED but all {total} LOWKEY reframings disabled → silent \
+                 no-op. Re-enable via `neoth refusal enable <id>`."
+            ),
+        };
+    }
+    CheckOutcome {
+        name,
+        status: CheckStatus::Pass,
+        detail: format!(
+            "active — {enabled_count}/{total} reframings enabled, max_attempts={}",
+            rr.max_attempts
+        ),
+    }
 }
 
 /// Cluster mDNS announcer state — surfaces whether the announcer
@@ -2182,12 +2274,57 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_six() {
+    fn check_docs_listed_count_pinned_at_twenty_seven() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
         // coverage) is caught. Bumped to 26 in Session 21 for
-        // `cluster mDNS announcer` (Bite #2 announcer state surface).
-        assert_eq!(CHECK_DOCS.len(), 26);
+        // `cluster mDNS announcer` (Bite #2 announcer state surface);
+        // 27 in Session 28c for `refusal recovery` (SPEC-10).
+        assert_eq!(CHECK_DOCS.len(), 27);
+    }
+
+    #[test]
+    fn refusal_recovery_check_passes_on_empty_home_defaults() {
+        // No freedom.yaml → recovery runs on healthy defaults → Pass.
+        let dir = tempdir().unwrap();
+        let outcome = check_refusal_recovery(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+    }
+
+    #[test]
+    fn refusal_recovery_check_warns_when_all_reframings_disabled() {
+        // Enabled recovery + every reframing disabled = silent no-op → Warn.
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.refusal_recovery.enabled = true;
+        cfg.refusal_recovery.max_attempts = 2;
+        cfg.refusal_recovery.disabled_reframings = crate::security::refusal_reframings::default_catalogue()
+            .iter()
+            .map(|r| r.id().to_string())
+            .collect();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        let outcome = check_refusal_recovery(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Warn);
+        assert!(outcome.detail.contains("no-op"), "detail: {}", outcome.detail);
+    }
+
+    #[test]
+    fn refusal_recovery_check_passes_when_disabled_by_operator() {
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.refusal_recovery.enabled = false;
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        let outcome = check_refusal_recovery(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("off by operator"));
     }
 
     #[test]
@@ -2736,11 +2873,12 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 26 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // 27 checks: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
         // flapping + cluster registry (Phase 4 follow-on) + cluster
-        // mDNS announcer (Session 21 bite #2).
-        assert_eq!(outs.len(), 26);
+        // mDNS announcer (Session 21 bite #2) + refusal recovery
+        // (Session 28c, SPEC-10).
+        assert_eq!(outs.len(), 27);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

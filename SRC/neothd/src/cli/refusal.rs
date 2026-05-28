@@ -1,5 +1,5 @@
 //! `neoth refusal {classify, patterns, cause, reframings, enable,
-//! disable}` — operator surface for the Refusal-Recovery LOWKEY arc.
+//! disable, test}` — operator surface for the Refusal-Recovery LOWKEY arc.
 //!
 //! Subcommands:
 //!   - `classify <text>` — Schicht-0 detector (surface class).
@@ -11,6 +11,11 @@
 //!     `refusal_recovery.disabled_reframings` so a specific LOWKEY
 //!     reframing never fires.
 //!   - `enable <id>` (R-06) — remove from the disabled list.
+//!   - `test <refusal> [--prompt P]` (SPEC-10) — pure DRY-RUN: classify
+//!     the cause, show the ordered reframing chain recovery WOULD try
+//!     (honouring `disabled_reframings`), and — with `--prompt` — the
+//!     reframed prompt the first applicable reframing produces. No
+//!     provider call, no WAL write.
 //!
 //! All commands are pure-read or freedom.yaml mutators. No LLM
 //! calls, no provider dependency.
@@ -22,7 +27,7 @@ use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::security::refusal_cause::classify_cause;
 use crate::security::refusal_detect::classify;
-use crate::security::refusal_reframings::default_catalogue;
+use crate::security::refusal_reframings::{applicable_reframings, default_catalogue};
 
 #[derive(Args, Debug, Clone)]
 pub struct RefusalArgs {
@@ -74,6 +79,20 @@ pub enum RefusalAction {
         /// Reframing id (snake_case).
         id: String,
     },
+    /// SPEC-10: dry-run the recovery selection for a refusal WITHOUT
+    /// calling a provider. Classifies the cause, lists the ordered
+    /// reframing chain `try_recover` would attempt (honouring the
+    /// operator's `disabled_reframings`), and — when `--prompt` is
+    /// given — shows the reframed prompt the first applicable reframing
+    /// produces. Pure: no LLM, no WAL.
+    Test {
+        /// The refusal text to classify + plan recovery for.
+        text: String,
+        /// Optional original prompt to reframe — shows the exact
+        /// rewritten prompt the first applicable reframing emits.
+        #[arg(long)]
+        prompt: Option<String>,
+    },
 }
 
 pub async fn run_refusal(args: RefusalArgs) -> Result<()> {
@@ -84,7 +103,93 @@ pub async fn run_refusal(args: RefusalArgs) -> Result<()> {
         RefusalAction::Reframings => run_reframings(&args.output),
         RefusalAction::Disable { id } => run_disable(&id, &args.output),
         RefusalAction::Enable { id } => run_enable(&id, &args.output),
+        RefusalAction::Test { text, prompt } => run_test(&text, prompt.as_deref(), &args.output),
     }
+}
+
+/// SPEC-10: dry-run the recovery plan for a refusal. Pure — reuses the
+/// same `classify_cause` + `applicable_reframings` the live
+/// `try_recover` orchestrator uses, so what this prints is exactly what
+/// recovery WOULD attempt (minus the provider call). `disabled_reframings`
+/// from freedom.yaml is honoured; a missing config falls back to "none
+/// disabled" so the operator sees the default plan.
+fn run_test(text: &str, prompt: Option<&str>, output: &OutputFormat) -> Result<()> {
+    let cause = classify_cause(text);
+    let disabled: Vec<String> = match FreedomConfig::load_from_default_path() {
+        Ok(cfg) => cfg.refusal_recovery.disabled_reframings,
+        Err(_) => Vec::new(),
+    };
+    let catalogue = default_catalogue();
+    let chain = applicable_reframings(cause.cause, &catalogue, &disabled);
+    let recoverable = !chain.is_empty();
+
+    // With --prompt, preview the first applicable reframing's rewrite —
+    // that's the one `try_recover` attempts first.
+    let reframed = match (chain.first(), prompt) {
+        (Some(r), Some(p)) => Some((r.id(), r.apply(p, None))),
+        _ => None,
+    };
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let chain_json: Vec<_> = chain
+                .iter()
+                .map(|r| serde_json::json!({ "id": r.id(), "description": r.description() }))
+                .collect();
+            let reframed_json = reframed.as_ref().map(|(id, rp)| {
+                serde_json::json!({
+                    "reframing_id": id,
+                    "reframed_prompt": rp.prompt,
+                    "reframed_system": rp.system,
+                })
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "cause": cause.cause.as_str(),
+                    "confidence": cause.confidence,
+                    "recoverable": recoverable,
+                    "applicable_reframings": chain_json,
+                    "reframed": reframed_json,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!("# Refusal recovery dry-run");
+            println!("  cause:        {}", cause.cause.as_str());
+            println!("  confidence:   {}", cause.confidence);
+            println!("  recoverable:  {recoverable}");
+            if chain.is_empty() {
+                println!(
+                    "  plan:         (none) — cause is not auto-reframed (Unknown / \
+                     OperatorPolicy) or every applicable reframing is disabled; \
+                     recovery would surface the original refusal + escalate."
+                );
+            } else {
+                println!("  plan ({} applicable, in attempt order):", chain.len());
+                for (i, r) in chain.iter().enumerate() {
+                    println!("    {}. {:<22} {}", i + 1, r.id(), r.description());
+                }
+            }
+            if let Some((id, rp)) = &reframed {
+                println!("\n  first reframing `{id}` rewrites the prompt to:");
+                println!("  ┌─ prompt ─");
+                for line in rp.prompt.lines() {
+                    println!("  │ {line}");
+                }
+                if let Some(sys) = &rp.system {
+                    println!("  ├─ system ─");
+                    for line in sys.lines() {
+                        println!("  │ {line}");
+                    }
+                }
+                println!("  └─");
+            } else if prompt.is_none() && recoverable {
+                println!("\n  (pass --prompt \"<your prompt>\" to preview the reframed prompt)");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// R-06: classify the cause of a refusal. Mirrors `run_classify`'s
@@ -410,5 +515,27 @@ mod tests {
         assert!(validate_reframing_id("").is_err());
         // No fuzzy match: leading/trailing spaces are not stripped.
         assert!(validate_reframing_id(" operator_authority ").is_err());
+    }
+
+    // ── SPEC-10: `neoth refusal test` dry-run ─────────────────────────
+
+    #[test]
+    fn test_dry_run_safety_policy_recoverable_both_outputs() {
+        // A safety-policy refusal has an applicable reframing chain →
+        // recoverable. Smoke both render branches (with + without
+        // --prompt).
+        let refusal = "I can't help with that — it violates my safety policy.";
+        run_test(refusal, Some("scan my own server for open ports"), &OutputFormat::Json).unwrap();
+        run_test(refusal, Some("scan my own server for open ports"), &OutputFormat::Table)
+            .unwrap();
+        run_test(refusal, None, &OutputFormat::Table).unwrap();
+    }
+
+    #[test]
+    fn test_dry_run_unknown_cause_not_recoverable_does_not_panic() {
+        // Clean (non-refusal) input → Unknown cause → empty chain →
+        // not recoverable. Both branches must render without panic.
+        run_test("Sure, here's the answer: 42", None, &OutputFormat::Json).unwrap();
+        run_test("Sure, here's the answer: 42", None, &OutputFormat::Table).unwrap();
     }
 }
