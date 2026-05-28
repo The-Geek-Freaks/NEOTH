@@ -32,7 +32,13 @@ use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
 #[derive(Args, Debug, Clone)]
 pub struct UndoArgs {
-    /// How many recent mutating frames to show (newest at the bottom).
+    /// Phase 2 — reverse a listed mutation. Omit to just LIST (the
+    /// read-only Phase-1 discovery view).
+    #[command(subcommand)]
+    pub action: Option<UndoAction>,
+
+    /// How many recent mutating frames to show / index into (newest at
+    /// the bottom).
     #[arg(long, default_value = "5")]
     pub limit: usize,
 
@@ -43,6 +49,20 @@ pub struct UndoArgs {
 
     #[arg(skip)]
     pub output: OutputFormat,
+}
+
+#[derive(clap::Subcommand, Debug, Clone)]
+pub enum UndoAction {
+    /// Reverse the Nth listed mutation (1-based index from `neoth undo`).
+    /// Confirm-gated unless `--yes`. Only frame types with a wired,
+    /// safe inverse are auto-reversed; others print the manual command.
+    Apply {
+        /// 1-based index into the `neoth undo` list (same `--limit`).
+        n: usize,
+        /// Skip the interactive confirmation prompt.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// How (if at all) a mutating frame can be walked back.
@@ -243,12 +263,21 @@ fn format_ts_short(ts_ns: u64) -> String {
     format!("{h:02}:{m:02}:{s:02}")
 }
 
-/// `neoth undo` entry point. Read-only.
+/// `neoth undo` entry point. `None` action ⇒ the read-only list;
+/// `apply <n>` ⇒ the confirm-gated reverser.
 pub fn run_undo(args: UndoArgs) -> Result<()> {
     let wal_dir = args.wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
-    let entries = scan_wal_dir_for_undo(&wal_dir, args.limit)?;
+    match args.action.clone() {
+        None => run_list(&wal_dir, args.limit, args.output),
+        Some(UndoAction::Apply { n, yes }) => run_apply(&wal_dir, args.limit, n, yes),
+    }
+}
 
-    match args.output {
+/// Read-only Phase-1 list.
+fn run_list(wal_dir: &PathBuf, limit: usize, output: OutputFormat) -> Result<()> {
+    let entries = scan_wal_dir_for_undo(wal_dir, limit)?;
+
+    match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let arr: Vec<serde_json::Value> = entries
                 .iter()
@@ -300,6 +329,159 @@ pub fn run_undo(args: UndoArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ── Phase 2: confirm-gated auto-reverser ───────────────────────────────────
+
+/// Reverse the Nth listed mutation. Only frame types with a wired,
+/// SAFE inverse are auto-reversed; the rest bail with the manual hint
+/// so the operator is never left guessing — and we never half-apply a
+/// destructive op we don't fully understand.
+fn run_apply(wal_dir: &PathBuf, limit: usize, n: usize, yes: bool) -> Result<()> {
+    let entries = scan_wal_dir_for_undo(wal_dir, limit)?;
+    if entries.is_empty() {
+        anyhow::bail!(
+            "nothing to undo — no mutating frames in {}",
+            wal_dir.display()
+        );
+    }
+    if n == 0 || n > entries.len() {
+        anyhow::bail!(
+            "index {n} out of range — `neoth undo` lists 1..={}",
+            entries.len()
+        );
+    }
+    let target = &entries[n - 1];
+    match target.event_type {
+        events::EVENT_TYPE_PROFILE_PRESET_APPLIED => reverse_preset(wal_dir, target.ts_ns, yes),
+        _ => anyhow::bail!(
+            "auto-undo for {} is not wired yet — reverse it manually:\n  ↩ {}",
+            target.name,
+            if target.reverse_hint.is_empty() {
+                "(audit-only frame; nothing to reverse)"
+            } else {
+                target.reverse_hint
+            }
+        ),
+    }
+}
+
+/// The ONLY wired inverse so far + the safest possible one: restore the
+/// behavioural preset that was active BEFORE the target switch. Zero
+/// data loss — it just re-applies a known prior preset via the same
+/// `record_active_preset` path `neoth profile preset apply` uses (which
+/// writes the `active_preset.txt` marker, no WAL mutation).
+fn reverse_preset(wal_dir: &PathBuf, target_ts: u64, yes: bool) -> Result<()> {
+    let frames = scan_preset_frames(wal_dir)?;
+    let prior = prior_preset_before(&frames, target_ts);
+    let home = FreedomConfig::default_neoth_home();
+    let current = crate::cli::profile::load_active_preset(&home);
+
+    println!("Undo: restore the preset that was active before this switch.");
+    println!(
+        "  current: {}",
+        current.map(|p| p.as_str()).unwrap_or("(none → lowkey)")
+    );
+    println!("  restore: {}", prior.as_str());
+
+    if !yes && !confirm("Apply this preset restore?")? {
+        println!("aborted — no change made.");
+        return Ok(());
+    }
+
+    crate::cli::profile::record_active_preset(&home, prior)
+        .context("restore prior preset via record_active_preset")?;
+    println!("✓ active preset restored → {}", prior.as_str());
+    Ok(())
+}
+
+/// Pure: the preset active immediately before `target_ts` — the latest
+/// `PROFILE_PRESET_APPLIED` with a strictly-earlier timestamp, or LOWKEY
+/// (the daemon's default) when the target was the first preset ever set.
+pub fn prior_preset_before(
+    frames: &[(u64, crate::profile::presets::ProfilePreset)],
+    target_ts: u64,
+) -> crate::profile::presets::ProfilePreset {
+    frames
+        .iter()
+        .filter(|(ts, _)| *ts < target_ts)
+        .max_by_key(|(ts, _)| *ts)
+        .map(|(_, p)| *p)
+        .unwrap_or(crate::profile::presets::ProfilePreset::Lowkey)
+}
+
+/// Walk the WAL for every `PROFILE_PRESET_APPLIED` frame, parsing the
+/// `preset_name` out of each payload. Sorted by timestamp ascending.
+fn scan_preset_frames(
+    wal_dir: &PathBuf,
+) -> Result<Vec<(u64, crate::profile::presets::ProfilePreset)>> {
+    let mut out: Vec<(u64, crate::profile::presets::ProfilePreset)> = Vec::new();
+    if !wal_dir.exists() {
+        return Ok(out);
+    }
+    let read_dir =
+        std::fs::read_dir(wal_dir).with_context(|| format!("read_dir {}", wal_dir.display()))?;
+    let mut segments: Vec<PathBuf> = read_dir
+        .filter_map(|r| r.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| x == "wal")
+        })
+        .map(|e| e.path())
+        .collect();
+    segments.sort();
+    for seg in &segments {
+        let Ok(bytes) = std::fs::read(seg) else {
+            continue;
+        };
+        if bytes.len() < SEGMENT_HEADER_LEN {
+            continue;
+        }
+        let mut cursor = SEGMENT_HEADER_LEN;
+        while cursor < bytes.len() {
+            match decode_frame(&bytes[cursor..]) {
+                Ok(dec) => {
+                    let total = dec.header.total_len as usize;
+                    if total == 0 {
+                        break;
+                    }
+                    if dec.header.event_type == events::EVENT_TYPE_PROFILE_PRESET_APPLIED {
+                        if let Some(p) = parse_preset_name(dec.payload) {
+                            out.push((dec.header.hlc.physical_ns(), p));
+                        }
+                    }
+                    cursor += total;
+                }
+                Err(_) => break,
+            }
+        }
+    }
+    out.sort_by_key(|(ts, _)| *ts);
+    Ok(out)
+}
+
+/// Extract the `preset_name` from a `PROFILE_PRESET_APPLIED` payload
+/// (`{"preset_name":"…","source":"…","ts_unix":…}`) → `ProfilePreset`.
+fn parse_preset_name(payload: &[u8]) -> Option<crate::profile::presets::ProfilePreset> {
+    let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let name = v.get("preset_name").and_then(|x| x.as_str())?;
+    crate::profile::presets::ProfilePreset::parse(name)
+}
+
+/// Interactive y/N confirmation on stdin. Defaults to NO on anything
+/// that isn't an explicit yes — the safe default for a mutating op.
+fn confirm(prompt: &str) -> Result<bool> {
+    use std::io::Write;
+    print!("{prompt} [y/N] ");
+    std::io::stdout().flush().ok();
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .context("read confirmation from stdin")?;
+    let a = line.trim().to_ascii_lowercase();
+    Ok(a == "y" || a == "yes")
 }
 
 #[cfg(test)]
@@ -361,5 +543,30 @@ mod tests {
         // 1 hour + 2 minutes + 3 seconds past a UTC day boundary.
         let ts = (3600 + 120 + 3) * 1_000_000_000u64;
         assert_eq!(format_ts_short(ts), "01:02:03");
+    }
+
+    // ── Phase 2: prior_preset_before ───────────────────────────────
+    use crate::profile::presets::ProfilePreset;
+
+    #[test]
+    fn prior_preset_before_picks_latest_strictly_earlier() {
+        let frames = vec![
+            (100u64, ProfilePreset::Lowkey),
+            (200, ProfilePreset::Formal),
+            (300, ProfilePreset::Deepdive),
+        ];
+        // Undo the switch at ts=300 → restore Formal (the one before).
+        assert_eq!(prior_preset_before(&frames, 300), ProfilePreset::Formal);
+        // Undo the switch at ts=200 → restore Lowkey.
+        assert_eq!(prior_preset_before(&frames, 200), ProfilePreset::Lowkey);
+    }
+
+    #[test]
+    fn prior_preset_before_defaults_lowkey_when_target_is_first() {
+        let frames = vec![(500u64, ProfilePreset::Opsec)];
+        // Target IS the first preset ever set → prior defaults to LOWKEY.
+        assert_eq!(prior_preset_before(&frames, 500), ProfilePreset::Lowkey);
+        // Empty history → LOWKEY.
+        assert_eq!(prior_preset_before(&[], 123), ProfilePreset::Lowkey);
     }
 }
