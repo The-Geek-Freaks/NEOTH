@@ -254,6 +254,13 @@ pub fn dispatch_session_with_apply(
     // Greeting-regression detection is per-call inside
     // `handle_retryable_failure` so it doesn't need session state.
     let mut patch_spiral = crate::coding::early_stop::PatchSpiralTracker::new();
+    // QU-01 Phase 3 (Session 28): per-task recent-output ring for the
+    // repetition-loop detector. Each failed attempt pushes the
+    // worker's reply text; `is_repetition_loop` checks the tail of
+    // REPETITION_LOOP_MIN_SAMPLES for an identical-after-whitespace
+    // wedge. Capped at REPETITION_RING_CAP entries per task so a
+    // long-churning session doesn't grow the map unbounded.
+    let mut recent_outputs: HashMap<KanbanTaskId, Vec<String>> = HashMap::new();
 
     if !workers.has_any() {
         warn!(
@@ -341,11 +348,18 @@ pub fn dispatch_session_with_apply(
                         }
                         Err(diagnosis) => {
                             patch_spiral.record(task.task_id, false);
+                            record_recent_output(
+                                &mut recent_outputs,
+                                task.task_id,
+                                &worker_output_text(&o),
+                            );
+                            let recent = recent_output_refs(&recent_outputs, task.task_id);
                             let _ = handle_retryable_failure(
                                 conn,
                                 &task,
                                 &mut retry_policy,
                                 &mut patch_spiral,
+                                &recent,
                                 &mut outcome,
                                 &diagnosis,
                                 Some(&o),
@@ -356,18 +370,25 @@ pub fn dispatch_session_with_apply(
                     outcome.tasks_completed += 1;
                     retry_policy.reset(task.task_id);
                     patch_spiral.record(task.task_id, true);
+                    // Productive completion resets the repetition ring
+                    // so a later unrelated failure on the same task id
+                    // (rare, but possible after re-queue) starts fresh.
+                    recent_outputs.remove(&task.task_id);
                 }
             }
             Ok(o) => {
                 // Outcome reached us but `failed()` (empty patch +
                 // zero tests) — treat as a retryable failure +
-                // count toward the patch-spiral.
+                // count toward the patch-spiral + repetition ring.
                 patch_spiral.record(task.task_id, false);
+                record_recent_output(&mut recent_outputs, task.task_id, &worker_output_text(&o));
+                let recent = recent_output_refs(&recent_outputs, task.task_id);
                 let _ = handle_retryable_failure(
                     conn,
                     &task,
                     &mut retry_policy,
                     &mut patch_spiral,
+                    &recent,
                     &mut outcome,
                     "worker returned empty outcome",
                     Some(&o),
@@ -375,15 +396,23 @@ pub fn dispatch_session_with_apply(
             }
             Err(e) => {
                 // Worker-execute error counts as a patch failure
-                // (no usable patch was produced this attempt).
+                // (no usable patch was produced this attempt). The
+                // error string is the "output" for repetition-loop
+                // purposes — a worker that keeps erroring identically
+                // is wedged just as surely as one that re-emits the
+                // same patch.
                 patch_spiral.record(task.task_id, false);
+                let err_text = format!("worker execute failed: {e}");
+                record_recent_output(&mut recent_outputs, task.task_id, &err_text);
+                let recent = recent_output_refs(&recent_outputs, task.task_id);
                 let _ = handle_retryable_failure(
                     conn,
                     &task,
                     &mut retry_policy,
                     &mut patch_spiral,
+                    &recent,
                     &mut outcome,
-                    &format!("worker execute failed: {e}"),
+                    &err_text,
                     None,
                 );
             }
@@ -746,6 +775,7 @@ fn handle_retryable_failure(
     task: &KanbanTask,
     retry_policy: &mut WorkerRetryPolicy,
     patch_spiral: &mut crate::coding::early_stop::PatchSpiralTracker,
+    recent_outputs: &[&str],
     outcome: &mut DispatchOutcome,
     diagnosis: &str,
     partial_outcome: Option<&WorkerOutcome>,
@@ -815,6 +845,25 @@ fn handle_retryable_failure(
         let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
         return Ok(());
     }
+    // 3. Repetition-loop (QU-01 Phase 3) — the worker re-emitted the
+    //    same reply (whitespace-normalised) for the last
+    //    REPETITION_LOOP_MIN_SAMPLES attempts. A wedged model that
+    //    keeps producing byte-identical output won't escape via a
+    //    strategy-hint rotation; bail rather than burn the rest of
+    //    the retry budget on guaranteed-identical attempts.
+    if crate::coding::early_stop::is_repetition_loop(recent_outputs) {
+        warn!(
+            task_id = task.task_id.raw(),
+            attempt = attempt,
+            early_stop = "repetition_loop",
+            samples = recent_outputs.len(),
+            diagnosis = %diagnosis,
+            "repetition-loop detected (identical worker output tail); marking Blocked"
+        );
+        outcome.tasks_blocked += 1;
+        let _ = store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns);
+        return Ok(());
+    }
 
     if retry_policy.should_retry(task.task_id) {
         // Re-queue with a strategy hint appended to the description.
@@ -872,6 +921,55 @@ fn now_unix_ns() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0)
+}
+
+/// QU-01 Phase 3 — cap on the per-task recent-output ring. Only the
+/// most-recent N matter to `is_repetition_loop` (which inspects the
+/// last REPETITION_LOOP_MIN_SAMPLES), so keep the ring small + drop
+/// the oldest beyond this. 8 gives comfortable headroom over the
+/// 3-sample detector window without unbounded growth on a wedged
+/// task that re-queues many times.
+const REPETITION_RING_CAP: usize = 8;
+
+/// Collapse a worker outcome into the single text the repetition-loop
+/// detector compares. Joins the operator-facing summary + the patch
+/// body so two attempts that differ only in one surface still count
+/// as distinct (and two byte-identical attempts collapse to the same
+/// string regardless of which surface carried the content).
+fn worker_output_text(o: &WorkerOutcome) -> String {
+    // Newline-join keeps the two surfaces distinguishable to
+    // `collapse_ws` without introducing a separator that could
+    // appear inside either field.
+    format!("{}\n{}", o.summary, o.patch_text)
+}
+
+/// Push `text` onto the task's recent-output ring, dropping the
+/// oldest entry past [`REPETITION_RING_CAP`]. Creates the ring lazily
+/// on first failure for a task.
+fn record_recent_output(
+    map: &mut HashMap<KanbanTaskId, Vec<String>>,
+    task_id: KanbanTaskId,
+    text: &str,
+) {
+    let ring = map.entry(task_id).or_default();
+    ring.push(text.to_string());
+    if ring.len() > REPETITION_RING_CAP {
+        let overflow = ring.len() - REPETITION_RING_CAP;
+        ring.drain(0..overflow);
+    }
+}
+
+/// Borrow the task's recent-output ring as a `Vec<&str>` for
+/// [`is_repetition_loop`]. Empty vec when the task has no recorded
+/// outputs yet (first failure) — the detector returns false below
+/// its minimum-sample floor, so this is the correct no-op.
+fn recent_output_refs(
+    map: &HashMap<KanbanTaskId, Vec<String>>,
+    task_id: KanbanTaskId,
+) -> Vec<&str> {
+    map.get(&task_id)
+        .map(|ring| ring.iter().map(String::as_str).collect())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -1799,8 +1897,10 @@ mod tests {
             ..DispatchBudget::default()
         };
         let outcome = dispatch_session(&conn, session_id, &workers, budget).expect("dispatch");
-        // Eventually Blocked (via retry ceiling OR patch-spiral —
-        // whichever fires first). Outcome counter for Blocked is 1.
+        // Eventually Blocked. With identical failing outputs the
+        // repetition-loop detector (3-sample tail) fires at attempt 3,
+        // one before the patch-spiral ceiling (4) — either way the
+        // task lands Blocked. Outcome counter for Blocked is 1.
         assert_eq!(outcome.tasks_blocked, 1);
         assert_eq!(outcome.tasks_completed, 0);
         let task = store::list_tasks_for_session(&conn, session_id)
@@ -1808,5 +1908,71 @@ mod tests {
             .pop()
             .unwrap();
         assert_eq!(task.status, TaskStatus::Blocked);
+    }
+
+    // ── QU-01 Phase 3 repetition-ring helpers ──────────────────────
+
+    #[test]
+    fn worker_output_text_joins_summary_and_patch() {
+        let o = WorkerOutcome {
+            patch_text: "diff body".into(),
+            patch_path: PathBuf::from("/tmp/x.patch"),
+            tests: TestSummary::ZERO,
+            summary: "one-liner".into(),
+        };
+        let text = worker_output_text(&o);
+        assert!(text.contains("one-liner"));
+        assert!(text.contains("diff body"));
+    }
+
+    #[test]
+    fn record_recent_output_caps_ring_at_capacity() {
+        let mut map: HashMap<KanbanTaskId, Vec<String>> = HashMap::new();
+        let tid = KanbanTaskId(1);
+        // Push more than the cap; oldest must drop, newest survive.
+        for i in 0..(REPETITION_RING_CAP + 3) {
+            record_recent_output(&mut map, tid, &format!("out{i}"));
+        }
+        let ring = map.get(&tid).unwrap();
+        assert_eq!(ring.len(), REPETITION_RING_CAP, "ring must cap at capacity");
+        // Oldest three (out0..out2) dropped; newest is the last push.
+        assert_eq!(
+            ring.last().unwrap(),
+            &format!("out{}", REPETITION_RING_CAP + 2)
+        );
+        assert!(
+            !ring.iter().any(|s| s == "out0"),
+            "oldest entry must be evicted"
+        );
+    }
+
+    #[test]
+    fn recent_output_refs_empty_for_unknown_task() {
+        let map: HashMap<KanbanTaskId, Vec<String>> = HashMap::new();
+        let refs = recent_output_refs(&map, KanbanTaskId(99));
+        assert!(refs.is_empty());
+    }
+
+    #[test]
+    fn recent_output_refs_round_trips_into_repetition_detector() {
+        // The whole point: a per-task ring of identical outputs must
+        // make `is_repetition_loop` fire once it reaches the sample
+        // floor. Proves the wire-in glue produces a slice the
+        // detector accepts.
+        let mut map: HashMap<KanbanTaskId, Vec<String>> = HashMap::new();
+        let tid = KanbanTaskId(7);
+        record_recent_output(&mut map, tid, "stuck output");
+        record_recent_output(&mut map, tid, "stuck output");
+        let refs2 = recent_output_refs(&map, tid);
+        assert!(
+            !crate::coding::early_stop::is_repetition_loop(&refs2),
+            "2 samples is below the min-sample floor"
+        );
+        record_recent_output(&mut map, tid, "stuck output");
+        let refs3 = recent_output_refs(&map, tid);
+        assert!(
+            crate::coding::early_stop::is_repetition_loop(&refs3),
+            "3 identical samples must trip the repetition-loop detector"
+        );
     }
 }
