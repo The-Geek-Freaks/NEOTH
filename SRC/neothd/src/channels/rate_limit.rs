@@ -26,8 +26,7 @@
 
 use std::collections::HashMap;
 use std::sync::Mutex;
-#[cfg_attr(not(test), allow(unused_imports))]
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Default rate: 30 tokens per minute (= 0.5 tokens/sec).
 pub const DEFAULT_TOKENS_PER_MINUTE: f64 = 30.0;
@@ -96,6 +95,13 @@ impl RateLimiter {
 
     /// Test seam: caller supplies the timestamp. Production callers use
     /// [`Self::try_consume`].
+    ///
+    /// F4-02 (A3 F-2 / A5 I-2 — Via-Negativa): this method is now a thin
+    /// imperative SHELL around the stateless [`refill_and_consume`] operation.
+    /// The shell does only what genuinely needs shared state — take the lock,
+    /// fetch-or-create the per-key bucket, write the result back. All token
+    /// math lives in the pure free function, exhaustively testable without a
+    /// lock or a map.
     pub fn try_consume_at(&self, channel: &str, sender: &str, now: Instant) -> Decision {
         let key = format!("{channel}/{sender}");
         let mut guard = match self.buckets.lock() {
@@ -105,24 +111,10 @@ impl RateLimiter {
         let bucket = guard
             .entry(key)
             .or_insert_with(|| Bucket::new(self.capacity));
-
-        // Refill: tokens += elapsed_seconds * tokens_per_sec, capped at capacity.
-        let elapsed_secs = now
-            .saturating_duration_since(bucket.last_refill)
-            .as_secs_f64();
-        bucket.tokens = (bucket.tokens + elapsed_secs * self.tokens_per_sec).min(self.capacity);
-        bucket.last_refill = now;
-
-        if bucket.tokens >= 1.0 {
-            bucket.tokens -= 1.0;
-            Decision::Allowed
-        } else {
-            // Time to one full token = (1 - tokens) / tokens_per_sec seconds.
-            let needed = 1.0 - bucket.tokens;
-            let secs = needed / self.tokens_per_sec.max(1e-9);
-            let retry_after_ms = (secs * 1000.0).ceil() as u32;
-            Decision::RateLimited { retry_after_ms }
-        }
+        let (updated, decision) =
+            refill_and_consume(*bucket, self.tokens_per_sec, self.capacity, now);
+        *bucket = updated;
+        decision
     }
 
     /// Drop everything we know about `(channel, sender)` — useful when the
@@ -144,9 +136,43 @@ impl Default for RateLimiter {
     }
 }
 
+/// Stateless token-bucket operation — the functional core of the limiter
+/// (F4-02). Given a bucket's prior state, the limiter parameters, and the
+/// current instant, returns the updated bucket plus the decision. No shared
+/// state, no lock, no map: a pure transformation the [`RateLimiter`] shell
+/// composes over its per-`(channel, sender)` storage.
+///
+/// Refill is linear in elapsed time and capped at `capacity`; a call consumes
+/// one token when ≥ 1 is available, otherwise reports the wait to the next
+/// whole token.
+fn refill_and_consume(
+    mut bucket: Bucket,
+    tokens_per_sec: f64,
+    capacity: f64,
+    now: Instant,
+) -> (Bucket, Decision) {
+    let elapsed_secs = now
+        .saturating_duration_since(bucket.last_refill)
+        .as_secs_f64();
+    bucket.tokens = (bucket.tokens + elapsed_secs * tokens_per_sec).min(capacity);
+    bucket.last_refill = now;
+
+    if bucket.tokens >= 1.0 {
+        bucket.tokens -= 1.0;
+        (bucket, Decision::Allowed)
+    } else {
+        // Time to one full token = (1 - tokens) / tokens_per_sec seconds.
+        let needed = 1.0 - bucket.tokens;
+        let secs = needed / tokens_per_sec.max(1e-9);
+        let retry_after_ms = (secs * 1000.0).ceil() as u32;
+        (bucket, Decision::RateLimited { retry_after_ms })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn fresh_sender_can_burst_up_to_capacity() {
@@ -247,6 +273,44 @@ mod tests {
         rl.reset("tg", "alice");
         // Fresh bucket — first call passes.
         assert_eq!(rl.try_consume_at("tg", "alice", t), Decision::Allowed);
+    }
+
+    // ── F4-02: pure operation tested in isolation (no lock, no map) ─────────
+    #[test]
+    fn refill_and_consume_allows_when_tokens_available() {
+        let t = Instant::now();
+        let (next, decision) = refill_and_consume(Bucket::new(2.0), 1.0, 5.0, t);
+        assert_eq!(decision, Decision::Allowed);
+        assert!((next.tokens - 1.0).abs() < 1e-9, "one token consumed");
+    }
+
+    #[test]
+    fn refill_and_consume_throttles_when_empty_and_reports_retry() {
+        let t = Instant::now();
+        // Empty bucket, 1 token/sec → next token in ~1000 ms.
+        let (next, decision) = refill_and_consume(Bucket { tokens: 0.0, last_refill: t }, 1.0, 5.0, t);
+        match decision {
+            Decision::RateLimited { retry_after_ms } => {
+                assert!((900..=1100).contains(&retry_after_ms), "got {retry_after_ms}");
+            }
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
+        assert_eq!(next.tokens, 0.0, "no token consumed when throttled");
+    }
+
+    #[test]
+    fn refill_and_consume_caps_refill_at_capacity() {
+        let t0 = Instant::now();
+        // Start empty, wait 100s at 1 tok/sec, capacity 3 → refill capped at 3,
+        // then one consumed → 2 remain.
+        let (next, decision) = refill_and_consume(
+            Bucket { tokens: 0.0, last_refill: t0 },
+            1.0,
+            3.0,
+            t0 + Duration::from_secs(100),
+        );
+        assert_eq!(decision, Decision::Allowed);
+        assert!((next.tokens - 2.0).abs() < 1e-9, "refill capped at capacity: {}", next.tokens);
     }
 
     #[test]

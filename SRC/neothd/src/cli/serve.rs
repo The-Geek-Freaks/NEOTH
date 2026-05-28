@@ -734,7 +734,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ── 5c-ratelimit. Shared per-sender token-bucket (BS-11). Defaults to
     // 30 msg/min, burst 30. Every channel pipeline consults this before
     // touching the WAL so a runaway upstream cannot drown the daemon.
-    let rate_limiter = Arc::new(crate::channels::rate_limit::RateLimiter::with_defaults());
+    let rate_limiter = crate::channels::shared_rate_limiter();
 
     // ── 5c. Spawn configured channel adapters ──────────────────────────────
     //

@@ -41,6 +41,16 @@ pub mod whatsapp_webhook;
 use anyhow::Result;
 use async_trait::async_trait;
 
+/// The daemon's single shared inbound rate limiter (F4-02). Every channel
+/// adapter throttles against ONE instance — the per-`(channel, sender)` token
+/// buckets live inside it — so a runaway sender is bounded across the whole
+/// daemon, not per-adapter. Construction is owned here in the channels layer
+/// rather than assembled ad-hoc at the composition root; this is also the seam
+/// where a future `freedom.yaml::rate_limit` override is wired.
+pub fn shared_rate_limiter() -> std::sync::Arc<rate_limit::RateLimiter> {
+    std::sync::Arc::new(rate_limit::RateLimiter::with_defaults())
+}
+
 /// Concrete messenger family. SP-5 C-prime: replaces the previous
 /// `&'static str` `channel` field so adapters cannot diverge on naming.
 /// Add a variant when a new adapter ships. `as_str()` returns the stable
