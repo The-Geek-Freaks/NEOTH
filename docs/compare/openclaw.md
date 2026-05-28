@@ -33,26 +33,7 @@ Baseline sources:
 | DAU path | Designed to be usable without terminal-first thinking | Stronger for power users |
 | Best user | Wants "my loyal Jarvis" that can also code and operate infrastructure | Wants local channel automation and Gateway reach |
 
-## Migration angle
 
-OpenClaw users know the value of an assistant that can act through real
-channels. NEOTH should say:
-
-> Keep the local action surface. Add loyal memory, privacy proof, and a buddy
-> that normal users can actually onboard.
-
-## README positioning
-
-Use this language:
-
-- "OpenClaw is excellent when channel breadth is the main job."
-- "NEOTH focuses the channel set and goes deeper on personal memory, coding
-  workflow, privacy audit, and capability-scoped extensibility."
-
-Avoid this language:
-
-- "OpenClaw is only chaos."
-- "Channel breadth does not matter."
 - "Gateway products are wrong."
 
 The sharper claim is: NEOTH optimizes for trustable continuity, not only reach.
