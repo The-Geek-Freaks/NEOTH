@@ -463,7 +463,7 @@ pub async fn run_chat_with(
                 .map(|s| (s.id(), s.content_hash.as_str())),
             &config.skills.pinned_hashes,
         );
-        let mut kept: Vec<crate::skills::Skill> = Vec::new();
+        let mut kept: Vec<crate::skills::schema::Skill> = Vec::new();
         for (skill, verdict) in raw_installed_skills.iter().zip(verdicts.iter()) {
             match verdict.verdict {
                 crate::skills::versioning::PinnedHashOutcome::Allowed => {
