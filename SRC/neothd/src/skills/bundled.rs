@@ -45,6 +45,10 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/academic_research/skill.yaml"),
     ),
     (
+        "archon",
+        include_str!("../../assets/skills/archon/skill.yaml"),
+    ),
+    (
         "brainstorming",
         include_str!("../../assets/skills/brainstorming/skill.yaml"),
     ),
@@ -81,8 +85,32 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/improve_codebase_architecture/skill.yaml"),
     ),
     (
+        "lowkey_base",
+        include_str!("../../assets/skills/lowkey_base/skill.yaml"),
+    ),
+    (
+        "magi_ultra",
+        include_str!("../../assets/skills/magi_ultra/skill.yaml"),
+    ),
+    (
+        "max_plus_plus",
+        include_str!("../../assets/skills/max_plus_plus/skill.yaml"),
+    ),
+    (
+        "omega_prime",
+        include_str!("../../assets/skills/omega_prime/skill.yaml"),
+    ),
+    (
+        "pme",
+        include_str!("../../assets/skills/pme/skill.yaml"),
+    ),
+    (
         "prototype",
         include_str!("../../assets/skills/prototype/skill.yaml"),
+    ),
+    (
+        "raskal",
+        include_str!("../../assets/skills/raskal/skill.yaml"),
     ),
     (
         "receiving_code_review",
@@ -233,5 +261,34 @@ mod tests {
             BUNDLED_SKILLS.len(),
             on_disk
         );
+    }
+
+    #[test]
+    fn lowkey_persona_family_is_bundled_and_triggerable() {
+        // QU-07 — the 7 LOWKEY-family registers must ship as first-class,
+        // router-triggerable skills (not just the hardcoded LOWKEY_PROMPT
+        // constant). Drift guard: a future removal of any persona fails here.
+        let ids: std::collections::HashSet<&str> =
+            BUNDLED_SKILLS.iter().map(|(id, _)| *id).collect();
+        for persona in [
+            "lowkey_base",
+            "magi_ultra",
+            "omega_prime",
+            "archon",
+            "raskal",
+            "pme",
+            "max_plus_plus",
+        ] {
+            assert!(ids.contains(persona), "LOWKEY persona `{persona}` not bundled");
+            let (_, body) = BUNDLED_SKILLS
+                .iter()
+                .find(|(id, _)| *id == persona)
+                .unwrap();
+            let manifest: SkillManifest = serde_yaml::from_str(body).unwrap();
+            assert!(
+                !manifest.trigger_keywords.is_empty(),
+                "LOWKEY persona `{persona}` has no trigger_keywords — router can't reach it"
+            );
+        }
     }
 }
