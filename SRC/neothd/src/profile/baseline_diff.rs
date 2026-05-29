@@ -20,6 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 /// Filename of the operator-resettable working drift baseline inside
@@ -46,8 +47,12 @@ pub struct DriftReport {
 impl DriftReport {
     /// Fraction of the profile that changed since the baseline:
     /// `(added + removed) / max(baseline_count, current_count)`.
-    /// `0.0` = identical sets; approaches `1.0` as turnover grows.
-    /// Empty-vs-empty is `0.0` (no baseline, no drift).
+    /// `0.0` = identical sets; `1.0` = full one-sided replacement (every
+    /// claim either added or removed, but not both); up to `2.0` when the
+    /// sets are completely disjoint (every baseline claim replaced by a
+    /// new one — both an add AND a remove per slot). So `threshold` in
+    /// `DriftAlertConfig` is meaningful across `0.0..=2.0`. Empty-vs-empty
+    /// is `0.0` (no baseline, no drift).
     pub fn drift_ratio(&self) -> f64 {
         let denom = self.baseline_count.max(self.current_count);
         if denom == 0 {
@@ -119,38 +124,42 @@ pub fn drift_baseline_path(home: &Path) -> PathBuf {
 }
 
 /// Persist the working baseline atomically (`.tmp` sibling + rename) so a
-/// crash mid-write never leaves a torn JSON file.
-pub fn save_drift_baseline(home: &Path, baseline: &DriftBaseline) -> std::io::Result<()> {
+/// crash mid-write never leaves a torn JSON file. Both fallible steps
+/// carry the offending path in their error context (matches the
+/// `audit_sidecar` / `briefing_gate` atomic-write convention).
+pub fn save_drift_baseline(home: &Path, baseline: &DriftBaseline) -> Result<()> {
     let path = drift_baseline_path(home);
     let tmp = path.with_extension("json.tmp");
-    let json = serde_json::to_string_pretty(baseline)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(&tmp, json)?;
+    let json = serde_json::to_string_pretty(baseline).context("serialize drift baseline")?;
+    std::fs::write(&tmp, json).with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), path.display()))
 }
 
 /// Load the working baseline. `Ok(None)` when no file exists (the caller
 /// then falls back to the `0xB3` anchor). A malformed file is an error so
-/// the operator notices rather than silently re-anchoring.
-pub fn load_drift_baseline(home: &Path) -> std::io::Result<Option<DriftBaseline>> {
+/// the operator notices rather than silently re-anchoring. Uses
+/// attempt-then-match-on-NotFound (no `exists()` TOCTOU window).
+pub fn load_drift_baseline(home: &Path) -> Result<Option<DriftBaseline>> {
     let path = drift_baseline_path(home);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let body = std::fs::read_to_string(&path)?;
+    let body = match std::fs::read_to_string(&path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(anyhow::Error::from(e).context(format!("read {}", path.display()))),
+    };
     let baseline: DriftBaseline = serde_json::from_str(&body)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        .with_context(|| format!("parse drift baseline {}", path.display()))?;
     Ok(Some(baseline))
 }
 
-/// Delete the working baseline file. Idempotent — absent file is `Ok`.
-pub fn reset_drift_baseline(home: &Path) -> std::io::Result<bool> {
+/// Delete the working baseline file. Idempotent — absent file is
+/// `Ok(false)`. Attempt-then-match-on-NotFound (no `exists()` TOCTOU).
+pub fn reset_drift_baseline(home: &Path) -> Result<bool> {
     let path = drift_baseline_path(home);
-    if path.exists() {
-        std::fs::remove_file(&path)?;
-        Ok(true)
-    } else {
-        Ok(false)
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(anyhow::Error::from(e).context(format!("remove {}", path.display()))),
     }
 }
 
@@ -188,6 +197,12 @@ mod tests {
         assert!((report.drift_ratio() - 2.0 / 3.0).abs() < 1e-9);
         assert!(report.is_over(0.5));
         assert!(!report.is_over(0.7));
+        // At-boundary must NOT trigger — pins the strict `>` contract
+        // against a `>` → `>=` regression.
+        assert!(
+            !report.is_over(2.0 / 3.0),
+            "at-boundary should not trigger (strict >)"
+        );
     }
 
     #[test]
@@ -197,12 +212,14 @@ mod tests {
     }
 
     #[test]
-    fn compute_drift_total_turnover_is_one() {
+    fn compute_drift_total_turnover_reaches_two() {
+        // Fully disjoint equal-size sets: every baseline claim removed +
+        // every current claim added ⇒ ratio 2.0 (the max), NOT 1.0.
         let base = vec![h("a"), h("b")];
         let cur = vec![h("x"), h("y")];
         let report = compute_drift(&base, &cur);
         assert_eq!(report.retained, 0);
-        assert_eq!(report.drift_ratio(), 2.0); // (2+2)/2 — full add+remove
+        assert_eq!(report.drift_ratio(), 2.0); // (added=2 + removed=2) / max(2,2)
     }
 
     #[test]

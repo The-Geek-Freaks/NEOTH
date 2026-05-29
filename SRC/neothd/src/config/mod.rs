@@ -495,9 +495,12 @@ pub struct ProactiveConfig {
 pub struct DriftAlertConfig {
     /// Master switch for drift alerting. Default `false`.
     pub enabled: bool,
-    /// Drift ratio (0.0–1.0+) above which the profile is "drifted". A
-    /// report at-or-below this is informational; above is flagged.
-    /// Default `0.25` (a quarter of the baseline churned).
+    /// Drift ratio above which the profile is "drifted". A report
+    /// at-or-below this is informational; strictly above is flagged.
+    /// The ratio ranges `0.0..=2.0` (0.0 = identical; 1.0 = full
+    /// one-sided replacement; 2.0 = fully disjoint sets — see
+    /// `baseline_diff::DriftReport::drift_ratio`). Default `0.25`
+    /// (a quarter of the baseline churned).
     pub threshold: f64,
 }
 
@@ -777,13 +780,54 @@ pub struct UpdaterConfig {
 }
 
 impl UpdaterConfig {
-    /// SC-10 — whether a HuggingFace download of `model_id` is permitted.
-    /// A per-model entry in `model_download_policy` takes precedence over
-    /// the global `allow_huggingface_downloads`; absent ⇒ the global flag.
-    pub fn model_download_allowed(&self, model_id: &str) -> bool {
-        match self.model_download_policy.get(model_id) {
-            Some(&explicit) => explicit,
-            None => self.allow_huggingface_downloads,
+    /// SC-10 — whether a HuggingFace download is permitted. A per-model
+    /// entry in `model_download_policy` takes precedence over the global
+    /// `allow_huggingface_downloads`; absent ⇒ the global flag.
+    ///
+    /// A model has TWO identifiers an operator might key the policy by:
+    /// the short CLI name (`whisper` — what you pass to `neoth model pull`)
+    /// and the full HuggingFace repo string (`openai/whisper-large-v3-turbo`
+    /// — what the download code uses internally). The repo BASENAME
+    /// (`whisper-large-v3-turbo`) is neither, so a naive last-segment split
+    /// would miss. Both identifiers are checked explicitly; an explicit
+    /// entry under EITHER governs (a `false` under either blocks).
+    pub fn model_download_allowed(&self, model_id: &str, name: Option<&str>) -> bool {
+        for key in [Some(model_id), name].into_iter().flatten() {
+            if let Some(&explicit) = self.model_download_policy.get(key) {
+                return explicit;
+            }
+        }
+        self.allow_huggingface_downloads
+    }
+
+    /// SC-10 — gate a model download, returning an actionable error when
+    /// blocked. Keeps the policy-map logic inside `UpdaterConfig` so the
+    /// CLI call site never reaches back into the internal `HashMap` to
+    /// reconstruct which gate fired. Pass both the full repo `model_id`
+    /// and the short CLI `name` so a policy entry keyed by either matches.
+    /// `Ok(())` ⇒ permitted.
+    pub fn check_model_download(&self, model_id: &str, name: Option<&str>) -> Result<(), String> {
+        if self.model_download_allowed(model_id, name) {
+            return Ok(());
+        }
+        // Blocked. Distinguish a per-model policy entry (under either
+        // identifier) from the global flag for a precise error message.
+        let per_model = self.model_download_policy.contains_key(model_id)
+            || name
+                .map(|n| self.model_download_policy.contains_key(n))
+                .unwrap_or(false);
+        if per_model {
+            Err(format!(
+                "model download blocked: freedom.yaml::updater.model_download_policy for \
+                 `{model_id}` = false (per-model policy). Set it to true (or remove it) to \
+                 permit this model."
+            ))
+        } else {
+            Err(format!(
+                "model download blocked: freedom.yaml::updater.allow_huggingface_downloads = \
+                 false. Set it to true (or add updater.model_download_policy with `{model_id}` = \
+                 true) to permit HuggingFace fetches."
+            ))
         }
     }
 }
@@ -2248,10 +2292,10 @@ mod tests {
         let mut u = UpdaterConfig::default();
         assert!(u.model_download_policy.is_empty());
         // Global true (default) ⇒ any model allowed.
-        assert!(u.model_download_allowed("clip"));
+        assert!(u.model_download_allowed("clip", None));
         // Global false ⇒ any model blocked when no per-model entry.
         u.allow_huggingface_downloads = false;
-        assert!(!u.model_download_allowed("clip"));
+        assert!(!u.model_download_allowed("clip", None));
     }
 
     #[test]
@@ -2260,14 +2304,14 @@ mod tests {
         // Block one model on an otherwise-open install.
         u.allow_huggingface_downloads = true;
         u.model_download_policy.insert("whisper".into(), false);
-        assert!(!u.model_download_allowed("whisper"));
-        assert!(u.model_download_allowed("clip")); // unlisted ⇒ global true
+        assert!(!u.model_download_allowed("whisper", None));
+        assert!(u.model_download_allowed("clip", None)); // unlisted ⇒ global true
         // Permit one model on an otherwise air-gapped install.
         u.allow_huggingface_downloads = false;
         u.model_download_policy.clear();
         u.model_download_policy.insert("clip".into(), true);
-        assert!(u.model_download_allowed("clip"));
-        assert!(!u.model_download_allowed("whisper")); // unlisted ⇒ global false
+        assert!(u.model_download_allowed("clip", None));
+        assert!(!u.model_download_allowed("whisper", None)); // unlisted ⇒ global false
     }
 
     #[test]
@@ -2280,7 +2324,36 @@ mod tests {
             cfg.updater.model_download_policy.get("whisper"),
             Some(&false)
         );
-        assert!(!cfg.updater.model_download_allowed("whisper"));
+        assert!(!cfg.updater.model_download_allowed("whisper", None));
+        // The actual run_pull call site passes the FULL repo string + the
+        // short name — a `whisper: false` policy entry MUST still block it
+        // (the high-sev gate-bypass regression guard).
+        assert!(
+            !cfg.updater
+                .model_download_allowed("openai/whisper-large-v3-turbo", Some("whisper"))
+        );
+        assert!(
+            cfg.updater
+                .check_model_download("openai/whisper-large-v3-turbo", Some("whisper"))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn sc10_short_name_policy_blocks_full_repo_string() {
+        // The call site passes (full_repo, Some(short_name)); the operator
+        // writes the short name. Either identifier must match the policy.
+        let mut u = UpdaterConfig::default();
+        u.allow_huggingface_downloads = true; // global open
+        u.model_download_policy.insert("whisper".into(), false);
+        assert!(!u.model_download_allowed("openai/whisper-large-v3-turbo", Some("whisper")));
+        // Different model, name not in policy ⇒ global true.
+        assert!(u.model_download_allowed("openai/clip-vit-base-patch32", Some("clip")));
+        // check_model_download surfaces the per-model error, not the global.
+        let err = u
+            .check_model_download("openai/whisper-large-v3-turbo", Some("whisper"))
+            .unwrap_err();
+        assert!(err.contains("per-model policy"), "got: {err}");
     }
 
     // ── AR-03 (Session 24) hook_chain per-stage policy ────────────────

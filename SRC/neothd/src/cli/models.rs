@@ -192,21 +192,12 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
             .unwrap_or_default();
     // SC-10: a per-model policy entry overrides the global gate, so an
     // operator can block (or permit) one specific model independent of
-    // the `allow_huggingface_downloads` default.
-    if !cfg.updater.model_download_allowed(&model_id) {
-        let per_model = cfg.updater.model_download_policy.contains_key(&model_id);
-        if per_model {
-            anyhow::bail!(
-                "model download blocked: freedom.yaml::updater.model_download_policy[\"{model_id}\"] \
-                 = false (per-model policy). Set it to true (or remove it) to permit this model."
-            );
-        }
-        anyhow::bail!(
-            "model download blocked: freedom.yaml::updater.allow_huggingface_downloads = false. \
-             Set it to true (or add updater.model_download_policy[\"{model_id}\"] = true) to permit \
-             HuggingFace fetches."
-        );
-    }
+    // the `allow_huggingface_downloads` default. The full repo string AND
+    // the short model name are both accepted as policy keys (see
+    // `UpdaterConfig::model_download_allowed`).
+    cfg.updater
+        .check_model_download(&model_id, Some(name))
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
 
     // HF-01 audit: best-effort one-shot WAL writer. Skipped when the
     // daemon is live (it owns the writer + would emit its own frames).

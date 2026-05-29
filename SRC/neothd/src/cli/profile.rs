@@ -468,12 +468,20 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
 /// Scan every `*.wal` segment for a prior `0xB3 PROFILE_BASELINE_SNAPSHOT`
 /// frame; return its `snapshot_id` if found. Backs the exactly-once gate
 /// (`Some` = a baseline was already emitted). Best-effort: unreadable
-/// segments / undecodable frames are skipped; the walk follows the same
-/// segment-header + zstd + frame-loop pattern as every other WAL reader.
+/// segments / undecodable frames are skipped.
+///
+/// NOTE: deliberately NOT unified with [`scan_for_baseline_snapshot_full`]
+/// despite the near-identical walk. The two have different strictness
+/// requirements: the exactly-once GATE must detect ANY `0xB3` frame by id
+/// alone (lenient `Value.get("snapshot_id")`, tolerant of minimal/legacy
+/// payloads), while the drift FULL scanner needs every field to
+/// deserialize a complete `BaselineSnapshot`. Collapsing the id-scanner
+/// onto the strict full-deserialize would make the gate miss a partial
+/// frame and wrongly permit a second baseline emit.
 fn scan_for_prior_baseline_snapshot(wal_dir: &std::path::Path) -> Option<String> {
     let entries = std::fs::read_dir(wal_dir).ok()?;
     let mut segments: Vec<std::path::PathBuf> = entries
-        .flatten()
+        .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
         .collect();
@@ -506,7 +514,9 @@ fn scan_for_prior_baseline_snapshot(wal_dir: &std::path::Path) -> Option<String>
 }
 
 /// Walk one (decompressed) segment body; return the `snapshot_id` of the
-/// first `0xB3` frame found. Tail-tolerant — stops at the first torn frame.
+/// first `0xB3` frame found. Lenient — extracts the id field from any JSON
+/// payload so the exactly-once gate catches partial/legacy frames too.
+/// Tail-tolerant: stops at the first torn frame.
 fn find_baseline_snapshot_id(frames: &[u8]) -> Option<String> {
     let mut cursor = 0usize;
     while cursor < frames.len() {
@@ -549,23 +559,10 @@ async fn run_seed_baseline(
     crate::profile::baseline_snapshot::ensure_exactly_once(prior.as_deref())
         .context("seed-baseline aborted (a baseline snapshot already exists)")?;
 
-    // Collect every active claim's value_json in a stable order.
-    let conn = store::open(db_path).context("open views.db")?;
-    let mut stmt = conn
-        .prepare(
-            "SELECT value_json FROM idx_profile WHERE superseded_at IS NULL ORDER BY field ASC",
-        )
-        .context("prepare active-claim query")?;
-    let values: Vec<String> = stmt
-        .query_map([], |row| row.get::<_, String>(0))
-        .context("query active claims")?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    let claim_hashes: Vec<String> = values
-        .iter()
-        .map(|v| crate::profile::baseline_snapshot::BaselineSnapshot::hash_claim(v))
-        .collect();
+    // Collect every active claim's hash in a stable order. Shares the
+    // single SQL+hash implementation with the drift path so the baseline
+    // anchor and the drift comparison can never diverge.
+    let claim_hashes = current_active_claim_hashes(db_path)?;
     let claim_count = claim_hashes.len();
 
     let now_unix = std::time::SystemTime::now()
