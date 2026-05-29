@@ -358,6 +358,16 @@ A1 binding: **PL-04 + PL-05 hard pre-condition before any EM-\* item merges.** A
 - [ ] **MAR-01** Marketing comparison table refresh + screenshots gallery. — 2d
 - [ ] **MAR-02** Launch post drafted + signed release artifacts published. — 1.5d
 
+### v1.0 — Model agility + CLI auto-update (operator directive 2026-05-29)
+
+> **HARD RULE (Alex 2026-05-29):** NEOTH must be **model-version-agnostic** and **self-updating across its bundled CLIs**. Opus 4.8 just shipped (the model authoring this); Opus 4.9 / Sonnet 4.8 / future codenames will keep coming. New models from `claude-cli` / `claude-code` / `codex` / `antigravity` (gemini successor) MUST flow into NEOTH automatically — selectable without us hand-patching a model list every release, and the CLIs themselves must auto-update so their newest models are even reachable. See [[neoth-model-version-agnostic]].
+
+- [~] **MV-01** Model-version-agnostic providers + CLI auto-update. **Already built (K-Models-Discovery, Session 14 Pick #3):** `models/catalog.rs` (TTL'd on-disk `~/.neoth/models_catalog.json`) + `models/discovery.rs::discover_all` + per-provider `models/sources/{anthropic,openai,gemini}.rs` (anthropic tries `claude /model list` then `GET /v1/models`) + `models/refresh_task.rs` (daily daemon refresh) + `models/cli_detect.rs` (CLI presence + version; notes neither `claude` nor `agy` ships a stable non-interactive `list-models`, so it uses `--version` + canonical aliases). So model DISCOVERY already auto-tracks new versions. **Open gaps to verify+close (the operator-directive deltas):**
+  - [ ] **MV-01a** CLI provider model **pass-through** — confirm `providers/claude_cli.rs` / `claude_tmux` + the codex + antigravity provider paths accept an ARBITRARY model id string (no hardcoded enum/whitelist that would reject `claude-opus-4-8` / `-4-9` / a future codename). Grep for any model-id validation that rejects unknown strings; make it pass-through. — verify, likely XS.
+  - [ ] **MV-01b** CLI **auto-update** for `claude-cli` / `claude-code` / `codex` / `antigravity` — wire each into the auto-update-every-installed-component rule ([[neoth-arch-extensions]] / [[neoth-cli-installers]]): periodic `--version` check → `npm i -g`/installer refresh on the blocking pool, gated by the operator's autonomy level, audited via WAL. So the CLIs stay current and their newest models are reachable without manual `npm update`. — M.
+  - [ ] **MV-01c** Model **selection surfaces read the catalog** — confirm wizard step 5 (`cli/init.rs`) + `neoth provider` (`cli/providers.rs`) + `neoth hemispheres` + GUI provider pickers offer models from the live `models::catalog`, NOT a hardcoded list, so a freshly-discovered `claude-opus-4-8` is pickable with zero code change. — verify, S.
+  - [ ] **MV-01d** End-to-end check: **Opus 4.8 (current) works TODAY** via claude-cli with no patch (set `claude-opus-4-8` as a hemisphere/provider model → chat round-trip). Pin a non-regression note. — XS.
+
 **v1.0 total: ~50-60 days. Tag: `v1.0.0`. Final gate: signed release artifacts + security audit pass (cargo-audit + cargo-deny + OpenGrep + manual SSRF + manual credential-handling review) + perf baseline doc + full cross-distro install verification + GUI screenshot gallery + threat-model.md complete + 4 final killer features demoable in a single 10-min screen recording.**
 
 ---
