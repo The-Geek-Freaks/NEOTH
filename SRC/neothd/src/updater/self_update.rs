@@ -732,6 +732,137 @@ pub async fn apply_update(
     })
 }
 
+/// MV-01b prereq #5 — the staged-pending record written next to the
+/// staged archive (`<stage_dir>/pending.json`). The unattended daemon
+/// task downloads + verifies + writes this; the manual `neoth update
+/// --self --apply` reads it to skip the re-download when the staged
+/// archive's SHA-256 still matches.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct PendingUpdate {
+    pub to_version: String,
+    pub archive_sha256: String,
+    pub download_url: String,
+    pub signature_status: String,
+    /// Absolute path of the staged archive on disk.
+    pub staged_archive: String,
+    pub target_triple: String,
+    pub staged_ts_unix: i64,
+}
+
+/// `<stage_dir>/pending.json`.
+pub fn pending_json_path(stage_dir: &Path) -> PathBuf {
+    stage_dir.join("pending.json")
+}
+
+/// MV-01b #5 — STAGE (do NOT swap) a newer release: fetch the archive +
+/// `.sha256` + `.minisig`, verify both (signature gated by
+/// `require_signature`), write the raw archive into `stage_dir`, and
+/// drop a `pending.json` record. Returns the [`PendingUpdate`].
+///
+/// Deliberately stops BEFORE extract/`atomic_replace_binary` — the
+/// `Action::SelfBinaryReplace` permission gate is Confirm-always, so the
+/// unattended daemon path may only stage; the actual swap stays
+/// operator-initiated (`neoth update --self --apply`). Senior-dev panel
+/// 2026-05-29.
+///
+/// NOTE: shares the fetch+verify shape with [`apply_update`]; kept
+/// separate (not yet extracted) so the swap path stays untouched.
+pub async fn stage_update(
+    release: &LatestRelease,
+    target_triple: &str,
+    binary: &str,
+    stage_dir: &Path,
+    require_signature: bool,
+    now_unix: i64,
+) -> Result<PendingUpdate> {
+    let assets = resolve_update_assets(release, target_triple, binary)?;
+    let companion = assets.sha256.ok_or_else(|| {
+        anyhow::anyhow!(
+            "release {} has no `.sha256` companion — refusing to stage \
+             (no integrity guarantee)",
+            release.tag_name
+        )
+    })?;
+
+    let ua = format!("NEOTH/{} (self-update-stage)", current_version());
+    let client = reqwest::Client::builder()
+        .user_agent(ua)
+        .build()
+        .context("build stage reqwest client")?;
+
+    let companion_text = client
+        .get(&companion.browser_download_url)
+        .send()
+        .await
+        .with_context(|| format!("GET {}", companion.browser_download_url))?
+        .error_for_status()
+        .context("fetch sha256 companion")?
+        .text()
+        .await
+        .context("read sha256 companion body")?;
+
+    let asset_bytes = client
+        .get(&assets.binary.browser_download_url)
+        .send()
+        .await
+        .with_context(|| format!("GET {}", assets.binary.browser_download_url))?
+        .error_for_status()
+        .context("fetch binary asset")?
+        .bytes()
+        .await
+        .context("read binary asset body")?;
+
+    // Integrity check (SHA-256) then authenticity (minisig). require=true
+    // for the unattended path → any non-verified outcome bails before the
+    // archive is written to the staging dir.
+    let expected = parse_sha256_companion(&companion_text).context("parse sha256 companion")?;
+    verify_sha256_bytes(&asset_bytes, &expected).context("verify staged asset sha256")?;
+
+    let signature_text = match assets.signature {
+        Some(sig_asset) => Some(
+            client
+                .get(&sig_asset.browser_download_url)
+                .send()
+                .await
+                .with_context(|| format!("GET {}", sig_asset.browser_download_url))?
+                .error_for_status()
+                .context("fetch minisig companion")?
+                .text()
+                .await
+                .context("read minisig companion body")?,
+        ),
+        None => None,
+    };
+    let sig_status = crate::updater::sig_verify::check_signature(
+        &asset_bytes,
+        signature_text.as_deref(),
+        require_signature,
+    )
+    .context("staged self-update signature gate")?;
+
+    std::fs::create_dir_all(stage_dir)
+        .with_context(|| format!("create stage dir {}", stage_dir.display()))?;
+    let staged_archive = stage_dir.join(&assets.binary.name);
+    std::fs::write(&staged_archive, &asset_bytes)
+        .with_context(|| format!("write staged archive {}", staged_archive.display()))?;
+
+    let pending = PendingUpdate {
+        to_version: release.tag_name.clone(),
+        archive_sha256: expected,
+        download_url: assets.binary.browser_download_url.clone(),
+        signature_status: sig_status.as_str().to_string(),
+        staged_archive: staged_archive.display().to_string(),
+        target_triple: target_triple.to_string(),
+        staged_ts_unix: now_unix,
+    };
+    let pending_path = pending_json_path(stage_dir);
+    let body = serde_json::to_vec_pretty(&pending).context("serialise pending.json")?;
+    std::fs::write(&pending_path, &body)
+        .with_context(|| format!("write {}", pending_path.display()))?;
+
+    Ok(pending)
+}
+
 /// Resolve every asset Phase 2b needs to run `apply_update`.
 /// Returns `Err` with an operator-readable diagnostic when:
 ///
@@ -1023,6 +1154,28 @@ mod tests {
         let bin = fake_asset("neoth-x86_64-pc-windows-msvc.zip");
         let assets = vec![bin.clone()];
         assert!(find_sha256_companion(&assets, &bin).is_none());
+    }
+
+    #[test]
+    fn pending_update_round_trips_via_json() {
+        let p = PendingUpdate {
+            to_version: "v0.3.0".into(),
+            archive_sha256: "a".repeat(64),
+            download_url: "https://example.com/neoth.tar.xz".into(),
+            signature_status: "verified".into(),
+            staged_archive: "/home/alex/.neoth/staged/neoth.tar.xz".into(),
+            target_triple: "x86_64-unknown-linux-gnu".into(),
+            staged_ts_unix: 1_700_000_000,
+        };
+        let json = serde_json::to_string(&p).unwrap();
+        let back: PendingUpdate = serde_json::from_str(&json).unwrap();
+        assert_eq!(p, back);
+    }
+
+    #[test]
+    fn pending_json_path_is_under_stage_dir() {
+        let p = pending_json_path(Path::new("/home/alex/.neoth/staged"));
+        assert!(p.ends_with("pending.json"));
     }
 
     #[test]

@@ -1291,6 +1291,25 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         info!("CLI auto-apply loop spawned (MV-01b; autonomy elevated/full)");
     }
 
+    // ── 5d.d. neoth-self STAGING loop — MV-01b #5 (Session 28c) ──────────
+    //
+    // Stage-only (never swaps — the SelfBinaryReplace gate is
+    // Confirm-always): at elevated/full it downloads + verifies (sha256 +
+    // minisig) + stages newer releases to ~/.neoth/staged/ + notifies.
+    // The operator applies via `neoth update --self --apply`.
+    let self_stage_task: Option<tokio::task::JoinHandle<()>> =
+        crate::daemon::auto_update::spawn_self_stage(
+            config.autonomy,
+            config.updater.enabled,
+            config.updater.interval_secs,
+            "The-Geek-Freaks/NEOTH".to_string(),
+            FreedomConfig::default_neoth_home(),
+            writer.clone(),
+        );
+    if self_stage_task.is_some() {
+        info!("neoth-self staging loop spawned (MV-01b #5; stage-only)");
+    }
+
     // ── 5d.b. Doctor cron loop — EL-01 (Session 25) ──────────────────────
     //
     // Periodic `neoth doctor` ticks → WAL 0x46 DOCTOR_TICK frame per pass +
@@ -1936,6 +1955,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // MV-01b CLI auto-apply loop. A mid-pass abort at worst drops one
     // component's UPDATE_RAN frame; the install itself already completed.
     if let Some(task) = cli_autoupdate_task {
+        task.abort();
+        let _ = task.await;
+    }
+    // MV-01b #5 neoth-self staging loop. Mid-pass abort at worst drops a
+    // partial staged archive (re-staged next boot); never swaps.
+    if let Some(task) = self_stage_task {
         task.abort();
         let _ = task.await;
     }

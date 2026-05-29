@@ -21,11 +21,12 @@
 //! Every failure (probe error, npm/install failure, WAL emit failure) logs
 //! and the loop continues — an auto-update task must never crash the daemon.
 
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::permissions::AutonomyLevel;
 use crate::updater;
-use crate::wal::events::EVENT_TYPE_UPDATE_RAN;
+use crate::wal::events::{EVENT_TYPE_SELF_UPDATE_APPLIED, EVENT_TYPE_UPDATE_RAN};
 use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, HeaderBuilder};
 
@@ -152,6 +153,146 @@ fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
+// ── MV-01b prereq #5 — unattended neoth-self STAGING lane ──────────────
+//
+// Senior-dev panel 2026-05-29: the `Action::SelfBinaryReplace` gate is
+// Confirm-always BY DESIGN, the daemon has no TTY, and there is no
+// confirmation-persistence layer — so the unattended task must NEVER
+// call `atomic_replace_binary`. It only DETECTS + DOWNLOADS + VERIFIES
+// (sha256 + minisig, `require_signature = true`) + STAGES the archive to
+// `~/.neoth/staged/` with a `pending.json`, emits a `0xD2` frame with
+// `trigger_source = "staged_pending"`, and drops an operator
+// notification. The actual swap stays operator-initiated (`neoth update
+// --self --apply`), which keeps prereq #1's gate intact.
+
+/// Spawn the unattended neoth-self STAGING loop. Same gate as the CLI
+/// auto-apply lane (autonomy elevated/full + updater enabled) — returns
+/// `None` otherwise so notify-only operators accumulate no task.
+pub fn spawn_self_stage(
+    autonomy: AutonomyLevel,
+    updater_enabled: bool,
+    interval_secs: u64,
+    repo: String,
+    home: PathBuf,
+    writer: WalWriterHandle,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !updater_enabled || !auto_apply_enabled(autonomy) {
+        return None;
+    }
+    let interval = Duration::from_secs(interval_secs.max(60));
+    Some(tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        tracing::info!(
+            autonomy = autonomy.as_str(),
+            interval_secs = interval.as_secs(),
+            repo = %repo,
+            "neoth-self staging loop online (MV-01b #5; stage-only, never auto-swaps)"
+        );
+        ticker.tick().await; // burn immediate tick
+        loop {
+            ticker.tick().await;
+            run_self_stage_pass(&home, &repo, &writer).await;
+        }
+    }))
+}
+
+/// One staging pass: probe GitHub, and if a newer release exists,
+/// download + verify + stage it + emit `0xD2 (staged_pending)` + notify.
+/// Every failure logs + the loop retries next tick — never crashes the
+/// daemon, never swaps the binary.
+async fn run_self_stage_pass(home: &Path, repo: &str, writer: &WalWriterHandle) {
+    let release = match updater::self_update::fetch_latest_release(repo).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "neoth-self staging: release probe failed");
+            return;
+        }
+    };
+    let current = updater::self_update::current_version();
+    if !updater::self_update::version_is_newer(&release.tag_name, current).unwrap_or(false) {
+        return; // already current — nothing to stage
+    }
+    let Some(target) = updater::self_update::host_target_triple() else {
+        tracing::warn!("neoth-self staging: host target triple not in cargo-dist matrix");
+        return;
+    };
+    let stage_dir = home.join("staged");
+    match updater::self_update::stage_update(
+        &release,
+        target,
+        "neoth",
+        &stage_dir,
+        true, // require_signature — unattended demands a verified release
+        now_unix_secs() as i64,
+    )
+    .await
+    {
+        Ok(pending) => {
+            emit_self_update_staged(writer, &pending).await;
+            write_stage_notification(home, &pending);
+            tracing::info!(
+                to = %pending.to_version,
+                sig = %pending.signature_status,
+                "neoth-self update staged + verified; awaiting operator `neoth update --self --apply`"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "neoth-self staging failed (will retry next tick)");
+        }
+    }
+}
+
+/// Emit the `0xD2 SELF_UPDATE_APPLIED` frame with `trigger_source =
+/// "staged_pending"` via the daemon's own WAL writer (no one-shot guard
+/// — the daemon owns the segment). The `trigger_source` discriminator
+/// distinguishes this staged record from a real `manual`/`auto` apply.
+async fn emit_self_update_staged(
+    writer: &WalWriterHandle,
+    pending: &updater::self_update::PendingUpdate,
+) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "from_version": updater::self_update::current_version(),
+        "to_version": pending.to_version,
+        "archive_sha256": pending.archive_sha256,
+        "download_url": pending.download_url,
+        "signature_status": pending.signature_status,
+        "staged_archive": pending.staged_archive,
+        "trigger_source": "staged_pending",
+        "ts_unix": now_unix_secs(),
+    }))
+    .unwrap_or_default();
+    let header = HeaderBuilder::new(EVENT_TYPE_SELF_UPDATE_APPLIED, &payload)
+        .flags(EventFlags::SYNTHETIC)
+        .build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "SELF_UPDATE_APPLIED (staged) WAL emit failed (non-fatal)");
+    }
+}
+
+/// Drop an operator-facing notification sidecar
+/// (`~/.neoth/notifications/self_update_<ts>.json`) so the GUI / `neoth
+/// notifications` surface the staged update. Best-effort.
+fn write_stage_notification(home: &Path, pending: &updater::self_update::PendingUpdate) {
+    let dir = home.join("notifications");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let ts = now_unix_secs();
+    let path = dir.join(format!("self_update_{ts}.json"));
+    let body = serde_json::json!({
+        "ts_unix": ts,
+        "kind": "self_update_staged",
+        "to_version": pending.to_version,
+        "signature_status": pending.signature_status,
+        "body": format!(
+            "NEOTH {} is downloaded + verified ({}). Run `neoth update --self --apply` to install it.",
+            pending.to_version, pending.signature_status
+        ),
+    });
+    let _ = std::fs::write(&path, serde_json::to_vec_pretty(&body).unwrap_or_default());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +328,44 @@ mod tests {
         let (writer, _join) = crate::wal::writer::spawn(dir.path().join("c.wal")).unwrap();
         let handle = spawn(AutonomyLevel::Elevated, true, 3600, writer)
             .expect("expected a task at elevated autonomy with updater enabled");
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn self_stage_spawn_gated_like_cli_lane() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().to_path_buf();
+        let repo = "owner/repo".to_string();
+        // Standard autonomy → no staging task (notify-only tier).
+        let (w1, _j1) = crate::wal::writer::spawn(dir.path().join("s1.wal")).unwrap();
+        assert!(
+            spawn_self_stage(
+                AutonomyLevel::Standard,
+                true,
+                3600,
+                repo.clone(),
+                home.clone(),
+                w1
+            )
+            .is_none()
+        );
+        // Updater disabled → no staging task even at Full.
+        let (w2, _j2) = crate::wal::writer::spawn(dir.path().join("s2.wal")).unwrap();
+        assert!(
+            spawn_self_stage(
+                AutonomyLevel::Full,
+                false,
+                3600,
+                repo.clone(),
+                home.clone(),
+                w2
+            )
+            .is_none()
+        );
+        // Elevated + enabled → task spawns.
+        let (w3, _j3) = crate::wal::writer::spawn(dir.path().join("s3.wal")).unwrap();
+        let handle = spawn_self_stage(AutonomyLevel::Elevated, true, 3600, repo, home, w3)
+            .expect("staging task at elevated autonomy");
         handle.abort();
     }
 
