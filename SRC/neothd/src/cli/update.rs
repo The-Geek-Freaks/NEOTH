@@ -170,8 +170,11 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
     // writer (HF-01 pattern). Guard: if the daemon is live it owns the
     // segment, so skip the open to preserve the single-writer invariant
     // (the binary swap already succeeded; the audit frame is a nicety,
-    // never load-bearing for the update itself).
-    emit_self_update_applied(&outcome, repo, target).await;
+    // never load-bearing for the update itself). `trigger_source =
+    // "manual"` — the operator ran `neoth update --self --apply`. The
+    // future unattended daemon path emits the same frame with "auto"
+    // via the daemon's own WAL writer handle (no one-shot guard).
+    emit_self_update_applied(&outcome, repo, target, "manual").await;
 
     render_self_apply(&outcome, output);
     Ok(())
@@ -192,6 +195,7 @@ async fn emit_self_update_applied(
     outcome: &crate::updater::self_update::UpdateApplied,
     repo: &str,
     target: &str,
+    trigger_source: &str,
 ) {
     if let Ok(Some(_pid)) =
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
@@ -217,6 +221,9 @@ async fn emit_self_update_applied(
         "backup_path": outcome.backup_path.display().to_string(),
         "repo": repo,
         "target_triple": target,
+        "archive_sha256": outcome.archive_sha256,
+        "download_url": outcome.download_url,
+        "trigger_source": trigger_source,
         "ts_unix": now_unix_secs(),
     }))
     .unwrap_or_default();

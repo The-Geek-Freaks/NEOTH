@@ -180,11 +180,15 @@ signature today (no minisign/cosign/Sigstore). Because of that, the
 APPLY step is **operator-initiated only** (`neoth update --self --apply`,
 emits `0xD2`) — the daemon does NOT auto-apply its own binary
 unattended. A senior-dev panel (2026-05-29) blocked unattended
-self-replace pending: (1) an `Action::SelfBinaryReplace` permission gate
-(Confirm even at Full), (2) minisign signature verification with the
-public key pinned at compile time, (3) a daemon-path WAL emit that
-survives the single-writer guard, (4) a richer `0xD2` payload (archive +
-extracted-binary SHA, download URL, manual/auto trigger source). The
+self-replace pending: (1) ✅ `Action::SelfBinaryReplace` permission gate
+(Confirm even at Full) — SHIPPED; (2) signature verification before the
+swap — NEOTH already cosign-keyless-signs releases, wiring the
+`sigstore` verify into `apply_downloaded` is the open item; (3) a
+daemon-path WAL emit that survives the single-writer guard — open
+(lands with the unattended task); (4) a richer `0xD2` payload —
+`archive_sha256` + `download_url` + `trigger_source` (manual/auto)
+SHIPPED; extracted-binary SHA + signature-verification-result still
+pending. The
 check itself is read-only release-metadata.
 
 ### 1.11 Discord channel (`channels/discord.rs`)

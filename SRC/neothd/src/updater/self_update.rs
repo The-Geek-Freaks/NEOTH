@@ -541,6 +541,16 @@ pub struct UpdateApplied {
     pub to_version: String,
     pub backup_path: PathBuf,
     pub restart_required: bool,
+    /// SHA-256 hex of the verified release archive (the value from the
+    /// `.sha256` companion that `apply_downloaded` checked the bytes
+    /// against). Surfaced into the `0xD2` audit frame so a reviewer can
+    /// prove exactly which artifact was installed. MV-01b audit
+    /// enrichment (senior-dev panel 2026-05-29).
+    pub archive_sha256: String,
+    /// Exact `browser_download_url` the archive was fetched from. Lets an
+    /// auditor catch a fork-repo swap that the version fields alone
+    /// wouldn't reveal.
+    pub download_url: String,
 }
 
 /// Pure-bytes-in orchestrator. Network-free so the unit suite
@@ -637,13 +647,20 @@ pub async fn apply_update(
         .context("read binary asset body")?;
 
     let format = archive_format_for_target(target_triple);
+    let download_url = assets.binary.browser_download_url.clone();
     let backup = apply_downloaded(&asset_bytes, &companion_text, format, binary, install_dir)?;
+    // apply_downloaded already parsed + verified the companion, so this
+    // re-parse cannot fail at this point; default to empty rather than
+    // unwrap to keep a successful apply from ever panicking on audit.
+    let archive_sha256 = parse_sha256_companion(&companion_text).unwrap_or_default();
 
     Ok(UpdateApplied {
         from_version: current_version().to_string(),
         to_version: release.tag_name.clone(),
         backup_path: backup,
         restart_required: true,
+        archive_sha256,
+        download_url,
     })
 }
 
