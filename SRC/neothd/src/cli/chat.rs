@@ -2530,6 +2530,7 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
             &sub_left,
             &sub_right,
             &sub_cere,
+            None, // inner council uses the cheap Jaccard dissent
         )
         .await;
         // Aggregation: winning_text on Consensus → use it.
@@ -3543,6 +3544,10 @@ async fn run_council_debate(
     // recursive sub-debate — no operator-configurable knob can break
     // the cap.
     let budget = crate::council::BudgetToken::from_council(&config.council);
+    // SP-4 embed-wire Phase 3 — feed the cosine-dissent path when an
+    // embedding provider is configured; the orchestrator falls back to
+    // Jaccard on any embed failure. `None` keeps the legacy heuristic.
+    let dissent_embed = crate::providers::embed_provider_from_config(config).await;
     Ok(crate::council::run_debate_with_depth_budget(
         &req.prompt,
         prompt_hash,
@@ -3551,6 +3556,7 @@ async fn run_council_debate(
         &left,
         &right,
         &cere,
+        dissent_embed.as_deref(),
     )
     .await)
 }

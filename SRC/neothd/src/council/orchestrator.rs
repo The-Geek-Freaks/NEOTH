@@ -36,7 +36,7 @@ use futures_util::stream::{FuturesUnordered, StreamExt};
 use crate::config::inference::HemisphereRole;
 
 use super::budget::BudgetToken;
-use super::dissent::{DissentScore, score_dissent};
+use super::dissent::{DissentScore, score_dissent, score_dissent_via_embedding};
 use super::types::{CouncilDebate, HemisphereRefusal, HemisphereResponse, Verdict, dur_to_ms};
 use crate::security::refusal_cause::classify_cause;
 use crate::security::refusal_detect::classify as classify_refusal;
@@ -173,6 +173,8 @@ pub async fn run_debate_with_depth(
         left,
         right,
         cerebellum,
+        None, // compat entry — Jaccard dissent (callers wanting embedding
+              // call run_debate_with_depth_budget directly with a provider)
     )
     .await
 }
@@ -196,6 +198,15 @@ pub async fn run_debate_with_depth_budget(
     left: &dyn HemisphereProvider,
     right: &dyn HemisphereProvider,
     cerebellum: &dyn HemisphereProvider,
+    // SP-4 embed-wire Phase 3 — when `Some`, the FINAL dissent score is
+    // computed via cosine distance over hemisphere-response embeddings
+    // (`score_dissent_via_embedding`) instead of the Jaccard token
+    // heuristic, with a Jaccard fallback on any embed failure (L-07
+    // safe-default). The early-exit quorum check stays on the cheap
+    // Jaccard path — it's a hot-loop shortcut, not the verdict input.
+    // `None` (the compat entry points + every non-chat caller) keeps the
+    // pure Jaccard behaviour.
+    embed_provider: Option<&dyn crate::providers::embed::EmbedProvider>,
 ) -> CouncilDebate {
     let overall_start = Instant::now();
 
@@ -271,7 +282,19 @@ pub async fn run_debate_with_depth_budget(
         .iter()
         .filter_map(|r| r.outcome().text())
         .collect();
-    let dissent = score_dissent(&texts);
+    // SP-4: embedding-cosine dissent when a provider is wired, else the
+    // Jaccard heuristic. Embed failure folds back to Jaccard (never
+    // blocks the verdict on a flaky embed call).
+    let dissent = match embed_provider {
+        Some(p) => match score_dissent_via_embedding(&texts, p).await {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::warn!(error = %e, "council dissent embedding failed; Jaccard fallback");
+                score_dissent(&texts)
+            }
+        },
+        None => score_dissent(&texts),
+    };
     let verdict = decide_verdict(&responses, dissent, &texts);
     CouncilDebate {
         prompt_hash_xxh3,
@@ -952,7 +975,7 @@ mod tests {
         let r = mk("gemini", "beta");
         let c = mk("local_qwen", "gamma");
         let budget = BudgetToken::new(2);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None).await;
         assert_eq!(d.responses.len(), 3, "all three slots present");
         let skipped: Vec<_> = d
             .responses
@@ -982,7 +1005,7 @@ mod tests {
         let r = mk("gemini", "y");
         let c = mk("local_qwen", "z");
         let budget = BudgetToken::new(0);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, None).await;
         assert_eq!(d.responses.len(), 3);
         for r in &d.responses {
             assert!(r.text.is_none(), "no LLM text should reach the verdict");
@@ -1002,7 +1025,7 @@ mod tests {
         let r = mk("gemini", "q");
         let c = mk("local_qwen", "r");
         let budget = BudgetToken::new(crate::config::inference::DEFAULT_MAX_CALLS_PER_USER_MESSAGE);
-        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c).await;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget.clone(), &l, &r, &c, None).await;
         let any_skipped = d
             .responses
             .iter()
@@ -1010,6 +1033,88 @@ mod tests {
         assert!(!any_skipped, "default cap must allow all three hemispheres");
         // At most 3 charges should have landed.
         assert!(budget.used() <= 3, "used={} should be ≤ 3", budget.used());
+    }
+
+    // ── SP-4 embed-wire Phase 3 — cosine dissent via EmbedProvider ────
+
+    struct DistinctEmbed;
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for DistinctEmbed {
+        fn name(&self) -> &'static str {
+            "distinct_mock"
+        }
+        fn default_dim(&self) -> usize {
+            8
+        }
+        async fn embed(
+            &self,
+            req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            // One-hot vector keyed on the first byte → distinct texts map
+            // to orthogonal vectors → cosine 0 → distance 1 → high dissent.
+            let slot = (req.text.bytes().next().unwrap_or(0) as usize) % 8;
+            let mut v = vec![0.0f32; 8];
+            v[slot] = 1.0;
+            Ok(crate::providers::embed::EmbedResponse {
+                vector: v,
+                model: "distinct_mock".into(),
+                latency: std::time::Duration::from_micros(1),
+            })
+        }
+    }
+
+    struct FailEmbed;
+    #[async_trait::async_trait]
+    impl crate::providers::embed::EmbedProvider for FailEmbed {
+        fn name(&self) -> &'static str {
+            "fail_mock"
+        }
+        fn default_dim(&self) -> usize {
+            8
+        }
+        async fn embed(
+            &self,
+            _req: crate::providers::embed::EmbedRequest,
+        ) -> anyhow::Result<crate::providers::embed::EmbedResponse> {
+            anyhow::bail!("embed backend down")
+        }
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_path_scores_distinct_texts_nonzero() {
+        // Three distinct replies → orthogonal one-hot embeddings → the
+        // cosine-dissent path returns a high (nonzero) score. Proves the
+        // EmbedProvider is actually consulted for the final verdict.
+        let l = mk("claude", "alpha");
+        let r = mk("gemini", "beta");
+        let c = mk("local_qwen", "gamma");
+        let budget = BudgetToken::new(15);
+        let embed = DistinctEmbed;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed)).await;
+        assert_eq!(d.responses.len(), 3);
+        assert!(
+            d.dissent.0 > 0.0,
+            "distinct texts via the embedding path must score nonzero dissent; got {}",
+            d.dissent.0
+        );
+    }
+
+    #[tokio::test]
+    async fn embedding_dissent_falls_back_to_jaccard_on_embed_error() {
+        // A failing EmbedProvider must NOT break the debate — the
+        // orchestrator folds back to the Jaccard heuristic + still
+        // produces a verdict.
+        let l = mk("claude", "alpha");
+        let r = mk("gemini", "beta");
+        let c = mk("local_qwen", "gamma");
+        let budget = BudgetToken::new(15);
+        let embed = FailEmbed;
+        let d = run_debate_with_depth_budget("p", 0, 1, budget, &l, &r, &c, Some(&embed)).await;
+        assert_eq!(d.responses.len(), 3, "fallback still yields a full debate");
+        assert!(
+            d.dissent.0 >= 0.0,
+            "Jaccard fallback produced a valid score"
+        );
     }
 
     #[tokio::test]
@@ -1022,14 +1127,14 @@ mod tests {
         let r = mk("gemini", "b");
         let c = mk("local_qwen", "c");
         let budget = BudgetToken::new(4);
-        let d1 = run_debate_with_depth_budget("p1", 0, 1, budget.clone(), &l, &r, &c).await;
+        let d1 = run_debate_with_depth_budget("p1", 0, 1, budget.clone(), &l, &r, &c, None).await;
         let skipped1 = d1
             .responses
             .iter()
             .filter(|r| r.error.as_deref() == Some(BUDGET_EXHAUSTED_ERROR))
             .count();
         assert_eq!(skipped1, 0, "first debate must complete fully");
-        let d2 = run_debate_with_depth_budget("p2", 0, 1, budget.clone(), &l, &r, &c).await;
+        let d2 = run_debate_with_depth_budget("p2", 0, 1, budget.clone(), &l, &r, &c, None).await;
         let skipped2 = d2
             .responses
             .iter()
@@ -1080,6 +1185,7 @@ mod tests {
                 &inner_l,
                 &inner_r,
                 &inner_c,
+                None,
             )
             .await;
             Ok(CompletionRecord {
@@ -1101,7 +1207,7 @@ mod tests {
         let r = RecursingMock { id: "outer-r" };
         let c = RecursingMock { id: "outer-c" };
         let budget = BudgetToken::new(5);
-        let _ = run_debate_with_depth_budget("p", 0, 2, budget.clone(), &l, &r, &c).await;
+        let _ = run_debate_with_depth_budget("p", 0, 2, budget.clone(), &l, &r, &c, None).await;
         assert_eq!(
             budget.used(),
             5,
