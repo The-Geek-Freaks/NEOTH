@@ -5,11 +5,13 @@
 //! hits wins, ties broken by skill id (stable). Returns `None` when no
 //! keyword matches.
 //!
-//! V2 (deferred until Day-14b lands real inference): embedding re-rank.
-//! Stage 1 produces a candidate list; Stage 2 calls Qwen3-Q8 over
-//! `(message, skill.description)` and picks the max-cosine candidate
-//! with similarity ≥ `EMBEDDING_THRESHOLD`. The hook here is the
-//! `route_with_embedding` function — currently delegates to keyword-only.
+//! V2 (Day-14b Phase 2, shipped 2026-05-23): embedding re-rank — LIVE.
+//! Stage 1 produces a candidate list; Stage 2 ([`route_stage2_embedding`])
+//! embeds `(message, skill.description)` via an
+//! [`crate::providers::embed::EmbedProvider`] and picks the max-cosine
+//! candidate with similarity ≥ `EMBEDDING_THRESHOLD` ([`cosine_rerank`]).
+//! Activated from `cli::chat` when an `inference.embedding_provider` is
+//! configured; falls back to keyword-only Stage 1 otherwise.
 //!
 //! The router never mutates skills; cloning is fine because manifests are
 //! small (typically < 1 KiB).
@@ -72,17 +74,6 @@ pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
         matched_keywords,
         embedding_score: None,
     })
-}
-
-/// Future-proof entry point — currently delegates to keyword scan.
-/// Day-14b Phase 1b (Session 21, 2026-05-23) shipped the embedding
-/// service at [`crate::providers::embed::EmbedProvider`] — Phase 2
-/// rewires this function to accept `Option<&[f32]>` message embedding +
-/// `Option<&HashMap<&str, Vec<f32>>>` cached skill embeddings and run
-/// the [`EMBEDDING_THRESHOLD`] cosine re-rank when keyword Stage-1
-/// produces ties. Signature stays back-compat until Phase 2 lands.
-pub fn route_with_embedding<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
-    route(message, skills)
 }
 
 /// Stage-2 cosine re-rank helper for callers that already hold a
@@ -342,18 +333,6 @@ mod tests {
         assert_eq!(m.skill.id(), "nodejs");
     }
 
-    #[test]
-    fn route_with_embedding_delegates_to_keyword_scan_for_now() {
-        let skills = vec![skill("news", &["news"], true)];
-        let a = route("morning news", &skills);
-        let b = route_with_embedding("morning news", &skills);
-        assert_eq!(a.is_some(), b.is_some());
-        assert_eq!(
-            a.as_ref().map(|m| m.skill.id()),
-            b.as_ref().map(|m| m.skill.id())
-        );
-    }
-
     // ── Phase 33e AP-1: anti-pattern gate (G.12 Level-Confusion) ────────────
     //
     // The router MUST stay a Schicht-1 filter — its job is to *select skill
@@ -414,9 +393,9 @@ mod tests {
             "Stage-2 cosine threshold must stay at 0.72 per round-3 synthesis",
         );
         let skills = vec![skill("news", &["news"], true)];
-        let m = route_with_embedding("news", &skills).unwrap();
-        // The score is `Option<f32>` (none today; some when Stage 2 lands).
-        // Cannot become anything else without a compile error.
+        let m = route("news", &skills).unwrap();
+        // The score is `Option<f32>` (None on the keyword Stage-1 path;
+        // Some when Stage-2 `route_stage2_embedding` runs).
         let _: Option<f32> = m.embedding_score;
     }
 
@@ -487,7 +466,7 @@ mod tests {
             .map(|s| serde_yaml::to_string(&s.manifest).unwrap())
             .collect();
         let _ = route("news today", &skills);
-        let _ = route_with_embedding("recall the answer", &skills);
+        let _ = route("recall the answer", &skills);
         let after: Vec<String> = skills
             .iter()
             .map(|s| serde_yaml::to_string(&s.manifest).unwrap())

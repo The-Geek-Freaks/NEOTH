@@ -1,13 +1,13 @@
 //! Embedding provider abstraction (Day-14b Phase 1a).
 //!
 //! Parallel to `Provider` (which is chat-completion only). Three
-//! downstreams have stub comments waiting on this surface:
-//!   - `skills::router::route_with_embedding` — Stage-2 cosine
-//!     re-rank when keyword Stage-1 has ties
-//!   - `council::dissent` — cosine dissent score replaces / augments
-//!     the existing Jaccard impl
-//!   - `daemon::dreaming` / `memory::dimension` — R-02 Phase 3
-//!     episodic clustering via cosine grouping
+//! downstreams now CONSUME this surface (all wired + tested):
+//!   - `skills::router::route_stage2_embedding` — Stage-2 cosine
+//!     re-rank when keyword Stage-1 has ties (called from `cli::chat`)
+//!   - `council::dissent::score_dissent_via_embedding` — cosine dissent
+//!     score, wired into the orchestrator with a Jaccard fallback
+//!   - `daemon::dreaming::compose_dreams_with_embeddings` — R-02
+//!     episodic clustering via cosine grouping (spawned by `cli::serve`)
 //!
 //! Phase 1a (this commit) ships the trait + canonical types + the
 //! `EmbedProvider` impl skeleton on `LocalQwenAdapter`. The hidden-

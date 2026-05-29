@@ -2963,6 +2963,32 @@ pub(crate) struct RoleAgnosticWinner {
 /// the `memory_weight` component of each hemisphere's composite score
 /// based on past operator-acceptance for the same topic. `None`
 /// keeps the neutral prior — same as Session-14 baseline.
+/// SP-4 F5 diversity bonus for one hemisphere: the Jaccard distance of
+/// its text to the council consensus. The consensus proxy is the
+/// verdict's winning text when present, else the first OTHER usable
+/// hemisphere's text (so we always compare two distinct inputs).
+/// Returns `0.0` for an errored hemisphere (no text) or when no other
+/// usable text exists (nothing to be diverse from). Bounded `[0.0, 1.0]`;
+/// `total()` weights it at `0.05`.
+fn diversity_bonus_for(
+    my_text: Option<&str>,
+    my_role: crate::config::inference::HemisphereRole,
+    outcome: &crate::council::CouncilDebate,
+) -> f32 {
+    my_text
+        .and_then(|my_text| {
+            let consensus_proxy = outcome.winning_text().or_else(|| {
+                outcome
+                    .responses
+                    .iter()
+                    .find(|other| other.role != my_role && other.text.is_some())
+                    .and_then(|other| other.text.as_deref())
+            });
+            consensus_proxy.map(|cp| crate::council::dissent::score_dissent(&[my_text, cp]).0)
+        })
+        .unwrap_or(0.0)
+}
+
 pub(crate) fn select_winner_role_agnostic(
     outcome: &crate::council::CouncilDebate,
     mode: crate::config::inference::SelectionMode,
@@ -2988,12 +3014,19 @@ pub(crate) fn select_winner_role_agnostic(
                 Some(rw) => rw.load_memory_weight(topic_hash, r.role, now),
                 None => base.memory_weight,
             };
-            // Recompose composite with the looked-up memory_weight.
+            // F5 diversity_bonus (SP-4): Jaccard distance of THIS
+            // hemisphere's text to the consensus — a dissenting
+            // hemisphere earns a small lift (worth `0.05 × bonus` in
+            // `total()`) so a lone correct dissenter isn't buried by two
+            // agreeing-but-wrong hemispheres. Was hardcoded 0.0 before.
+            let diversity = diversity_bonus_for(r.text.as_deref(), r.role, outcome);
+            // Recompose composite with the looked-up memory_weight + the
+            // computed diversity_bonus.
             let composite = crate::council::quality_score::QualityScore::new(
                 base.tier_weight,
                 base.dynamic_signal,
                 mem,
-                base.diversity_bonus,
+                diversity,
             )
             .total();
             (r.role, composite)
@@ -4722,6 +4755,81 @@ mod tests {
         // winning_text = "claude text" → matches the claude_cli response.
         assert_eq!(winner.text, "claude text");
         assert_eq!(winner.provider, "claude_cli");
+    }
+
+    // ── SP-4 F5 diversity_bonus_for ────────────────────────────────────
+
+    #[test]
+    fn diversity_bonus_zero_for_text_matching_consensus() {
+        use crate::config::inference::HemisphereRole;
+        let outcome = mk_outcome_consensus(
+            "yes that is correct",
+            vec![
+                mk_resp_picksel(HemisphereRole::Left, "claude_cli", "yes that is correct"),
+                mk_resp_picksel(HemisphereRole::Right, "local_qwen", "no never"),
+            ],
+        );
+        // Left text == winning_text → zero distance → zero bonus.
+        let b = diversity_bonus_for(Some("yes that is correct"), HemisphereRole::Left, &outcome);
+        assert_eq!(b, 0.0);
+    }
+
+    #[test]
+    fn diversity_bonus_positive_for_text_dissenting_from_consensus() {
+        use crate::config::inference::HemisphereRole;
+        let outcome = mk_outcome_consensus(
+            "yes that is correct",
+            vec![
+                mk_resp_picksel(HemisphereRole::Left, "claude_cli", "yes that is correct"),
+                mk_resp_picksel(
+                    HemisphereRole::Right,
+                    "local_qwen",
+                    "no totally wrong instead",
+                ),
+            ],
+        );
+        // Right text fully disjoint from winning_text → high distance.
+        let b = diversity_bonus_for(
+            Some("no totally wrong instead"),
+            HemisphereRole::Right,
+            &outcome,
+        );
+        assert!(
+            b > 0.0,
+            "a dissenting hemisphere must earn a nonzero diversity bonus; got {b}"
+        );
+        assert!(b <= 1.0, "bonus stays bounded; got {b}");
+    }
+
+    #[test]
+    fn diversity_bonus_zero_for_errored_hemisphere() {
+        use crate::config::inference::HemisphereRole;
+        let outcome = mk_outcome_consensus(
+            "yes",
+            vec![mk_resp_picksel(HemisphereRole::Left, "claude_cli", "yes")],
+        );
+        // text=None (errored) → 0.0, no panic.
+        assert_eq!(
+            diversity_bonus_for(None, HemisphereRole::Right, &outcome),
+            0.0
+        );
+    }
+
+    #[test]
+    fn diversity_bonus_split_verdict_uses_other_hemisphere_as_proxy() {
+        use crate::config::inference::HemisphereRole;
+        // Split has no winning_text → fall back to the OTHER hemisphere's
+        // text as the consensus proxy. Left="alpha beta", Right="gamma
+        // delta" → disjoint → nonzero, no panic.
+        let outcome = mk_outcome_split(vec![
+            mk_resp_picksel(HemisphereRole::Left, "claude_cli", "alpha beta"),
+            mk_resp_picksel(HemisphereRole::Right, "local_qwen", "gamma delta"),
+        ]);
+        let b = diversity_bonus_for(Some("alpha beta"), HemisphereRole::Left, &outcome);
+        assert!(
+            b > 0.0,
+            "split-verdict proxy must still produce a distance; got {b}"
+        );
     }
 
     #[test]

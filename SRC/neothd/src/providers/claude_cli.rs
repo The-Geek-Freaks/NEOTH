@@ -1489,6 +1489,13 @@ mod tests {
         assert_eq!(normalise_model("claude-opus-4-7"), "claude-opus-4-7");
         assert_eq!(normalise_model("sonnet-4-6"), "sonnet-4-6");
         assert_eq!(normalise_model(""), "");
+        // MV-01d non-regression: current + future Opus/Sonnet codenames
+        // pass through verbatim with NO hand-patching — the
+        // model-version-agnostic hard rule. New models work the day they
+        // ship via claude-cli, no NEOTH release needed.
+        assert_eq!(normalise_model("claude-opus-4-8"), "claude-opus-4-8");
+        assert_eq!(normalise_model("claude-opus-4-9"), "claude-opus-4-9");
+        assert_eq!(normalise_model("claude-sonnet-4-8"), "claude-sonnet-4-8");
     }
 
     #[test]
