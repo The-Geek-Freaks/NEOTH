@@ -407,9 +407,10 @@ async fn open_segment(path: &Path) -> Result<OpenedSegment, WalError> {
     }
 
     // Windows: tokio::fs has no `mode()`. We restrict the file's DACL to the
-    // current user via `icacls.exe` after open. Uses the async wrapper so the
-    // icacls subprocess runs on the blocking pool and does not stall this
-    // tokio worker. See OPEN_DECISIONS.md D-008.
+    // current user via the native `SetNamedSecurityInfoW` path (E-11,
+    // `win_acl::restrict_to_owner_async` → `win_native::set_owner_dacl`; no
+    // icacls subprocess). Runs on the blocking pool so the Win32 call does
+    // not stall this tokio worker. See OPEN_DECISIONS.md D-008 / GR-16.
     #[cfg(windows)]
     {
         if let Err(e) = super::win_acl::restrict_to_owner_async(path).await {
