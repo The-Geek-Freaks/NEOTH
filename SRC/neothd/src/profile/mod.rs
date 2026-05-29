@@ -28,6 +28,7 @@ pub mod apply;
 /// interactively (tty present) or parks in `idx_profile_pending` for
 /// `neoth profile approve/decline` (daemon mode).
 pub mod approval_gate;
+pub mod baseline_diff;
 pub mod baseline_snapshot;
 pub mod briefing_gate;
 pub mod briefing_policy;

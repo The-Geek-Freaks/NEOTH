@@ -197,6 +197,33 @@ pub enum ProfileAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// HO-09 / V1x-03 — profile baseline DRIFT detection. Compare the
+    /// current active claim set against a baseline (an operator-captured
+    /// working baseline, else the `0xB3` migration anchor) and report
+    /// what was added / removed / retained + a drift ratio.
+    ///
+    /// Subcommands: `report` (default) shows the drift; `baseline`
+    /// (re)captures the working baseline to "now"; `reset` clears the
+    /// working baseline so `report` falls back to the `0xB3` anchor.
+    Drift {
+        #[command(subcommand)]
+        sub: Option<DriftSub>,
+    },
+}
+
+/// HO-09 — subcommands under `neoth profile drift`.
+#[derive(Subcommand, Debug, Clone)]
+pub enum DriftSub {
+    /// Compare current claims against the baseline + print the drift
+    /// report. Flags when the drift ratio exceeds
+    /// `freedom.yaml::drift_alert.threshold`. This is the default action.
+    Report,
+    /// (Re)capture the operator-resettable working baseline to the
+    /// current active claim set. Overwrites any prior working baseline.
+    Baseline,
+    /// Clear the working baseline file. The next `report` falls back to
+    /// the immutable `0xB3` migration anchor (if one exists).
+    Reset,
 }
 
 /// P-02 (Session 22) — subcommands under `neoth profile preset`.
@@ -429,6 +456,10 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
             drop(conn); // seed-baseline opens its own read connection.
             run_seed_baseline(&db_path, dry_run, &args.output).await
         }
+        ProfileAction::Drift { sub } => {
+            drop(conn); // drift opens its own read connection.
+            run_drift(&db_path, sub.unwrap_or(DriftSub::Report), &args.output).await
+        }
     }
 }
 
@@ -606,6 +637,232 @@ async fn run_seed_baseline(
         }
     }
     Ok(())
+}
+
+// ── HO-09 / V1x-03: profile baseline DRIFT detection ──────────────────────
+
+/// SHA-256 hash every active `idx_profile` claim (stable `field ASC`
+/// order). Mirrors the claim-collection in [`run_seed_baseline`] so the
+/// drift comparison hashes claims identically to the baseline anchor.
+fn current_active_claim_hashes(db_path: &std::path::Path) -> Result<Vec<String>> {
+    let conn = store::open(db_path).context("open views.db")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT value_json FROM idx_profile WHERE superseded_at IS NULL ORDER BY field ASC",
+        )
+        .context("prepare active-claim query")?;
+    let values: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .context("query active claims")?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(values
+        .iter()
+        .map(|v| crate::profile::baseline_snapshot::BaselineSnapshot::hash_claim(v))
+        .collect())
+}
+
+/// Scan the WAL for the `0xB3` migration anchor and return the FULL
+/// [`BaselineSnapshot`] (not just the id `scan_for_prior_baseline_snapshot`
+/// returns) so drift can diff against its `claim_hashes`.
+fn scan_for_baseline_snapshot_full(
+    wal_dir: &std::path::Path,
+) -> Option<crate::profile::baseline_snapshot::BaselineSnapshot> {
+    let mut segments: Vec<std::path::PathBuf> = std::fs::read_dir(wal_dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
+        .collect();
+    segments.sort();
+    for seg in segments {
+        let Ok(bytes) = std::fs::read(&seg) else {
+            continue;
+        };
+        let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
+            continue;
+        };
+        let header_len = hdr.header_len();
+        if bytes.len() <= header_len {
+            continue;
+        }
+        let body = &bytes[header_len..];
+        let found = if hdr.is_compressed() {
+            match crate::wal::compress::decompress_frames(body) {
+                Ok(d) => find_baseline_snapshot_full(&d),
+                Err(_) => None,
+            }
+        } else {
+            find_baseline_snapshot_full(body)
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// Walk one (decompressed) segment body; deserialize the first `0xB3`
+/// frame's payload into a full [`BaselineSnapshot`]. Tail-tolerant.
+fn find_baseline_snapshot_full(
+    frames: &[u8],
+) -> Option<crate::profile::baseline_snapshot::BaselineSnapshot> {
+    let mut cursor = 0usize;
+    while cursor < frames.len() {
+        let dec = match crate::wal::frame::decode_frame(&frames[cursor..]) {
+            Ok(d) => d,
+            Err(_) => break,
+        };
+        if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT {
+            if let Ok(snap) = serde_json::from_slice::<
+                crate::profile::baseline_snapshot::BaselineSnapshot,
+            >(dec.payload)
+            {
+                return Some(snap);
+            }
+        }
+        let total = dec.header.total_len as usize;
+        if total == 0 {
+            break;
+        }
+        cursor = cursor.saturating_add(total);
+    }
+    None
+}
+
+/// HO-09 — `neoth profile drift {report, baseline, reset}`.
+async fn run_drift(db_path: &std::path::Path, sub: DriftSub, output: &OutputFormat) -> Result<()> {
+    use crate::profile::baseline_diff::{
+        DriftBaseline, compute_drift, load_drift_baseline, reset_drift_baseline,
+        save_drift_baseline,
+    };
+    let home = FreedomConfig::default_neoth_home();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    match sub {
+        DriftSub::Baseline => {
+            let hashes = current_active_claim_hashes(db_path)?;
+            let count = hashes.len();
+            let baseline =
+                DriftBaseline::new("manual", hashes, env!("CARGO_PKG_VERSION"), now_unix);
+            save_drift_baseline(&home, &baseline).context("write working drift baseline")?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "baseline",
+                        "source": "manual",
+                        "claim_count": count,
+                        "captured_at_ts_unix": now_unix,
+                    }))?
+                ),
+                OutputFormat::Table => {
+                    println!("captured working drift baseline: claim_count={count} (source=manual)")
+                }
+            }
+            Ok(())
+        }
+        DriftSub::Reset => {
+            let removed = reset_drift_baseline(&home).context("reset working drift baseline")?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "reset",
+                        "removed": removed,
+                    }))?
+                ),
+                OutputFormat::Table => {
+                    if removed {
+                        println!(
+                            "cleared working drift baseline; `drift report` now falls back to \
+                             the 0xB3 migration anchor"
+                        );
+                    } else {
+                        println!("no working drift baseline to clear (already absent)");
+                    }
+                }
+            }
+            Ok(())
+        }
+        DriftSub::Report => {
+            // Baseline source: operator working baseline first, else the
+            // immutable 0xB3 migration anchor.
+            let (baseline_hashes, source) =
+                match load_drift_baseline(&home).context("load working drift baseline")? {
+                    Some(b) => (b.claim_hashes, format!("working/{}", b.source)),
+                    None => {
+                        let wal_dir = FreedomConfig::default_wal_dir();
+                        match scan_for_baseline_snapshot_full(&wal_dir) {
+                            Some(s) => (s.claim_hashes, format!("anchor/{}", s.snapshot_id)),
+                            None => anyhow::bail!(
+                                "no baseline to compare against. Capture one with \
+                             `neoth profile drift baseline` (resettable working baseline) or \
+                             `neoth profile seed-baseline` (the one-shot 0xB3 migration anchor)."
+                            ),
+                        }
+                    }
+                };
+            let current = current_active_claim_hashes(db_path)?;
+            let report = compute_drift(&baseline_hashes, &current);
+            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let threshold = cfg.drift_alert.threshold;
+            let alerting = cfg.drift_alert.enabled;
+            let over = report.is_over(threshold);
+            let flagged = alerting && over;
+
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "action": "report",
+                        "baseline_source": source,
+                        "baseline_count": report.baseline_count,
+                        "current_count": report.current_count,
+                        "added": report.added,
+                        "removed": report.removed,
+                        "retained": report.retained,
+                        "drift_ratio": report.drift_ratio(),
+                        "threshold": threshold,
+                        "alert_enabled": alerting,
+                        "over_threshold": over,
+                        "flagged": flagged,
+                    }))?
+                ),
+                OutputFormat::Table => {
+                    println!("profile drift report (baseline: {source})");
+                    println!(
+                        "  baseline claims: {}   current claims: {}   retained: {}",
+                        report.baseline_count, report.current_count, report.retained
+                    );
+                    println!(
+                        "  added: {}   removed: {}   drift ratio: {:.3} (threshold {:.3})",
+                        report.added.len(),
+                        report.removed.len(),
+                        report.drift_ratio(),
+                        threshold
+                    );
+                    if flagged {
+                        println!(
+                            "  ALERT: drift {:.3} exceeds threshold {:.3} — review with \
+                             `neoth profile show`, then re-anchor via `neoth profile drift baseline`",
+                            report.drift_ratio(),
+                            threshold
+                        );
+                    } else if over {
+                        println!(
+                            "  (over threshold {threshold:.3}, but drift_alert.enabled = false — \
+                             informational only)"
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 // ── AR-05 (Session 24) profile conflict detection + resolution ────────────

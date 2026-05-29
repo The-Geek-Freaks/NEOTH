@@ -309,6 +309,12 @@ pub struct FreedomConfig {
     /// action without operator GO per command".
     #[serde(default)]
     pub proactive: ProactiveConfig,
+    /// HO-09 / V1x-03 — profile baseline drift alerting. When
+    /// `enabled = true`, a drift-report whose ratio exceeds `threshold`
+    /// is surfaced as an alert (CLI today; daemon cron is a follow-on).
+    /// Default OFF.
+    #[serde(default)]
+    pub drift_alert: DriftAlertConfig,
     /// E-18 Workstream N (Session 22) — operator opt-in for
     /// anonymous version-check telemetry. Default OFF
     /// (`enabled: false`, `endpoint: None`). When on, the daemon
@@ -478,6 +484,30 @@ pub struct ProactiveConfig {
     /// messages (briefings stay opt-in-per-call via the cron yaml).
     /// `true` = cron + `send_proactive()` MAY post on their own.
     pub enabled: bool,
+}
+
+/// HO-09 / V1x-03 — profile baseline drift alerting. `neoth profile drift
+/// report` flags drift over `threshold`; when `enabled` a future daemon
+/// cron consumer will emit an alert on the same threshold. Default OFF so
+/// the common path is unaffected.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct DriftAlertConfig {
+    /// Master switch for drift alerting. Default `false`.
+    pub enabled: bool,
+    /// Drift ratio (0.0–1.0+) above which the profile is "drifted". A
+    /// report at-or-below this is informational; above is flagged.
+    /// Default `0.25` (a quarter of the baseline churned).
+    pub threshold: f64,
+}
+
+impl Default for DriftAlertConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: 0.25,
+        }
+    }
 }
 
 /// R-02 Phase 4c — nightly dreaming task gates.
@@ -2246,7 +2276,10 @@ mod tests {
         let yaml = "operator_id: alice\nupdater:\n  model_download_policy:\n    whisper: false\n";
         let path = write_yaml(dir.path(), yaml);
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
-        assert_eq!(cfg.updater.model_download_policy.get("whisper"), Some(&false));
+        assert_eq!(
+            cfg.updater.model_download_policy.get("whisper"),
+            Some(&false)
+        );
         assert!(!cfg.updater.model_download_allowed("whisper"));
     }
 
