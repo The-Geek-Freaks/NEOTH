@@ -1400,11 +1400,16 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                 .or(claude_path)
                 .unwrap_or_else(|| "claude".to_string());
             state.provider_binary = Some(bin);
-            state.provider_model = Some(
-                args.provider_model
-                    .clone()
-                    .unwrap_or_else(|| "claude-opus-4-7".to_string()),
-            );
+            // MV-01c — catalog-first default so a newly-discovered Claude
+            // model (Opus 4.8 / 4.9, Sonnet 4.8, codenames) becomes the
+            // wizard default WITHOUT a code patch. Mirrors the OpenAI/Gemini
+            // arm below; `ClaudeCli` maps to the `anthropic_api` catalog
+            // key. Falls back to the bundled baseline when no fresh
+            // anthropic_api entry exists (fresh install, pre-`catalog
+            // refresh`).
+            let resolved_default = catalog_recommended_for_provider_kind(kind)
+                .unwrap_or_else(|| "claude-opus-4-7".to_string());
+            state.provider_model = Some(args.provider_model.clone().unwrap_or(resolved_default));
         }
         ProviderKind::OpenaiApi | ProviderKind::GeminiApi | ProviderKind::OpenaiCompat => {
             // Endpoint resolution: for OpenaiCompat we prompt explicitly because

@@ -49,6 +49,10 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/brainstorming/skill.yaml"),
     ),
     (
+        "conductor",
+        include_str!("../../assets/skills/conductor/skill.yaml"),
+    ),
+    (
         "diagnose",
         include_str!("../../assets/skills/diagnose/skill.yaml"),
     ),

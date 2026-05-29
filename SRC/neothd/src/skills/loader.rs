@@ -283,6 +283,8 @@ mod tests {
             "finishing_a_development_branch",
             // QM-23 (academic-research-skills, 15 modes in one skill)
             "academic_research",
+            // ARCH-03 / QU-06 — three-layer context conductor
+            "conductor",
         ];
         for id in expected {
             assert!(

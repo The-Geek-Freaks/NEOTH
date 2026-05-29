@@ -1072,14 +1072,14 @@ pub struct ClaudeCliTmuxConfig {
     pub idle_ttl_secs: u64,
     /// Per-request idle-window cap. No pane change for this many
     /// seconds = response complete. Bridge.py + claude_tmux default
-    /// = 120. v0.1: declared here but not yet read by claude_tmux
-    /// (that uses the const). Wired in Item 3 when the retry
-    /// classifier consumes the per-call timer budget.
+    /// = 120. Read by `providers::mod::build_provider` and threaded into
+    /// `ClaudeCliAdapter::new_with_backend_and_timeouts` (Pick #35).
     #[serde(default = "default_idle_timeout_secs")]
     pub idle_timeout_secs: u64,
     /// Per-request absolute cap. claude_tmux returns
     /// `HardTimeoutNoOutput` past this. Bridge.py default = 300.
-    /// v0.1: declared, not yet wired (see `idle_timeout_secs`).
+    /// Read alongside `idle_timeout_secs` at `providers/mod.rs`
+    /// build-time (Pick #35).
     #[serde(default = "default_hard_timeout_secs")]
     pub hard_timeout_secs: u64,
 }

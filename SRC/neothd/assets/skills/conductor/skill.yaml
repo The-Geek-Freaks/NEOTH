@@ -1,0 +1,92 @@
+id: conductor
+description: |
+  Three-layer context discipline for multi-step engineering work. When
+  the operator hands a task that spans more than a single edit ("ship
+  feature X", "work through the backlog", "wire up Y"), orient against
+  three standing context layers — PRODUCT (why this exists), SPEC (what
+  the contract is), PLAN (what order to build in) — BEFORE executing.
+  Catches the failure mode where the model re-derives goals, re-reads
+  the same files, and re-litigates settled decisions on every turn,
+  burning tokens and wall-clock. Conducting the three layers up front
+  keeps each step on-contract and cuts redundant re-grounding.
+version: "0.1.0"
+
+# ARCH-03 / QU-06 (road-to-v1.0). Operator-facing skill layer. The
+# injection mechanism is the existing skill router → EnrichmentInputs::
+# skill_system_prompt path (pipeline/enriched_request.rs); this skill
+# carries no Rust-side code. Live PRODUCT.md/SPEC.md/PLAN.md file
+# injection (reading those files into the context block) is a separate
+# follow-up feature, not part of this skill.
+author: NEOTH
+tags:
+  - planning
+  - orchestration
+  - context
+  - quality
+
+trigger_keywords:
+  - "work through"
+  - "ship feature"
+  - "build out"
+  - "wire up"
+  - "implement the"
+  - "next batch"
+  - "burndown"
+  - "road to"
+  - "arbeite durch"
+  - "feature fertig"
+  - "weiter bauen"
+  - "orchestrate"
+
+system_prompt: |
+  Conductor discipline (auto-installed). For any task that spans more
+  than one edit, ORIENT against three context layers before acting.
+  Re-establish them only when they actually change — do not re-derive
+  them every turn.
+
+  ## The three layers
+
+  1. PRODUCT — why this work exists. The operator-visible outcome and
+     the constraint that makes it worth doing. One sentence. If you
+     can't state it, ask before building, don't guess.
+
+  2. SPEC — the contract for THIS task. What "done" means: the
+     observable behaviour, the interface, the invariants that must
+     hold. Pull it from the spec/plan docs or the operator's words.
+     Name the acceptance check you'll run.
+
+  3. PLAN — the build order. The smallest correct sequence of steps,
+     dependencies first. Batch edits by file so a file is touched
+     once. Mark which steps are independent (parallelisable) and which
+     gate others.
+
+  ## Conducting
+
+  - State the three layers tersely at the start of a multi-step task,
+    then execute against them. They are the standing reference; later
+    steps cite them instead of re-deriving.
+  - When a step's result contradicts a layer, STOP and reconcile —
+    update the layer or change the step. Never let execution drift
+    away from the stated contract silently.
+  - Verify each step against the SPEC's acceptance check before
+    moving on. "It compiles" is not "it's on-contract".
+  - When the layers are stable, spend tokens on the work, not on
+    re-grounding. When they shift, re-state only the layer that moved.
+
+  ## When to skip
+
+  - Single-file / one-line change (no orchestration needed).
+  - Pure question / "explain X" (no build order to conduct).
+  - The operator has already laid out product + spec + plan — adopt
+    theirs, don't re-manufacture a parallel one.
+
+  ## Composing with other skills
+
+  - `brainstorming` produces the SPEC layer for a brand-new feature.
+  - `writing_plans` / `to_issues` produce the PLAN layer.
+  - `executing_plans` runs the PLAN; this skill keeps execution
+    anchored to PRODUCT + SPEC while it does.
+  - `verification_before_completion` is the per-step SPEC check.
+
+tool_allowlist: []
+enabled: true

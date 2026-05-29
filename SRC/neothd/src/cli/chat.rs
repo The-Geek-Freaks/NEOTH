@@ -230,7 +230,8 @@ pub async fn run_chat_with(
     // operator toward opt-in features they still haven't switched on.
     // Self-suppresses via a marker file; naturally silent pre-30-days,
     // when all features are active, or on a fresh install.
-    if let Some(banner) = crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config) {
+    if let Some(banner) = crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config)
+    {
         println!("{banner}");
     }
 
@@ -426,11 +427,17 @@ pub async fn run_chat_with(
         }
     };
     let blocks = blocks_res.unwrap_or_default();
-    let operator_context = if blocks.is_empty() {
+    let rendered_md = if blocks.is_empty() {
         None
     } else {
         Some(crate::memory::operator_md::render(&blocks))
     };
+    // Wire the wizard-captured operator facts (custom/enum role +
+    // preferred language) into the top of the operator-context layer.
+    // These `freedom.yaml` fields were written at onboarding but never
+    // reached the prompt before, so the model knew neither the
+    // operator's role nor their preferred response language.
+    let operator_context = merge_operator_facts(&config, rendered_md);
 
     // ── K-Wire-3 (Session 23) — layered enrichment via shared helper ──────
     // Pre-loads every enrichment block the prior 200-LOC inline
@@ -2788,6 +2795,62 @@ pub(crate) fn maybe_repo_context_block_at(
     if block.is_empty() { None } else { Some(block) }
 }
 
+/// The operator's role as a human-readable label. The free-form
+/// `freedom.yaml::role_custom` wins when set; otherwise the
+/// `OperatorRole` enum is mapped to prose. `OperatorRole::None`
+/// (or an unset role) with no custom label yields `None`.
+fn operator_role_label(config: &FreedomConfig) -> Option<String> {
+    if let Some(custom) = config.role_custom.as_deref() {
+        let custom = custom.trim();
+        if !custom.is_empty() {
+            return Some(custom.to_string());
+        }
+    }
+    use crate::cli::init::OperatorRole;
+    match config.role {
+        Some(OperatorRole::Developer) => Some("developer".to_string()),
+        Some(OperatorRole::SecurityResearcher) => Some("security researcher".to_string()),
+        Some(OperatorRole::Founder) => Some("founder".to_string()),
+        Some(OperatorRole::DataScientist) => Some("data scientist".to_string()),
+        Some(OperatorRole::Writer) => Some("writer".to_string()),
+        Some(OperatorRole::None) | None => None,
+    }
+}
+
+/// Render the operator's structured identity facts (custom/enum role +
+/// preferred response language) as a short preamble, then merge it
+/// ABOVE the assembled NEOTH.md body.
+///
+/// Closes an unwired gap: the wizard captures `role_custom` /
+/// `language_primary` into `freedom.yaml`, but neither field previously
+/// reached the prompt pipeline — the model never learned the operator's
+/// role or preferred response language. The language line is emitted
+/// only for a non-English BCP-47 tag (English is the model default, so
+/// no instruction is needed). Returns `None` only when there are
+/// neither facts nor a rendered body.
+fn merge_operator_facts(config: &FreedomConfig, rendered_md: Option<String>) -> Option<String> {
+    let mut facts: Vec<String> = Vec::new();
+
+    if let Some(role) = operator_role_label(config) {
+        facts.push(format!("Operator role: {role}."));
+    }
+    if let Some(tag) = config.language_primary.as_deref() {
+        let tag = tag.trim();
+        if !tag.is_empty() && !tag.to_ascii_lowercase().starts_with("en") {
+            facts.push(format!(
+                "Respond in the operator's primary language (BCP-47 '{tag}') \
+                 unless they write to you in another language."
+            ));
+        }
+    }
+
+    match (facts.is_empty(), rendered_md) {
+        (true, md) => md,
+        (false, Some(md)) => Some(format!("{}\n\n{md}", facts.join("\n"))),
+        (false, None) => Some(facts.join("\n")),
+    }
+}
+
 /// A-1 audit emission. Records every refused hemisphere with role +
 /// provider + class + cause so an operator running `neoth wal show` can
 /// reconstruct exactly which hemisphere said no + why, even when the
@@ -5006,6 +5069,79 @@ mod tests {
             std::path::Path::new("/definitely/does/not/exist/code_map.db"),
         );
         assert!(result.is_none());
+    }
+
+    // ── operator-facts wiring (role_custom + language_primary) ──────────
+
+    #[test]
+    fn operator_facts_none_when_no_role_no_lang() {
+        let cfg = FreedomConfig::default();
+        assert_eq!(merge_operator_facts(&cfg, None), None);
+        // A rendered NEOTH.md body passes through untouched.
+        assert_eq!(
+            merge_operator_facts(&cfg, Some("# Rules\nBe terse.".into())).as_deref(),
+            Some("# Rules\nBe terse.")
+        );
+    }
+
+    #[test]
+    fn operator_facts_custom_role_wins_over_enum() {
+        let mut cfg = FreedomConfig::default();
+        cfg.role = Some(crate::cli::init::OperatorRole::Developer);
+        cfg.role_custom = Some("authorized pentester".into());
+        let out = merge_operator_facts(&cfg, None).expect("facts");
+        assert_eq!(out, "Operator role: authorized pentester.");
+    }
+
+    #[test]
+    fn operator_facts_enum_role_maps_to_prose() {
+        let mut cfg = FreedomConfig::default();
+        cfg.role = Some(crate::cli::init::OperatorRole::SecurityResearcher);
+        let out = merge_operator_facts(&cfg, None).expect("facts");
+        assert_eq!(out, "Operator role: security researcher.");
+    }
+
+    #[test]
+    fn operator_facts_role_none_variant_yields_nothing() {
+        let mut cfg = FreedomConfig::default();
+        cfg.role = Some(crate::cli::init::OperatorRole::None);
+        assert_eq!(merge_operator_facts(&cfg, None), None);
+    }
+
+    #[test]
+    fn operator_facts_non_english_language_emits_instruction() {
+        let mut cfg = FreedomConfig::default();
+        cfg.language_primary = Some("de".into());
+        let out = merge_operator_facts(&cfg, None).expect("facts");
+        assert!(out.contains("BCP-47 'de'"), "got: {out}");
+        assert!(out.starts_with("Respond in the operator's primary language"));
+    }
+
+    #[test]
+    fn operator_facts_english_language_emits_no_instruction() {
+        // English is the model default — no instruction needed, and the
+        // "en-GB" / "en" family is all skipped.
+        for tag in ["en", "en-GB", "EN", "en-US"] {
+            let mut cfg = FreedomConfig::default();
+            cfg.language_primary = Some(tag.into());
+            assert_eq!(
+                merge_operator_facts(&cfg, None),
+                None,
+                "tag {tag} must not emit a language instruction"
+            );
+        }
+    }
+
+    #[test]
+    fn operator_facts_role_and_language_stack_above_body() {
+        let mut cfg = FreedomConfig::default();
+        cfg.role_custom = Some("solo dev".into());
+        cfg.language_primary = Some("zh-CN".into());
+        let out = merge_operator_facts(&cfg, Some("# NEOTH.md body".into())).expect("facts");
+        // Role line first, language line second, then a blank line, then body.
+        assert!(out.starts_with("Operator role: solo dev.\n"));
+        assert!(out.contains("BCP-47 'zh-CN'"));
+        assert!(out.ends_with("\n\n# NEOTH.md body"));
     }
 }
 
