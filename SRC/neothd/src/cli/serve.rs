@@ -2954,6 +2954,9 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             // completion.text on success so downstream egress sees the
             // recovered reply. Per-call escape via
             // `NEOTH_REFUSAL_RECOVERY_DISABLE=1`.
+            // ADV-07: mark mirror-recovery turns so profile extraction
+            // skips the operator_preferences category for them.
+            let mut derived_from_mirror_pipeline = false;
             if config_for_handler.refusal_recovery.enabled
                 && std::env::var("NEOTH_REFUSAL_RECOVERY_DISABLE")
                     .map(|v| !(v == "1" || v.eq_ignore_ascii_case("true")))
@@ -2994,6 +2997,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                 "channel refusal recovery succeeded — replacing completion.text",
                             );
                             completion.text = recovered.text;
+                            derived_from_mirror_pipeline = true; // ADV-07
                         }
                         Ok(crate::security::refusal_recovery::RecoveryOutcome::RefusedAgain {
                             reframing_id,
@@ -3215,6 +3219,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                 // `neoth profile pending` surface is
                                 // shipped.
                                 None,
+                                derived_from_mirror_pipeline, // ADV-07
                             )
                             .await
                             {

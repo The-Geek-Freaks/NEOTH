@@ -74,6 +74,24 @@ pub enum PipelineRun {
 // so the 9-arg signature shrinks; the wide signature mirrors the
 // pipeline's stage inputs 1:1 and is stable across callers.
 #[allow(clippy::too_many_arguments)]
+/// ADV-07: drop every `operator_preferences` claim from a freshly
+/// extracted delta (applied on mirror-recovery turns). Returns the number
+/// of claims removed. Pure — unit-testable without the full pipeline /
+/// guard / extension registry.
+fn drop_mirror_categories(delta: &mut ProfileDelta) -> usize {
+    let before = delta.claims.len();
+    delta
+        .claims
+        .retain(|c| !c.field.starts_with("operator_preferences"));
+    before - delta.claims.len()
+}
+
+// Pipeline orchestrator — the staged dependencies (conn, writer,
+// provider, guard, registry, gate ctx, mirror flag) are each distinct +
+// not naturally groupable into a config struct without obscuring the
+// call sites. ADV-07 added the 10th arg; an args-struct refactor is
+// tracked as a separate cleanup, not worth churning every call site now.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_pipeline(
     conn: &mut Connection,
     writer: &WalWriterHandle,
@@ -88,6 +106,14 @@ pub async fn run_pipeline(
     // `None`, behaviour is identical to pre-Phase-5 — every guarded
     // delta proceeds straight to Stage 6 (existing callers).
     gate_ctx: Option<ApprovalGateContext<'_>>,
+    // ADV-07 (Session 28c): true when THIS turn's reply came from the
+    // mirror refusal-recovery path (a refusal was auto-reframed + retried).
+    // On such turns the `operator_preferences` the extractor infers are
+    // about the REFRAMING, not the operator (self-amplifying loop "Alex
+    // values limitation-reflection"). When true, drop every
+    // `operator_preferences` claim post-extract; other categories extract
+    // normally.
+    skip_mirror_categories: bool,
 ) -> Result<PipelineRun> {
     // V10-07 H3 privacy guard: profile extraction sees the operator's
     // full conversation window — routing that through a cloud provider
@@ -127,9 +153,23 @@ pub async fn run_pipeline(
 
     // Stage 3 — extract (LLM call). Short-circuits if no eligible
     // segments survive attribution.
-    let delta: ProfileDelta = extract_delta(provider, &attributed)
+    let mut delta: ProfileDelta = extract_delta(provider, &attributed)
         .await
         .context("pipeline stage 3: profile.extract")?;
+
+    // ADV-07: on a mirror-recovery turn, drop operator_preferences claims
+    // before validation so the reframing-induced "preferences" never reach
+    // idx_profile (closes the self-amplifying feedback loop). The reroute
+    // itself stays auditable via the 0x19 REFUSAL_REROUTED frame.
+    if skip_mirror_categories {
+        let dropped = drop_mirror_categories(&mut delta);
+        if dropped > 0 {
+            tracing::debug!(
+                dropped,
+                "ADV-07: dropped operator_preferences claims on mirror-recovery turn"
+            );
+        }
+    }
 
     // Stage 4 — validate. Whole-delta errors abort with no audit
     // (those are misuse, not adversarial); per-claim drops fold into
@@ -465,6 +505,58 @@ mod tests {
         .to_string()
     }
 
+    #[test]
+    fn adv07_drop_mirror_categories_removes_only_operator_preferences() {
+        use crate::profile::delta::{ProfileDelta, RawClaim};
+        let mut delta = ProfileDelta {
+            claims: vec![
+                RawClaim {
+                    field: "identity.location".into(),
+                    value_json: serde_json::json!("Berlin"),
+                    confidence: 0.9,
+                    reasoning: String::new(),
+                    evidence_event_ids: vec![],
+                },
+                RawClaim {
+                    field: "operator_preferences.tone".into(),
+                    value_json: serde_json::json!("blunt"),
+                    confidence: 0.8,
+                    reasoning: String::new(),
+                    evidence_event_ids: vec![],
+                },
+                RawClaim {
+                    field: "operator_preferences.format".into(),
+                    value_json: serde_json::json!("terse"),
+                    confidence: 0.8,
+                    reasoning: String::new(),
+                    evidence_event_ids: vec![],
+                },
+            ],
+            ..Default::default()
+        };
+        let dropped = drop_mirror_categories(&mut delta);
+        assert_eq!(dropped, 2, "both operator_preferences claims dropped");
+        assert_eq!(delta.claims.len(), 1);
+        assert_eq!(delta.claims[0].field.as_str(), "identity.location");
+    }
+
+    #[test]
+    fn adv07_drop_mirror_categories_noop_without_operator_preferences() {
+        use crate::profile::delta::{ProfileDelta, RawClaim};
+        let mut delta = ProfileDelta {
+            claims: vec![RawClaim {
+                field: "skills.rust".into(),
+                value_json: serde_json::json!("expert"),
+                confidence: 0.9,
+                reasoning: String::new(),
+                evidence_event_ids: vec![],
+            }],
+            ..Default::default()
+        };
+        assert_eq!(drop_mirror_categories(&mut delta), 0);
+        assert_eq!(delta.claims.len(), 1);
+    }
+
     #[tokio::test]
     async fn pipeline_runs_end_to_end_and_writes_idx_profile_row() {
         let (_dir, mut conn, writer, join) = setup().await;
@@ -487,6 +579,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             None, // ADV-03 Phase 5: gate context unused in this test
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -538,6 +631,7 @@ mod tests {
             &extensions,
             100,
             None, // ADV-03 Phase 5: gate context unused in this test
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -572,6 +666,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             None, // ADV-03 Phase 5: gate context unused in this test
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -613,6 +708,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             None, // ADV-03 Phase 5: gate context unused in this test
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -626,6 +722,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             None, // ADV-03 Phase 5: gate context unused in this test
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -721,6 +818,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             Some(ctx),
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -779,6 +877,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             Some(ctx),
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -824,6 +923,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             Some(ctx),
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();
@@ -875,6 +975,7 @@ mod tests {
             &extensions,
             1_778_803_200,
             Some(ctx),
+            false, // ADV-07: not a mirror-recovery turn
         )
         .await
         .unwrap();

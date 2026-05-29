@@ -999,6 +999,7 @@ async fn run_pipeline_cli_batch(
             // ADV-03 Phase 5: None preserves pre-gate behaviour
             // for the `neoth profile run` admin command.
             None,
+            false, // ADV-07: CLI batch run, not a mirror-recovery turn
         )
         .await;
         match result {

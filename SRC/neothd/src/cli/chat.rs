@@ -1723,6 +1723,11 @@ pub async fn run_chat_with(
     // Audit: every retry attempt emits `0x19 REFUSAL_REROUTED`. The
     // original 0x16 REFUSAL_OBSERVED frame above stays as truth (the
     // original refusal happened); the recovery is an additive layer.
+    // ADV-07: track whether this turn's reply came from the mirror
+    // refusal-recovery path, so profile extraction can skip the
+    // operator_preferences category for it (the recovered "preferences"
+    // are about the reframing, not the operator).
+    let mut derived_from_mirror_pipeline = false;
     if config.refusal_recovery.enabled
         && std::env::var("NEOTH_REFUSAL_RECOVERY_DISABLE")
             .map(|v| !(v == "1" || v.eq_ignore_ascii_case("true")))
@@ -1765,6 +1770,7 @@ pub async fn run_chat_with(
                         "refusal recovery succeeded — replacing response_text downstream"
                     );
                     response_text = completion.text;
+                    derived_from_mirror_pipeline = true; // ADV-07
                 }
                 Ok(crate::security::refusal_recovery::RecoveryOutcome::RefusedAgain {
                     reframing_id,
@@ -1937,6 +1943,7 @@ pub async fn run_chat_with(
                             // is_tty + dialoguer confirm) is Phase 6+
                             // CLI surface work tracked separately.
                             None,
+                            derived_from_mirror_pipeline, // ADV-07
                         )
                         .await
                         {
