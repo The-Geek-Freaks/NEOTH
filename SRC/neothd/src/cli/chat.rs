@@ -1266,6 +1266,27 @@ pub async fn run_chat_with(
                 total_latency_ms = outcome.total_latency_ms,
                 "council debate complete"
             );
+            // ADV-10b (Session 28g+): surface degraded debates at the
+            // default log level. The orchestrator's FuturesUnordered +
+            // quorum check absorbs hemisphere failures naturally (2-of-3
+            // degrade is already there), but without a warn at this
+            // level a persistently rate-limited or unreachable hemisphere
+            // shows ONLY at debug. The degradation classifier
+            // distinguishes quota (best-effort substring sniff against
+            // QuotaError's Display phrasing) from other failures so the
+            // operator can tell "wait for the backoff window" apart from
+            // "something else is wrong".
+            let degradation = outcome.degradation();
+            if degradation.is_degraded() {
+                tracing::warn!(
+                    degradation = degradation.variant_name(),
+                    errored_count = degradation.errored_count(),
+                    left_provider = left_provider_str,
+                    right_provider = right_provider_str,
+                    cere_provider = cere_provider_str,
+                    "council debate degraded — fewer than 3 hemispheres contributed (ADV-10b)"
+                );
+            }
             // A-1: emit COUNCIL_PARTIAL_REFUSAL audit frame whenever any
             // hemisphere refused, regardless of which branch consumes the
             // result. Operator MUST see refusals even when Consensus or

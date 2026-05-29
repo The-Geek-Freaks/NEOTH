@@ -268,6 +268,47 @@ impl CouncilDebate {
         any_refused && any_usable
     }
 
+    /// ADV-10b (Session 28g+) — classify how the debate is degraded by
+    /// errored hemispheres. The orchestrator already handles 2-of-3
+    /// degrade naturally (FuturesUnordered + `is_present` quorum), but
+    /// callers want a typed signal for operator-visible logging +
+    /// future verdict-confidence-penalty wiring.
+    ///
+    /// Quota detection is BEST-EFFORT substring sniffing of the per-
+    /// hemisphere `error` string — the typed `QuotaError` is lost
+    /// upstream when `HemisphereProvider::ask_with_depth_budget`
+    /// stringifies the failure. The shipped `QuotaError` Display
+    /// contains the literal "quota exceeded (HTTP 429)" phrase
+    /// (`providers::quota::QuotaError`), so the substring check is
+    /// reliable in practice. Threading the typed error through the
+    /// trait + adapters is its own larger refactor (tracked separately).
+    pub fn degradation(&self) -> CouncilDegradation {
+        let mut quota = 0usize;
+        let mut other = 0usize;
+        for r in &self.responses {
+            if r.text.is_none() {
+                if let Some(err) = &r.error {
+                    if council_error_is_quota(err) {
+                        quota += 1;
+                    } else {
+                        other += 1;
+                    }
+                } else {
+                    other += 1;
+                }
+            }
+        }
+        match (quota, other) {
+            (0, 0) => CouncilDegradation::None,
+            (q, 0) => CouncilDegradation::QuotaOnly { count: q },
+            (0, o) => CouncilDegradation::OtherOnly { count: o },
+            (q, o) => CouncilDegradation::Mixed {
+                quota_count: q,
+                other_count: o,
+            },
+        }
+    }
+
     /// Pick #8 SP-2 (Session 14) — role-agnostic "smartest-wins"
     /// selection. Returns the usable response whose
     /// [`super::quality_score::QualityScore::total`] is highest
@@ -443,6 +484,85 @@ impl CouncilVoice {
             }
         }
     }
+}
+
+/// ADV-10b (Session 28g+) — how a [`CouncilDebate`] is degraded by
+/// errored hemispheres. The orchestrator's natural 2-of-3 degrade (the
+/// FuturesUnordered quorum check absorbs hemisphere failures) leaves
+/// the verdict resolvable, but callers want a typed signal for
+/// operator-visible logging + future verdict-confidence-penalty wiring.
+///
+/// `QuotaOnly` is distinguished from `OtherOnly` because the operator
+/// remediation differs: quota means "wait the backoff window", other
+/// errors (network, refusal, budget) mean something more specific is
+/// wrong. `Mixed` covers the rare case where one hemisphere is
+/// rate-limited AND another fails for a different reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CouncilDegradation {
+    /// All hemispheres returned text; the debate was fully attended.
+    None,
+    /// Exactly the named count of hemispheres failed due to HTTP 429
+    /// (typed `QuotaError` flattened to substring-matched diagnostic).
+    QuotaOnly { count: usize },
+    /// Exactly the named count of hemispheres failed for non-quota
+    /// reasons (network, refusal, budget-exhausted, model not configured).
+    OtherOnly { count: usize },
+    /// A mix of both. `quota_count` + `other_count` is the total of
+    /// errored hemispheres; the debate still has `3 - (q+o)` usable
+    /// responses.
+    Mixed {
+        quota_count: usize,
+        other_count: usize,
+    },
+}
+
+impl CouncilDegradation {
+    /// True for any non-`None` variant — useful for the chat-side
+    /// "should this turn produce a degraded warn log?" branch.
+    pub fn is_degraded(self) -> bool {
+        !matches!(self, CouncilDegradation::None)
+    }
+
+    /// Total count of errored hemispheres across both quota + other.
+    /// `None` returns 0.
+    pub fn errored_count(self) -> usize {
+        match self {
+            CouncilDegradation::None => 0,
+            CouncilDegradation::QuotaOnly { count } => count,
+            CouncilDegradation::OtherOnly { count } => count,
+            CouncilDegradation::Mixed {
+                quota_count,
+                other_count,
+            } => quota_count + other_count,
+        }
+    }
+
+    /// Stable lower-snake-case discriminator for log lines + future
+    /// WAL audit payloads. The variant payloads stay structured for
+    /// programmatic consumers; this is for human / grep visibility.
+    pub fn variant_name(self) -> &'static str {
+        match self {
+            CouncilDegradation::None => "none",
+            CouncilDegradation::QuotaOnly { .. } => "quota_only",
+            CouncilDegradation::OtherOnly { .. } => "other_only",
+            CouncilDegradation::Mixed { .. } => "mixed",
+        }
+    }
+}
+
+/// ADV-10b — substring sniff for a `QuotaError`-derived hemisphere
+/// error diagnostic. Returns `true` when the error string carries one
+/// of the canonical phrases the shipped `providers::quota::QuotaError`
+/// Display impl produces. Best-effort because the typed error is
+/// stringified upstream in `ask_with_depth_budget`; threading the
+/// typed signal through the trait is a separate larger refactor.
+pub(crate) fn council_error_is_quota(err: &str) -> bool {
+    // QuotaError Display: "{provider}: quota exceeded (HTTP 429), retry_after=..."
+    // — the literal "quota exceeded" + "429" phrases are the load-bearing
+    // signal. Match case-insensitively so a future Display tweak that
+    // changed casing doesn't silently regress the operator log.
+    let lower = err.to_ascii_lowercase();
+    lower.contains("quota exceeded") || lower.contains("http 429") || lower.contains("429")
 }
 
 #[cfg(test)]
@@ -817,6 +937,112 @@ mod tests {
             mk_resp(HemisphereRole::Cerebellum, Some("agreed")),
         ]);
         assert!(!d.is_partial_refusal());
+    }
+
+    // ── ADV-10b degradation classifier ──────────────────────────────
+
+    fn mk_errored_resp(role: HemisphereRole, err: &str) -> HemisphereResponse {
+        let mut r = mk_resp(role, None);
+        r.error = Some(err.into());
+        r
+    }
+
+    #[test]
+    fn council_error_is_quota_matches_quota_error_display_phrases() {
+        // Pin the substring sniff against the actual `QuotaError`
+        // Display output. A future Display tweak that changed the
+        // phrasing would silently regress operator visibility — this
+        // test makes that change fail loudly.
+        assert!(council_error_is_quota(
+            "openai_api: quota exceeded (HTTP 429), retry_after=Some(60s)"
+        ));
+        assert!(council_error_is_quota("HTTP 429: too many requests"));
+        assert!(council_error_is_quota("response code 429"));
+        // Case-insensitive — defensive against future Display tweaks.
+        assert!(council_error_is_quota("Quota Exceeded"));
+    }
+
+    #[test]
+    fn council_error_is_quota_rejects_unrelated_errors() {
+        assert!(!council_error_is_quota("network timeout"));
+        assert!(!council_error_is_quota("budget exhausted"));
+        assert!(!council_error_is_quota("model not configured"));
+        assert!(!council_error_is_quota(""));
+    }
+
+    #[test]
+    fn degradation_is_none_when_every_hemisphere_present() {
+        let d = debate_with(vec![
+            mk_resp(HemisphereRole::Left, Some("yes")),
+            mk_resp(HemisphereRole::Right, Some("ok")),
+            mk_resp(HemisphereRole::Cerebellum, Some("agreed")),
+        ]);
+        assert_eq!(d.degradation(), CouncilDegradation::None);
+        assert!(!d.degradation().is_degraded());
+        assert_eq!(d.degradation().errored_count(), 0);
+    }
+
+    #[test]
+    fn degradation_quota_only_when_only_quota_errors() {
+        let d = debate_with(vec![
+            mk_resp(HemisphereRole::Left, Some("yes")),
+            mk_errored_resp(
+                HemisphereRole::Right,
+                "openai_api: quota exceeded (HTTP 429), retry_after=Some(60s)",
+            ),
+            mk_resp(HemisphereRole::Cerebellum, Some("agreed")),
+        ]);
+        assert_eq!(d.degradation(), CouncilDegradation::QuotaOnly { count: 1 });
+        assert!(d.degradation().is_degraded());
+        assert_eq!(d.degradation().variant_name(), "quota_only");
+    }
+
+    #[test]
+    fn degradation_other_only_when_non_quota_error() {
+        let d = debate_with(vec![
+            mk_errored_resp(HemisphereRole::Left, "network timeout"),
+            mk_resp(HemisphereRole::Right, Some("ok")),
+            mk_resp(HemisphereRole::Cerebellum, Some("agreed")),
+        ]);
+        assert_eq!(d.degradation(), CouncilDegradation::OtherOnly { count: 1 });
+        assert_eq!(d.degradation().variant_name(), "other_only");
+    }
+
+    #[test]
+    fn degradation_mixed_when_both_quota_and_other_errors() {
+        let d = debate_with(vec![
+            mk_errored_resp(HemisphereRole::Left, "network timeout"),
+            mk_errored_resp(
+                HemisphereRole::Right,
+                "gemini_api: quota exceeded (HTTP 429)",
+            ),
+            mk_resp(HemisphereRole::Cerebellum, Some("agreed")),
+        ]);
+        assert_eq!(
+            d.degradation(),
+            CouncilDegradation::Mixed {
+                quota_count: 1,
+                other_count: 1,
+            }
+        );
+        assert_eq!(d.degradation().errored_count(), 2);
+        assert_eq!(d.degradation().variant_name(), "mixed");
+    }
+
+    #[test]
+    fn degradation_errored_with_no_error_string_counts_as_other() {
+        // A hemisphere with `text=None` AND `error=None` (the budget-
+        // exhausted shape from `run_one`'s charge() short-circuit
+        // already carries a BUDGET_EXHAUSTED_ERROR string, but be
+        // defensive about a future codepath that nulls both).
+        let mut errored = mk_resp(HemisphereRole::Left, None);
+        errored.error = None;
+        let d = debate_with(vec![
+            errored,
+            mk_resp(HemisphereRole::Right, Some("ok")),
+            mk_resp(HemisphereRole::Cerebellum, Some("agreed")),
+        ]);
+        assert_eq!(d.degradation(), CouncilDegradation::OtherOnly { count: 1 });
     }
 
     #[test]
