@@ -39,6 +39,10 @@ use std::time::Duration;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
+use crate::config::FreedomConfig;
+use crate::permissions::{Action, AutonomyLevel, evaluate};
+use crate::wal::writer::WalWriterHandle;
+
 /// Default drain-tick interval — 5 minutes in seconds. Producers
 /// (G-01-mini reflection cron at 24h) enqueue at much lower
 /// frequency, so 5min is comfortable: at most 12 drain ticks per
@@ -116,31 +120,289 @@ fn append_to_sidecar(
     Ok(())
 }
 
+/// G-01 channel-delivery (Session 28d, 4-lens gremium) — the outcome of
+/// attempting to deliver ONE drained proactive item.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProactiveStatus {
+    /// Live-sent to the operator's channel via `Channel::send_proactive`.
+    Delivered,
+    /// A live send was attempted but the channel transport failed
+    /// (network / bad token / rate-limit). The item is NOT re-enqueued —
+    /// re-queue would starve the daily budget; the operator sees the
+    /// `failed` status in the ledger + WAL and can act.
+    Failed,
+    /// The autonomy gate (`Action::ProactiveChannelSend`) did not return
+    /// `Allow` — Strict denies, Standard confirms (no daemon TTY ⇒
+    /// suppressed). No live send; ledger-only.
+    Suppressed,
+    /// `proactive.enabled` + autonomy permitted a send, but the item's
+    /// target channel has no live adapter configured (e.g. Telegram token
+    /// or recipient id absent, or a channel family delivery isn't wired
+    /// yet). The JSONL ledger IS the delivery for these — zero-channel
+    /// operators still see their proactive items via `proactive_delivered.jsonl`.
+    SidecarOnly,
+}
+
+impl ProactiveStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProactiveStatus::Delivered => "delivered",
+            ProactiveStatus::Failed => "failed",
+            ProactiveStatus::Suppressed => "suppressed",
+            ProactiveStatus::SidecarOnly => "sidecar_only",
+        }
+    }
+
+    /// True when a live channel send was attempted + succeeded — used for
+    /// the loop's delivered-count log.
+    pub fn is_delivered(self) -> bool {
+        matches!(self, ProactiveStatus::Delivered)
+    }
+}
+
+/// G-01 — the resolved route for one proactive item. Pure (no secrets, no
+/// IO) so the gate + recipient-resolution decision is unit-testable in
+/// isolation; the async tick consumes this to do the actual send.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DeliveryRoute {
+    /// Autonomy gate not `Allow` — suppress (no send).
+    Suppressed,
+    /// Gate allowed but no live adapter for this channel/config — ledger only.
+    SidecarOnly,
+    /// Deliver to Telegram. `chat_id` is the operator's OWN configured id
+    /// (`telegram_user_id`) rendered as a decimal string — never a value
+    /// the proactive item could influence (items carry no chat id), so the
+    /// "attacker-chosen recipient" vector is structurally absent.
+    Telegram { chat_id: String },
+}
+
+/// G-01 — decide how (and whether) to deliver an item whose target is
+/// `channel`, given the operator's autonomy level + config. Two gates:
+/// (1) the autonomy `Action::ProactiveChannelSend` gate, (2) live-adapter
+/// availability. The `proactive.enabled` master switch is checked by the
+/// caller BEFORE this; this function assumes the feature is enabled.
+///
+/// v1.0 scope: only Telegram has authoritative recipient resolution
+/// (`telegram_user_id` is the single configured operator). Other channel
+/// families (Slack/Discord/Keet/WhatsApp) have no persisted proactive
+/// recipient, so they fall back to `SidecarOnly` until a per-channel
+/// recipient is wired — the operator still sees the item in the ledger.
+pub(crate) fn plan_delivery(
+    channel: &str,
+    autonomy: AutonomyLevel,
+    config: &FreedomConfig,
+) -> DeliveryRoute {
+    let action = Action::ProactiveChannelSend {
+        channel: channel.to_string(),
+    };
+    if !evaluate(&action, autonomy).is_allow() {
+        return DeliveryRoute::Suppressed;
+    }
+    match channel {
+        "telegram" => match (&config.telegram_token, config.telegram_user_id) {
+            (Some(_token), Some(uid)) => DeliveryRoute::Telegram {
+                chat_id: uid.to_string(),
+            },
+            _ => DeliveryRoute::SidecarOnly,
+        },
+        _ => DeliveryRoute::SidecarOnly,
+    }
+}
+
+/// SHA-256 hex of a recipient id. The WAL audit frame must NOT carry the
+/// raw chat id (a live user identifier); the hash lets an operator
+/// correlate frames for the same recipient without leaking the id.
+fn recipient_hash(recipient: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(recipient.as_bytes());
+    let out = hasher.finalize();
+    out.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// G-01 delivery tick — drains the queue + ACTUALLY SENDS each item to the
+/// operator's channel (the slice the consumer-half sidecar left open),
+/// then records the outcome. Async because `Channel::send_proactive` is
+/// async. Ordering is deliberate for at-least-once delivery: the queue is
+/// saved LAST, so a crash mid-send re-drains the item next tick (the
+/// `dedup_key` bounds duplicate harm); a duplicate proactive nudge is far
+/// less bad than a silently-lost one.
+///
+/// Returns the number of items LIVE-DELIVERED (status `delivered`).
+pub async fn run_proactive_delivery_tick(
+    home: &Path,
+    config: &FreedomConfig,
+    writer: &WalWriterHandle,
+    now_unix: i64,
+) -> Result<usize, String> {
+    use crate::proactive::ProactiveQueue;
+
+    let queue_path = home.join("proactive_queue.json");
+    if !queue_path.exists() {
+        return Ok(0);
+    }
+    let mut queue =
+        ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
+    if queue.is_empty() {
+        return Ok(0);
+    }
+    let drained = queue.drain(now_unix, PROACTIVE_PER_TICK_CAP);
+    if drained.is_empty() {
+        return Ok(0);
+    }
+
+    let autonomy = config.autonomy;
+    let mut records: Vec<(crate::proactive::ProactiveItem, ProactiveStatus)> =
+        Vec::with_capacity(drained.len());
+    let mut delivered = 0usize;
+
+    for item in drained {
+        let (status, recipient) = match plan_delivery(&item.channel, autonomy, config) {
+            DeliveryRoute::Suppressed => (ProactiveStatus::Suppressed, String::new()),
+            DeliveryRoute::SidecarOnly => (ProactiveStatus::SidecarOnly, String::new()),
+            DeliveryRoute::Telegram { chat_id } => {
+                // Safe: plan_delivery returned Telegram only when the token
+                // is present. Clone the secret only at the send site.
+                let token = config
+                    .telegram_token
+                    .clone()
+                    .expect("plan_delivery guarantees telegram_token is Some");
+                let channel =
+                    crate::channels::telegram::TelegramChannel::new(token, config.telegram_user_id);
+                use crate::channels::Channel;
+                match channel.send_proactive(&chat_id, &item.body).await {
+                    Ok(_) => {
+                        delivered += 1;
+                        (ProactiveStatus::Delivered, chat_id)
+                    }
+                    Err(e) => {
+                        warn!(
+                            channel = %item.channel,
+                            dedup_key = %item.dedup_key,
+                            error = %e,
+                            "proactive send failed; recorded as failed (not re-enqueued)"
+                        );
+                        (ProactiveStatus::Failed, chat_id)
+                    }
+                }
+            }
+        };
+
+        // Distinct WAL frame (0x3A) so an operator can grep exactly when
+        // the daemon spoke UNPROMPTED. recipient is hashed, never raw.
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "channel": item.channel,
+            "recipient_hash": recipient_hash(&recipient),
+            "dedup_key": item.dedup_key,
+            "source": item.source,
+            "status": status.as_str(),
+            "autonomy": autonomy.as_str(),
+            "ts_unix": now_unix,
+        }))
+        .unwrap_or_default();
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_PROACTIVE_SENT, &payload)
+                .build();
+        if let Err(e) = writer.append(header, payload).await {
+            warn!(error = %e, "PROACTIVE_SENT WAL append failed (best-effort audit frame)");
+        }
+
+        records.push((item, status));
+    }
+
+    let sidecar_path = home.join(PROACTIVE_DELIVERED_SIDECAR);
+    append_delivery_records(&sidecar_path, &records, now_unix)
+        .map_err(|e| format!("sidecar append failed: {e}"))?;
+
+    // Saved LAST — at-least-once across a mid-send crash.
+    queue
+        .save_to(&queue_path)
+        .map_err(|e| format!("queue save after delivery failed: {e}"))?;
+    Ok(delivered)
+}
+
+/// Append delivery records (item + outcome status) to the JSONL ledger.
+/// Distinct from [`append_to_sidecar`] (the gate-off sidecar-only path)
+/// because each line carries the live-send `status`.
+fn append_delivery_records(
+    sidecar_path: &Path,
+    records: &[(crate::proactive::ProactiveItem, ProactiveStatus)],
+    now_unix: i64,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(sidecar_path)?;
+    for (item, status) in records {
+        let line = serde_json::to_string(&serde_json::json!({
+            "delivered_at_unix": now_unix,
+            "status": status.as_str(),
+            "item": item,
+        }))
+        .unwrap_or_default();
+        writeln!(f, "{line}")?;
+    }
+    f.flush()?;
+    Ok(())
+}
+
 /// Spawn the daemon-side drain loop. Matches the doctor_cron /
 /// reflection_cron pattern. Returns the JoinHandle the daemon's
 /// shutdown path can `.abort()`.
-pub fn spawn_proactive_drain_loop(home: PathBuf, interval_secs: u64) -> JoinHandle<()> {
+///
+/// G-01 (Session 28d): each tick reads `FreedomConfig` FRESH so a mid-run
+/// `proactive.enabled` flip (or autonomy change) takes effect without a
+/// daemon restart. When `proactive.enabled` is true the tick runs the
+/// channel-delivery path (sends to the operator's channel + records
+/// outcome); when false it falls back to the sidecar-only drain (the
+/// pre-delivery behaviour — items still land in the JSONL ledger).
+pub fn spawn_proactive_drain_loop(
+    home: PathBuf,
+    interval_secs: u64,
+    writer: WalWriterHandle,
+) -> JoinHandle<()> {
     let interval = Duration::from_secs(interval_secs.max(30));
     tokio::spawn(async move {
         info!(
             interval_secs = interval.as_secs(),
             home = %home.display(),
-            "proactive drain loop spawned (G-01 consumer half)"
+            "proactive drain loop spawned (G-01 consumer + channel delivery)"
         );
         let mut ticker = tokio::time::interval(interval);
         loop {
             ticker.tick().await;
             let now_unix = chrono::Utc::now().timestamp();
-            match run_proactive_drain_tick(&home, now_unix) {
-                Ok(0) => {
-                    tracing::debug!("proactive drain tick: nothing to deliver");
+            // Fresh config read per tick — honours mid-run enable/disable.
+            let proactive_enabled = FreedomConfig::load_from_default_path()
+                .map(|c| c.proactive.enabled)
+                .unwrap_or(false);
+            if proactive_enabled {
+                let config = match FreedomConfig::load_from_default_path() {
+                    Ok(c) => c,
+                    Err(e) => {
+                        warn!(error = %e, "proactive tick: config reload failed; skipping");
+                        continue;
+                    }
+                };
+                match run_proactive_delivery_tick(&home, &config, &writer, now_unix).await {
+                    Ok(0) => tracing::debug!("proactive delivery tick: nothing delivered"),
+                    Ok(n) => info!(delivered = n, "proactive delivery tick: {n} live-sent"),
+                    Err(e) => {
+                        warn!(error = %e, "proactive delivery tick failed; will retry next interval")
+                    }
                 }
-                Ok(n) => info!(
-                    delivered = n,
-                    "proactive drain tick: {n} item(s) appended to sidecar",
-                ),
-                Err(e) => {
-                    warn!(error = %e, "proactive drain tick failed; will retry next interval")
+            } else {
+                // Gate off — sidecar-only drain (no channel send).
+                match run_proactive_drain_tick(&home, now_unix) {
+                    Ok(0) => tracing::debug!("proactive drain tick: nothing to deliver"),
+                    Ok(n) => info!(
+                        delivered = n,
+                        "proactive drain tick: {n} item(s) appended to sidecar (proactive disabled)",
+                    ),
+                    Err(e) => {
+                        warn!(error = %e, "proactive drain tick failed; will retry next interval")
+                    }
                 }
             }
         }
@@ -269,5 +531,99 @@ mod tests {
         assert_eq!(PROACTIVE_DRAIN_INTERVAL_SECS, 5 * 60);
         assert_eq!(PROACTIVE_PER_TICK_CAP, 3);
         assert_eq!(PROACTIVE_DELIVERED_SIDECAR, "proactive_delivered.jsonl");
+    }
+
+    // ── G-01 channel-delivery (Session 28d) ──────────────────────────────
+    fn cfg_with_telegram(autonomy: AutonomyLevel) -> FreedomConfig {
+        let mut c = FreedomConfig::default();
+        c.autonomy = autonomy;
+        c.telegram_token = Some(crate::secret::SecretString::from(
+            "test-bot-token".to_string(),
+        ));
+        c.telegram_user_id = Some(123456);
+        c
+    }
+
+    #[test]
+    fn plan_delivery_strict_suppresses() {
+        // Strict autonomy denies daemon-initiated outbound regardless of
+        // channel config.
+        let cfg = cfg_with_telegram(AutonomyLevel::Strict);
+        assert_eq!(
+            plan_delivery("telegram", AutonomyLevel::Strict, &cfg),
+            DeliveryRoute::Suppressed
+        );
+    }
+
+    #[test]
+    fn plan_delivery_standard_suppresses() {
+        // Standard ⇒ Confirm ⇒ not Allow ⇒ suppressed (no daemon TTY).
+        let cfg = cfg_with_telegram(AutonomyLevel::Standard);
+        assert_eq!(
+            plan_delivery("telegram", AutonomyLevel::Standard, &cfg),
+            DeliveryRoute::Suppressed
+        );
+    }
+
+    #[test]
+    fn plan_delivery_elevated_telegram_configured_routes_to_telegram() {
+        let cfg = cfg_with_telegram(AutonomyLevel::Elevated);
+        assert_eq!(
+            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg),
+            DeliveryRoute::Telegram {
+                chat_id: "123456".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn plan_delivery_elevated_telegram_unconfigured_is_sidecar_only() {
+        // Gate allows, but no telegram token/recipient ⇒ ledger-only.
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = AutonomyLevel::Elevated;
+        // No telegram_token / telegram_user_id set.
+        assert_eq!(
+            plan_delivery("telegram", AutonomyLevel::Elevated, &cfg),
+            DeliveryRoute::SidecarOnly
+        );
+    }
+
+    #[test]
+    fn plan_delivery_non_telegram_channel_is_sidecar_only_for_now() {
+        // v1.0 scope: only telegram has authoritative recipient resolution.
+        let cfg = cfg_with_telegram(AutonomyLevel::Full);
+        for ch in ["slack", "discord", "keet", "whatsapp", "cli"] {
+            assert_eq!(
+                plan_delivery(ch, AutonomyLevel::Full, &cfg),
+                DeliveryRoute::SidecarOnly,
+                "channel {ch} should be sidecar-only until per-channel recipient is wired",
+            );
+        }
+    }
+
+    #[test]
+    fn proactive_status_as_str_pinned() {
+        assert_eq!(ProactiveStatus::Delivered.as_str(), "delivered");
+        assert_eq!(ProactiveStatus::Failed.as_str(), "failed");
+        assert_eq!(ProactiveStatus::Suppressed.as_str(), "suppressed");
+        assert_eq!(ProactiveStatus::SidecarOnly.as_str(), "sidecar_only");
+        assert!(ProactiveStatus::Delivered.is_delivered());
+        assert!(!ProactiveStatus::Failed.is_delivered());
+    }
+
+    #[test]
+    fn recipient_hash_is_deterministic_64_hex_and_input_sensitive() {
+        let a = recipient_hash("123456");
+        let b = recipient_hash("123456");
+        let c = recipient_hash("123457");
+        assert_eq!(a, b, "same input ⇒ same hash");
+        assert_ne!(a, c, "different input ⇒ different hash");
+        assert_eq!(a.len(), 64, "sha-256 hex is 64 chars");
+        assert!(
+            a.chars()
+                .all(|ch| ch.is_ascii_hexdigit() && !ch.is_ascii_uppercase())
+        );
+        // The raw recipient id must NOT appear in the audit hash.
+        assert!(!a.contains("123456"));
     }
 }

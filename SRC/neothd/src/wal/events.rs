@@ -293,6 +293,17 @@ pub const EVENT_TYPE_CHANNEL_EDIT: u8 = 0x38;
 /// carries the same `request_id` so WAL replay shows the trigger chain
 /// end-to-end. N-3 (Session 21).
 pub const EVENT_TYPE_N8N_REQUEST: u8 = 0x39;
+/// `0x3A PROACTIVE_SENT` — the daemon, on its OWN initiative (no inbound
+/// prompt), delivered a proactive message OUT to a messaging channel via
+/// `Channel::send_proactive`. Distinct from `0x33 CHANNEL_EGRESS` (the
+/// reply path) so an operator can grep exactly when "the daemon spoke
+/// unprompted". Emitted by the G-01 proactive delivery tick. Payload:
+/// `{channel, recipient_hash, dedup_key, source, status, autonomy, ts_unix}`
+/// — `recipient_hash` is a SHA-256 of the chat id (never the raw id; the
+/// audit log must not carry a live user identifier), `status` is one of
+/// `delivered` / `failed` / `suppressed` / `sidecar_only`. G-01 (Session
+/// 28d, 4-lens gremium).
+pub const EVENT_TYPE_PROACTIVE_SENT: u8 = 0x3A;
 
 // ---- 0x50..=0x5F  Panic / recovery (Pick #35 Session 14 WAL recovery) -----
 
@@ -1174,6 +1185,8 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_ACK < 0x30 || EVENT_TYPE_CHANNEL_ACK > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_EDIT < 0x30 || EVENT_TYPE_CHANNEL_EDIT > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_N8N_REQUEST < 0x30 || EVENT_TYPE_N8N_REQUEST > 0x3F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_PROACTIVE_SENT < 0x30 || EVENT_TYPE_PROACTIVE_SENT > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FIRED < 0x40 || EVENT_TYPE_JOB_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_SUCCESS < 0x40 || EVENT_TYPE_JOB_SUCCESS > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
@@ -1354,6 +1367,7 @@ mod tests {
             ("SKILL_INJECT_SKIPPED", EVENT_TYPE_SKILL_INJECT_SKIPPED),
             ("CHANNEL_INGRESS", EVENT_TYPE_CHANNEL_INGRESS),
             ("CHANNEL_EGRESS", EVENT_TYPE_CHANNEL_EGRESS),
+            ("PROACTIVE_SENT", EVENT_TYPE_PROACTIVE_SENT),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
             ("INGRESS_QUARANTINED", EVENT_TYPE_INGRESS_QUARANTINED),
             ("INGRESS_SANITIZED", EVENT_TYPE_INGRESS_SANITIZED),

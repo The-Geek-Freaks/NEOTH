@@ -120,6 +120,21 @@ pub enum Action {
         /// GitHub `owner/repo` slug the release came from.
         repo: String,
     },
+    /// G-01 (Session 28d, 4-lens gremium): the daemon, ON ITS OWN
+    /// INITIATIVE (no inbound prompt), sends an unsolicited message OUT
+    /// to a messaging channel. Distinct from [`Action::ChannelSend`]
+    /// (which is the REPLY path — operator just messaged, daemon answers,
+    /// implicitly allowed at Standard). Daemon-initiated outbound has a
+    /// fundamentally higher blast radius, so it gets a STRICTER gate than
+    /// the reply path: Strict denies outright, Standard requires confirm
+    /// (and the daemon has no TTY, so Standard effectively suppresses —
+    /// matching the MV-01b Option-A "auto-actions only at Elevated/Full"
+    /// policy), Elevated/Full allow. The `proactive.enabled` master switch
+    /// (default OFF) is checked BEFORE this gate; this is the second layer.
+    ProactiveChannelSend {
+        /// Channel family the message targets ("telegram", "keet", ...).
+        channel: String,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -234,6 +249,9 @@ fn evaluate_strict(action: &Action) -> Decision {
         Action::SelfBinaryReplace { from, to, .. } => Decision::Deny(format!(
             "strict: daemon self-replace ({from} -> {to}) denied — agent never replaces its own binary"
         )),
+        Action::ProactiveChannelSend { channel } => Decision::Deny(format!(
+            "strict: daemon never sends unsolicited messages — proactive send to '{channel}' denied"
+        )),
     }
 }
 
@@ -267,6 +285,10 @@ fn evaluate_standard(action: &Action) -> Decision {
         )),
         Action::SelfBinaryReplace { from, to, repo } => Decision::Confirm(format!(
             "standard: daemon self-replace {from} -> {to} from {repo} requires confirm"
+        )),
+        Action::ProactiveChannelSend { channel } => Decision::Confirm(format!(
+            "standard: unsolicited proactive send to '{channel}' requires confirm \
+             (no TTY in daemon ⇒ effectively suppressed until Elevated)"
         )),
     }
 }
@@ -314,6 +336,10 @@ fn evaluate_elevated(action: &Action) -> Decision {
         Action::SelfBinaryReplace { from, to, repo } => Decision::Confirm(format!(
             "elevated: daemon self-replace {from} -> {to} from {repo} requires confirm"
         )),
+        // Elevated/Full is where the operator opted into autonomous
+        // behaviour — proactive outbound is allowed (the `proactive.enabled`
+        // master switch is the operator's explicit opt-in upstream).
+        Action::ProactiveChannelSend { .. } => Decision::Allow,
     }
 }
 
@@ -390,6 +416,56 @@ fn evaluate_full(action: &Action) -> Decision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn proactive_channel_send_strict_denies() {
+        let action = Action::ProactiveChannelSend {
+            channel: "telegram".into(),
+        };
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Strict),
+            Decision::Deny(_)
+        ));
+    }
+
+    #[test]
+    fn proactive_channel_send_standard_confirms() {
+        // Standard ⇒ Confirm; the daemon has no TTY so this effectively
+        // suppresses proactive sends until the operator raises to Elevated.
+        let action = Action::ProactiveChannelSend {
+            channel: "telegram".into(),
+        };
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        // Custom routes through the standard evaluator too.
+        assert!(matches!(
+            evaluate(&action, AutonomyLevel::Custom),
+            Decision::Confirm(_)
+        ));
+    }
+
+    #[test]
+    fn proactive_channel_send_elevated_and_full_allow() {
+        let action = Action::ProactiveChannelSend {
+            channel: "keet".into(),
+        };
+        assert!(evaluate(&action, AutonomyLevel::Elevated).is_allow());
+        assert!(evaluate(&action, AutonomyLevel::Full).is_allow());
+    }
+
+    #[test]
+    fn proactive_channel_send_is_stricter_than_reply_channel_send() {
+        // The whole point of the distinct variant: at Standard the REPLY
+        // path (ChannelSend) is allowed, but the daemon-INITIATED path
+        // (ProactiveChannelSend) must NOT be silently allowed.
+        assert!(evaluate(&Action::ChannelSend, AutonomyLevel::Standard).is_allow());
+        let proactive = Action::ProactiveChannelSend {
+            channel: "telegram".into(),
+        };
+        assert!(!evaluate(&proactive, AutonomyLevel::Standard).is_allow());
+    }
 
     #[test]
     fn cluster_peer_pairing_strict_denies() {

@@ -1384,6 +1384,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         crate::daemon::proactive_dispatcher::spawn_proactive_drain_loop(
             home,
             crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
+            writer.clone(),
         )
     };
     info!(
