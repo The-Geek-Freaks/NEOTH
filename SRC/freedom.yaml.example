@@ -115,6 +115,20 @@ inference:
   #   provider: local_qwen
   #   model: Qwen/Qwen2.5-3B-Instruct
 
+# ── Dreaming pipeline (R-02 Phase 4c) ───────────────────────────────────────
+#
+# Nightly background pass that groups recent episodes from `idx_episode`
+# into themed "dreams". OFF by default — the task never spawns (zero CPU)
+# unless `enabled: true`. When `inference.embedding_provider` is also set,
+# clustering is embedding-based (cosine over the local Qwen embeddings,
+# per ADR-004); otherwise it falls back to a deterministic compose. All
+# intervals omit-able — the commented values below are the defaults.
+# dreaming:
+#   enabled: false          # master switch; false = task never spawns
+#   interval_secs: 86400    # seconds between passes (default 86400 = 24h)
+#   window_secs: 86400      # episode lookback window per pass (default 24h)
+#   max_events: 500         # cap on events processed per pass (default 500)
+
 # ── 5a. Recipe: cloud-Qwen via OpenRouter (no local GPU needed) ──────────────
 #
 # Operators without GPU for local Qwen3 inference can route any

@@ -1,8 +1,13 @@
 # ADR-004 — R-02 Phase 3 embedding model selection
 
-**Status**: Proposed (HO-04 stub registered 2026-05-27 Session 28;
-final decision waits on Day-14b forward-pass + `embed()` surface
-unstuck — the Qwen path is currently stubbed per [[neoth-d14b-status-correction]]).
+**Status**: Accepted (2026-05-29 Session 28c — the `embed()` surface that
+gated this decision is shipped: `providers/embed.rs` defines the
+`EmbedProvider` trait + `l2_normalize`/`cosine`; `providers/local_qwen.rs`
+ships `ensure_embed_loaded` + `run_embed` (mean-pool across the sequence
+dim, then L2-normalise) + `impl EmbedProvider for LocalQwenAdapter::embed`
+with an L2-norm contract assertion + tests. The `[[neoth-d14b-status-correction]]`
+"Qwen path is stubbed" note is itself now stale. HO-04 stub registered
+2026-05-27 Session 28).
 
 ## Context
 
@@ -39,13 +44,13 @@ The choice affects:
 
 ## Decision
 
-**Pending — gating on Day-14b forward-pass unstuck.** Per
-[[neoth-d14b-status-correction]], the existing `local_qwen`
-forward-pass + sampling-loop are shipped, but the `embed()` surface
-is stubbed. Three downstreams block on this: skill-router Stage-2,
-council dissent, R-02 dreaming.
+**Accepted — Qwen3-Q8 (local) as the default + primary embedding model.**
+The `embed()` surface this decision gated on is now shipped (see Status),
+so the decision is ratified rather than pending. Three downstreams can now
+consume it: skill-router Stage-2, council dissent, R-02 dreaming — that
+consumer wiring is tracked under SPEC-12 (v0.9), not this ADR.
 
-The recommended shape per architect-panel direction:
+The accepted shape per architect-panel direction:
 
 - **Default + primary:** Qwen3-Q8. Multilingual + same model
   family as the chat path → no second model to download + manage.
