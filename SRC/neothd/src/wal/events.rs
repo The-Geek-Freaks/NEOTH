@@ -166,7 +166,9 @@ pub const EVENT_TYPE_HEMISPHERE_REBOUND: u8 = 0x1F;
 
 /// Outbound request to an LLM provider. Payload: prompt hash + model + ts.
 pub const EVENT_TYPE_PROVIDER_REQUEST: u8 = 0x20;
-/// Inbound response from an LLM provider. Payload: response hash + tokens + latency.
+/// Inbound response from an LLM provider. Payload: response hash + tokens
+/// (incl. `prompt_token_actual`, pairing with PROVIDER_REQUEST's
+/// `prompt_token_estimate` per ARCH-04) + latency.
 pub const EVENT_TYPE_PROVIDER_RESPONSE: u8 = 0x21;
 /// Provider returned an error or timed out.
 pub const EVENT_TYPE_PROVIDER_ERROR: u8 = 0x22;

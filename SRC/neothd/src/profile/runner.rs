@@ -267,7 +267,10 @@ fn is_local_inference_provider(name: &str) -> bool {
 /// without spinning up a WAL writer; the labels are the operator-
 /// facing strings `neoth privacy audit` + WAL consumers grep, so a
 /// rename must be deliberate.
-fn extract_target_label(provider_name: &str) -> &'static str {
+///
+/// `pub(crate)` so the main-chat + n8n PROVIDER_REQUEST emit sites tag
+/// each request with the same `local`/`cloud` label (SPEC-04 audit-pair).
+pub(crate) fn extract_target_label(provider_name: &str) -> &'static str {
     if is_local_inference_provider(provider_name) {
         "local"
     } else {

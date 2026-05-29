@@ -497,6 +497,27 @@ const CHECK_DOCS: &[CheckDoc] = &[
               false` — doctor then passes quietly. Dry-run a refusal with \
               `neoth refusal test \"<refusal text>\"`.",
     },
+    CheckDoc {
+        name: "local_qwen weights",
+        purpose: "SPEC-04 private-extraction readiness. When \
+                  `profile.learn_provider = local_qwen` (the privacy-floor \
+                  default), profile facts are extracted ON-DEVICE — but \
+                  only if the Qwen weights are cached. If they're missing, \
+                  the local provider fails to build and (with \
+                  `allow_cloud_fallback = false`) extraction is SKIPPED \
+                  rather than leaking the conversation to a cloud model, \
+                  so profile learning silently stops.",
+        common_failures: "Fresh install where the operator chose local_qwen \
+                         in the wizard but skipped the ~3 GB weight download; \
+                         a wiped `~/.neoth/models/` cache; an interrupted \
+                         download leaving an `.incomplete` marker.",
+        fix: "Download the weights: `neoth model fetch` (or re-run `neoth \
+              init` and accept step 5c). To extract on a cloud model \
+              instead, set `profile.learn_provider` to a cloud slug AND \
+              `profile.allow_cloud_fallback: true` in freedom.yaml \
+              (understand the privacy trade-off first — see `neoth privacy \
+              audit`).",
+    },
 ];
 
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
@@ -707,7 +728,62 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_cluster_registry(home),
         check_cluster_mdns_announcer(home),
         check_refusal_recovery(home),
+        check_local_qwen_weights(home),
     ]
+}
+
+/// SPEC-04 local_qwen profile-extraction readiness. When `profile.
+/// learn_provider` is set to the on-device `local_qwen` path, profile
+/// extraction runs locally ONLY if the Qwen weights are cached;
+/// otherwise `from_config_for_learn` fails the build and (with
+/// `allow_cloud_fallback=false`, the privacy-floor default) extraction
+/// is SKIPPED — profile learning silently stops. This check surfaces
+/// that gap before it bites.
+///
+/// PASS: `learn_provider` is not `local_qwen` (cache irrelevant), or the
+/// weights are cached, or freedom.yaml is unreadable (owned by the
+/// freedom.yaml check, not double-reported here).
+/// WARN: configured `local_qwen` but the weights are absent → the
+/// operator must `neoth model fetch`.
+fn check_local_qwen_weights(home: &Path) -> CheckOutcome {
+    let name = "local_qwen weights";
+    let cfg = match crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")) {
+        Ok(c) => c,
+        Err(_) => {
+            return CheckOutcome {
+                name,
+                status: CheckStatus::Pass,
+                detail: "freedom.yaml unreadable — skipping local_qwen cache check".to_string(),
+            };
+        }
+    };
+    let learn = cfg.profile.learn_provider.as_deref().unwrap_or("");
+    if learn != "local_qwen" {
+        let shown = if learn.is_empty() { "(unset)" } else { learn };
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: format!("learn_provider `{shown}` is not local_qwen — Qwen weight cache not required"),
+        };
+    }
+    let model = crate::installers::qwen_weights::DEFAULT_QWEN_MODEL_ID;
+    if crate::installers::qwen_weights::check_weights_cached(model) {
+        CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: format!("local_qwen weights cached ({model})"),
+        }
+    } else {
+        CheckOutcome {
+            name,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "learn_provider=local_qwen but {model} weights not cached → profile \
+                 extraction will SKIP (privacy floor). Run `neoth model fetch` or \
+                 `neoth init` step 5c."
+            ),
+        }
+    }
 }
 
 /// SPEC-10 refusal-recovery health. Recovery reframes + retries when the
@@ -2274,13 +2350,37 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_seven() {
+    fn check_docs_listed_count_pinned_at_twenty_eight() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
         // coverage) is caught. Bumped to 26 in Session 21 for
         // `cluster mDNS announcer` (Bite #2 announcer state surface);
-        // 27 in Session 28c for `refusal recovery` (SPEC-10).
-        assert_eq!(CHECK_DOCS.len(), 27);
+        // 27 in Session 28c for `refusal recovery` (SPEC-10);
+        // 28 in Session 28c for `local_qwen weights` (SPEC-04).
+        assert_eq!(CHECK_DOCS.len(), 28);
+    }
+
+    #[test]
+    fn local_qwen_check_passes_when_learn_provider_not_local_qwen() {
+        // freedom.yaml with a cloud learn_provider → Qwen cache irrelevant.
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.profile.learn_provider = Some("gemini".to_string());
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        let outcome = check_local_qwen_weights(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("not local_qwen"));
+    }
+
+    #[test]
+    fn local_qwen_check_passes_on_unreadable_freedom_yaml() {
+        let dir = tempdir().unwrap();
+        let outcome = check_local_qwen_weights(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
     }
 
     #[test]
@@ -2873,12 +2973,12 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 27 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // 28 checks: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
         // flapping + cluster registry (Phase 4 follow-on) + cluster
         // mDNS announcer (Session 21 bite #2) + refusal recovery
-        // (Session 28c, SPEC-10).
-        assert_eq!(outs.len(), 27);
+        // (Session 28c, SPEC-10) + local_qwen weights (Session 28c, SPEC-04).
+        assert_eq!(outs.len(), 28);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

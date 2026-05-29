@@ -364,6 +364,11 @@ pub async fn run_chat_with(
     let req_payload = serde_json::to_vec(&serde_json::json!({
         "operator_id": config.operator_id,
         "provider": provider.name(),
+        // SPEC-04: on/off-device classification of THIS request's
+        // provider ("local" | "cloud") — the durable per-turn audit
+        // anchor for the privacy posture, alongside the extraction-path
+        // 0x2E PROFILE_EXTRACT_TARGET frame.
+        "target": crate::profile::runner::extract_target_label(provider.name()),
         "model": args.model.clone().or_else(|| config.provider_model.clone()),
         "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(prompt.as_bytes()),
         "prompt_bytes": prompt.len(),
@@ -1629,6 +1634,12 @@ pub async fn run_chat_with(
         "response_bytes": response_text.len(),
         "latency_ns": u64::try_from(total_latency.as_nanos()).unwrap_or(u64::MAX),
         "input_tokens": final_input_tokens,
+        // ARCH-04: name the real prompt-token count so it pairs with
+        // `prompt_token_estimate` on PROVIDER_REQUEST — operators can
+        // diff estimate-vs-actual per turn from the audit chain. Same
+        // value as `input_tokens` (kept for back-compat with existing
+        // WAL readers); the named field closes the estimate/actual pair.
+        "prompt_token_actual": final_input_tokens,
         "output_tokens": final_output_tokens,
         "streamed": args.stream,
     }))?;
