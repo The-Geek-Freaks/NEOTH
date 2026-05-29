@@ -10,7 +10,7 @@
 //! - **Linux** — systemd USER unit + `loginctl enable-linger`.
 //! - **macOS** — launchd LaunchAgent (`KeepAlive` + `RunAtLoad`).
 //! - **Windows** — Task Scheduler `onlogon` task pointing at the
-//!   built-in `neoth supervisor-loop` restart wrapper (a bare
+//!   built-in `neoth supervisor loop` restart wrapper (a bare
 //!   `schtasks` task has no restart-on-crash; the loop provides it).
 //!
 //! The content generators are pure (unit-tested); `install` / `uninstall`
@@ -94,7 +94,7 @@ pub fn launchd_plist_text(exe: &Path, home: &Path) -> String {
 }
 
 /// The `schtasks /create` argv for an onlogon task that runs the
-/// built-in supervisor loop (`neoth supervisor-loop`), which spawns +
+/// built-in supervisor loop (`neoth supervisor loop`), which spawns +
 /// restarts `neoth serve`. `/f` overwrites idempotently.
 pub fn windows_task_argv(exe: &Path) -> Vec<String> {
     vec![
@@ -102,7 +102,7 @@ pub fn windows_task_argv(exe: &Path) -> Vec<String> {
         "/tn".into(),
         WINDOWS_TASK_NAME.into(),
         "/tr".into(),
-        format!("\"{}\" supervisor-loop", exe.display()),
+        format!("\"{}\" supervisor loop", exe.display()),
         "/sc".into(),
         "onlogon".into(),
         "/f".into(),
@@ -224,6 +224,43 @@ pub fn uninstall(config_home: &Path, home: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Should the supervisor loop relaunch `neoth serve` given its exit
+/// code? Everything except the deliberate-stop code restarts (a crash
+/// or a self-update swap both exit non-2). A `None` code (killed by
+/// signal) also restarts — a SIGKILL/console-close should bring the
+/// daemon back.
+pub fn should_restart(exit_code: Option<i32>) -> bool {
+    exit_code != Some(EXIT_CODE_STOP)
+}
+
+/// The `neoth supervisor-loop` body: spawn `neoth serve` as a child,
+/// wait, relaunch unless it exited with [`EXIT_CODE_STOP`]. This is the
+/// target the Windows Task Scheduler `onlogon` task runs (Task Scheduler
+/// has no restart-on-crash for user tasks; systemd/launchd provide it
+/// natively, so this loop is primarily the Windows path but is OS-
+/// agnostic). Never returns while restarts continue; returns `Ok(())`
+/// after a deliberate stop.
+pub fn run_supervisor_loop(exe: &Path) -> Result<()> {
+    loop {
+        let status = std::process::Command::new(exe)
+            .arg("serve")
+            .status()
+            .with_context(|| format!("spawn {} serve", exe.display()))?;
+        if !should_restart(status.code()) {
+            tracing::info!(
+                code = EXIT_CODE_STOP,
+                "supervisor-loop: deliberate stop — not restarting"
+            );
+            return Ok(());
+        }
+        tracing::warn!(
+            code = ?status.code(),
+            "supervisor-loop: `neoth serve` exited; restarting in 3s"
+        );
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+}
+
 fn write_unit(path: &Path, body: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -289,7 +326,7 @@ mod tests {
     #[test]
     fn windows_task_targets_supervisor_loop_with_force() {
         let argv = windows_task_argv(Path::new("C:\\neoth\\neoth.exe"));
-        assert!(argv.iter().any(|a| a.contains("supervisor-loop")));
+        assert!(argv.iter().any(|a| a.contains("supervisor loop")));
         assert!(argv.contains(&"onlogon".to_string()));
         assert!(argv.contains(&"/f".to_string()));
         assert!(argv.contains(&WINDOWS_TASK_NAME.to_string()));
@@ -317,6 +354,21 @@ mod tests {
         } else if cfg!(target_os = "macos") {
             assert_eq!(k, SupervisorKind::LaunchdAgent);
         }
+    }
+
+    #[test]
+    fn should_restart_only_skips_deliberate_stop_code() {
+        assert!(
+            !should_restart(Some(EXIT_CODE_STOP)),
+            "stop code = no restart"
+        );
+        assert!(
+            should_restart(Some(0)),
+            "clean exit (self-update swap) = restart"
+        );
+        assert!(should_restart(Some(1)), "crash exit = restart");
+        assert!(should_restart(Some(101)), "panic abort = restart");
+        assert!(should_restart(None), "signal-killed = restart");
     }
 
     #[test]

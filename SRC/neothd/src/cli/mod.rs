@@ -80,6 +80,7 @@ pub mod skills;
 pub mod slack;
 pub mod slash;
 pub mod status;
+pub mod supervisor;
 pub mod telemetry;
 pub mod tour;
 pub mod tts;
@@ -177,6 +178,14 @@ pub enum Commands {
     /// `--apply` runs `npm install -g <pkg>@latest` for each component that needs it.
     /// `--list` prints the static list of components NEOTH knows.
     Update(update::UpdateArgs),
+
+    /// MV-01b #3 — install/remove the OS-native process supervisor
+    /// (systemd user unit / launchd LaunchAgent / Windows Task) that
+    /// keeps `neoth serve` running + auto-restarts it so self-update can
+    /// activate a new binary. `neoth supervisor loop` is the built-in
+    /// restart wrapper the Windows task targets. User-scoped, no
+    /// root/admin.
+    Supervisor(supervisor::SupervisorArgs),
 
     /// List + validate scheduled jobs defined in `~/.neoth/jobs.yaml`.
     ///
@@ -704,6 +713,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Update(mut args) => {
             args.output = global_output;
             update::run_update(args).await?;
+        }
+        Commands::Supervisor(mut args) => {
+            args.output = global_output;
+            supervisor::run_supervisor(args)?;
         }
         Commands::Jobs(mut args) => {
             args.output = global_output;
