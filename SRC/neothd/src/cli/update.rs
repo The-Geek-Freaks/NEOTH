@@ -164,7 +164,11 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
 
-    let outcome = apply_update(&release, target, "neoth", install_dir).await?;
+    // require_signature = false — the MANUAL operator path warns on an
+    // unsigned/unprovisioned release + proceeds (keeps the updater usable
+    // for releases published before minisign signing was enabled). The
+    // unattended daemon path passes `true`.
+    let outcome = apply_update(&release, target, "neoth", install_dir, false).await?;
 
     // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — best-effort one-shot
     // writer (HF-01 pattern). Guard: if the daemon is live it owns the
@@ -223,6 +227,7 @@ async fn emit_self_update_applied(
         "target_triple": target,
         "archive_sha256": outcome.archive_sha256,
         "download_url": outcome.download_url,
+        "signature_status": outcome.signature_status,
         "trigger_source": trigger_source,
         "ts_unix": now_unix_secs(),
     }))

@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use tracing::{info, warn};
 
 /// One GitHub Release as returned by
 /// `/repos/{owner}/{repo}/releases/latest`. We only care about the
@@ -268,6 +269,23 @@ pub fn sha256_companion_name(asset_name: &str) -> String {
     format!("{asset_name}.sha256")
 }
 
+/// MV-01b #2 — the minisign signature companion name for an asset
+/// (`<asset>.minisig`), matching what the CI signing step uploads.
+pub fn minisig_companion_name(asset_name: &str) -> String {
+    format!("{asset_name}.minisig")
+}
+
+/// Locate the `<asset>.minisig` signature companion for the binary asset.
+/// `None` when the release predates signing (manual path warns,
+/// unattended path bails).
+pub fn find_minisig_companion<'a>(
+    assets: &'a [ReleaseAsset],
+    binary_asset: &ReleaseAsset,
+) -> Option<&'a ReleaseAsset> {
+    let want = minisig_companion_name(&binary_asset.name);
+    assets.iter().find(|a| a.name == want)
+}
+
 /// Locate the matching cargo-dist asset in a release. Returns
 /// `None` when no asset matches the target — common when the
 /// release was published before the target was added to the
@@ -308,6 +326,8 @@ pub struct UpdateAssets<'a> {
     pub target: &'a str,
     pub binary: &'a ReleaseAsset,
     pub sha256: Option<&'a ReleaseAsset>,
+    /// MV-01b #2 — the `.minisig` signature companion, when published.
+    pub signature: Option<&'a ReleaseAsset>,
 }
 
 /// Extract a cargo-dist archive's `<binary>` member to `out_dir`.
@@ -551,6 +571,11 @@ pub struct UpdateApplied {
     /// auditor catch a fork-repo swap that the version fields alone
     /// wouldn't reveal.
     pub download_url: String,
+    /// MV-01b #2 — minisign signature outcome
+    /// ([`crate::updater::sig_verify::SigStatus::as_str`]): `verified`,
+    /// `unsigned_allowed`, or `no_pinned_key`. Recorded in the `0xD2`
+    /// audit frame.
+    pub signature_status: String,
 }
 
 /// Pure-bytes-in orchestrator. Network-free so the unit suite
@@ -606,6 +631,7 @@ pub async fn apply_update(
     target_triple: &str,
     binary: &str,
     install_dir: &Path,
+    require_signature: bool,
 ) -> Result<UpdateApplied> {
     let assets = resolve_update_assets(release, target_triple, binary)?;
     let companion = assets.sha256.ok_or_else(|| {
@@ -646,6 +672,47 @@ pub async fn apply_update(
         .await
         .context("read binary asset body")?;
 
+    // MV-01b #2 — minisign signature verification BEFORE the swap. Fetch
+    // the `.minisig` companion (if published) then gate on it. `require`
+    // is the two-tier rule: the unattended daemon path passes `true`
+    // (any non-verified outcome bails); the manual operator path passes
+    // `false` (missing sig / unprovisioned key warns + proceeds, but a
+    // present-but-invalid sig still bails). Runs before apply_downloaded
+    // so a failed verify never reaches `atomic_replace_binary`.
+    let signature_text = match assets.signature {
+        Some(sig_asset) => Some(
+            client
+                .get(&sig_asset.browser_download_url)
+                .send()
+                .await
+                .with_context(|| format!("GET {}", sig_asset.browser_download_url))?
+                .error_for_status()
+                .context("fetch minisig companion")?
+                .text()
+                .await
+                .context("read minisig companion body")?,
+        ),
+        None => None,
+    };
+    let sig_status = crate::updater::sig_verify::check_signature(
+        &asset_bytes,
+        signature_text.as_deref(),
+        require_signature,
+    )
+    .context("self-update signature gate")?;
+    match sig_status {
+        crate::updater::sig_verify::SigStatus::Verified => {
+            info!("self-update: release signature verified");
+        }
+        other => {
+            warn!(
+                status = other.as_str(),
+                "self-update: proceeding without a verified signature (manual path); \
+                 unattended updates would refuse this release"
+            );
+        }
+    }
+
     let format = archive_format_for_target(target_triple);
     let download_url = assets.binary.browser_download_url.clone();
     let backup = apply_downloaded(&asset_bytes, &companion_text, format, binary, install_dir)?;
@@ -661,6 +728,7 @@ pub async fn apply_update(
         restart_required: true,
         archive_sha256,
         download_url,
+        signature_status: sig_status.as_str().to_string(),
     })
 }
 
@@ -687,10 +755,12 @@ pub fn resolve_update_assets<'a>(
         )
     })?;
     let sha256 = find_sha256_companion(&release.assets, asset);
+    let signature = find_minisig_companion(&release.assets, asset);
     Ok(UpdateAssets {
         target,
         binary: asset,
         sha256,
+        signature,
     })
 }
 
@@ -953,6 +1023,27 @@ mod tests {
         let bin = fake_asset("neoth-x86_64-pc-windows-msvc.zip");
         let assets = vec![bin.clone()];
         assert!(find_sha256_companion(&assets, &bin).is_none());
+    }
+
+    #[test]
+    fn find_minisig_companion_pairs_with_binary() {
+        // MV-01b #2: the `<asset>.minisig` companion is located the same
+        // way as the .sha256 one.
+        let bin = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz");
+        let sig = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz.minisig");
+        let assets = vec![bin.clone(), sig];
+        let found = find_minisig_companion(&assets, &bin).expect("minisig must match");
+        assert!(found.name.ends_with(".minisig"));
+    }
+
+    #[test]
+    fn find_minisig_companion_none_for_pre_signing_release() {
+        // Releases published before signing was enabled have no .minisig.
+        // resolve_update_assets surfaces None → manual path warns,
+        // unattended path bails (sig_verify gate).
+        let bin = fake_asset("neoth-x86_64-pc-windows-msvc.zip");
+        let assets = vec![bin.clone()];
+        assert!(find_minisig_companion(&assets, &bin).is_none());
     }
 
     #[test]

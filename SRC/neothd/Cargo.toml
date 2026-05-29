@@ -236,6 +236,15 @@ sha1   = "0.10"
 # adapter independent of upstream churn.
 hex    = "0.4"
 
+# MV-01b prereq #2 (Session 28c) — verify-only minisign signature check
+# for the daemon self-update path. Pure-Rust (ed25519 + blake2b), no C
+# deps, no openssl, no `ring` — chosen over the `sigstore`/cosign crate
+# which pulls native-tls/schannel + untrusted(ring) + prost, violating
+# the rustls-only/no-ring posture (empirical probe 2026-05-29). Releases
+# are minisign-signed in CI; the public key is pinned at compile time
+# (`NEOTH_RELEASE_MINISIGN_PUBKEY` env, via `option_env!`).
+minisign-verify = "0.2"
+
 # N-3 Workstream D (Session 23) — base64url-NOPAD encoding for the
 # localhost API bearer token. 32 random bytes → 43-char URL-safe
 # token stored at ~/.neoth/n8n_api_token.
