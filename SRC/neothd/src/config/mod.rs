@@ -736,6 +736,26 @@ pub struct UpdaterConfig {
     /// `0xD7/0xD8 MODEL_DOWNLOAD_*` audit frames around a permitted pull.
     #[serde(default = "default_allow_huggingface_downloads")]
     pub allow_huggingface_downloads: bool,
+    /// SC-10 — per-model download policy overriding the global
+    /// `allow_huggingface_downloads` flag for specific model ids. An
+    /// entry `"<repo_or_model_id>": false` blocks ONLY that model even
+    /// when the global flag is `true` (and vice-versa: `true` permits a
+    /// single model on an otherwise air-gapped install). Absent entry ⇒
+    /// the global flag applies. Default empty (global flag governs all).
+    #[serde(default)]
+    pub model_download_policy: std::collections::HashMap<String, bool>,
+}
+
+impl UpdaterConfig {
+    /// SC-10 — whether a HuggingFace download of `model_id` is permitted.
+    /// A per-model entry in `model_download_policy` takes precedence over
+    /// the global `allow_huggingface_downloads`; absent ⇒ the global flag.
+    pub fn model_download_allowed(&self, model_id: &str) -> bool {
+        match self.model_download_policy.get(model_id) {
+            Some(&explicit) => explicit,
+            None => self.allow_huggingface_downloads,
+        }
+    }
 }
 
 fn default_updater_enabled() -> bool {
@@ -756,6 +776,7 @@ impl Default for UpdaterConfig {
             enabled: default_updater_enabled(),
             interval_secs: default_updater_interval_secs(),
             allow_huggingface_downloads: default_allow_huggingface_downloads(),
+            model_download_policy: std::collections::HashMap::new(),
         }
     }
 }
@@ -2189,6 +2210,44 @@ mod tests {
         let path = write_yaml(dir.path(), yaml);
         let cfg = FreedomConfig::load_from_path(&path).unwrap();
         assert!(cfg.proactive.enabled);
+    }
+
+    // ── SC-10 per-model download policy ───────────────────────────────
+    #[test]
+    fn sc10_model_download_allowed_falls_back_to_global_flag() {
+        let mut u = UpdaterConfig::default();
+        assert!(u.model_download_policy.is_empty());
+        // Global true (default) ⇒ any model allowed.
+        assert!(u.model_download_allowed("clip"));
+        // Global false ⇒ any model blocked when no per-model entry.
+        u.allow_huggingface_downloads = false;
+        assert!(!u.model_download_allowed("clip"));
+    }
+
+    #[test]
+    fn sc10_per_model_entry_overrides_global_both_directions() {
+        let mut u = UpdaterConfig::default();
+        // Block one model on an otherwise-open install.
+        u.allow_huggingface_downloads = true;
+        u.model_download_policy.insert("whisper".into(), false);
+        assert!(!u.model_download_allowed("whisper"));
+        assert!(u.model_download_allowed("clip")); // unlisted ⇒ global true
+        // Permit one model on an otherwise air-gapped install.
+        u.allow_huggingface_downloads = false;
+        u.model_download_policy.clear();
+        u.model_download_policy.insert("clip".into(), true);
+        assert!(u.model_download_allowed("clip"));
+        assert!(!u.model_download_allowed("whisper")); // unlisted ⇒ global false
+    }
+
+    #[test]
+    fn sc10_model_download_policy_round_trips_via_yaml() {
+        let dir = tempfile::tempdir().unwrap();
+        let yaml = "operator_id: alice\nupdater:\n  model_download_policy:\n    whisper: false\n";
+        let path = write_yaml(dir.path(), yaml);
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert_eq!(cfg.updater.model_download_policy.get("whisper"), Some(&false));
+        assert!(!cfg.updater.model_download_allowed("whisper"));
     }
 
     // ── AR-03 (Session 24) hook_chain per-stage policy ────────────────
