@@ -51,6 +51,11 @@ pub mod sidecar;
 /// only — never fails boot on a finding (operators legitimately
 /// keep API keys in shell rc files).
 pub mod startup_credential_audit;
+/// MV-01b prereq #3 — OS-native process-supervisor install (systemd
+/// user unit / launchd LaunchAgent / Windows Task Scheduler) so the
+/// daemon auto-restarts + unattended self-update can activate the new
+/// binary. User-scoped, no root/admin.
+pub mod supervisor;
 pub mod updater_cron;
 // GC lives in `memory::gc` next to the SQLite tables it sweeps.
 pub mod dreaming;

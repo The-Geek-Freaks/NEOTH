@@ -260,6 +260,14 @@ pub struct FreedomConfig {
     /// override lands when an operator asks for it.
     #[serde(default)]
     pub updater: UpdaterConfig,
+    /// MV-01b prereq #3 — process-supervisor install state. When the
+    /// wizard installs a supervisor (systemd user unit / launchd agent /
+    /// Windows Task Scheduler) the daemon can self-restart so unattended
+    /// self-update actually activates the new binary. Off by default;
+    /// the wizard's supervisor step writes it. `enabled = false` means
+    /// self-update degrades to stage-and-notify (no auto-restart).
+    #[serde(default)]
+    pub supervisor: SupervisorConfig,
     /// AR-03 (Session 24) — per-stage hook chain composition. Keyed
     /// by stage name (`"pre_pipeline"` / `"pre_provider_call"` / etc).
     /// Today carries one field, `fail_fast`, that flips the
@@ -750,6 +758,47 @@ impl Default for UpdaterConfig {
             allow_huggingface_downloads: default_allow_huggingface_downloads(),
         }
     }
+}
+
+/// MV-01b prereq #3 — which OS-native process supervisor keeps `neoth
+/// serve` running + restarts it (so unattended self-update can activate
+/// the new binary). Wizard step writes the resolved kind; `None` =
+/// no supervisor installed (self-update degrades to stage-and-notify).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SupervisorKind {
+    /// systemd user unit (`~/.config/systemd/user/neoth.service` +
+    /// `loginctl enable-linger`). No root.
+    SystemdUser,
+    /// launchd LaunchAgent (`~/Library/LaunchAgents/io.neoth.daemon.plist`).
+    LaunchdAgent,
+    /// Windows Task Scheduler `onlogon` task pointing at the built-in
+    /// `neoth supervisor-loop` restart wrapper. No admin.
+    WindowsTask,
+    /// No supervisor installed.
+    #[default]
+    None,
+}
+
+impl SupervisorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SupervisorKind::SystemdUser => "systemd_user",
+            SupervisorKind::LaunchdAgent => "launchd_agent",
+            SupervisorKind::WindowsTask => "windows_task",
+            SupervisorKind::None => "none",
+        }
+    }
+}
+
+/// MV-01b prereq #3 — operator supervisor state. Off by default per the
+/// noob-wizard opt-in rule. `enabled = false` → no auto-restart, so
+/// self-update stages the new binary + notifies but never relaunches.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct SupervisorConfig {
+    pub enabled: bool,
+    pub kind: SupervisorKind,
 }
 
 /// Pick #6 Phase 4 coding-workflow config block.
