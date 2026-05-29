@@ -165,15 +165,71 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
 
     let outcome = apply_update(&release, target, "neoth", install_dir).await?;
-    // WAL audit frame (0xD2 SELF_UPDATE_APPLIED) deferred — the
-    // CLI runs without a live WalWriterHandle, so writing here
-    // means spinning a one-shot writer + rotating the segment.
-    // Future scheduled-update task that runs INSIDE `cli::serve`
-    // already has the handle and will emit the frame there.
-    let _ = repo;
-    let _ = target;
+
+    // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — best-effort one-shot
+    // writer (HF-01 pattern). Guard: if the daemon is live it owns the
+    // segment, so skip the open to preserve the single-writer invariant
+    // (the binary swap already succeeded; the audit frame is a nicety,
+    // never load-bearing for the update itself).
+    emit_self_update_applied(&outcome, repo, target).await;
+
     render_self_apply(&outcome, output);
     Ok(())
+}
+
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Emit the `0xD2 SELF_UPDATE_APPLIED` audit frame after a successful
+/// manual `neoth update --self --apply`. Skips silently when the daemon
+/// is live (it owns the WAL segment) or the WAL dir is unwritable —
+/// every failure is logged at WARN, never fatal.
+async fn emit_self_update_applied(
+    outcome: &crate::updater::self_update::UpdateApplied,
+    repo: &str,
+    target: &str,
+) {
+    if let Ok(Some(_pid)) =
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
+    {
+        tracing::info!("daemon live — skipping 0xD2 emit to preserve single-writer invariant");
+        return;
+    }
+    let wal_dir = crate::config::FreedomConfig::default_wal_dir();
+    if std::fs::create_dir_all(&wal_dir).is_err() {
+        return;
+    }
+    let seg = wal_dir.join("000001.wal");
+    let (writer, join) = match crate::wal::writer::spawn(seg) {
+        Ok(pair) => pair,
+        Err(e) => {
+            tracing::warn!(error = %e, "SELF_UPDATE_APPLIED WAL writer spawn failed (non-fatal)");
+            return;
+        }
+    };
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "from_version": outcome.from_version,
+        "to_version": outcome.to_version,
+        "backup_path": outcome.backup_path.display().to_string(),
+        "repo": repo,
+        "target_triple": target,
+        "ts_unix": now_unix_secs(),
+    }))
+    .unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED,
+        &payload,
+    )
+    .build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "SELF_UPDATE_APPLIED WAL emit failed (non-fatal)");
+    }
+    drop(writer);
+    let _ = join.await;
 }
 
 fn render_self_apply(applied: &crate::updater::self_update::UpdateApplied, output: OutputFormat) {

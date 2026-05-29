@@ -27,18 +27,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// `(const-name, why-it-is-not-yet-wired)`. Keep this list short + justified.
-const RESERVED: &[(&str, &str)] = &[
-    (
-        "EVENT_TYPE_CHANNEL_ACK",
-        "SP-5 C-prime: ack_received deferred until a 2nd production messenger lands",
-    ),
-    (
-        "EVENT_TYPE_SELF_UPDATE_APPLIED",
-        "V03-09: the emit site is the daemon-internal scheduled-update task \
-         (single-writer safety) — `neoth update --self --apply` runs in a \
-         separate process and must not open a 2nd writer on the live segment",
-    ),
-];
+const RESERVED: &[(&str, &str)] = &[(
+    "EVENT_TYPE_CHANNEL_ACK",
+    "SP-5 C-prime: ack_received deferred until a 2nd production messenger lands",
+)];
 
 #[test]
 fn every_event_type_constant_is_wired() {

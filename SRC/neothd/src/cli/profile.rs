@@ -186,6 +186,17 @@ pub enum ProfileAction {
         #[arg(long)]
         keep: String,
     },
+    /// P-10 Phase-3 — emit the one-shot `PROFILE_BASELINE_SNAPSHOT`
+    /// (`0xB3`) drift anchor: a SHA-256 digest of every active profile
+    /// claim, written once to the WAL so future drift queries diff
+    /// against it. Exactly-once — a second run bails when a prior `0xB3`
+    /// frame is already in the WAL. Refuses while the daemon is live
+    /// (single-writer safety).
+    SeedBaseline {
+        /// Build + print the snapshot payload without writing the WAL frame.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 /// P-02 (Session 22) — subcommands under `neoth profile preset`.
@@ -414,7 +425,187 @@ pub async fn run_profile(args: ProfileArgs) -> Result<()> {
         ProfileAction::ConflictsResolve { field, keep } => {
             run_conflicts_resolve(&conn, &field, &keep, &args.output)
         }
+        ProfileAction::SeedBaseline { dry_run } => {
+            drop(conn); // seed-baseline opens its own read connection.
+            run_seed_baseline(&db_path, dry_run, &args.output).await
+        }
     }
+}
+
+// ── P-10 Phase-3: PROFILE_BASELINE_SNAPSHOT (0xB3) seed ────────────────────
+
+/// Scan every `*.wal` segment for a prior `0xB3 PROFILE_BASELINE_SNAPSHOT`
+/// frame; return its `snapshot_id` if found. Backs the exactly-once gate
+/// (`Some` = a baseline was already emitted). Best-effort: unreadable
+/// segments / undecodable frames are skipped; the walk follows the same
+/// segment-header + zstd + frame-loop pattern as every other WAL reader.
+fn scan_for_prior_baseline_snapshot(wal_dir: &std::path::Path) -> Option<String> {
+    let entries = std::fs::read_dir(wal_dir).ok()?;
+    let mut segments: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
+        .collect();
+    segments.sort();
+    for path in segments {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
+            continue;
+        };
+        let header_len = hdr.header_len();
+        if bytes.len() <= header_len {
+            continue;
+        }
+        let body = &bytes[header_len..];
+        let found = if hdr.is_compressed() {
+            match crate::wal::compress::decompress_frames(body) {
+                Ok(d) => find_baseline_snapshot_id(&d),
+                Err(_) => None,
+            }
+        } else {
+            find_baseline_snapshot_id(body)
+        };
+        if found.is_some() {
+            return found;
+        }
+    }
+    None
+}
+
+/// Walk one (decompressed) segment body; return the `snapshot_id` of the
+/// first `0xB3` frame found. Tail-tolerant — stops at the first torn frame.
+fn find_baseline_snapshot_id(frames: &[u8]) -> Option<String> {
+    let mut cursor = 0usize;
+    while cursor < frames.len() {
+        let dec = match crate::wal::frame::decode_frame(&frames[cursor..]) {
+            Ok(d) => d,
+            Err(_) => break,
+        };
+        if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT {
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(dec.payload) {
+                if let Some(id) = v.get("snapshot_id").and_then(|s| s.as_str()) {
+                    return Some(id.to_string());
+                }
+            }
+        }
+        let total = dec.header.total_len as usize;
+        if total == 0 {
+            break;
+        }
+        cursor = cursor.saturating_add(total);
+    }
+    None
+}
+
+/// Emit the one-shot `0xB3 PROFILE_BASELINE_SNAPSHOT` drift anchor.
+///
+/// Reads every active `idx_profile` claim, hashes each, and writes a
+/// single WAL frame carrying the digest set + a UUID-v7 snapshot id.
+/// Exactly-once: bails if a prior `0xB3` frame already exists. Refuses
+/// while the daemon owns the segment (single-writer safety). `--dry-run`
+/// prints the payload and emits nothing.
+async fn run_seed_baseline(
+    db_path: &std::path::Path,
+    dry_run: bool,
+    output: &OutputFormat,
+) -> Result<()> {
+    let wal_dir = FreedomConfig::default_wal_dir();
+
+    // Exactly-once gate — scan the WAL for a prior baseline first.
+    let prior = scan_for_prior_baseline_snapshot(&wal_dir);
+    crate::profile::baseline_snapshot::ensure_exactly_once(prior.as_deref())
+        .context("seed-baseline aborted (a baseline snapshot already exists)")?;
+
+    // Collect every active claim's value_json in a stable order.
+    let conn = store::open(db_path).context("open views.db")?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT value_json FROM idx_profile WHERE superseded_at IS NULL ORDER BY field ASC",
+        )
+        .context("prepare active-claim query")?;
+    let values: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .context("query active claims")?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let claim_hashes: Vec<String> = values
+        .iter()
+        .map(|v| crate::profile::baseline_snapshot::BaselineSnapshot::hash_claim(v))
+        .collect();
+    let claim_count = claim_hashes.len();
+
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let snapshot_id = uuid::Uuid::now_v7().to_string();
+    let snapshot = crate::profile::baseline_snapshot::BaselineSnapshot::new(
+        &snapshot_id,
+        claim_hashes,
+        None,
+        env!("CARGO_PKG_VERSION"),
+        now_unix,
+    );
+    let payload = snapshot
+        .to_payload()
+        .context("serialise BaselineSnapshot")?;
+
+    if dry_run {
+        println!("{}", String::from_utf8_lossy(&payload));
+        return Ok(());
+    }
+
+    // Single-writer safety: never open a 2nd writer on a segment the
+    // live daemon owns. The operator stops the daemon, runs seed-baseline,
+    // restarts — a one-time onboarding/migration action.
+    if let Ok(Some(pid)) =
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
+    {
+        anyhow::bail!(
+            "neoth daemon is live (pid {pid}); stop it before `profile seed-baseline` \
+             so the one-shot 0xB3 frame doesn't race the daemon's WAL writer"
+        );
+    }
+
+    std::fs::create_dir_all(&wal_dir)
+        .with_context(|| format!("create WAL dir {}", wal_dir.display()))?;
+    let seg = wal_dir.join("000001.wal");
+    let (writer, writer_join) =
+        crate::wal::writer::spawn(seg).context("spawn WAL writer for seed-baseline")?;
+    let header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT,
+        &payload,
+    )
+    .importance(1.0)
+    .build();
+    writer
+        .append(header, payload)
+        .await
+        .context("emit 0xB3 PROFILE_BASELINE_SNAPSHOT")?;
+    drop(writer);
+    let _ = writer_join.await;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "snapshot_id": snapshot_id,
+                    "claim_count": claim_count,
+                    "seeded_at_ts_unix": now_unix,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "seeded profile baseline: snapshot_id={snapshot_id} claim_count={claim_count}"
+            );
+        }
+    }
+    Ok(())
 }
 
 // ── AR-05 (Session 24) profile conflict detection + resolution ────────────
@@ -2239,5 +2430,57 @@ mod tests {
         insert_with_value(&conn, "skills.rust", "\"expert\"", 0.95, 100, "ext-1");
         let n = super::resolve_conflict(&conn, "skills.rust", "ext-1", 999).unwrap();
         assert_eq!(n, 0, "no losers to supersede");
+    }
+
+    // ── P-10 seed-baseline (0xB3) scan ─────────────────────────────────
+
+    #[test]
+    fn baseline_scan_returns_none_for_empty_dir() {
+        let dir = tempdir().unwrap();
+        assert!(scan_for_prior_baseline_snapshot(dir.path()).is_none());
+    }
+
+    #[tokio::test]
+    async fn baseline_scan_finds_emitted_snapshot_id() {
+        // Write a real 0xB3 frame to a temp segment via the WAL writer,
+        // then assert the scan extracts its snapshot_id — exercises the
+        // full segment-header + frame-walk + JSON-extract path.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (w, join) = crate::wal::writer::spawn(seg).unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "snapshot_id": "0192f000-baseline-test",
+            "claim_count": 2,
+        }))
+        .unwrap();
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT,
+            &payload,
+        )
+        .build();
+        w.append(header, payload).await.unwrap();
+        drop(w);
+        let _ = join.await;
+        assert_eq!(
+            scan_for_prior_baseline_snapshot(dir.path()).as_deref(),
+            Some("0192f000-baseline-test")
+        );
+    }
+
+    #[tokio::test]
+    async fn baseline_scan_ignores_non_baseline_frames() {
+        // A segment carrying only a non-0xB3 frame yields None — the
+        // exactly-once gate must not trip on unrelated events.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (w, join) = crate::wal::writer::spawn(seg).unwrap();
+        let payload = serde_json::to_vec(&serde_json::json!({"x": 1})).unwrap();
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_RAW_TEXT, &payload)
+                .build();
+        w.append(header, payload).await.unwrap();
+        drop(w);
+        let _ = join.await;
+        assert!(scan_for_prior_baseline_snapshot(dir.path()).is_none());
     }
 }

@@ -683,11 +683,13 @@ pub const EVENT_TYPE_PROFILE_SUPERSEDED: u8 = 0xB2;
 /// no `EmbedProvider` is wired into the seed migration path yet
 /// (Phase 4 of the embed-wire plan).
 ///
-/// **NOT YET EMITTED.** This constant reserves the code for the Phase-3
-/// emitter; the daemon today never writes a frame with `event_type =
-/// 0xB3`. Validation tooling (`needs_immediate_sync`, the band-membership
-/// check below) treats it correctly so the emitter can land without
-/// touching the durability surface.
+/// Emitted by `neoth profile seed-baseline` (`cli/profile.rs::
+/// run_seed_baseline`) — a one-shot operator/onboarding command that
+/// reads every active `idx_profile` claim, hashes each, and writes this
+/// frame once (exactly-once gated via a WAL scan; refuses while the
+/// daemon is live so the single-writer invariant holds). The
+/// `embedding_b64` field stays `null` until the embed-wire Phase-4
+/// follow-up populates it.
 pub const EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT: u8 = 0xB3;
 
 /// Stage-5 guard rejected an entire delta. Audit-trail row that records
