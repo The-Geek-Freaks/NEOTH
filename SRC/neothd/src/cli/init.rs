@@ -284,6 +284,12 @@ pub struct WizardState {
     /// FreedomConfig surface.
     #[serde(default)]
     pub auto_update: crate::config::AutoUpdateConfig,
+    /// MV-01b prereq #3 (Session 28c): process-supervisor install state.
+    /// `step7d_supervisor` sets it when the operator opts into a
+    /// background auto-restart service. Serializes under `supervisor:` so
+    /// the daemon's `config.supervisor.enabled` read sees the same shape.
+    #[serde(default)]
+    pub supervisor: crate::config::SupervisorConfig,
     /// D-102 wizard step 7c (Session 21, 2026-05-23): per-plugin
     /// activation state populated by `step7c_wasm_plugin_activation`.
     /// Empty by default; the step writes
@@ -422,6 +428,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step7b_auto_update(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step7c_wasm_plugin_activation(&args, interactive, &neoth_dir, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
+    step7d_supervisor(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step8_summary(&args, &mut state)?;
 
@@ -3672,6 +3680,93 @@ fn step7c_wasm_plugin_activation(
     Ok(())
 }
 
+/// MV-01b prereq #3 wizard step 7d (Session 28c) — offer to install the
+/// OS-native process supervisor so NEOTH keeps running + auto-restarts
+/// (the prerequisite for self-update to actually activate a new binary
+/// + for the daemon to survive logout/crash).
+///
+/// Off by default (opt-in): a background auto-restart service is a real
+/// system change, so the operator says yes explicitly. Non-interactive
+/// runs skip it. The install is user-scoped (no root/admin) + best-effort
+/// — a failure warns + leaves `supervisor.enabled = false` rather than
+/// aborting onboarding.
+fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+    debug!("wizard step 7d: supervisor");
+
+    if !interactive {
+        // Default = disabled (WizardState::default). Just record the step.
+        state.steps_completed.push(72);
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        let kind = crate::daemon::supervisor::recommended_kind();
+        if matches!(kind, crate::config::SupervisorKind::None) {
+            println!("  [7d/9] supervisor: no supported supervisor for this OS — skipping");
+            state.steps_completed.push(72);
+            return Ok(());
+        }
+        let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(format!(
+                "[7d/9] Keep NEOTH running in the background + auto-restart it ({})? \
+                 Needed for auto-update to take effect; survives logout/crash. No root required.",
+                kind.as_str()
+            ))
+            .default(false)
+            .interact()
+            .context("supervisor install confirm")?;
+        if want {
+            match install_supervisor_now() {
+                Ok(installed) => {
+                    state.supervisor.enabled = true;
+                    state.supervisor.kind = installed;
+                    println!("  [7d/9] supervisor installed: {}", installed.as_str());
+                }
+                Err(e) => {
+                    warn!(error = %e, "supervisor install failed; leaving it disabled");
+                    state.supervisor.enabled = false;
+                    println!(
+                        "  [7d/9] supervisor install failed ({e}); NEOTH will run only while \
+                         `neoth serve` is open. You can retry later with `neoth supervisor install`."
+                    );
+                }
+            }
+        } else {
+            state.supervisor.enabled = false;
+            println!(
+                "  [7d/9] supervisor: skipped. Run NEOTH with `neoth serve`; auto-update will \
+                 stage updates but you'll restart manually to finish them."
+            );
+        }
+    }
+    #[cfg(not(feature = "wizard"))]
+    {
+        // Slim build: leave defaults (disabled).
+    }
+
+    state.steps_completed.push(72);
+    Ok(())
+}
+
+/// Resolve the current exe + config/home dirs and run the OS supervisor
+/// install. Split out so the dialoguer branch stays readable + so the
+/// path resolution is shared with a future `neoth supervisor` re-run.
+#[cfg(feature = "wizard")]
+fn install_supervisor_now() -> Result<crate::config::SupervisorKind> {
+    let exe = std::env::current_exe().context("locate current executable")?;
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let config_home = std::env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| home.join(".config"));
+    crate::daemon::supervisor::install(&exe, &config_home, &home)
+}
+
 fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     debug!("wizard step 8: summary");
     // Step 7 (autonomy) already pushed `7`; pushing again here corrupted
@@ -4847,6 +4942,7 @@ mod tests {
             autonomy: crate::permissions::AutonomyLevel::Standard,
             inference: crate::config::inference::InferenceTopology::default(),
             auto_update: crate::config::AutoUpdateConfig::default(),
+            supervisor: crate::config::SupervisorConfig::default(),
             plugins: crate::config::PluginsConfig::default(),
             keet_seed_phrase: None,
             pears_bearer_token: None,
@@ -4934,6 +5030,26 @@ mod tests {
         assert!(state.auto_update.auto_apply);
         // Step marker recorded.
         assert!(state.steps_completed.contains(&70));
+    }
+
+    #[test]
+    fn step7d_non_interactive_leaves_supervisor_disabled() {
+        // A background auto-restart service is a real system change —
+        // non-interactive onboarding MUST NOT install one. Pin the
+        // off-by-default contract + the step marker.
+        let mut state = fixture_state();
+        let args = InitArgs {
+            non_interactive: true,
+            accept_license: true,
+            ..Default::default()
+        };
+        step7d_supervisor(&args, false, &mut state).unwrap();
+        assert!(
+            !state.supervisor.enabled,
+            "non-interactive must not install a supervisor"
+        );
+        assert_eq!(state.supervisor.kind, crate::config::SupervisorKind::None);
+        assert!(state.steps_completed.contains(&72));
     }
 
     #[tokio::test]
