@@ -351,7 +351,7 @@ A1 binding: **PL-04 + PL-05 hard pre-condition before any EM-\* item merges.** A
 
 - [ ] **DOC-01** README + comparison table + 4 new SVGs in NEOTH cyber-CI palette. Refresh competitor table with v1.0 capabilities. **A1 binding: this is a NAMED v1.0 item, not afterthought — without it, launch post has no shareable assets.** — 3d
 - [ ] **DOC-02** Comprehensive operator-journey docs covering 7 segments from A4 (first 5 min / day 1 / month 1-3 / power user / multi-device / failure recovery / mastery). — 2.5d
-- [ ] **DOC-03** `docs/security/threat-model.md` (started in v0.2.1 hotfix as SX-07) expanded with all v1.0 surfaces. — 1.5d
+- [x] **DOC-03** `docs/security/threat-model.md` (started in v0.2.1 hotfix as SX-07) expanded with all v1.0 surfaces. — 1.5d — ✅ 2026-05-29 Session 28c. Expanded from 6 → **13 outbound surfaces**, each VERIFIED against code before documenting (anti-hallucination on a security doc): added web_search (`tools/web_search.rs` → Brave/Tavily), arXiv (`tools/arxiv.rs` → `export.arxiv.org`, anonymous), cloud TTS (`tools/tts.rs` → `api.elevenlabs.io`), self-updater (`updater/self_update.rs` → GitHub, SHA-256-verified), Discord (`channels/discord.rs`, send-only), Pears bridge (`channels/pears_bridge.rs`, localhost), Gmail (`email/gmail.rs` — flagged scaffold-only/not-network-live). TL;DR count + Section-1 table + new sub-sections 1.7–1.13 + Section-2 consent rows (web_search/arxiv/TTS/Discord/self-update) + Section-3 audit row for the new `0xD7/0xD8 MODEL_DOWNLOAD_*` frames. HF-01 sub-section flipped from "v0.9 planned" to "shipped" (gate + audit). Date/version bumped. Docs-only; all referenced modules + endpoints confirmed present in code.
 
 ### v1.0 — A1 "ADD as named v1.0 items" (operator wish-list AD)
 

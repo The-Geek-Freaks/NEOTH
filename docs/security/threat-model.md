@@ -1,6 +1,6 @@
 # NEOTH Threat Model
 
-**Last updated:** 2026-05-25 (v0.2.1 security hotfix)
+**Last updated:** 2026-05-29 (DOC-03 — road-to-v1.0 surface expansion)
 **Audience:** operators running NEOTH on a personal machine,
 security reviewers, and anyone reasoning about what NEOTH can and
 cannot do over the network or with local files.
@@ -14,23 +14,34 @@ flow](../../SECURITY.md).
 
 ## TL;DR
 
-NEOTH talks to the network through **six controlled surfaces**.
+NEOTH talks to the network through **thirteen controlled surfaces**.
 Every surface honours your `autonomy` setting in `freedom.yaml`,
 emits a WAL audit frame, and runs through the SSRF guard for any
-URL the operator hands it. Local file IO goes only to
-`~/.neoth/`, your Obsidian vault (if you opted in), and the WAL +
-SQLite views database.
+URL the operator hands it. Beyond the original six (web_fetch,
+provider APIs, n8n loopback, HuggingFace downloads, cluster gossip,
+Obsidian sync) the map now also covers the search APIs (web_search,
+arXiv), cloud TTS, the self-updater, the Discord channel, the Pears
+localhost bridge, and the (scaffold-only) Gmail surface. Local file
+IO goes only to `~/.neoth/`, your Obsidian vault (if you opted in),
+and the WAL + SQLite views database.
 
-## 1. The 6 outbound surfaces
+## 1. The 13 outbound surfaces
 
 | # | Surface | Code module | Where it goes | Status |
 |---|---|---|---|---|
 | 1 | `web_fetch` | `tools/web_fetch.rs` | Any operator-supplied URL | SX-01 SSRF-guarded |
 | 2 | Provider API calls | `providers/*.rs` | Cloud LLM endpoints (OpenAI, Anthropic via CLI, Gemini, Azure, AWS Bedrock) | Consent + autonomy gate; circuit-broken |
 | 3 | n8n localhost API | `n8n/api_client.rs` | `http://127.0.0.1:5678` only | Loopback-only by construction |
-| 4 | Hugging Face downloads | `providers/local_qwen.rs`, `clip_engine.rs`, `whisper.rs`, `ouro/adapter.rs` | `huggingface.co` model weights | One-time per model; consent gate (HF-01) in v0.9 |
+| 4 | Hugging Face downloads | `providers/local_qwen.rs`, `clip_engine.rs`, `whisper.rs`, `ouro/adapter.rs`, `cli/models.rs` | `huggingface.co` model weights | One-time per model; **HF-01 consent gate shipped** (`updater.allow_huggingface_downloads`) + `0xD7/0xD8` audit |
 | 5 | Cluster gossip | `cluster/*` | Operator-confirmed peers only | mTLS + per-peer confirmation; defer-mesh (Phase 5) |
 | 6 | Obsidian sync | `obsidian/*` | Local filesystem ONLY (operator's vault path) | No network |
+| 7 | Web search | `tools/web_search.rs` | `api.search.brave.com` / `api.tavily.com` | Fixed cloud endpoint; operator API key; autonomy gate |
+| 8 | arXiv search | `tools/arxiv.rs` | `export.arxiv.org/api/query` | Anonymous, read-only, fixed endpoint (no key) |
+| 9 | Cloud TTS | `tools/tts.rs` | `api.elevenlabs.io` | Cloud TTS; operator API key; opt-in |
+| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | SHA-256-verified artifacts; autonomy-gated apply |
+| 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | Send-only; operator bot token; CHANNEL_EGRESS audit |
+| 12 | Pears bridge | `channels/pears_bridge.rs` | `127.0.0.1` localhost only | Localhost-only by construction; per-session token |
+| 13 | Gmail (scaffold) | `email/gmail.rs` | `accounts.google.com` + `imap.gmail.com` | **Not network-live** — scaffold only; consent gate planned (EM-01b) |
 
 ### 1.1 `web_fetch` (SX-01 guarded)
 
@@ -107,10 +118,16 @@ features = ["tokio", "rustls-tls"]` — `openssl-sys` is gone from
 the dependency graph entirely (was a banned transitive via the
 0.3.x `native-tls` path).
 
-The HF-01 explicit consent gate (operator must confirm BEFORE
-the first download) lands in v0.9. Today, the download happens
-on first call to any local-inference provider that doesn't find
-its weights in `~/.neoth/models/`.
+**HF-01 shipped (2026-05-29):** `cli/models.rs::run_pull` reads
+`freedom.yaml::updater.allow_huggingface_downloads` (default `true`)
+BEFORE any fetch and refuses the download when it's `false`
+(air-gapped / bandwidth-controlled installs). A permitted download
+emits `0xD7 MODEL_DOWNLOAD_START` before + `0xD8
+MODEL_DOWNLOAD_COMPLETE` after, so exactly-what-was-fetched-when is
+in the audit chain. The implicit first-use download on a
+local-inference provider that doesn't find its weights in
+`~/.neoth/models/` still works (the gate is enforced on the explicit
+`neoth model pull` path).
 
 ### 1.5 Cluster gossip
 
@@ -132,6 +149,51 @@ The integration is one-directional: NEOTH writes notes the
 operator can then sync via whatever Obsidian sync service they
 already use (Obsidian Sync, Syncthing, git, iCloud Drive).
 
+### 1.7 Web search (`tools/web_search.rs`)
+
+Brave (`api.search.brave.com`) / Tavily (`api.tavily.com`) — FIXED
+provider endpoints, not operator-supplied URLs, so SSRF guarding is
+N/A. Requires the operator's API key; autonomy-gated like any cloud
+call. Read-only query API.
+
+### 1.8 arXiv search (`tools/arxiv.rs`)
+
+`http://export.arxiv.org/api/query` — a fixed, anonymous,
+read-only public XML API (`ARXIV_API_URL` constant, no API key).
+No operator-supplied URL, no credentials, no write path.
+
+### 1.9 Cloud TTS (`tools/tts.rs`)
+
+`https://api.elevenlabs.io/v1/text-to-speech/...` — fixed endpoint,
+operator API key (`--api-key` / `NEOTH_TTS_KEY`), opt-in. Sends the
+text to synthesise; returns audio bytes. No operator-supplied URL.
+
+### 1.10 Self-updater (`updater/self_update.rs`)
+
+`api.github.com` releases + the GitHub release CDN. Downloaded
+artifacts are SHA-256-verified against the published companion hash
+before any swap; the APPLY step is autonomy-gated. The check itself
+is read-only release-metadata.
+
+### 1.11 Discord channel (`channels/discord.rs`)
+
+`discord.com/api` — SEND-only outbound from the operator's bot
+token. Inbound is gateway-driven, not an outbound surface. Every
+send is audited via `CHANNEL_EGRESS` (`0x33`).
+
+### 1.12 Pears bridge (`channels/pears_bridge.rs`)
+
+Localhost-only by construction (`127.0.0.1`) — a per-session
+bearer-token bridge to a co-located Pears/Keet process. No
+public-network egress; same trust class as the n8n loopback.
+
+### 1.13 Gmail (`email/gmail.rs`) — scaffold only
+
+`accounts.google.com` OAuth + `imap.gmail.com:993`. **NOT
+network-live** — the module is a scaffold (EM-01b); no live OAuth /
+IMAP path ships today. A consent gate is planned before it goes
+live. Listed here so the surface is mapped before it activates.
+
 ## 2. Consent gates per `AutonomyLevel`
 
 `freedom.yaml::autonomy` sets the default trust level. The
@@ -150,7 +212,12 @@ consults this on every outbound surface.
 | Provider API call (cloud) | confirm | ✅ | ✅ | ✅ |
 | Provider API call (local in-process) | ✅ | ✅ | ✅ | ✅ |
 | n8n localhost call | ✅ | ✅ | ✅ | ✅ |
-| HF model download | confirm | confirm | confirm | confirm (HF-01 v0.9) |
+| Web search (Brave/Tavily) | confirm | ✅ | ✅ | ✅ |
+| arXiv search (anonymous) | confirm | ✅ | ✅ | ✅ |
+| Cloud TTS (ElevenLabs) | confirm | ✅ | ✅ | ✅ |
+| Discord send | confirm | ✅ | ✅ | ✅ |
+| Self-update apply | confirm | confirm | confirm | confirm |
+| HF model download | gated by `updater.allow_huggingface_downloads` (HF-01 shipped) — config boolean, not per-autonomy | | | |
 | Cluster gossip emit | per-peer confirm | per-peer confirm | per-peer confirm | per-peer confirm |
 | Profile-claim apply | confirm | confirm | confirm | ✅ |
 
@@ -175,6 +242,7 @@ constants in `wal::events`:
 | Provider call (success) | `PROVIDER_REQUEST` + `PROVIDER_RESPONSE` | `0x20`, `0x21` | as above |
 | Provider call (circuit open) | `PROVIDER_ERROR` | `0x22` | as above |
 | Provider call (429 quota) | `PROVIDER_QUOTA_EXCEEDED` | `0x24` | `neoth wal show --type provider_quota_exceeded` |
+| HF model download (start/done) | `MODEL_DOWNLOAD_START` / `MODEL_DOWNLOAD_COMPLETE` | `0xD7`, `0xD8` | `neoth wal show --type model_download_start` (HF-01) |
 | Channel inbound (Telegram, etc.) | `CHANNEL_INGRESS` | `0x32` | `neoth wal show --type channel_ingress` |
 | Channel outbound | `CHANNEL_EGRESS` | `0x33` | as above |
 | Inbound sanitised | `INGRESS_SANITIZED` | `0x36` | `neoth wal show --type ingress_sanitized` |
