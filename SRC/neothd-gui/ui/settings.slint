@@ -383,6 +383,11 @@ export component SettingsView inherits Rectangle {
     /// string means "no sessions yet — operator has not run `neoth
     /// code` on this machine".
     in property <string> kanban-session-summary: "";
+    /// HO-02: whether a Cerebellum hemisphere is bound (wizard step 5d).
+    /// `false` surfaces a warning banner in the Code Sessions tab —
+    /// without a Cerebellum the decompose step can't run, so `neoth code`
+    /// is degraded. Defaults true so a probe failure doesn't false-alarm.
+    in property <bool> cerebellum-bound: true;
     /// Step 5 (2026-05-20): currently-focused task. Operator clicks a
     /// card → property updates → detail pane below the board renders
     /// title / hemisphere / status. Empty string hides the pane.
@@ -717,6 +722,27 @@ export component SettingsView inherits Rectangle {
                     title: "Code Sessions";
                     subtitle: "Hermes-style autonomous coding workflow. Decompose a prompt with Cerebellum, dispatch tasks to Left (fast) + Right (deep) hemispheres, watch the kanban board fill.";
                     mirrors-slash: "/code <prompt>   |   neoth kanban {list,show,task,move,assign,comment,archive,watch,review}";
+                }
+
+                // HO-02: no-Cerebellum fallback banner. Without a bound
+                // Cerebellum the decompose step can't run, so `neoth code`
+                // silently produces nothing — surface the fix loudly.
+                if !root.cerebellum-bound: Rectangle {
+                    background: Theme.bg-card;
+                    border-radius: Theme.radius-card;
+                    border-width: 1px;
+                    border-color: Theme.accent-pink;
+                    height: txt.preferred-height + 2 * Theme.space-base;
+                    txt := Text {
+                        x: Theme.space-base;
+                        width: parent.width - 2 * Theme.space-base;
+                        text: "⚠  No Cerebellum bound — run wizard step 5d (`neoth hemispheres set --role cerebellum --provider <p>`) to enable autonomous decomposition. `neoth code` can't decompose prompts until then.";
+                        font-family: Theme.font-mono;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.accent-pink;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                    }
                 }
 
                 // Session summary + refresh button. Empty

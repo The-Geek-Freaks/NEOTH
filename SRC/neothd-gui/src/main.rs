@@ -91,6 +91,11 @@ struct KanbanBoardSnapshot {
     done: Vec<KanbanTaskRow>,
     feed: Vec<KanbanFeedRow>,
     summary: String,
+    /// HO-02: whether a Cerebellum hemisphere is bound. `None` on every
+    /// degraded path (no binary / list-or-show failure) so the UI does
+    /// NOT false-alarm; `Some(bool)` only on the success path where we
+    /// actually probed `neoth hemispheres show`. apply maps None→true.
+    cerebellum_bound: Option<bool>,
 }
 
 impl KanbanBoardSnapshot {
@@ -1346,7 +1351,49 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
             _ => snap.backlog.push(row),
         }
     }
+    // HO-02: only probe on the success path (we have a working binary).
+    snap.cerebellum_bound = Some(probe_cerebellum_bound(&bin));
     snap
+}
+
+/// HO-02: probe whether a Cerebellum provider is bound. Runs
+/// `neoth hemispheres show --output json` and returns true UNLESS we can
+/// positively determine the cerebellum role has no provider AND there is
+/// no single-mode fallback. Fail-safe (true) on any spawn/parse error so
+/// a transient probe failure never false-alarms the operator with the
+/// "no Cerebellum bound" banner.
+fn probe_cerebellum_bound(bin: &Path) -> bool {
+    let out = spawn_neothd_plain(bin)
+        .arg("hemispheres")
+        .arg("show")
+        .arg("--output")
+        .arg("json")
+        .output();
+    let stdout = match out {
+        Ok(o) if o.status.success() => o.stdout,
+        _ => return true, // fail-safe: don't alarm when the probe can't run
+    };
+    let v: serde_json::Value = match serde_json::from_slice(&stdout) {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+    // single-mode: every role routes to the single fallback provider.
+    if v.get("single_provider_fallback")
+        .and_then(|x| x.as_str())
+        .is_some()
+    {
+        return true;
+    }
+    // per-role mode: the cerebellum role must carry a provider string.
+    if let Some(roles) = v.get("roles").and_then(|x| x.as_array()) {
+        for r in roles {
+            if r.get("role").and_then(|x| x.as_str()) == Some("cerebellum") {
+                return r.get("provider").and_then(|x| x.as_str()).is_some();
+            }
+        }
+    }
+    // No fallback + no cerebellum role row → decompose can't run.
+    false
 }
 
 /// Pick #8 step 3 — Activity feed right rail. Subprocess
@@ -1472,6 +1519,9 @@ fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
     window.set_kanban_done(ModelRc::new(VecModel::from(snap.done)));
     window.set_kanban_feed(ModelRc::new(VecModel::from(snap.feed)));
     window.set_kanban_session_summary(snap.summary.into());
+    // HO-02: None (degraded / un-probed path) → true, so the banner only
+    // shows when we positively determined no Cerebellum is bound.
+    window.set_cerebellum_bound(snap.cerebellum_bound.unwrap_or(true));
 }
 
 /// R2-P0-1: GUI chat dispatch via the `neothd chat` subprocess. Returns
