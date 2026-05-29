@@ -302,7 +302,28 @@ async fn read_body_capped(req: Request<Incoming>) -> Result<Vec<u8>, HandlerOutc
 pub fn load_or_init_token(home: &std::path::Path) -> std::io::Result<String> {
     let path = home.join("n8n_api_token");
     if path.exists() {
-        let token = std::fs::read_to_string(&path)?.trim().to_string();
+        // SC-08: read raw bytes + DPAPI-unwrap on Windows (legacy
+        // plaintext files pass through + upgrade to wrapped on the next
+        // mint). Unix is plaintext mode-0600 as before.
+        let bytes = std::fs::read(&path)?;
+        #[cfg(windows)]
+        let token = {
+            let raw = if crate::wal::dpapi::is_wrapped(&bytes) {
+                crate::wal::dpapi::unprotect(&bytes)
+                    .map_err(|e| std::io::Error::other(format!("DPAPI unwrap n8n_api_token: {e}")))?
+            } else {
+                bytes
+            };
+            String::from_utf8(raw)
+                .map_err(|e| std::io::Error::other(format!("n8n_api_token UTF-8: {e}")))?
+                .trim()
+                .to_string()
+        };
+        #[cfg(not(windows))]
+        let token = String::from_utf8(bytes)
+            .map_err(|e| std::io::Error::other(format!("n8n_api_token UTF-8: {e}")))?
+            .trim()
+            .to_string();
         if token.len() == super::N8N_API_TOKEN_CHAR_LEN {
             return Ok(token);
         }
@@ -317,9 +338,34 @@ pub fn load_or_init_token(home: &std::path::Path) -> std::io::Result<String> {
     use base64::Engine;
     let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw);
     std::fs::create_dir_all(home)?;
-    std::fs::write(&path, &token)?;
-    #[cfg(unix)]
+    // SC-08: on Windows DPAPI-wrap the token (so a stolen file is useless
+    // outside the operator's account) + restrict the DACL; on Unix write
+    // plaintext mode-0600. Mirrors the WAL HMAC-key handling.
+    #[cfg(windows)]
     {
+        let payload = match crate::wal::dpapi::protect(token.as_bytes()) {
+            Ok(wrapped) => wrapped,
+            Err(e) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "DPAPI wrap unavailable; writing n8n_api_token plaintext with DACL fallback"
+                );
+                token.as_bytes().to_vec()
+            }
+        };
+        std::fs::write(&path, &payload)?;
+        if let Err(e) = crate::wal::win_acl::restrict_to_owner(&path) {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "n8n_api_token DACL restriction failed; token file inherits parent DACL"
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::write(&path, &token)?;
         use std::os::unix::fs::PermissionsExt;
         let mut perms = std::fs::metadata(&path)?.permissions();
         perms.set_mode(0o600);

@@ -518,6 +518,22 @@ const CHECK_DOCS: &[CheckDoc] = &[
               (understand the privacy trade-off first — see `neoth privacy \
               audit`).",
     },
+    CheckDoc {
+        name: "n8n_api_token",
+        purpose: "SC-08 — when the n8n API is enabled, its bearer token \
+                  at `~/.neoth/n8n_api_token` is the key to the localhost \
+                  automation surface. On Windows it must be DPAPI-wrapped \
+                  (a copied file is useless outside the operator's \
+                  account); on Unix it must be mode-0600.",
+        common_failures: "A pre-SC-08 plaintext token still on disk \
+                         (Windows); a token file whose mode drifted off \
+                         0600 (Unix, e.g. restored from a backup).",
+        fix: "Delete `~/.neoth/n8n_api_token` and restart `neoth serve` — \
+              it re-mints the token DPAPI-wrapped (Windows) / mode-0600 \
+              (Unix). On Unix you can also just `chmod 600 \
+              ~/.neoth/n8n_api_token`. To remove the surface entirely set \
+              `n8n_api.enabled: false`.",
+    },
 ];
 
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
@@ -729,7 +745,88 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_cluster_mdns_announcer(home),
         check_refusal_recovery(home),
         check_local_qwen_weights(home),
+        check_n8n_api_token(home),
     ]
+}
+
+/// SC-08 n8n API bearer-token at-rest protection. When the n8n API is
+/// enabled, its bearer token lives at `~/.neoth/n8n_api_token`. On
+/// Windows it must be DPAPI-wrapped (a stolen file is useless outside the
+/// operator's account); on Unix it must be mode-0600. PASS when n8n is
+/// disabled (no token to protect), the token isn't minted yet (created
+/// on next `neoth serve`), or it's protected. WARN when an enabled
+/// deployment has a plaintext (Windows) / world-readable (Unix) token.
+fn check_n8n_api_token(home: &Path) -> CheckOutcome {
+    let name = "n8n_api_token";
+    let enabled = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+        .map(|c| c.n8n_api.enabled)
+        .unwrap_or(false);
+    if !enabled {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: "n8n API disabled (freedom.yaml::n8n_api.enabled=false) — token check skipped"
+                .to_string(),
+        };
+    }
+    let path = home.join("n8n_api_token");
+    if !path.exists() {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Pass,
+            detail: "n8n API enabled; token not yet minted (created on next `neoth serve`)"
+                .to_string(),
+        };
+    }
+    let Ok(bytes) = std::fs::read(&path) else {
+        return CheckOutcome {
+            name,
+            status: CheckStatus::Warn,
+            detail: format!("n8n_api_token unreadable at {}", path.display()),
+        };
+    };
+    #[cfg(windows)]
+    {
+        if crate::wal::dpapi::is_wrapped(&bytes) {
+            CheckOutcome {
+                name,
+                status: CheckStatus::Pass,
+                detail: "n8n_api_token present + DPAPI-wrapped (machine/user-bound)".to_string(),
+            }
+        } else {
+            CheckOutcome {
+                name,
+                status: CheckStatus::Warn,
+                detail: format!(
+                    "n8n_api_token at {} is PLAINTEXT — delete it; `neoth serve` re-mints it DPAPI-wrapped",
+                    path.display()
+                ),
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&path)
+            .map(|m| m.permissions().mode() & 0o777)
+            .unwrap_or(0o777);
+        if mode == 0o600 {
+            CheckOutcome {
+                name,
+                status: CheckStatus::Pass,
+                detail: format!("n8n_api_token present + mode 0600 ({} bytes)", bytes.len()),
+            }
+        } else {
+            CheckOutcome {
+                name,
+                status: CheckStatus::Warn,
+                detail: format!(
+                    "n8n_api_token at {} is mode {mode:o} — should be 0600 (chmod 600 it)",
+                    path.display()
+                ),
+            }
+        }
+    }
 }
 
 /// SPEC-04 local_qwen profile-extraction readiness. When `profile.
@@ -2350,14 +2447,45 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_eight() {
+    fn check_docs_listed_count_pinned_at_twenty_nine() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
         // coverage) is caught. Bumped to 26 in Session 21 for
         // `cluster mDNS announcer` (Bite #2 announcer state surface);
         // 27 in Session 28c for `refusal recovery` (SPEC-10);
-        // 28 in Session 28c for `local_qwen weights` (SPEC-04).
-        assert_eq!(CHECK_DOCS.len(), 28);
+        // 28 in Session 28c for `local_qwen weights` (SPEC-04);
+        // 29 in Session 28c for `n8n_api_token` (SC-08).
+        assert_eq!(CHECK_DOCS.len(), 29);
+    }
+
+    #[test]
+    fn n8n_token_check_passes_when_disabled() {
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.n8n_api.enabled = false;
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        let outcome = check_n8n_api_token(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("disabled"));
+    }
+
+    #[test]
+    fn n8n_token_check_passes_when_enabled_but_not_minted() {
+        let dir = tempdir().unwrap();
+        let mut cfg = crate::config::FreedomConfig::default();
+        cfg.n8n_api.enabled = true;
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            serde_yaml::to_string(&cfg).unwrap(),
+        )
+        .unwrap();
+        let outcome = check_n8n_api_token(dir.path());
+        assert_eq!(outcome.status, CheckStatus::Pass);
+        assert!(outcome.detail.contains("not yet minted"));
     }
 
     #[test]
@@ -2973,12 +3101,13 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 28 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // 29 checks: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
         // flapping + cluster registry (Phase 4 follow-on) + cluster
         // mDNS announcer (Session 21 bite #2) + refusal recovery
-        // (Session 28c, SPEC-10) + local_qwen weights (Session 28c, SPEC-04).
-        assert_eq!(outs.len(), 28);
+        // (Session 28c, SPEC-10) + local_qwen weights (Session 28c, SPEC-04)
+        // + n8n_api_token (Session 28c, SC-08).
+        assert_eq!(outs.len(), 29);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
