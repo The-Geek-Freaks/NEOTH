@@ -13,6 +13,13 @@
 //!
 //! `run_pipeline` is `async` because stage 3 (extract) hits the provider.
 //! Every other stage is pure-function over typed structs.
+//!
+//! ADV-10 Slice A: Stage 3 may return
+//! `Ok(PipelineRun::Skipped(PipelineSkip::QuotaExceeded { .. }))` when the
+//! provider returns HTTP 429, so a rate-limited provider does not surface
+//! as a generic `Err`. The graceful skip emits a
+//! `0xB9 PROFILE_EXTRACT_SKIPPED` audit frame and the caller treats it as
+//! "try again later" rather than a real failure.
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
@@ -55,15 +62,20 @@ pub enum PipelineSkip {
     /// provider gave a real error" — pre-fix this surfaced as a
     /// generic `Err` and the operator lost the provider + retry signal.
     /// A `0xB9 PROFILE_EXTRACT_SKIPPED` audit frame was emitted.
-    #[error(
-        "profile extraction skipped — provider `{provider}` rate-limited \
-         (retry_after_secs={retry_after_secs:?})"
-    )]
+    ///
+    /// The Display message intentionally omits `retry_after_secs` (typed
+    /// `Option<u64>` has no Display impl; Debug would leak Rust syntax
+    /// like `Some(42)` into operator-facing log lines via `%reason`). The
+    /// structured field stays available to callers + lives in the WAL
+    /// frame payload.
+    #[error("profile extraction skipped — provider `{provider}` rate-limited (HTTP 429)")]
     QuotaExceeded {
         /// `Provider::name()` of the throttled adapter (e.g. `"openai_api"`).
         provider: String,
         /// `Retry-After` seconds when the 429 carried that header; `None`
-        /// when the dispatcher fell back to the default backoff.
+        /// when the dispatcher fell back to the default backoff. Capped
+        /// at `quota::MAX_BACKOFF` (24h) to defend the WAL + downstream
+        /// schedulers against adversarial response headers.
         retry_after_secs: Option<u64>,
     },
 }
@@ -183,14 +195,40 @@ pub async fn run_pipeline(
         Ok(d) => d,
         Err(e) => {
             if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
-                let retry_after_secs = qe.retry_after.map(|d| d.as_secs());
-                let payload = serde_json::to_vec(&serde_json::json!({
+                // Cap `retry_after` at `MAX_BACKOFF` (24h) to match what
+                // `QuotaTracker::record_429` enforces — without the cap an
+                // adversarial server sending `Retry-After: 99999999` would
+                // land verbatim in the durable WAL + the Skip variant
+                // while the in-process tracker quietly clamps it. Apply
+                // the cap once at the emit site so the audit chain, the
+                // returned `PipelineSkip`, and the tracker all agree.
+                let retry_after_secs = qe
+                    .retry_after
+                    .map(|d| d.min(crate::providers::quota::MAX_BACKOFF).as_secs());
+                let payload = match serde_json::to_vec(&serde_json::json!({
                     "provider": qe.provider,
                     "retry_after_secs": retry_after_secs,
                     "trigger_event_id": trigger_event_id,
                     "ts_unix": now_unix,
-                }))
-                .unwrap_or_default();
+                })) {
+                    Ok(p) => p,
+                    Err(emit_err) => {
+                        // Best-effort: a serialize failure on primitive
+                        // fields is effectively impossible, but mirror the
+                        // explicit-match pattern `emit_extract_target_audit`
+                        // uses so a future field addition can't silently
+                        // truncate to an empty payload via
+                        // `unwrap_or_default()`.
+                        tracing::warn!(
+                            error = %emit_err,
+                            "serialise PROFILE_EXTRACT_SKIPPED payload failed — audit frame skipped"
+                        );
+                        return Ok(PipelineRun::Skipped(PipelineSkip::QuotaExceeded {
+                            provider: qe.provider.to_string(),
+                            retry_after_secs,
+                        }));
+                    }
+                };
                 let header = crate::wal::HeaderBuilder::new(
                     crate::wal::events::EVENT_TYPE_PROFILE_EXTRACT_SKIPPED,
                     &payload,
@@ -1149,10 +1187,11 @@ mod tests {
     #[tokio::test]
     async fn pipeline_skips_with_none_retry_when_429_carries_no_header() {
         // Pin that a 429 without `Retry-After` round-trips as
-        // `retry_after_secs: None` (the dispatcher's default-backoff
-        // fallback is a runtime concern; the WAL frame must carry the
-        // honest "no header was sent" signal).
-        let (_dir, mut conn, writer, join) = setup().await;
+        // `retry_after_secs: None` BOTH in the `Skip` variant AND on
+        // disk — the WAL frame must serialize JSON `null` (not `0`, not
+        // omitted) so downstream tooling can tell "no header sent" from
+        // "header said 0 seconds".
+        let (dir, mut conn, writer, join) = setup().await;
         let ts_ns = 1_778_803_200 * 1_000_000_000;
         insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
         let provider = QuotaErrorMock {
@@ -1178,6 +1217,83 @@ mod tests {
             PipelineRun::Skipped(PipelineSkip::QuotaExceeded {
                 retry_after_secs, ..
             }) => assert_eq!(retry_after_secs, None),
+            other => panic!("expected Skipped(QuotaExceeded), got {other:?}"),
+        }
+        drop(writer);
+        let _ = join.await;
+
+        // Walk the on-disk WAL to confirm the `None` case serialises as
+        // JSON `null` — the regression guard the prior test missed.
+        let seg = std::fs::read(dir.path().join("seg.wal")).unwrap();
+        let body = &seg[crate::wal::segment_header::parse_segment_header(&seg)
+            .unwrap()
+            .header_len()..];
+        let mut cursor = 0usize;
+        let mut found_skip = false;
+        while cursor < body.len() {
+            let Ok(dec) = crate::wal::frame::decode_frame(&body[cursor..]) else {
+                break;
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_EXTRACT_SKIPPED {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                assert_eq!(v["provider"], "quota_mock");
+                assert!(
+                    v["retry_after_secs"].is_null(),
+                    "expected null, got {}",
+                    v["retry_after_secs"]
+                );
+                assert_eq!(v["trigger_event_id"], 10);
+                found_skip = true;
+                break;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert!(
+            found_skip,
+            "0xB9 PROFILE_EXTRACT_SKIPPED frame must be in the WAL"
+        );
+    }
+
+    #[tokio::test]
+    async fn pipeline_caps_oversized_retry_after_at_max_backoff() {
+        // Adversarial server sends `Retry-After: 99999999` (~3 years). The
+        // tracker's `record_429` enforces MAX_BACKOFF (24h = 86400s); the
+        // emit site MUST apply the same cap so the durable WAL value
+        // does not diverge from what the in-process tracker actually
+        // honours. Without the cap, downstream schedulers reading the
+        // WAL frame would plan years-long backoffs while the tracker
+        // recovers in a day.
+        let (_dir, mut conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+        let provider = QuotaErrorMock {
+            retry_after_secs: Some(99_999_999),
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+        let out = run_pipeline(
+            &mut conn,
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        let cap = crate::providers::quota::MAX_BACKOFF.as_secs();
+        match out {
+            PipelineRun::Skipped(PipelineSkip::QuotaExceeded {
+                retry_after_secs, ..
+            }) => assert_eq!(retry_after_secs, Some(cap)),
             other => panic!("expected Skipped(QuotaExceeded), got {other:?}"),
         }
         drop(writer);

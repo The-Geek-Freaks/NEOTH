@@ -638,11 +638,16 @@ pub const EVENT_TYPE_COST_ESTIMATE_SHOWN: u8 = 0xA4;
 
 // ---- 0xB0..=0xBF  Hypothalamus / user-profile -----------------------------
 //
-// Single-writer band for `profile.apply` (SPEC_proactive_learning.md §1.3,
-// SPEC_profile_claim_guard.md §7). Every event in this band MUST be
-// emitted by the apply Effect Adapter — the gate is conventional in v0.1
-// (the wire header doesn't yet carry a `region_tag` field), Phase-2 wire-
-// format extension will enforce it cryptographically via the header.
+// Profile-pipeline band (SPEC_proactive_learning.md §1.3,
+// SPEC_profile_claim_guard.md §7). The original spec called this the
+// `profile.apply` "single-writer" band, but in practice multiple
+// profile-pipeline subsystems own slots in it: `profile::apply` emits
+// `0xB0`/`0xB1`/`0xB2`/`0xB4`, `cli/profile.rs` emits `0xB3` (seed-baseline
+// migration), the approval-gate emits `0xB5`/`0xB6`/`0xB7`, redaction
+// emits `0xB8`, and `profile::runner` emits `0xB9` (Stage-3 graceful 429
+// skip). Phase-2 wire-format extension will add a `region_tag` field that
+// can express which subsystem owns a write, but the apply-only
+// single-writer claim is no longer accurate today.
 
 /// One profile claim applied to the operator's profile state.
 /// Payload: `{extraction_id, field, value_json, confidence, evidence_event_ids,

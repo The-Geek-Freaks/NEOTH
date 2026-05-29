@@ -3387,6 +3387,22 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                         "channel profile pipeline applied post-reply"
                                     );
                                 }
+                                Ok(crate::profile::PipelineRun::Skipped(
+                                    reason @ crate::profile::PipelineSkip::QuotaExceeded { .. },
+                                )) => {
+                                    // ADV-10 review follow-up: escalate
+                                    // quota-exceeded to warn so persistent
+                                    // 429 suppression on the channel post-
+                                    // reply path is visible at the default
+                                    // log level (see cli/chat.rs for the
+                                    // matching split on the interactive
+                                    // path).
+                                    tracing::warn!(
+                                        channel = %channel_str_for_pipeline,
+                                        reason = %reason,
+                                        "channel profile pipeline quota-exceeded post-reply"
+                                    );
+                                }
                                 Ok(crate::profile::PipelineRun::Skipped(reason)) => {
                                     tracing::debug!(
                                         channel = %channel_str_for_pipeline,

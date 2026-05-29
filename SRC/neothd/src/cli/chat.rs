@@ -1976,6 +1976,20 @@ pub async fn run_chat_with(
                                     "profile pipeline applied post-reply"
                                 );
                             }
+                            Ok(crate::profile::PipelineRun::Skipped(
+                                reason @ crate::profile::PipelineSkip::QuotaExceeded { .. },
+                            )) => {
+                                // ADV-10 review follow-up: persistent 429
+                                // suppression must be observable at the
+                                // default log level — a quietly rate-limited
+                                // learn_provider that always lands here
+                                // would otherwise show no operator-visible
+                                // signal except the WAL frame.
+                                tracing::warn!(
+                                    reason = %reason,
+                                    "profile pipeline quota-exceeded post-reply"
+                                );
+                            }
                             Ok(crate::profile::PipelineRun::Skipped(reason)) => {
                                 tracing::debug!(reason = %reason, "profile pipeline skipped post-reply");
                             }
