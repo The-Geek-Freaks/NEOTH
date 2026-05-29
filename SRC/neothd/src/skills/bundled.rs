@@ -100,10 +100,7 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "omega_prime",
         include_str!("../../assets/skills/omega_prime/skill.yaml"),
     ),
-    (
-        "pme",
-        include_str!("../../assets/skills/pme/skill.yaml"),
-    ),
+    ("pme", include_str!("../../assets/skills/pme/skill.yaml")),
     (
         "prototype",
         include_str!("../../assets/skills/prototype/skill.yaml"),
@@ -279,7 +276,10 @@ mod tests {
             "pme",
             "max_plus_plus",
         ] {
-            assert!(ids.contains(persona), "LOWKEY persona `{persona}` not bundled");
+            assert!(
+                ids.contains(persona),
+                "LOWKEY persona `{persona}` not bundled"
+            );
             let (_, body) = BUNDLED_SKILLS
                 .iter()
                 .find(|(id, _)| *id == persona)
