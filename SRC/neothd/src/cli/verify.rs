@@ -54,8 +54,25 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
         .key
         .clone()
         .unwrap_or_else(compaction::default_key_path);
-    let key = compaction::load_or_init_key(&key_path)
-        .with_context(|| format!("load HMAC key from {}", key_path.display()))?;
+    let key = match compaction::load_or_init_key(&key_path) {
+        Ok(k) => k,
+        Err(e) => {
+            // SC-09: a load failure here is almost always a DPAPI unwrap
+            // failure after a machine swap / Windows reinstall / account
+            // switch — point the operator straight at the recovery path
+            // instead of a bare "load HMAC key" context.
+            anyhow::bail!(
+                "HMAC key at {} could not be loaded\n  cause: {e}\n  \
+                 If the cause mentions CryptUnprotectData / a DPAPI unwrap failure, the key is \
+                 bound to a DIFFERENT Windows user or machine (e.g. restored from a backup on \
+                 another box).\n  \
+                 Recovery (PLAN/RUNBOOK_dpapi_hmac_recovery.md): Tier 1 = re-wrap your plaintext \
+                 backup with `neoth security rewrap-hmac-key --source <backup>`; Tier 2/3 = rotate \
+                 or reset if no backup exists.",
+                key_path.display()
+            );
+        }
+    };
 
     let segments = if let Some(s) = args.segment.clone() {
         vec![s]

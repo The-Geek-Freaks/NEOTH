@@ -73,6 +73,31 @@ pub enum SecurityCommand {
     /// password manager / hardware token / sealed vault — NOT on the
     /// same disk as `~/.neoth`.
     BackupHmacKey(BackupHmacKeyArgs),
+    /// SC-09 Tier-1 recovery — re-wrap a plaintext HMAC key backup for
+    /// THIS machine/user and install it, OVERWRITING the current key.
+    ///
+    /// **When to run**: after a machine swap / Windows reinstall /
+    /// account switch, `neoth verify` fails because the DPAPI-wrapped
+    /// key can no longer be unwrapped (CryptUnprotectData error). Feed
+    /// the plaintext backup taken via `neoth security backup-hmac-key`
+    /// on the old host to this command — it DPAPI-re-wraps the key for
+    /// the new identity (Windows) / writes it mode-0600 (Unix), so the
+    /// existing compaction-marker audit chain verifies again. Stop the
+    /// daemon before running. See `PLAN/RUNBOOK_dpapi_hmac_recovery.md`.
+    RewrapHmacKey(RewrapHmacKeyArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct RewrapHmacKeyArgs {
+    /// Path to the plaintext HMAC key backup (produced by
+    /// `neoth security backup-hmac-key`). Its bytes are re-wrapped for
+    /// the current machine/user and installed over the live key.
+    #[arg(long, value_name = "PATH")]
+    pub source: PathBuf,
+    /// Override the `~/.neoth` home dir (mostly for tests). Defaults
+    /// to the operator's actual `~/.neoth`.
+    #[arg(long, value_name = "DIR")]
+    pub home: Option<PathBuf>,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -194,7 +219,58 @@ pub async fn run_security(args: SecurityArgs) -> Result<()> {
             Ok(())
         }
         SecurityCommand::BackupHmacKey(a) => run_backup_hmac_key(&a),
+        SecurityCommand::RewrapHmacKey(a) => run_rewrap_hmac_key(&a),
     }
+}
+
+/// SC-09 Tier-1 recovery: re-wrap a plaintext HMAC key backup for this
+/// machine + install it over the live key. Overwrites by design — the
+/// existing key is the broken/unreadable one the operator is replacing.
+/// Loud stderr so the operator sees exactly what happened.
+pub fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
+    let home = args
+        .home
+        .clone()
+        .unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
+
+    if !args.source.exists() {
+        anyhow::bail!(
+            "no plaintext key backup at {} — point --source at the file written by \
+             `neoth security backup-hmac-key` on the original machine",
+            args.source.display()
+        );
+    }
+    let raw = std::fs::read(&args.source)
+        .map_err(|e| anyhow::anyhow!("read key backup {}: {e}", args.source.display()))?;
+
+    let key_path = home.join("wal").join("hmac.key");
+    let replaced = key_path.exists();
+
+    // compaction::rewrap_key validates the 16-byte floor + DPAPI-wraps
+    // (Windows) / writes mode-0600 (Unix), overwriting any existing key.
+    crate::wal::compaction::rewrap_key(&key_path, &raw)?;
+
+    eprintln!();
+    eprintln!("[neoth security] HMAC KEY RE-WRAPPED FOR THIS MACHINE");
+    eprintln!("[neoth security]   source:  {}", args.source.display());
+    eprintln!("[neoth security]   key:     {}", key_path.display());
+    eprintln!(
+        "[neoth security]   bytes:   {} ({})",
+        raw.len(),
+        if replaced {
+            "replaced the existing key"
+        } else {
+            "installed (no prior key present)"
+        }
+    );
+    eprintln!("[neoth security]");
+    eprintln!("[neoth security] The key is now bound to the current user/machine (DPAPI on");
+    eprintln!("[neoth security] Windows, mode-0600 on Unix). Run `neoth verify` to confirm the");
+    eprintln!("[neoth security] compaction-marker audit chain verifies again.");
+    eprintln!("[neoth security] Delete the plaintext --source backup once verification passes.");
+
+    println!("hmac key re-wrapped: {}", key_path.display());
+    Ok(())
 }
 
 /// SC-09 (Session 28) — write the operator's WAL HMAC compaction key
@@ -910,5 +986,74 @@ mod tests {
             mode, 0o600,
             "backup file MUST be mode-0600 (operator-only); got {mode:o}"
         );
+    }
+
+    // ── SC-09: rewrap-hmac-key (Tier-1 recovery) ──────────────────────
+
+    #[test]
+    fn rewrap_refuses_missing_source() {
+        let home = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let args = RewrapHmacKeyArgs {
+            source: out.path().join("absent.key"),
+            home: Some(home.path().to_path_buf()),
+        };
+        let err = run_rewrap_hmac_key(&args).unwrap_err();
+        assert!(
+            err.to_string().contains("no plaintext key backup"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rewrap_refuses_weak_source_key() {
+        let home = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let src = out.path().join("weak.key");
+        write_file(&src, b"short"); // < 16 bytes
+        let args = RewrapHmacKeyArgs {
+            source: src,
+            home: Some(home.path().to_path_buf()),
+        };
+        let err = run_rewrap_hmac_key(&args).unwrap_err();
+        assert!(
+            err.to_string().contains("shorter than 16 bytes"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rewrap_installs_and_roundtrips_via_load() {
+        let home = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let src = out.path().join("backup.key");
+        let raw = vec![5u8; 32];
+        write_file(&src, &raw);
+        let args = RewrapHmacKeyArgs {
+            source: src,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_rewrap_hmac_key(&args).unwrap();
+        let key_path = home.path().join("wal").join("hmac.key");
+        let loaded = crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        assert_eq!(loaded, raw, "re-wrapped key must load back to the backup bytes");
+    }
+
+    #[test]
+    fn rewrap_overwrites_existing_live_key() {
+        let home = TempDir::new().unwrap();
+        seed_hmac_key(home.path()); // existing (different) key on disk
+        let out = TempDir::new().unwrap();
+        let src = out.path().join("backup.key");
+        let raw = vec![3u8; 32];
+        write_file(&src, &raw);
+        let args = RewrapHmacKeyArgs {
+            source: src,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_rewrap_hmac_key(&args).unwrap();
+        let key_path = home.path().join("wal").join("hmac.key");
+        let loaded = crate::wal::compaction::load_or_init_key(&key_path).unwrap();
+        assert_eq!(loaded, raw, "rewrap must overwrite the prior live key");
     }
 }

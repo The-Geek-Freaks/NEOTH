@@ -174,6 +174,39 @@ pub fn load_or_init_key(path: &Path) -> Result<Vec<u8>> {
     Ok(key)
 }
 
+/// SC-09 Tier-1 recovery: re-wrap an operator-supplied RAW HMAC key for
+/// THIS machine/user and install it at `path`, OVERWRITING any existing
+/// key file (the typical case: a key DPAPI-bound to a different Windows
+/// user/box after a restore, which `load_or_init_key` can no longer
+/// unwrap). The raw bytes come from a `neoth security backup-hmac-key`
+/// backup taken on the original host. On Windows the bytes are
+/// DPAPI-wrapped for the current user before writing (re-binding the
+/// restored key to this machine); on unix the file is written mode 0600.
+/// Refuses keys shorter than 16 bytes — the same weak-key floor as
+/// [`load_or_init_key`].
+///
+/// Run with the daemon stopped: there is a brief window where the key
+/// file is absent between removing the old file and writing the new one.
+pub fn rewrap_key(path: &Path, raw_key: &[u8]) -> Result<()> {
+    if raw_key.len() < 16 {
+        anyhow::bail!(
+            "refusing to install HMAC key shorter than 16 bytes ({} given) — \
+             a weak key undermines WAL tamper-evidence",
+            raw_key.len()
+        );
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create HMAC key parent {}", parent.display()))?;
+    }
+    if path.exists() {
+        std::fs::remove_file(path).with_context(|| {
+            format!("remove existing HMAC key at {} before re-wrap", path.display())
+        })?;
+    }
+    write_key_securely(path, raw_key)
+}
+
 /// On Windows: if the file is DPAPI-wrapped, unwrap. Otherwise return
 /// the bytes unchanged (legacy plaintext path). Linux: always return
 /// unchanged.
@@ -424,6 +457,39 @@ mod tests {
         load_or_init_key(&path).unwrap();
         let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn rewrap_key_refuses_short_key() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        let err = rewrap_key(&path, b"short").unwrap_err();
+        assert!(
+            err.to_string().contains("shorter than 16 bytes"),
+            "got: {err}"
+        );
+        assert!(!path.exists(), "no key file written when the key is rejected");
+    }
+
+    #[test]
+    fn rewrap_key_roundtrips_via_load() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        let raw = vec![7u8; 32];
+        rewrap_key(&path, &raw).unwrap();
+        let loaded = load_or_init_key(&path).unwrap();
+        assert_eq!(loaded, raw, "rewrapped key must load back to the same bytes");
+    }
+
+    #[test]
+    fn rewrap_key_overwrites_existing_key() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("hmac.key");
+        rewrap_key(&path, &[1u8; 32]).unwrap();
+        let restored = vec![9u8; 24];
+        rewrap_key(&path, &restored).unwrap();
+        let loaded = load_or_init_key(&path).unwrap();
+        assert_eq!(loaded, restored, "rewrap must overwrite the prior key");
     }
 
     #[test]
