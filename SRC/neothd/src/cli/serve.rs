@@ -2202,6 +2202,20 @@ pub(crate) struct PipelineHandlerDeps {
     pub(crate) views_conn: Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
 }
 
+/// SC-11 — derive the MCP `tool_allowlist` that scopes a single channel
+/// inbound from the routed skill. `None` (no skill matched this turn) lets
+/// the gate allow every tool; `Some(empty)` (the manifest default) also
+/// allows all; `Some(non-empty)` restricts the model to the listed tools.
+/// Extracted from the inline channel-handler derivation so the mapping is
+/// unit-testable in isolation — the handler closure itself is not directly
+/// callable. The same value flows into `run_mcp_dispatch_loop` exactly as
+/// on the `neoth chat` path, closing the channel-bypass gap.
+pub(crate) fn channel_skill_allowlist(
+    skill: Option<&crate::skills::schema::Skill>,
+) -> Option<Vec<String>> {
+    skill.map(|s| s.manifest.tool_allowlist.clone())
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -2621,46 +2635,60 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
                     .unwrap_or_default();
             let mode_hit = mode_registry.match_trigger(&sanitized_text);
-            let (skill_layer, used_skill_id): (Option<String>, Option<String>) =
-                if let Some(resolved) = mode_hit {
-                    let parent = installed_skills
-                        .iter()
-                        .find(|s| s.id() == resolved.skill_id);
+            // SC-11 (Session 28d) — the channel path now threads the
+            // matched skill's `tool_allowlist` into the MCP dispatch loop
+            // exactly like `cli/chat.rs`. Previously the channel/daemon
+            // path matched a skill for the SYSTEM PROMPT but passed `None`
+            // for the allowlist, so Telegram/Slack/WhatsApp inbound got
+            // ZERO skill-scoped tool restriction — the primary production
+            // deployment model bypassed the gate `neoth chat` enforced.
+            // A mode is a behaviour variant of its parent skill, so the
+            // PARENT skill's allowlist still applies when a mode is active.
+            let (skill_layer, used_skill_id, channel_skill_allowlist): (
+                Option<String>,
+                Option<String>,
+                Option<Vec<String>>,
+            ) = if let Some(resolved) = mode_hit {
+                let parent = installed_skills
+                    .iter()
+                    .find(|s| s.id() == resolved.skill_id);
+                info!(
+                    channel = channel_str,
+                    mode = %resolved.mode.id,
+                    skill = %resolved.skill_id,
+                    "mode activated via ModeRegistry (channel path)"
+                );
+                let layer = match parent {
+                    Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
+                        "{}\n\n{}",
+                        p.system_prompt(),
+                        resolved.mode.system_prompt_delta
+                    )),
+                    Some(p) => Some(p.system_prompt().to_string()),
+                    None if !resolved.mode.system_prompt_delta.is_empty() => {
+                        Some(resolved.mode.system_prompt_delta.clone())
+                    }
+                    None => None,
+                };
+                let allowlist = channel_skill_allowlist(parent);
+                (layer, None, allowlist)
+            } else {
+                let skill_match = crate::skills::route(&sanitized_text, &installed_skills);
+                if let Some(m) = &skill_match {
                     info!(
                         channel = channel_str,
-                        mode = %resolved.mode.id,
-                        skill = %resolved.skill_id,
-                        "mode activated via ModeRegistry (channel path)"
+                        skill = m.skill.id(),
+                        matched_keywords = ?m.matched_keywords,
+                        "skill activated (channel path)"
                     );
-                    let layer = match parent {
-                        Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
-                            "{}\n\n{}",
-                            p.system_prompt(),
-                            resolved.mode.system_prompt_delta
-                        )),
-                        Some(p) => Some(p.system_prompt().to_string()),
-                        None if !resolved.mode.system_prompt_delta.is_empty() => {
-                            Some(resolved.mode.system_prompt_delta.clone())
-                        }
-                        None => None,
-                    };
-                    (layer, None)
-                } else {
-                    let skill_match = crate::skills::route(&sanitized_text, &installed_skills);
-                    if let Some(m) = &skill_match {
-                        info!(
-                            channel = channel_str,
-                            skill = m.skill.id(),
-                            matched_keywords = ?m.matched_keywords,
-                            "skill activated (channel path)"
-                        );
-                    }
-                    let layer = skill_match
-                        .as_ref()
-                        .map(|m| m.skill.system_prompt().to_string());
-                    let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
-                    (layer, id)
-                };
+                }
+                let layer = skill_match
+                    .as_ref()
+                    .map(|m| m.skill.system_prompt().to_string());
+                let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+                let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
+                (layer, id, allowlist)
+            };
 
             let channel_mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
                 warn!(
@@ -2965,10 +2993,13 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     autonomy,
                     &writer,
                     None,
-                    // SC-11 — the channel/daemon dispatch path does not
-                    // route skills the way `neoth chat` does, so no
-                    // skill-scoped tool_allowlist applies here yet.
-                    None,
+                    // SC-11 (Session 28d) — the matched skill's
+                    // tool_allowlist now scopes the channel MCP gate the
+                    // same way it does on `neoth chat`. None only when no
+                    // skill matched this inbound (gate allows all);
+                    // Some(empty) also allows all; Some(non-empty)
+                    // enforces.
+                    channel_skill_allowlist.as_deref(),
                 )
                 .await
                 {
@@ -4063,5 +4094,71 @@ mod tests {
         };
         let err = run_serve(args).await.unwrap_err();
         assert!(err.to_string().contains("neoth init"));
+    }
+
+    // ── SC-11 channel-path tool_allowlist threading (Session 28d) ─────────
+    fn skill_with_allowlist(
+        id: &str,
+        kws: &[&str],
+        allow: &[&str],
+    ) -> crate::skills::schema::Skill {
+        crate::skills::schema::Skill {
+            manifest: crate::skills::schema::SkillManifest {
+                id: id.to_string(),
+                description: format!("test skill {id}"),
+                version: "1.0.0".to_string(),
+                trigger_keywords: kws.iter().map(|s| (*s).to_string()).collect(),
+                system_prompt: format!("you are {id}"),
+                tool_allowlist: allow.iter().map(|s| (*s).to_string()).collect(),
+                author: None,
+                tags: vec![],
+                homepage: None,
+                source: None,
+                modes: vec![],
+                enabled: true,
+            },
+            path: std::path::PathBuf::from(format!("/tmp/{id}/skill.yaml")),
+            content_hash: String::new(),
+        }
+    }
+
+    #[test]
+    fn channel_skill_allowlist_none_when_no_skill_matched() {
+        // No skill matched this inbound ⇒ gate allows every tool.
+        assert_eq!(channel_skill_allowlist(None), None);
+    }
+
+    #[test]
+    fn channel_skill_allowlist_some_empty_for_default_manifest() {
+        // A matched skill with the default (empty) allowlist ⇒ Some(empty),
+        // which the gate also treats as "allow all" — distinct from None
+        // but behaviourally equivalent at the gate.
+        let s = skill_with_allowlist("news", &["news"], &[]);
+        assert_eq!(channel_skill_allowlist(Some(&s)), Some(vec![]));
+    }
+
+    #[test]
+    fn channel_skill_allowlist_carries_restrictive_list() {
+        // The SC-11 regression guard: a matched skill's NON-EMPTY allowlist
+        // must survive to the dispatch loop, not be dropped to None like the
+        // pre-fix channel path did.
+        let s = skill_with_allowlist("ops", &["deploy"], &["fs.read", "shell.run"]);
+        assert_eq!(
+            channel_skill_allowlist(Some(&s)),
+            Some(vec!["fs.read".to_string(), "shell.run".to_string()])
+        );
+    }
+
+    #[test]
+    fn channel_route_then_allowlist_preserves_restriction_end_to_end() {
+        // Compose the exact channel derivation: route() picks the skill,
+        // channel_skill_allowlist() extracts its allowlist. A restrictive
+        // allowlist must reach the gate — proving the channel path no longer
+        // bypasses skill-scoped tool restriction.
+        let skills = vec![skill_with_allowlist("ops", &["deploy"], &["fs.read"])];
+        let m = crate::skills::route("please deploy the service", &skills)
+            .expect("skill should match 'deploy'");
+        let allow = channel_skill_allowlist(Some(m.skill));
+        assert_eq!(allow, Some(vec!["fs.read".to_string()]));
     }
 }
