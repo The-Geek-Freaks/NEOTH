@@ -223,7 +223,11 @@ jobs:
           COSIGN_EXPERIMENTAL: "1"
         run: |
           cd dist
-          for f in *.tar.gz; do
+          # Sign BOTH the Unix tarballs AND the Windows .zip archives —
+          # the prior loop covered only *.tar.gz, leaving every Windows
+          # release artifact unsigned (gremium quality-lens v1.0 blocker).
+          shopt -s nullglob
+          for f in *.tar.gz *.zip; do
             cosign sign-blob --yes "$f" --bundle "${f}.cosign.bundle"
           done
 
@@ -236,6 +240,7 @@ jobs:
           prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/*.tar.gz
+            dist/*.zip
             dist/*.sha256
             dist/SHA256SUMS
             dist/*.cosign.bundle

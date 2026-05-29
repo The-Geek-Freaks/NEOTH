@@ -3767,6 +3767,61 @@ fn install_supervisor_now() -> Result<crate::config::SupervisorKind> {
     crate::daemon::supervisor::install(&exe, &config_home, &home)
 }
 
+/// V03-08 — offer to grant cloud-egress consent inline at wizard end so
+/// the operator's first `neoth chat` doesn't hit a cold consent-failure.
+/// Returns `true` when consent was granted in-process (caller then skips
+/// the printed pre-grant hint). Interactive-TTY + `wizard`-feature only;
+/// every other path returns `false` (caller prints the hint).
+#[cfg(feature = "wizard")]
+fn try_inline_consent_grant(
+    args: &InitArgs,
+    provider_kind: Option<ProviderKind>,
+    provider_display: &str,
+) -> bool {
+    use std::io::IsTerminal;
+    let interactive = !args.non_interactive && std::io::stdin().is_terminal();
+    if !interactive {
+        return false;
+    }
+    let Some(pk) = provider_kind else {
+        return false;
+    };
+    let grant_now = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt(format!(
+            "Grant cloud-egress consent for `{provider_display}` now? \
+             (so your first `neoth chat` just works)"
+        ))
+        .default(true)
+        .interact()
+        .unwrap_or(false);
+    if !grant_now {
+        return false;
+    }
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    match crate::consent::grant(&home, pk) {
+        Ok(()) => {
+            println!("  ✓ cloud-egress consent granted for `{provider_display}`");
+            true
+        }
+        Err(e) => {
+            println!(
+                "  ! consent grant failed: {e} — run \
+                 `neoth consent grant {provider_display}` before chatting"
+            );
+            false
+        }
+    }
+}
+
+#[cfg(not(feature = "wizard"))]
+fn try_inline_consent_grant(
+    _args: &InitArgs,
+    _provider_kind: Option<ProviderKind>,
+    _provider_display: &str,
+) -> bool {
+    false
+}
+
 fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     debug!("wizard step 8: summary");
     // Step 7 (autonomy) already pushed `7`; pushing again here corrupted
@@ -3854,11 +3909,19 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
         )
     );
     if cloud_provider {
-        println!(
-            "\n  Consent gate (V03-08): `neoth chat` will prompt you to grant cloud-egress consent\n  \
-             for `{provider_display}` on first run. Pre-grant with:\n  \
-             `neoth consent grant {provider_display}`"
-        );
+        // V03-08 — don't just PRINT the consent command (a noob ignores
+        // it, runs `neoth chat`, hits an opaque consent-failure, and
+        // stops). Offer to grant it inline now so first chat just works.
+        // Interactive TTY only; non-interactive / decline / no-wizard
+        // falls back to the printed hint. `consent::grant` is idempotent.
+        let granted_inline = try_inline_consent_grant(args, state.provider_kind, provider_display);
+        if !granted_inline {
+            println!(
+                "\n  Consent gate (V03-08): `neoth chat` will prompt you to grant cloud-egress consent\n  \
+                 for `{provider_display}` on first run. Pre-grant with:\n  \
+                 `neoth consent grant {provider_display}`"
+            );
+        }
     }
     if !args.dry_run {
         println!("\nNext: neoth chat  |  neothd  |  neoth profile show");
@@ -4354,9 +4417,9 @@ async fn offer_cli_installs(
             }
         } else {
             let hint = match kind.install {
-                InstallStrategy::Npm { .. } => "Open a new shell or check your npm prefix.",
+                InstallStrategy::Npm { .. } => npm_path_hint(kind.binary),
                 InstallStrategy::ShellScript { .. } => {
-                    "Open a new shell or check the installer's reported install path."
+                    "Open a new shell or check the installer's reported install path.".to_string()
                 }
             };
             println!(
@@ -4380,6 +4443,28 @@ async fn offer_cli_installs(
     _antigravity: &mut Option<String>,
 ) -> Result<()> {
     Ok(())
+}
+
+/// Actionable "installed but not on PATH" guidance for an npm-installed
+/// CLI. On Windows `npm i -g` writes a `.cmd` shim to `%APPDATA%\npm`,
+/// which is NOT on PATH unless Node was installed via the official
+/// installer — the #1 silent dead-end for a noob who used `winget install
+/// OpenJS.NodeJS`. Give the exact shim path + a copy-paste PowerShell
+/// command to add it to the user PATH. Non-Windows: the generic prefix hint.
+#[cfg(feature = "wizard")]
+fn npm_path_hint(binary: &str) -> String {
+    if cfg!(windows) {
+        let appdata = std::env::var("APPDATA").unwrap_or_else(|_| "%APPDATA%".to_string());
+        format!(
+            "On Windows `npm i -g` writes the shim to {appdata}\\npm\\{binary}.cmd, which isn't on \
+             PATH by default. Add it (PowerShell, then open a NEW terminal):\n      \
+             [Environment]::SetEnvironmentVariable('Path', \
+             [Environment]::GetEnvironmentVariable('Path','User') + ';' + \"$env:APPDATA\\npm\", 'User')"
+        )
+    } else {
+        "Open a new shell, or check your npm prefix: `npm config get prefix` (its `bin/` must be on PATH)."
+            .to_string()
+    }
 }
 
 fn which_binary(name: &str) -> Option<String> {
