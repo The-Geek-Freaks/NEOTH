@@ -124,10 +124,15 @@ BEFORE any fetch and refuses the download when it's `false`
 (air-gapped / bandwidth-controlled installs). A permitted download
 emits `0xD7 MODEL_DOWNLOAD_START` before + `0xD8
 MODEL_DOWNLOAD_COMPLETE` after, so exactly-what-was-fetched-when is
-in the audit chain. The implicit first-use download on a
-local-inference provider that doesn't find its weights in
-`~/.neoth/models/` still works (the gate is enforced on the explicit
-`neoth model pull` path).
+in the audit chain. The **implicit** first-use download (a
+local-inference provider — `local_qwen` / `local_ouro` — that doesn't
+find its weights in cache) ALSO honours the gate as of 2026-05-29:
+`ensure_artifacts` reads `allow_huggingface_downloads` before any fetch
+and bails with an actionable error when it's `false`, so an air-gapped
+/ bandwidth-capped operator never triggers a silent ~3 GB download.
+(Audit caveat: the implicit path does not yet emit `0xD7/0xD8` — it has
+no WAL writer handle in scope; the explicit `neoth model pull` path
+does. Wiring the implicit-path audit frame is a tracked follow-up.)
 
 ### 1.5 Cluster gossip
 

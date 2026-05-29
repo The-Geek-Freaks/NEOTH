@@ -290,6 +290,27 @@ impl LocalQwenAdapter {
             return Ok(());
         }
 
+        // HF-01 — honour the operator's HuggingFace-download policy on the
+        // IMPLICIT first-use download path too (the explicit `neoth model
+        // pull` already gates on this). An air-gapped / bandwidth-capped /
+        // firewalled operator sets `updater.allow_huggingface_downloads =
+        // false`; refuse the silent ~3 GB fetch with an actionable error
+        // instead of reaching out anyway. Best-effort config read; absent
+        // config defaults permissive (matches the serde default `true`).
+        let allow_hf = crate::config::FreedomConfig::load_from_default_path()
+            .map(|c| c.updater.allow_huggingface_downloads)
+            .unwrap_or(true);
+        if !allow_hf {
+            anyhow::bail!(
+                "Hugging Face downloads are disabled \
+                 (freedom.yaml::updater.allow_huggingface_downloads = false), but the local_qwen \
+                 provider needs to fetch its weights from {}. Set it to true, pre-place the \
+                 artifacts under {}, or run `neoth model pull` on a connected machine.",
+                self.repo,
+                self.cache_dir.display(),
+            );
+        }
+
         // L-14 disk-space pre-flight. Bypassable via env var for
         // CI / sandbox scenarios where the OS-reported free space
         // is unreliable (tmpfs, overlayfs, etc).

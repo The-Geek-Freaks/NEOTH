@@ -237,6 +237,24 @@ impl LocalOuroAdapter {
             info!(repo = %self.repo, cache = %self.cache_dir.display(), "Ouro artifacts already cached");
             return Ok(());
         }
+        // HF-01 — honour the operator's HuggingFace-download policy on the
+        // implicit first-use path (mirrors local_qwen + the explicit
+        // `neoth model pull`). Refuse the silent fetch when the operator
+        // disabled HF downloads. Best-effort read; absent config = default
+        // permissive.
+        let allow_hf = crate::config::FreedomConfig::load_from_default_path()
+            .map(|c| c.updater.allow_huggingface_downloads)
+            .unwrap_or(true);
+        if !allow_hf {
+            anyhow::bail!(
+                "Hugging Face downloads are disabled \
+                 (freedom.yaml::updater.allow_huggingface_downloads = false), but the local_ouro \
+                 provider needs to fetch its weights from {}. Set it to true, pre-place the \
+                 artifacts under {}, or run `neoth model pull` on a connected machine.",
+                self.repo,
+                self.cache_dir.display(),
+            );
+        }
         if std::env::var("NEOTH_OURO_SKIP_DISK_PREFLIGHT")
             .ok()
             .as_deref()
