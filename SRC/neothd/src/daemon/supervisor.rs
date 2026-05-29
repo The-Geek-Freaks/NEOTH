@@ -261,6 +261,42 @@ pub fn run_supervisor_loop(exe: &Path) -> Result<()> {
     }
 }
 
+// ── restart contract (MV-01b #5 follow) ───────────────────────────────
+//
+// After an operator-confirmed self-update swaps the binary on disk, the
+// RUNNING daemon still executes the old image. With a supervisor
+// installed, the daemon exits → the supervisor relaunches onto the new
+// binary. The apply path drops a `restart.request` marker; the daemon's
+// watcher consumes it + triggers a graceful drain+exit. Stop (as opposed
+// to restart) goes through the supervisor's own command (`neoth
+// supervisor uninstall` / `systemctl --user stop` / Task end), NOT an
+// exit code — so a plain restart needs no exit-code juggling.
+
+/// `~/.neoth/restart.request` — the cross-process "please restart"
+/// marker the apply path writes + the daemon watcher consumes.
+pub fn restart_request_path(neoth_home: &Path) -> PathBuf {
+    neoth_home.join("restart.request")
+}
+
+/// Write the restart-request marker (apply path). Best-effort caller
+/// decides; this returns the IO error so the CLI can warn.
+pub fn request_restart(neoth_home: &Path) -> std::io::Result<()> {
+    std::fs::write(restart_request_path(neoth_home), b"restart\n")
+}
+
+/// Consume the restart-request marker: returns `true` (and removes the
+/// file) when a restart was requested, `false` otherwise. The daemon
+/// watcher polls this.
+pub fn take_restart_request(neoth_home: &Path) -> bool {
+    let path = restart_request_path(neoth_home);
+    if path.exists() {
+        let _ = std::fs::remove_file(&path);
+        true
+    } else {
+        false
+    }
+}
+
 fn write_unit(path: &Path, body: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -369,6 +405,24 @@ mod tests {
         assert!(should_restart(Some(1)), "crash exit = restart");
         assert!(should_restart(Some(101)), "panic abort = restart");
         assert!(should_restart(None), "signal-killed = restart");
+    }
+
+    #[test]
+    fn restart_request_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        // No marker yet.
+        assert!(!take_restart_request(home));
+        // Apply path writes it.
+        request_restart(home).unwrap();
+        assert!(restart_request_path(home).exists());
+        // Watcher consumes it exactly once (removes the file).
+        assert!(take_restart_request(home), "first take sees the request");
+        assert!(!take_restart_request(home), "second take is clean");
+        assert!(
+            !restart_request_path(home).exists(),
+            "marker removed on take"
+        );
     }
 
     #[test]

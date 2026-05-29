@@ -1814,9 +1814,40 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // turns up a stale tail. Treating writer death as fatal lets a
     // process supervisor (systemd / Windows Service Manager / a bash
     // `while true; do neothd serve; done` loop) restart cleanly.
+    // ── MV-01b restart contract ────────────────────────────────────────
+    // After an operator-confirmed self-update swaps the binary on disk,
+    // the apply path drops `~/.neoth/restart.request`. This watcher polls
+    // for it + signals a graceful drain+exit so the supervisor relaunches
+    // onto the NEW binary. No-op without a supervisor (the daemon would
+    // just exit + not come back, so the apply path only writes the marker
+    // when `config.supervisor.enabled`). Stop (vs restart) is the
+    // supervisor's own command, not this path.
+    let restart_notify = std::sync::Arc::new(tokio::sync::Notify::new());
+    let restart_watcher = {
+        let notify = std::sync::Arc::clone(&restart_notify);
+        tokio::spawn(async move {
+            let home = crate::config::FreedomConfig::default_neoth_home();
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(5));
+            ticker.tick().await; // burn immediate
+            loop {
+                ticker.tick().await;
+                if crate::daemon::supervisor::take_restart_request(&home) {
+                    notify.notify_one();
+                    break;
+                }
+            }
+        })
+    };
+
     let writer_died = tokio::select! {
         biased;
         _ = shutdown::wait_for_signal() => false,
+        _ = restart_notify.notified() => {
+            info!(
+                "restart requested (self-update binary swap); draining + exiting for supervisor relaunch"
+            );
+            false
+        }
         result = &mut writer_join => {
             match result {
                 Ok(()) => warn!(
@@ -1830,6 +1861,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             true
         }
     };
+    restart_watcher.abort();
+    let _ = restart_watcher.await;
     if writer_died {
         info!("WAL writer death detected; aborting channels + exiting");
     } else {

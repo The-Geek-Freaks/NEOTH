@@ -159,6 +159,7 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
                         )
                         .await;
                         render_self_apply(&outcome, output);
+                        maybe_request_restart();
                         return Ok(());
                     }
                     Err(e) => {
@@ -221,7 +222,32 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
     emit_self_update_applied(&outcome, repo, target, "manual").await;
 
     render_self_apply(&outcome, output);
+    maybe_request_restart();
     Ok(())
+}
+
+/// MV-01b restart contract: after a successful swap, if a supervisor is
+/// installed (`config.supervisor.enabled`), drop the `restart.request`
+/// marker so a RUNNING daemon picks up the new binary on its next watcher
+/// tick (it drains + exits → the supervisor relaunches). No-op when no
+/// supervisor is configured (an exit would just leave the daemon down).
+fn maybe_request_restart() {
+    let enabled = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.supervisor.enabled)
+        .unwrap_or(false);
+    if !enabled {
+        return;
+    }
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    match crate::daemon::supervisor::request_restart(&home) {
+        Ok(()) => {
+            info!("restart requested — a running daemon will relaunch onto the new binary");
+            println!("  A running NEOTH daemon will restart shortly onto the new version.");
+        }
+        Err(e) => {
+            warn!(error = %e, "could not write restart.request marker (restart the daemon manually)");
+        }
+    }
 }
 
 fn now_unix_secs() -> u64 {
