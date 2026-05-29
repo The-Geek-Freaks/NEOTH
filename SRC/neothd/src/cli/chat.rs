@@ -226,6 +226,14 @@ pub async fn run_chat_with(
         println!("{line}");
     }
 
+    // UX-05 — Day-30 "unlock moment": once, after 30+ days, nudge the
+    // operator toward opt-in features they still haven't switched on.
+    // Self-suppresses via a marker file; naturally silent pre-30-days,
+    // when all features are active, or on a fresh install.
+    if let Some(banner) = crate::cli::unlock_moment::maybe_unlock_banner(&first_tour_home, &config) {
+        println!("{banner}");
+    }
+
     let wal_dir = FreedomConfig::default_wal_dir();
     let segment_path = args
         .wal_segment

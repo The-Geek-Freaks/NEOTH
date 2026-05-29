@@ -84,6 +84,7 @@ pub mod tour;
 pub mod tts;
 pub mod tweaks;
 pub mod undo;
+pub mod unlock_moment;
 pub mod update;
 pub mod updater;
 pub mod usage;
