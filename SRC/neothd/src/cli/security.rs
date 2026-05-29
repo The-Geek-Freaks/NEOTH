@@ -268,6 +268,8 @@ pub fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
     eprintln!("[neoth security] Windows, mode-0600 on Unix). Run `neoth verify` to confirm the");
     eprintln!("[neoth security] compaction-marker audit chain verifies again.");
     eprintln!("[neoth security] Delete the plaintext --source backup once verification passes.");
+    eprintln!("[neoth security] (If this command had failed mid-write, the key file could be");
+    eprintln!("[neoth security]  absent — just re-run with the same --source to restore it.)");
 
     println!("hmac key re-wrapped: {}", key_path.display());
     Ok(())
@@ -386,7 +388,12 @@ pub fn run_audit_collect(args: &AuditArgs) -> Result<AuditReport> {
 }
 
 fn check_hmac_key(home: &Path, report: &mut AuditReport) {
-    let key_path = home.join("wal_hmac_key");
+    // The HMAC key lives at `~/.neoth/wal/hmac.key` (see
+    // `compaction::default_key_path`, `doctor::check_hmac_key`,
+    // backup/rewrap). The audit previously looked at a flat
+    // `wal_hmac_key` path that never exists on a real install → it
+    // always reported a false FAIL for the tamper-evidence key.
+    let key_path = home.join("wal").join("hmac.key");
     if !key_path.exists() {
         report.push(
             "HMAC compaction key",
@@ -698,7 +705,7 @@ mod tests {
     #[test]
     fn hmac_key_empty_fails() {
         let tmp = TempDir::new().unwrap();
-        write_file(&tmp.path().join("wal_hmac_key"), b"");
+        write_file(&tmp.path().join("wal").join("hmac.key"), b"");
         let mut report = AuditReport::default();
         check_hmac_key(tmp.path(), &mut report);
         let c = &report.checks[0];
@@ -711,7 +718,7 @@ mod tests {
     fn hmac_key_with_secure_mode_passes() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("wal_hmac_key");
+        let path = tmp.path().join("wal").join("hmac.key");
         write_file(&path, b"0123456789abcdef");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
         let mut report = AuditReport::default();
@@ -725,7 +732,7 @@ mod tests {
     fn hmac_key_world_readable_fails() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("wal_hmac_key");
+        let path = tmp.path().join("wal").join("hmac.key");
         write_file(&path, b"0123456789abcdef");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         let mut report = AuditReport::default();
@@ -739,7 +746,7 @@ mod tests {
     #[test]
     fn hmac_key_with_content_passes_on_windows() {
         let tmp = TempDir::new().unwrap();
-        write_file(&tmp.path().join("wal_hmac_key"), b"0123456789abcdef");
+        write_file(&tmp.path().join("wal").join("hmac.key"), b"0123456789abcdef");
         let mut report = AuditReport::default();
         check_hmac_key(tmp.path(), &mut report);
         let c = &report.checks[0];
