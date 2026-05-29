@@ -38,7 +38,7 @@ and the WAL + SQLite views database.
 | 7 | Web search | `tools/web_search.rs` | `api.search.brave.com` / `api.tavily.com` | Fixed cloud endpoint; operator API key; autonomy gate |
 | 8 | arXiv search | `tools/arxiv.rs` | `export.arxiv.org/api/query` | Anonymous, read-only, fixed endpoint (no key) |
 | 9 | Cloud TTS | `tools/tts.rs` | `api.elevenlabs.io` | Cloud TTS; operator API key; opt-in |
-| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | SHA-256-verified artifacts; autonomy-gated apply |
+| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | SHA-256 **integrity**-checked (NOT signature-verified — see §1.10); operator-initiated apply only |
 | 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | Send-only; operator bot token; CHANNEL_EGRESS audit |
 | 12 | Pears bridge | `channels/pears_bridge.rs` | `127.0.0.1` localhost only | Localhost-only by construction; per-session token |
 | 13 | Gmail (scaffold) | `email/gmail.rs` | `accounts.google.com` + `imap.gmail.com` | **Not network-live** — scaffold only; consent gate planned (EM-01b) |
@@ -171,9 +171,21 @@ text to synthesise; returns audio bytes. No operator-supplied URL.
 ### 1.10 Self-updater (`updater/self_update.rs`)
 
 `api.github.com` releases + the GitHub release CDN. Downloaded
-artifacts are SHA-256-verified against the published companion hash
-before any swap; the APPLY step is autonomy-gated. The check itself
-is read-only release-metadata.
+artifacts are **SHA-256 integrity-checked** against the published
+companion hash before any swap. **This is a corruption/integrity check,
+NOT an authenticity control** — the hash and the binary come from the
+same GitHub release, so an attacker who compromises the release (or the
+account, or MITMs the CDN) controls both. There is no cryptographic
+signature today (no minisign/cosign/Sigstore). Because of that, the
+APPLY step is **operator-initiated only** (`neoth update --self --apply`,
+emits `0xD2`) — the daemon does NOT auto-apply its own binary
+unattended. A senior-dev panel (2026-05-29) blocked unattended
+self-replace pending: (1) an `Action::SelfBinaryReplace` permission gate
+(Confirm even at Full), (2) minisign signature verification with the
+public key pinned at compile time, (3) a daemon-path WAL emit that
+survives the single-writer guard, (4) a richer `0xD2` payload (archive +
+extracted-binary SHA, download URL, manual/auto trigger source). The
+check itself is read-only release-metadata.
 
 ### 1.11 Discord channel (`channels/discord.rs`)
 
