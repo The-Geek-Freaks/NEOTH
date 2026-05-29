@@ -1932,93 +1932,119 @@ pub async fn run_chat_with(
                  allow_cloud_fallback=false (operator chose privacy over learn)"
             );
         } else if let Some(learn_provider_ref) = learn_dispatch {
-            match crate::memory::store::open(&views_path) {
-                Ok(mut conn) => {
-                    let pipeline_fut = async {
-                        if let Err(e) =
-                            crate::memory::indexer::replay_once(&mut conn, &segment_path).await
-                        {
-                            tracing::warn!(
-                                error = %e,
-                                "indexer replay_once failed before profile pipeline; skipping learn"
-                            );
-                            return;
-                        }
-                        let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
-                        let extensions =
-                            crate::profile::extension_registry::TypedExtensionRegistry::load()
-                                .unwrap_or_default();
-                        match crate::profile::run_pipeline(
-                            &mut conn,
-                            &writer,
-                            learn_provider_ref,
-                            raw_event_id,
-                            2,
-                            &guard,
-                            &extensions,
-                            now_unix(),
-                            // ADV-03 Phase 5 (Session 24): gate context
-                            // None preserves pre-gate behaviour. Wiring
-                            // the chat-path gate context (autonomy +
-                            // is_tty + dialoguer confirm) is Phase 6+
-                            // CLI surface work tracked separately.
-                            None,
-                            derived_from_mirror_pipeline, // ADV-07
-                        )
-                        .await
-                        {
-                            Ok(crate::profile::PipelineRun::Applied { outcome, .. }) => {
-                                tracing::info!(
-                                    claims_applied = outcome.claims_applied,
-                                    claims_reinforced = outcome.claims_reinforced,
-                                    claims_superseded = outcome.claims_superseded,
-                                    idempotent_skip = outcome.idempotent_skip,
-                                    "profile pipeline applied post-reply"
-                                );
-                            }
-                            Ok(crate::profile::PipelineRun::Skipped(
-                                reason @ crate::profile::PipelineSkip::QuotaExceeded { .. },
-                            )) => {
-                                // ADV-10 review follow-up: persistent 429
-                                // suppression must be observable at the
-                                // default log level — a quietly rate-limited
-                                // learn_provider that always lands here
-                                // would otherwise show no operator-visible
-                                // signal except the WAL frame.
-                                tracing::warn!(
-                                    reason = %reason,
-                                    "profile pipeline quota-exceeded post-reply"
-                                );
-                            }
-                            Ok(crate::profile::PipelineRun::Skipped(reason)) => {
-                                tracing::debug!(reason = %reason, "profile pipeline skipped post-reply");
-                            }
-                            Err(e) => {
+            // ADV-10c (Session 28g+): pre-flight QuotaTracker check on
+            // the learn_provider. Without this, a persistently rate-
+            // limited learn_provider pays a full LLM round-trip EVERY
+            // post-reply turn only to be 429'd inside Stage 3 of
+            // `run_pipeline`. ADV-10 Slice A closed the silent-data-loss
+            // gap (the 0xB9 emit + Skip variant); this closes the
+            // wasted-cost gap upstream by skipping the call entirely
+            // while a backoff window is active. Soft-skip — log warn and
+            // continue, do NOT bail the chat turn (the operator already
+            // got their reply; profile-learn is a passive post-reply
+            // pass). Local providers always pass the check.
+            let learn_quota_path =
+                crate::config::FreedomConfig::default_neoth_home().join("quota.json");
+            let learn_tracker = crate::providers::quota::QuotaTracker::load_from(&learn_quota_path);
+            let learn_now = crate::providers::quota::now_unix();
+            let learn_backoff_remaining =
+                learn_tracker.backoff_remaining_for(learn_provider_ref.name(), learn_now);
+            if let Some(remaining) = learn_backoff_remaining {
+                tracing::warn!(
+                    provider = learn_provider_ref.name(),
+                    backoff_remaining_secs = remaining,
+                    "profile.learn pre-flight: learn_provider in 429 backoff — skipping pipeline (ADV-10c)"
+                );
+            }
+            if learn_backoff_remaining.is_none() {
+                match crate::memory::store::open(&views_path) {
+                    Ok(mut conn) => {
+                        let pipeline_fut = async {
+                            if let Err(e) =
+                                crate::memory::indexer::replay_once(&mut conn, &segment_path).await
+                            {
                                 tracing::warn!(
                                     error = %e,
-                                    "profile pipeline failed post-reply (non-fatal)"
+                                    "indexer replay_once failed before profile pipeline; skipping learn"
+                                );
+                                return;
+                            }
+                            let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
+                            let extensions =
+                                crate::profile::extension_registry::TypedExtensionRegistry::load()
+                                    .unwrap_or_default();
+                            match crate::profile::run_pipeline(
+                                &mut conn,
+                                &writer,
+                                learn_provider_ref,
+                                raw_event_id,
+                                2,
+                                &guard,
+                                &extensions,
+                                now_unix(),
+                                // ADV-03 Phase 5 (Session 24): gate context
+                                // None preserves pre-gate behaviour. Wiring
+                                // the chat-path gate context (autonomy +
+                                // is_tty + dialoguer confirm) is Phase 6+
+                                // CLI surface work tracked separately.
+                                None,
+                                derived_from_mirror_pipeline, // ADV-07
+                            )
+                            .await
+                            {
+                                Ok(crate::profile::PipelineRun::Applied { outcome, .. }) => {
+                                    tracing::info!(
+                                        claims_applied = outcome.claims_applied,
+                                        claims_reinforced = outcome.claims_reinforced,
+                                        claims_superseded = outcome.claims_superseded,
+                                        idempotent_skip = outcome.idempotent_skip,
+                                        "profile pipeline applied post-reply"
+                                    );
+                                }
+                                Ok(crate::profile::PipelineRun::Skipped(
+                                    reason @ crate::profile::PipelineSkip::QuotaExceeded { .. },
+                                )) => {
+                                    // ADV-10 review follow-up: persistent 429
+                                    // suppression must be observable at the
+                                    // default log level — a quietly rate-limited
+                                    // learn_provider that always lands here
+                                    // would otherwise show no operator-visible
+                                    // signal except the WAL frame.
+                                    tracing::warn!(
+                                        reason = %reason,
+                                        "profile pipeline quota-exceeded post-reply"
+                                    );
+                                }
+                                Ok(crate::profile::PipelineRun::Skipped(reason)) => {
+                                    tracing::debug!(reason = %reason, "profile pipeline skipped post-reply");
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "profile pipeline failed post-reply (non-fatal)"
+                                    );
+                                }
+                            }
+                        };
+                        match tokio::time::timeout(timeout, pipeline_fut).await {
+                            Ok(()) => {}
+                            Err(_elapsed) => {
+                                tracing::warn!(
+                                    timeout_secs = timeout.as_secs(),
+                                    "profile pipeline timed out post-reply; learning abandoned for this turn"
                                 );
                             }
                         }
-                    };
-                    match tokio::time::timeout(timeout, pipeline_fut).await {
-                        Ok(()) => {}
-                        Err(_elapsed) => {
-                            tracing::warn!(
-                                timeout_secs = timeout.as_secs(),
-                                "profile pipeline timed out post-reply; learning abandoned for this turn"
-                            );
-                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %views_path.display(),
+                            "open views.db failed for post-reply profile pipeline (non-fatal)"
+                        );
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        path = %views_path.display(),
-                        "open views.db failed for post-reply profile pipeline (non-fatal)"
-                    );
-                }
-            }
+            } // ADV-10c (Session 28g+): closes `if learn_backoff_remaining.is_none()`
         } // Session 24 fix #2: closes the `else if let Some(learn_provider_ref) = ...`
     }
 

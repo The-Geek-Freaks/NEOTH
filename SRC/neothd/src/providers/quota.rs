@@ -191,6 +191,25 @@ impl QuotaTracker {
             .unwrap_or(true)
     }
 
+    /// ADV-10c — the soft-skip pre-flight primitive: `Some(remaining_secs)`
+    /// when the provider is in an active 429 backoff window (caller should
+    /// skip the call + log a warning), `None` when the provider is healthy,
+    /// untracked, or never observed a 429. Distinct from `is_healthy`
+    /// because callers also want the operator-visible "wait N seconds"
+    /// signal without re-walking the map. `provider == "local_qwen"`
+    /// always returns `None` — local inference is never rate-limited and
+    /// the tracker carries no state for it.
+    pub fn backoff_remaining_for(&self, provider: &str, now_unix: u64) -> Option<u64> {
+        if provider == "local_qwen" {
+            return None;
+        }
+        let state = self.states.get(provider)?;
+        if state.is_healthy(now_unix) {
+            return None;
+        }
+        Some(state.backoff_remaining_secs(now_unix))
+    }
+
     /// Increment the per-day counter for a successful call. Rolls over
     /// the counter if midnight UTC has passed since `last_reset_unix`.
     /// Returns the new `requests_today` value.
@@ -460,5 +479,62 @@ mod tests {
             t.is_healthy("openai_api", after_window),
             "provider must be healthy once the backoff window has elapsed"
         );
+    }
+
+    // ── ADV-10c `backoff_remaining_for` pre-flight primitive ──────────
+
+    #[test]
+    fn adv10c_backoff_remaining_for_untracked_provider_is_none() {
+        let t = QuotaTracker::default();
+        assert_eq!(t.backoff_remaining_for("openai_api", 100), None);
+    }
+
+    #[test]
+    fn adv10c_backoff_remaining_for_local_qwen_is_always_none() {
+        // Even if some bug pushed state for local_qwen into the tracker,
+        // the pre-flight must NEVER claim the local provider is in backoff
+        // — local inference is not rate-limited.
+        let mut t = QuotaTracker::default();
+        t.record_429(
+            "local_qwen",
+            Some(std::time::Duration::from_secs(300)),
+            1_000,
+        );
+        assert_eq!(t.backoff_remaining_for("local_qwen", 1_100), None);
+    }
+
+    #[test]
+    fn adv10c_backoff_remaining_for_healthy_provider_is_none() {
+        let mut t = QuotaTracker::default();
+        t.record_success("openai_api", 1_000);
+        assert_eq!(t.backoff_remaining_for("openai_api", 1_100), None);
+    }
+
+    #[test]
+    fn adv10c_backoff_remaining_for_throttled_provider_returns_remaining_secs() {
+        let mut t = QuotaTracker::default();
+        t.record_429(
+            "openai_api",
+            Some(std::time::Duration::from_secs(60)),
+            1_000,
+        );
+        // 30s into the window — 30s remain (record_429 cap+min applied
+        // upstream; here we read it back).
+        let remaining = t.backoff_remaining_for("openai_api", 1_030);
+        assert!(
+            matches!(remaining, Some(r) if r == 30),
+            "expected Some(30) remaining at +30s into 60s window, got {remaining:?}"
+        );
+    }
+
+    #[test]
+    fn adv10c_backoff_remaining_for_returns_none_after_window_elapses() {
+        let mut t = QuotaTracker::default();
+        t.record_429(
+            "openai_api",
+            Some(std::time::Duration::from_secs(60)),
+            1_000,
+        );
+        assert_eq!(t.backoff_remaining_for("openai_api", 1_061), None);
     }
 }
