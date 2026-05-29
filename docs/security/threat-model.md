@@ -182,8 +182,10 @@ emits `0xD2`) — the daemon does NOT auto-apply its own binary
 unattended. A senior-dev panel (2026-05-29) blocked unattended
 self-replace pending: (1) ✅ `Action::SelfBinaryReplace` permission gate
 (Confirm even at Full) — SHIPPED; (2) signature verification before the
-swap — NEOTH already cosign-keyless-signs releases, wiring the
-`sigstore` verify into `apply_downloaded` is the open item; (3) a
+swap via `minisign-verify` (pure-Rust, fits the no-ring/no-openssl
+posture; the `sigstore` crate was probed + rejected for pulling
+native-tls/ring/prost) — wiring it into `apply_downloaded` + a minisign
+signing step in CI is the open item; (3) a
 daemon-path WAL emit that survives the single-writer guard — open
 (lands with the unattended task); (4) a richer `0xD2` payload —
 `archive_sha256` + `download_url` + `trigger_source` (manual/auto)
