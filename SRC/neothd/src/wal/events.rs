@@ -753,6 +753,18 @@ pub const EVENT_TYPE_PROFILE_DELTA_DECLINED: u8 = 0xB7;
 /// it preserved, and the audit frame mirrors that.
 pub const EVENT_TYPE_PROFILE_REDACT_BLOCKED: u8 = 0xB8;
 
+/// `0xB9 PROFILE_EXTRACT_SKIPPED` — the profile pipeline's Stage 3 LLM
+/// call returned HTTP 429 (rate-limit) so the pipeline gracefully
+/// skipped instead of propagating a generic error that would lose the
+/// provider + `Retry-After` signal. ADV-10 Slice A (Session 28g,
+/// gremium-unanimous rank 1).
+///
+/// Payload (JSON): `{ provider, retry_after_secs, trigger_event_id,
+/// ts_unix }`. `provider` is the static name (e.g. `"openai_api"`);
+/// `retry_after_secs` is `null` when the 429 carried no `Retry-After`
+/// header (the dispatcher then falls back to `DEFAULT_BACKOFF`).
+pub const EVENT_TYPE_PROFILE_EXTRACT_SKIPPED: u8 = 0xB9;
+
 // ---- 0xF0..=0xFF  Operator / system ---------------------------------------
 
 /// Daemon refused a WAL write because `~/.neoth/` exceeded the configured
@@ -1253,6 +1265,8 @@ const _: () = {
         || EVENT_TYPE_PROFILE_BASELINE_SNAPSHOT > 0xBF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_REDACT_BLOCKED < 0xB0
         || EVENT_TYPE_PROFILE_REDACT_BLOCKED > 0xBF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PROFILE_EXTRACT_SKIPPED < 0xB0
+        || EVENT_TYPE_PROFILE_EXTRACT_SKIPPED > 0xBF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -1431,6 +1445,10 @@ mod tests {
             ),
             ("PROFILE_DELTA_BLOCKED", EVENT_TYPE_PROFILE_DELTA_BLOCKED),
             ("PROFILE_REDACT_BLOCKED", EVENT_TYPE_PROFILE_REDACT_BLOCKED),
+            (
+                "PROFILE_EXTRACT_SKIPPED",
+                EVENT_TYPE_PROFILE_EXTRACT_SKIPPED,
+            ),
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),

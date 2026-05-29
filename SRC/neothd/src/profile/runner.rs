@@ -49,6 +49,23 @@ pub enum PipelineSkip {
     /// was emitted.
     #[error("operator declined delta at approval prompt")]
     ApprovalDeclined,
+    /// ADV-10 Slice A (Session 28g): the Stage 3 LLM call returned
+    /// HTTP 429 (rate-limit). Surfaced as a typed skip so the caller
+    /// can tell "provider rate-limited; try later" apart from "the
+    /// provider gave a real error" — pre-fix this surfaced as a
+    /// generic `Err` and the operator lost the provider + retry signal.
+    /// A `0xB9 PROFILE_EXTRACT_SKIPPED` audit frame was emitted.
+    #[error(
+        "profile extraction skipped — provider `{provider}` rate-limited \
+         (retry_after_secs={retry_after_secs:?})"
+    )]
+    QuotaExceeded {
+        /// `Provider::name()` of the throttled adapter (e.g. `"openai_api"`).
+        provider: String,
+        /// `Retry-After` seconds when the 429 carried that header; `None`
+        /// when the dispatcher fell back to the default backoff.
+        retry_after_secs: Option<u64>,
+    },
 }
 
 /// Outcome of one end-to-end run.
@@ -153,9 +170,51 @@ pub async fn run_pipeline(
 
     // Stage 3 — extract (LLM call). Short-circuits if no eligible
     // segments survive attribution.
-    let mut delta: ProfileDelta = extract_delta(provider, &attributed)
-        .await
-        .context("pipeline stage 3: profile.extract")?;
+    //
+    // ADV-10 Slice A: when the provider returns HTTP 429 (rate-limit), do
+    // NOT propagate a generic error — that would lose the provider +
+    // `Retry-After` signal and surface as a tracing::warn in the caller.
+    // Downcast `QuotaError` from the anyhow chain (anyhow walks
+    // `source()`; the same pattern is used in `cli::chat`'s three
+    // provider-error sites), emit a `0xB9 PROFILE_EXTRACT_SKIPPED` audit
+    // frame, and return `Ok(Skipped)` so the cron / chat-tail caller
+    // treats this as a clean "try again later" outcome.
+    let mut delta: ProfileDelta = match extract_delta(provider, &attributed).await {
+        Ok(d) => d,
+        Err(e) => {
+            if let Some(qe) = e.downcast_ref::<crate::providers::quota::QuotaError>() {
+                let retry_after_secs = qe.retry_after.map(|d| d.as_secs());
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "provider": qe.provider,
+                    "retry_after_secs": retry_after_secs,
+                    "trigger_event_id": trigger_event_id,
+                    "ts_unix": now_unix,
+                }))
+                .unwrap_or_default();
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_PROFILE_EXTRACT_SKIPPED,
+                    &payload,
+                )
+                .build();
+                if let Err(emit_err) = writer.append(header, payload).await {
+                    tracing::warn!(
+                        error = %emit_err,
+                        "PROFILE_EXTRACT_SKIPPED WAL append failed (best-effort audit frame)"
+                    );
+                }
+                tracing::warn!(
+                    provider = qe.provider,
+                    retry_after_secs = ?retry_after_secs,
+                    "profile extraction skipped — provider returned 429"
+                );
+                return Ok(PipelineRun::Skipped(PipelineSkip::QuotaExceeded {
+                    provider: qe.provider.to_string(),
+                    retry_after_secs,
+                }));
+            }
+            return Err(e).context("pipeline stage 3: profile.extract");
+        }
+    };
 
     // ADV-07: on a mirror-recovery turn, drop operator_preferences claims
     // before validation so the reframing-induced "preferences" never reach
@@ -980,6 +1039,147 @@ mod tests {
         .await
         .unwrap();
         assert!(matches!(out, PipelineRun::Applied { .. }));
+        drop(writer);
+        let _ = join.await;
+    }
+
+    // ── ADV-10 Slice A: HTTP 429 → graceful Stage-3 skip + WAL emit ────
+
+    struct QuotaErrorMock {
+        retry_after_secs: Option<u64>,
+    }
+
+    #[async_trait]
+    impl Provider for QuotaErrorMock {
+        fn name(&self) -> &'static str {
+            "quota_mock"
+        }
+        async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+            // Return the QuotaError directly — wrapped through the same
+            // `.context()` chain extract_delta uses in production so the
+            // test exercises the real anyhow-chain downcast path.
+            Err(anyhow::Error::from(crate::providers::quota::QuotaError {
+                provider: "quota_mock",
+                retry_after: self.retry_after_secs.map(Duration::from_secs),
+                body: String::new(),
+            }))
+            .context("simulated 429 from provider")
+        }
+    }
+
+    #[tokio::test]
+    async fn pipeline_skips_and_emits_0xb9_when_provider_returns_429() {
+        let (dir, mut conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+
+        let provider = QuotaErrorMock {
+            retry_after_secs: Some(42),
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+        let out = run_pipeline(
+            &mut conn,
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            None,
+            false,
+        )
+        .await
+        .expect("a QuotaError must be a clean Skipped, not a propagated Err");
+
+        match out {
+            PipelineRun::Skipped(PipelineSkip::QuotaExceeded {
+                provider,
+                retry_after_secs,
+            }) => {
+                assert_eq!(provider, "quota_mock");
+                assert_eq!(retry_after_secs, Some(42));
+            }
+            other => panic!("expected Skipped(QuotaExceeded), got {other:?}"),
+        }
+
+        // No idx_profile row was written — the pipeline aborted at Stage 3.
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_profile", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0, "no claim should have been applied");
+
+        drop(writer);
+        let _ = join.await;
+
+        // The 0xB9 PROFILE_EXTRACT_SKIPPED audit frame must be on disk —
+        // SC-01a's emit-site guard requires every defined event to be
+        // emitted by something, and this is the (only) emit site.
+        let seg = std::fs::read(dir.path().join("seg.wal")).unwrap();
+        let body = &seg[crate::wal::segment_header::parse_segment_header(&seg)
+            .unwrap()
+            .header_len()..];
+        let mut cursor = 0usize;
+        let mut found_skip = false;
+        while cursor < body.len() {
+            let Ok(dec) = crate::wal::frame::decode_frame(&body[cursor..]) else {
+                break;
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROFILE_EXTRACT_SKIPPED {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                assert_eq!(v["provider"], "quota_mock");
+                assert_eq!(v["retry_after_secs"], 42);
+                assert_eq!(v["trigger_event_id"], 10);
+                found_skip = true;
+                break;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert!(
+            found_skip,
+            "0xB9 PROFILE_EXTRACT_SKIPPED frame must be in the WAL"
+        );
+    }
+
+    #[tokio::test]
+    async fn pipeline_skips_with_none_retry_when_429_carries_no_header() {
+        // Pin that a 429 without `Retry-After` round-trips as
+        // `retry_after_secs: None` (the dispatcher's default-backoff
+        // fallback is a runtime concern; the WAL frame must carry the
+        // honest "no header was sent" signal).
+        let (_dir, mut conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+        let provider = QuotaErrorMock {
+            retry_after_secs: None,
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+        let out = run_pipeline(
+            &mut conn,
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        match out {
+            PipelineRun::Skipped(PipelineSkip::QuotaExceeded {
+                retry_after_secs, ..
+            }) => assert_eq!(retry_after_secs, None),
+            other => panic!("expected Skipped(QuotaExceeded), got {other:?}"),
+        }
         drop(writer);
         let _ = join.await;
     }
