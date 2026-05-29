@@ -56,6 +56,17 @@ pub enum PluginAction {
     },
     /// Flip a plugin to `disabled`. Idempotent.
     Disable { id: String },
+    /// UX-07 — pre-deployment plugin verification. Reads
+    /// `<path>/plugin.toml` + `<path>/plugin.wasm`, validates the
+    /// manifest, and (when the daemon was built with the
+    /// `wasm-plugin-host` feature) runs a sandboxed `neoth_run`
+    /// invocation in a fresh wasmtime Store with the manifest's fuel +
+    /// memory budgets applied. Reports the `InvocationOutcome` so the
+    /// operator sees pass/fail without touching `~/.neoth/plugins/`.
+    Test {
+        /// Directory containing `plugin.toml` + `plugin.wasm`.
+        path: std::path::PathBuf,
+    },
 }
 
 pub async fn run_plugin(args: PluginArgs) -> Result<()> {
@@ -69,7 +80,206 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
         PluginAction::Disable { id } => {
             set_activation(&home, &id, PluginActivation::Disabled, args.output)
         }
+        PluginAction::Test { path } => run_test(&path, args.output),
     }
+}
+
+/// UX-07 — always-compiled summary of a live invocation. The real
+/// `dispatch::InvocationOutcome` lives behind the `wasm-plugin-host`
+/// feature, so the CLI surfaces an always-available shape that the
+/// renderer + tests can hold in both build modes. The cfg-gated
+/// invoker converts `InvocationOutcome` → `TestInvocationSummary`; the
+/// slim build never produces one and the renderer prints the
+/// "rebuild with feature" hint.
+#[derive(Clone, Debug, serde::Serialize)]
+struct TestInvocationSummary {
+    /// Stage name (`compile` / `instantiate` / `export_lookup` / `run` /
+    /// `skipped_due_to_compile_failure`) — kept as a String so the slim
+    /// build doesn't need to depend on the gated `InvocationStage` enum.
+    stage: String,
+    /// `None` when `neoth_run` returned normally; `Some` when any stage
+    /// (compile / instantiate / export-lookup / run trap) failed.
+    error: Option<String>,
+    /// True when the live invocation reached `neoth_run` and the plugin
+    /// completed without a trap (regardless of the i32 return value —
+    /// non-zero is "plugin's own convention", not a host-level failure).
+    invoked_ok: bool,
+}
+
+/// UX-07 — read + validate a candidate plugin and (under the host
+/// feature) live-invoke it. Returns Ok even when the invocation reports
+/// a plugin-side error so the operator can see the structured outcome;
+/// returns Err only when the inputs themselves are unusable
+/// (missing files, malformed manifest).
+fn run_test(path: &std::path::Path, output: OutputFormat) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!(
+            "plugin path `{}` does not exist — pass a directory containing \
+             `plugin.toml` + `plugin.wasm`",
+            path.display()
+        );
+    }
+    if !path.is_dir() {
+        anyhow::bail!(
+            "plugin path `{}` is not a directory — expected a directory with \
+             `plugin.toml` + `plugin.wasm`",
+            path.display()
+        );
+    }
+
+    let manifest_path = path.join("plugin.toml");
+    let wasm_path = path.join("plugin.wasm");
+    if !manifest_path.exists() {
+        anyhow::bail!("missing `plugin.toml` at {}", manifest_path.display());
+    }
+    if !wasm_path.exists() {
+        anyhow::bail!("missing `plugin.wasm` at {}", wasm_path.display());
+    }
+
+    let manifest_bytes = std::fs::read(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest = crate::wasm_plugin::manifest::parse_manifest(&manifest_bytes)
+        .map_err(|e| anyhow::anyhow!("manifest invalid: {e}"))?;
+
+    let wasm_bytes =
+        std::fs::read(&wasm_path).with_context(|| format!("read {}", wasm_path.display()))?;
+
+    // Default-build path: report manifest validation without invoking.
+    // Operators on a slim daemon (no `wasm-plugin-host`) still get the
+    // manifest-shape check, which catches the most common authoring
+    // mistakes (wrong id casing, missing permissions, bad budgets).
+    let invocation_outcome: Option<TestInvocationSummary> = run_test_invoke(&manifest, &wasm_bytes);
+
+    render_test_report(&manifest, wasm_bytes.len(), invocation_outcome, output)
+}
+
+#[cfg(feature = "wasm-plugin-host")]
+fn run_test_invoke(
+    manifest: &crate::wasm_plugin::manifest::PluginManifest,
+    wasm_bytes: &[u8],
+) -> Option<TestInvocationSummary> {
+    use crate::wasm_plugin::dispatch::{
+        CompileOutcome, InvocationStage, invocation_outcome_from_compile_failure, invoke_plugin,
+    };
+    use crate::wasm_plugin::engine::NeothEngine;
+    use crate::wasm_plugin::hostcalls;
+
+    let engine = match NeothEngine::new() {
+        Ok(e) => e,
+        Err(e) => {
+            return Some(TestInvocationSummary {
+                stage: "compile".to_string(),
+                error: Some(format!("engine init failed: {e}")),
+                invoked_ok: false,
+            });
+        }
+    };
+    let compile_outcome = match engine.compile_from_bytes(wasm_bytes) {
+        Ok(module) => CompileOutcome::Compiled {
+            plugin_id: manifest.id.clone(),
+            module,
+        },
+        Err(e) => CompileOutcome::Failed {
+            plugin_id: manifest.id.clone(),
+            error: format!("{e}"),
+        },
+    };
+    if let Some(skip) = invocation_outcome_from_compile_failure(&compile_outcome) {
+        return Some(TestInvocationSummary {
+            stage: invocation_stage_name(skip.stage).to_string(),
+            error: skip.error,
+            invoked_ok: false,
+        });
+    }
+    let module = match &compile_outcome {
+        CompileOutcome::Compiled { module, .. } => module,
+        CompileOutcome::Failed { .. } => unreachable!("invocation_outcome_from_compile_failure"),
+    };
+    let linker = hostcalls::build_linker(&engine);
+    let outcome = invoke_plugin(&engine, module, &linker, manifest.id.clone());
+    let invoked_ok = matches!(outcome.stage, InvocationStage::Run) && outcome.error.is_none();
+    Some(TestInvocationSummary {
+        stage: invocation_stage_name(outcome.stage).to_string(),
+        error: outcome.error,
+        invoked_ok,
+    })
+}
+
+#[cfg(feature = "wasm-plugin-host")]
+fn invocation_stage_name(s: crate::wasm_plugin::dispatch::InvocationStage) -> &'static str {
+    use crate::wasm_plugin::dispatch::InvocationStage;
+    match s {
+        InvocationStage::Compile => "compile",
+        InvocationStage::Instantiate => "instantiate",
+        InvocationStage::ExportLookup => "export_lookup",
+        InvocationStage::Run => "run",
+        InvocationStage::SkippedDueToCompileFailure => "skipped_due_to_compile_failure",
+    }
+}
+
+#[cfg(not(feature = "wasm-plugin-host"))]
+fn run_test_invoke(
+    _manifest: &crate::wasm_plugin::manifest::PluginManifest,
+    _wasm_bytes: &[u8],
+) -> Option<TestInvocationSummary> {
+    // Slim daemon — wasm-plugin-host wasn't built in. The CLI still
+    // validates the manifest shape (the common failure mode for plugin
+    // authors) but doesn't run the live invocation; the report renderer
+    // surfaces a clear "rebuild with --features wasm-plugin-host" hint.
+    None
+}
+
+fn render_test_report(
+    manifest: &crate::wasm_plugin::manifest::PluginManifest,
+    wasm_size: usize,
+    outcome: Option<TestInvocationSummary>,
+    output: OutputFormat,
+) -> Result<()> {
+    let host_built = cfg!(feature = "wasm-plugin-host");
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let payload = json!({
+                "manifest": {
+                    "id": manifest.id,
+                    "name": manifest.name,
+                    "version": manifest.version,
+                    "hook_stages": manifest.hook_stages,
+                },
+                "wasm_size_bytes": wasm_size,
+                "host_feature_built": host_built,
+                "invocation": outcome,
+            });
+            println!("{}", serde_json::to_string_pretty(&payload)?);
+        }
+        OutputFormat::Table => {
+            println!("Plugin `{}` (v{})", manifest.id, manifest.version);
+            println!("  name:        {}", manifest.name);
+            println!("  hook stages: {:?}", manifest.hook_stages);
+            println!("  wasm size:   {} bytes", wasm_size);
+            println!("  manifest:    valid");
+            match outcome {
+                Some(o) => {
+                    println!(
+                        "  invocation:  stage={} error={} invoked_ok={}",
+                        o.stage,
+                        o.error.as_deref().unwrap_or("none"),
+                        o.invoked_ok
+                    );
+                }
+                None => {
+                    println!(
+                        "  invocation:  skipped — daemon not built with \
+                         `wasm-plugin-host` feature"
+                    );
+                    println!(
+                        "               rebuild with `cargo build --features wasm-plugin-host` \
+                         to live-invoke `neoth_run`"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 fn render_list(home: &std::path::Path, output: OutputFormat, only_pending: bool) -> Result<()> {
@@ -288,5 +498,121 @@ mod tests {
             assert_eq!(s, back);
             assert_eq!(s.as_str(), json.trim_matches('"'));
         }
+    }
+
+    // ── UX-07 `neoth plugin test <path>` ──────────────────────────────
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_manifest(dir: &std::path::Path, body: &str) {
+        std::fs::write(dir.join("plugin.toml"), body).unwrap();
+    }
+    fn write_wasm(dir: &std::path::Path, bytes: &[u8]) {
+        std::fs::write(dir.join("plugin.wasm"), bytes).unwrap();
+    }
+
+    /// A minimal-but-valid plugin.toml so the manifest parse succeeds in
+    /// tests that exercise the rest of the path. Mirrors the shape used
+    /// in `wasm_plugin::manifest::tests`.
+    const VALID_MANIFEST: &str = "\
+id = \"demo_plugin\"\n\
+name = \"Demo Plugin\"\n\
+version = \"0.1.0\"\n\
+";
+
+    #[test]
+    fn ux07_test_bails_when_path_does_not_exist() {
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("not_there");
+        let err = run_test(&missing, OutputFormat::Table).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("does not exist"),
+            "expected path-missing diagnostic, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ux07_test_bails_when_path_is_a_file_not_a_directory() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("oops.txt");
+        std::fs::write(&file, b"not a plugin dir").unwrap();
+        let err = run_test(&file, OutputFormat::Table).unwrap_err();
+        assert!(format!("{err:#}").contains("not a directory"));
+    }
+
+    #[test]
+    fn ux07_test_bails_with_specific_diagnostic_for_missing_manifest() {
+        let dir = TempDir::new().unwrap();
+        let plugin_dir = dir.path().join("plug");
+        std::fs::create_dir(&plugin_dir).unwrap();
+        write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]); // wasm magic only
+        let err = run_test(&plugin_dir, OutputFormat::Table).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("missing `plugin.toml`"),
+            "expected manifest-missing diagnostic, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ux07_test_bails_with_specific_diagnostic_for_missing_wasm() {
+        let dir = TempDir::new().unwrap();
+        let plugin_dir = dir.path().join("plug");
+        std::fs::create_dir(&plugin_dir).unwrap();
+        write_manifest(&plugin_dir, VALID_MANIFEST);
+        let err = run_test(&plugin_dir, OutputFormat::Table).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("missing `plugin.wasm`"),
+            "expected wasm-missing diagnostic, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ux07_test_surfaces_manifest_parse_errors_with_clear_message() {
+        let dir = TempDir::new().unwrap();
+        let plugin_dir = dir.path().join("plug");
+        std::fs::create_dir(&plugin_dir).unwrap();
+        write_manifest(
+            &plugin_dir,
+            "id = \"BadCase\"\nname = \"\"\nversion = \"0.1.0\"\n",
+        );
+        write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]);
+        let err = run_test(&plugin_dir, OutputFormat::Table).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("manifest invalid"),
+            "expected `manifest invalid` prefix, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn ux07_test_accepts_valid_inputs_in_slim_build() {
+        // Default cargo test --lib: wasm-plugin-host feature is OFF, so
+        // run_test must NOT bail when the inputs are well-formed — it
+        // just skips the live invocation and the renderer says so.
+        // This is the "manifest validation still useful for slim
+        // operators" contract from the doc comment.
+        let dir = TempDir::new().unwrap();
+        let plugin_dir = dir.path().join("plug");
+        std::fs::create_dir(&plugin_dir).unwrap();
+        write_manifest(&plugin_dir, VALID_MANIFEST);
+        write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]);
+        // Use the JSON output so the test doesn't depend on Table-format
+        // string drift; either renderer is acceptable.
+        run_test(&plugin_dir, OutputFormat::Json).unwrap();
+    }
+
+    #[cfg(not(feature = "wasm-plugin-host"))]
+    #[test]
+    fn ux07_run_test_invoke_is_none_without_host_feature() {
+        // Drift guard: without the feature, run_test_invoke MUST return
+        // None so the renderer surfaces the "rebuild with feature" hint.
+        // A future refactor that flipped this to Some(...) would silently
+        // claim the plugin ran on a slim daemon.
+        let manifest =
+            crate::wasm_plugin::manifest::parse_manifest(VALID_MANIFEST.as_bytes()).unwrap();
+        assert!(run_test_invoke(&manifest, &[]).is_none());
     }
 }
