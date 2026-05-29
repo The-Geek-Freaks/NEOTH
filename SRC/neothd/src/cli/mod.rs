@@ -11,6 +11,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 pub mod adr;
 pub mod agents;
 pub mod arxiv;
+pub mod arxiv_ingest_task;
 pub mod backup;
 pub mod catalog;
 pub mod chat;

@@ -36,8 +36,10 @@ pub async fn search(query: &str, max_results: usize) -> Result<Vec<ArxivPaper>> 
 }
 
 /// Internal test seam — production `search` calls this with the real
-/// ArXiv endpoint; wiremock tests pass a mock server's URI.
-async fn search_against(
+/// ArXiv endpoint; wiremock tests pass a mock server's URI. `pub(crate)`
+/// so the EL-02 ingest task (`cli::arxiv_ingest_task`) can drive it
+/// against a mock endpoint in its own wiremock tests.
+pub(crate) async fn search_against(
     endpoint: &str,
     query: &str,
     max_results: usize,

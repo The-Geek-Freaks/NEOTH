@@ -285,6 +285,14 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub dreaming: DreamingConfig,
 
+    /// EL-02 — arXiv topic-feed periodic ingest. Off by default; opt in
+    /// via `arxiv.enabled: true` + a non-empty `arxiv.topics` list. When
+    /// active, the daemon runs each topic query on a cadence (default 6h),
+    /// optionally LLM-summarises each abstract, and lands the result in
+    /// the ctx knowledge store keyed `arxiv:<id>`.
+    #[serde(default)]
+    pub arxiv: ArxivIngestConfig,
+
     /// C-16 (Session 21) — operator opt-in for proactive channel
     /// messaging. When `enabled = true`, the daemon's cron + the
     /// future `send_proactive()` impl (C-11) MAY post outbound
@@ -493,6 +501,40 @@ impl Default for DreamingConfig {
             interval_secs: None,
             window_secs: None,
             max_events: None,
+        }
+    }
+}
+
+/// EL-02 — arXiv topic-feed ingest task knobs.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ArxivIngestConfig {
+    /// Master switch. `false` = task never spawns. `true` AND a
+    /// non-empty `topics` list = spawn the interval task at boot.
+    pub enabled: bool,
+    /// Tick interval in seconds. `None` = 21_600 (6h — well clear of
+    /// arXiv's politeness window for an anonymous client).
+    pub interval_secs: Option<u64>,
+    /// Operator-curated topic queries in arXiv query syntax:
+    /// `cat:cs.CL`, `all:rag`, `ti:diffusion AND cat:cs.CV`, …
+    pub topics: Vec<String>,
+    /// Max results fetched per topic per tick. `None` = 10. The
+    /// underlying `arxiv::search` clamps to the API cap of 50.
+    pub max_per_topic: Option<usize>,
+    /// `source_category` bucket label for the ctx index rows. `None`
+    /// = `"arxiv"`.
+    pub source_category: Option<String>,
+}
+
+impl Default for ArxivIngestConfig {
+    fn default() -> Self {
+        // Off by default — opt-in gate per the noob-wizard rule.
+        Self {
+            enabled: false,
+            interval_secs: None,
+            topics: Vec::new(),
+            max_per_topic: None,
+            source_category: None,
         }
     }
 }

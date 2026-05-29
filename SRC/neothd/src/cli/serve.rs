@@ -998,6 +998,35 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             None
         };
 
+    // ── 5b-arxiv. EL-02 arXiv topic-feed ingest task ───────────────────────
+    //
+    // Off by default. When freedom.yaml::arxiv.enabled = true AND
+    // arxiv.topics is non-empty, runs each topic query on a cadence
+    // (default 6h), optionally LLM-summarises each abstract via the
+    // shared provider, and lands the result in the ctx knowledge store.
+    // A topic fetch failure logs + skips; a pass failure logs + retries
+    // next tick — never crashes the daemon.
+    let arxiv_ingest_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
+        if config.arxiv.enabled && !config.arxiv.topics.is_empty() {
+            info!(
+                topics = config.arxiv.topics.len(),
+                "arxiv ingest task enabled"
+            );
+            Some(crate::cli::arxiv_ingest_task::spawn(
+                crate::config::FreedomConfig::default_neoth_home(),
+                config.arxiv.topics.clone(),
+                shared_provider.as_ref().map(Arc::clone),
+                config
+                    .arxiv
+                    .interval_secs
+                    .map(std::time::Duration::from_secs),
+                config.arxiv.max_per_topic,
+                config.arxiv.source_category.clone(),
+            ))
+        } else {
+            None
+        };
+
     // ── 5b-bis. Hebbian decay task — QUELLEN Q-8 adoption ──────────────────
     //
     // Runs `memory::consolidate::run_consolidation_pass` every 2h. Math
@@ -1990,6 +2019,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // may run to completion (acceptable — drains naturally,
     // never strands the model load).
     if let Some(task) = dreaming_task {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // EL-02 arXiv ingest task — abort on shutdown. Mid-pass abort at
+    // worst drops one topic's fetch, which the next boot re-runs.
+    if let Some(task) = arxiv_ingest_task {
         task.abort();
         let _ = task.await;
     }
