@@ -6,6 +6,11 @@
 //! command surfaces.
 
 pub mod accelerator;
+/// MV-01b (Session 28c) — daemon CLI auto-apply loop. At
+/// `AutonomyLevel::Elevated`/`Full` it periodically applies updates for
+/// the NEOTH-managed CLIs (claude-cli / antigravity-cli / codex) and
+/// emits `0x13 UPDATE_RAN`; notify-only below that tier.
+pub mod auto_update;
 pub mod backup;
 pub mod backup_retention;
 pub mod clock_floor;

@@ -1272,6 +1272,25 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── 5d.c. CLI auto-apply loop — MV-01b (Session 28c) ─────────────────
+    //
+    // Operator policy "Option A": auto-apply CLI updates (claude-cli /
+    // antigravity-cli / codex) when autonomy is elevated/full. At standard
+    // or below this returns None (notify-only — the probe crons above
+    // already surface availability). Emits `0x13 UPDATE_RAN` per applied
+    // CLI. The `neoth` daemon's own self-replacement stays manual
+    // (`neoth update --self --apply`).
+    let cli_autoupdate_task: Option<tokio::task::JoinHandle<()>> =
+        crate::daemon::auto_update::spawn(
+            config.autonomy,
+            config.updater.enabled,
+            config.updater.interval_secs,
+            writer.clone(),
+        );
+    if cli_autoupdate_task.is_some() {
+        info!("CLI auto-apply loop spawned (MV-01b; autonomy elevated/full)");
+    }
+
     // ── 5d.b. Doctor cron loop — EL-01 (Session 25) ──────────────────────
     //
     // Periodic `neoth doctor` ticks → WAL 0x46 DOCTOR_TICK frame per pass +
@@ -1911,6 +1930,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let _ = task.await;
     }
     if let Some(task) = updater_skill_task {
+        task.abort();
+        let _ = task.await;
+    }
+    // MV-01b CLI auto-apply loop. A mid-pass abort at worst drops one
+    // component's UPDATE_RAN frame; the install itself already completed.
+    if let Some(task) = cli_autoupdate_task {
         task.abort();
         let _ = task.await;
     }
