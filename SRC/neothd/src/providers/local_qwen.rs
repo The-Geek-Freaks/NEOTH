@@ -323,6 +323,17 @@ impl LocalQwenAdapter {
                 .context("disk-space pre-flight before Qwen download")?;
         }
 
+        // HF-01 implicit-emit (Session 28g+): pair the explicit-pull
+        // audit (`run_pull`) with a matching audit on the implicit first-
+        // use path so a silent ~3 GB fetch is no longer invisible in
+        // `neoth wal show`. The `trigger=implicit` discriminator in the
+        // payload lets the operator + threat-model audit tell the
+        // implicit path apart from `neoth model pull`. Best-effort:
+        // single-writer-invariant skip when a live daemon owns the
+        // segment; failure to emit must not abort the download.
+        crate::daemon::model_download_audit::emit_start(&self.repo).await;
+        let download_start = std::time::Instant::now();
+
         info!(repo = %self.repo, "downloading Qwen artifacts from Hugging Face (one-time, ~3 GB)");
         let api = Api::new().context("init HF Hub API")?;
         let repo_handle = api.model(self.repo.clone());
@@ -354,6 +365,12 @@ impl LocalQwenAdapter {
                 "cached"
             );
         }
+        crate::daemon::model_download_audit::emit_complete(
+            &self.repo,
+            &self.cache_dir.display().to_string(),
+            download_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        )
+        .await;
         Ok(())
     }
 }

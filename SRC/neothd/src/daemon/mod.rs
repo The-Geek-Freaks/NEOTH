@@ -28,6 +28,7 @@ pub mod export;
 pub mod g02_surfacing_cron;
 pub mod hardware;
 pub mod installer_audit_sidecar;
+pub mod model_download_audit;
 /// Round-3 v0.4 G-01 consumer half — periodic drain of
 /// `proactive::ProactiveQueue` into a `proactive_delivered.jsonl`
 /// sidecar. Operators tail the sidecar OR future channel adapters

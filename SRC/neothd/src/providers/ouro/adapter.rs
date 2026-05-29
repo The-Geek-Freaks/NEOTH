@@ -263,6 +263,14 @@ impl LocalOuroAdapter {
             preflight_disk_space(&self.cache_dir, OURO_DOWNLOAD_MIN_FREE_BYTES)
                 .context("disk-space pre-flight before Ouro download")?;
         }
+        // HF-01 implicit-emit (Session 28g+) — same audit-chain closure
+        // as `local_qwen::ensure_artifacts`: emit 0xD7 before the fetch,
+        // 0xD8 after, with `trigger=implicit` so the operator can tell
+        // the implicit first-use path apart from `neoth model pull` in
+        // the WAL log. Best-effort + single-writer-invariant safe.
+        crate::daemon::model_download_audit::emit_start(&self.repo).await;
+        let download_start = std::time::Instant::now();
+
         info!(
             repo = %self.repo,
             "downloading Ouro artifacts from Hugging Face (one-time, ~3 GB)"
@@ -294,6 +302,12 @@ impl LocalOuroAdapter {
                 "cached"
             );
         }
+        crate::daemon::model_download_audit::emit_complete(
+            &self.repo,
+            &self.cache_dir.display().to_string(),
+            download_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+        )
+        .await;
         Ok(())
     }
 
