@@ -733,6 +733,32 @@ fn validate_sql_identifier(name: &str, kind: &str) -> Result<()> {
     Ok(())
 }
 
+/// SC-02: validate a FileWrite/ConfigWrite rollback target BEFORE it is
+/// handed to `std::fs::write`. The `target` comes from a WAL snapshot
+/// frame; a tampered/crafted frame carrying `../../../etc/...` would
+/// otherwise let `apply` write arbitrary bytes anywhere the daemon can
+/// write (the snapshot's `before_state` is the content). Reject empty,
+/// null-byte, and path-traversal targets. Real filesystem paths
+/// legitimately contain `/`, `:`, `~`, `.`, so this is a traversal +
+/// null-byte + non-empty check — NOT the strict label-only regex
+/// (`[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}`) which is reserved for a future
+/// named-checkpoint API where the target IS a label, not a path.
+fn validate_rollback_target(target: &str, kind_label: &str) -> Result<()> {
+    if target.is_empty() {
+        anyhow::bail!("{kind_label} rollback target is empty");
+    }
+    if target.contains('\0') {
+        anyhow::bail!("{kind_label} rollback target contains a null byte");
+    }
+    if crate::security::redact::contains_path_traversal(target) {
+        anyhow::bail!(
+            "{kind_label} rollback target `{target}` contains a path-traversal sequence \
+             (../ or ..\\) — refusing to restore outside the original location"
+        );
+    }
+    Ok(())
+}
+
 fn open_views_db() -> Result<rusqlite::Connection> {
     let path = crate::memory::store::default_path();
     crate::memory::store::open(&path).with_context(|| {
@@ -876,6 +902,7 @@ impl ApplyPlan {
         let before_state_bytes_len = before.len();
         match snap.mutation_kind {
             MutationKind::FileWrite => {
+                validate_rollback_target(&snap.target, "file_write")?;
                 let target = snap.target.clone();
                 let bytes = before.clone();
                 let summary = format!(
@@ -911,6 +938,7 @@ impl ApplyPlan {
                 apply_plan_sql_mutation(snap, before_state_bytes_len, &before)
             }
             MutationKind::ConfigWrite => {
+                validate_rollback_target(&snap.target, "config_write")?;
                 let target = snap.target.clone();
                 let bytes = before.clone();
                 let summary = format!(
@@ -1033,6 +1061,47 @@ mod tests {
         std::fs::write(dir.path().join("notes.txt"), b"not a wal").unwrap();
         let entries = collect_snapshots(dir.path(), None).unwrap();
         assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn sc02_rejects_path_traversal_in_file_write_target() {
+        let snap = crate::wal::snapshot::PreMutationSnapshot::new(
+            MutationKind::FileWrite,
+            "../../../etc/passwd",
+            b"malicious",
+            1_700_000_100,
+        );
+        let err = ApplyPlan::from_snapshot(&snap)
+            .err()
+            .expect("expected Err for path-traversal target");
+        assert!(err.to_string().contains("path-traversal"), "got: {err}");
+    }
+
+    #[test]
+    fn sc02_rejects_path_traversal_in_config_write_target() {
+        let snap = crate::wal::snapshot::PreMutationSnapshot::new(
+            MutationKind::ConfigWrite,
+            "..\\..\\windows\\system32\\x",
+            b"malicious",
+            1_700_000_100,
+        );
+        let err = ApplyPlan::from_snapshot(&snap)
+            .err()
+            .expect("expected Err for path-traversal target");
+        assert!(err.to_string().contains("path-traversal"), "got: {err}");
+    }
+
+    #[test]
+    fn sc02_allows_legit_absolute_file_write_target() {
+        // A normal absolute path (no traversal) must still build a plan —
+        // the guard must not over-reject legitimate restore targets.
+        let snap = crate::wal::snapshot::PreMutationSnapshot::new(
+            MutationKind::FileWrite,
+            "/home/alex/.config/app.conf",
+            b"content",
+            1_700_000_100,
+        );
+        assert!(ApplyPlan::from_snapshot(&snap).is_ok());
     }
 
     #[tokio::test]
