@@ -101,6 +101,25 @@ pub enum Action {
         /// `"hysteria_relay"`, `"manual"`).
         discovered_via: String,
     },
+    /// MV-01b Option-A prereq (senior-dev panel 2026-05-29): replace the
+    /// running `neoth` daemon's OWN binary with a freshly-downloaded
+    /// release. The highest-blast-radius action NEOTH can take — a
+    /// compromised replacement is unrestricted RCE as the operator's
+    /// user (WAL, secrets, DPAPI creds, all provider keys). Therefore it
+    /// requires explicit confirm at EVERY level except Strict (which
+    /// denies outright), mirroring + exceeding the `PatchApplyToRepo`
+    /// precedent — even `Full` must confirm a self-replace. The
+    /// operator-initiated `neoth update --self --apply` path is the human
+    /// in the loop; the unattended daemon path must surface this gate
+    /// before any swap.
+    SelfBinaryReplace {
+        /// Currently-running version.
+        from: String,
+        /// Version being installed.
+        to: String,
+        /// GitHub `owner/repo` slug the release came from.
+        repo: String,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -212,6 +231,9 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: cluster makes no autonomous topology changes — peer {} denied",
             &pub_key_hex[..16.min(pub_key_hex.len())]
         )),
+        Action::SelfBinaryReplace { from, to, .. } => Decision::Deny(format!(
+            "strict: daemon self-replace ({from} -> {to}) denied — agent never replaces its own binary"
+        )),
     }
 }
 
@@ -242,6 +264,9 @@ fn evaluate_standard(action: &Action) -> Decision {
         } => Decision::Confirm(format!(
             "standard: peer {} (via {discovered_via}) requires confirm before pairing",
             &pub_key_hex[..16.min(pub_key_hex.len())]
+        )),
+        Action::SelfBinaryReplace { from, to, repo } => Decision::Confirm(format!(
+            "standard: daemon self-replace {from} -> {to} from {repo} requires confirm"
         )),
     }
 }
@@ -282,6 +307,12 @@ fn evaluate_elevated(action: &Action) -> Decision {
         } => Decision::Confirm(format!(
             "elevated: peer {} (via {discovered_via}) requires confirm — topology change",
             &pub_key_hex[..16.min(pub_key_hex.len())]
+        )),
+        // Self-replace is the highest-blast-radius action (RCE surface).
+        // Even at Elevated it requires explicit confirm — same precedent
+        // as patch-apply + cluster-pairing, but stricter intent.
+        Action::SelfBinaryReplace { from, to, repo } => Decision::Confirm(format!(
+            "elevated: daemon self-replace {from} -> {to} from {repo} requires confirm"
         )),
     }
 }
@@ -339,6 +370,17 @@ fn evaluate_full(action: &Action) -> Decision {
         // into autonomous behaviour → auto-pair on matching
         // cluster_key. The HMAC check upstream is the gate.
         Action::ClusterPeerPairing { .. } => Decision::Allow,
+        // Senior-dev panel 2026-05-29: daemon self-replace is the single
+        // highest-blast-radius action NEOTH can take (a compromised
+        // replacement = unrestricted RCE as the operator's user). It is
+        // NEVER auto-allowed — Confirm even at Full, exceeding the
+        // PatchApplyToRepo precedent. The unattended updater must surface
+        // this gate before any swap; an operator who wants hands-off
+        // self-update confirms once with `--remember`.
+        Action::SelfBinaryReplace { from, to, repo } => Decision::Confirm(format!(
+            "full: daemon self-replace {from} -> {to} from {repo} requires confirm — \
+             highest blast radius (RCE surface), never auto-allowed"
+        )),
         // Full = trust the operator's other gates (policy.yaml allowlist,
         // hardware-2FA at level-set time). Everything else allowed.
         _ => Decision::Allow,
@@ -662,6 +704,62 @@ mod tests {
         } else {
             panic!("expected Confirm, got {d:?}");
         }
+    }
+
+    // ── MV-01b SelfBinaryReplace gate (senior-dev panel 2026-05-29) ──
+
+    fn self_replace_action() -> Action {
+        Action::SelfBinaryReplace {
+            from: "0.2.1".into(),
+            to: "0.3.0".into(),
+            repo: "The-Geek-Freaks/NEOTH".into(),
+        }
+    }
+
+    #[test]
+    fn self_replace_strict_denies() {
+        let d = evaluate(&self_replace_action(), AutonomyLevel::Strict);
+        assert!(d.is_deny(), "strict must DENY daemon self-replace");
+    }
+
+    #[test]
+    fn self_replace_confirms_at_standard_elevated_and_full() {
+        // The whole point: self-replace is NEVER auto-allowed — Confirm
+        // at every non-Strict level, INCLUDING Full (exceeds the
+        // PatchApplyToRepo precedent). If a refactor ever flips Full to
+        // Allow, this test fails + forces a security conversation.
+        for level in [
+            AutonomyLevel::Standard,
+            AutonomyLevel::Elevated,
+            AutonomyLevel::Full,
+        ] {
+            let d = evaluate(&self_replace_action(), level);
+            assert!(
+                matches!(d, Decision::Confirm(_)),
+                "self-replace at {level:?} MUST Confirm, never Allow; got {d:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn self_replace_confirm_message_names_versions_and_repo() {
+        let d = evaluate(&self_replace_action(), AutonomyLevel::Full);
+        if let Decision::Confirm(msg) = d {
+            assert!(msg.contains("0.2.1"), "from-version must surface: {msg}");
+            assert!(msg.contains("0.3.0"), "to-version must surface: {msg}");
+            assert!(
+                msg.contains("The-Geek-Freaks/NEOTH"),
+                "repo must surface: {msg}"
+            );
+        } else {
+            panic!("expected Confirm, got {d:?}");
+        }
+    }
+
+    #[test]
+    fn self_replace_custom_inherits_standard_confirm() {
+        let d = evaluate(&self_replace_action(), AutonomyLevel::Custom);
+        assert!(matches!(d, Decision::Confirm(_)));
     }
 
     #[test]
