@@ -187,8 +187,9 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
 
     // HF-01 consent gate — refuse the fetch when the operator disabled
     // HuggingFace downloads (air-gapped / bandwidth-controlled installs).
-    let cfg = FreedomConfig::load_from_path(&FreedomConfig::default_neoth_home().join("freedom.yaml"))
-        .unwrap_or_default();
+    let cfg =
+        FreedomConfig::load_from_path(&FreedomConfig::default_neoth_home().join("freedom.yaml"))
+            .unwrap_or_default();
     if !cfg.updater.allow_huggingface_downloads {
         anyhow::bail!(
             "model download blocked: freedom.yaml::updater.allow_huggingface_downloads = false. \
@@ -221,7 +222,10 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
         }))
         .unwrap_or_default();
         if let Err(e) = w
-            .append(make_header(EVENT_TYPE_MODEL_DOWNLOAD_START, &payload), payload)
+            .append(
+                make_header(EVENT_TYPE_MODEL_DOWNLOAD_START, &payload),
+                payload,
+            )
             .await
         {
             tracing::warn!(error = %e, "MODEL_DOWNLOAD_START WAL emit failed (non-fatal)");

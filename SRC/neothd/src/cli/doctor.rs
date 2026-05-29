@@ -860,7 +860,9 @@ fn check_local_qwen_weights(home: &Path) -> CheckOutcome {
         return CheckOutcome {
             name,
             status: CheckStatus::Pass,
-            detail: format!("learn_provider `{shown}` is not local_qwen — Qwen weight cache not required"),
+            detail: format!(
+                "learn_provider `{shown}` is not local_qwen — Qwen weight cache not required"
+            ),
         };
     }
     let model = crate::installers::qwen_weights::DEFAULT_QWEN_MODEL_ID;
@@ -2526,10 +2528,11 @@ mod tests {
         let mut cfg = crate::config::FreedomConfig::default();
         cfg.refusal_recovery.enabled = true;
         cfg.refusal_recovery.max_attempts = 2;
-        cfg.refusal_recovery.disabled_reframings = crate::security::refusal_reframings::default_catalogue()
-            .iter()
-            .map(|r| r.id().to_string())
-            .collect();
+        cfg.refusal_recovery.disabled_reframings =
+            crate::security::refusal_reframings::default_catalogue()
+                .iter()
+                .map(|r| r.id().to_string())
+                .collect();
         std::fs::write(
             dir.path().join("freedom.yaml"),
             serde_yaml::to_string(&cfg).unwrap(),
@@ -2537,7 +2540,11 @@ mod tests {
         .unwrap();
         let outcome = check_refusal_recovery(dir.path());
         assert_eq!(outcome.status, CheckStatus::Warn);
-        assert!(outcome.detail.contains("no-op"), "detail: {}", outcome.detail);
+        assert!(
+            outcome.detail.contains("no-op"),
+            "detail: {}",
+            outcome.detail
+        );
     }
 
     #[test]

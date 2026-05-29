@@ -139,8 +139,8 @@ impl Channel for TelegramChannel {
         let dedup_edit = Arc::clone(&dedup);
 
         let schema = dptree::entry()
-            .branch(Update::filter_message().endpoint(
-                move |bot: Bot, msg: Message| {
+            .branch(
+                Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
                     let handler = Arc::clone(&h_msg);
                     async move {
                         if let Err(e) = handle_one_message(bot, msg, handler, allowed).await {
@@ -148,10 +148,10 @@ impl Channel for TelegramChannel {
                         }
                         respond(())
                     }
-                },
-            ))
-            .branch(Update::filter_edited_message().endpoint(
-                move |bot: Bot, msg: Message| {
+                }),
+            )
+            .branch(
+                Update::filter_edited_message().endpoint(move |bot: Bot, msg: Message| {
                     let handler = Arc::clone(&h_edit);
                     let dedup = Arc::clone(&dedup_edit);
                     async move {
@@ -162,8 +162,8 @@ impl Channel for TelegramChannel {
                         }
                         respond(())
                     }
-                },
-            ));
+                }),
+            );
 
         Dispatcher::builder(bot, schema)
             .enable_ctrlc_handler()
@@ -568,7 +568,10 @@ mod tests {
     #[test]
     fn edit_dedup_first_sight_is_new_repeat_is_dup() {
         let mut d = EditDedup::new(8);
-        assert!(d.check_and_insert((100, 1_700_000_000)), "first sight = new");
+        assert!(
+            d.check_and_insert((100, 1_700_000_000)),
+            "first sight = new"
+        );
         assert!(
             !d.check_and_insert((100, 1_700_000_000)),
             "same (msg_id, edit_ts) = duplicate"

@@ -288,10 +288,21 @@ mod tests {
     fn refill_and_consume_throttles_when_empty_and_reports_retry() {
         let t = Instant::now();
         // Empty bucket, 1 token/sec → next token in ~1000 ms.
-        let (next, decision) = refill_and_consume(Bucket { tokens: 0.0, last_refill: t }, 1.0, 5.0, t);
+        let (next, decision) = refill_and_consume(
+            Bucket {
+                tokens: 0.0,
+                last_refill: t,
+            },
+            1.0,
+            5.0,
+            t,
+        );
         match decision {
             Decision::RateLimited { retry_after_ms } => {
-                assert!((900..=1100).contains(&retry_after_ms), "got {retry_after_ms}");
+                assert!(
+                    (900..=1100).contains(&retry_after_ms),
+                    "got {retry_after_ms}"
+                );
             }
             other => panic!("expected RateLimited, got {other:?}"),
         }
@@ -304,13 +315,20 @@ mod tests {
         // Start empty, wait 100s at 1 tok/sec, capacity 3 → refill capped at 3,
         // then one consumed → 2 remain.
         let (next, decision) = refill_and_consume(
-            Bucket { tokens: 0.0, last_refill: t0 },
+            Bucket {
+                tokens: 0.0,
+                last_refill: t0,
+            },
             1.0,
             3.0,
             t0 + Duration::from_secs(100),
         );
         assert_eq!(decision, Decision::Allowed);
-        assert!((next.tokens - 2.0).abs() < 1e-9, "refill capped at capacity: {}", next.tokens);
+        assert!(
+            (next.tokens - 2.0).abs() < 1e-9,
+            "refill capped at capacity: {}",
+            next.tokens
+        );
     }
 
     #[test]

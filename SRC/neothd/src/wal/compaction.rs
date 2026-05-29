@@ -201,7 +201,10 @@ pub fn rewrap_key(path: &Path, raw_key: &[u8]) -> Result<()> {
     }
     if path.exists() {
         std::fs::remove_file(path).with_context(|| {
-            format!("remove existing HMAC key at {} before re-wrap", path.display())
+            format!(
+                "remove existing HMAC key at {} before re-wrap",
+                path.display()
+            )
         })?;
     }
     write_key_securely(path, raw_key)
@@ -468,7 +471,10 @@ mod tests {
             err.to_string().contains("shorter than 16 bytes"),
             "got: {err}"
         );
-        assert!(!path.exists(), "no key file written when the key is rejected");
+        assert!(
+            !path.exists(),
+            "no key file written when the key is rejected"
+        );
     }
 
     #[test]
@@ -478,7 +484,10 @@ mod tests {
         let raw = vec![7u8; 32];
         rewrap_key(&path, &raw).unwrap();
         let loaded = load_or_init_key(&path).unwrap();
-        assert_eq!(loaded, raw, "rewrapped key must load back to the same bytes");
+        assert_eq!(
+            loaded, raw,
+            "rewrapped key must load back to the same bytes"
+        );
     }
 
     #[test]

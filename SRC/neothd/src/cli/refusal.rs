@@ -805,9 +805,18 @@ mod tests {
         // recoverable. Smoke both render branches (with + without
         // --prompt).
         let refusal = "I can't help with that — it violates my safety policy.";
-        run_test(refusal, Some("scan my own server for open ports"), &OutputFormat::Json).unwrap();
-        run_test(refusal, Some("scan my own server for open ports"), &OutputFormat::Table)
-            .unwrap();
+        run_test(
+            refusal,
+            Some("scan my own server for open ports"),
+            &OutputFormat::Json,
+        )
+        .unwrap();
+        run_test(
+            refusal,
+            Some("scan my own server for open ports"),
+            &OutputFormat::Table,
+        )
+        .unwrap();
         run_test(refusal, None, &OutputFormat::Table).unwrap();
     }
 
@@ -944,7 +953,11 @@ mod tests {
         let _ = join.await;
 
         let got = collect_reroutes(&wal_dir);
-        assert_eq!(got.len(), 2, "only the two 0x19 frames are collected (0x1A filtered)");
+        assert_eq!(
+            got.len(),
+            2,
+            "only the two 0x19 frames are collected (0x1A filtered)"
+        );
         assert!(got.iter().all(|e| e.cause == "safety_policy"));
         // collect_reroutes walks each segment in file (insertion) order —
         // assert it directly rather than re-sorting (the most-recent-first
@@ -956,9 +969,15 @@ mod tests {
     #[test]
     fn sanitize_field_strips_escapes_controls_and_bounds_length() {
         // ANSI colour codes stripped (terminal-injection guard).
-        assert_eq!(sanitize_field("\x1b[31msafety_policy\x1b[0m"), "safety_policy");
+        assert_eq!(
+            sanitize_field("\x1b[31msafety_policy\x1b[0m"),
+            "safety_policy"
+        );
         // Control chars (newline / carriage-return / NUL) dropped.
-        assert_eq!(sanitize_field("oper\nator\r_auth\0ority"), "operator_authority");
+        assert_eq!(
+            sanitize_field("oper\nator\r_auth\0ority"),
+            "operator_authority"
+        );
         // Length clamped — a multi-KB tampered field can't flood the view.
         let huge = "x".repeat(5000);
         assert_eq!(sanitize_field(&huge).len(), 64);
@@ -978,7 +997,11 @@ mod tests {
         }))
         .unwrap();
         let e = parse_reroute_frame(EVENT_TYPE_REFUSAL_REROUTED, &payload, 1, 1).unwrap();
-        assert!(!e.cause.contains('\x1b'), "ANSI must be stripped: {:?}", e.cause);
+        assert!(
+            !e.cause.contains('\x1b'),
+            "ANSI must be stripped: {:?}",
+            e.cause
+        );
         assert_eq!(e.cause, "EVIL");
         assert_eq!(e.reframing_id, "idwithbreaks");
     }

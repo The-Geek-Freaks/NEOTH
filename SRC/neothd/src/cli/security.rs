@@ -746,7 +746,10 @@ mod tests {
     #[test]
     fn hmac_key_with_content_passes_on_windows() {
         let tmp = TempDir::new().unwrap();
-        write_file(&tmp.path().join("wal").join("hmac.key"), b"0123456789abcdef");
+        write_file(
+            &tmp.path().join("wal").join("hmac.key"),
+            b"0123456789abcdef",
+        );
         let mut report = AuditReport::default();
         check_hmac_key(tmp.path(), &mut report);
         let c = &report.checks[0];
@@ -1043,7 +1046,10 @@ mod tests {
         run_rewrap_hmac_key(&args).unwrap();
         let key_path = home.path().join("wal").join("hmac.key");
         let loaded = crate::wal::compaction::load_or_init_key(&key_path).unwrap();
-        assert_eq!(loaded, raw, "re-wrapped key must load back to the backup bytes");
+        assert_eq!(
+            loaded, raw,
+            "re-wrapped key must load back to the backup bytes"
+        );
     }
 
     #[test]

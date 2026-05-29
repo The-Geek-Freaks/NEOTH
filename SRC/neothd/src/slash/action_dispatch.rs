@@ -417,13 +417,23 @@ mod tests {
 
     #[test]
     fn config_with_one_arg_returns_invalid_args() {
-        let out = dispatch_action(SlashAction::ConfigGet, "operator_id", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::ConfigGet,
+            "operator_id",
+            &cfg(),
+            CommandSource::Cli,
+        );
         assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
     }
 
     #[test]
     fn config_with_two_args_returns_pending_with_gui_mirror() {
-        let out = dispatch_action(SlashAction::ConfigGet, "operator_id alex", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::ConfigGet,
+            "operator_id alex",
+            &cfg(),
+            CommandSource::Cli,
+        );
         match out {
             ActionOutcome::Pending { text } => {
                 assert!(text.contains("operator_id"));
@@ -436,7 +446,12 @@ mod tests {
 
     #[test]
     fn connect_rejects_unknown_channel() {
-        let out = dispatch_action(SlashAction::ConnectChannel, "fax_machine", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::ConnectChannel,
+            "fax_machine",
+            &cfg(),
+            CommandSource::Cli,
+        );
         match out {
             ActionOutcome::InvalidArgs { text } => {
                 assert!(text.contains("unknown channel"));
@@ -459,13 +474,23 @@ mod tests {
 
     #[test]
     fn skill_list_returns_handled() {
-        let out = dispatch_action(SlashAction::SkillRegistry, "list", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::SkillRegistry,
+            "list",
+            &cfg(),
+            CommandSource::Cli,
+        );
         assert!(matches!(out, ActionOutcome::Handled { .. }));
     }
 
     #[test]
     fn skill_unknown_sub_returns_invalid_args() {
-        let out = dispatch_action(SlashAction::SkillRegistry, "explode", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::SkillRegistry,
+            "explode",
+            &cfg(),
+            CommandSource::Cli,
+        );
         assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
     }
 
@@ -483,14 +508,24 @@ mod tests {
 
     #[test]
     fn autonomy_with_invalid_level_returns_invalid_args() {
-        let out = dispatch_action(SlashAction::AutonomyLevel, "yolo", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::AutonomyLevel,
+            "yolo",
+            &cfg(),
+            CommandSource::Cli,
+        );
         assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
     }
 
     #[test]
     fn autonomy_with_valid_level_returns_pending() {
         for level in ["strict", "standard", "elevated", "full", "custom"] {
-            let out = dispatch_action(SlashAction::AutonomyLevel, level, &cfg(), CommandSource::Cli);
+            let out = dispatch_action(
+                SlashAction::AutonomyLevel,
+                level,
+                &cfg(),
+                CommandSource::Cli,
+            );
             assert!(
                 matches!(out, ActionOutcome::Pending { .. }),
                 "{level} must be accepted"
@@ -500,7 +535,12 @@ mod tests {
 
     #[test]
     fn consent_list_returns_handled() {
-        let out = dispatch_action(SlashAction::ConsentManage, "list", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::ConsentManage,
+            "list",
+            &cfg(),
+            CommandSource::Cli,
+        );
         assert!(matches!(out, ActionOutcome::Handled { .. }));
     }
 
@@ -512,7 +552,12 @@ mod tests {
 
     #[test]
     fn plugin_list_returns_handled() {
-        let out = dispatch_action(SlashAction::PluginRegistry, "list", &cfg(), CommandSource::Cli);
+        let out = dispatch_action(
+            SlashAction::PluginRegistry,
+            "list",
+            &cfg(),
+            CommandSource::Cli,
+        );
         assert!(matches!(out, ActionOutcome::Handled { .. }));
     }
 
@@ -554,7 +599,10 @@ mod tests {
             &cfg(),
             CommandSource::Channel,
         );
-        assert!(out.is_channel_blocked(), "destructive op from channel must block");
+        assert!(
+            out.is_channel_blocked(),
+            "destructive op from channel must block"
+        );
         assert!(out.text().contains("channel"));
         assert!(out.text().contains("CLI"));
     }
@@ -565,7 +613,11 @@ mod tests {
         // consent via a channel message is privilege escalation.
         for a in [SlashAction::AutonomyLevel, SlashAction::ConsentManage] {
             let out = dispatch_action(a, "full", &cfg(), CommandSource::Channel);
-            assert!(out.is_channel_blocked(), "{} must block from channel", a.as_str());
+            assert!(
+                out.is_channel_blocked(),
+                "{} must block from channel",
+                a.as_str()
+            );
         }
     }
 
@@ -581,7 +633,10 @@ mod tests {
     fn adv09_cli_permits_destructive_action() {
         // CLI is trusted — the ceiling only applies to channels.
         let out = dispatch_action(SlashAction::ConfigSet, "", &cfg(), CommandSource::Cli);
-        assert!(!out.is_channel_blocked(), "CLI must never be ceiling-blocked");
+        assert!(
+            !out.is_channel_blocked(),
+            "CLI must never be ceiling-blocked"
+        );
     }
 
     #[test]

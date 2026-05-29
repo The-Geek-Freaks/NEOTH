@@ -108,7 +108,8 @@ fn render_user_prompt(window: &AttributedWindow) -> String {
         // anchor on conversation-time, not the model's training "now".
         // Deterministic (fixed ts_ns) so the G.1 same-window-same-prompt
         // contract holds.
-        let normalized = crate::profile::relative_time::normalize_segment(&scrubbed, seg.segment.ts_ns);
+        let normalized =
+            crate::profile::relative_time::normalize_segment(&scrubbed, seg.segment.ts_ns);
         out.push_str(&block_open);
         out.push('\n');
         out.push_str(&format!(

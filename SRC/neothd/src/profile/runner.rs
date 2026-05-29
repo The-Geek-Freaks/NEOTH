@@ -578,7 +578,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
-            None, // ADV-03 Phase 5: gate context unused in this test
+            None,  // ADV-03 Phase 5: gate context unused in this test
             false, // ADV-07: not a mirror-recovery turn
         )
         .await
@@ -630,7 +630,7 @@ mod tests {
             &guard,
             &extensions,
             100,
-            None, // ADV-03 Phase 5: gate context unused in this test
+            None,  // ADV-03 Phase 5: gate context unused in this test
             false, // ADV-07: not a mirror-recovery turn
         )
         .await
@@ -665,7 +665,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
-            None, // ADV-03 Phase 5: gate context unused in this test
+            None,  // ADV-03 Phase 5: gate context unused in this test
             false, // ADV-07: not a mirror-recovery turn
         )
         .await
@@ -707,7 +707,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
-            None, // ADV-03 Phase 5: gate context unused in this test
+            None,  // ADV-03 Phase 5: gate context unused in this test
             false, // ADV-07: not a mirror-recovery turn
         )
         .await
@@ -721,7 +721,7 @@ mod tests {
             &guard,
             &extensions,
             1_778_803_200,
-            None, // ADV-03 Phase 5: gate context unused in this test
+            None,  // ADV-03 Phase 5: gate context unused in this test
             false, // ADV-07: not a mirror-recovery turn
         )
         .await

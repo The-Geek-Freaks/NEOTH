@@ -151,8 +151,9 @@ static DE_LASTNEXT_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 // Single-token relative days (unambiguous EN + DE only).
-static SINGLE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)\b(today|yesterday|tomorrow|heute|gestern|vorgestern)\b").unwrap());
+static SINGLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\b(today|yesterday|tomorrow|heute|gestern|vorgestern)\b").unwrap()
+});
 
 /// Cheap pre-check: skip all regex work (and borrow the input) unless a
 /// trigger root is present. Keeps the hot path allocation-free for the
@@ -160,8 +161,20 @@ static SINGLE_RE: LazyLock<Regex> =
 fn needs_normalization(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     const ROOTS: &[&str] = &[
-        "ago", "vor ", "in ", "last ", "next ", "letzte", "nächste", "naechste", "today",
-        "yesterday", "tomorrow", "heute", "gestern", "vorgestern",
+        "ago",
+        "vor ",
+        "in ",
+        "last ",
+        "next ",
+        "letzte",
+        "nächste",
+        "naechste",
+        "today",
+        "yesterday",
+        "tomorrow",
+        "heute",
+        "gestern",
+        "vorgestern",
     ];
     ROOTS.iter().any(|r| lower.contains(r))
 }
@@ -375,10 +388,16 @@ mod tests {
     #[test]
     fn single_token_days_en_de() {
         assert_eq!(normalize_relative_dates("today", anchor()), "2026-05-28");
-        assert_eq!(normalize_relative_dates("yesterday", anchor()), "2026-05-27");
+        assert_eq!(
+            normalize_relative_dates("yesterday", anchor()),
+            "2026-05-27"
+        );
         assert_eq!(normalize_relative_dates("heute", anchor()), "2026-05-28");
         assert_eq!(normalize_relative_dates("gestern", anchor()), "2026-05-27");
-        assert_eq!(normalize_relative_dates("vorgestern", anchor()), "2026-05-26");
+        assert_eq!(
+            normalize_relative_dates("vorgestern", anchor()),
+            "2026-05-26"
+        );
         assert_eq!(normalize_relative_dates("tomorrow", anchor()), "2026-05-29");
     }
 

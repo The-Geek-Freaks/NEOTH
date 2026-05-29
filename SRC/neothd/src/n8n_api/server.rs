@@ -309,8 +309,9 @@ pub fn load_or_init_token(home: &std::path::Path) -> std::io::Result<String> {
         #[cfg(windows)]
         let token = {
             let raw = if crate::wal::dpapi::is_wrapped(&bytes) {
-                crate::wal::dpapi::unprotect(&bytes)
-                    .map_err(|e| std::io::Error::other(format!("DPAPI unwrap n8n_api_token: {e}")))?
+                crate::wal::dpapi::unprotect(&bytes).map_err(|e| {
+                    std::io::Error::other(format!("DPAPI unwrap n8n_api_token: {e}"))
+                })?
             } else {
                 bytes
             };
