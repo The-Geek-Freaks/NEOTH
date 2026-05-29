@@ -38,7 +38,7 @@ and the WAL + SQLite views database.
 | 7 | Web search | `tools/web_search.rs` | `api.search.brave.com` / `api.tavily.com` | Fixed cloud endpoint; operator API key; autonomy gate |
 | 8 | arXiv search | `tools/arxiv.rs` | `export.arxiv.org/api/query` | Anonymous, read-only, fixed endpoint (no key) |
 | 9 | Cloud TTS | `tools/tts.rs` | `api.elevenlabs.io` | Cloud TTS; operator API key; opt-in |
-| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | SHA-256 **integrity**-checked (NOT signature-verified — see §1.10); operator-initiated apply only |
+| 10 | Self-updater | `updater/self_update.rs` | `api.github.com` releases + GitHub CDN | SHA-256 integrity + **minisign signature verification** (`updater/sig_verify.rs`, compile-time pinned pubkey; two-tier rule — see §1.10); manual path warns when unsigned, unattended path refuses |
 | 11 | Discord channel | `channels/discord.rs` | `discord.com/api` | Send-only; operator bot token; CHANNEL_EGRESS audit |
 | 12 | Pears bridge | `channels/pears_bridge.rs` | `127.0.0.1` localhost only | Localhost-only by construction; per-session token |
 | 13 | Gmail (scaffold) | `email/gmail.rs` | `accounts.google.com` + `imap.gmail.com` | **Not network-live** — scaffold only; consent gate planned (EM-01b) |
@@ -175,28 +175,66 @@ text to synthesise; returns audio bytes. No operator-supplied URL.
 
 ### 1.10 Self-updater (`updater/self_update.rs`)
 
-`api.github.com` releases + the GitHub release CDN. Downloaded
-artifacts are **SHA-256 integrity-checked** against the published
-companion hash before any swap. **This is a corruption/integrity check,
-NOT an authenticity control** — the hash and the binary come from the
-same GitHub release, so an attacker who compromises the release (or the
-account, or MITMs the CDN) controls both. There is no cryptographic
-signature today (no minisign/cosign/Sigstore). Because of that, the
-APPLY step is **operator-initiated only** (`neoth update --self --apply`,
-emits `0xD2`) — the daemon does NOT auto-apply its own binary
-unattended. A senior-dev panel (2026-05-29) blocked unattended
-self-replace pending: (1) ✅ `Action::SelfBinaryReplace` permission gate
-(Confirm even at Full) — SHIPPED; (2) signature verification before the
-swap via `minisign-verify` (pure-Rust, fits the no-ring/no-openssl
-posture; the `sigstore` crate was probed + rejected for pulling
-native-tls/ring/prost) — wiring it into `apply_downloaded` + a minisign
-signing step in CI is the open item; (3) a
-daemon-path WAL emit that survives the single-writer guard — open
-(lands with the unattended task); (4) a richer `0xD2` payload —
-`archive_sha256` + `download_url` + `trigger_source` (manual/auto)
-SHIPPED; extracted-binary SHA + signature-verification-result still
-pending. The
-check itself is read-only release-metadata.
+`api.github.com` releases + the GitHub release CDN. Each downloaded
+artifact passes through **two checks** before any binary swap:
+
+1. **SHA-256 integrity** against the `<asset>.sha256` companion. A
+   corruption/transport-tamper guard — necessary but not sufficient on
+   its own (hash and binary share a release origin; an attacker who
+   compromises the release controls both).
+
+2. **minisign signature verification** (`updater/sig_verify.rs`) against
+   a compile-time pinned ed25519 pubkey (`NEOTH_RELEASE_MINISIGN_PUBKEY`,
+   `option_env!`-baked at release build). Reads a `<asset>.minisig`
+   companion. Pure-Rust (`minisign-verify`), no `ring`/no-openssl/no
+   native-tls — fits NEOTH's rustls-only posture. The `sigstore` crate
+   was empirically probed + rejected for pulling tokio-native-tls /
+   ring / prost.
+
+Two-tier `require_signature` rule:
+- **Manual path** (`neoth update --self --apply`, `require=false`) —
+  warns on `unsigned_allowed` / `no_pinned_key`, **proceeds**. Keeps the
+  updater usable for legacy releases + first-bootstrap before the CI
+  signing step is provisioned. A *present-but-invalid* signature **always
+  bails** regardless of the require flag.
+- **Unattended path** (`daemon/auto_update::spawn_self_stage`,
+  `require=true`) — hard-bails any non-`Verified` status. Combined with
+  the `Action::SelfBinaryReplace` Confirm-at-every-level gate, this
+  means daemon-initiated self-replace requires BOTH a verified signature
+  AND a TTY confirm — the daemon has no TTY, so the unattended path
+  stage-only stages + drops a notification sidecar; the operator runs
+  the manual apply to confirm + swap.
+
+Public-download **provenance** (separate from self-update verify) is
+provided by **cosign keyless** (Sigstore OIDC) — every release publishes
+a `<asset>.cosign.bundle` next to the `.minisig`, anchored to the
+GitHub Actions workflow identity. Operators downloading manually verify
+provenance with `cosign verify-blob`; the daemon's self-update path
+verifies authenticity with minisign.
+
+**Open CI dependency:** the release workflow's minisign signing step is
+in place (additive, graceful-skip when the secret is unset) but
+**inactive until Alex provisions the keypair** — set
+`NEOTH_RELEASE_MINISIGN_SECRET_KEY` (and optional
+`NEOTH_RELEASE_MINISIGN_PASSWORD`) repo secrets + build the binaries
+with `NEOTH_RELEASE_MINISIGN_PUBKEY` env baked in. Until then, releases
+ship cosign-only; the unattended self-update path reports
+`no_pinned_key` and refuses (correct fail-closed behaviour). The manual
+path keeps working.
+
+Other senior-dev-panel items: (1) ✅ `Action::SelfBinaryReplace`
+Confirm-at-every-level gate — SHIPPED; (2) ✅ minisign verify wired into
+`apply_update` / `stage_update` — SHIPPED; (3) daemon-path WAL emit that
+survives the single-writer guard — open, lands with the unattended
+task; (4) richer `0xD2` payload (`archive_sha256` + `download_url` +
+`trigger_source`) — SHIPPED; extracted-binary SHA + sig-result still
+pending.
+
+**Asset naming alignment (Session 28f):** the code's asset locator now
+matches the workflow's actual artifact scheme (`neothd-<version>-<target>.<ext>`,
+`.tar.gz` unix / `.zip` windows) via `find_matching_asset` (target +
+extension match, prefix/version tolerant). Pre-fix the code expected
+`neoth-<target>.tar.xz` and silently missed every release.
 
 ### 1.11 Discord channel (`channels/discord.rs`)
 

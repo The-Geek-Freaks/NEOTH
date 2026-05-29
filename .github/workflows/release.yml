@@ -218,7 +218,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign archives (keyless)
+      - name: Sign archives (cosign keyless — public-download provenance)
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: |
@@ -230,6 +230,61 @@ jobs:
           for f in *.tar.gz *.zip; do
             cosign sign-blob --yes "$f" --bundle "${f}.cosign.bundle"
           done
+
+      # Session 28f release-drift fix — TWO complementary signing schemes:
+      #   1. cosign (above) → public-download PROVENANCE (Sigstore
+      #      transparency log; anyone downloading verifies the artifact was
+      #      built by this exact workflow). No key management.
+      #   2. minisign (below) → self-update VERIFY path (the daemon's
+      #      `updater::sig_verify` has a compile-time pinned pubkey + reads
+      #      a `<asset>.minisig` companion; ed25519, offline, rustls/no-ring
+      #      friendly). MV-01b prereq #2.
+      #
+      # The minisign step is GRACEFUL-SKIP when the secrets aren't set, so
+      # adding the secrets is a non-breaking deploy: existing releases keep
+      # shipping cosign-only; once Alex provisions the keypair the next
+      # release also ships `.minisig` companions and the unattended
+      # self-update path (`require_signature = true`) starts accepting them.
+      #
+      # Provisioning (Alex action, one-time):
+      #   1. `rsign generate` (or `minisign -G`) — produce a passwordless
+      #      key (`-W` flag) so CI can sign without a password secret. The
+      #      .pub file holds the public key.
+      #   2. Repo Settings → Secrets → Actions:
+      #        - NEOTH_RELEASE_MINISIGN_SECRET_KEY = entire content of the
+      #          generated `minisign.key` (or `*.sec`) file.
+      #        - NEOTH_RELEASE_MINISIGN_PASSWORD   = the key password, OR
+      #          leave UNSET when the key is passwordless (`-W`).
+      #   3. Build the release binaries with the public key baked in:
+      #      pass `NEOTH_RELEASE_MINISIGN_PUBKEY=<contents-of-.pub-file>`
+      #      to `cargo build --release` (add it to the `Build (native)` /
+      #      `Build (cross)` env: in this matrix when ready).
+      - name: Sign archives (minisign — self-update verify)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.NEOTH_RELEASE_MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.NEOTH_RELEASE_MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::notice::NEOTH_RELEASE_MINISIGN_SECRET_KEY not set — skipping minisign signing."
+            echo "::notice::Manual self-update (neoth update --self) will still work; unattended"
+            echo "::notice::self-update (require_signature=true) refuses until this secret is set."
+            exit 0
+          fi
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+          KEY_FILE="$RUNNER_TEMP/minisign.key"
+          printf '%s' "$MINISIGN_SECRET_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          cd dist
+          shopt -s nullglob
+          for f in *.tar.gz *.zip; do
+            # Pipe the password (empty string is fine for a `-W` passwordless key).
+            printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$KEY_FILE" -m "$f" \
+              || { echo "::error::minisign signing failed for $f"; rm -f "$KEY_FILE"; exit 1; }
+          done
+          rm -f "$KEY_FILE"
+          echo "minisign companions produced:"
+          ls -la *.minisig 2>/dev/null || echo "  (none — investigate)"
 
       - name: Create GitHub Release
         # SHA-pinned to immutable release tag (mutable @v2 tag is hijack risk).
@@ -244,6 +299,7 @@ jobs:
             dist/*.sha256
             dist/SHA256SUMS
             dist/*.cosign.bundle
+            dist/*.minisig
           body: |
             ## Installation
 
@@ -254,13 +310,20 @@ jobs:
             # Verify checksum (Linux example)
             sha256sum -c neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.sha256
 
-            # Verify cosign signature (recommended — proves the binary was
-            # built by this GitHub Actions workflow, not by an attacker):
+            # Verify cosign signature (public-download provenance — proves
+            # the binary was built by this GitHub Actions workflow):
             cosign verify-blob \
               --bundle neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz.cosign.bundle \
               --certificate-identity-regexp "https://github.com/.*/neoth/.github/workflows/release.yml@.*" \
               --certificate-oidc-issuer https://token.actions.githubusercontent.com \
               neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+
+            # Verify minisign signature (when a .minisig companion is present
+            # — used by the daemon's `neoth update --self` for unattended
+            # verification against a compile-time pinned pubkey; the public
+            # key is published with each release once provisioned):
+            minisign -V -P "$(cat NEOTH_RELEASE_MINISIGN_PUBKEY.txt)" \
+              -m neothd-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
             ```
 
             See [PLAN/00_DESIGN_v1.1_FINAL.md](PLAN/00_DESIGN_v1.1_FINAL.md) for architecture notes.

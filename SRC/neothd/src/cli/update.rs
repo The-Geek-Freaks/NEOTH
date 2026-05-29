@@ -209,7 +209,13 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
     // unsigned/unprovisioned release + proceeds (keeps the updater usable
     // for releases published before minisign signing was enabled). The
     // unattended daemon path passes `true`.
-    let outcome = apply_update(&release, target, "neoth", install_dir, false).await?;
+    // The on-disk binary + the archive member basename are both `neothd`
+    // (the Cargo package name; the release workflow packs `neothd` /
+    // `neothd.exe` into each archive). Pre-Session-28f this was the wrong
+    // string `"neoth"` (the product/CLI name, not the binary file), so the
+    // asset extractor + the atomic-replace target both pointed at a file
+    // that didn't exist. Aligned to reality.
+    let outcome = apply_update(&release, target, "neothd", install_dir, false).await?;
 
     // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — best-effort one-shot
     // writer (HF-01 pattern). Guard: if the daemon is live it owns the

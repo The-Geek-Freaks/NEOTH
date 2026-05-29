@@ -184,12 +184,16 @@ pub async fn check_for_update(owner_repo: &str) -> Result<UpdateCheck> {
 // `freedom.yaml::auto_update.{auto_apply,channel}` knobs Codex
 // flagged in the Round-3 review.
 
-/// Archive format cargo-dist emits per host platform.
+/// Archive format the release workflow emits per host platform.
 ///
-/// cargo-dist's default release matrix:
-///   - Windows: `.zip` (binaries + PDBs)
-///   - Linux:   `.tar.xz` (smaller than .gz, ubiquitous on modern distros)
-///   - macOS:   `.tar.xz` (matches Linux; cargo-dist >= 0.10)
+/// Pinned to what `.github/workflows/release.yml` actually produces:
+///   - Windows: `.zip` (7-Zip, NestedInstallerType: portable for winget)
+///   - Linux:   `.tar.gz` (`tar -czf`)
+///   - macOS:   `.tar.gz` (`tar -czf`)
+///
+/// `TarXz` is kept in the enum + the extractor stays compiled — a future
+/// workflow flip to `.tar.xz` (smaller for larger releases) only needs
+/// flipping the per-target arm in [`archive_format_for_target`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveFormat {
     Zip,
@@ -209,16 +213,20 @@ impl ArchiveFormat {
     }
 }
 
-/// Pick the cargo-dist-canonical archive format for a target
-/// triple. Falls back to `TarGz` for unknown targets — the
-/// safest universal choice; Phase 2b's extractor must handle
-/// all three.
+/// Pick the canonical archive format for a target triple. Aligned to the
+/// **release workflow's actual output** — unix targets get `.tar.gz`
+/// because that is what `tar -czf` in `release.yml` produces (Session 28f
+/// reconciliation; pre-fix the code expected `.tar.xz` and the asset
+/// locator silently missed every release). Falls back to `TarGz` for
+/// unknown targets — the safest universal choice; the matcher + extractor
+/// dispatch on this single source of truth so the want_ext and the chosen
+/// extractor can never disagree.
 pub fn archive_format_for_target(target: &str) -> ArchiveFormat {
     if target.contains("windows") {
         ArchiveFormat::Zip
-    } else if target.contains("linux") || target.contains("darwin") {
-        ArchiveFormat::TarXz
     } else {
+        // linux / darwin / anything else (universal-safe fallback) — all
+        // share the workflow's `tar -czf` `.tar.gz` output.
         ArchiveFormat::TarGz
     }
 }
@@ -250,13 +258,17 @@ pub fn host_target_triple() -> Option<&'static str> {
     }
 }
 
-/// Build the cargo-dist-canonical asset filename for a binary +
-/// target. The default cargo-dist convention is
+/// Build the canonical asset filename for a binary + target, matching
+/// the format the release workflow produces. The base shape is
 /// `<binary>-<target>.<archive>`. Examples:
 ///
-///   neoth-x86_64-pc-windows-msvc.zip
-///   neoth-x86_64-unknown-linux-gnu.tar.xz
-///   neoth-aarch64-apple-darwin.tar.xz
+///   neothd-x86_64-pc-windows-msvc.zip
+///   neothd-x86_64-unknown-linux-gnu.tar.gz
+///   neothd-aarch64-apple-darwin.tar.gz
+///
+/// Used only in the error message of `resolve_update_assets` — the live
+/// match path goes through [`find_matching_asset`], which is tolerant of
+/// version prefixes (so `neothd-v0.2.1-<target>.tar.gz` matches too).
 pub fn expected_asset_name(binary: &str, target: &str) -> String {
     let fmt = archive_format_for_target(target);
     format!("{binary}-{target}{ext}", ext = fmt.extension())
@@ -773,7 +785,12 @@ pub fn apply_from_staged(pending: &PendingUpdate, install_dir: &Path) -> Result<
     // Re-verify integrity against the recorded hash before any swap.
     let companion_text = format!("{}  staged\n", pending.archive_sha256);
     let format = archive_format_for_target(&pending.target_triple);
-    let backup = apply_downloaded(&bytes, &companion_text, format, "neoth", install_dir)
+    // `neothd` is the on-disk binary + the archive member basename (Cargo
+    // package name `neothd`; release workflow packs `neothd`/`neothd.exe`).
+    // Pre-Session-28f this was the wrong string `"neoth"` — the
+    // staged-apply fast-path would have failed at extraction looking for a
+    // `neoth` member that doesn't exist.
+    let backup = apply_downloaded(&bytes, &companion_text, format, "neothd", install_dir)
         .context("apply staged archive")?;
     Ok(UpdateApplied {
         from_version: current_version().to_string(),
@@ -1052,28 +1069,29 @@ mod tests {
     }
 
     #[test]
-    fn archive_format_picks_tar_xz_for_unix() {
+    fn archive_format_picks_tar_gz_for_unix() {
+        // Session 28f reconciliation: aligned to the release workflow's
+        // actual output (`tar -czf` → `.tar.gz`). Pre-fix this pinned
+        // `TarXz` and the asset locator silently missed every release.
         assert_eq!(
             archive_format_for_target("x86_64-unknown-linux-gnu"),
-            ArchiveFormat::TarXz
+            ArchiveFormat::TarGz
         );
         assert_eq!(
             archive_format_for_target("aarch64-apple-darwin"),
-            ArchiveFormat::TarXz
+            ArchiveFormat::TarGz
         );
         assert_eq!(
             archive_format_for_target("x86_64-apple-darwin"),
-            ArchiveFormat::TarXz
+            ArchiveFormat::TarGz
         );
     }
 
     #[test]
     fn archive_format_falls_back_to_tar_gz_for_unknown() {
         // Truly unknown OS (no `linux` / `darwin` / `windows`
-        // substring) — safest universal fallback so Phase 2b's
-        // extractor always has SOMETHING to try. Note `*-linux-musl`
-        // intentionally still routes to TarXz; cargo-dist publishes
-        // both glibc + musl Linux as `.tar.xz`.
+        // substring) — safest universal fallback so the extractor
+        // always has SOMETHING to try.
         assert_eq!(
             archive_format_for_target("riscv64gc-unknown-freebsd"),
             ArchiveFormat::TarGz
@@ -1120,11 +1138,11 @@ mod tests {
         );
         assert_eq!(
             expected_asset_name("neoth", "x86_64-unknown-linux-gnu"),
-            "neoth-x86_64-unknown-linux-gnu.tar.xz"
+            "neoth-x86_64-unknown-linux-gnu.tar.gz"
         );
         assert_eq!(
             expected_asset_name("neoth", "aarch64-apple-darwin"),
-            "neoth-aarch64-apple-darwin.tar.xz"
+            "neoth-aarch64-apple-darwin.tar.gz"
         );
     }
 
@@ -1135,8 +1153,8 @@ mod tests {
             "neoth-x86_64-pc-windows-msvc.zip.sha256"
         );
         assert_eq!(
-            sha256_companion_name("neoth-x86_64-unknown-linux-gnu.tar.xz"),
-            "neoth-x86_64-unknown-linux-gnu.tar.xz.sha256"
+            sha256_companion_name("neoth-x86_64-unknown-linux-gnu.tar.gz"),
+            "neoth-x86_64-unknown-linux-gnu.tar.gz.sha256"
         );
     }
 
@@ -1144,8 +1162,8 @@ mod tests {
     fn find_matching_asset_picks_correct_target() {
         let assets = vec![
             fake_asset("neoth-x86_64-pc-windows-msvc.zip"),
-            fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz"),
-            fake_asset("neoth-aarch64-apple-darwin.tar.xz"),
+            fake_asset("neoth-x86_64-unknown-linux-gnu.tar.gz"),
+            fake_asset("neoth-aarch64-apple-darwin.tar.gz"),
         ];
         let m = find_matching_asset(&assets, "x86_64-pc-windows-msvc")
             .expect("must locate windows asset");
@@ -1172,14 +1190,14 @@ mod tests {
     fn find_matching_asset_none_for_target_not_in_release() {
         // Release published only the Linux build; Windows host
         // asks for an asset → None, caller falls back to manual.
-        let assets = vec![fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz")];
+        let assets = vec![fake_asset("neoth-x86_64-unknown-linux-gnu.tar.gz")];
         assert!(find_matching_asset(&assets, "x86_64-pc-windows-msvc").is_none());
     }
 
     #[test]
     fn find_sha256_companion_pairs_with_binary() {
-        let bin = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz");
-        let companion = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz.sha256");
+        let bin = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.gz");
+        let companion = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.gz.sha256");
         let assets = vec![bin.clone(), companion];
         let found = find_sha256_companion(&assets, &bin).expect("companion must match");
         assert!(found.name.ends_with(".sha256"));
@@ -1199,8 +1217,10 @@ mod tests {
     async fn apply_from_staged_installs_without_network() {
         // Stage a zip on disk + a matching pending.json, then apply it
         // via the no-network fast-path. Mirrors the apply_downloaded test
-        // but through the staged-apply helper.
-        let want = binary_filename_for_host("neoth");
+        // but through the staged-apply helper. The fixture binary name
+        // must match what `apply_from_staged` extracts internally
+        // (`"neothd"` — the real Cargo binary).
+        let want = binary_filename_for_host("neothd");
         let zip_bytes = make_zip_with_member(&want, b"staged-daemon");
         let mut hasher = Sha256::new();
         hasher.update(&zip_bytes);
@@ -1246,8 +1266,9 @@ mod tests {
     #[tokio::test]
     async fn apply_from_staged_refuses_tampered_archive() {
         // The staged file was modified after staging — the SHA re-check
-        // inside apply_from_staged must refuse before any swap.
-        let want = binary_filename_for_host("neoth");
+        // inside apply_from_staged must refuse before any swap. Fixture
+        // matches the production binary name `"neothd"`.
+        let want = binary_filename_for_host("neothd");
         let zip_bytes = make_zip_with_member(&want, b"good");
         let dir = tempdir().unwrap();
         let stage_dir = dir.path().join("staged");
@@ -1278,9 +1299,9 @@ mod tests {
         let p = PendingUpdate {
             to_version: "v0.3.0".into(),
             archive_sha256: "a".repeat(64),
-            download_url: "https://example.com/neoth.tar.xz".into(),
+            download_url: "https://example.com/neoth.tar.gz".into(),
             signature_status: "verified".into(),
-            staged_archive: "/home/alex/.neoth/staged/neoth.tar.xz".into(),
+            staged_archive: "/home/alex/.neoth/staged/neoth.tar.gz".into(),
             target_triple: "x86_64-unknown-linux-gnu".into(),
             staged_ts_unix: 1_700_000_000,
         };
@@ -1299,8 +1320,8 @@ mod tests {
     fn find_minisig_companion_pairs_with_binary() {
         // MV-01b #2: the `<asset>.minisig` companion is located the same
         // way as the .sha256 one.
-        let bin = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz");
-        let sig = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz.minisig");
+        let bin = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.gz");
+        let sig = fake_asset("neoth-x86_64-unknown-linux-gnu.tar.gz.minisig");
         let assets = vec![bin.clone(), sig];
         let found = find_minisig_companion(&assets, &bin).expect("minisig must match");
         assert!(found.name.ends_with(".minisig"));
@@ -1330,7 +1351,7 @@ mod tests {
 
     #[test]
     fn resolve_update_assets_errors_when_target_unmatched() {
-        let release = fake_release(vec![fake_asset("neoth-x86_64-unknown-linux-gnu.tar.xz")]);
+        let release = fake_release(vec![fake_asset("neoth-x86_64-unknown-linux-gnu.tar.gz")]);
         let err = resolve_update_assets(&release, "x86_64-pc-windows-msvc", "neoth")
             .unwrap_err()
             .to_string();
@@ -1347,8 +1368,8 @@ mod tests {
     #[test]
     fn resolve_update_assets_returns_some_sha256_when_published() {
         let assets = vec![
-            fake_asset("neoth-x86_64-apple-darwin.tar.xz"),
-            fake_asset("neoth-x86_64-apple-darwin.tar.xz.sha256"),
+            fake_asset("neoth-x86_64-apple-darwin.tar.gz"),
+            fake_asset("neoth-x86_64-apple-darwin.tar.gz.sha256"),
         ];
         let release = fake_release(assets);
         let resolved = resolve_update_assets(&release, "x86_64-apple-darwin", "neoth").unwrap();
@@ -1359,7 +1380,7 @@ mod tests {
     fn resolve_update_assets_returns_none_sha256_when_companion_missing() {
         // Phase 2b's apply path inspects this directly; if None,
         // refuse the update.
-        let assets = vec![fake_asset("neoth-x86_64-apple-darwin.tar.xz")];
+        let assets = vec![fake_asset("neoth-x86_64-apple-darwin.tar.gz")];
         let release = fake_release(assets);
         let resolved = resolve_update_assets(&release, "x86_64-apple-darwin", "neoth").unwrap();
         assert!(resolved.sha256.is_none());

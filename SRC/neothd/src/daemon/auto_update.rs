@@ -221,7 +221,10 @@ async fn run_self_stage_pass(home: &Path, repo: &str, writer: &WalWriterHandle) 
     match updater::self_update::stage_update(
         &release,
         target,
-        "neoth",
+        // `neothd` is the Cargo binary + the archive member basename + the
+        // on-disk file to atomic-replace. Pre-Session-28f this was the
+        // wrong string `"neoth"` (product/CLI name, not binary file).
+        "neothd",
         &stage_dir,
         true, // require_signature — unattended demands a verified release
         now_unix_secs() as i64,
