@@ -19,6 +19,7 @@
 //! operator context so per-turn skill instructions win over global rules.
 
 pub mod bundled;
+pub mod creator;
 pub mod installer;
 pub mod loader;
 pub mod mode_registry;

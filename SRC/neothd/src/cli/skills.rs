@@ -9,6 +9,8 @@
 
 use std::path::PathBuf;
 
+use std::io::IsTerminal;
+
 use anyhow::Result;
 use clap::Args;
 use tracing::info;
@@ -50,6 +52,37 @@ pub struct SkillsArgs {
     /// existing skill of the same id.
     #[arg(long, requires = "install")]
     pub force: bool,
+
+    /// UX-06 — create a new skill manifest via an interactive wizard (or
+    /// `--create-*` flags / `--non-interactive`). Writes a validated
+    /// `~/.neoth/skills/<id>/skill.yaml` — no Rust required.
+    #[arg(long, conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall"])]
+    pub create: bool,
+
+    /// UX-06 non-interactive: skill id (kebab-case, `[a-zA-Z0-9_-]`).
+    #[arg(long = "create-id", value_name = "ID", requires = "create")]
+    pub create_id: Option<String>,
+
+    /// UX-06 non-interactive: one-line description.
+    #[arg(long = "create-description", value_name = "DESC", requires = "create")]
+    pub create_description: Option<String>,
+
+    /// UX-06 non-interactive: comma-separated trigger keywords.
+    #[arg(long = "create-keywords", value_name = "KW,...", requires = "create")]
+    pub create_keywords: Option<String>,
+
+    /// UX-06 non-interactive: system prompt text.
+    #[arg(
+        long = "create-system-prompt",
+        value_name = "PROMPT",
+        requires = "create"
+    )]
+    pub create_system_prompt: Option<String>,
+
+    /// UX-06: skip interactive prompts even on a TTY (drives `--create`
+    /// from the `--create-*` flags only).
+    #[arg(long = "non-interactive", requires = "create")]
+    pub create_non_interactive: bool,
 
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
@@ -108,6 +141,28 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
                         skills_dir.display()
                     );
                 }
+            }
+        }
+        return Ok(());
+    }
+
+    // UX-06 create — happens BEFORE the load so a missing skills dir
+    // (fresh install) doesn't block creating the operator's first skill.
+    if args.create {
+        let interactive = !args.create_non_interactive && std::io::stdin().is_terminal();
+        let params = crate::skills::creator::collect_create_params(&args, interactive)?;
+        let report = crate::skills::creator::create_skill(&skills_dir, params)?;
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                let v = serde_json::json!({
+                    "id": report.id,
+                    "path": report.path.display().to_string(),
+                });
+                println!("{}", serde_json::to_string(&v)?);
+            }
+            OutputFormat::Table => {
+                println!("Created skill `{}` at {}", report.id, report.path.display());
+                println!("Try it: neoth skills --test \"<a message that should trigger it>\"");
             }
         }
         return Ok(());

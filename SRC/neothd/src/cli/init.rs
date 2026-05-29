@@ -2296,7 +2296,7 @@ fn prompt_hemisphere_model(
 /// `~/.neoth/models_catalog.json` lists for `provider`. Empty `Vec`
 /// when the catalog has no entry / no fresh entries. Pure helper —
 /// no network calls.
-fn catalog_model_ids_for_provider(
+pub(crate) fn catalog_model_ids_for_provider(
     provider: crate::config::inference::InferenceProvider,
 ) -> Vec<String> {
     use crate::config::FreedomConfig;

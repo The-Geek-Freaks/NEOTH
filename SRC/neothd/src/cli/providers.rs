@@ -14,6 +14,7 @@ use anyhow::Result;
 use serde_json::json;
 
 use crate::cli::OutputFormat;
+use crate::cli::init::catalog_model_ids_for_provider;
 use crate::config::inference::InferenceProvider;
 
 /// Static list of known OpenAI-compatible endpoints. Operators configure
@@ -173,6 +174,10 @@ pub fn run_show(provider_str: &str, output: &OutputFormat) -> Result<()> {
             "unknown provider `{provider_str}`. Run `neoth provider list` for the full list."
         )
     })?;
+    // MV-01c — best-effort live-catalog model list. Empty Vec when the
+    // catalog is missing/stale or the provider has no catalog source
+    // (LocalQwen / LocalOuro / AzureOpenAi → silent). Never fails run_show.
+    let catalog_models = catalog_model_ids_for_provider(provider);
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             let mut obj = json!({
@@ -184,6 +189,11 @@ pub fn run_show(provider_str: &str, output: &OutputFormat) -> Result<()> {
                 obj.as_object_mut()
                     .unwrap()
                     .insert("compat_examples".into(), json!(OPENAI_COMPAT_TARGETS));
+            }
+            if !catalog_models.is_empty() {
+                obj.as_object_mut()
+                    .unwrap()
+                    .insert("available_models".into(), json!(catalog_models));
             }
             println!("{}", serde_json::to_string_pretty(&obj)?);
         }
@@ -202,6 +212,12 @@ pub fn run_show(provider_str: &str, output: &OutputFormat) -> Result<()> {
                 println!("  compat:      covers these endpoints via configurable URL:");
                 for target in OPENAI_COMPAT_TARGETS {
                     println!("    - {target}");
+                }
+            }
+            if !catalog_models.is_empty() {
+                println!("  available models (live catalog):");
+                for id in &catalog_models {
+                    println!("    - {id}");
                 }
             }
         }
@@ -271,6 +287,22 @@ mod tests {
         for p in ALL_PROVIDERS {
             run_show(p.as_str(), &OutputFormat::Table)
                 .unwrap_or_else(|e| panic!("show {} failed: {e}", p.as_str()));
+        }
+    }
+
+    #[test]
+    fn run_show_catalog_section_is_silent_safe_for_catalog_keyed_providers() {
+        // MV-01c: catalog-keyed providers (anthropic_api, openai_api)
+        // must not fail run_show when no catalog file exists — the
+        // "available models" section is a best-effort silent no-op.
+        // (The model-filtering logic itself is unit-tested in init.rs.)
+        for p in [
+            InferenceProvider::AnthropicApi,
+            InferenceProvider::OpenAi,
+            InferenceProvider::Gemini,
+        ] {
+            run_show(p.as_str(), &OutputFormat::Json)
+                .unwrap_or_else(|e| panic!("json show {} failed: {e}", p.as_str()));
         }
     }
 
