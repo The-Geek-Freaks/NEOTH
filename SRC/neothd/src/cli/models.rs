@@ -19,6 +19,8 @@ use clap::{Args, Subcommand};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::providers::{clip_engine, whisper};
+use crate::wal::events::{EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, EVENT_TYPE_MODEL_DOWNLOAD_START};
+use crate::wal::{make_header, spawn as wal_spawn};
 
 #[derive(Args, Debug, Clone)]
 pub struct ModelsArgs {
@@ -154,32 +156,25 @@ struct ListRow {
     cached: bool,
 }
 
+/// Seconds since the unix epoch (saturating to 0 on a clock fault) for
+/// the HF-01 model-download audit payloads.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
-    match name {
-        "clip" => {
-            let repo = repo_override.map(String::from);
-            tracing::info!(repo = ?repo, "pulling CLIP artifacts");
-            let _engine = clip_engine::ClipEngine::new(repo)
-                .await
-                .with_context(|| "pull CLIP artifacts")?;
-            println!(
-                "CLIP cached at {}",
-                clip_engine::default_cache_dir(clip_engine::DEFAULT_CLIP_REPO).display()
-            );
-            Ok(())
-        }
-        "whisper" => {
-            let repo = repo_override.map(String::from);
-            tracing::info!(repo = ?repo, "pulling Whisper artifacts");
-            let _engine = whisper::WhisperEngine::new(repo)
-                .await
-                .with_context(|| "pull Whisper artifacts")?;
-            println!(
-                "Whisper cached at {}",
-                whisper_cache_dir(whisper::DEFAULT_WHISPER_REPO).display()
-            );
-            Ok(())
-        }
+    // Resolve the known model + its target repo BEFORE any config load or
+    // network, so an unknown name fails fast with the known-list.
+    let model_id: String = match name {
+        "clip" => repo_override
+            .unwrap_or(clip_engine::DEFAULT_CLIP_REPO)
+            .to_string(),
+        "whisper" => repo_override
+            .unwrap_or(whisper::DEFAULT_WHISPER_REPO)
+            .to_string(),
         other => anyhow::bail!(
             "unknown model id '{other}'. Known: {}",
             known_models()
@@ -188,7 +183,94 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+    };
+
+    // HF-01 consent gate — refuse the fetch when the operator disabled
+    // HuggingFace downloads (air-gapped / bandwidth-controlled installs).
+    let cfg = FreedomConfig::load_from_path(&FreedomConfig::default_neoth_home().join("freedom.yaml"))
+        .unwrap_or_default();
+    if !cfg.updater.allow_huggingface_downloads {
+        anyhow::bail!(
+            "model download blocked: freedom.yaml::updater.allow_huggingface_downloads = false. \
+             Set it to true to permit HuggingFace fetches."
+        );
     }
+
+    // HF-01 audit: best-effort one-shot WAL writer. Skipped when the
+    // daemon is live (it owns the writer + would emit its own frames).
+    let audit = {
+        let pidfile = crate::daemon::pidfile::default_pidfile();
+        if matches!(
+            crate::daemon::pidfile::live_daemon_pid(&pidfile),
+            Ok(Some(_))
+        ) {
+            None
+        } else {
+            let seg = FreedomConfig::default_wal_dir().join("000001.wal");
+            if let Some(p) = seg.parent() {
+                let _ = std::fs::create_dir_all(p);
+            }
+            wal_spawn(seg).ok()
+        }
+    };
+
+    if let Some((w, _)) = &audit {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "model_id": model_id.as_str(),
+            "ts_unix": now_unix_secs(),
+        }))
+        .unwrap_or_default();
+        if let Err(e) = w
+            .append(make_header(EVENT_TYPE_MODEL_DOWNLOAD_START, &payload), payload)
+            .await
+        {
+            tracing::warn!(error = %e, "MODEL_DOWNLOAD_START WAL emit failed (non-fatal)");
+        }
+    }
+
+    let started = std::time::Instant::now();
+    let cache_dir = match name {
+        "clip" => {
+            tracing::info!(repo = %model_id, "pulling CLIP artifacts");
+            let _engine = clip_engine::ClipEngine::new(repo_override.map(String::from))
+                .await
+                .with_context(|| "pull CLIP artifacts")?;
+            clip_engine::default_cache_dir(&model_id)
+        }
+        "whisper" => {
+            tracing::info!(repo = %model_id, "pulling Whisper artifacts");
+            let _engine = whisper::WhisperEngine::new(repo_override.map(String::from))
+                .await
+                .with_context(|| "pull Whisper artifacts")?;
+            whisper_cache_dir(&model_id)
+        }
+        // `name` was validated to clip/whisper above.
+        _ => unreachable!("model id validated above"),
+    };
+
+    if let Some((w, join)) = audit {
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "model_id": model_id.as_str(),
+            "cached_path": cache_dir.display().to_string(),
+            "duration_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            "ts_unix": now_unix_secs(),
+        }))
+        .unwrap_or_default();
+        if let Err(e) = w
+            .append(
+                make_header(EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, &payload),
+                payload,
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "MODEL_DOWNLOAD_COMPLETE WAL emit failed (non-fatal)");
+        }
+        drop(w);
+        let _ = join.await;
+    }
+
+    println!("{} cached at {}", name, cache_dir.display());
+    Ok(())
 }
 
 fn run_prune(name: &str) -> Result<()> {
@@ -257,6 +339,32 @@ mod tests {
     fn prune_unknown_name_errors() {
         let err = run_prune("nope").unwrap_err();
         assert!(err.to_string().contains("unknown model id"));
+    }
+
+    // The env lock is intentionally held across run_pull's await so no
+    // concurrent test mutates NEOTH_HOME mid-call (single-threaded intent).
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn pull_blocked_when_hf_downloads_disabled() {
+        // HF-01 gate: with allow_huggingface_downloads = false the pull
+        // bails BEFORE any network fetch. Hermetic via NEOTH_HOME override.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let _env = crate::test_env::lock();
+        let prev = std::env::var("NEOTH_HOME").ok();
+        unsafe { std::env::set_var("NEOTH_HOME", tmp.path()) };
+        std::fs::write(
+            tmp.path().join("freedom.yaml"),
+            "updater:\n  allow_huggingface_downloads: false\n",
+        )
+        .unwrap();
+        let r = run_pull("clip", None).await;
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("NEOTH_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("NEOTH_HOME") };
+        }
+        let err = r.expect_err("gate should block the pull");
+        assert!(err.to_string().contains("blocked"), "got: {err}");
     }
 
     #[test]

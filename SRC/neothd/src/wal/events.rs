@@ -883,6 +883,19 @@ pub const EVENT_TYPE_DETECT_COMPLETE: u8 = 0xD5;
 ///             services_redacted: true }`.
 pub const EVENT_TYPE_CREDENTIAL_IMPORT: u8 = 0xD6;
 
+/// `0xD7 MODEL_DOWNLOAD_START` — HF-01. Emitted by `cli::models::run_pull`
+/// immediately BEFORE a HuggingFace model download begins (when the
+/// `updater.allow_huggingface_downloads` gate permits it). Durable audit
+/// of exactly-what-we-fetched-when. Payload:
+/// `{ model_id, expected_files, ts_unix }`.
+pub const EVENT_TYPE_MODEL_DOWNLOAD_START: u8 = 0xD7;
+
+/// `0xD8 MODEL_DOWNLOAD_COMPLETE` — HF-01. Emitted by `cli::models::run_pull`
+/// after a download finishes, recording the on-disk cache location +
+/// wall-clock duration. Payload:
+/// `{ model_id, cached_path, duration_ms, ts_unix }`.
+pub const EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE: u8 = 0xD8;
+
 // ---- 0xE0..=0xE7  Cluster lifecycle (R-7, Session 19) ---------------------
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
@@ -1258,6 +1271,11 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_PATCH_APPLIED < 0xD0 || EVENT_TYPE_PATCH_APPLIED > 0xDF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PATCH_APPLY_FAILED < 0xD0 || EVENT_TYPE_PATCH_APPLY_FAILED > 0xDF) as usize];
+    // HF-01 model-download band membership (0xD0..=0xDF).
+    let _ = [(); 1][(EVENT_TYPE_MODEL_DOWNLOAD_START < 0xD0
+        || EVENT_TYPE_MODEL_DOWNLOAD_START > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE < 0xD0
+        || EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xE7).
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_CONNECTED < 0xE0
         || EVENT_TYPE_CLUSTER_PEER_CONNECTED > 0xE7) as usize];
@@ -1416,6 +1434,8 @@ mod tests {
             ("SELF_UPDATE_APPLIED", EVENT_TYPE_SELF_UPDATE_APPLIED),
             ("PATCH_APPLIED", EVENT_TYPE_PATCH_APPLIED),
             ("PATCH_APPLY_FAILED", EVENT_TYPE_PATCH_APPLY_FAILED),
+            ("MODEL_DOWNLOAD_START", EVENT_TYPE_MODEL_DOWNLOAD_START),
+            ("MODEL_DOWNLOAD_COMPLETE", EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",

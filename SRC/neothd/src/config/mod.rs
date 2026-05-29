@@ -679,6 +679,13 @@ pub struct UpdaterConfig {
     pub enabled: bool,
     #[serde(default = "default_updater_interval_secs")]
     pub interval_secs: u64,
+    /// HF-01: when `false`, `neoth model pull` REFUSES HuggingFace model
+    /// downloads (air-gapped / bandwidth-controlled / consent-gated
+    /// deployments). Default `true` so the common path is unaffected.
+    /// The download path reads this before any network fetch + emits the
+    /// `0xD7/0xD8 MODEL_DOWNLOAD_*` audit frames around a permitted pull.
+    #[serde(default = "default_allow_huggingface_downloads")]
+    pub allow_huggingface_downloads: bool,
 }
 
 fn default_updater_enabled() -> bool {
@@ -689,11 +696,16 @@ fn default_updater_interval_secs() -> u64 {
     6 * 3600
 }
 
+fn default_allow_huggingface_downloads() -> bool {
+    true
+}
+
 impl Default for UpdaterConfig {
     fn default() -> Self {
         Self {
             enabled: default_updater_enabled(),
             interval_secs: default_updater_interval_secs(),
+            allow_huggingface_downloads: default_allow_huggingface_downloads(),
         }
     }
 }
