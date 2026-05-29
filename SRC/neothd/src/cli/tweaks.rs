@@ -145,6 +145,7 @@ mod tests {
                 description: "Morning greeting".into(),
                 prompt: "Good morning, Alex.".into(),
             }],
+            theme: Default::default(), // HO-05
         }
     }
 

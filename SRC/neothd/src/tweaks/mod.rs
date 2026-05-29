@@ -48,6 +48,43 @@ pub struct Tweaks {
     pub persona_override: Option<String>,
     /// Named reusable prompt snippets, mirrors `tweakcc::prompts[]`.
     pub prompts: Vec<PromptSnippet>,
+    /// HO-05 (R-21): GUI/TUI appearance + layout knobs. Parsed here so a
+    /// `[theme]` block in `tweaks.toml` round-trips; the Slint GUI +
+    /// statusline consume these when rendering (Workstream P). All
+    /// optional — `None` means "use NEOTH's built-in default".
+    #[serde(default)]
+    pub theme: ThemeConfig,
+}
+
+/// HO-05 (R-21) `[theme]` block — ~18 appearance/layout keys the GUI +
+/// statusline read at render time. Every field optional so partial
+/// `tweaks.toml` overrides only what the operator set; unknown keys are
+/// ignored by serde so a newer GUI can add keys without breaking older
+/// configs. Colours are free-form strings (`"#ff00aa"` / named) validated
+/// at render time, not here.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ThemeConfig {
+    pub accent_color: Option<String>,
+    pub background_color: Option<String>,
+    pub foreground_color: Option<String>,
+    pub font_family: Option<String>,
+    pub font_size_pt: Option<u8>,
+    pub sidebar_width_px: Option<u32>,
+    pub border_radius_px: Option<u32>,
+    pub compact_mode: Option<bool>,
+    pub show_token_count: Option<bool>,
+    pub show_model_badge: Option<bool>,
+    /// `"rounded"` | `"square"` | `"minimal"` — chat bubble shape.
+    pub chat_bubble_style: Option<String>,
+    pub icon_set: Option<String>,
+    /// `"none"` | `"reduced"` | `"full"` — respects reduce-motion prefs.
+    pub animation_speed: Option<String>,
+    pub scrollbar_style: Option<String>,
+    pub input_height_lines: Option<u8>,
+    pub panel_opacity: Option<f32>,
+    pub header_hidden: Option<bool>,
+    pub sidebar_collapsed: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -147,6 +184,43 @@ prompt = "Ship it. Reasoning first, then code."
         assert_eq!(t.prompts.len(), 2);
         assert!(t.snippet("morning").is_some());
         assert!(t.snippet("ghost").is_none());
+    }
+
+    #[test]
+    fn parses_theme_block_with_partial_overrides() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("tweaks.toml");
+        std::fs::write(
+            &path,
+            r##"
+statusline = "n"
+
+[theme]
+accent_color = "#ff00aa"
+font_size_pt = 14
+compact_mode = true
+animation_speed = "reduced"
+"##,
+        )
+        .unwrap();
+        let t = Tweaks::load_or_default(&path).unwrap();
+        assert_eq!(t.theme.accent_color.as_deref(), Some("#ff00aa"));
+        assert_eq!(t.theme.font_size_pt, Some(14));
+        assert_eq!(t.theme.compact_mode, Some(true));
+        assert_eq!(t.theme.animation_speed.as_deref(), Some("reduced"));
+        // Keys the operator didn't set stay None (partial override).
+        assert!(t.theme.sidebar_width_px.is_none());
+        assert!(t.theme.header_hidden.is_none());
+    }
+
+    #[test]
+    fn theme_defaults_to_all_none_when_block_absent() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("t.toml");
+        std::fs::write(&path, "statusline = \"x\"").unwrap();
+        let t = Tweaks::load_or_default(&path).unwrap();
+        assert!(t.theme.accent_color.is_none());
+        assert!(t.theme.compact_mode.is_none());
     }
 
     #[test]
