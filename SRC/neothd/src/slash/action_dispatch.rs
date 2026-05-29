@@ -26,7 +26,7 @@
 //! surface immediately while the per-handler wiring lands in
 //! follow-up picks.
 
-use super::schema::SlashAction;
+use super::schema::{CommandSource, SlashAction};
 use crate::config::FreedomConfig;
 
 /// What the dispatcher decided after seeing an action invocation.
@@ -47,6 +47,11 @@ pub enum ActionOutcome {
     InvalidArgs { text: String },
     /// `/quit` only — caller drains state + exits the process.
     Exit,
+    /// ADV-09: a destructive action (config / consent / autonomy / channel
+    /// mutation) was invoked from a CHANNEL. Rejected — it requires local
+    /// CLI authentication. `text` is the operator-facing refusal the
+    /// channel adapter sends back.
+    ChannelPrivilegeBlocked { text: String },
 }
 
 impl ActionOutcome {
@@ -54,7 +59,10 @@ impl ActionOutcome {
     /// the string to stdout / the channel.
     pub fn text(&self) -> &str {
         match self {
-            Self::Handled { text } | Self::Pending { text } | Self::InvalidArgs { text } => text,
+            Self::Handled { text }
+            | Self::Pending { text }
+            | Self::InvalidArgs { text }
+            | Self::ChannelPrivilegeBlocked { text } => text,
             Self::Exit => "Exiting NEOTH chat session.",
         }
     }
@@ -62,12 +70,37 @@ impl ActionOutcome {
     pub fn should_exit(&self) -> bool {
         matches!(self, Self::Exit)
     }
+
+    /// ADV-09: true when the action was refused by the channel privilege
+    /// ceiling. Channel adapters surface the text + do NOT fall through
+    /// to the LLM.
+    pub fn is_channel_blocked(&self) -> bool {
+        matches!(self, Self::ChannelPrivilegeBlocked { .. })
+    }
 }
 
 /// Dispatch one action. `args` is the trailing slice after the
 /// command name (e.g. `/config foo bar` → `args = "foo bar"`).
 /// `config` is the live `FreedomConfig` snapshot for read paths.
-pub fn dispatch_action(action: SlashAction, args: &str, config: &FreedomConfig) -> ActionOutcome {
+pub fn dispatch_action(
+    action: SlashAction,
+    args: &str,
+    config: &FreedomConfig,
+    source: CommandSource,
+) -> ActionOutcome {
+    // ADV-09 channel privilege ceiling: a destructive action arriving
+    // from a channel is rejected outright — config / consent / autonomy /
+    // channel mutation requires local CLI authentication so a Telegram
+    // message can't reconfigure or escalate the daemon. CLI is trusted.
+    if source.is_channel() && action.is_destructive() {
+        return ActionOutcome::ChannelPrivilegeBlocked {
+            text: format!(
+                "⛔ `/{}` is a destructive operator command and cannot be run from a channel. \
+                 Run it locally: `neoth` in a terminal on the host (CLI + local auth required).",
+                action.as_str()
+            ),
+        };
+    }
     let trimmed = args.trim();
     match action {
         SlashAction::RestartWizard => handle_wizard(),
@@ -365,13 +398,13 @@ mod tests {
 
     #[test]
     fn quit_returns_exit_outcome() {
-        let out = dispatch_action(SlashAction::Quit, "", &cfg());
+        let out = dispatch_action(SlashAction::Quit, "", &cfg(), CommandSource::Cli);
         assert!(out.should_exit());
     }
 
     #[test]
     fn config_with_no_args_lists_current_values() {
-        let out = dispatch_action(SlashAction::ConfigGet, "", &cfg());
+        let out = dispatch_action(SlashAction::ConfigGet, "", &cfg(), CommandSource::Cli);
         match out {
             ActionOutcome::Handled { text } => {
                 assert!(text.contains("operator_id"));
@@ -384,13 +417,13 @@ mod tests {
 
     #[test]
     fn config_with_one_arg_returns_invalid_args() {
-        let out = dispatch_action(SlashAction::ConfigGet, "operator_id", &cfg());
+        let out = dispatch_action(SlashAction::ConfigGet, "operator_id", &cfg(), CommandSource::Cli);
         assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
     }
 
     #[test]
     fn config_with_two_args_returns_pending_with_gui_mirror() {
-        let out = dispatch_action(SlashAction::ConfigGet, "operator_id alex", &cfg());
+        let out = dispatch_action(SlashAction::ConfigGet, "operator_id alex", &cfg(), CommandSource::Cli);
         match out {
             ActionOutcome::Pending { text } => {
                 assert!(text.contains("operator_id"));
@@ -403,7 +436,7 @@ mod tests {
 
     #[test]
     fn connect_rejects_unknown_channel() {
-        let out = dispatch_action(SlashAction::ConnectChannel, "fax_machine", &cfg());
+        let out = dispatch_action(SlashAction::ConnectChannel, "fax_machine", &cfg(), CommandSource::Cli);
         match out {
             ActionOutcome::InvalidArgs { text } => {
                 assert!(text.contains("unknown channel"));
@@ -416,7 +449,7 @@ mod tests {
     #[test]
     fn connect_accepts_known_channel() {
         for ch in ["telegram", "whatsapp", "slack", "discord", "keet"] {
-            let out = dispatch_action(SlashAction::ConnectChannel, ch, &cfg());
+            let out = dispatch_action(SlashAction::ConnectChannel, ch, &cfg(), CommandSource::Cli);
             assert!(
                 matches!(out, ActionOutcome::Pending { .. }),
                 "{ch} must be accepted as a known channel name"
@@ -426,19 +459,19 @@ mod tests {
 
     #[test]
     fn skill_list_returns_handled() {
-        let out = dispatch_action(SlashAction::SkillRegistry, "list", &cfg());
+        let out = dispatch_action(SlashAction::SkillRegistry, "list", &cfg(), CommandSource::Cli);
         assert!(matches!(out, ActionOutcome::Handled { .. }));
     }
 
     #[test]
     fn skill_unknown_sub_returns_invalid_args() {
-        let out = dispatch_action(SlashAction::SkillRegistry, "explode", &cfg());
+        let out = dispatch_action(SlashAction::SkillRegistry, "explode", &cfg(), CommandSource::Cli);
         assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
     }
 
     #[test]
     fn autonomy_with_no_args_shows_current() {
-        let out = dispatch_action(SlashAction::AutonomyLevel, "", &cfg());
+        let out = dispatch_action(SlashAction::AutonomyLevel, "", &cfg(), CommandSource::Cli);
         match out {
             ActionOutcome::Handled { text } => {
                 assert!(text.contains("Current autonomy"));
@@ -450,14 +483,14 @@ mod tests {
 
     #[test]
     fn autonomy_with_invalid_level_returns_invalid_args() {
-        let out = dispatch_action(SlashAction::AutonomyLevel, "yolo", &cfg());
+        let out = dispatch_action(SlashAction::AutonomyLevel, "yolo", &cfg(), CommandSource::Cli);
         assert!(matches!(out, ActionOutcome::InvalidArgs { .. }));
     }
 
     #[test]
     fn autonomy_with_valid_level_returns_pending() {
         for level in ["strict", "standard", "elevated", "full", "custom"] {
-            let out = dispatch_action(SlashAction::AutonomyLevel, level, &cfg());
+            let out = dispatch_action(SlashAction::AutonomyLevel, level, &cfg(), CommandSource::Cli);
             assert!(
                 matches!(out, ActionOutcome::Pending { .. }),
                 "{level} must be accepted"
@@ -467,19 +500,19 @@ mod tests {
 
     #[test]
     fn consent_list_returns_handled() {
-        let out = dispatch_action(SlashAction::ConsentManage, "list", &cfg());
+        let out = dispatch_action(SlashAction::ConsentManage, "list", &cfg(), CommandSource::Cli);
         assert!(matches!(out, ActionOutcome::Handled { .. }));
     }
 
     #[test]
     fn memory_view_returns_handled() {
-        let out = dispatch_action(SlashAction::MemoryView, "view", &cfg());
+        let out = dispatch_action(SlashAction::MemoryView, "view", &cfg(), CommandSource::Cli);
         assert!(matches!(out, ActionOutcome::Handled { .. }));
     }
 
     #[test]
     fn plugin_list_returns_handled() {
-        let out = dispatch_action(SlashAction::PluginRegistry, "list", &cfg());
+        let out = dispatch_action(SlashAction::PluginRegistry, "list", &cfg(), CommandSource::Cli);
         assert!(matches!(out, ActionOutcome::Handled { .. }));
     }
 
@@ -504,5 +537,60 @@ mod tests {
                 .is_empty()
         );
         assert!(!ActionOutcome::Exit.text().is_empty());
+        assert!(
+            !ActionOutcome::ChannelPrivilegeBlocked { text: "b".into() }
+                .text()
+                .is_empty()
+        );
+    }
+
+    // ── ADV-09 channel privilege ceiling ──────────────────────────────
+
+    #[test]
+    fn adv09_channel_blocks_destructive_action() {
+        let out = dispatch_action(
+            SlashAction::ConfigSet,
+            "operator_id alex",
+            &cfg(),
+            CommandSource::Channel,
+        );
+        assert!(out.is_channel_blocked(), "destructive op from channel must block");
+        assert!(out.text().contains("channel"));
+        assert!(out.text().contains("CLI"));
+    }
+
+    #[test]
+    fn adv09_channel_blocks_autonomy_and_consent() {
+        // The two most security-critical: raising autonomy / granting
+        // consent via a channel message is privilege escalation.
+        for a in [SlashAction::AutonomyLevel, SlashAction::ConsentManage] {
+            let out = dispatch_action(a, "full", &cfg(), CommandSource::Channel);
+            assert!(out.is_channel_blocked(), "{} must block from channel", a.as_str());
+        }
+    }
+
+    #[test]
+    fn adv09_channel_allows_readonly_action() {
+        // ConfigGet is read-only — a channel may still inspect config.
+        let out = dispatch_action(SlashAction::ConfigGet, "", &cfg(), CommandSource::Channel);
+        assert!(!out.is_channel_blocked(), "read-only op must NOT block");
+        assert!(matches!(out, ActionOutcome::Handled { .. }));
+    }
+
+    #[test]
+    fn adv09_cli_permits_destructive_action() {
+        // CLI is trusted — the ceiling only applies to channels.
+        let out = dispatch_action(SlashAction::ConfigSet, "", &cfg(), CommandSource::Cli);
+        assert!(!out.is_channel_blocked(), "CLI must never be ceiling-blocked");
+    }
+
+    #[test]
+    fn adv09_is_destructive_matrix() {
+        assert!(SlashAction::ConfigSet.is_destructive());
+        assert!(SlashAction::AutonomyLevel.is_destructive());
+        assert!(SlashAction::ConsentManage.is_destructive());
+        assert!(SlashAction::ConnectChannel.is_destructive());
+        assert!(!SlashAction::ConfigGet.is_destructive());
+        assert!(!SlashAction::Quit.is_destructive());
     }
 }

@@ -138,9 +138,48 @@ impl SlashAction {
             Self::Quit => "quit",
         }
     }
+
+    /// ADV-09: actions that MUTATE operator config / security state and
+    /// so must require CLI + local auth — `dispatch_action` rejects them
+    /// when the invocation arrives from a channel (privilege ceiling).
+    /// Read-only actions (ConfigGet / Quit) + the mixed list/mutate
+    /// registries (Skill/Plugin/Memory — sub-command-level granularity
+    /// is a future refinement) are NOT blocked here.
+    pub const fn is_destructive(self) -> bool {
+        matches!(
+            self,
+            Self::RestartWizard
+                | Self::ConfigSet
+                | Self::ProviderSwitch
+                | Self::ConnectChannel
+                | Self::DisconnectChannel
+                | Self::ConsentManage
+                | Self::ReloadConfig
+                | Self::AutonomyLevel
+        )
+    }
 }
 
 impl Copy for SlashAction {}
+
+/// ADV-09: origin surface of a slash-command invocation. The channel
+/// privilege ceiling in [`crate::slash::dispatch_action`] rejects
+/// destructive actions ([`SlashAction::is_destructive`]) when the
+/// source is a channel — they require local CLI authentication.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CommandSource {
+    /// Local CLI (`neoth chat`) — trusted, full privilege.
+    Cli,
+    /// A messaging channel (Telegram / WhatsApp / Slack / ...).
+    /// Destructive operator commands are rejected.
+    Channel,
+}
+
+impl CommandSource {
+    pub fn is_channel(self) -> bool {
+        matches!(self, Self::Channel)
+    }
+}
 
 fn default_enabled() -> bool {
     true

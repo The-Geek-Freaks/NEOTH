@@ -839,7 +839,12 @@ pub async fn run_chat_with(
                     // call, no token cost, no consent gate.
                     if let Some(action) = cmd.action {
                         info!(slash_command = %name, action = action.as_str(), "slash action dispatch");
-                        let outcome = crate::slash::dispatch_action(action, &cmd_args, &config);
+                        let outcome = crate::slash::dispatch_action(
+                            action,
+                            &cmd_args,
+                            &config,
+                            crate::slash::CommandSource::Cli,
+                        );
                         println!("{}", outcome.text());
                         if outcome.should_exit() {
                             return Ok(());

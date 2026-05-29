@@ -25,3 +25,4 @@ pub mod schema;
 pub use action_dispatch::{ActionOutcome, dispatch_action};
 pub use loader::load_all;
 pub use parser::{Invocation, parse_invocation};
+pub use schema::CommandSource;
