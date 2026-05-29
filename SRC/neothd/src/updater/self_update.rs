@@ -754,6 +754,45 @@ pub fn pending_json_path(stage_dir: &Path) -> PathBuf {
     stage_dir.join("pending.json")
 }
 
+/// Read a staged-pending record, if one exists + parses. `None` when no
+/// update is staged (the common case).
+pub fn read_pending(stage_dir: &Path) -> Option<PendingUpdate> {
+    let body = std::fs::read(pending_json_path(stage_dir)).ok()?;
+    serde_json::from_slice(&body).ok()
+}
+
+/// Apply an ALREADY-STAGED update — skips the network entirely. The
+/// staging task downloaded + sha256 + minisig-verified this archive; here
+/// we RE-VERIFY the SHA-256 (the staged file could have been touched on
+/// disk) then extract + atomic-replace. Returns the same [`UpdateApplied`]
+/// envelope a fresh `apply_update` would.
+pub fn apply_from_staged(pending: &PendingUpdate, install_dir: &Path) -> Result<UpdateApplied> {
+    let archive = PathBuf::from(&pending.staged_archive);
+    let bytes = std::fs::read(&archive)
+        .with_context(|| format!("read staged archive {}", archive.display()))?;
+    // Re-verify integrity against the recorded hash before any swap.
+    let companion_text = format!("{}  staged\n", pending.archive_sha256);
+    let format = archive_format_for_target(&pending.target_triple);
+    let backup = apply_downloaded(&bytes, &companion_text, format, "neoth", install_dir)
+        .context("apply staged archive")?;
+    Ok(UpdateApplied {
+        from_version: current_version().to_string(),
+        to_version: pending.to_version.clone(),
+        backup_path: backup,
+        restart_required: true,
+        archive_sha256: pending.archive_sha256.clone(),
+        download_url: pending.download_url.clone(),
+        signature_status: pending.signature_status.clone(),
+    })
+}
+
+/// Remove the staged archive + `pending.json` after a successful apply.
+/// Best-effort — a leftover staged file is harmless (re-validated next time).
+pub fn clear_staged(stage_dir: &Path, pending: &PendingUpdate) {
+    let _ = std::fs::remove_file(&pending.staged_archive);
+    let _ = std::fs::remove_file(pending_json_path(stage_dir));
+}
+
 /// MV-01b #5 — STAGE (do NOT swap) a newer release: fetch the archive +
 /// `.sha256` + `.minisig`, verify both (signature gated by
 /// `require_signature`), write the raw archive into `stage_dir`, and
@@ -1154,6 +1193,84 @@ mod tests {
         let bin = fake_asset("neoth-x86_64-pc-windows-msvc.zip");
         let assets = vec![bin.clone()];
         assert!(find_sha256_companion(&assets, &bin).is_none());
+    }
+
+    #[tokio::test]
+    async fn apply_from_staged_installs_without_network() {
+        // Stage a zip on disk + a matching pending.json, then apply it
+        // via the no-network fast-path. Mirrors the apply_downloaded test
+        // but through the staged-apply helper.
+        let want = binary_filename_for_host("neoth");
+        let zip_bytes = make_zip_with_member(&want, b"staged-daemon");
+        let mut hasher = Sha256::new();
+        hasher.update(&zip_bytes);
+        let digest = hex_encode(&hasher.finalize());
+
+        let dir = tempdir().unwrap();
+        let stage_dir = dir.path().join("staged");
+        std::fs::create_dir_all(&stage_dir).unwrap();
+        let staged_archive = stage_dir.join("neoth.zip");
+        std::fs::write(&staged_archive, &zip_bytes).unwrap();
+
+        let install_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::write(install_dir.join(&want), b"old-daemon").unwrap();
+
+        let pending = PendingUpdate {
+            to_version: "v9.9.9".into(),
+            archive_sha256: digest,
+            download_url: "https://example.com/neoth.zip".into(),
+            signature_status: "verified".into(),
+            staged_archive: staged_archive.display().to_string(),
+            target_triple: "x86_64-pc-windows-msvc".into(),
+            staged_ts_unix: 1_700_000_000,
+        };
+        // pending.json round-trips through disk.
+        let pj = pending_json_path(&stage_dir);
+        std::fs::write(&pj, serde_json::to_vec(&pending).unwrap()).unwrap();
+        assert_eq!(read_pending(&stage_dir).as_ref(), Some(&pending));
+
+        let outcome = apply_from_staged(&pending, &install_dir).expect("staged apply");
+        assert_eq!(outcome.to_version, "v9.9.9");
+        assert_eq!(outcome.signature_status, "verified");
+        assert_eq!(
+            std::fs::read(install_dir.join(&want)).unwrap(),
+            b"staged-daemon"
+        );
+
+        clear_staged(&stage_dir, &pending);
+        assert!(!staged_archive.exists(), "staged archive removed");
+        assert!(read_pending(&stage_dir).is_none(), "pending.json removed");
+    }
+
+    #[tokio::test]
+    async fn apply_from_staged_refuses_tampered_archive() {
+        // The staged file was modified after staging — the SHA re-check
+        // inside apply_from_staged must refuse before any swap.
+        let want = binary_filename_for_host("neoth");
+        let zip_bytes = make_zip_with_member(&want, b"good");
+        let dir = tempdir().unwrap();
+        let stage_dir = dir.path().join("staged");
+        std::fs::create_dir_all(&stage_dir).unwrap();
+        let staged_archive = stage_dir.join("neoth.zip");
+        std::fs::write(&staged_archive, &zip_bytes).unwrap();
+        let install_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&install_dir).unwrap();
+
+        let pending = PendingUpdate {
+            to_version: "v9.9.9".into(),
+            archive_sha256: "0".repeat(64), // wrong hash → tamper-detect
+            download_url: "x".into(),
+            signature_status: "verified".into(),
+            staged_archive: staged_archive.display().to_string(),
+            target_triple: "x86_64-pc-windows-msvc".into(),
+            staged_ts_unix: 0,
+        };
+        let err = apply_from_staged(&pending, &install_dir).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("sha256 mismatch"),
+            "tampered staged archive must fail SHA re-check: {err:#}"
+        );
     }
 
     #[test]

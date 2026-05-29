@@ -11,7 +11,7 @@
 
 use anyhow::{Context, Result};
 use clap::Args;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::cli::OutputFormat;
 use crate::updater::{Component, UpdateStatus, check_all, check_and_apply_all};
@@ -128,6 +128,46 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
     use crate::updater::self_update::{
         apply_update, fetch_latest_release, host_target_triple, version_is_newer,
     };
+
+    // MV-01b #5 fast-path: if the unattended staging task already
+    // downloaded + verified a newer release into ~/.neoth/staged/, apply
+    // it WITHOUT re-downloading. The staged archive's SHA-256 is
+    // re-verified inside `apply_from_staged` before any swap.
+    {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        let stage_dir = home.join("staged");
+        if let Some(pending) = crate::updater::self_update::read_pending(&stage_dir) {
+            let current = crate::updater::self_update::current_version();
+            let staged_present = std::path::Path::new(&pending.staged_archive).exists();
+            if staged_present && version_is_newer(&pending.to_version, current).unwrap_or(false) {
+                info!(
+                    to = %pending.to_version,
+                    "applying pre-staged + verified update (skipping download)"
+                );
+                let exe = std::env::current_exe().context("locate current executable")?;
+                let install_dir = exe
+                    .parent()
+                    .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
+                match crate::updater::self_update::apply_from_staged(&pending, install_dir) {
+                    Ok(outcome) => {
+                        crate::updater::self_update::clear_staged(&stage_dir, &pending);
+                        emit_self_update_applied(
+                            &outcome,
+                            repo,
+                            &pending.target_triple,
+                            "manual_from_staged",
+                        )
+                        .await;
+                        render_self_apply(&outcome, output);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "staged apply failed; falling back to fresh download");
+                    }
+                }
+            }
+        }
+    }
 
     let release = fetch_latest_release(repo).await?;
     let current = crate::updater::self_update::current_version();
