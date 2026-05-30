@@ -183,6 +183,7 @@ pub async fn run_chat_with(
             no_assign: false,
             dispatch: false, // operator runs `neoth kanban` after to drive dispatch
             apply: None,
+            run_pending: false,
             output: crate::cli::OutputFormat::default(),
         };
         return crate::cli::code::run_code(code_args).await;

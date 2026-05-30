@@ -39,7 +39,9 @@ use crate::providers;
 #[derive(Args, Debug, Clone)]
 pub struct CodeArgs {
     /// Free-text coding request. Wrapped in `<operator_request>` by
-    /// the decomposer prompt — no further escaping needed.
+    /// the decomposer prompt — no further escaping needed. Optional only
+    /// so `--run-pending` (which decomposes nothing) can run without one.
+    #[arg(default_value = "")]
     pub prompt: String,
     /// Override `views.db` path. Defaults to `~/.neoth/views.db`.
     #[arg(long, value_name = "PATH")]
@@ -72,14 +74,30 @@ pub struct CodeArgs {
     /// stores patches (Phase-3 behaviour preserved).
     #[arg(long, value_name = "REPO_ROOT", requires = "dispatch")]
     pub apply: Option<PathBuf>,
+    /// QU-10b / SP-A1: skip decomposition and instead drive the
+    /// dispatcher across EVERY session that still has a Backlog task.
+    /// Picks up pending work created outside a one-shot `neoth code
+    /// "..."` (deferred dispatch, tasks added to an existing session).
+    /// Pairs with `--apply <repo>` to apply patches in worktrees just
+    /// like the single-session path. Operator-driven — no daemon loop.
+    #[arg(long)]
+    pub run_pending: bool,
     /// Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
 }
 
 pub async fn run_code(args: CodeArgs) -> Result<()> {
+    // QU-10b: --run-pending drives the dispatcher across every session
+    // with a Backlog task instead of decomposing a fresh prompt.
+    if args.run_pending {
+        return run_pending_phase(&args).await;
+    }
     if args.prompt.trim().is_empty() {
-        anyhow::bail!("neoth code: prompt is empty — nothing to decompose");
+        anyhow::bail!(
+            "neoth code: prompt is empty — nothing to decompose \
+             (pass --run-pending to drive existing Backlog tasks)"
+        );
     }
 
     // QM-7 (2026-05-22 Session 20) — TDD pre-flight. Classify the
@@ -203,55 +221,10 @@ async fn run_dispatch_phase(
     apply_repo: Option<PathBuf>,
 ) -> Result<()> {
     use crate::coding::dispatcher::{
-        DispatchApplyConfig, DispatchBudget, HemisphereWorkerSet, dispatch_session,
-        dispatch_session_with_apply,
+        DispatchApplyConfig, DispatchBudget, dispatch_session, dispatch_session_with_apply,
     };
-    use crate::coding::provider_worker::ProviderWorker;
-    use crate::coding::types::Hemisphere;
-    use std::sync::Arc;
 
-    let runtime = tokio::runtime::Handle::current();
-    let patch_root = FreedomConfig::default_neoth_home();
-
-    let mut workers = HemisphereWorkerSet::new();
-
-    // Left + Right bindings come from the operator's per-hemisphere
-    // provider config. Each may legitimately fail (operator only
-    // bound one side) — the dispatcher blocks unassigned tasks
-    // cleanly. We log the resolution outcome for transparency.
-    for (role, hemi, name) in [
-        (HemisphereRole::Left, Hemisphere::Left, "left"),
-        (HemisphereRole::Right, Hemisphere::Right, "right"),
-        (
-            HemisphereRole::Cerebellum,
-            Hemisphere::Cerebellum,
-            "cerebellum",
-        ),
-    ] {
-        match providers::from_config_for_role(cfg, role).await {
-            Ok(p) => {
-                let provider_name = p.name();
-                // Leak a `String` to get `&'static str` for the Worker
-                // name. One-off per dispatch invocation — cost is
-                // bounded and the audit trail benefits from the
-                // hemisphere/provider pair surfaced verbatim.
-                let label: &'static str =
-                    Box::leak(format!("{name}/{provider_name}").into_boxed_str());
-                let worker =
-                    ProviderWorker::new(label, Arc::from(p), patch_root.clone(), runtime.clone());
-                workers.bind(hemi, Box::new(worker));
-                println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
-            }
-            Err(e) => {
-                eprintln!(
-                    "⚠  dispatch: {hemi} unbound — {e}. Tasks on this hemisphere \
-                     will block.",
-                    hemi = hemi.as_str()
-                );
-            }
-        }
-    }
-
+    let workers = build_worker_set(cfg).await;
     if !workers.has_any() {
         eprintln!("dispatch: no hemisphere has a worker bound — skipping");
         return Ok(());
@@ -304,6 +277,115 @@ async fn run_dispatch_phase(
             ""
         }
     );
+    Ok(())
+}
+
+/// QU-10b: build the `HemisphereWorkerSet` from the operator's
+/// per-hemisphere provider bindings. Extracted from `run_dispatch_phase`
+/// so the single-session dispatch path AND the `--run-pending` controller
+/// share one binding routine. Each role may legitimately fail (operator
+/// bound only one side) — the dispatcher blocks unassigned tasks cleanly.
+async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::HemisphereWorkerSet {
+    use crate::coding::dispatcher::HemisphereWorkerSet;
+    use crate::coding::provider_worker::ProviderWorker;
+    use std::sync::Arc;
+
+    let runtime = tokio::runtime::Handle::current();
+    let patch_root = FreedomConfig::default_neoth_home();
+    let mut workers = HemisphereWorkerSet::new();
+    for (role, hemi, name) in [
+        (HemisphereRole::Left, Hemisphere::Left, "left"),
+        (HemisphereRole::Right, Hemisphere::Right, "right"),
+        (
+            HemisphereRole::Cerebellum,
+            Hemisphere::Cerebellum,
+            "cerebellum",
+        ),
+    ] {
+        match providers::from_config_for_role(cfg, role).await {
+            Ok(p) => {
+                let provider_name = p.name();
+                // Leak a `String` to get `&'static str` for the Worker
+                // name. One-off per invocation — bounded cost, and the
+                // audit trail benefits from the hemisphere/provider pair.
+                let label: &'static str =
+                    Box::leak(format!("{name}/{provider_name}").into_boxed_str());
+                let worker =
+                    ProviderWorker::new(label, Arc::from(p), patch_root.clone(), runtime.clone());
+                workers.bind(hemi, Box::new(worker));
+                println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
+            }
+            Err(e) => {
+                eprintln!(
+                    "⚠  dispatch: {hemi} unbound — {e}. Tasks on this hemisphere \
+                     will block.",
+                    hemi = hemi.as_str()
+                );
+            }
+        }
+    }
+    workers
+}
+
+/// QU-10b / SP-A1 — `neoth code --run-pending`. Build the worker set, then
+/// drive the dispatcher across every session with a Backlog task via
+/// `coding::task_executor::run_pending_sessions`. Apply-aware when
+/// `--apply <repo>` is also set (note: `--apply` still requires
+/// `--dispatch` per its clap contract, so use `--dispatch --run-pending
+/// --apply <repo>` to apply patches; without it patches are stored only).
+async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
+    use crate::coding::dispatcher::{DispatchApplyConfig, DispatchBudget};
+
+    let cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml — run `neoth init` first")?;
+    let db_path = args.db.clone().unwrap_or_else(memstore::default_path);
+    let conn = memstore::open(&db_path).context("open views.db")?;
+    store::ensure_schema(&conn).context("ensure kanban schema")?;
+
+    let workers = build_worker_set(&cfg).await;
+    if !workers.has_any() {
+        eprintln!("run-pending: no hemisphere has a worker bound — nothing to drive");
+        return Ok(());
+    }
+
+    let apply_cfg = args.apply.as_ref().map(|repo| {
+        let mut c = DispatchApplyConfig::new(repo);
+        if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
+            c = c
+                .with_test_cmd(cmd)
+                .with_test_timeout(std::time::Duration::from_secs(cfg.coding.test_timeout_secs));
+        }
+        c
+    });
+
+    let report = crate::coding::task_executor::run_pending_sessions(
+        &conn,
+        &workers,
+        DispatchBudget::default(),
+        apply_cfg.as_ref(),
+    )
+    .context("run pending sessions")?;
+
+    println!(
+        "run-pending: sessions={} dispatched={} attempted={} completed={} blocked={} unassigned={}{}",
+        report.sessions_seen,
+        report.sessions_dispatched,
+        report.tasks_attempted,
+        report.tasks_completed,
+        report.tasks_blocked,
+        report.tasks_unassigned,
+        if report.budget_exhausted_sessions > 0 {
+            format!(
+                "  ({} session(s) hit budget)",
+                report.budget_exhausted_sessions
+            )
+        } else {
+            String::new()
+        }
+    );
+    if report.sessions_seen == 0 {
+        println!("(no sessions had Backlog tasks — nothing to do)");
+    }
     Ok(())
 }
 

@@ -71,6 +71,9 @@ pub mod retry;
 pub mod review;
 pub mod second_opinion;
 pub mod store;
+/// QU-10b / SP-A1 — pending-task controller loop driving the dispatcher
+/// across every session with a Backlog task (`neoth code --run-pending`).
+pub mod task_executor;
 pub mod tdd_preflight;
 pub mod tool_router;
 pub mod types;

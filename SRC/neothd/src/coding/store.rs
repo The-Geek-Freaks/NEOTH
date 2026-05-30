@@ -217,6 +217,28 @@ pub fn reap_stale_planning_sessions(
     Ok(n)
 }
 
+/// QU-10b / SP-A1 — distinct session ids that still have at least one
+/// `Backlog` task, ascending. The `task_executor` controller loop drives
+/// each so pending work created outside a one-shot `neoth code "..."`
+/// (a deferred dispatch, or tasks added to an existing session) still
+/// gets picked up. Read-only.
+pub fn sessions_with_backlog_tasks(conn: &Connection) -> Result<Vec<KanbanSessionId>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT DISTINCT session_id FROM idx_kanban_task \
+             WHERE status = ?1 ORDER BY session_id ASC",
+        )
+        .context("prepare sessions-with-backlog query")?;
+    let ids = stmt
+        .query_map(params![TaskStatus::Backlog.as_str()], |row| {
+            Ok(KanbanSessionId(row.get::<_, i64>(0)?))
+        })
+        .context("query sessions-with-backlog")?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(ids)
+}
+
 // ── Task CRUD ──────────────────────────────────────────────────────────────
 
 /// Insert one task row for the given session. Initial status is
