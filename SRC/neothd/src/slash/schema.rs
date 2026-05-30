@@ -158,6 +158,28 @@ impl SlashAction {
                 | Self::AutonomyLevel
         )
     }
+
+    /// ADV-09 sub-command-aware ceiling. The mixed-mode registries
+    /// (`SkillRegistry`/`PluginRegistry`/`MemoryView`) are NOT flatly
+    /// destructive — `/skill list`, `/plugin info`, `/memory view` are
+    /// read-only — but their MUTATING sub-commands (`enable`/`disable`,
+    /// `forget`/`tier`) must require local CLI auth just like the flat
+    /// mutators. `args` is the trailing slice after the command name; the
+    /// first token selects the sub-command. Used by the channel gate so a
+    /// `/skill enable …` over Telegram is rejected even though the handler
+    /// is `Pending` today — closing the gate BEFORE the write paths wire in
+    /// (the alternative is a silent bypass the day a handler goes live).
+    pub fn is_destructive_with_args(self, args: &str) -> bool {
+        if self.is_destructive() {
+            return true;
+        }
+        let sub = args.split_whitespace().next().unwrap_or("");
+        match self {
+            Self::SkillRegistry | Self::PluginRegistry => matches!(sub, "enable" | "disable"),
+            Self::MemoryView => matches!(sub, "forget" | "tier"),
+            _ => false,
+        }
+    }
 }
 
 impl Copy for SlashAction {}

@@ -92,7 +92,7 @@ pub fn dispatch_action(
     // from a channel is rejected outright — config / consent / autonomy /
     // channel mutation requires local CLI authentication so a Telegram
     // message can't reconfigure or escalate the daemon. CLI is trusted.
-    if source.is_channel() && action.is_destructive() {
+    if source.is_channel() && action.is_destructive_with_args(args) {
         return ActionOutcome::ChannelPrivilegeBlocked {
             text: format!(
                 "⛔ `/{}` is a destructive operator command and cannot be run from a channel. \
@@ -647,5 +647,51 @@ mod tests {
         assert!(SlashAction::ConnectChannel.is_destructive());
         assert!(!SlashAction::ConfigGet.is_destructive());
         assert!(!SlashAction::Quit.is_destructive());
+    }
+
+    #[test]
+    fn adv09_sub_command_aware_gate_blocks_registry_mutations() {
+        // The mixed-mode registries are NOT flatly destructive, but their
+        // MUTATING sub-commands must require CLI auth. Read sub-commands stay
+        // channel-allowed. Closes the latent bypass before the handlers wire
+        // live writes.
+        assert!(SlashAction::SkillRegistry.is_destructive_with_args("enable foo"));
+        assert!(SlashAction::SkillRegistry.is_destructive_with_args("disable foo"));
+        assert!(!SlashAction::SkillRegistry.is_destructive_with_args("list"));
+        assert!(!SlashAction::SkillRegistry.is_destructive_with_args("info foo"));
+        assert!(SlashAction::PluginRegistry.is_destructive_with_args("disable bar"));
+        assert!(!SlashAction::PluginRegistry.is_destructive_with_args("info bar"));
+        assert!(SlashAction::MemoryView.is_destructive_with_args("forget x"));
+        assert!(SlashAction::MemoryView.is_destructive_with_args("tier hot"));
+        assert!(!SlashAction::MemoryView.is_destructive_with_args("view"));
+        // Flat mutators stay destructive regardless of args.
+        assert!(SlashAction::AutonomyLevel.is_destructive_with_args(""));
+        // Read-only stays read-only.
+        assert!(!SlashAction::ConfigGet.is_destructive_with_args("anything"));
+    }
+
+    #[test]
+    fn adv09_channel_blocks_skill_enable_but_allows_skill_list() {
+        // End-to-end through dispatch_action with CommandSource::Channel.
+        let blocked = dispatch_action(
+            SlashAction::SkillRegistry,
+            "enable mybot",
+            &cfg(),
+            CommandSource::Channel,
+        );
+        assert!(
+            blocked.is_channel_blocked(),
+            "skill enable from channel must block"
+        );
+        let allowed = dispatch_action(
+            SlashAction::SkillRegistry,
+            "list",
+            &cfg(),
+            CommandSource::Channel,
+        );
+        assert!(
+            !allowed.is_channel_blocked(),
+            "skill list from channel is read-only, must not block"
+        );
     }
 }

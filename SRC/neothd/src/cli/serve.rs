@@ -2870,9 +2870,22 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                         "channel slash action dispatched (read-only / pending)"
                                     );
                                 }
+                                // `/quit` (ActionOutcome::Exit) is a
+                                // local-CLI-only lifecycle command — the
+                                // channel handler deliberately never acts on
+                                // `should_exit()` (a channel must not kill the
+                                // daemon). Return a clarifying message instead
+                                // of the CLI-flavoured "Exiting chat session".
+                                let reply_text = if outcome.should_exit() {
+                                    "/quit applies only to the local CLI session — the daemon \
+                                     keeps serving this channel."
+                                        .to_string()
+                                } else {
+                                    outcome.text().to_string()
+                                };
                                 return Ok(::std::option::Option::Some(OutboundMessage {
                                     recipient_id: inbound.sender_id.clone(),
-                                    text: outcome.text().to_string(),
+                                    text: reply_text,
                                 }));
                             }
                             let rendered = cmd.render(&args, operator_id.as_deref());

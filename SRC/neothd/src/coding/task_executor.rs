@@ -150,7 +150,14 @@ fn open_session_conn(db_path: &std::path::Path) -> Result<Connection> {
     // touch the same rows, but the schema-level writes can contend).
     conn.busy_timeout(std::time::Duration::from_secs(10))
         .context("set busy_timeout")?;
-    let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    // WAL is load-bearing for the parallel pass: without it concurrent
+    // writers take an exclusive DELETE-mode lock + hit SQLITE_BUSY past the
+    // timeout. Propagate the error (fail-closed) rather than silently
+    // degrading to a mode that can't safely run concurrent sessions —
+    // matches the `.context(?)` convention in memory/store.rs +
+    // code_map/persist.rs. On an already-WAL file this is a no-op.
+    conn.pragma_update(None, "journal_mode", "WAL")
+        .with_context(|| format!("set WAL journal mode on {}", db_path.display()))?;
     store::ensure_schema(&conn).context("ensure kanban schema")?;
     Ok(conn)
 }
@@ -325,6 +332,77 @@ mod tests {
                 .unwrap()
                 .is_empty(),
             "parallel pass must drain every session's backlog"
+        );
+    }
+
+    /// Worker that records the MAX number of concurrent `execute` calls in
+    /// flight, via an atomic enter/exit counter around a yield point. Proves
+    /// the parallel pass actually OVERLAPS worker execution (the drain test
+    /// above can't — MockWorker is sync + never yields, so join_all would be
+    /// observationally identical to a sequential loop).
+    struct ConcurrencyProbeWorker {
+        current: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        max_seen: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl Worker for ConcurrencyProbeWorker {
+        async fn execute(&self, _task: &KanbanTask) -> anyhow::Result<WorkerOutcome> {
+            use std::sync::atomic::Ordering;
+            let now = self.current.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_seen.fetch_max(now, Ordering::SeqCst);
+            // Yield so peers entering execute overlap with this one before
+            // any completes — without an await, join_all never interleaves.
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            self.current.fetch_sub(1, Ordering::SeqCst);
+            Ok(WorkerOutcome {
+                patch_text: "diff --git a/x b/x\n@@\n+ok\n".into(),
+                patch_path: std::path::PathBuf::from("probe.patch"),
+                tests: TestSummary {
+                    added: 1,
+                    total: 1,
+                    passing: 1,
+                    failing: 0,
+                    skipped: 0,
+                },
+                summary: "probe".into(),
+            })
+        }
+        fn name(&self) -> &'static str {
+            "left/probe"
+        }
+    }
+
+    #[tokio::test]
+    async fn run_pending_parallel_actually_overlaps_worker_execution() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("coding.db");
+        {
+            let seed = open_session_conn(&db_path).unwrap();
+            seed_left_backlog(&seed, "t1");
+            seed_left_backlog(&seed, "t2");
+            seed_left_backlog(&seed, "t3");
+        }
+        let current = std::sync::Arc::new(AtomicUsize::new(0));
+        let max_seen = std::sync::Arc::new(AtomicUsize::new(0));
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(ConcurrencyProbeWorker {
+                current: std::sync::Arc::clone(&current),
+                max_seen: std::sync::Arc::clone(&max_seen),
+            }),
+        );
+        let report =
+            run_pending_sessions_parallel(&db_path, &workers, DispatchBudget::default(), None, 3)
+                .await
+                .unwrap();
+        assert_eq!(report.sessions_dispatched, 3);
+        let observed = max_seen.load(Ordering::SeqCst);
+        assert!(
+            observed >= 2,
+            "parallel pass must overlap >=2 worker executions; observed max {observed} (==1 means it ran sequentially)"
         );
     }
 }
