@@ -82,10 +82,10 @@ mod tests {
         assert!(names.contains(&"session-summarizer"));
         assert!(names.contains(&"evidence-collector"));
         assert!(names.contains(&"reality-checker"));
-        // Built-ins now number 7 (QM-14 4→5 + evidence-collector +
-        // reality-checker). Kept in lockstep with builtins.rs's own
-        // `built_ins_include_required_seven`.
-        assert_eq!(agents.len(), 7);
+        // Built-ins now number 18 (the original 7 + QU-09b's 11
+        // agency-agents personas). Kept in lockstep with builtins.rs's
+        // own `built_ins_include_all_eighteen`.
+        assert_eq!(agents.len(), 18);
     }
 
     #[tokio::test]
@@ -138,10 +138,9 @@ system = "You write docs"
         .await
         .unwrap();
         let agents = load_all(dir.path()).await.unwrap();
-        // 7 built-ins (code-reviewer, security-reviewer, planner, critic,
-        // session-summarizer, evidence-collector, reality-checker) + 1
-        // operator new = 8.
-        assert_eq!(agents.len(), 8);
+        // 18 built-ins (original 7 + QU-09b's 11 agency personas) + 1
+        // operator-new = 19.
+        assert_eq!(agents.len(), 19);
         assert!(agents.iter().any(|a| a.name == "doc-writer"));
     }
 
@@ -159,10 +158,9 @@ system = ""
         .await
         .unwrap();
         let agents = load_all(dir.path()).await.unwrap();
-        // Validation drops the bad one but 5 built-ins still load
-        // (QM-14 bumped from 4→5 with the session-summarizer addition).
+        // Validation drops the bad one but all 18 built-ins still load.
         assert!(!agents.iter().any(|a| a.name == "bad"));
-        // The bad one is dropped by validation; all 7 built-ins remain.
-        assert_eq!(agents.len(), 7);
+        // The bad one is dropped by validation; all 18 built-ins remain.
+        assert_eq!(agents.len(), 18);
     }
 }
