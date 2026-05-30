@@ -743,11 +743,12 @@ fn main() -> Result<()> {
         let neoth_dir = default_neoth_home();
         let freedom_path = neoth_dir.join("freedom.yaml");
         let result = (|| -> anyhow::Result<()> {
-            let mut cfg = read_freedom_yaml(&freedom_path)?;
-            cfg.provider_kind = new_provider.to_string();
-            let body = serde_yaml::to_string(&cfg)
-                .context("serialise freedom.yaml")?;
-            write_mode_0600(&freedom_path, body.as_bytes())?;
+            // MV-01c bug-fix: write losslessly. The prior path read+rewrote
+            // the typed `MinimalFreedomYaml` (5 fields, no flatten), which
+            // DROPPED the operator's inference topology / council / profile /
+            // tokens config on every GUI provider-change. The `Value`
+            // round-trip preserves every other field.
+            set_top_level_string_in_freedom(&freedom_path, "provider_kind", &new_provider)?;
             std::fs::write(neoth_dir.join(".reload-requested"), b"reload\n")
                 .with_context(|| "write reload sentinel")?;
             Ok(())
@@ -1115,6 +1116,34 @@ fn set_cluster_mdns_enabled_in_freedom(path: &Path, enabled: bool) -> Result<()>
     map.insert(cluster_key, serde_yaml::Value::Mapping(cluster_map));
     let serialised =
         serde_yaml::to_string(&root).context("serialise freedom.yaml after cluster mdns toggle")?;
+    write_mode_0600(path, serialised.as_bytes())
+}
+
+/// Lossless top-level-string set: read freedom.yaml as a `serde_yaml::Value`
+/// mapping, insert/replace `key = value`, write back — preserving EVERY
+/// other field (inference topology, council, profile, tokens, ...). The
+/// typed `MinimalFreedomYaml` round-trip is LOSSY (5 fields, no flatten) and
+/// must NEVER be used for an in-place edit: it silently drops everything it
+/// doesn't model. This is the only safe writer for the settings panel's
+/// provider/model selectors. Atomic via `write_mode_0600` (.tmp + rename).
+fn set_top_level_string_in_freedom(path: &Path, key: &str, value: &str) -> Result<()> {
+    let body = if path.exists() {
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    let mut root: serde_yaml::Value = if body.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?
+    };
+    let map = match &mut root {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
+    };
+    map.insert(serde_yaml::Value::from(key), serde_yaml::Value::from(value));
+    let serialised = serde_yaml::to_string(&root)
+        .with_context(|| format!("serialise freedom.yaml after setting {key}"))?;
     write_mode_0600(path, serialised.as_bytes())
 }
 
@@ -2322,6 +2351,68 @@ mod tests {
         assert!(body.contains("enabled: false"), "got: {body}");
         // .tmp left behind would mean the rename didn't happen.
         assert!(!dir.path().join("freedom.yaml.tmp").exists());
+    }
+
+    #[test]
+    fn set_top_level_string_preserves_every_other_field() {
+        // MV-01c bug-fix regression guard: the GUI provider/model selectors
+        // must NOT drop the operator's other config. Seed a freedom.yaml
+        // with a custom inference topology + council + profile block, change
+        // provider_kind + provider_model via the lossless writer, assert all
+        // the other fields SURVIVE (the prior MinimalFreedomYaml round-trip
+        // would have wiped them).
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: alice\n\
+             provider_kind: claude_cli\n\
+             provider_model: claude-opus-4-8\n\
+             inference:\n  mode: triplet\n  left:\n    provider: local_qwen\n\
+             council:\n  daily_usd_cap: 5.0\n  disabled: false\n\
+             profile:\n  learn_enabled: true\n",
+        )
+        .unwrap();
+
+        set_top_level_string_in_freedom(&path, "provider_kind", "openai_api").unwrap();
+        set_top_level_string_in_freedom(&path, "provider_model", "gpt-5.5").unwrap();
+
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            body.contains("provider_kind: openai_api"),
+            "provider updated: {body}"
+        );
+        assert!(
+            body.contains("provider_model: gpt-5.5"),
+            "model updated: {body}"
+        );
+        // The fields MinimalFreedomYaml never modelled MUST survive.
+        assert!(
+            body.contains("mode: triplet"),
+            "inference topology dropped: {body}"
+        );
+        assert!(
+            body.contains("provider: local_qwen"),
+            "hemisphere slot dropped: {body}"
+        );
+        assert!(
+            body.contains("daily_usd_cap"),
+            "council config dropped: {body}"
+        );
+        assert!(
+            body.contains("learn_enabled"),
+            "profile config dropped: {body}"
+        );
+        assert!(!dir.path().join("freedom.yaml.tmp").exists());
+    }
+
+    #[test]
+    fn set_top_level_string_creates_mapping_when_file_absent() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        set_top_level_string_in_freedom(&path, "provider_kind", "gemini_api").unwrap();
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("provider_kind: gemini_api"), "got: {body}");
     }
 
     #[test]
