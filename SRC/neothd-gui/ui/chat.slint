@@ -176,7 +176,9 @@ component Composer inherits Rectangle {
     // Reviewer-3 P1-B (2026-05-20): persistent label + helper line so
     // the operator always sees what the input is for, even after the
     // placeholder vanishes on first keystroke.
-    height: 116px;
+    // Chat-feel #2: height now tracks the body so the multi-line composer
+    // grows with the draft instead of clipping at a fixed bar height.
+    height: body.preferred-height;
     background: Theme.bg-base;
 
     Rectangle {
@@ -187,7 +189,7 @@ component Composer inherits Rectangle {
         background: Theme.border-subtle;
     }
 
-    VerticalLayout {
+    body := VerticalLayout {
         padding-left: Theme.space-screen;
         padding-right: Theme.space-screen;
         padding-top: Theme.space-tight;
@@ -229,16 +231,70 @@ component Composer inherits Rectangle {
             }
         }
 
-        // Reviewer-3 P1-B: shorter placeholder — the persistent label
-        // above already explains the field; this is now just hint copy.
-        input := LineEdit {
-            placeholder-text: "Type message or /command…";
-            text <=> root.draft;
-            accepted(t) => {
-                if (t != "") {
-                    root.send-clicked(t);
-                    root.draft = "";
+        // Chat-feel parity #2 (beat-openhuman): multi-line composer.
+        // Bare TextInput (NOT std TextEdit — its key-pressed fires after
+        // the char is inserted, so Enter can't be intercepted). ENTER
+        // sends; SHIFT+ENTER inserts a newline. Auto-grows with content
+        // between min/max; word-wraps. Slint represents Return as "\n"
+        // (U+000A) in event.text.
+        Rectangle {
+            horizontal-stretch: 1;
+            // Auto-grow: height tracks the TextInput's reactive
+            // preferred-height between a 1-line floor and a ~6-line cap.
+            height: max(38px, min(160px, composer-input.preferred-height + Theme.space-base));
+            background: Theme.bg-card;
+            border-radius: Theme.radius-button;
+            border-width: 1px;
+            border-color: composer-input.has-focus ? Theme.accent-green : Theme.border-subtle;
+            animate border-color {
+                duration: Theme.duration-micro;
+                easing: cubic-bezier(0.2, 0.8, 0.2, 1);
+            }
+
+            // Placeholder layer — visible only when empty + unfocused.
+            if root.draft == "" && !composer-input.has-focus: Text {
+                x: Theme.space-tight;
+                y: Theme.space-tight;
+                text: "Type message or /command…  (Enter sends · Shift+Enter = newline)";
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                color: Theme.text-dim;
+                vertical-alignment: top;
+            }
+
+            composer-input := TextInput {
+                x: Theme.space-tight;
+                y: Theme.space-tight;
+                width: parent.width - Theme.space-tight * 2;
+                height: parent.height - Theme.space-tight * 2;
+                text <=> root.draft;
+                font-family: Theme.font-display;
+                font-size: Theme.font-size-body;
+                color: Theme.text-primary;
+                selection-background-color: Theme.accent-green.with-alpha(0.4);
+                single-line: false;
+                wrap: word-wrap;
+                vertical-alignment: top;
+
+                key-pressed(event) => {
+                    if (event.text == "\n") {
+                        // Shift+Enter → let TextInput insert the newline.
+                        if (event.modifiers.shift) {
+                            return reject;
+                        }
+                        // Plain Enter → send (when non-empty) + clear.
+                        if (root.draft != "") {
+                            root.send-clicked(root.draft);
+                            root.draft = "";
+                        }
+                        return accept;
+                    }
+                    return reject;
                 }
+            }
+
+            TouchArea {
+                clicked => { composer-input.focus(); }
             }
         }
 
@@ -256,7 +312,7 @@ component Composer inherits Rectangle {
 
         // Constant helper line below — visible at all times.
         Text {
-            text: "Enter sends · Shift+Enter for newline (coming soon)";
+            text: "Enter sends · Shift+Enter for newline";
             font-family: Theme.font-display;
             font-size: Theme.font-size-caption;
             color: Theme.text-dim;
@@ -285,6 +341,20 @@ export component ChatView inherits Rectangle {
     callback send-clicked(string);
     callback channel-switched(int);
     callback open-settings();
+
+    // Chat-feel #2 (beat-openhuman): auto-scroll-to-bottom. `auto-follow`
+    // stays true while the operator is at/near the bottom; a manual
+    // scroll-up disengages it (so reading history isn't yanked away by a
+    // new reply), and scrolling back to the bottom re-engages it.
+    private property <bool> auto-follow: true;
+    // Pin the scrollback to the newest message when a message is appended
+    // AND the operator is following. `min(0px, …)` guards the
+    // content-fits-in-viewport case (no negative scroll).
+    changed messages => {
+        if (root.auto-follow) {
+            scrollback.viewport-y = min(0px, -(scrollback.viewport-height - scrollback.visible-height));
+        }
+    }
 
     background: Theme.bg-base;
 
@@ -379,9 +449,18 @@ export component ChatView inherits Rectangle {
                     }
                 }
             }
-            ScrollView {
+            scrollback := ScrollView {
                 horizontal-stretch: 1;
                 vertical-stretch: 1;
+
+                // Manual-scroll opt-out: `scrolled` fires only on
+                // user-initiated drag/flick (NOT on the programmatic
+                // viewport-y write above), so re-derive auto-follow from
+                // proximity to the bottom (within 12px = still following).
+                scrolled => {
+                    root.auto-follow =
+                        self.viewport-y <= -(self.viewport-height - self.visible-height) + 12px;
+                }
 
                 VerticalLayout {
                     padding: Theme.space-base;
