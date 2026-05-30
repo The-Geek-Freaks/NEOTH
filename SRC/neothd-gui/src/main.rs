@@ -317,7 +317,82 @@ fn main() -> Result<()> {
 
         let weak_worker = w.as_weak();
         std::thread::spawn(move || {
-            let outcome = chat_via_subprocess(&body);
+            // Chat-feel #3: live token streaming. `neoth chat --stream`
+            // prints raw reply deltas incrementally + a final
+            // {"neoth_stream":"done"} sentinel. We read stdout in chunks,
+            // push the accumulated partial into the placeholder bubble on
+            // each chunk (live "▋" cursor), then segment the final reply.
+            // On a missing binary / spawn failure / truncated stream
+            // (EOF with no sentinel) we surface an error bubble.
+            use std::io::Read as _;
+            let outcome: std::result::Result<String, String> = (|| {
+                let bin = which_neothd().ok_or_else(|| BINARY_MISSING_MESSAGE.to_string())?;
+                let mut child = spawn_neothd_plain(&bin)
+                    .arg("chat")
+                    .arg("--stream")
+                    .arg(&body)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .map_err(|e| {
+                        format!(
+                            "Chat subprocess could not start: {e}\n\
+                             Verify `neothd --version` works from a terminal."
+                        )
+                    })?;
+                let mut stdout = child
+                    .stdout
+                    .take()
+                    .ok_or_else(|| "stream stdout unavailable".to_string())?;
+                let mut acc: Vec<u8> = Vec::new();
+                let mut buf = [0u8; 512];
+                loop {
+                    match stdout.read(&mut buf) {
+                        Ok(0) => break, // EOF
+                        Ok(n) => {
+                            acc.extend_from_slice(&buf[..n]);
+                            // Re-decode the whole buffer each chunk so a
+                            // split multi-byte char never bakes a U+FFFD.
+                            let (live, _done) =
+                                strip_stream_sentinel(&String::from_utf8_lossy(&acc));
+                            let weak_live = weak_worker.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = weak_live.upgrade() {
+                                    use slint::{Model, ModelRc, VecModel};
+                                    let mut rows: Vec<ChatMessage> =
+                                        w.get_chat_messages().iter().collect();
+                                    if placeholder_idx < rows.len()
+                                        && rows[placeholder_idx].streaming
+                                        && rows[placeholder_idx].role == "assistant"
+                                    {
+                                        rows[placeholder_idx].text = live.clone().into();
+                                        w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
+                                    }
+                                }
+                            });
+                        }
+                        Err(e) => return Err(format!("stream read error: {e}")),
+                    }
+                }
+                let status = child.wait();
+                let (reply, done) = strip_stream_sentinel(&String::from_utf8_lossy(&acc));
+                if reply.is_empty() {
+                    return Err("Provider returned an empty reply. Check `neoth doctor` + \
+                                `~/.neoth/freedom.yaml` provider settings."
+                        .to_string());
+                }
+                if !done {
+                    // EOF without the sentinel → the stream was truncated
+                    // (provider error / crash mid-reply). Surface what we
+                    // got so the operator isn't left guessing.
+                    let code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
+                    return Err(format!(
+                        "Stream ended before completion (exit {code}). Partial reply:\n\n{reply}"
+                    ));
+                }
+                Ok(reply)
+            })();
+
             let weak_for_loop = weak_worker.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak_for_loop.upgrade() {
@@ -1633,20 +1708,32 @@ fn is_visual_separator_only(s: &str) -> bool {
         && non_space.iter().all(|&c| c == non_space[0])
 }
 
-fn chat_via_subprocess(message: &str) -> std::result::Result<String, String> {
-    let Some(bin) = which_neothd() else {
-        return Err(BINARY_MISSING_MESSAGE.to_string());
-    };
-    chat_via_subprocess_with(&bin, message)
+/// Chat-feel parity #3 (beat-openhuman): split the raw stdout of
+/// `neoth chat --stream` into `(reply_text, done)`. The CLI streams raw
+/// reply deltas incrementally, then emits a blank line + a final sentinel
+/// line `{"neoth_stream":"done","count":N}` (OPEN_DECISIONS D-005) so a
+/// consumer can tell a CLEAN completion from a truncated stream. Everything
+/// before the sentinel is the reply (trailing blank trimmed); `done` is
+/// true once the sentinel appears. Pure fn — unit-testable; called per
+/// stdout chunk during streaming (mid-stream: no sentinel yet → done=false,
+/// live partial text) and once at EOF (done=true → final text to segment).
+pub fn strip_stream_sentinel(raw: &str) -> (String, bool) {
+    if let Some(pos) = raw.rfind("{\"neoth_stream\":\"done\"") {
+        (raw[..pos].trim_end().to_string(), true)
+    } else {
+        (raw.trim_end().to_string(), false)
+    }
 }
 
-/// R4-P1 test-injection entry point. Same logic as
-/// [`chat_via_subprocess`] but the caller pins the binary path —
-/// lets tests run with a synthetic fake-neothd binary on disk
-/// instead of relying on the real daemon being installed. The
-/// production path forwards from `chat_via_subprocess` after
-/// `which_neothd` resolves; tests pass tempdir-staged `bin.sh` /
-/// `bin.cmd` scripts that emit fixture stdout/stderr.
+/// Non-streaming chat round-trip (waits for full stdout). The live chat
+/// path now uses `neoth chat --stream` (see the send-worker), so this is
+/// retained as the test-injection seam for [`shape_chat_output`]: the
+/// caller pins the binary path, letting tests run a synthetic fake-neothd
+/// (tempdir-staged `bin.sh` / `bin.cmd` that emit fixture stdout/stderr)
+/// instead of the real daemon. Kept because the four-outcome shaping logic
+/// it exercises is the same error taxonomy the streaming path's terminal
+/// states map onto.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn chat_via_subprocess_with(
     bin: &std::path::Path,
     message: &str,
@@ -1786,6 +1873,44 @@ mod chat_subprocess_tests {
     #[test]
     fn segment_empty_reply_yields_no_bubbles() {
         assert!(segment_reply_into_bubbles("   \n\n  ").is_empty());
+    }
+
+    #[test]
+    fn strip_stream_sentinel_mid_stream_has_no_sentinel() {
+        // While streaming, the sentinel hasn't arrived → done=false, the
+        // accumulated partial text is returned (trailing whitespace trimmed).
+        let (txt, done) = strip_stream_sentinel("Hello, I am think");
+        assert_eq!(txt, "Hello, I am think");
+        assert!(!done);
+    }
+
+    #[test]
+    fn strip_stream_sentinel_strips_done_line_and_trailing_blank() {
+        // Clean completion: reply + blank line + sentinel JSON line.
+        let raw = "Here is the answer.\n\n{\"neoth_stream\":\"done\",\"count\":7}\n";
+        let (txt, done) = strip_stream_sentinel(raw);
+        assert_eq!(txt, "Here is the answer.");
+        assert!(done);
+        assert!(!txt.contains("neoth_stream"), "sentinel must be stripped");
+    }
+
+    #[test]
+    fn strip_stream_sentinel_empty_reply_with_sentinel_is_done() {
+        let (txt, done) = strip_stream_sentinel("\n{\"neoth_stream\":\"done\",\"count\":0}\n");
+        assert_eq!(txt, "");
+        assert!(done);
+    }
+
+    #[test]
+    fn strip_stream_sentinel_multiparagraph_preserved_before_sentinel() {
+        // Internal blank lines (paragraph breaks) survive — only the
+        // trailing blank+sentinel is removed, so segmentation still works.
+        let raw = "Para one.\n\nPara two.\n\n{\"neoth_stream\":\"done\",\"count\":3}";
+        let (txt, done) = strip_stream_sentinel(raw);
+        assert_eq!(txt, "Para one.\n\nPara two.");
+        assert!(done);
+        // And it segments into two bubbles downstream.
+        assert_eq!(segment_reply_into_bubbles(&txt).len(), 2);
     }
 
     #[test]
