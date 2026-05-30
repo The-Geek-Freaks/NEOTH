@@ -1126,15 +1126,25 @@ pub async fn run_chat_with(
         let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
-        let council_disable = std::env::var("NEOTH_COUNCIL_DISABLE")
+        let council_disable_env = std::env::var("NEOTH_COUNCIL_DISABLE")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
+        // SPEC-03 suppress: the persistent `freedom.yaml::council.disabled`
+        // flag (set via `neoth council suppress`) is the durable twin of
+        // the env override — either one forces the single-hemisphere path.
+        // `config` is fresh per CLI invocation so the flag is always current.
+        let council_disable_cfg = config.council.disabled.unwrap_or(false);
+        let council_disable = council_disable_env || council_disable_cfg;
         // Trigger decision is computed even when not used so the WAL
         // audit (next iteration) can record "council was triggerable
         // but skipped because operator opted out".
         let trigger_decision = if council_disable {
             crate::council::TriggerDecision::Skip {
-                reason: "NEOTH_COUNCIL_DISABLE=1".into(),
+                reason: if council_disable_env {
+                    "NEOTH_COUNCIL_DISABLE=1".into()
+                } else {
+                    "freedom.yaml::council.disabled=true".into()
+                },
             }
         } else if council_force {
             crate::council::TriggerDecision::Convene {
@@ -3247,9 +3257,16 @@ async fn emit_council_synthesis_attempted(
 /// don't pre-compute a per-prompt cost like the CLI does; pass `0.01`
 /// as the floor so the gate scales cleanly when operators tune
 /// `policy.budget_multiplier` higher.
+///
+/// `disabled` is the SPEC-03 persistent suppress flag
+/// (`freedom.yaml::council.disabled`); the channel caller reads it fresh
+/// per message so `neoth council suppress` takes effect without a daemon
+/// restart. `true` → forced Skip (the durable twin of
+/// `NEOTH_COUNCIL_DISABLE=1`, which still wins when both are set).
 pub(crate) fn evaluate_council_trigger(
     prompt: &str,
     estimated_single_call_eur: f32,
+    disabled: bool,
 ) -> crate::council::TriggerDecision {
     let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -3260,6 +3277,11 @@ pub(crate) fn evaluate_council_trigger(
     if council_disable {
         return crate::council::TriggerDecision::Skip {
             reason: "NEOTH_COUNCIL_DISABLE=1".into(),
+        };
+    }
+    if disabled {
+        return crate::council::TriggerDecision::Skip {
+            reason: "freedom.yaml::council.disabled=true".into(),
         };
     }
     if council_force {

@@ -535,6 +535,18 @@ pub struct CouncilConfig {
     /// = 81 leaf calls. `None` → defaults to 2.
     #[serde(default)]
     pub max_recursion_depth: Option<u8>,
+
+    /// SPEC-03 suppress switch. When `Some(true)`, the council
+    /// smart-trigger is hard-disabled — `council::should_convene` is
+    /// bypassed and every turn takes the single-hemisphere path
+    /// regardless of dissent markers. `None` / `Some(false)` → normal
+    /// smart-trigger behaviour. This is the PERSISTENT twin of the
+    /// `NEOTH_COUNCIL_DISABLE=1` env override; set it via
+    /// `neoth council suppress` and clear it with
+    /// `neoth council suppress --off`. The env override still wins when
+    /// both are present.
+    #[serde(default)]
+    pub disabled: Option<bool>,
 }
 
 /// SP-2 minimum-viable default: 15 calls per user message. Covers

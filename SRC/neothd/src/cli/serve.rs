@@ -2929,7 +2929,16 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             // CLI's `cost_estimate` path. Operators wanting tighter
             // budget control raise `policy.budget_multiplier` in
             // freedom.yaml.
-            let council_decision = crate::cli::chat::evaluate_council_trigger(&req.prompt, 0.01);
+            // SPEC-03 suppress: read `freedom.yaml::council.disabled` fresh
+            // per message (best-effort — load failure ⇒ not disabled) so
+            // `neoth council suppress` gates the channel path too, without a
+            // daemon restart. Mirrors how the trigger already re-reads
+            // council_last.json per message.
+            let council_disabled = crate::config::FreedomConfig::load_from_default_path()
+                .map(|c| c.council.disabled.unwrap_or(false))
+                .unwrap_or(false);
+            let council_decision =
+                crate::cli::chat::evaluate_council_trigger(&req.prompt, 0.01, council_disabled);
             let council_enable = council_decision.should_convene();
             // B-1 (Session 13) — channel-side COUNCIL_SKIP audit. Same
             // contract as the CLI path: every Skip decision lands in
