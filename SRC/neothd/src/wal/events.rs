@@ -318,6 +318,21 @@ pub const EVENT_TYPE_PROACTIVE_SENT: u8 = 0x3A;
 /// is even read, so there is none to leak). SF-03 (Session 29).
 pub const EVENT_TYPE_CHANNEL_GATE_REJECTED: u8 = 0x3B;
 
+/// `0x3C CHANNEL_PRIVILEGE_BLOCKED` — an allowlisted channel sender invoked
+/// a DESTRUCTIVE operator slash-action (`/config set`, `/autonomy`,
+/// `/consent`, `/provider`, `/connect`, `/disconnect`, `/reload`,
+/// `/wizard`) over a messaging channel. The ADV-09 privilege ceiling in
+/// `slash::dispatch_action` rejects it — destructive config/consent/
+/// autonomy mutation requires LOCAL CLI authentication, so a Telegram
+/// message can't reconfigure or escalate the daemon. This frame closes the
+/// audit gap: before ADV-09 wired the ceiling into the channel path, such a
+/// command was silently rendered into an LLM prompt with no block + no
+/// trail. Distinct from `0x3B` (allowlist drop, pre-pipeline): the sender
+/// here IS on the allowlist but lacks the privilege for this action.
+/// Payload: `{channel, sender_id, action, ts_unix}` — `action` is the
+/// `SlashAction::as_str()` wire name; no message text. ADV-09 (Session 30).
+pub const EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED: u8 = 0x3C;
+
 // ---- 0x50..=0x5F  Panic / recovery (Pick #35 Session 14 WAL recovery) -----
 
 /// `0x50 RECOVERY_TRUNCATED` — emitted by `wal::recovery::scan_tail` at
@@ -1235,6 +1250,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_PROACTIVE_SENT < 0x30 || EVENT_TYPE_PROACTIVE_SENT > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_GATE_REJECTED < 0x30
         || EVENT_TYPE_CHANNEL_GATE_REJECTED > 0x3F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED < 0x30
+        || EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FIRED < 0x40 || EVENT_TYPE_JOB_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_SUCCESS < 0x40 || EVENT_TYPE_JOB_SUCCESS > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
@@ -1421,6 +1438,10 @@ mod tests {
             ("CHANNEL_EGRESS", EVENT_TYPE_CHANNEL_EGRESS),
             ("PROACTIVE_SENT", EVENT_TYPE_PROACTIVE_SENT),
             ("CHANNEL_GATE_REJECTED", EVENT_TYPE_CHANNEL_GATE_REJECTED),
+            (
+                "CHANNEL_PRIVILEGE_BLOCKED",
+                EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED,
+            ),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
             ("INGRESS_QUARANTINED", EVENT_TYPE_INGRESS_QUARANTINED),
             ("INGRESS_SANITIZED", EVENT_TYPE_INGRESS_SANITIZED),

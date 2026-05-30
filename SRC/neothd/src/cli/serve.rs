@@ -2259,6 +2259,42 @@ pub(crate) fn channel_skill_allowlist(
     skill.map(|s| s.manifest.tool_allowlist.clone())
 }
 
+/// ADV-09: best-effort `0x3C CHANNEL_PRIVILEGE_BLOCKED` audit frame for a
+/// destructive operator slash-action rejected by the channel privilege
+/// ceiling. Carries only the channel name + numeric sender id + the
+/// `SlashAction::as_str()` wire name — never message text. Never fails the
+/// caller: the rejection already happened, the audit frame is the nicety.
+async fn emit_channel_privilege_blocked(
+    writer: &WalWriterHandle,
+    channel: &str,
+    sender_id: &str,
+    action: &str,
+) {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "channel": channel,
+        "sender_id": sender_id,
+        "action": action,
+        "ts_unix": ts_unix,
+    })) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(error = %e, "serialize CHANNEL_PRIVILEGE_BLOCKED failed");
+            return;
+        }
+    };
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED,
+        &payload,
+    );
+    if let Err(e) = writer.append(header, payload).await {
+        warn!(error = %e, "CHANNEL_PRIVILEGE_BLOCKED append failed (non-fatal)");
+    }
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -2796,6 +2832,49 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                             crate::config::FreedomConfig::default_neoth_home().join("commands");
                         let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
                         if let Some(cmd) = commands.iter().find(|c| c.name == name) {
+                            // ADV-09: a command carrying a typed ACTION is
+                            // dispatched here with `CommandSource::Channel`
+                            // (mirrors the CLI action short-circuit in
+                            // `cli/chat.rs`). The privilege ceiling rejects a
+                            // destructive action (`/autonomy`, `/config set`,
+                            // `/consent`, ...) — previously it fell through to
+                            // the render path below + reached the LLM with no
+                            // gate + no audit. Read-only / Pending actions
+                            // return their handler text directly. Either way
+                            // the provider call is skipped — return early.
+                            if let Some(action) = cmd.action {
+                                let outcome = crate::slash::dispatch_action(
+                                    action,
+                                    &args,
+                                    config_for_handler.as_ref(),
+                                    crate::slash::CommandSource::Channel,
+                                );
+                                if outcome.is_channel_blocked() {
+                                    emit_channel_privilege_blocked(
+                                        &writer,
+                                        channel_str,
+                                        &inbound.sender_id,
+                                        action.as_str(),
+                                    )
+                                    .await;
+                                    warn!(
+                                        channel = channel_str,
+                                        sender = %inbound.sender_id,
+                                        action = action.as_str(),
+                                        "ADV-09: destructive slash action rejected from channel"
+                                    );
+                                } else {
+                                    info!(
+                                        channel = channel_str,
+                                        action = action.as_str(),
+                                        "channel slash action dispatched (read-only / pending)"
+                                    );
+                                }
+                                return Ok(::std::option::Option::Some(OutboundMessage {
+                                    recipient_id: inbound.sender_id.clone(),
+                                    text: outcome.text().to_string(),
+                                }));
+                            }
                             let rendered = cmd.render(&args, operator_id.as_deref());
                             info!(slash_command = %name, "slash dispatch");
                             (args, Some(rendered))
@@ -4228,5 +4307,51 @@ mod tests {
             .expect("skill should match 'deploy'");
         let allow = channel_skill_allowlist(Some(m.skill));
         assert_eq!(allow, Some(vec!["fs.read".to_string()]));
+    }
+
+    // ── ADV-09: channel privilege-block audit frame (0x3C) ────────────
+
+    #[tokio::test]
+    async fn emit_channel_privilege_blocked_writes_0x3c_frame() {
+        // The privilege ceiling itself (destructive action from a channel →
+        // ChannelPrivilegeBlocked) is unit-tested in slash::action_dispatch;
+        // this pins the AUDIT frame the serve.rs channel path emits when it
+        // rejects such an action — exactly one 0x3C frame carrying the
+        // channel + numeric sender + action wire-name, NO message text.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("priv.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        emit_channel_privilege_blocked(&writer, "telegram", "4242", "autonomy_level").await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut found = 0usize;
+        while cursor < bytes.len() {
+            let dec = match decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                assert_eq!(v["channel"], "telegram");
+                assert_eq!(v["sender_id"], "4242");
+                assert_eq!(v["action"], "autonomy_level");
+                assert!(
+                    v.get("text").is_none(),
+                    "audit frame must carry no message text"
+                );
+                found += 1;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert_eq!(
+            found, 1,
+            "expected exactly one 0x3C CHANNEL_PRIVILEGE_BLOCKED frame"
+        );
     }
 }
