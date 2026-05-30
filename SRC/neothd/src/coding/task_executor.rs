@@ -159,6 +159,14 @@ mod tests {
         assert_eq!(report.sessions_seen, 2);
         assert_eq!(report.sessions_dispatched, 2);
         assert_eq!(report.tasks_attempted, 2, "one task per session attempted");
+        // Pin the cross-session accumulation (`+=`, not `=`): MockWorker
+        // returns review-ready (patch + 1 passing test, apply_config=None),
+        // so each session completes its one task → 2 total. A regression to
+        // `=` would silently report 1 here.
+        assert_eq!(
+            report.tasks_completed, 2,
+            "tasks_completed must accumulate across both sessions"
+        );
         assert_eq!(report.per_session.len(), 2);
         // The controller drained every Backlog task — a second pass finds
         // nothing pending.

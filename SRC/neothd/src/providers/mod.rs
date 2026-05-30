@@ -206,6 +206,42 @@ pub async fn from_config_for_role(
 /// (zero decorator overhead, no behaviour change without a `fallback:`
 /// section). Callers (`cli/chat.rs`, `serve.rs`) use this in place of
 /// `from_config_for_role(.., Left)`.
+/// SPEC-03b consent gate — extracted as a pure, side-effect-light seam so
+/// the security-critical decision ("never build a cloud fallback the
+/// operator has not consented to") is unit-testable without constructing
+/// providers or mutating the real `~/.neoth`. Returns the subset of `slots`
+/// whose cloud-egress consent is granted under `home`, in order, paired with
+/// the resolved provider. Slots with no provider are dropped; non-cloud
+/// kinds (`local_qwen`/`local_ouro`) always pass via [`crate::consent::is_granted`].
+pub(crate) fn consented_fallback_slots<'a>(
+    home: &std::path::Path,
+    slots: &'a [crate::config::inference::HemisphereSlot],
+) -> Vec<(
+    &'a crate::config::inference::HemisphereSlot,
+    crate::config::inference::InferenceProvider,
+)> {
+    slots
+        .iter()
+        .filter_map(|slot| match slot.provider {
+            None => {
+                tracing::warn!("fallback slot has no provider set; skipping");
+                None
+            }
+            Some(inf) if crate::consent::is_granted(home, inf.to_provider_kind()) => {
+                Some((slot, inf))
+            }
+            Some(inf) => {
+                tracing::warn!(
+                    provider = inf.as_str(),
+                    "fallback slot skipped: cloud-egress consent not granted \
+                     (run `neoth consent grant <provider>` to enable)"
+                );
+                None
+            }
+        })
+        .collect()
+}
+
 pub async fn fallback_chain_from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
     let primary =
         from_config_for_role(config, crate::config::inference::HemisphereRole::Left).await?;
@@ -214,24 +250,12 @@ pub async fn fallback_chain_from_config(config: &FreedomConfig) -> Result<Box<dy
     }
     let home = FreedomConfig::default_neoth_home();
     let mut chain: Vec<Box<dyn Provider>> = vec![primary];
-    for slot in &config.fallback.chain {
-        let Some(inf_provider) = slot.provider else {
-            tracing::warn!("fallback slot has no provider set; skipping");
-            continue;
-        };
+    // CRITICAL consent gate (4-lens gremium) lives in
+    // `consented_fallback_slots` — a regression there would leak operator
+    // text to an un-consented cloud provider on every 429, so it is a pure
+    // tested seam rather than an inline branch.
+    for (slot, inf_provider) in consented_fallback_slots(&home, &config.fallback.chain) {
         let kind = inf_provider.to_provider_kind();
-        // CRITICAL consent gate (4-lens gremium): only build a cloud
-        // fallback the operator has consented to. Non-interactive (the
-        // daemon has no TTY) — skip + warn rather than prompt. Non-cloud
-        // kinds return `is_granted = true` automatically.
-        if !crate::consent::is_granted(&home, kind) {
-            tracing::warn!(
-                provider = inf_provider.as_str(),
-                "fallback slot skipped: cloud-egress consent not granted \
-                 (run `neoth consent grant <provider>` to enable)"
-            );
-            continue;
-        }
         let mut synthetic = config.clone();
         synthetic.provider_kind = Some(kind);
         synthetic.provider_model = slot.model.clone();
@@ -852,5 +876,89 @@ mod tests {
         }
         // Success case (weights cached + GPU works) is fine — no
         // assertion needed; the gate is the error message.
+    }
+
+    // ── SPEC-03b consent gate (consented_fallback_slots, Session 29) ──
+    // The security-critical seam: a regression here (dropping the gate,
+    // flipping the `!`, mis-mapping the kind) would route operator text to
+    // an un-consented cloud provider on every 429. These pin the contract.
+
+    #[test]
+    fn consented_slots_drops_unconsented_cloud_slot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let slots = vec![HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAi),
+            ..Default::default()
+        }];
+        // No `.granted` marker written → OpenAI (cloud) must be dropped.
+        assert!(
+            consented_fallback_slots(tmp.path(), &slots).is_empty(),
+            "un-consented cloud fallback slot must never be built"
+        );
+    }
+
+    #[test]
+    fn consented_slots_keeps_consented_cloud_slot() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::consent::grant(tmp.path(), ProviderKind::OpenaiApi).unwrap();
+        let slots = vec![HemisphereSlot {
+            provider: Some(InferenceProvider::OpenAi),
+            ..Default::default()
+        }];
+        let kept = consented_fallback_slots(tmp.path(), &slots);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].1, InferenceProvider::OpenAi);
+    }
+
+    #[test]
+    fn consented_slots_local_provider_always_passes() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No marker, no grant — local_qwen is non-cloud so it passes the gate.
+        let slots = vec![HemisphereSlot {
+            provider: Some(InferenceProvider::LocalQwen),
+            ..Default::default()
+        }];
+        assert_eq!(
+            consented_fallback_slots(tmp.path(), &slots).len(),
+            1,
+            "local provider needs no consent"
+        );
+    }
+
+    #[test]
+    fn consented_slots_drops_slot_without_provider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let slots = vec![HemisphereSlot {
+            provider: None,
+            ..Default::default()
+        }];
+        assert!(consented_fallback_slots(tmp.path(), &slots).is_empty());
+    }
+
+    #[test]
+    fn consented_slots_preserves_order_and_filters_mixed() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::consent::grant(tmp.path(), ProviderKind::GeminiApi).unwrap();
+        // openai (cloud, NOT granted) dropped; gemini (cloud, granted) kept;
+        // local_qwen (non-cloud) kept — relative order preserved.
+        let slots = vec![
+            HemisphereSlot {
+                provider: Some(InferenceProvider::OpenAi),
+                ..Default::default()
+            },
+            HemisphereSlot {
+                provider: Some(InferenceProvider::Gemini),
+                ..Default::default()
+            },
+            HemisphereSlot {
+                provider: Some(InferenceProvider::LocalQwen),
+                ..Default::default()
+            },
+        ];
+        let kept = consented_fallback_slots(tmp.path(), &slots);
+        assert_eq!(
+            kept.iter().map(|(_, p)| *p).collect::<Vec<_>>(),
+            vec![InferenceProvider::Gemini, InferenceProvider::LocalQwen]
+        );
     }
 }

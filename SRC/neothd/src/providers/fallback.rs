@@ -45,13 +45,45 @@ pub struct FallbackProvider {
     max_hops: u8,
 }
 
+/// What to do with one fallback candidate. Extracted as a pure decision so
+/// the hop-accounting contract is unit-testable without disk/async/env —
+/// the `Skip` arm must NOT consume a hop slot (see [`FallbackProvider::decide_hop`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HopAction {
+    /// Candidate is in a 429 backoff window — skip it WITHOUT spending a hop.
+    Skip,
+    /// Attempt this candidate; the caller advances the hop counter.
+    Attempt,
+    /// Hop cap reached — stop walking the chain, surface the last 429.
+    Stop,
+}
+
 impl FallbackProvider {
     pub fn new(chain: Vec<Box<dyn Provider>>, max_hops: u8) -> Self {
-        debug_assert!(
+        // `assert!` (not `debug_assert!`) so the invariant holds in release
+        // too — `stream()` does `.first().expect(..)` and would otherwise
+        // hard-panic on an empty chain in a release binary.
+        assert!(
             !chain.is_empty(),
             "FallbackProvider chain must be non-empty (primary at [0])"
         );
         Self { chain, max_hops }
+    }
+
+    /// Per-candidate hop decision for a fallback slot (`i > 0`). A candidate
+    /// already in a 429 backoff window is skipped *without* consuming a hop
+    /// (`hops_used` unchanged) — otherwise two backed-off slots would burn
+    /// the whole `max_hops` budget and starve a healthy slot behind them.
+    /// Only an actual attempt advances `hops_used`; `hops_used + 1 > max_hops`
+    /// stops the walk.
+    fn decide_hop(in_backoff: bool, hops_used: u8, max_hops: u8) -> HopAction {
+        if in_backoff {
+            return HopAction::Skip;
+        }
+        if hops_used.saturating_add(1) > max_hops {
+            return HopAction::Stop;
+        }
+        HopAction::Attempt
     }
 
     fn is_quota_error(e: &anyhow::Error) -> bool {
@@ -74,40 +106,52 @@ impl Provider for FallbackProvider {
 
     async fn complete(&self, req: Request) -> Result<Completion> {
         let quota_path = crate::config::FreedomConfig::default_neoth_home().join("quota.json");
-        let tracker = QuotaTracker::load_from(&quota_path);
         let now = Self::now_unix();
+        // Lazy: the QuotaTracker is only read when we actually reach a
+        // fallback candidate, so the common primary-success path pays ZERO
+        // disk I/O. `load_from` degrades OPEN on an unreadable/corrupt file
+        // (empty tracker + its own `warn!`) — the storm guard becomes a
+        // no-op but a legitimate 429 failover still proceeds; we never
+        // block failover because the quota file could not be read.
+        let mut tracker: Option<QuotaTracker> = None;
         let mut last_err: Option<anyhow::Error> = None;
         let mut hops = 0u8;
 
         for (i, candidate) in self.chain.iter().enumerate() {
             if i > 0 {
-                // Fallback hop. Bounded by max_hops (cycle + storm guard).
-                hops += 1;
-                if hops > self.max_hops {
-                    tracing::warn!(
-                        max_hops = self.max_hops,
-                        "fallback chain hop cap reached — surfacing the last 429"
-                    );
-                    break;
-                }
-                // Cheap in-memory pre-flight: skip a fallback already in a
-                // 429 backoff window (no round-trip).
-                if tracker
+                // Fallback hop. Load the tracker on first use (see above).
+                let tracker = tracker.get_or_insert_with(|| QuotaTracker::load_from(&quota_path));
+                let in_backoff = tracker
                     .backoff_remaining_for(candidate.name(), now)
-                    .is_some()
-                {
-                    tracing::warn!(
-                        provider = candidate.name(),
-                        "fallback skipped: provider in quota backoff"
-                    );
-                    continue;
+                    .is_some();
+                match Self::decide_hop(in_backoff, hops, self.max_hops) {
+                    HopAction::Skip => {
+                        // In a 429 backoff window — skip WITHOUT spending a
+                        // hop, so a healthy slot behind it stays reachable.
+                        tracing::warn!(
+                            provider = candidate.name(),
+                            "fallback skipped: provider in quota backoff"
+                        );
+                        continue;
+                    }
+                    HopAction::Stop => {
+                        tracing::warn!(
+                            max_hops = self.max_hops,
+                            "fallback chain hop cap reached — surfacing the last 429"
+                        );
+                        break;
+                    }
+                    HopAction::Attempt => {
+                        // Only an actual attempt consumes a hop slot.
+                        hops += 1;
+                        tracing::warn!(
+                            from = self.chain[0].name(),
+                            to = candidate.name(),
+                            hop = hops,
+                            "provider failover on 429"
+                        );
+                    }
                 }
-                tracing::warn!(
-                    from = self.chain[0].name(),
-                    to = candidate.name(),
-                    hop = hops,
-                    "provider failover on 429"
-                );
             }
             match candidate.complete(req.clone()).await {
                 Ok(c) => return Ok(c),
@@ -265,5 +309,45 @@ mod tests {
             fp2.complete(Request::default()).await.unwrap().text,
             "ok:fb2"
         );
+    }
+
+    #[test]
+    fn decide_hop_skips_backoff_without_consuming_a_hop() {
+        // The regression guard for the increment-before-skip bug: a slot in
+        // backoff is skipped REGARDLESS of the hop budget, and (crucially)
+        // the caller leaves `hops_used` untouched on Skip — so the very next
+        // healthy slot still gets an Attempt even at max_hops=1.
+        assert_eq!(
+            FallbackProvider::decide_hop(true, 0, 1),
+            HopAction::Skip,
+            "in-backoff slot must skip"
+        );
+        assert_eq!(
+            FallbackProvider::decide_hop(true, 5, 1),
+            HopAction::Skip,
+            "backoff skip ignores the hop budget entirely"
+        );
+        // After a backoff skip kept hops_used at 0, the next healthy slot is
+        // still attemptable under max_hops=1 — the bug made this a Stop.
+        assert_eq!(
+            FallbackProvider::decide_hop(false, 0, 1),
+            HopAction::Attempt
+        );
+    }
+
+    #[test]
+    fn decide_hop_caps_actual_attempts_at_max_hops() {
+        assert_eq!(
+            FallbackProvider::decide_hop(false, 0, 2),
+            HopAction::Attempt
+        );
+        assert_eq!(
+            FallbackProvider::decide_hop(false, 1, 2),
+            HopAction::Attempt
+        );
+        // hops_used == max_hops → the next attempt would be hop 3 > 2.
+        assert_eq!(FallbackProvider::decide_hop(false, 2, 2), HopAction::Stop);
+        // max_hops = 0 → no fallback attempt is ever allowed.
+        assert_eq!(FallbackProvider::decide_hop(false, 0, 0), HopAction::Stop);
     }
 }

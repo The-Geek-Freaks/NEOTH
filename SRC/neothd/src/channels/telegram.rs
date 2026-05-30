@@ -273,6 +273,35 @@ async fn emit_gate_rejected(writer: Option<&crate::wal::writer::WalWriterHandle>
     }
 }
 
+/// SF-03 allowlist gate, shared by the new-message + edited-message paths
+/// so both enforce the identical drop-and-audit contract from one tested
+/// seam. Returns `true` when the sender is blocked (caller drops the
+/// update) and, as a side effect, emits the `0x3B CHANNEL_GATE_REJECTED`
+/// audit frame. `site` ("message"/"edit") only labels the two call sites in
+/// the warn log. An open allowlist (`None`) never blocks; a rejected sender
+/// is never sent a reply (information-leak avoidance).
+async fn sender_blocked_by_allowlist(
+    allowed_user_id: Option<u64>,
+    from_id: u64,
+    gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    site: &'static str,
+) -> bool {
+    let Some(allowed) = allowed_user_id else {
+        return false;
+    };
+    if from_id == allowed {
+        return false;
+    }
+    tracing::warn!(
+        from_id,
+        allowed_id = allowed,
+        site,
+        "Telegram sender not on allowlist — dropped"
+    );
+    emit_gate_rejected(gate_writer, from_id).await;
+    true
+}
+
 async fn handle_one_message(
     bot: Bot,
     msg: Message,
@@ -286,21 +315,13 @@ async fn handle_one_message(
     };
 
     // Allowlist check FIRST — before we read the text, before we touch the
-    // WAL, before any provider call. Rejected messages get logged + dropped;
-    // we do NOT send a "you are not allowed" reply (information leak).
-    if let Some(allowed) = allowed_user_id {
-        if from.id.0 != allowed {
-            tracing::warn!(
-                from_id = from.id.0,
-                allowed_id = allowed,
-                "Telegram message dropped: sender not on allowlist"
-            );
-            // SF-03: audit the rejected sender so it shows in
-            // `neoth wal show --type channel_gate_rejected` (the drop was
-            // previously tracing-only — invisible at the default log level).
-            emit_gate_rejected(gate_writer.as_ref(), from.id.0).await;
-            return Ok(());
-        }
+    // WAL, before any provider call. Rejected messages get logged + dropped
+    // (+ a 0x3B audit frame); we do NOT send a "you are not allowed" reply
+    // (information leak).
+    if sender_blocked_by_allowlist(allowed_user_id, from.id.0, gate_writer.as_ref(), "message")
+        .await
+    {
+        return Ok(());
     }
 
     // Detect message kind. Order matters: photo/voice/audio/document
@@ -409,18 +430,9 @@ async fn handle_edited_message(
     };
 
     // Allowlist FIRST — same contract as new messages: rejected edits are
-    // logged + dropped, never acknowledged (information leak).
-    if let Some(allowed) = allowed_user_id {
-        if from.id.0 != allowed {
-            tracing::warn!(
-                from_id = from.id.0,
-                allowed_id = allowed,
-                "Telegram edit dropped: sender not on allowlist"
-            );
-            // SF-03: audit the rejected sender (edit path).
-            emit_gate_rejected(gate_writer.as_ref(), from.id.0).await;
-            return Ok(());
-        }
+    // logged + dropped (+ a 0x3B audit frame), never acknowledged.
+    if sender_blocked_by_allowlist(allowed_user_id, from.id.0, gate_writer.as_ref(), "edit").await {
+        return Ok(());
     }
 
     // A genuine `EditedMessage` always carries `edit_date`. If Telegram omits
@@ -637,6 +649,57 @@ mod tests {
             cursor = cursor.saturating_add(total);
         }
         assert_eq!(found, 1, "expected exactly one CHANNEL_GATE_REJECTED frame");
+    }
+
+    #[tokio::test]
+    async fn sender_blocked_by_allowlist_gates_both_paths() {
+        // Open allowlist → nobody is blocked (no writer needed).
+        assert!(
+            !sender_blocked_by_allowlist(None, 999, None, "message").await,
+            "open allowlist must let every sender through"
+        );
+        // Listed sender → not blocked.
+        assert!(
+            !sender_blocked_by_allowlist(Some(7), 7, None, "edit").await,
+            "the allowed sender must pass"
+        );
+
+        // Unlisted sender → blocked AND a single 0x3B frame for that id is
+        // written. This is the seam both handle_one_message ("message") and
+        // handle_edited_message ("edit") route through, so it guards both.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("gate.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        assert!(
+            sender_blocked_by_allowlist(Some(7), 13, Some(&writer), "edit").await,
+            "a sender not on the allowlist must be blocked"
+        );
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut found = 0usize;
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                assert_eq!(v["sender_id"], 13);
+                assert_eq!(v["reason"], "not_on_allowlist");
+                found += 1;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert_eq!(
+            found, 1,
+            "blocked sender must produce exactly one 0x3B frame"
+        );
     }
 
     #[test]

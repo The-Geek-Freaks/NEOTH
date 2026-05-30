@@ -716,15 +716,21 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     //
     // Built once so the scheduler can dispatch jobs even when no channel
     // is configured, and so two consumers don't pay the construction cost
-    // twice. None if `from_config` fails — channels + scheduler then skip
+    // twice. None if construction fails — channels + scheduler then skip
     // gracefully rather than crash the daemon.
-    let shared_provider: Option<Arc<dyn Provider>> = match providers::from_config(&config).await {
-        Ok(p) => Some(Arc::from(p)),
-        Err(e) => {
-            warn!(error = %e, "provider not available — channels + cron skipped");
-            None
-        }
-    };
+    //
+    // SPEC-03b: use `fallback_chain_from_config` (NOT bare `from_config`) so
+    // channel-driven messages get the same 429 fallback chain the CLI does,
+    // and so the consent gate runs on this construction path too. Empty
+    // `fallback.chain` ⇒ the bare primary (zero overhead, no behaviour change).
+    let shared_provider: Option<Arc<dyn Provider>> =
+        match providers::fallback_chain_from_config(&config).await {
+            Ok(p) => Some(Arc::from(p)),
+            Err(e) => {
+                warn!(error = %e, "provider not available — channels + cron skipped");
+                None
+            }
+        };
 
     // ── 5c-meter. Shared provider-call Meter (Q-3). One per daemon —
     // every channel pipeline records into the same rolling window so

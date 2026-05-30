@@ -1142,10 +1142,16 @@ pub async fn run_chat_with(
         // but skipped because operator opted out".
         let trigger_decision = if council_disable {
             crate::council::TriggerDecision::Skip {
-                reason: if council_disable_env {
-                    "NEOTH_COUNCIL_DISABLE=1".into()
-                } else {
-                    "freedom.yaml::council.disabled=true".into()
+                // Record BOTH sources when co-active so the audit trail
+                // doesn't hide the persistent suppress behind the env var
+                // (clearing the env later would otherwise leave no WAL hint
+                // that `council.disabled=true` is still in effect).
+                reason: match (council_disable_env, council_disable_cfg) {
+                    (true, true) => {
+                        "NEOTH_COUNCIL_DISABLE=1 + freedom.yaml::council.disabled=true".into()
+                    }
+                    (true, false) => "NEOTH_COUNCIL_DISABLE=1".into(),
+                    (false, _) => "freedom.yaml::council.disabled=true".into(),
                 },
             }
         } else if council_force {
@@ -3265,6 +3271,13 @@ async fn emit_council_synthesis_attempted(
 /// per message so `neoth council suppress` takes effect without a daemon
 /// restart. `true` → forced Skip (the durable twin of
 /// `NEOTH_COUNCIL_DISABLE=1`, which still wins when both are set).
+///
+/// Precedence (highest first): `NEOTH_COUNCIL_DISABLE=1` → `disabled` flag
+/// → `NEOTH_COUNCIL_ENABLE=1` → AUTO. So EITHER disable source beats the
+/// force-enable env var: a suppressed council cannot be force-convened
+/// without first clearing the suppress. This is intentional (an operator
+/// who durably opted out should not be overridden by a stray env var) and
+/// is pinned by `evaluate_council_trigger_disable_beats_force_enable`.
 pub(crate) fn evaluate_council_trigger(
     prompt: &str,
     estimated_single_call_eur: f32,
@@ -3860,6 +3873,61 @@ mod tests {
     use std::time::Duration;
     use tempfile::tempdir;
     use tokio::fs::read;
+
+    // ── SPEC-03 council suppress: evaluate_council_trigger (Session 29) ──
+    // The channel path (serve.rs) reads `council.disabled` per message and
+    // passes it here; these pin the suppress contract so a negated/dropped
+    // branch can't silently let channels ignore suppression.
+
+    #[test]
+    fn evaluate_council_trigger_disabled_flag_forces_skip() {
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::remove_var("NEOTH_COUNCIL_DISABLE");
+            std::env::remove_var("NEOTH_COUNCIL_ENABLE");
+        }
+        let decision = evaluate_council_trigger("should I use Rust or Go here?", 0.01, true);
+        match decision {
+            crate::council::TriggerDecision::Skip { reason } => {
+                assert!(
+                    reason.contains("freedom.yaml"),
+                    "disabled flag must attribute the Skip to the config flag, got: {reason}"
+                );
+            }
+            other => panic!("disabled=true must force Skip, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_council_trigger_disable_beats_force_enable() {
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::remove_var("NEOTH_COUNCIL_DISABLE");
+            std::env::set_var("NEOTH_COUNCIL_ENABLE", "1");
+        }
+        let decision = evaluate_council_trigger("anything at all", 0.01, true);
+        unsafe { std::env::remove_var("NEOTH_COUNCIL_ENABLE") };
+        assert!(
+            matches!(decision, crate::council::TriggerDecision::Skip { .. }),
+            "a durably-suppressed council must not be force-convened by NEOTH_COUNCIL_ENABLE=1"
+        );
+    }
+
+    #[test]
+    fn evaluate_council_trigger_not_disabled_allows_force_enable() {
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::remove_var("NEOTH_COUNCIL_DISABLE");
+            std::env::set_var("NEOTH_COUNCIL_ENABLE", "1");
+        }
+        let decision = evaluate_council_trigger("anything at all", 0.01, false);
+        unsafe { std::env::remove_var("NEOTH_COUNCIL_ENABLE") };
+        // disabled=false + force-enable → the normal force path (Convene).
+        assert!(
+            matches!(decision, crate::council::TriggerDecision::Convene { .. }),
+            "with no suppress, NEOTH_COUNCIL_ENABLE=1 must force Convene"
+        );
+    }
 
     // ── UX-02 memory-signal line ───────────────────────────────────
 
