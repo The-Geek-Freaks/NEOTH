@@ -323,14 +323,21 @@ fn main() -> Result<()> {
                 if let Some(w) = weak_for_loop.upgrade() {
                     use slint::{Model, ModelRc, VecModel};
                     let mut rows: Vec<ChatMessage> = w.get_chat_messages().iter().collect();
-                    let target = match outcome {
-                        Ok(reply) => ChatMessage {
-                            role: "assistant".into(),
-                            text: reply.into(),
-                            timestamp: format_now_hms().into(),
-                            streaming: false,
-                        },
-                        Err(err) => ChatMessage {
+                    let ts = format_now_hms();
+                    // Chat-feel parity: a successful reply is segmented into
+                    // one bubble per paragraph (openhuman cluster feel); an
+                    // error stays a single `error`-role bubble.
+                    let replacements: Vec<ChatMessage> = match outcome {
+                        Ok(reply) => segment_reply_into_bubbles(&reply)
+                            .into_iter()
+                            .map(|seg| ChatMessage {
+                                role: "assistant".into(),
+                                text: seg.into(),
+                                timestamp: ts.clone().into(),
+                                streaming: false,
+                            })
+                            .collect(),
+                        Err(err) => vec![ChatMessage {
                             // `error` bubble role lets the .slint side
                             // colour the surface differently (red tint
                             // when the Composer's theme picks it up).
@@ -338,21 +345,24 @@ fn main() -> Result<()> {
                             // same as "assistant" — degrades cleanly.
                             role: "error".into(),
                             text: err.into(),
-                            timestamp: format_now_hms().into(),
+                            timestamp: ts.clone().into(),
                             streaming: false,
-                        },
+                        }],
                     };
-                    // Replace the streaming placeholder (penultimate row
-                    // by construction; check defensively in case the
-                    // operator sent a second message before the first
-                    // returned).
+                    // Splice the replacement bubble(s) in place of the
+                    // streaming placeholder (penultimate row by construction;
+                    // check defensively in case the operator sent a second
+                    // message before the first returned).
                     if placeholder_idx < rows.len()
                         && rows[placeholder_idx].streaming
                         && rows[placeholder_idx].role == "assistant"
                     {
-                        rows[placeholder_idx] = target;
+                        rows.remove(placeholder_idx);
+                        for (i, bubble) in replacements.into_iter().enumerate() {
+                            rows.insert(placeholder_idx + i, bubble);
+                        }
                     } else {
-                        rows.push(target);
+                        rows.extend(replacements);
                     }
                     w.set_chat_messages(ModelRc::new(VecModel::from(rows)));
                 }
@@ -1562,6 +1572,67 @@ fn apply_kanban_snapshot(window: &MainWindow, snap: KanbanBoardSnapshot) {
 /// daemon internals while ensuring GUI Send hits EXACTLY the same
 /// provider / WAL / permission / cost / autonomy code path as
 /// `neothd chat` from a terminal — that's the R2 done-criterion.
+/// Chat-feel parity (openhuman): split a NEOTH assistant reply into
+/// multiple bubbles at blank-line (paragraph) boundaries, so a
+/// multi-paragraph reply reads as a conversation cluster instead of one
+/// wall of text. Mirrors openhuman's render-time `splitAgentMessageInto
+/// Bubbles` — a pure line-iterator state machine, no Slint/UI dependency,
+/// fully unit-testable.
+///
+/// Rules:
+/// - A fenced code block (```…```) is kept INTACT as one bubble — blank
+///   lines inside a fence never split it (avoids fragmenting code/tables).
+/// - A blank line OUTSIDE a fence ends the current bubble.
+/// - Segments that are only a visual separator (`---` / `***` / `___`) are
+///   dropped (openhuman's `isVisualSeparatorOnly`) so horizontal rules
+///   don't render as empty bubbles.
+/// - Each emitted segment is trimmed. A non-empty reply always yields at
+///   least one bubble (falls back to the whole trimmed reply).
+pub fn segment_reply_into_bubbles(reply: &str) -> Vec<String> {
+    fn push_segment(cur: &[&str], out: &mut Vec<String>) {
+        let trimmed = cur.join("\n");
+        let trimmed = trimmed.trim();
+        if !trimmed.is_empty() && !is_visual_separator_only(trimmed) {
+            out.push(trimmed.to_string());
+        }
+    }
+    let mut bubbles: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    let mut in_fence = false;
+    for line in reply.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            current.push(line);
+            continue;
+        }
+        if !in_fence && line.trim().is_empty() {
+            push_segment(&current, &mut bubbles);
+            current.clear();
+        } else {
+            current.push(line);
+        }
+    }
+    push_segment(&current, &mut bubbles);
+    if bubbles.is_empty() {
+        let t = reply.trim();
+        if !t.is_empty() {
+            bubbles.push(t.to_string());
+        }
+    }
+    bubbles
+}
+
+/// True when `s` (already trimmed, non-empty) is ONLY a Markdown
+/// horizontal-rule / visual separator — 3+ of `-`/`*`/`_` (allowing
+/// interspersed spaces, as Markdown permits `- - -`). Such a segment
+/// carries no content and is dropped during bubble segmentation.
+fn is_visual_separator_only(s: &str) -> bool {
+    let non_space: Vec<char> = s.chars().filter(|c| !c.is_whitespace()).collect();
+    non_space.len() >= 3
+        && non_space.iter().all(|&c| c == '-' || c == '*' || c == '_')
+        && non_space.iter().all(|&c| c == non_space[0])
+}
+
 fn chat_via_subprocess(message: &str) -> std::result::Result<String, String> {
     let Some(bin) = which_neothd() else {
         return Err(BINARY_MISSING_MESSAGE.to_string());
@@ -1662,6 +1733,71 @@ pub const PRESET_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::fr
 #[cfg(test)]
 mod chat_subprocess_tests {
     use super::*;
+
+    #[test]
+    fn segment_single_paragraph_is_one_bubble() {
+        let r = segment_reply_into_bubbles("Just one line of reply.");
+        assert_eq!(r, vec!["Just one line of reply.".to_string()]);
+    }
+
+    #[test]
+    fn segment_splits_paragraphs_at_blank_line() {
+        let r = segment_reply_into_bubbles("First paragraph.\n\nSecond paragraph.\n\nThird.");
+        assert_eq!(
+            r,
+            vec![
+                "First paragraph.".to_string(),
+                "Second paragraph.".to_string(),
+                "Third.".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn segment_keeps_fenced_code_block_intact() {
+        // A code fence with internal blank lines must stay ONE bubble.
+        let reply = "Here is the fix:\n\n```rust\nfn a() {}\n\nfn b() {}\n```\n\nDone.";
+        let r = segment_reply_into_bubbles(reply);
+        assert_eq!(r.len(), 3, "intro + fenced block + outro: {r:?}");
+        assert!(
+            r[1].contains("fn a()") && r[1].contains("fn b()"),
+            "fence intact: {:?}",
+            r[1]
+        );
+        assert!(r[1].contains("```"), "fence markers preserved");
+    }
+
+    #[test]
+    fn segment_drops_visual_separator_segments() {
+        // A `---` horizontal rule between paragraphs is dropped, not a bubble.
+        let r = segment_reply_into_bubbles("Above the line.\n\n---\n\nBelow the line.");
+        assert_eq!(
+            r,
+            vec!["Above the line.".to_string(), "Below the line.".to_string()]
+        );
+    }
+
+    #[test]
+    fn segment_trims_and_collapses_leading_trailing_blanks() {
+        let r = segment_reply_into_bubbles("\n\n  Only content.  \n\n\n");
+        assert_eq!(r, vec!["Only content.".to_string()]);
+    }
+
+    #[test]
+    fn segment_empty_reply_yields_no_bubbles() {
+        assert!(segment_reply_into_bubbles("   \n\n  ").is_empty());
+    }
+
+    #[test]
+    fn visual_separator_matrix() {
+        assert!(is_visual_separator_only("---"));
+        assert!(is_visual_separator_only("***"));
+        assert!(is_visual_separator_only("___"));
+        assert!(is_visual_separator_only("- - -")); // markdown spaced hr
+        assert!(!is_visual_separator_only("--")); // too short
+        assert!(!is_visual_separator_only("-*-")); // mixed glyphs
+        assert!(!is_visual_separator_only("text")); // real content
+    }
 
     #[test]
     fn shape_chat_output_happy_path_returns_trimmed_stdout() {
