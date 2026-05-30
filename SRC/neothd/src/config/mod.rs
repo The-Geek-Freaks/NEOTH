@@ -324,6 +324,12 @@ pub struct FreedomConfig {
     /// adaptation, matching the `drift_alert` precedent.
     #[serde(default)]
     pub profile_adapt: ProfileAdaptConfig,
+    /// G-01 (first slice) — passive inactivity-nudge cron. Default OFF
+    /// (opt-in; a proactive ping is intrusive). When enabled, the daemon
+    /// enqueues one "still there?" nudge after `inactivity_gap_secs` of
+    /// quiet (deduped per UTC day).
+    #[serde(default)]
+    pub pattern_cron: PatternCronConfig,
     /// SPEC-03b — per-provider HTTP-429 fallback chain. Empty (default) =
     /// no fallback, pre-SPEC-03b behaviour preserved exactly.
     #[serde(default)]
@@ -577,6 +583,46 @@ impl Default for ProfileAdaptConfig {
 impl ProfileAdaptConfig {
     /// Tick interval as a `Duration`, clamped to a 60s minimum so an
     /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// G-01 (first slice) — passive inactivity-nudge cron config. When
+/// `enabled`, the daemon's `pattern_cron` checks every `interval_secs`
+/// whether the operator has gone quiet for longer than
+/// `inactivity_gap_secs` and, if so, enqueues ONE proactive "still there?"
+/// nudge (deduped per UTC day). Default OFF — a proactive ping is
+/// intrusive, so it stays opt-in, matching `drift_alert`/`profile_adapt`.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct PatternCronConfig {
+    /// Master switch for the inactivity nudge. Default `false`.
+    pub enabled: bool,
+    /// Cron tick interval, seconds. Default 24h.
+    pub interval_secs: u64,
+    /// Quiet-gap threshold, seconds, beyond which a nudge fires. Default
+    /// 3 days — long enough that a normal weekend pause stays silent.
+    pub inactivity_gap_secs: u64,
+}
+
+/// 24 hours — the pattern cron default cadence.
+pub const DEFAULT_PATTERN_CRON_INTERVAL_SECS: u64 = 24 * 3600;
+/// 3 days — the default inactivity gap before a nudge.
+pub const DEFAULT_INACTIVITY_GAP_SECS: u64 = 3 * 24 * 3600;
+
+impl Default for PatternCronConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_PATTERN_CRON_INTERVAL_SECS,
+            inactivity_gap_secs: DEFAULT_INACTIVITY_GAP_SECS,
+        }
+    }
+}
+
+impl PatternCronConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum.
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }

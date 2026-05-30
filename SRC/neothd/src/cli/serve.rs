@@ -1488,6 +1488,26 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── Inactivity-nudge cron (G-01 first slice) ──────────────────────────
+    // Enqueues one proactive "still there?" nudge after the operator has
+    // been quiet for `pattern_cron.inactivity_gap_secs` (deduped per UTC
+    // day). Delivered by the existing proactive_dispatcher drain loop. Off
+    // by default — a proactive ping is intrusive — so `spawn_*` returns
+    // None when `pattern_cron.enabled = false`.
+    let pattern_cron_handle: Option<tokio::task::JoinHandle<()>> = {
+        let home = FreedomConfig::default_neoth_home();
+        let handle =
+            crate::daemon::pattern_cron::spawn_pattern_cron_loop(config.pattern_cron, home);
+        if handle.is_some() {
+            info!(
+                interval_secs = config.pattern_cron.interval_secs,
+                inactivity_gap_secs = config.pattern_cron.inactivity_gap_secs,
+                "inactivity-nudge cron loop spawned (G-01)"
+            );
+        }
+        handle
+    };
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -2177,6 +2197,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let _ = task.await;
     }
     if let Some(task) = profile_adapt_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
+    if let Some(task) = pattern_cron_handle {
         task.abort();
         let _ = task.await;
     }

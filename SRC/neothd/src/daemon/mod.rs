@@ -35,6 +35,12 @@ pub mod g02_surfacing_cron;
 pub mod hardware;
 pub mod installer_audit_sidecar;
 pub mod model_download_audit;
+/// G-01 (first slice) — inactivity-gap detector: enqueues one proactive
+/// "still there?" nudge after `pattern_cron.inactivity_gap_secs` of
+/// operator silence (deduped per UTC day), onto the G-01 proactive
+/// substrate. Off by default. The first detector of the named
+/// pattern-detection cron; further detectors layer on the same shape.
+pub mod pattern_cron;
 /// Round-3 v0.4 G-01 consumer half — periodic drain of
 /// `proactive::ProactiveQueue` into a `proactive_delivered.jsonl`
 /// sidecar. Operators tail the sidecar OR future channel adapters
@@ -43,13 +49,13 @@ pub mod model_download_audit;
 /// PROACTIVE_PER_TICK_CAP = 3 caps the notification storm even if
 /// the queue's daily budget is wider.
 pub mod proactive_dispatcher;
+pub mod profile_adapt_cron;
 /// Round-3 v0.4 G-01 cron-wiring — periodic reflection-builder tick
 /// that glues `reflection::build_reflection_item` (G-01-mini) +
 /// `proactive::ProactiveQueue::enqueue` (G-01a). Ticks every 24h
 /// (operator-tunable); the per-week dedup_key in the reflection
 /// item itself keeps emissions to one per ISO week regardless of
 /// tick frequency.
-pub mod profile_adapt_cron;
 pub mod reflection_cron;
 pub mod sidecar;
 /// HO-06 (Session 28) — credential-pattern scanner that walks
