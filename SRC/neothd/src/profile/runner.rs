@@ -392,9 +392,11 @@ static V10_07_PROVIDER_WARNED: std::sync::atomic::AtomicBool =
 
 /// Returns true if the provider name (`Provider::name()`) is a local
 /// inference path. Local providers see the operator's conversation but
-/// the data stays on-device — no privacy concern under H3.
+/// the data stays on-device — no privacy concern under H3. Delegates to
+/// the canonical [`crate::providers::is_local_provider`] so the
+/// local-provider set lives in exactly one place (GR-17).
 fn is_local_inference_provider(name: &str) -> bool {
-    matches!(name, "local_qwen" | "local_ouro")
+    crate::providers::is_local_provider(name)
 }
 
 /// SPEC-04 (Session 28) — stable wire label for the `target` field in

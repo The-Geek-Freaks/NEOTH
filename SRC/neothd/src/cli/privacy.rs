@@ -86,7 +86,7 @@ pub fn audit_posture(cfg: &FreedomConfig, creds: &Credentials) -> Vec<PrivacyFin
         .map(|s| s.trim_matches('"').to_string())
         .unwrap_or_else(|| "local_qwen".to_string());
     let provider = provider_owned.as_str();
-    let cloud_provider = provider != "local_qwen";
+    let cloud_provider = !crate::providers::is_local_provider(provider);
     out.push(PrivacyFinding {
         category: "provider",
         severity: if cloud_provider { "warn" } else { "info" },
@@ -112,7 +112,7 @@ pub fn audit_posture(cfg: &FreedomConfig, creds: &Credentials) -> Vec<PrivacyFin
     // ── Profile learning ──────────────────────────────────────────────
     let learn_enabled = cfg.profile.learn_enabled;
     let learn_provider = cfg.profile.learn_provider.as_deref().unwrap_or(provider);
-    let learn_is_cloud = learn_provider != "local_qwen";
+    let learn_is_cloud = !crate::providers::is_local_provider(learn_provider);
     out.push(PrivacyFinding {
         category: "profile-learning",
         severity: if !learn_enabled {
@@ -234,6 +234,7 @@ mod tests {
         let mut cfg = FreedomConfig::default();
         cfg.provider_kind = Some(match provider {
             "local_qwen" => ProviderKind::LocalQwen,
+            "local_ouro" => ProviderKind::LocalOuro,
             "openai_api" => ProviderKind::OpenaiApi,
             _ => ProviderKind::LocalQwen,
         });
@@ -250,6 +251,36 @@ mod tests {
         let provider_finding = findings.iter().find(|f| f.category == "provider").unwrap();
         assert_eq!(provider_finding.severity, "info");
         assert!(provider_finding.status.contains("LOCAL ONLY"));
+    }
+
+    #[test]
+    fn audit_reports_local_only_when_provider_is_local_ouro() {
+        // GR-17 (Session 30): local_ouro is on-device inference — it must
+        // classify LOCAL ONLY / info, never CLOUD / warn. Before the
+        // canonical `is_local_provider` helper, the `!= "local_qwen"` guard
+        // mislabelled it CLOUD with a false "posts your prompt to
+        // local_ouro's servers" privacy warning.
+        let cfg = cfg_with("local_ouro", false, Some("local_ouro"));
+        let creds = Credentials::default();
+        let findings = audit_posture(&cfg, &creds);
+        let provider_finding = findings.iter().find(|f| f.category == "provider").unwrap();
+        assert_eq!(provider_finding.severity, "info");
+        assert!(provider_finding.status.contains("LOCAL ONLY"));
+    }
+
+    #[test]
+    fn audit_info_when_profile_learn_uses_local_ouro() {
+        let cfg = cfg_with("openai_api", true, Some("local_ouro"));
+        let creds = Credentials::default();
+        let findings = audit_posture(&cfg, &creds);
+        let pf = findings
+            .iter()
+            .find(|f| f.category == "profile-learning")
+            .unwrap();
+        assert_eq!(
+            pf.severity, "info",
+            "local_ouro learn provider is on-device"
+        );
     }
 
     #[test]

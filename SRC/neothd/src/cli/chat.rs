@@ -800,7 +800,7 @@ pub async fn run_chat_with(
     // to be rate-limited again. Local providers are never tracked.
     let quota_path = crate::config::FreedomConfig::default_neoth_home().join("quota.json");
     let provider_name = provider.name();
-    if provider_name != "local_qwen" {
+    if !crate::providers::is_local_provider(provider_name) {
         let tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
         let now = crate::providers::quota::now_unix();
         if let Some(state) = tracker.get(provider_name) {
@@ -963,7 +963,7 @@ pub async fn run_chat_with(
     // emission path covers both `provider.complete(req)` and
     // `provider.stream(req)`. The Request is consumed by each call below,
     // so we read its fields once here.
-    let is_local_inference = provider.name() == "local_qwen";
+    let is_local_inference = crate::providers::is_local_provider(provider.name());
     let inference_id: u64 = if is_local_inference {
         let id = rand_u64_for_trace();
         let payload = serde_json::to_vec(&serde_json::json!({
@@ -1629,7 +1629,7 @@ pub async fn run_chat_with(
     // Successful remote call → bump the per-provider daily counter for the
     // quota tracker so `neoth quota status` reflects actual usage. Local
     // providers are not tracked.
-    if provider_name != "local_qwen" {
+    if !crate::providers::is_local_provider(provider_name) {
         let mut tracker = crate::providers::quota::QuotaTracker::load_from(&quota_path);
         tracker.record_success(provider_name, crate::providers::quota::now_unix());
         if let Err(e) = tracker.save() {

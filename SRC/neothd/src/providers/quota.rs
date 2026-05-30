@@ -196,11 +196,12 @@ impl QuotaTracker {
     /// skip the call + log a warning), `None` when the provider is healthy,
     /// untracked, or never observed a 429. Distinct from `is_healthy`
     /// because callers also want the operator-visible "wait N seconds"
-    /// signal without re-walking the map. `provider == "local_qwen"`
-    /// always returns `None` — local inference is never rate-limited and
-    /// the tracker carries no state for it.
+    /// signal without re-walking the map. Any local provider (see
+    /// [`crate::providers::is_local_provider`]) always returns `None` —
+    /// local inference is never rate-limited and the tracker carries no
+    /// state for it.
     pub fn backoff_remaining_for(&self, provider: &str, now_unix: u64) -> Option<u64> {
-        if provider == "local_qwen" {
+        if crate::providers::is_local_provider(provider) {
             return None;
         }
         let state = self.states.get(provider)?;
@@ -501,6 +502,22 @@ mod tests {
             1_000,
         );
         assert_eq!(t.backoff_remaining_for("local_qwen", 1_100), None);
+    }
+
+    #[test]
+    fn adv10c_backoff_remaining_for_local_ouro_is_always_none() {
+        // GR-17 (Session 30): local_ouro is the SECOND local provider and
+        // must be exempt from backoff exactly like local_qwen. Before the
+        // canonical `is_local_provider` helper, this guard listed only
+        // local_qwen, so a stray local_ouro 429 entry would have made the
+        // pre-flight refuse a local inference call.
+        let mut t = QuotaTracker::default();
+        t.record_429(
+            "local_ouro",
+            Some(std::time::Duration::from_secs(300)),
+            1_000,
+        );
+        assert_eq!(t.backoff_remaining_for("local_ouro", 1_100), None);
     }
 
     #[test]

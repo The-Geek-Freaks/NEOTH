@@ -1571,13 +1571,26 @@ fn board_json_to_snapshot(b: GuiBoardJson) -> KanbanBoardSnapshot {
     snap
 }
 
+/// Per-request read budget. The warm channel is local IPC — a healthy
+/// daemon answers in single-digit ms. 5s is generous slack; exceeding it
+/// means the child is hung, so `request_board` gives up and the caller
+/// falls back to the cold path (and drops this client so the next tick
+/// reconnects). Bounds how long a worker thread can sit on a stalled read.
+const GUI_STREAM_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Persistent client to a `neoth gui-stream` child. Owns the child + its
-/// piped stdin/stdout for the channel lifetime; one request/response per
-/// `request_board` call. Dropping the client tears the child down.
+/// stdin, plus an `mpsc` receiver fed by a dedicated reader thread that
+/// owns stdout. Decoupling the blocking read into its own thread means
+/// `request_board` waits on a `recv_timeout` (never an unbounded
+/// `read_line`), so a hung daemon can neither pin the per-tick worker
+/// thread nor delay this client's `Drop` (and thus the child kill) past
+/// the timeout. Dropping the client kills the child, which EOFs the
+/// reader thread.
 struct GuiStreamClient {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
-    stdout: std::io::BufReader<std::process::ChildStdout>,
+    /// Lines the reader thread pulled off the child's stdout, in order.
+    rx: std::sync::mpsc::Receiver<String>,
     next_id: u64,
 }
 
@@ -1601,19 +1614,43 @@ impl GuiStreamClient {
         let stdout = child.stdout.take().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::BrokenPipe, "gui-stream: no stdout pipe")
         })?;
+        // Dedicated reader thread owns stdout, pushes whole lines onto the
+        // channel. It exits when the child dies (read_line → EOF) or when
+        // the receiver is dropped (send error). Detached on purpose: it is
+        // self-terminating and cheap, and we never want to JOIN it from a
+        // drop path that might otherwise block on a stalled read.
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let mut reader = std::io::BufReader::new(stdout);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break, // EOF — child exited
+                    Ok(_) => {
+                        if tx.send(std::mem::take(&mut line)).is_err() {
+                            break; // receiver gone — client dropped
+                        }
+                    }
+                    Err(_) => break, // pipe error — give up
+                }
+            }
+        });
         Ok(Self {
             child,
             stdin,
-            stdout: std::io::BufReader::new(stdout),
+            rx,
             next_id: 1,
         })
     }
 
     /// One `{"id":N,"method":"board"}` round-trip → mapped snapshot.
-    /// `None` on any I/O, EOF, protocol (`ok:false`), or parse failure;
-    /// the caller then drops `self` and falls back to the cold path.
+    /// `None` on any I/O, EOF, timeout, protocol (`ok:false`), or parse
+    /// failure; the caller then drops `self` and falls back to the cold
+    /// path. Never blocks longer than `GUI_STREAM_READ_TIMEOUT` per line.
     fn request_board(&mut self) -> Option<KanbanBoardSnapshot> {
-        use std::io::{BufRead, Write};
+        use std::io::Write;
         let id = self.next_id;
         self.next_id = self.next_id.wrapping_add(1);
         // Hand-format the request line — no need to pull in a serialiser
@@ -1622,19 +1659,15 @@ impl GuiStreamClient {
         self.stdin.write_all(req.as_bytes()).ok()?;
         self.stdin.flush().ok()?;
 
-        // Read until we get a parseable JSON response object. `NEOTH_LOG=error`
-        // (set in spawn_neothd_plain) already keeps stdout free of the daemon's
-        // INFO banner, but this is the robustness net: ANY stray non-JSON line
-        // (e.g. an error-level tracing event the daemon emits on stdout) is
-        // skipped rather than mistaken for the response. Bounded so a wedged /
-        // chatty stream can never spin forever — we fall back to the cold path.
+        // Pull lines (via the reader thread) until we get a parseable JSON
+        // response object. `NEOTH_LOG=error` already keeps stdout free of
+        // the daemon's INFO banner, but this is the robustness net: ANY
+        // stray non-JSON line (e.g. an error-level tracing event) is
+        // skipped. Bounded by MAX_SKIP (chatty stream) AND by the per-recv
+        // timeout (hung daemon) — both fall back to the cold path.
         const MAX_SKIP: usize = 32;
         for _ in 0..MAX_SKIP {
-            let mut line = String::new();
-            let n = self.stdout.read_line(&mut line).ok()?;
-            if n == 0 {
-                return None; // EOF — child exited
-            }
+            let line = self.rx.recv_timeout(GUI_STREAM_READ_TIMEOUT).ok()?;
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
@@ -1661,9 +1694,12 @@ impl GuiStreamClient {
 
 impl Drop for GuiStreamClient {
     fn drop(&mut self) {
-        // The child blocks on `read_line`; killing it is the clean exit
-        // (closing stdin would also signal EOF, but the kill+wait is the
-        // unambiguous teardown that reaps the zombie on Unix too).
+        // Kill + reap the child. This closes the child's stdout, so the
+        // detached reader thread's `read_line` returns EOF and the thread
+        // exits on its own. Because `request_board` waits on a bounded
+        // `recv_timeout` (not a raw blocking `read_line`), this Drop is
+        // never gated behind an unbounded read — it runs promptly even if
+        // the daemon had gone unresponsive.
         let _ = self.child.kill();
         let _ = self.child.wait();
     }

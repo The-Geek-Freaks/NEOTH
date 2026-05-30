@@ -121,6 +121,22 @@ pub struct CompletionChunk {
 /// the consumer should stop reading.
 pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>;
 
+/// Canonical "is this `Provider::name()` an on-device (local) inference
+/// backend" predicate. This is the SINGLE place the local-provider set is
+/// enumerated — quota tracking, privacy classification, WAL audit gating
+/// and the free-price table all key off it. GR-17 (Session 30) extracted
+/// this after `local_ouro` (the second local provider, shipped Session 22)
+/// was silently missed at five separate `== "local_qwen"` guards: a new
+/// local backend must only be added here, not hunted across the codebase.
+///
+/// NOTE: this is the "is it local at all" question. Provider-SPECIFIC checks
+/// (e.g. `doctor::check_local_qwen_weights`, which verifies the Qwen weight
+/// cache) intentionally stay keyed to their one provider and must NOT route
+/// through this helper.
+pub fn is_local_provider(name: &str) -> bool {
+    matches!(name, "local_qwen" | "local_ouro")
+}
+
 /// Every LLM backend implements this. Trait is object-safe by design so the
 /// daemon can hold `Box<dyn Provider>` in its registry.
 #[async_trait]
@@ -700,6 +716,21 @@ mod tests {
     use crate::config::inference::{
         HemisphereRole, HemisphereSlot, InferenceProvider, InferenceTopology, TopologyMode,
     };
+
+    #[test]
+    fn is_local_provider_recognises_both_local_backends_and_rejects_cloud() {
+        // The canonical local-provider set. Adding a third local backend
+        // means adding ONE arm here — every quota/privacy/audit guard
+        // routes through this fn, so they can't drift out of sync (GR-17).
+        assert!(is_local_provider("local_qwen"));
+        assert!(is_local_provider("local_ouro"));
+        assert!(!is_local_provider("claude_cli"));
+        assert!(!is_local_provider("openai_api"));
+        assert!(!is_local_provider("gemini_api"));
+        assert!(!is_local_provider("aws_bedrock"));
+        assert!(!is_local_provider("azure_openai"));
+        assert!(!is_local_provider("")); // defensive: empty name is not local
+    }
 
     fn base_config() -> FreedomConfig {
         FreedomConfig {
