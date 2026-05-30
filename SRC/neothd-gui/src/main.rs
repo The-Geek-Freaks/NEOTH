@@ -2434,6 +2434,75 @@ mod chat_subprocess_tests {
             "expected a spawn-failure status, got: {result}"
         );
     }
+
+    /// GR-05: stage a fake `neothd` that answers `preset list` (with or
+    /// without an active `*` marker) and `preset apply <name>` (exit 0),
+    /// so the full list → parse-active → apply seam can be driven end-to-end
+    /// against a staged binary. Windows → `.cmd`; unix → an executable
+    /// `#!/bin/sh` script.
+    fn stage_fake_preset_neothd(
+        dir: &std::path::Path,
+        list_has_active: bool,
+    ) -> std::path::PathBuf {
+        #[cfg(windows)]
+        {
+            let p = dir.join("neothd.cmd");
+            let list_line = if list_has_active {
+                "echo * lowkey"
+            } else {
+                "echo   lowkey"
+            };
+            // `preset list` echoes the bundle list; everything else (incl.
+            // `preset apply`) just exits 0.
+            let body = format!(
+                "@echo off\r\nif \"%1\"==\"preset\" if \"%2\"==\"list\" {list_line}\r\nexit /b 0\r\n"
+            );
+            std::fs::write(&p, body).unwrap();
+            p
+        }
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let p = dir.join("neothd.sh");
+            let list_line = if list_has_active {
+                "echo '* lowkey'"
+            } else {
+                "echo '  lowkey'"
+            };
+            let body = format!(
+                "#!/bin/sh\nif [ \"$1\" = preset ] && [ \"$2\" = list ]; then {list_line}; fi\nexit 0\n"
+            );
+            std::fs::write(&p, body).unwrap();
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            p
+        }
+    }
+
+    #[test]
+    fn apply_active_preset_via_subprocess_with_applies_when_active_present() {
+        // Full happy path: list returns `* lowkey` → parse-active finds
+        // `lowkey` → apply succeeds (exit 0) → "Applied preset `lowkey`."
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = stage_fake_preset_neothd(dir.path(), true);
+        let result = crate::apply_active_preset_via_subprocess_with(&bin);
+        assert!(
+            result.contains("Applied preset") && result.contains("lowkey"),
+            "expected applied-preset status, got: {result}"
+        );
+    }
+
+    #[test]
+    fn apply_active_preset_via_subprocess_with_reports_no_active_when_no_marker() {
+        // List has no `*` marker → no active preset → the seam stops before
+        // any apply and returns the operator-guidance status.
+        let dir = tempfile::TempDir::new().unwrap();
+        let bin = stage_fake_preset_neothd(dir.path(), false);
+        let result = crate::apply_active_preset_via_subprocess_with(&bin);
+        assert!(
+            result.contains("No active preset"),
+            "expected no-active-preset status, got: {result}"
+        );
+    }
 }
 
 fn probe_hardware_via_subprocess() -> String {
