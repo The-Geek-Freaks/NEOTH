@@ -550,6 +550,102 @@ fn run_watch(wal_dir: &PathBuf, limit: usize, output: OutputFormat) -> Result<()
     Ok(())
 }
 
+// ── GUI warm-channel board assembly (B — persistent-stdio-stream) ───────────
+//
+// The `neoth gui-stream` subcommand (cli/gui_stream.rs) calls
+// `assemble_gui_board` once per `board` request over a held-open
+// connection, collapsing what the GUI previously did via FOUR cold
+// subprocess spawns per 2s tick (`kanban list` → `kanban show` →
+// `kanban watch` → `hemispheres show`) into one in-process query.
+
+/// One task row in the GUI board snapshot. Field names + types mirror
+/// the GUI's `CodingTaskJson` (`task_id` / `title` / `hemisphere` /
+/// `status`) so the warm-channel payload deserialises into the same
+/// board buckets the legacy subprocess path produced.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct GuiBoardTask {
+    pub task_id: i64,
+    pub title: String,
+    pub hemisphere: String,
+    pub status: String,
+}
+
+/// Full board snapshot returned for a `board` request. Read-only — no
+/// mutation flows through the warm channel (mutations stay as the
+/// existing gated `kanban move/review/...` subprocess calls, preserving
+/// the CommandSource privilege ceiling from ADV-09/ADV-15).
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct GuiBoardSnapshot {
+    pub summary: String,
+    pub cerebellum_bound: bool,
+    pub tasks: Vec<GuiBoardTask>,
+    pub feed: Vec<FeedEntry>,
+}
+
+/// Assemble the GUI board snapshot server-side against the warm
+/// (held-open) `views.db` connection. Mirrors
+/// `neothd-gui::fetch_kanban_board_snapshot` exactly: latest active
+/// session (newest-first), its tasks, the WAL-derived activity feed,
+/// and the cerebellum-bound bit — so the warm path is equivalent to
+/// the legacy 4-subprocess path.
+pub(crate) fn assemble_gui_board(
+    conn: &Connection,
+    wal_dir: &std::path::Path,
+    cfg: &FreedomConfig,
+) -> Result<GuiBoardSnapshot> {
+    let cerebellum_bound = cerebellum_is_bound(cfg);
+    // Latest active session — `select_sessions(.., false)` is
+    // newest-first, so `.next()` mirrors the GUI's `.into_iter().next()`.
+    let sessions = select_sessions(conn, false)?;
+    let Some(latest) = sessions.into_iter().next() else {
+        return Ok(GuiBoardSnapshot {
+            summary: "No active session. Run `neoth code \"...\"` in your terminal, then refresh."
+                .to_string(),
+            cerebellum_bound,
+            tasks: Vec::new(),
+            feed: Vec::new(),
+        });
+    };
+    let tasks = store::list_tasks_for_session(conn, latest.session_id)?
+        .into_iter()
+        .map(|t| GuiBoardTask {
+            task_id: t.task_id.raw(),
+            title: t.title,
+            hemisphere: t.hemisphere.as_str().to_string(),
+            status: t.status.as_str().to_string(),
+        })
+        .collect();
+    // Feed is best-effort: a WAL-scan failure degrades to an empty feed
+    // rather than failing the whole board (mirrors the GUI's behaviour).
+    let feed = scan_wal_dir_for_kanban_feed(&wal_dir.to_path_buf(), 50).unwrap_or_default();
+    Ok(GuiBoardSnapshot {
+        summary: format!(
+            "Session #{}  [{}]   {}",
+            latest.session_id.raw(),
+            latest.status.as_str(),
+            latest.prompt,
+        ),
+        cerebellum_bound,
+        tasks,
+        feed,
+    })
+}
+
+/// Cerebellum-bound determination, mirroring `neothd-gui`'s
+/// `probe_cerebellum_bound` reading of `hemispheres show`: a single-mode
+/// fallback (any `provider_kind`) binds every role; in per-role mode the
+/// Cerebellum slot must carry a provider. Reports the real bit — the
+/// fail-safe-to-true policy on probe failure is the GUI's concern.
+fn cerebellum_is_bound(cfg: &FreedomConfig) -> bool {
+    if cfg.provider_kind.is_some() {
+        return true;
+    }
+    cfg.inference
+        .slot_for(crate::config::inference::HemisphereRole::Cerebellum)
+        .provider
+        .is_some()
+}
+
 /// `--follow` live tail: print the backlog up to `limit`, then loop
 /// re-scanning every `interval_ms` and printing entries strictly newer
 /// than the last printed `ts_ns`. Exits cleanly on Ctrl+C. The pure

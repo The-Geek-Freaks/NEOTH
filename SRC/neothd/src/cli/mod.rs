@@ -35,6 +35,7 @@ pub mod github;
 pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
+pub mod gui_stream;
 pub mod hardware;
 pub mod hemispheres;
 pub mod hooks;
@@ -212,6 +213,17 @@ pub enum Commands {
     /// / IN_PROGRESS / REVIEW / DONE) onto NEOTH's `idx_kanban_*`
     /// tables. Pick #5a per `PLAN/SPEC_coding_workflow.md` build order.
     Kanban(kanban::KanbanArgs),
+
+    /// Persistent NDJSON request/response channel for `neothd-gui`
+    /// (B — persistent-stdio-stream, Session 30). The GUI holds this
+    /// process open and sends `{"id":N,"method":"board"}` lines on
+    /// stdin, reading one JSON board snapshot per line on stdout —
+    /// collapsing the previous 4-subprocess-per-2s-tick board refresh
+    /// into one warm in-process query. READ-ONLY (board queries only);
+    /// mutations stay on their gated subprocess paths. Not intended for
+    /// direct operator use. See `cli/gui_stream.rs`.
+    #[command(hide = true)]
+    GuiStream(gui_stream::GuiStreamArgs),
 
     /// Inspect the assembled NEOTH.md operator context.
     ///
@@ -729,6 +741,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Kanban(mut args) => {
             args.output = global_output;
             kanban::run_kanban(args).await?;
+        }
+        Commands::GuiStream(args) => {
+            gui_stream::run_gui_stream(args).await?;
         }
         Commands::Memory(mut args) => {
             args.output = global_output;

@@ -610,9 +610,14 @@ fn main() -> Result<()> {
     // The AtomicBool lets at most ONE fetch be in flight at a time — a
     // late fetch just skips the tick instead of stacking another thread.
     let kanban_fetch_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // B — persistent-stdio-stream: ONE warm `neoth gui-stream` child shared
+    // across ticks, lazily connected on first board fetch. Held for the
+    // window lifetime; dropped (→ child killed) when the timer drops.
+    let gui_stream_client = std::sync::Arc::new(std::sync::Mutex::new(None::<GuiStreamClient>));
     let _kanban_live_timer = {
         let timer = slint::Timer::default();
         let in_flight = kanban_fetch_in_flight.clone();
+        let client_timer = gui_stream_client.clone();
         timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_secs(2),
@@ -633,8 +638,9 @@ fn main() -> Result<()> {
                     let weak = weak_kanban_tick.clone();
                     let mutex = mutex_tick.clone();
                     let done = in_flight.clone();
+                    let client = client_timer.clone();
                     std::thread::spawn(move || {
-                        let snap = fetch_kanban_board_snapshot();
+                        let snap = fetch_board_warm_or_cold(&client);
                         let snap_for_state = snap.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Ok(mut g) = mutex.lock() {
@@ -1356,7 +1362,18 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new(bin);
     cmd.env("NO_COLOR", "1")
         .env("RUST_LOG_STYLE", "never")
-        .env("CLICOLOR", "0");
+        .env("CLICOLOR", "0")
+        // CRITICAL for stdout parsing: the daemon's `init_tracing` writes
+        // tracing events (incl. the `INFO neothd: Neoth ready. Sup.`
+        // startup banner) to STDOUT, not stderr. At the default
+        // `info,neothd=debug` level those lines would prepend the
+        // machine-readable JSON / streamed chat deltas every GUI
+        // subprocess parses — corrupting `serde_json::from_slice` and the
+        // `gui-stream` NDJSON channel alike. `error` suppresses the
+        // banner + info/debug noise so stdout carries only the payload.
+        // Genuine clap/anyhow failures still surface on stderr + via exit
+        // code, so the GUI's error handling is unaffected.
+        .env("NEOTH_LOG", "error");
     cmd
 }
 
@@ -1486,6 +1503,204 @@ fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
     // HO-02: only probe on the success path (we have a working binary).
     snap.cerebellum_bound = Some(probe_cerebellum_bound(&bin));
     snap
+}
+
+// ── Warm-channel board client (B — persistent-stdio-stream, Session 30) ─────
+//
+// The legacy `fetch_kanban_board_snapshot` above spawns FOUR cold
+// subprocesses per call. `GuiStreamClient` holds ONE `neoth gui-stream`
+// child open across refreshes and gets the whole board in a single
+// NDJSON round-trip. On ANY I/O / protocol error the caller drops the
+// client and falls back to the cold path, so the warm channel is a pure
+// optimisation — it can never make the board worse than before.
+
+/// Board payload as returned by `neoth gui-stream`'s `board` method.
+/// Field-for-field mirror of the daemon's `cli::kanban::GuiBoardSnapshot`.
+#[derive(Debug, Deserialize)]
+struct GuiBoardJson {
+    summary: String,
+    cerebellum_bound: bool,
+    tasks: Vec<GuiBoardTaskJson>,
+    feed: Vec<FeedEntryJson>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GuiBoardTaskJson {
+    task_id: i64,
+    title: String,
+    hemisphere: String,
+    status: String,
+}
+
+/// Map the warm-channel board payload into the same `KanbanBoardSnapshot`
+/// the cold path produces. The status-bucketing + feed `rev()`+map mirror
+/// `fetch_kanban_board_snapshot` (task loop) and `fetch_kanban_feed`
+/// EXACTLY, so warm and cold are byte-for-byte equivalent in the UI.
+fn board_json_to_snapshot(b: GuiBoardJson) -> KanbanBoardSnapshot {
+    let mut snap = KanbanBoardSnapshot {
+        summary: b.summary,
+        cerebellum_bound: Some(b.cerebellum_bound),
+        ..Default::default()
+    };
+    for t in b.tasks {
+        let row = KanbanTaskRow {
+            task_id: format!("#{}", t.task_id).into(),
+            title: t.title.into(),
+            hemisphere: t.hemisphere.into(),
+        };
+        match t.status.as_str() {
+            "todo" => snap.todo.push(row),
+            "in_progress" => snap.in_progress.push(row),
+            "review" => snap.review.push(row),
+            "done" | "archived" => snap.done.push(row),
+            _ => snap.backlog.push(row),
+        }
+    }
+    // Server returns feed oldest-first (WAL append order); the right rail
+    // wants most-recent-first — same `.rev()` as `fetch_kanban_feed`.
+    snap.feed = b
+        .feed
+        .into_iter()
+        .rev()
+        .map(|e| KanbanFeedRow {
+            ts: format_hms_from_ns(e.ts_ns).into(),
+            actor: e.actor.into(),
+            message: e.message.into(),
+        })
+        .collect();
+    snap
+}
+
+/// Persistent client to a `neoth gui-stream` child. Owns the child + its
+/// piped stdin/stdout for the channel lifetime; one request/response per
+/// `request_board` call. Dropping the client tears the child down.
+struct GuiStreamClient {
+    child: std::process::Child,
+    stdin: std::process::ChildStdin,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+    next_id: u64,
+}
+
+impl GuiStreamClient {
+    /// Spawn `neoth gui-stream` with piped stdin/stdout (stderr to null).
+    /// `spawn_neothd_plain` sets `NEOTH_LOG=error`, so stdout carries only
+    /// the NDJSON responses; `request_board` additionally skips any stray
+    /// non-JSON line as a belt-and-suspenders guard. Errors propagate so
+    /// the caller falls back to the cold path.
+    fn connect(bin: &Path) -> std::io::Result<Self> {
+        use std::process::Stdio;
+        let mut child = spawn_neothd_plain(bin)
+            .arg("gui-stream")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let stdin = child.stdin.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "gui-stream: no stdin pipe")
+        })?;
+        let stdout = child.stdout.take().ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "gui-stream: no stdout pipe")
+        })?;
+        Ok(Self {
+            child,
+            stdin,
+            stdout: std::io::BufReader::new(stdout),
+            next_id: 1,
+        })
+    }
+
+    /// One `{"id":N,"method":"board"}` round-trip → mapped snapshot.
+    /// `None` on any I/O, EOF, protocol (`ok:false`), or parse failure;
+    /// the caller then drops `self` and falls back to the cold path.
+    fn request_board(&mut self) -> Option<KanbanBoardSnapshot> {
+        use std::io::{BufRead, Write};
+        let id = self.next_id;
+        self.next_id = self.next_id.wrapping_add(1);
+        // Hand-format the request line — no need to pull in a serialiser
+        // for a two-field object with a numeric id + a literal method.
+        let req = format!("{{\"id\":{id},\"method\":\"board\"}}\n");
+        self.stdin.write_all(req.as_bytes()).ok()?;
+        self.stdin.flush().ok()?;
+
+        // Read until we get a parseable JSON response object. `NEOTH_LOG=error`
+        // (set in spawn_neothd_plain) already keeps stdout free of the daemon's
+        // INFO banner, but this is the robustness net: ANY stray non-JSON line
+        // (e.g. an error-level tracing event the daemon emits on stdout) is
+        // skipped rather than mistaken for the response. Bounded so a wedged /
+        // chatty stream can never spin forever — we fall back to the cold path.
+        const MAX_SKIP: usize = 32;
+        for _ in 0..MAX_SKIP {
+            let mut line = String::new();
+            let n = self.stdout.read_line(&mut line).ok()?;
+            if n == 0 {
+                return None; // EOF — child exited
+            }
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+                continue; // not JSON — a log line; skip it
+            };
+            // A genuine response carries an `ok` bool. Anything else that
+            // happens to be JSON but lacks it is not our response — skip.
+            let Some(ok) = v.get("ok").and_then(|b| b.as_bool()) else {
+                continue;
+            };
+            if !ok {
+                tracing::warn!(response = %trimmed, "gui-stream: board request not ok");
+                return None;
+            }
+            let board: GuiBoardJson = serde_json::from_value(v.get("board")?.clone()).ok()?;
+            return Some(board_json_to_snapshot(board));
+        }
+        // Too many non-response lines — treat as a broken channel.
+        None
+    }
+}
+
+impl Drop for GuiStreamClient {
+    fn drop(&mut self) {
+        // The child blocks on `read_line`; killing it is the clean exit
+        // (closing stdin would also signal EOF, but the kill+wait is the
+        // unambiguous teardown that reaps the zombie on Unix too).
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Board fetch for the live-tail timer: try the warm `gui-stream` channel
+/// first (lazy-connecting the client on first use), fall back to the cold
+/// 4-subprocess path on any failure. A failed warm request drops the dead
+/// client so the next tick reconnects from scratch.
+fn fetch_board_warm_or_cold(
+    client: &std::sync::Mutex<Option<GuiStreamClient>>,
+) -> KanbanBoardSnapshot {
+    let Some(bin) = which_neothd() else {
+        return fetch_kanban_board_snapshot(); // surfaces the "install" hint
+    };
+    // Recover from a poisoned lock rather than panicking the worker — the
+    // guarded value is just a reconnectable client, never corrupt state.
+    let mut guard = client.lock().unwrap_or_else(|p| p.into_inner());
+    if guard.is_none() {
+        match GuiStreamClient::connect(&bin) {
+            Ok(c) => *guard = Some(c),
+            Err(e) => {
+                tracing::warn!(error = %e, "gui-stream: connect failed; using cold path");
+                return fetch_kanban_board_snapshot();
+            }
+        }
+    }
+    if let Some(c) = guard.as_mut() {
+        if let Some(snap) = c.request_board() {
+            return snap;
+        }
+        // Warm request failed — drop the dead child so the next tick
+        // reconnects, and serve this tick from the cold path.
+        tracing::warn!("gui-stream: warm request failed; dropping client + cold fallback");
+        *guard = None;
+    }
+    fetch_kanban_board_snapshot()
 }
 
 /// HO-02: probe whether a Cerebellum provider is bound. Runs
@@ -2436,6 +2651,97 @@ mod tests {
             telegram_token: String::new(),
             cluster_discovery_disabled: false,
         }
+    }
+
+    #[test]
+    fn board_json_buckets_tasks_by_status_like_cold_path() {
+        let b = GuiBoardJson {
+            summary: "Session #1  [running]   do stuff".into(),
+            cerebellum_bound: true,
+            tasks: vec![
+                GuiBoardTaskJson {
+                    task_id: 1,
+                    title: "a".into(),
+                    hemisphere: "left".into(),
+                    status: "backlog".into(),
+                },
+                GuiBoardTaskJson {
+                    task_id: 2,
+                    title: "b".into(),
+                    hemisphere: "right".into(),
+                    status: "todo".into(),
+                },
+                GuiBoardTaskJson {
+                    task_id: 3,
+                    title: "c".into(),
+                    hemisphere: "left".into(),
+                    status: "in_progress".into(),
+                },
+                GuiBoardTaskJson {
+                    task_id: 4,
+                    title: "d".into(),
+                    hemisphere: "right".into(),
+                    status: "review".into(),
+                },
+                GuiBoardTaskJson {
+                    task_id: 5,
+                    title: "e".into(),
+                    hemisphere: "left".into(),
+                    status: "done".into(),
+                },
+                GuiBoardTaskJson {
+                    task_id: 6,
+                    title: "f".into(),
+                    hemisphere: "left".into(),
+                    status: "archived".into(),
+                },
+                GuiBoardTaskJson {
+                    task_id: 7,
+                    title: "g".into(),
+                    hemisphere: "left".into(),
+                    status: "totally_unknown".into(),
+                },
+            ],
+            feed: vec![],
+        };
+        let snap = board_json_to_snapshot(b);
+        assert_eq!(snap.todo.len(), 1);
+        assert_eq!(snap.in_progress.len(), 1);
+        assert_eq!(snap.review.len(), 1);
+        // `done` + `archived` both land in DONE (mirrors the cold path).
+        assert_eq!(snap.done.len(), 2);
+        // explicit `backlog` + the unknown status both land in BACKLOG.
+        assert_eq!(snap.backlog.len(), 2);
+        assert_eq!(snap.cerebellum_bound, Some(true));
+        assert_eq!(snap.todo[0].task_id.as_str(), "#2");
+    }
+
+    #[test]
+    fn board_json_feed_is_reversed_to_newest_first() {
+        let b = GuiBoardJson {
+            summary: "s".into(),
+            cerebellum_bound: false,
+            tasks: vec![],
+            feed: vec![
+                FeedEntryJson {
+                    ts_ns: 100,
+                    actor: "left".into(),
+                    message: "first".into(),
+                },
+                FeedEntryJson {
+                    ts_ns: 200,
+                    actor: "right".into(),
+                    message: "second".into(),
+                },
+            ],
+        };
+        let snap = board_json_to_snapshot(b);
+        // Server emits oldest-first (WAL append order); the rail shows
+        // newest-first — same reversal the cold `fetch_kanban_feed` does.
+        assert_eq!(snap.feed.len(), 2);
+        assert_eq!(snap.feed[0].message.as_str(), "second");
+        assert_eq!(snap.feed[1].message.as_str(), "first");
+        assert_eq!(snap.cerebellum_bound, Some(false));
     }
 
     #[test]
