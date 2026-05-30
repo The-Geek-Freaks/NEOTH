@@ -604,8 +604,15 @@ fn main() -> Result<()> {
     // it to `_kanban_live_timer` keeps it alive for the program's life.
     let weak_kanban_tick = window.as_weak();
     let mutex_tick = kanban_snapshot.clone();
+    // In-flight guard: each tick spawns a subprocess fetch. If a fetch
+    // takes longer than the 2s poll interval (slow box / large board),
+    // the naive timer would pile up overlapping fetch threads every 2s.
+    // The AtomicBool lets at most ONE fetch be in flight at a time — a
+    // late fetch just skips the tick instead of stacking another thread.
+    let kanban_fetch_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let _kanban_live_timer = {
         let timer = slint::Timer::default();
+        let in_flight = kanban_fetch_in_flight.clone();
         timer.start(
             slint::TimerMode::Repeated,
             std::time::Duration::from_secs(2),
@@ -616,8 +623,16 @@ fn main() -> Result<()> {
                     if w.get_step() != WizardStep::Settings {
                         return;
                     }
+                    // Skip if a prior fetch is still running. `swap`
+                    // returns the previous value: if it was already
+                    // true, another fetch is in flight → bail without
+                    // spawning. Otherwise we've claimed the slot.
+                    if in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                        return;
+                    }
                     let weak = weak_kanban_tick.clone();
                     let mutex = mutex_tick.clone();
+                    let done = in_flight.clone();
                     std::thread::spawn(move || {
                         let snap = fetch_kanban_board_snapshot();
                         let snap_for_state = snap.clone();
@@ -629,6 +644,9 @@ fn main() -> Result<()> {
                                 apply_kanban_snapshot(&w, snap);
                             }
                         });
+                        // Release the slot AFTER the fetch + UI-write
+                        // enqueue, so the next tick can claim it.
+                        done.store(false, std::sync::atomic::Ordering::Release);
                     });
                 }
             },
