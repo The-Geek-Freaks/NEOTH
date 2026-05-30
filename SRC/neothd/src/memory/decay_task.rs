@@ -24,8 +24,8 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 ///
 /// `db_path` lets tests inject a tempdir db; production callers pass
 /// `store::default_path()`. Same for `interval` — tests use a short tick.
-pub fn spawn(db_path: PathBuf, interval: Duration) -> JoinHandle<()> {
-    tokio::spawn(async move { run(db_path, interval).await })
+pub fn spawn(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) -> JoinHandle<()> {
+    tokio::spawn(async move { run(db_path, interval, vault).await })
 }
 
 /// M-04 (Session 24): infinite-loop body never returns Ok(()), so
@@ -34,7 +34,7 @@ pub fn spawn(db_path: PathBuf, interval: Duration) -> JoinHandle<()> {
 /// tick), and the only way the function exits is via task abort or
 /// panic. Return-unit makes the never-returns semantics honest +
 /// matches the JoinHandle<()> the caller actually observes.
-async fn run(db_path: PathBuf, interval: Duration) {
+async fn run(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) {
     let mut ticker = tokio::time::interval(interval);
     // First tick fires immediately. Skip the initial fire on the assumption
     // that fresh boot already has a recent consolidation state — gives
@@ -43,7 +43,7 @@ async fn run(db_path: PathBuf, interval: Duration) {
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        if let Err(e) = run_once(&db_path).await {
+        if let Err(e) = run_once(&db_path, vault.clone()).await {
             tracing::warn!(
                 db = %db_path.display(),
                 error = %e,
@@ -55,7 +55,10 @@ async fn run(db_path: PathBuf, interval: Duration) {
 
 /// One-shot decay pass — useful for `neoth memory --decay` style CLIs +
 /// for unit tests.
-pub async fn run_once(db_path: &std::path::Path) -> Result<consolidate::PassReport> {
+pub async fn run_once(
+    db_path: &std::path::Path,
+    vault: Option<PathBuf>,
+) -> Result<consolidate::PassReport> {
     let db = db_path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<consolidate::PassReport> {
         let mut conn = store::open(&db)?;
@@ -84,7 +87,7 @@ pub async fn run_once(db_path: &std::path::Path) -> Result<consolidate::PassRepo
                 return Ok(consolidate::PassReport::default());
             }
         };
-        consolidate::run_consolidation_pass(&mut conn, now_ns)
+        consolidate::run_consolidation_pass(&mut conn, now_ns, vault.as_deref())
     })
     .await?
 }
@@ -98,7 +101,7 @@ mod tests {
     async fn run_once_returns_a_pass_report_against_empty_db() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("v.db");
-        let report = run_once(&db).await.expect("run once");
+        let report = run_once(&db, None).await.expect("run once");
         // Empty db: nothing to decay, nothing to promote, nothing to forget.
         assert_eq!(report.hot_decayed, 0);
         assert_eq!(report.hot_archived, 0);
@@ -111,7 +114,7 @@ mod tests {
         let db = dir.path().join("v.db");
         // 10ms interval — task ticks fast enough to be in `interval.tick()`
         // when we abort.
-        let task = spawn(db, Duration::from_millis(10));
+        let task = spawn(db, Duration::from_millis(10), None);
         // Give it a moment to enter the loop.
         tokio::time::sleep(Duration::from_millis(25)).await;
         task.abort();

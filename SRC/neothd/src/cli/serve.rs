@@ -1042,12 +1042,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Runs `memory::consolidate::run_consolidation_pass` every 2h. Math
     // primitives (decay 0.97/0.99/0.997, FORGET_FLOOR 0.10, PROMOTION 0.65)
     // are math-validated in `memory::tiers`. Task aborts on shutdown.
+    // KF-10: when the operator configured an Obsidian vault, the decay
+    // pass drafts a frontmatter-markdown summary of each hot memory it is
+    // about to FORGET (below FORGET_FLOOR) into `<vault>/PreDecay/` — a
+    // last-chance, reviewable record before the sweep. `None` = no export
+    // (the pre-KF-10 behaviour, unchanged).
+    let pre_decay_vault = config.obsidian_vault.clone().map(PathBuf::from);
     let decay_task = Some(crate::memory::decay_task::spawn(
         store::default_path(),
         crate::memory::decay_task::DEFAULT_INTERVAL,
+        pre_decay_vault.clone(),
     ));
     info!(
         interval_secs = crate::memory::decay_task::DEFAULT_INTERVAL.as_secs(),
+        pre_decay_export = pre_decay_vault.is_some(),
         "Hebbian decay task spawned"
     );
 

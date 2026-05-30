@@ -52,6 +52,12 @@ pub struct PassReport {
     /// at all. Surface it here so the report-shape matches the
     /// other tier-archive fields.
     pub cold_swept: usize,
+    /// KF-10 (Session 30): hot rows drafted to the Obsidian `PreDecay/`
+    /// vault before being forgotten (only non-zero when the operator
+    /// configured `obsidian_vault` AND rows fell below FORGET_FLOOR this
+    /// pass). Equals `hot_archived` when a vault is set and every draft
+    /// wrote cleanly.
+    pub pre_decay_drafted: usize,
 }
 
 /// Run one consolidation pass against `conn`. All work happens in a single
@@ -59,9 +65,17 @@ pub struct PassReport {
 ///
 /// `now_ns` is injected (rather than read inside) so tests can simulate
 /// arbitrary clock positions without sleeping.
-pub fn run_consolidation_pass(conn: &mut Connection, now_ns: i64) -> Result<PassReport> {
+pub fn run_consolidation_pass(
+    conn: &mut Connection,
+    now_ns: i64,
+    vault_path: Option<&std::path::Path>,
+) -> Result<PassReport> {
     let tx = conn.transaction().context("begin consolidation tx")?;
     let mut report = PassReport::default();
+    // KF-10: hot rows captured at the FORGET_FLOOR delete site (Phase 2)
+    // so the EXACT set being forgotten is drafted to Obsidian after the tx
+    // commits. Stays empty (zero overhead) when no `vault_path` is set.
+    let mut forgotten: Vec<crate::memory::pre_decay_export::PreDecayRow> = Vec::new();
 
     // ── Phase 1: decay every importance column in every tier ──────────────
     //
@@ -120,6 +134,17 @@ pub fn run_consolidation_pass(conn: &mut Connection, now_ns: i64) -> Result<Pass
     for (event_id, ts_ns, text, text_hash, importance) in rows {
         if importance < FORGET_FLOOR {
             // Below floor → drop without consolidating. Archive MD remains.
+            // KF-10: capture the row BEFORE the DELETE for pre-decay export
+            // (only when a vault is configured) — `text` is unused on this
+            // branch otherwise, so move it in rather than clone.
+            if vault_path.is_some() {
+                forgotten.push(crate::memory::pre_decay_export::PreDecayRow {
+                    event_id,
+                    ts_ns,
+                    text,
+                    importance,
+                });
+            }
             tx.execute(
                 "DELETE FROM idx_episode WHERE event_id = ?1",
                 params![event_id],
@@ -208,6 +233,17 @@ pub fn run_consolidation_pass(conn: &mut Connection, now_ns: i64) -> Result<Pass
     report.cold_swept = cold_swept;
 
     tx.commit().context("commit consolidation tx")?;
+
+    // KF-10: AFTER the tx commits (never holding the DB lock during file
+    // IO), draft the forgotten hot rows into the Obsidian vault. Best-
+    // effort — `write_pre_decay_drafts` logs + skips individual failures
+    // and never errors, so a full/read-only vault can't fail a decay pass.
+    if let Some(vault) = vault_path {
+        if !forgotten.is_empty() {
+            report.pre_decay_drafted =
+                crate::memory::pre_decay_export::write_pre_decay_drafts(vault, &forgotten);
+        }
+    }
     Ok(report)
 }
 
@@ -286,12 +322,62 @@ mod tests {
     }
 
     #[test]
+    fn forgotten_hot_rows_are_drafted_to_vault_when_configured() {
+        // KF-10: a below-floor, >7d-old row is FORGOTTEN this pass → it must
+        // be drafted to the vault. A row that gets CONSOLIDATED (above floor)
+        // must NOT be drafted. Proves the draft set equals the deleted set
+        // exactly — captured at the delete site, not a re-derived criterion.
+        let (_dir, mut conn) = open();
+        let vault = tempdir().unwrap();
+        let now: i64 = 1_700_000_000_000_000_000;
+        insert_episode(&conn, 1, 10, 0.05, now); // below floor + old → forgotten
+        insert_episode(&conn, 2, 10, 0.50, now); // above floor + old → consolidated
+
+        let report = run_consolidation_pass(&mut conn, now, Some(vault.path())).unwrap();
+
+        assert_eq!(report.hot_archived, 1, "event 1 forgotten");
+        assert_eq!(report.consolidated, 1, "event 2 consolidated");
+        assert_eq!(
+            report.pre_decay_drafted, 1,
+            "exactly the forgotten row is drafted"
+        );
+        let files: Vec<String> = std::fs::read_dir(vault.path().join("PreDecay"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            files.len(),
+            1,
+            "only the forgotten row drafted, got {files:?}"
+        );
+        assert!(
+            files[0].ends_with("-1.md"),
+            "draft is for event_id 1, got {files:?}"
+        );
+        // Tier outcomes unchanged by the export: hot emptied, warm gained one.
+        assert_eq!(count_in_tier(&conn, Tier::Hot).unwrap(), 0);
+        assert_eq!(count_in_tier(&conn, Tier::Warm).unwrap(), 1);
+    }
+
+    #[test]
+    fn no_vault_means_no_drafts_and_unchanged_forget_behaviour() {
+        // The default daemon path (no obsidian_vault) is byte-for-byte the
+        // pre-KF-10 behaviour: the row is still forgotten, just not drafted.
+        let (_dir, mut conn) = open();
+        let now: i64 = 1_700_000_000_000_000_000;
+        insert_episode(&conn, 1, 10, 0.05, now);
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
+        assert_eq!(report.hot_archived, 1);
+        assert_eq!(report.pre_decay_drafted, 0, "no vault → no drafts");
+    }
+
+    #[test]
     fn pass_decays_every_tier() {
         let (_dir, mut conn) = open();
         let now: i64 = 1_700_000_000_000_000_000;
         insert_episode(&conn, 1, 1, 0.50, now);
         insert_consolidated(&conn, "retained", 30, 0.50, now);
-        let report = run_consolidation_pass(&mut conn, now).unwrap();
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
         assert_eq!(report.hot_decayed, 1);
         assert_eq!(report.warm_decayed, 1);
 
@@ -318,7 +404,7 @@ mod tests {
         // 3-day-old event — stays hot.
         insert_episode(&conn, 3, 3, 0.5, now);
 
-        let report = run_consolidation_pass(&mut conn, now).unwrap();
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
         assert_eq!(report.consolidated, 1, "event 1 should move warm");
         assert_eq!(report.hot_archived, 1, "event 2 should archive");
         let remaining: i64 = conn
@@ -340,7 +426,7 @@ mod tests {
         insert_consolidated(&conn, "retained", 95, 0.80, now);
         insert_consolidated(&conn, "retained", 95, 0.30, now);
 
-        let report = run_consolidation_pass(&mut conn, now).unwrap();
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
         // Decay pulls 0.80 → 0.792 (still ≥ 0.65 threshold).
         assert_eq!(report.promoted, 1);
         // 0.30 → 0.297 (below 0.65) → archive (drop from views).
@@ -360,7 +446,7 @@ mod tests {
     fn pass_is_idempotent_with_no_events() {
         let (_dir, mut conn) = open();
         let now: i64 = 1_700_000_000_000_000_000;
-        let report = run_consolidation_pass(&mut conn, now).unwrap();
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
         assert_eq!(report, PassReport::default());
     }
 
@@ -382,7 +468,7 @@ mod tests {
         )
         .unwrap();
 
-        let report = run_consolidation_pass(&mut conn, now).unwrap();
+        let report = run_consolidation_pass(&mut conn, now, None).unwrap();
         // Decay multiplier 0.999 keeps the 0.50 row above floor; the 0.05
         // and 0.04 rows both fall below 0.10 → swept.
         assert_eq!(report.cold_swept, 2, "report must surface the sweep count");

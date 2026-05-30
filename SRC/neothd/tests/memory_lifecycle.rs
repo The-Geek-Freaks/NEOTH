@@ -190,7 +190,7 @@ fn consolidation_pass_walks_every_tier_in_one_call() {
     let now_ns: i64 = 1_700_000_000_000_000_000;
     let mut conn = seed_episodes_across_tiers(&db, now_ns);
 
-    let report: PassReport = run_consolidation_pass(&mut conn, now_ns).expect("pass");
+    let report: PassReport = run_consolidation_pass(&mut conn, now_ns, None).expect("pass");
 
     // Hot tier — 3 events decayed (the 3-day, 10-day-above-floor,
     // and 10-day-below-floor each got their importance multiplied
@@ -255,10 +255,10 @@ fn consolidation_is_no_op_when_views_are_already_caught_up() {
     let now_ns: i64 = 1_700_000_000_000_000_000;
     let mut conn = seed_episodes_across_tiers(&db, now_ns);
 
-    let first = run_consolidation_pass(&mut conn, now_ns).unwrap();
+    let first = run_consolidation_pass(&mut conn, now_ns, None).unwrap();
     assert!(first.consolidated >= 1, "first pass migrates");
 
-    let second = run_consolidation_pass(&mut conn, now_ns).unwrap();
+    let second = run_consolidation_pass(&mut conn, now_ns, None).unwrap();
     assert_eq!(second.consolidated, 0, "no new hot rows older than 7d");
     assert_eq!(second.promoted, 0, "no more warm rows older than 90d");
     assert_eq!(second.hot_archived, 0);
@@ -290,7 +290,7 @@ fn groundtruth_row_survives_one_full_year_of_consolidation_passes() {
 
     let mut now_ns: i64 = 1_700_000_000_000_000_000;
     for _ in 0..365 {
-        run_consolidation_pass(&mut conn, now_ns).unwrap();
+        run_consolidation_pass(&mut conn, now_ns, None).unwrap();
         now_ns += DAY_NS;
     }
 
