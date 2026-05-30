@@ -305,6 +305,19 @@ pub const EVENT_TYPE_N8N_REQUEST: u8 = 0x39;
 /// 28d, 4-lens gremium).
 pub const EVENT_TYPE_PROACTIVE_SENT: u8 = 0x3A;
 
+/// `0x3B CHANNEL_GATE_REJECTED` — an inbound channel message was dropped
+/// by the adapter's allowlist gate (sender not on the operator's
+/// allowlist) BEFORE it reached the pipeline handler. The gate itself is
+/// not new (the adapter has always dropped non-allowlisted senders before
+/// touching the WAL — so a blocked sender never produces a `0x32
+/// CHANNEL_INGRESS` frame); this frame closes SF-03's audit gap: the drop
+/// was previously `tracing::warn`-only, leaving no `neoth wal show` trail
+/// of rejected inbound. Now the operator can see WHO tried + how often.
+/// Payload: `{channel, sender_id, reason, ts_unix}` — `reason` is
+/// `"not_on_allowlist"`; no message text (the gate fires before the text
+/// is even read, so there is none to leak). SF-03 (Session 29).
+pub const EVENT_TYPE_CHANNEL_GATE_REJECTED: u8 = 0x3B;
+
 // ---- 0x50..=0x5F  Panic / recovery (Pick #35 Session 14 WAL recovery) -----
 
 /// `0x50 RECOVERY_TRUNCATED` — emitted by `wal::recovery::scan_tail` at
@@ -1220,6 +1233,8 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_N8N_REQUEST < 0x30 || EVENT_TYPE_N8N_REQUEST > 0x3F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_PROACTIVE_SENT < 0x30 || EVENT_TYPE_PROACTIVE_SENT > 0x3F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CHANNEL_GATE_REJECTED < 0x30
+        || EVENT_TYPE_CHANNEL_GATE_REJECTED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FIRED < 0x40 || EVENT_TYPE_JOB_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_SUCCESS < 0x40 || EVENT_TYPE_JOB_SUCCESS > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
@@ -1405,6 +1420,7 @@ mod tests {
             ("CHANNEL_INGRESS", EVENT_TYPE_CHANNEL_INGRESS),
             ("CHANNEL_EGRESS", EVENT_TYPE_CHANNEL_EGRESS),
             ("PROACTIVE_SENT", EVENT_TYPE_PROACTIVE_SENT),
+            ("CHANNEL_GATE_REJECTED", EVENT_TYPE_CHANNEL_GATE_REJECTED),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
             ("INGRESS_QUARANTINED", EVENT_TYPE_INGRESS_QUARANTINED),
             ("INGRESS_SANITIZED", EVENT_TYPE_INGRESS_SANITIZED),

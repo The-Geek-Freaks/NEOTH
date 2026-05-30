@@ -760,7 +760,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             reload_controller: Arc::clone(&reload_controller),
             views_conn: shared_views_conn.clone(),
         });
-        let channel = TelegramChannel::new(telegram_token, config.telegram_user_id);
+        // SF-03: hand the adapter the daemon's WAL writer so allowlist-
+        // rejected senders are audited via `0x3B CHANNEL_GATE_REJECTED`
+        // (the daemon is the single writer; this is a cheap handle clone).
+        let channel = TelegramChannel::new(telegram_token, config.telegram_user_id)
+            .with_gate_writer(writer.clone());
         let task = tokio::spawn(async move {
             if let Err(e) = channel.run(handler).await {
                 tracing::error!(error = %e, "Telegram channel task exited with error");

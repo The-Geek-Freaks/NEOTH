@@ -82,6 +82,30 @@ Fix: Add condition guard to emit_inbound: cond: allowlist.allowed.
 Add WAL event 0x28 CHANNEL_GATE_REJECTED for audit of dropped messages.
 SPEC_channels.md needs both the yaml fix and the new event type.
 
+**RESOLVED 2026-05-30 Session 29 (F-03 vollausbau, verify-first).** The
+PRIMARY concern — false-positive `CHANNEL_INGRESS` for blocked senders —
+is MOOT against the real code: the spec-era `emit_inbound`-with-no-guard
+never shipped. The Telegram adapter gates the allowlist in
+`channels/telegram.rs` ("Allowlist check FIRST — before we read the text,
+before we touch the WAL") and `return Ok(())`s the drop BEFORE the
+pipeline handler (which is where `0x32 CHANNEL_INGRESS` is emitted, in
+`serve.rs`). So a blocked sender already produces NO ingress frame —
+nothing to guard. The genuinely-open half — AUDIT of the drop — shipped:
+new `EVENT_TYPE_CHANNEL_GATE_REJECTED = 0x3B` (channels band; the spec's
+`0x28` was already taken). `TelegramChannel::with_gate_writer` threads the
+daemon's single WAL writer into the adapter (cheap handle clone — no
+second-writer/single-writer conflict); the allowlist drop now emits a
+`0x3B` frame `{channel, sender_id, reason: "not_on_allowlist", ts_unix}`
+(numeric id + reason only, NO text since the gate fires pre-text-read) via
+the best-effort `emit_gate_rejected` helper on BOTH the new-message AND
+edited-message paths. `neoth wal show --type channel_gate_rejected` now
+surfaces rejected inbound that was previously `tracing::warn`-only +
+invisible at the default log level. Slack/Discord adapters get the same
+`with_gate_writer` treatment when an operator wires their allowlist
+(Telegram-first per operator pick). 3 telegram tests + SC-01a
+`every_event_type_constant_is_wired` guard green (0x3B is emitted, not
+defined-dead). clippy `--lib --tests` crate-wide 0 warnings, fmt clean.
+
 ---
 
 ### SF-04: content_hash Ambiguity Produces Dedup Collisions Across Boundaries

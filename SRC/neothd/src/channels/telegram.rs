@@ -35,6 +35,12 @@ pub struct TelegramChannel {
     /// interact. Group chats are rejected unless the bot is explicitly
     /// mentioned (deferred to V2).
     allowed_user_id: Option<u64>,
+    /// SF-03: optional daemon WAL writer so the allowlist gate can emit a
+    /// `0x3B CHANNEL_GATE_REJECTED` audit frame when it drops a
+    /// non-allowlisted sender. The daemon owns the single WAL writer; the
+    /// adapter borrows a clone purely for this gate audit. `None` (the
+    /// default, e.g. in tests) keeps the pre-SF-03 tracing-only drop.
+    gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
 
 impl TelegramChannel {
@@ -42,7 +48,18 @@ impl TelegramChannel {
         Self {
             token,
             allowed_user_id,
+            gate_writer: None,
         }
+    }
+
+    /// SF-03: attach the daemon's WAL writer so allowlist-rejected senders
+    /// are audited via `0x3B CHANNEL_GATE_REJECTED` instead of being
+    /// dropped tracing-only. The daemon is the single writer; this is a
+    /// cheap `WalWriterHandle` clone (an `mpsc` sender), so there is no
+    /// second-writer/single-writer-invariant conflict.
+    pub fn with_gate_writer(mut self, writer: crate::wal::writer::WalWriterHandle) -> Self {
+        self.gate_writer = Some(writer);
+        self
     }
 }
 
@@ -124,6 +141,10 @@ impl Channel for TelegramChannel {
 
         let handler = Arc::new(handler);
         let allowed = self.allowed_user_id;
+        // SF-03: one writer clone per dptree branch (each `move` endpoint
+        // closure owns its own; cloned again per inbound for the audit).
+        let gate_writer_msg = self.gate_writer.clone();
+        let gate_writer_edit = self.gate_writer.clone();
         // SD-03: bounded dedup so a repeated edited-message delivery (Telegram
         // can re-send the same edit across poll cycles) emits 0x38 only once.
         let dedup = Arc::new(std::sync::Mutex::new(EditDedup::new(EDIT_DEDUP_CAP)));
@@ -142,8 +163,11 @@ impl Channel for TelegramChannel {
             .branch(
                 Update::filter_message().endpoint(move |bot: Bot, msg: Message| {
                     let handler = Arc::clone(&h_msg);
+                    let gate_writer = gate_writer_msg.clone();
                     async move {
-                        if let Err(e) = handle_one_message(bot, msg, handler, allowed).await {
+                        if let Err(e) =
+                            handle_one_message(bot, msg, handler, allowed, gate_writer).await
+                        {
                             tracing::warn!(error = %e, "Telegram message handler error");
                         }
                         respond(())
@@ -154,9 +178,11 @@ impl Channel for TelegramChannel {
                 Update::filter_edited_message().endpoint(move |bot: Bot, msg: Message| {
                     let handler = Arc::clone(&h_edit);
                     let dedup = Arc::clone(&dedup_edit);
+                    let gate_writer = gate_writer_edit.clone();
                     async move {
                         if let Err(e) =
-                            handle_edited_message(bot, msg, handler, allowed, dedup).await
+                            handle_edited_message(bot, msg, handler, allowed, dedup, gate_writer)
+                                .await
                         {
                             tracing::warn!(error = %e, "Telegram edited-message handler error");
                         }
@@ -212,11 +238,47 @@ impl EditDedup {
     }
 }
 
+/// SF-03: best-effort `0x3B CHANNEL_GATE_REJECTED` audit frame for an
+/// allowlist-rejected sender. No-op when no writer is attached (tests /
+/// open-allowlist installs). Never fails the caller — a WAL write error
+/// logs `warn!` and is dropped; the rejection already happened, the audit
+/// frame is the nicety. Carries only the numeric sender id + reason — no
+/// message text (the gate fires before the text is read).
+async fn emit_gate_rejected(writer: Option<&crate::wal::writer::WalWriterHandle>, sender_id: u64) {
+    let Some(w) = writer else {
+        return;
+    };
+    let ts_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "channel": "telegram",
+        "sender_id": sender_id,
+        "reason": "not_on_allowlist",
+        "ts_unix": ts_unix,
+    })) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "serialize CHANNEL_GATE_REJECTED failed");
+            return;
+        }
+    };
+    let header = crate::wal::make_header(
+        crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED,
+        &payload,
+    );
+    if let Err(e) = w.append(header, payload).await {
+        tracing::warn!(error = %e, "CHANNEL_GATE_REJECTED append failed (non-fatal)");
+    }
+}
+
 async fn handle_one_message(
     bot: Bot,
     msg: Message,
     handler: Arc<PipelineHandler>,
     allowed_user_id: Option<u64>,
+    gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<()> {
     let Some(from) = msg.from.as_ref() else {
         // Non-user message (channel post, service message). Ignore.
@@ -233,6 +295,10 @@ async fn handle_one_message(
                 allowed_id = allowed,
                 "Telegram message dropped: sender not on allowlist"
             );
+            // SF-03: audit the rejected sender so it shows in
+            // `neoth wal show --type channel_gate_rejected` (the drop was
+            // previously tracing-only — invisible at the default log level).
+            emit_gate_rejected(gate_writer.as_ref(), from.id.0).await;
             return Ok(());
         }
     }
@@ -336,6 +402,7 @@ async fn handle_edited_message(
     handler: Arc<PipelineHandler>,
     allowed_user_id: Option<u64>,
     dedup: Arc<std::sync::Mutex<EditDedup>>,
+    gate_writer: Option<crate::wal::writer::WalWriterHandle>,
 ) -> Result<()> {
     let Some(from) = msg.from.as_ref() else {
         return Ok(());
@@ -350,6 +417,8 @@ async fn handle_edited_message(
                 allowed_id = allowed,
                 "Telegram edit dropped: sender not on allowlist"
             );
+            // SF-03: audit the rejected sender (edit path).
+            emit_gate_rejected(gate_writer.as_ref(), from.id.0).await;
             return Ok(());
         }
     }
@@ -519,6 +588,55 @@ mod tests {
     fn channel_reports_name() {
         let t = TelegramChannel::new(SecretString::from("dummy"), Some(123));
         assert_eq!(t.name(), "telegram");
+    }
+
+    #[tokio::test]
+    async fn with_gate_writer_attaches_the_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, _join) = crate::wal::writer::spawn(dir.path().join("g.wal")).unwrap();
+        let t = TelegramChannel::new(SecretString::from("dummy"), Some(1)).with_gate_writer(writer);
+        assert!(t.gate_writer.is_some());
+    }
+
+    #[tokio::test]
+    async fn emit_gate_rejected_writes_0x3b_frame_and_none_is_noop() {
+        // SF-03: None writer (tests / open-allowlist) → no-op, no panic.
+        emit_gate_rejected(None, 999).await;
+
+        // Some writer → exactly one 0x3B frame carrying the numeric sender
+        // id + reason, NO message text.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("gate.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        emit_gate_rejected(Some(&writer), 4242).await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut found = 0usize;
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_GATE_REJECTED {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                assert_eq!(v["sender_id"], 4242);
+                assert_eq!(v["reason"], "not_on_allowlist");
+                assert_eq!(v["channel"], "telegram");
+                assert!(
+                    v.get("text").is_none(),
+                    "gate-reject frame must carry no text"
+                );
+                found += 1;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert_eq!(found, 1, "expected exactly one CHANNEL_GATE_REJECTED frame");
     }
 
     #[test]
