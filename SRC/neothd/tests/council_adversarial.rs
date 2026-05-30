@@ -45,20 +45,28 @@ use neothd::tokens::budget::{Block, BlockItem, enforce_budget};
 
 #[test]
 fn test_all_three_agree_and_wrong() {
-    // Three hemispheres unanimously echo the WRONG capital. Dissent
-    // is 0 (high false confidence). Without ADV-12's factual_check
-    // the council would treat this as "consensus" + ship the wrong
-    // answer. With factual_check the ground-truth comparison fires
-    // independently.
-    let left = "The capital of Germany is Munich. I am certain.";
-    let right = "Germany's capital city is Munich, which has been since 1949.";
-    let cerebellum = "It is Munich. The capital of Germany is Munich.";
+    // Three hemispheres unanimously echo the WRONG capital with the same
+    // phrasing (the shared-bias / model-collapse case). Lexical dissent is
+    // near-0 (high false confidence) so the dissent scorer sees consensus
+    // and the council would ship the wrong answer. With ADV-12's
+    // factual_check the ground-truth comparison fires independently.
+    //
+    // NOTE: the responses are lexically near-identical ON PURPOSE. Jaccard
+    // dissent measures WORD overlap, not meaning — paraphrases of the same
+    // fact ("Munich since 1949" vs "It is Munich") score HIGH dissent
+    // despite agreeing, which is exactly the blind spot
+    // `score_dissent_via_embedding` exists to close. This test pins the
+    // lexical-consensus case where dissent is genuinely blind.
+    let left = "The capital of Germany is Munich.";
+    let right = "The capital of Germany is Munich today.";
+    let cerebellum = "The capital of Germany is Munich, yes.";
 
-    // Pre-ADV-12: dissent would be ~0 (high consensus).
+    // Pre-ADV-12: dissent reads near-0 (high lexical consensus).
     let dissent = score_dissent(&[left, right, cerebellum]);
     assert!(
         dissent.is_consensus(),
-        "three hemispheres echoing same wrong fact MUST appear as consensus to the dissent scorer (this is the bug ADV-12 closes)",
+        "three hemispheres echoing the same wrong fact in the same words MUST appear as consensus to the lexical dissent scorer (this is the bug ADV-12 closes), got {}",
+        dissent.0,
     );
 
     // Post-ADV-12: ground-truth comparison catches it.
