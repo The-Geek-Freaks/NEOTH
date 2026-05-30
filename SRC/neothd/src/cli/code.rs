@@ -221,7 +221,8 @@ async fn run_dispatch_phase(
     apply_repo: Option<PathBuf>,
 ) -> Result<()> {
     use crate::coding::dispatcher::{
-        DispatchApplyConfig, DispatchBudget, dispatch_session, dispatch_session_with_apply,
+        ApplyOrigin, DispatchApplyConfig, DispatchBudget, dispatch_session,
+        dispatch_session_with_apply,
     };
 
     let workers = build_worker_set(cfg).await;
@@ -234,7 +235,7 @@ async fn run_dispatch_phase(
     // when the operator passed `--apply <repo>`. Without the
     // flag, legacy semantics (patch stored, never applied).
     let outcome = if let Some(repo) = apply_repo.as_ref() {
-        let mut apply_cfg = DispatchApplyConfig::new(repo);
+        let mut apply_cfg = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed);
         if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
             apply_cfg = apply_cfg
                 .with_test_cmd(cmd)
@@ -334,7 +335,7 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
 /// `--dispatch` per its clap contract, so use `--dispatch --run-pending
 /// --apply <repo>` to apply patches; without it patches are stored only).
 async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
-    use crate::coding::dispatcher::{DispatchApplyConfig, DispatchBudget};
+    use crate::coding::dispatcher::{ApplyOrigin, DispatchApplyConfig, DispatchBudget};
 
     let cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml — run `neoth init` first")?;
@@ -349,7 +350,7 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
     }
 
     let apply_cfg = args.apply.as_ref().map(|repo| {
-        let mut c = DispatchApplyConfig::new(repo);
+        let mut c = DispatchApplyConfig::new(repo, ApplyOrigin::CliConfirmed);
         if let Some(cmd) = cfg.coding.test_cmd.as_deref() {
             c = c
                 .with_test_cmd(cmd)

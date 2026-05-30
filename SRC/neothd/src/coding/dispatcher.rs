@@ -100,6 +100,46 @@ impl Default for DispatchBudget {
 /// (the operator-driven invocation is its own visible audit).
 pub type WalWriterRef = Option<std::sync::Arc<crate::wal::writer::WalWriterHandle>>;
 
+/// ADV review-D (Session 30) — the ORIGIN of an apply request, so the
+/// per-task permission gate stays context-sensitive. The dispatcher
+/// degrades a `Decision::Confirm` to Allow ONLY for `CliConfirmed` (the
+/// operator already confirmed by typing `neoth code --apply` at a local
+/// TTY). A daemon-scheduled or channel-requested apply MUST NOT inherit
+/// that trust — there is no operator at the keyboard — so those origins
+/// keep `Confirm` as a hard gate (fail-closed: the apply is refused until
+/// a real confirmation channel exists). Deliberately NO `Default` impl:
+/// the origin must be chosen explicitly at every construction site, so a
+/// future caller can't silently get the trusted `CliConfirmed` behaviour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyOrigin {
+    /// Local CLI `neoth code --apply` — the operator confirmed at a TTY.
+    /// The only origin permitted to degrade `Confirm` → Allow.
+    CliConfirmed,
+    /// A daemon cron / scheduler-initiated apply. No operator present →
+    /// `Confirm` is NOT degraded.
+    DaemonScheduled,
+    /// An apply requested over a messaging channel. No local auth →
+    /// `Confirm` is NOT degraded.
+    ChannelRequested,
+}
+
+impl ApplyOrigin {
+    /// True only for the origin that carries an explicit local operator
+    /// confirmation, i.e. the one allowed to degrade `Confirm` → Allow.
+    pub fn may_degrade_confirm(self) -> bool {
+        matches!(self, ApplyOrigin::CliConfirmed)
+    }
+
+    /// Stable wire/log name.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ApplyOrigin::CliConfirmed => "cli_confirmed",
+            ApplyOrigin::DaemonScheduled => "daemon_scheduled",
+            ApplyOrigin::ChannelRequested => "channel_requested",
+        }
+    }
+}
+
 /// Pick #6 Phase 4 — opt-in patch-apply config. When passed to
 /// `dispatch_session`, every worker-produced patch is applied
 /// inside a task-scoped git worktree per the Chorus verdict
@@ -117,16 +157,17 @@ pub type WalWriterRef = Option<std::sync::Arc<crate::wal::writer::WalWriterHandl
 /// worktree; non-zero exit routes through the retry-policy
 /// path the same way a `git apply --check` rejection does.
 ///
-/// `autonomy` flows through `permissions::evaluate(WriteToRepo,
-/// level)` in a follow-up commit — today the dispatcher applies
-/// unconditionally when `apply_config` is `Some`. The CLI's
-/// `neoth code --apply` operator-prompt gate happens before
-/// `dispatch_session` is called, so the in-loop gate is a
-/// defense-in-depth check that lands once the permissions
-/// surface adds the `WriteToRepo` action.
+/// `autonomy` flows through `permissions::evaluate(PatchApplyToRepo,
+/// level)`; combined with `origin` it gates whether a `Confirm`
+/// decision may degrade to Allow (see [`ApplyOrigin`]). Strict
+/// denies outright; other levels yield Confirm, degraded to Allow
+/// only when the origin is `CliConfirmed`.
 #[derive(Clone)]
 pub struct DispatchApplyConfig {
     pub repo_root: std::path::PathBuf,
+    /// Origin of this apply request — gates whether `Confirm` may degrade
+    /// to Allow (only `CliConfirmed`). See [`ApplyOrigin`].
+    pub origin: ApplyOrigin,
     pub test_cmd: Option<String>,
     pub test_timeout: std::time::Duration,
     pub wal_writer: WalWriterRef,
@@ -134,11 +175,12 @@ pub struct DispatchApplyConfig {
     /// per-task `permissions::evaluate(PatchApplyToRepo, level)`
     /// gate. When `Some`, the dispatcher consults the policy
     /// BEFORE creating the worktree. Strict → Deny (task
-    /// blocks); Standard/Elevated/Full → Confirm via the
-    /// CLI's pre-flight prompt (operator already opted in by
-    /// passing `--apply` in `neoth code`, so the in-loop
-    /// Confirm degrades to Allow). When `None`, the gate is
-    /// skipped (CLI one-shot operator-already-confirmed).
+    /// blocks); Standard/Elevated/Full → Confirm. The Confirm
+    /// degrades to Allow ONLY when `origin` is `CliConfirmed`
+    /// (operator opted in by passing `--apply` at a TTY);
+    /// `DaemonScheduled` / `ChannelRequested` keep Confirm as a
+    /// hard gate (fail-closed). When `None`, the gate is skipped
+    /// (CLI one-shot operator-already-confirmed).
     pub autonomy: Option<crate::permissions::AutonomyLevel>,
 }
 
@@ -146,6 +188,7 @@ impl std::fmt::Debug for DispatchApplyConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DispatchApplyConfig")
             .field("repo_root", &self.repo_root)
+            .field("origin", &self.origin)
             .field("test_cmd", &self.test_cmd)
             .field("test_timeout", &self.test_timeout)
             .field("wal_writer", &self.wal_writer.as_ref().map(|_| "<live>"))
@@ -155,9 +198,15 @@ impl std::fmt::Debug for DispatchApplyConfig {
 }
 
 impl DispatchApplyConfig {
-    pub fn new(repo_root: impl Into<std::path::PathBuf>) -> Self {
+    /// `origin` is REQUIRED (not a builder) so every construction site
+    /// makes an explicit trust decision — see [`ApplyOrigin`]. CLI
+    /// one-shots pass `ApplyOrigin::CliConfirmed`; daemon/channel apply
+    /// paths must pass their own origin so the `Confirm` gate is NOT
+    /// silently degraded for an unattended apply.
+    pub fn new(repo_root: impl Into<std::path::PathBuf>, origin: ApplyOrigin) -> Self {
         Self {
             repo_root: repo_root.into(),
+            origin,
             test_cmd: None,
             test_timeout: std::time::Duration::from_secs(5 * 60),
             wal_writer: None,
@@ -165,12 +214,14 @@ impl DispatchApplyConfig {
         }
     }
 
-    /// Attach the operator's autonomy level so the dispatcher
-    /// runs `permissions::evaluate(PatchApplyToRepo, level)`
-    /// per task. Strict denies the task before any IO; other
-    /// levels Confirm but the caller (CLI) has already
-    /// confirmed by passing `--apply` so the in-loop Confirm
-    /// degrades to Allow.
+    /// Attach the operator's autonomy level so the dispatcher runs
+    /// `permissions::evaluate(PatchApplyToRepo, level)` per task. Strict
+    /// denies the task before any IO. For `ApplyOrigin::CliConfirmed` a
+    /// `Confirm` decision degrades to Allow (the operator already
+    /// confirmed by passing `--apply` at a TTY); for `DaemonScheduled` /
+    /// `ChannelRequested` a `Confirm` is a HARD gate (apply refused until
+    /// a real confirmation channel exists) — see the gate in
+    /// `apply_patch_via_worktree`.
     pub fn with_autonomy(mut self, level: crate::permissions::AutonomyLevel) -> Self {
         self.autonomy = Some(level);
         self
@@ -525,12 +576,23 @@ fn apply_patch_via_worktree(
         match evaluate(&action, level) {
             Decision::Allow => {}
             Decision::Confirm(_) => {
-                // CLI-driven runs: operator already confirmed
-                // by passing `--apply`. Future unattended-
-                // scheduled-apply path (lives in cli::serve,
-                // not the CLI one-shot) will surface this
-                // Confirm to the operator via the existing
-                // PermissionConfirm channel.
+                // ADV review-D (Session 30): the Confirm→Allow degrade is
+                // ORIGIN-SENSITIVE. Only `CliConfirmed` carries an explicit
+                // local-operator confirmation (`neoth code --apply` at a
+                // TTY), so only it may proceed on Confirm. A
+                // `DaemonScheduled` / `ChannelRequested` apply has NO
+                // operator present, so a Confirm is a HARD gate — refuse
+                // (fail-closed) rather than inherit CLI trust. This routes
+                // through the caller's failure path (task → Blocked).
+                if !cfg.origin.may_degrade_confirm() {
+                    return Err(format!(
+                        "permission gate requires confirmation for task {} \
+                         but the apply origin is `{}` (no local operator to \
+                         confirm) — refusing unattended apply",
+                        task.task_id.raw(),
+                        cfg.origin.as_str()
+                    ));
+                }
             }
             Decision::Deny(reason) => {
                 return Err(format!(
@@ -1612,7 +1674,7 @@ mod tests {
             }),
         );
 
-        let cfg = DispatchApplyConfig::new(&repo);
+        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -1678,7 +1740,7 @@ mod tests {
             }),
         );
 
-        let cfg = DispatchApplyConfig::new(&repo);
+        let cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -1753,7 +1815,7 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo)
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
             .with_test_cmd(always_pass_cmd_str())
             .with_test_timeout(std::time::Duration::from_secs(10));
         let outcome = dispatch_session_with_apply(
@@ -1799,7 +1861,7 @@ mod tests {
             }),
         );
 
-        let apply_cfg = DispatchApplyConfig::new(&repo)
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
             .with_test_cmd(always_fail_cmd_str())
             .with_test_timeout(std::time::Duration::from_secs(10));
         let outcome = dispatch_session_with_apply(
@@ -1874,8 +1936,8 @@ mod tests {
             }),
         );
 
-        let apply_cfg =
-            DispatchApplyConfig::new(&repo).with_wal_writer(std::sync::Arc::clone(&writer));
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+            .with_wal_writer(std::sync::Arc::clone(&writer));
 
         // QU-10d: the dispatcher is now async — await it directly. The
         // prior spawn_blocking + Arc<Mutex<conn>> wrapper (needed when the
@@ -1934,7 +1996,7 @@ mod tests {
         // Use a path that does NOT need to exist — the gate
         // fires before we ever touch the filesystem.
         let fake_repo = dir.path().join("never-exists");
-        let apply_cfg = DispatchApplyConfig::new(&fake_repo)
+        let apply_cfg = DispatchApplyConfig::new(&fake_repo, ApplyOrigin::CliConfirmed)
             .with_autonomy(crate::permissions::AutonomyLevel::Strict);
         let outcome = dispatch_session_with_apply(
             &conn,
@@ -1984,8 +2046,8 @@ mod tests {
             }),
         );
 
-        let apply_cfg =
-            DispatchApplyConfig::new(&repo).with_autonomy(crate::permissions::AutonomyLevel::Full);
+        let apply_cfg = DispatchApplyConfig::new(&repo, ApplyOrigin::CliConfirmed)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full);
         let outcome = dispatch_session_with_apply(
             &conn,
             session_id,
@@ -2003,6 +2065,81 @@ mod tests {
 
         let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
+    }
+
+    #[tokio::test]
+    async fn daemon_scheduled_origin_blocks_on_confirm() {
+        // ADV review-D (Session 30): SAME autonomy + SAME provider
+        // outcome as `full_autonomy_still_applies_under_confirm`, the
+        // ONLY difference is the apply origin. Full autonomy yields
+        // Decision::Confirm for PatchApplyToRepo; with a
+        // `DaemonScheduled` origin there is NO operator at a TTY, so the
+        // Confirm is a HARD gate (fail-closed) — the apply is refused and
+        // the task does NOT complete. The gate fires BEFORE any worktree
+        // IO, so no git repo is needed.
+        let (dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, task_id, Hemisphere::Left, None, None).unwrap();
+
+        let patch_path = dir.path().join("change.patch");
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(CannedWorker {
+                outcome: green_outcome_with_real_patch(patch_path),
+                name: "phase4-daemon-origin",
+            }),
+        );
+
+        // Path need not exist — the origin gate denies before
+        // worktree::create_task_worktree ever runs.
+        let fake_repo = dir.path().join("never-exists");
+        let apply_cfg = DispatchApplyConfig::new(&fake_repo, ApplyOrigin::DaemonScheduled)
+            .with_autonomy(crate::permissions::AutonomyLevel::Full);
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
+        .await
+        .expect("dispatch with daemon-scheduled origin");
+
+        assert_eq!(
+            outcome.tasks_completed, 0,
+            "daemon-scheduled origin must NOT degrade Confirm → apply"
+        );
+        let wt = dir.path().join(format!(".neoth-task-{}", task_id.raw()));
+        assert!(
+            !wt.exists(),
+            "origin gate must refuse BEFORE any worktree IO"
+        );
+    }
+
+    #[test]
+    fn apply_origin_may_degrade_confirm_only_for_cli_confirmed() {
+        // Pure-logic guard: the trust asymmetry lives in one method, so
+        // pin it directly. Exactly ONE origin may degrade Confirm.
+        assert!(
+            ApplyOrigin::CliConfirmed.may_degrade_confirm(),
+            "CLI-confirmed apply carries explicit local-operator consent"
+        );
+        assert!(
+            !ApplyOrigin::DaemonScheduled.may_degrade_confirm(),
+            "daemon-scheduled apply has no operator → must not degrade"
+        );
+        assert!(
+            !ApplyOrigin::ChannelRequested.may_degrade_confirm(),
+            "channel-requested apply has no local auth → must not degrade"
+        );
+
+        // Stable wire/log names — these land in WAL diagnostics + Err
+        // strings, so a rename is a breaking change worth a test.
+        assert_eq!(ApplyOrigin::CliConfirmed.as_str(), "cli_confirmed");
+        assert_eq!(ApplyOrigin::DaemonScheduled.as_str(), "daemon_scheduled");
+        assert_eq!(ApplyOrigin::ChannelRequested.as_str(), "channel_requested");
     }
 
     #[tokio::test]
