@@ -1079,28 +1079,17 @@ pub async fn run_chat_with(
             p.record_success();
         }
         {
-            // QM-9 Phase 1.5: persist a usage event for the
-            // streaming chat path. Best-effort I/O.
-            let home = crate::config::FreedomConfig::default_neoth_home();
+            // QM-9 Phase 1.5 / GR-15: persist a usage event for the
+            // streaming chat path via the shared best-effort helper.
             let elapsed_ms = stream_call_started.elapsed().as_millis() as u64;
-            let cost = crate::providers::cost::actual_cost_usd(
+            crate::daemon::usage_log::record_provider_call_best_effort(
                 provider_name,
                 &model_used,
-                input_tokens.unwrap_or(0),
-                output_tokens.unwrap_or(0),
-            );
-            if let Err(e) = crate::daemon::usage_log::record_now(
-                &home,
-                provider_name,
-                &model_used,
-                input_tokens.unwrap_or(0),
-                output_tokens.unwrap_or(0),
-                cost,
+                input_tokens,
+                output_tokens,
                 elapsed_ms,
                 true,
-            ) {
-                warn!(error = %e, "usage_log append failed on stream path (non-fatal)");
-            }
+            );
         }
         // Sentinel line per OPEN_DECISIONS.md D-005 so consumers can detect
         // truncated streams.
@@ -1547,28 +1536,16 @@ pub async fn run_chat_with(
                     if let Some(p) = permit {
                         p.record_success();
                     }
-                    // QM-9 Phase 1.5: persist a usage event for the
-                    // non-streaming chat path. Best-effort; warn on I/O
-                    // error so a stuck disk doesn't break the reply.
-                    let home = crate::config::FreedomConfig::default_neoth_home();
-                    let cost = crate::providers::cost::actual_cost_usd(
+                    // QM-9 Phase 1.5 / GR-15: persist a usage event for
+                    // the non-streaming chat path via the shared helper.
+                    crate::daemon::usage_log::record_provider_call_best_effort(
                         provider_name,
                         &completion.model,
-                        completion.input_tokens.unwrap_or(0),
-                        completion.output_tokens.unwrap_or(0),
-                    );
-                    if let Err(e) = crate::daemon::usage_log::record_now(
-                        &home,
-                        provider_name,
-                        &completion.model,
-                        completion.input_tokens.unwrap_or(0),
-                        completion.output_tokens.unwrap_or(0),
-                        cost,
+                        completion.input_tokens,
+                        completion.output_tokens,
                         elapsed_ms,
                         true,
-                    ) {
-                        warn!(error = %e, "usage_log append failed (non-fatal)");
-                    }
+                    );
                     println!("{}", completion.text);
                     (
                         completion.text,
@@ -1583,16 +1560,13 @@ pub async fn run_chat_with(
                         p.record_failure();
                     }
                     // Record the failure too so the rollup distinguishes
-                    // ok-vs-err for the same provider.
-                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    // ok-vs-err for the same provider (GR-15 helper).
                     let model = model_for_estimate(&args, &config);
-                    let _ = crate::daemon::usage_log::record_now(
-                        &home,
+                    crate::daemon::usage_log::record_provider_call_best_effort(
                         provider_name,
                         &model,
-                        0,
-                        0,
-                        0.0,
+                        None,
+                        None,
                         elapsed_ms,
                         false,
                     );
@@ -2409,25 +2383,16 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         let call_started = std::time::Instant::now();
         let raw = self.provider.complete(req).await;
         let elapsed_ms = call_started.elapsed().as_millis() as u64;
-        let home = crate::config::FreedomConfig::default_neoth_home();
         match raw {
             Ok(c) => {
                 if let Some(p) = permit {
                     p.record_success();
                 }
-                let cost = crate::providers::cost::actual_cost_usd(
+                crate::daemon::usage_log::record_provider_call_best_effort(
                     provider_name,
                     &c.model,
-                    c.input_tokens.unwrap_or(0),
-                    c.output_tokens.unwrap_or(0),
-                );
-                let _ = crate::daemon::usage_log::record_now(
-                    &home,
-                    provider_name,
-                    &c.model,
-                    c.input_tokens.unwrap_or(0),
-                    c.output_tokens.unwrap_or(0),
-                    cost,
+                    c.input_tokens,
+                    c.output_tokens,
                     elapsed_ms,
                     true,
                 );
@@ -2441,13 +2406,11 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                 if let Some(p) = permit {
                     p.record_failure();
                 }
-                let _ = crate::daemon::usage_log::record_now(
-                    &home,
+                crate::daemon::usage_log::record_provider_call_best_effort(
                     provider_name,
                     "unknown",
-                    0,
-                    0,
-                    0.0,
+                    None,
+                    None,
                     elapsed_ms,
                     false,
                 );
@@ -3710,25 +3673,16 @@ pub(crate) async fn run_mcp_dispatch_loop(
                 let call_started = std::time::Instant::now();
                 let result = provider.complete(req).await;
                 let elapsed_ms = call_started.elapsed().as_millis() as u64;
-                let home = crate::config::FreedomConfig::default_neoth_home();
                 match result {
                     Ok(c) => {
                         if let Some(p) = permit {
                             p.record_success();
                         }
-                        let cost = crate::providers::cost::actual_cost_usd(
+                        crate::daemon::usage_log::record_provider_call_best_effort(
                             provider_name,
                             &c.model,
-                            c.input_tokens.unwrap_or(0),
-                            c.output_tokens.unwrap_or(0),
-                        );
-                        let _ = crate::daemon::usage_log::record_now(
-                            &home,
-                            provider_name,
-                            &c.model,
-                            c.input_tokens.unwrap_or(0),
-                            c.output_tokens.unwrap_or(0),
-                            cost,
+                            c.input_tokens,
+                            c.output_tokens,
                             elapsed_ms,
                             true,
                         );
@@ -3738,13 +3692,11 @@ pub(crate) async fn run_mcp_dispatch_loop(
                         if let Some(p) = permit {
                             p.record_failure();
                         }
-                        let _ = crate::daemon::usage_log::record_now(
-                            &home,
+                        crate::daemon::usage_log::record_provider_call_best_effort(
                             provider_name,
                             "unknown",
-                            0,
-                            0,
-                            0.0,
+                            None,
+                            None,
                             elapsed_ms,
                             false,
                         );

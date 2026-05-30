@@ -134,6 +134,74 @@ pub fn record_now(
     Ok(ev)
 }
 
+/// GR-15 — testable core that records one provider call.
+///
+/// Collapses the `providers::cost::actual_cost_usd` + [`record_now`]
+/// boilerplate that was duplicated verbatim across the chat-sync,
+/// chat-stream, council-hemisphere, and MCP-loop call sites. Cost is
+/// computed from the live price table ONLY on the success path; a
+/// failed call records zero tokens + zero cost with `ok = false` so the
+/// rollup still distinguishes ok-vs-err per provider.
+///
+/// The circuit-breaker half of the original GR-15 wrapper name is
+/// already centralised inside every provider adapter via
+/// `providers::circuit_breaker::run_with_breaker` (GR-04), so this
+/// helper deliberately owns only the usage-metering consolidation —
+/// re-wrapping the breaker here would double-settle the permit.
+///
+/// `home` is an explicit parameter so the function is unit-testable
+/// against a tempdir without touching the operator's real `~/.neoth`.
+pub fn record_provider_call(
+    home: &Path,
+    provider: &str,
+    model: &str,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    latency_ms: u64,
+    ok: bool,
+) -> std::io::Result<UsageEvent> {
+    let (input, output, cost) = if ok {
+        let i = input_tokens.unwrap_or(0);
+        let o = output_tokens.unwrap_or(0);
+        (
+            i,
+            o,
+            crate::providers::cost::actual_cost_usd(provider, model, i, o),
+        )
+    } else {
+        // Error path: nothing worth charging — zero tokens, zero cost.
+        (0, 0, 0.0)
+    };
+    record_now(home, provider, model, input, output, cost, latency_ms, ok)
+}
+
+/// GR-15 — best-effort convenience over [`record_provider_call`] that
+/// resolves the default `~/.neoth` home and warns (never fails) on an
+/// I/O error. This is what the hot chat / council / MCP-loop paths
+/// call: a stuck disk must never break the operator's reply, but the
+/// dropped usage row is surfaced as a `warn!` (no silent swallow).
+pub fn record_provider_call_best_effort(
+    provider: &str,
+    model: &str,
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+    latency_ms: u64,
+    ok: bool,
+) {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    if let Err(e) = record_provider_call(
+        &home,
+        provider,
+        model,
+        input_tokens,
+        output_tokens,
+        latency_ms,
+        ok,
+    ) {
+        tracing::warn!(error = %e, ok, "usage_log append failed (non-fatal)");
+    }
+}
+
 /// Walk every `usage/*.jsonl` and aggregate events whose `ts_unix >=
 /// since_unix` and `< until_unix`. Missing usage dir → empty rollup.
 /// Malformed lines are skipped (logged at debug level via stderr
@@ -458,5 +526,85 @@ mod tests {
         let parsed: UsageEvent = serde_json::from_str(body.trim()).unwrap();
         assert_eq!(parsed.provider, "openai_api");
         assert_eq!(parsed.input_tokens, 10);
+    }
+
+    // ── GR-15: record_provider_call consolidation ──────────────────────
+
+    #[test]
+    fn record_provider_call_ok_computes_cost_via_price_table() {
+        let dir = tempdir().unwrap();
+        let ev = record_provider_call(
+            dir.path(),
+            "openai_api",
+            "gpt-5.5",
+            Some(100),
+            Some(50),
+            250,
+            true,
+        )
+        .unwrap();
+        assert!(ev.ok);
+        assert_eq!(ev.input_tokens, 100);
+        assert_eq!(ev.output_tokens, 50);
+        // Cost must equal the live price-table fn — pins that the helper
+        // routes through actual_cost_usd rather than hardcoding a value
+        // (robust to price-table changes; no magic literal to drift).
+        assert_eq!(
+            ev.cost_usd,
+            crate::providers::cost::actual_cost_usd("openai_api", "gpt-5.5", 100, 50)
+        );
+    }
+
+    #[test]
+    fn record_provider_call_failure_zeroes_tokens_and_cost() {
+        let dir = tempdir().unwrap();
+        // Even with non-zero token hints, the error path records zeros so
+        // a failed call never inflates the spend rollup.
+        let ev = record_provider_call(
+            dir.path(),
+            "openai_api",
+            "gpt-5.5",
+            Some(999),
+            Some(999),
+            80,
+            false,
+        )
+        .unwrap();
+        assert!(!ev.ok);
+        assert_eq!(ev.input_tokens, 0);
+        assert_eq!(ev.output_tokens, 0);
+        assert_eq!(ev.cost_usd, 0.0);
+    }
+
+    #[test]
+    fn record_provider_call_none_tokens_treated_as_zero() {
+        let dir = tempdir().unwrap();
+        let ev = record_provider_call(dir.path(), "local_qwen", "qwen2.5-7b", None, None, 10, true)
+            .unwrap();
+        assert_eq!(ev.input_tokens, 0);
+        assert_eq!(ev.output_tokens, 0);
+        // Unpriced local model → cost 0.0 (drift guard: actual_cost_usd
+        // returns 0.0 for unknown provider/model pairs).
+        assert_eq!(ev.cost_usd, 0.0);
+    }
+
+    #[test]
+    fn record_provider_call_round_trips_through_aggregate() {
+        let dir = tempdir().unwrap();
+        record_provider_call(
+            dir.path(),
+            "gemini_api",
+            "gemini-3-pro",
+            Some(5),
+            Some(7),
+            33,
+            true,
+        )
+        .unwrap();
+        let roll = aggregate(dir.path(), 0, i64::MAX);
+        assert_eq!(roll.total_call_count, 1);
+        assert_eq!(roll.total_ok_count, 1);
+        assert_eq!(roll.total_input_tokens, 5);
+        assert_eq!(roll.total_output_tokens, 7);
     }
 }
