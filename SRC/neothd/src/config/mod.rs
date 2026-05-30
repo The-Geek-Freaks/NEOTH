@@ -315,6 +315,10 @@ pub struct FreedomConfig {
     /// Default OFF.
     #[serde(default)]
     pub drift_alert: DriftAlertConfig,
+    /// SPEC-03b — per-provider HTTP-429 fallback chain. Empty (default) =
+    /// no fallback, pre-SPEC-03b behaviour preserved exactly.
+    #[serde(default)]
+    pub fallback: FallbackConfig,
     /// E-18 Workstream N (Session 22) — operator opt-in for
     /// anonymous version-check telemetry. Default OFF
     /// (`enabled: false`, `endpoint: None`). When on, the daemon
@@ -530,6 +534,31 @@ impl DriftAlertConfig {
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
+}
+
+/// SPEC-03b — per-provider HTTP-429 fallback chain (4-lens gremium design,
+/// 2026-05-30). When the primary provider returns `QuotaError` (429), the
+/// chat dispatch transparently tries each chain entry in order. Two guards
+/// the gremium flagged as mandatory: (1) each fallback hop must pass the
+/// SAME cloud-egress consent gate as the primary — a 429 must never
+/// silently exfiltrate to a provider the operator never approved; (2)
+/// fallback fires ONLY on 429 (not breaker-open/timeout — mixing signals
+/// contaminates the breaker). Entries already in QuotaTracker backoff are
+/// skipped. Empty `chain` (default) = no fallback, no behaviour change.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct FallbackConfig {
+    /// Ordered fallback providers, each a `HemisphereSlot`
+    /// (provider/model/key/endpoint/region/api_version). Tried in order
+    /// after the primary 429s; the primary is NOT repeated here.
+    #[serde(default)]
+    pub chain: Vec<crate::config::inference::HemisphereSlot>,
+    /// Hard cap on fallback hops (cycle + retry-storm guard). Default 2.
+    #[serde(default = "default_fallback_max_hops")]
+    pub max_hops: u8,
+}
+
+fn default_fallback_max_hops() -> u8 {
+    2
 }
 
 /// R-02 Phase 4c — nightly dreaming task gates.

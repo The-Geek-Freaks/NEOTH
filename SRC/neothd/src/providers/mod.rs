@@ -28,6 +28,8 @@ pub mod cooldown_pair;
 pub mod cost;
 pub mod effort_override;
 pub mod embed;
+/// SPEC-03b — per-provider 429 fallback chain (`FallbackProvider` decorator).
+pub mod fallback;
 pub mod gemini_api;
 pub mod http_client;
 pub mod known_endpoints;
@@ -192,6 +194,73 @@ pub async fn from_config_for_role(
         synthetic.provider_api_version = Some(slot_ver);
     }
     from_config(&synthetic).await
+}
+
+/// SPEC-03b — build the chat provider WITH its 429 fallback chain. The
+/// primary is the Left-role provider (identical to `from_config_for_role`
+/// in Single mode); each `config.fallback.chain` slot is appended as a
+/// fallback IFF its cloud-egress consent is granted — a 429 must never
+/// silently exfiltrate to a provider the operator never approved (4-lens
+/// gremium consensus). Non-cloud slots (local_qwen/ouro) pass the consent
+/// gate automatically. Empty chain / all-skipped ⇒ the bare primary
+/// (zero decorator overhead, no behaviour change without a `fallback:`
+/// section). Callers (`cli/chat.rs`, `serve.rs`) use this in place of
+/// `from_config_for_role(.., Left)`.
+pub async fn fallback_chain_from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    let primary =
+        from_config_for_role(config, crate::config::inference::HemisphereRole::Left).await?;
+    if config.fallback.chain.is_empty() {
+        return Ok(primary);
+    }
+    let home = FreedomConfig::default_neoth_home();
+    let mut chain: Vec<Box<dyn Provider>> = vec![primary];
+    for slot in &config.fallback.chain {
+        let Some(inf_provider) = slot.provider else {
+            tracing::warn!("fallback slot has no provider set; skipping");
+            continue;
+        };
+        let kind = inf_provider.to_provider_kind();
+        // CRITICAL consent gate (4-lens gremium): only build a cloud
+        // fallback the operator has consented to. Non-interactive (the
+        // daemon has no TTY) — skip + warn rather than prompt. Non-cloud
+        // kinds return `is_granted = true` automatically.
+        if !crate::consent::is_granted(&home, kind) {
+            tracing::warn!(
+                provider = inf_provider.as_str(),
+                "fallback slot skipped: cloud-egress consent not granted \
+                 (run `neoth consent grant <provider>` to enable)"
+            );
+            continue;
+        }
+        let mut synthetic = config.clone();
+        synthetic.provider_kind = Some(kind);
+        synthetic.provider_model = slot.model.clone();
+        synthetic.provider_key = slot.key.clone();
+        synthetic.provider_endpoint = slot.endpoint.clone();
+        if let Some(region) = slot.region.clone() {
+            synthetic.provider_region = Some(region);
+        }
+        if let Some(ver) = slot.api_version.clone() {
+            synthetic.provider_api_version = Some(ver);
+        }
+        match from_config(&synthetic).await {
+            Ok(p) => chain.push(p),
+            Err(e) => tracing::warn!(
+                provider = inf_provider.as_str(),
+                error = %e,
+                "fallback slot build failed; skipping"
+            ),
+        }
+    }
+    if chain.len() == 1 {
+        // Every fallback was skipped (un-consented / build-failed) → no
+        // decorator, just the primary.
+        return Ok(chain.into_iter().next().expect("primary present"));
+    }
+    Ok(Box::new(fallback::FallbackProvider::new(
+        chain,
+        config.fallback.max_hops,
+    )))
 }
 
 /// E-2 Phase 3 (Session 14) — construct an adapter for an INNER

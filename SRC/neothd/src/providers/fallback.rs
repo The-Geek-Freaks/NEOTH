@@ -1,0 +1,269 @@
+//! SPEC-03b — per-provider HTTP-429 fallback chain (decorator).
+//!
+//! A `FallbackProvider` wraps an ordered `Vec<Box<dyn Provider>>` —
+//! `[0]` is the primary, `[1..]` the operator-configured fallbacks — and
+//! implements `Provider` itself. When the primary's `complete()` returns
+//! `QuotaError` (HTTP 429), it transparently tries each fallback in order.
+//!
+//! ## Why a decorator (4-lens gremium design, 2026-05-30)
+//!
+//! The retry lives entirely inside `complete()`, so the three QuotaError
+//! handling sites in `cli/chat.rs` are UNCHANGED — the chat dispatch still
+//! sees one `&dyn Provider`. The chain is built once at construction
+//! (`providers::fallback_chain_from_config`), not threaded through the hot
+//! path. Empty chain ⇒ the caller hands back the bare primary, so there is
+//! zero overhead + zero behaviour change for operators with no `fallback:`
+//! config.
+//!
+//! ## Hard rules the gremium flagged
+//!
+//! - **429-only.** Fallback fires ONLY on `QuotaError`. A non-quota error
+//!   propagates immediately — masking a real outage as failover would
+//!   hide the problem AND contaminate the circuit breaker's signal.
+//! - **Consent is enforced upstream**, in `fallback_chain_from_config`:
+//!   a cloud fallback the operator never consented to is never even built
+//!   into the chain. By the time a `Box<dyn Provider>` reaches this
+//!   decorator it has already passed the consent gate.
+//! - **Bounded.** `max_hops` caps the fallback attempts (cycle + retry-
+//!   storm guard); candidates already in `QuotaTracker` backoff are
+//!   skipped via a cheap in-memory pre-flight.
+//! - **Streams don't fall over.** A partially-consumed stream cannot be
+//!   rewound onto a second provider, so `stream()` delegates to the
+//!   primary only (documented follow-on).
+
+use anyhow::Result;
+use async_trait::async_trait;
+
+use super::quota::{QuotaError, QuotaTracker};
+use super::{ChunkStream, Completion, Provider, Request};
+
+/// Ordered primary + fallbacks. See module docs.
+pub struct FallbackProvider {
+    /// `[0]` = primary; `[1..]` = ordered fallbacks. Non-empty.
+    chain: Vec<Box<dyn Provider>>,
+    /// Hard cap on fallback hops (does not count the primary attempt).
+    max_hops: u8,
+}
+
+impl FallbackProvider {
+    pub fn new(chain: Vec<Box<dyn Provider>>, max_hops: u8) -> Self {
+        debug_assert!(
+            !chain.is_empty(),
+            "FallbackProvider chain must be non-empty (primary at [0])"
+        );
+        Self { chain, max_hops }
+    }
+
+    fn is_quota_error(e: &anyhow::Error) -> bool {
+        e.downcast_ref::<QuotaError>().is_some()
+    }
+
+    fn now_unix() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    }
+}
+
+#[async_trait]
+impl Provider for FallbackProvider {
+    fn name(&self) -> &'static str {
+        self.chain.first().map(|p| p.name()).unwrap_or("fallback")
+    }
+
+    async fn complete(&self, req: Request) -> Result<Completion> {
+        let quota_path = crate::config::FreedomConfig::default_neoth_home().join("quota.json");
+        let tracker = QuotaTracker::load_from(&quota_path);
+        let now = Self::now_unix();
+        let mut last_err: Option<anyhow::Error> = None;
+        let mut hops = 0u8;
+
+        for (i, candidate) in self.chain.iter().enumerate() {
+            if i > 0 {
+                // Fallback hop. Bounded by max_hops (cycle + storm guard).
+                hops += 1;
+                if hops > self.max_hops {
+                    tracing::warn!(
+                        max_hops = self.max_hops,
+                        "fallback chain hop cap reached — surfacing the last 429"
+                    );
+                    break;
+                }
+                // Cheap in-memory pre-flight: skip a fallback already in a
+                // 429 backoff window (no round-trip).
+                if tracker
+                    .backoff_remaining_for(candidate.name(), now)
+                    .is_some()
+                {
+                    tracing::warn!(
+                        provider = candidate.name(),
+                        "fallback skipped: provider in quota backoff"
+                    );
+                    continue;
+                }
+                tracing::warn!(
+                    from = self.chain[0].name(),
+                    to = candidate.name(),
+                    hop = hops,
+                    "provider failover on 429"
+                );
+            }
+            match candidate.complete(req.clone()).await {
+                Ok(c) => return Ok(c),
+                // 429 → try the next candidate.
+                Err(e) if Self::is_quota_error(&e) => {
+                    last_err = Some(e);
+                    continue;
+                }
+                // Non-quota error → propagate immediately (do not mask a
+                // real failure as failover; only 429 chains).
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "fallback chain exhausted: every provider returned 429 or was in backoff"
+            )
+        }))
+    }
+
+    async fn stream(&self, req: Request) -> Result<ChunkStream> {
+        // No fallback on streams — a partially-consumed stream cannot be
+        // rewound + re-issued against a second provider. The primary's 429
+        // surfaces unchanged; the operator switches to non-stream or waits
+        // out the backoff. Stream fallback is a documented follow-on.
+        self.chain
+            .first()
+            .expect("FallbackProvider chain is non-empty")
+            .stream(req)
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    enum Behavior {
+        Ok,
+        Quota,
+        Other,
+    }
+
+    struct MockProvider {
+        name: &'static str,
+        behavior: Behavior,
+    }
+
+    #[async_trait]
+    impl Provider for MockProvider {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            match self.behavior {
+                Behavior::Ok => Ok(Completion {
+                    text: format!("ok:{}", self.name),
+                    model: "mock".into(),
+                    latency: Duration::from_millis(1),
+                    input_tokens: None,
+                    output_tokens: None,
+                }),
+                Behavior::Quota => Err(anyhow::Error::new(QuotaError {
+                    provider: self.name,
+                    retry_after: None,
+                    body: String::new(),
+                })),
+                Behavior::Other => Err(anyhow::anyhow!("non-quota failure from {}", self.name)),
+            }
+        }
+    }
+
+    fn mock(name: &'static str, behavior: Behavior) -> Box<dyn Provider> {
+        Box::new(MockProvider { name, behavior })
+    }
+
+    #[tokio::test]
+    async fn primary_ok_returns_primary_no_fallback() {
+        let fp = FallbackProvider::new(
+            vec![mock("primary", Behavior::Ok), mock("fb", Behavior::Ok)],
+            2,
+        );
+        let c = fp.complete(Request::default()).await.unwrap();
+        assert_eq!(c.text, "ok:primary");
+        assert_eq!(fp.name(), "primary");
+    }
+
+    #[tokio::test]
+    async fn primary_429_falls_over_to_fallback() {
+        let fp = FallbackProvider::new(
+            vec![mock("primary", Behavior::Quota), mock("fb", Behavior::Ok)],
+            2,
+        );
+        let c = fp.complete(Request::default()).await.unwrap();
+        assert_eq!(c.text, "ok:fb", "fallback must answer when primary 429s");
+    }
+
+    #[tokio::test]
+    async fn non_quota_error_propagates_without_fallback() {
+        // primary fails with a NON-429 error → must NOT fall over; the
+        // fallback (which would succeed) is never tried.
+        let fp = FallbackProvider::new(
+            vec![mock("primary", Behavior::Other), mock("fb", Behavior::Ok)],
+            2,
+        );
+        let err = fp.complete(Request::default()).await.unwrap_err();
+        assert!(err.to_string().contains("non-quota failure from primary"));
+    }
+
+    #[tokio::test]
+    async fn all_429_returns_exhausted_error() {
+        let fp = FallbackProvider::new(
+            vec![
+                mock("primary", Behavior::Quota),
+                mock("fb1", Behavior::Quota),
+            ],
+            2,
+        );
+        let err = fp.complete(Request::default()).await.unwrap_err();
+        // The last error surfaced is a QuotaError (fb1's), downcastable.
+        assert!(err.downcast_ref::<QuotaError>().is_some());
+    }
+
+    #[tokio::test]
+    async fn max_hops_caps_fallback_attempts() {
+        // primary 429, fb1 429, fb2 Ok — but max_hops = 1 means only fb1
+        // is tried (hop 1); fb2 (hop 2) is past the cap, so the Ok at
+        // position 2 is NEVER reached → exhausted error.
+        let fp = FallbackProvider::new(
+            vec![
+                mock("primary", Behavior::Quota),
+                mock("fb1", Behavior::Quota),
+                mock("fb2", Behavior::Ok),
+            ],
+            1,
+        );
+        assert!(
+            fp.complete(Request::default()).await.is_err(),
+            "max_hops=1 must not reach the Ok provider at hop 2"
+        );
+
+        // Same chain, max_hops = 2 → fb2 IS reached + answers.
+        let fp2 = FallbackProvider::new(
+            vec![
+                mock("primary", Behavior::Quota),
+                mock("fb1", Behavior::Quota),
+                mock("fb2", Behavior::Ok),
+            ],
+            2,
+        );
+        assert_eq!(
+            fp2.complete(Request::default()).await.unwrap().text,
+            "ok:fb2"
+        );
+    }
+}

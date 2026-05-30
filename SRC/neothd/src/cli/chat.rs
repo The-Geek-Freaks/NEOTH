@@ -112,9 +112,10 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // through to the same default-slot adapter `from_config` would build,
     // so existing operators see no behaviour change. In Triplet/Custom
     // mode the operator-picked Left provider wins.
-    let provider =
-        providers::from_config_for_role(&config, crate::config::inference::HemisphereRole::Left)
-            .await?;
+    // SPEC-03b: build the primary WITH its 429 fallback chain. With no
+    // `fallback:` config this returns the bare Left provider — identical
+    // to the prior `from_config_for_role(.., Left)` call, zero change.
+    let provider = providers::fallback_chain_from_config(&config).await?;
     run_chat_with(args, config, provider.as_ref()).await
 }
 
