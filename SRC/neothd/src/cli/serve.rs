@@ -723,8 +723,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // channel-driven messages get the same 429 fallback chain the CLI does,
     // and so the consent gate runs on this construction path too. Empty
     // `fallback.chain` ⇒ the bare primary (zero overhead, no behaviour change).
+    // Thread the live daemon WAL writer so a 429 failover on the unattended
+    // channel/cron path emits a durable `0x25 PROVIDER_FALLBACK_ATTEMPTED`
+    // audit frame (SPEC-03b trust claim — a prompt that "wanders" A→B must
+    // be auditable). The writer (spawned ~line 272) serializes concurrent
+    // channel turns, so per-hop frames stay correct under concurrency.
     let shared_provider: Option<Arc<dyn Provider>> =
-        match providers::fallback_chain_from_config(&config).await {
+        match providers::fallback_chain_from_config(&config, Some(writer.clone())).await {
             Ok(p) => Some(Arc::from(p)),
             Err(e) => {
                 warn!(error = %e, "provider not available — channels + cron skipped");

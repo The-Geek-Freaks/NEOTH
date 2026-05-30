@@ -115,7 +115,11 @@ pub async fn run_chat(args: ChatArgs) -> Result<()> {
     // SPEC-03b: build the primary WITH its 429 fallback chain. With no
     // `fallback:` config this returns the bare Left provider — identical
     // to the prior `from_config_for_role(.., Left)` call, zero change.
-    let provider = providers::fallback_chain_from_config(&config).await?;
+    // CLI one-shot: no WAL writer here (it's created inside run_chat_with,
+    // below this provider build), and the operator is present to see a 429
+    // failover in the logs. The daemon path threads its writer for the
+    // durable `0x25 PROVIDER_FALLBACK_ATTEMPTED` audit frame.
+    let provider = providers::fallback_chain_from_config(&config, None).await?;
     run_chat_with(args, config, provider.as_ref()).await
 }
 

@@ -181,6 +181,24 @@ pub const EVENT_TYPE_PROVIDER_STREAM_CHUNK: u8 = 0x23;
 /// Emitted at most once per 429 — repeat 429s inside an active backoff window
 /// extend the window in place without spamming the WAL.
 pub const EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED: u8 = 0x24;
+/// SPEC-03b — a provider FALLBACK hop was ATTEMPTED: the primary (or a
+/// prior hop) returned a 429 and the fallback chain moved the prompt to
+/// the next consented provider. This closes the trust-claim audit gap —
+/// when a prompt "wanders" from provider A to provider B under quota
+/// pressure, the move is now durably recorded, not just `tracing::warn!`.
+/// Emitted at the hop-decision site inside `providers::fallback`, once per
+/// actual attempt (a 429-backoff SKIP does NOT emit — no hop is taken).
+///
+/// Payload (JSON):
+///   - `from_provider`: the provider that 429'd (the chain primary's name)
+///   - `to_provider`: the provider being attempted on this hop
+///   - `reason`: `"quota_429"` (the only trigger — non-429 errors propagate
+///               immediately without failover)
+///   - `hop`: 1-based hop index (does not count the primary attempt)
+///   - `prompt_hash_xxh3`: xxh3-64 of the prompt text, correlates with the
+///                         `PROVIDER_REQUEST` (0x20) frame for the same turn
+///   - `ts_unix`: seconds since epoch
+pub const EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED: u8 = 0x25;
 /// Round-3 v0.4 ARCH-07 — LOWKEY skill injection was SKIPPED for the
 /// current turn (operator-disabled / disabled_for_eval_sessions /
 /// content_hash mismatch against the pinned baseline). Sits in the
@@ -1220,6 +1238,8 @@ const _: () = {
         || EVENT_TYPE_PROVIDER_STREAM_CHUNK > 0x2F) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED < 0x20
         || EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED > 0x2F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED < 0x20
+        || EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED > 0x2F) as usize];
     let _ = [(); 1][(EVENT_TYPE_LOCAL_INFERENCE_START < 0x20
         || EVENT_TYPE_LOCAL_INFERENCE_START > 0x2F) as usize];
     let _ = [(); 1]
@@ -1426,6 +1446,10 @@ mod tests {
             (
                 "PROVIDER_QUOTA_EXCEEDED",
                 EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED,
+            ),
+            (
+                "PROVIDER_FALLBACK_ATTEMPTED",
+                EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
             ),
             ("LOCAL_INFERENCE_START", EVENT_TYPE_LOCAL_INFERENCE_START),
             ("LOCAL_INFERENCE_END", EVENT_TYPE_LOCAL_INFERENCE_END),

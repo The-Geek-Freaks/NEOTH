@@ -43,6 +43,15 @@ pub struct FallbackProvider {
     chain: Vec<Box<dyn Provider>>,
     /// Hard cap on fallback hops (does not count the primary attempt).
     max_hops: u8,
+    /// SPEC-03b — optional WAL writer for the `0x25
+    /// PROVIDER_FALLBACK_ATTEMPTED` audit frame, emitted at each hop so a
+    /// 429-driven provider switch is durably auditable (the trust claim).
+    /// `None` on the CLI one-shot path (the operator is present + sees the
+    /// `tracing::warn!`; the writer is created below this provider in the
+    /// chat call stack). The daemon (`cli::serve`) threads its live writer
+    /// in, so the unattended channel/cron path — where prompts actually
+    /// "wander" between providers — is the one that gets the durable frame.
+    wal_writer: Option<crate::wal::writer::WalWriterHandle>,
 }
 
 /// What to do with one fallback candidate. Extracted as a pure decision so
@@ -59,7 +68,11 @@ enum HopAction {
 }
 
 impl FallbackProvider {
-    pub fn new(chain: Vec<Box<dyn Provider>>, max_hops: u8) -> Self {
+    pub fn new(
+        chain: Vec<Box<dyn Provider>>,
+        max_hops: u8,
+        wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    ) -> Self {
         // `assert!` (not `debug_assert!`) so the invariant holds in release
         // too — `stream()` does `.first().expect(..)` and would otherwise
         // hard-panic on an empty chain in a release binary.
@@ -67,7 +80,11 @@ impl FallbackProvider {
             !chain.is_empty(),
             "FallbackProvider chain must be non-empty (primary at [0])"
         );
-        Self { chain, max_hops }
+        Self {
+            chain,
+            max_hops,
+            wal_writer,
+        }
     }
 
     /// Per-candidate hop decision for a fallback slot (`i > 0`). A candidate
@@ -150,6 +167,43 @@ impl Provider for FallbackProvider {
                             hop = hops,
                             "provider failover on 429"
                         );
+                        // SPEC-03b — durable audit of the hop (0x25). Emitted
+                        // only when a writer is wired (daemon path); the CLI
+                        // one-shot path passes None. Best-effort: an audit
+                        // append failure must NEVER block the failover.
+                        if let Some(w) = &self.wal_writer {
+                            let payload = serde_json::json!({
+                                "from_provider": self.chain[0].name(),
+                                "to_provider": candidate.name(),
+                                "reason": "quota_429",
+                                "hop": hops,
+                                // Same field + encoding (u64) as the
+                                // PROVIDER_REQUEST (0x20) frame, so an operator
+                                // can correlate the hop with the turn.
+                                "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
+                                "ts_unix": now,
+                            });
+                            match serde_json::to_vec(&payload) {
+                                Ok(bytes) => {
+                                    let header = crate::wal::make_header(
+                                        crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
+                                        &bytes,
+                                    );
+                                    if let Err(e) = w.append(header, bytes).await {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "fallback audit frame (0x25) append failed; \
+                                             failover proceeds"
+                                        );
+                                    }
+                                }
+                                Err(e) => tracing::warn!(
+                                    error = %e,
+                                    "fallback audit frame (0x25) serialize failed; \
+                                     failover proceeds"
+                                ),
+                            }
+                        }
                     }
                 }
             }
@@ -236,6 +290,7 @@ mod tests {
         let fp = FallbackProvider::new(
             vec![mock("primary", Behavior::Ok), mock("fb", Behavior::Ok)],
             2,
+            None,
         );
         let c = fp.complete(Request::default()).await.unwrap();
         assert_eq!(c.text, "ok:primary");
@@ -247,9 +302,88 @@ mod tests {
         let fp = FallbackProvider::new(
             vec![mock("primary", Behavior::Quota), mock("fb", Behavior::Ok)],
             2,
+            None,
         );
         let c = fp.complete(Request::default()).await.unwrap();
         assert_eq!(c.text, "ok:fb", "fallback must answer when primary 429s");
+    }
+
+    /// Decode the first `0x25 PROVIDER_FALLBACK_ATTEMPTED` payload from an
+    /// uncompressed WAL segment (test writer uses the plain `spawn`).
+    fn first_fallback_payload(seg: &std::path::Path) -> Option<serde_json::Value> {
+        let bytes = std::fs::read(seg).ok()?;
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).ok()?;
+        let mut cursor = hdr.header_len();
+        while cursor < bytes.len() {
+            let dec = crate::wal::frame::decode_frame(&bytes[cursor..]).ok()?;
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED {
+                return serde_json::from_slice(dec.payload).ok();
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        None
+    }
+
+    #[tokio::test]
+    async fn fallback_hop_emits_audit_frame_when_writer_wired() {
+        // SPEC-03b trust claim: a 429 hop with a writer present emits a
+        // durable 0x25 frame recording from/to/reason/hop + a prompt hash
+        // that correlates with the PROVIDER_REQUEST (0x20) frame.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("fb.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let fp = FallbackProvider::new(
+            vec![mock("primary", Behavior::Quota), mock("fb", Behavior::Ok)],
+            2,
+            Some(writer.clone()),
+        );
+        let req = Request {
+            prompt: "hello".into(),
+            ..Default::default()
+        };
+        let c = fp.complete(req).await.unwrap();
+        assert_eq!(c.text, "ok:fb");
+        // Flush: drop both writer handles so the writer task drains + exits.
+        drop(fp);
+        drop(writer);
+        let _ = join.await;
+
+        let payload = first_fallback_payload(&seg).expect("0x25 frame must be emitted on a hop");
+        assert_eq!(payload["from_provider"], "primary");
+        assert_eq!(payload["to_provider"], "fb");
+        assert_eq!(payload["reason"], "quota_429");
+        assert_eq!(payload["hop"], 1);
+        assert_eq!(
+            payload["prompt_hash_xxh3"].as_u64().unwrap(),
+            xxhash_rust::xxh3::xxh3_64(b"hello"),
+            "prompt hash must correlate with the PROVIDER_REQUEST frame"
+        );
+    }
+
+    #[tokio::test]
+    async fn primary_ok_emits_no_audit_frame() {
+        // No hop taken → no 0x25 frame even with a writer wired.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("fb.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let fp = FallbackProvider::new(
+            vec![mock("primary", Behavior::Ok), mock("fb", Behavior::Ok)],
+            2,
+            Some(writer.clone()),
+        );
+        let c = fp.complete(Request::default()).await.unwrap();
+        assert_eq!(c.text, "ok:primary");
+        drop(fp);
+        drop(writer);
+        let _ = join.await;
+        assert!(
+            first_fallback_payload(&seg).is_none(),
+            "no hop → no 0x25 frame"
+        );
     }
 
     #[tokio::test]
@@ -259,6 +393,7 @@ mod tests {
         let fp = FallbackProvider::new(
             vec![mock("primary", Behavior::Other), mock("fb", Behavior::Ok)],
             2,
+            None,
         );
         let err = fp.complete(Request::default()).await.unwrap_err();
         assert!(err.to_string().contains("non-quota failure from primary"));
@@ -272,6 +407,7 @@ mod tests {
                 mock("fb1", Behavior::Quota),
             ],
             2,
+            None,
         );
         let err = fp.complete(Request::default()).await.unwrap_err();
         // The last error surfaced is a QuotaError (fb1's), downcastable.
@@ -290,6 +426,7 @@ mod tests {
                 mock("fb2", Behavior::Ok),
             ],
             1,
+            None,
         );
         assert!(
             fp.complete(Request::default()).await.is_err(),
@@ -304,6 +441,7 @@ mod tests {
                 mock("fb2", Behavior::Ok),
             ],
             2,
+            None,
         );
         assert_eq!(
             fp2.complete(Request::default()).await.unwrap().text,

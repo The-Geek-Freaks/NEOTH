@@ -258,7 +258,10 @@ pub(crate) fn consented_fallback_slots<'a>(
         .collect()
 }
 
-pub async fn fallback_chain_from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+pub async fn fallback_chain_from_config(
+    config: &FreedomConfig,
+    wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+) -> Result<Box<dyn Provider>> {
     let primary =
         from_config_for_role(config, crate::config::inference::HemisphereRole::Left).await?;
     if config.fallback.chain.is_empty() {
@@ -300,6 +303,7 @@ pub async fn fallback_chain_from_config(config: &FreedomConfig) -> Result<Box<dy
     Ok(Box::new(fallback::FallbackProvider::new(
         chain,
         config.fallback.max_hops,
+        wal_writer,
     )))
 }
 
