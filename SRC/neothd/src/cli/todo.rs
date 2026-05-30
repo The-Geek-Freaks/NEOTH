@@ -7,7 +7,7 @@
 //!   3. `NEOTH_TODOIST_TOKEN` env var (CI / quick one-off)
 //! else a clear error telling the operator where to put it.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
@@ -102,10 +102,13 @@ fn resolve_token(arg: Option<&str>) -> Result<SecretString> {
             return Ok(SecretString::from(t));
         }
     }
+    // Propagate a corrupt-credentials parse error (load_or_default hard-errors
+    // on bad YAML by contract) rather than `unwrap_or_default()`-swallowing it
+    // into a misleading "no Todoist token" bail. Mirrors cli::slack.
     let creds = crate::config::credentials::Credentials::load_or_default(
         &crate::config::credentials::default_path(),
     )
-    .unwrap_or_default();
+    .context("load credentials.yaml")?;
     if let Some(tok) = creds.todoist_token {
         return Ok(tok);
     }

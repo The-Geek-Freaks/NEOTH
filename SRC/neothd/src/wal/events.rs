@@ -190,7 +190,13 @@ pub const EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED: u8 = 0x24;
 /// actual attempt (a 429-backoff SKIP does NOT emit — no hop is taken).
 ///
 /// Payload (JSON):
-///   - `from_provider`: the provider that 429'd (the chain primary's name)
+///   - `from_provider`: the chain PRIMARY (`chain[0]`) — the head of the
+///     fallback chain, NOT necessarily the immediate 429-source on a
+///     multi-hop chain. For a 3+ provider chain the immediate source of
+///     hop N is the candidate at position N-1; reconstruct the exact walk
+///     from `hop` (1-based) against the static `freedom.yaml::fallback.chain`
+///     order. (Single-fallback chains — the common case — have one hop, so
+///     primary IS the 429-source there.)
 ///   - `to_provider`: the provider being attempted on this hop
 ///   - `reason`: `"quota_429"` (the only trigger — non-429 errors propagate
 ///               immediately without failover)

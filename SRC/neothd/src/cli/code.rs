@@ -105,6 +105,16 @@ pub async fn run_code(args: CodeArgs) -> Result<()> {
         return run_pending_phase(&args).await;
     }
     if args.prompt.trim().is_empty() {
+        // Context-accurate remedy: a `--dispatch` operator chose the
+        // fresh-decompose path and just forgot the prompt — telling them to
+        // use `--run-pending` (a mutually-exclusive mode) would misdirect.
+        if args.dispatch {
+            anyhow::bail!(
+                "neoth code --dispatch requires a prompt to decompose — e.g. \
+                 `neoth code --dispatch \"add auth\"` (to drive EXISTING Backlog \
+                 tasks without a prompt, use --run-pending instead)"
+            );
+        }
         anyhow::bail!(
             "neoth code: prompt is empty — nothing to decompose \
              (pass --run-pending to drive existing Backlog tasks)"
