@@ -37,9 +37,9 @@ pub enum HemisphereAction {
         /// Role to rebind: `left` / `right` / `cerebellum`.
         #[arg(long)]
         role: String,
-        /// Provider name: `claude_cli` / `openai_api` / `openai_compat` /
-        /// `gemini_api` / `local_qwen` / `hermes` / `openclaw` /
-        /// `anthropic_api`.
+        /// Provider name: `claude_cli` / `anthropic_api` / `openai_api` /
+        /// `openai_compat` / `gemini_api` / `local_qwen` / `local_ouro` /
+        /// `aws_bedrock` / `azure_openai`.
         #[arg(long)]
         provider: String,
         /// Model identifier (e.g. `claude-opus-4-7`, `gpt-4o`).
@@ -48,7 +48,7 @@ pub enum HemisphereAction {
         /// API key (when the provider needs one).
         #[arg(long)]
         key: Option<String>,
-        /// Endpoint URL (for `openai_compat` / `hermes` / `openclaw`).
+        /// Endpoint URL (for `openai_compat`).
         #[arg(long)]
         endpoint: Option<String>,
     },
@@ -162,7 +162,8 @@ async fn run_set(
     let provider = InferenceProvider::from_str(provider_str).ok_or_else(|| {
         anyhow::anyhow!(
             "unknown provider `{provider_str}`. Valid: claude_cli, anthropic_api, \
-             openai_api, openai_compat, gemini_api, local_qwen, hermes, openclaw"
+             openai_api, openai_compat, gemini_api, local_qwen, local_ouro, \
+             aws_bedrock, azure_openai"
         )
     })?;
 

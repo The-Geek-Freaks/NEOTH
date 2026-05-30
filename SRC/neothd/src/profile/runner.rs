@@ -394,7 +394,7 @@ static V10_07_PROVIDER_WARNED: std::sync::atomic::AtomicBool =
 /// inference path. Local providers see the operator's conversation but
 /// the data stays on-device — no privacy concern under H3.
 fn is_local_inference_provider(name: &str) -> bool {
-    matches!(name, "local_qwen" | "hermes" | "openclaw")
+    matches!(name, "local_qwen" | "local_ouro")
 }
 
 /// SPEC-04 (Session 28) — stable wire label for the `target` field in
@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn local_providers_do_not_set_v10_07_warn_flag() {
         reset_v10_07_warned_flag_for_test();
-        for name in ["local_qwen", "hermes", "openclaw"] {
+        for name in ["local_qwen", "local_ouro"] {
             warn_if_cloud_provider_used_for_profile_extraction_once(name);
             assert!(
                 !v10_07_warned_flag_for_test(),
@@ -868,8 +868,7 @@ mod tests {
     #[test]
     fn is_local_provider_classifies_inference_paths_correctly() {
         assert!(is_local_inference_provider("local_qwen"));
-        assert!(is_local_inference_provider("hermes"));
-        assert!(is_local_inference_provider("openclaw"));
+        assert!(is_local_inference_provider("local_ouro"));
         assert!(!is_local_inference_provider("claude_cli"));
         assert!(!is_local_inference_provider("openai_api"));
         assert!(!is_local_inference_provider("gemini_api"));

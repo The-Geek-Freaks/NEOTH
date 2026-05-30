@@ -1,8 +1,8 @@
 //! Pick #6 Phase 3 — concrete provider-backed Worker.
 //!
 //! `ProviderWorker` wraps any `providers::Provider` (claude_cli,
-//! openai_api, openai_compat, gemini_api, local_qwen, hermes,
-//! openclaw) into an `async` `Worker` impl that the dispatcher calls
+//! openai_api, openai_compat, gemini_api, local_qwen, local_ouro)
+//! into an `async` `Worker` impl that the dispatcher calls
 //! one task at a time. QU-10d (Session 30): `Worker::execute` is now
 //! `async`, so this awaits `provider.complete` directly on the ambient
 //! runtime — the prior `tokio::runtime::Handle` + `block_on` hack is

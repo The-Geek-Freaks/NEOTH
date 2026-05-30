@@ -56,7 +56,7 @@ pub struct CostEstimate {
 }
 
 /// Look up a `PriceRow` for a provider/model pair. Returns the free
-/// row for local providers (`local_qwen`) + when the table doesn't
+/// row for local providers (`local_qwen` / `local_ouro`) + when the table doesn't
 /// know about the model. Unknown-model behaviour is intentional: we
 /// don't want to surprise-bill an operator who points NEOTH at a
 /// brand-new release; the gate falls back to "estimate unknown" +
@@ -115,7 +115,7 @@ pub fn lookup_price(provider: &str, model: &str) -> Option<PriceRow> {
             output_eur_per_mtok: 9.2,
         }),
         // Local — always free
-        ("local_qwen" | "hermes" | "openclaw", _) => Some(PriceRow::free()),
+        ("local_qwen" | "local_ouro", _) => Some(PriceRow::free()),
         _ => None,
     }
 }
@@ -268,7 +268,7 @@ pub fn predict(provider: &str, model: &str, input_text: &str, meter: &Meter) -> 
     // (silent-bypass of the autonomy gate). Fall back to a
     // conservative high estimate so the operator sees a non-zero
     // EUR figure and the permission gate decides on the safe side.
-    // Local providers (local_qwen / hermes / openclaw) genuinely
+    // Local providers (local_qwen / local_ouro) genuinely
     // are free and `lookup_price` returns Some(free) for those.
     let price = lookup_price(provider, model).unwrap_or_else(|| {
         tracing::warn!(
@@ -452,13 +452,22 @@ mod tests {
 
     #[test]
     fn predict_unknown_local_model_stays_zero() {
-        // Local providers (local_qwen/hermes/openclaw) match the
+        // Local providers (local_qwen/local_ouro) match the
         // generic-local arm in lookup_price + return free. The
         // fail-safe high-estimate kicks in only for truly unknown
         // provider names.
         let meter = Meter::with_default_window();
         let est = predict("local_qwen", "Qwen/Some-New-Tag", "hello", &meter);
         assert_eq!(est.total_eur, 0.0);
+        // local_ouro is the second local provider (Session 22) — it must
+        // also price free, not fall through to the high-estimate fallback.
+        let ouro = predict(
+            "local_ouro",
+            "ByteDance/Ouro-1.4B-Thinking",
+            "hello",
+            &meter,
+        );
+        assert_eq!(ouro.total_eur, 0.0);
     }
 
     #[test]

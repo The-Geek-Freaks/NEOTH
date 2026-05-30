@@ -66,9 +66,8 @@ pub struct KnownEndpoint {
     pub has_list_models: bool,
 }
 
-/// Pinned 2026-05-18 snapshot. Cross-checked against
-/// `c:/Users/Shadow-PC/CascadeProjects/openclawfix/AIRFORCE_MODELS.json`
-/// (provider catalogue research) + each provider's public docs.
+/// Pinned 2026-05-18 snapshot. Cross-checked against an offline
+/// provider-catalogue research dump + each provider's public docs.
 pub const KNOWN_ENDPOINTS: &[KnownEndpoint] = &[
     KnownEndpoint {
         display: "DeepSeek (direct)",
