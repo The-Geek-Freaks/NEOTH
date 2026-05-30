@@ -16,6 +16,7 @@ use crate::credentials::bitwarden::BitwardenJsonImporter;
 use crate::credentials::chrome::ChromeImporter;
 use crate::credentials::firefox::FirefoxImporter;
 use crate::credentials::{CredentialImporter, ImportSession, ImporterOutcome, build_import_record};
+use crate::secret::SecretString;
 use crate::security::credential_redact::{
     RedactedCredentialImportPayload, redact_credential_import,
 };
@@ -87,12 +88,22 @@ pub fn importer_id_for_source(source: super::ImportSource) -> String {
 /// Build the static importer list the wizard picker renders.
 /// `bitwarden_export_path` is operator-supplied via the wizard
 /// prompt (None = Bitwarden entry hidden in the picker).
+/// `bitwarden_password` (C-02b) is attached when the operator's export
+/// is the password-protected variant; the importer auto-detects the
+/// format at discover-time, so a `None` password with a plaintext export
+/// is the common case, and a `None` password with an encrypted export
+/// surfaces a clear error rather than a silent empty vault.
 pub fn build_wizard_importer_list(
     bitwarden_export_path: Option<&Path>,
+    bitwarden_password: Option<SecretString>,
 ) -> Vec<Box<dyn CredentialImporter>> {
     let mut out: Vec<Box<dyn CredentialImporter>> = Vec::new();
     if let Some(path) = bitwarden_export_path {
-        out.push(Box::new(BitwardenJsonImporter::new(path)));
+        let mut importer = BitwardenJsonImporter::new(path);
+        if let Some(password) = bitwarden_password {
+            importer = importer.with_password(password);
+        }
+        out.push(Box::new(importer));
     }
     out.push(Box::new(ChromeImporter));
     // C-04b Phase 2 chunk 3 (Session 28) — the Firefox importer
@@ -188,7 +199,7 @@ mod tests {
 
     #[test]
     fn build_list_without_bitwarden_path_has_chrome_and_firefox() {
-        let list = build_wizard_importer_list(None);
+        let list = build_wizard_importer_list(None, None);
         assert_eq!(list.len(), 2);
         // Both chrome + firefox importers are WizardPrompt source
         // (their gated impls).
@@ -202,7 +213,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("export.json");
         std::fs::write(&path, "{}").unwrap();
-        let list = build_wizard_importer_list(Some(&path));
+        let list = build_wizard_importer_list(Some(&path), None);
         assert_eq!(list.len(), 3);
         // Bitwarden lands first.
         assert_eq!(list[0].source(), ImportSource::Bitwarden);
@@ -212,7 +223,7 @@ mod tests {
 
     #[tokio::test]
     async fn wizard_step_with_no_available_importer_redacts_payload_empty() {
-        let result = run_wizard_step(build_wizard_importer_list(None), "primary", 100).await;
+        let result = run_wizard_step(build_wizard_importer_list(None, None), "primary", 100).await;
         assert!(result.redacted_payload.services_redacted);
         assert_eq!(result.redacted_payload.target_vault_id, "primary");
         assert_eq!(result.redacted_payload.ts_unix, 100);
@@ -231,7 +242,7 @@ mod tests {
         }"#;
         std::fs::write(&path, body).unwrap();
         let result = run_wizard_step(
-            build_wizard_importer_list(Some(&path)),
+            build_wizard_importer_list(Some(&path), None),
             "primary",
             1_700_000_000,
         )
@@ -246,11 +257,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wizard_step_encrypted_export_without_password_reports_clear_error() {
+        // C-02b end-to-end: an encrypted export handed to the wizard with
+        // no password must surface a failed Bitwarden outcome with an
+        // actionable error — NOT a silently-successful empty import.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("export.json");
+        std::fs::write(&path, r#"{"encrypted":true,"data":"2.a|b|c"}"#).unwrap();
+        let result =
+            run_wizard_step(build_wizard_importer_list(Some(&path), None), "primary", 0).await;
+        let bw = result
+            .summaries
+            .iter()
+            .find(|s| s.importer_name.contains("Bitwarden"))
+            .expect("bitwarden summary present");
+        assert!(
+            !bw.ok,
+            "encrypted export with no password must fail, not silently succeed"
+        );
+        assert!(
+            bw.error_summary.contains("encrypted") || bw.error_summary.contains("password"),
+            "error must be actionable, got: {}",
+            bw.error_summary
+        );
+    }
+
+    #[tokio::test]
     async fn wizard_step_any_importer_succeeded_true_when_at_least_one_ok() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("export.json");
         std::fs::write(&path, "{}").unwrap();
-        let result = run_wizard_step(build_wizard_importer_list(Some(&path)), "primary", 0).await;
+        let result =
+            run_wizard_step(build_wizard_importer_list(Some(&path), None), "primary", 0).await;
         assert!(result.any_importer_succeeded());
     }
 
@@ -263,7 +301,8 @@ mod tests {
             {"name":"b","type":1,"login":{"username":"u","password":"p","uris":[{"uri":"y"}]}}
         ]}"#;
         std::fs::write(&path, body).unwrap();
-        let result = run_wizard_step(build_wizard_importer_list(Some(&path)), "primary", 0).await;
+        let result =
+            run_wizard_step(build_wizard_importer_list(Some(&path), None), "primary", 0).await;
         assert_eq!(result.total_entries(), 2);
     }
 

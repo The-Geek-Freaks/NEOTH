@@ -3194,12 +3194,40 @@ async fn step6g_credential_import(args: &InitArgs, interactive: bool, neoth_dir:
     #[cfg(not(feature = "wizard"))]
     let bitwarden_path: Option<std::path::PathBuf> = None;
 
+    // C-02b: a password-protected Bitwarden export needs the export
+    // password to decrypt. Peek the file; only prompt when it's the
+    // encrypted variant (the common plaintext export needs no password).
+    #[cfg(feature = "wizard")]
+    let bitwarden_password: Option<crate::secret::SecretString> = match bitwarden_path.as_deref() {
+        Some(path)
+            if std::fs::read_to_string(path)
+                .map(|body| crate::credentials::bitwarden::export_is_encrypted(&body))
+                .unwrap_or(false) =>
+        {
+            match dialoguer::Password::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt("Bitwarden export is encrypted — export password")
+                .interact()
+            {
+                Ok(pw) => Some(crate::secret::SecretString::new(pw)),
+                Err(e) => {
+                    warn!(error = %e, "bitwarden password prompt failed; encrypted export will be skipped with a clear error");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+    #[cfg(not(feature = "wizard"))]
+    let bitwarden_password: Option<crate::secret::SecretString> = None;
+
     let ts_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let importers =
-        crate::credentials::wizard_step::build_wizard_importer_list(bitwarden_path.as_deref());
+    let importers = crate::credentials::wizard_step::build_wizard_importer_list(
+        bitwarden_path.as_deref(),
+        bitwarden_password,
+    );
     let result =
         crate::credentials::wizard_step::run_wizard_step(importers, "primary", ts_unix).await;
 

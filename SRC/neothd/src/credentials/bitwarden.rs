@@ -27,6 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::credentials::{
     CredentialImporter, DiscoveredCredentials, ImportSource, ImportedCredential,
 };
+use crate::secret::SecretString;
 
 /// Maximum nesting depth allowed when parsing a Bitwarden export.
 /// Adversarial JSON with deeper nesting is rejected to prevent
@@ -72,10 +73,34 @@ struct BwUri {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct BwExport {
+    /// `true` for a password-protected (`encrypted_json`) export. The
+    /// plaintext parser must REJECT these — an encrypted export has no
+    /// `items`/`folders` at top level, so without this guard it parsed
+    /// to an empty vault silently (C-02b bug). The decrypt path lives in
+    /// [`crate::credentials::bitwarden_encrypted`]; the importer routes
+    /// to it automatically (see [`BitwardenJsonImporter::discover_entries`]).
+    #[serde(default)]
+    encrypted: bool,
     #[serde(default)]
     folders: Vec<BwFolder>,
     #[serde(default)]
     items: Vec<BwItem>,
+}
+
+/// Cheap pre-flight: is this export the password-protected
+/// (`encrypted: true`) variant? Tolerant — a parse failure (truncated
+/// file, not-JSON) returns `false` so the caller falls through to the
+/// plaintext parser, which surfaces the real parse error. Used by the
+/// importer + wizard to route encrypted exports to the decrypt path.
+pub fn export_is_encrypted(body: &str) -> bool {
+    #[derive(Deserialize)]
+    struct EncFlag {
+        #[serde(default)]
+        encrypted: bool,
+    }
+    serde_json::from_str::<EncFlag>(body)
+        .map(|f| f.encrypted)
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -86,16 +111,34 @@ struct BwFolder {
     name: String,
 }
 
-/// Importer for the Bitwarden unencrypted JSON export.
+/// Importer for the Bitwarden JSON export — handles BOTH the plaintext
+/// (`encrypted: false`) and the password-protected (`encrypted: true`)
+/// variants. Mirrors the Firefox importer precedent: a single importer
+/// carries an OPTIONAL secret (`password`) rather than splitting into two
+/// types. The export format is auto-detected at `discover_entries` time;
+/// an encrypted export with no password supplied surfaces a clear error
+/// (never a silent empty vault).
 pub struct BitwardenJsonImporter {
     pub export_path: PathBuf,
+    /// Export password for the encrypted variant. `None` for plaintext
+    /// exports (the common case) — the wizard's interactive branch fills
+    /// this via [`BitwardenJsonImporter::with_password`] after prompting.
+    password: Option<SecretString>,
 }
 
 impl BitwardenJsonImporter {
     pub fn new(export_path: impl Into<PathBuf>) -> Self {
         Self {
             export_path: export_path.into(),
+            password: None,
         }
+    }
+
+    /// Attach the export password for the encrypted variant. Builder so
+    /// the plaintext call site (`new`) stays a one-arg constructor.
+    pub fn with_password(mut self, password: SecretString) -> Self {
+        self.password = Some(password);
+        self
     }
 }
 
@@ -106,7 +149,7 @@ impl CredentialImporter for BitwardenJsonImporter {
     }
 
     fn name(&self) -> &'static str {
-        "Bitwarden (unencrypted JSON export)"
+        "Bitwarden (JSON export)"
     }
 
     async fn is_available(&self) -> bool {
@@ -118,7 +161,23 @@ impl CredentialImporter for BitwardenJsonImporter {
         let body = tokio::fs::read_to_string(&self.export_path)
             .await
             .map_err(|e| format!("read {}: {e}", self.export_path.display()))?;
-        parse_export_str(&body)
+        if export_is_encrypted(&body) {
+            // Password-protected export → decrypt first, then reuse the
+            // plaintext parser on the recovered vault JSON.
+            let password = self.password.as_ref().ok_or_else(|| {
+                "encrypted Bitwarden export — re-run the import with the export password \
+                 (the encrypted variant cannot be read without it)"
+                    .to_string()
+            })?;
+            let plaintext = crate::credentials::bitwarden_encrypted::parse_and_decrypt(
+                &body,
+                password.expose(),
+            )
+            .map_err(|e| format!("decrypt Bitwarden export: {e}"))?;
+            parse_export_str(&plaintext)
+        } else {
+            parse_export_str(&body)
+        }
     }
 }
 
@@ -135,6 +194,18 @@ pub fn parse_export_str(body: &str) -> Result<DiscoveredCredentials, String> {
         ));
     }
     let export: BwExport = serde_json::from_str(body).map_err(|e| format!("parse JSON: {e}"))?;
+
+    // C-02b: a password-protected export carries `encrypted: true` and no
+    // top-level items — reject it with a clear message instead of silently
+    // returning an empty vault. The importer routes encrypted exports to the
+    // decrypt path before reaching here; this guard catches direct callers.
+    if export.encrypted {
+        return Err(
+            "encrypted Bitwarden export detected (`encrypted: true`) — supply the export \
+             password so NEOTH can decrypt it first"
+                .to_string(),
+        );
+    }
 
     // Folder id → tag mapping.
     let folder_tag: std::collections::HashMap<String, String> = export
@@ -504,5 +575,121 @@ mod tests {
         let imp = BitwardenJsonImporter::new(dir.path().join("no-export.json"));
         let err = imp.discover_entries().await.unwrap_err();
         assert!(err.contains("read"));
+    }
+
+    // ── C-02b: encrypted-export detection + decrypt routing ───────────
+
+    /// Build a real password-protected Bitwarden export envelope around
+    /// `vault_json`, using the SAME AES-256-CBC + HMAC-SHA256 + PBKDF2
+    /// construction the decrypt path expects. Mirrors the encrypted
+    /// module's own test harness so the importer round-trip exercises
+    /// the production decrypt code, not a stub.
+    fn build_synthetic_encrypted_export(
+        password: &str,
+        salt: &str,
+        iters: u32,
+        vault_json: &str,
+    ) -> String {
+        use base64::Engine as _;
+        use cbc::cipher::block_padding::Pkcs7;
+        use cbc::cipher::{BlockEncryptMut, KeyIvInit};
+        use hmac::{Hmac, Mac};
+        use sha2::Sha256;
+        type Aes256CbcEnc = cbc::Encryptor<aes::Aes256>;
+        type HmacSha256 = Hmac<Sha256>;
+
+        let (enc_key, mac_key) = crate::credentials::bitwarden_encrypted::derive_keys_pbkdf2(
+            password.as_bytes(),
+            salt.as_bytes(),
+            iters,
+        );
+        let enc_string = |plaintext: &[u8], iv: &[u8; 16]| -> String {
+            let mut buf = vec![0u8; plaintext.len() + 16];
+            buf[..plaintext.len()].copy_from_slice(plaintext);
+            let ct_len = Aes256CbcEnc::new((&enc_key).into(), iv.into())
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
+                .expect("encrypt must succeed")
+                .len();
+            buf.truncate(ct_len);
+            let mut h = HmacSha256::new_from_slice(&mac_key).expect("HMAC accepts any key len");
+            h.update(iv);
+            h.update(&buf);
+            let mac = h.finalize().into_bytes();
+            format!(
+                "2.{}|{}|{}",
+                base64::engine::general_purpose::STANDARD.encode(iv),
+                base64::engine::general_purpose::STANDARD.encode(&buf),
+                base64::engine::general_purpose::STANDARD.encode(mac),
+            )
+        };
+        let validator = enc_string(b"neoth-validator", &[0xAB; 16]);
+        let data_enc = enc_string(vault_json.as_bytes(), &[0xCD; 16]);
+        format!(
+            r#"{{"encrypted":true,"passwordProtected":true,"salt":"{salt}","kdfType":0,"kdfIterations":{iters},"encKeyValidation_DO_NOT_EDIT":"{validator}","data":"{data_enc}"}}"#
+        )
+    }
+
+    #[test]
+    fn export_is_encrypted_detects_flag() {
+        assert!(export_is_encrypted(r#"{"encrypted":true,"data":"x"}"#));
+        assert!(!export_is_encrypted(r#"{"encrypted":false,"items":[]}"#));
+        // absent flag == plaintext export
+        assert!(!export_is_encrypted(r#"{"items":[]}"#));
+        // tolerant: non-JSON falls through to the plaintext parser
+        assert!(!export_is_encrypted("not json at all"));
+    }
+
+    #[test]
+    fn parse_export_str_rejects_encrypted_export() {
+        let err = parse_export_str(r#"{"encrypted":true,"data":"2.a|b|c"}"#).unwrap_err();
+        assert!(err.contains("encrypted Bitwarden export"), "got: {err}");
+        assert!(err.contains("password"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn encrypted_importer_without_password_errors_clearly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("enc.json");
+        std::fs::write(&path, r#"{"encrypted":true,"data":"2.a|b|c"}"#).unwrap();
+        // No password attached → must surface a clear, actionable error,
+        // NOT a silent empty vault (the C-02b bug).
+        let imp = BitwardenJsonImporter::new(&path);
+        let err = imp.discover_entries().await.unwrap_err();
+        assert!(err.contains("encrypted"), "got: {err}");
+        assert!(err.contains("password"), "got: {err}");
+    }
+
+    #[tokio::test]
+    async fn encrypted_importer_round_trip_decrypts_and_parses() {
+        let vault = r#"{"folders":[],"items":[{"name":"PayPal","type":1,"login":{"username":"alex","password":"S3cret!","uris":[{"uri":"https://paypal.com"}]}}]}"#;
+        let body = build_synthetic_encrypted_export("hunter2", "alex@example.com", 100_000, vault);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("enc.json");
+        std::fs::write(&path, body).unwrap();
+        let imp =
+            BitwardenJsonImporter::new(&path).with_password(SecretString::new("hunter2".into()));
+        let d = imp.discover_entries().await.unwrap();
+        assert_eq!(d.entries.len(), 1, "decrypted vault must yield the login");
+        assert_eq!(d.entries[0].name, "PayPal");
+        assert_eq!(d.entries[0].username, "alex");
+        assert_eq!(d.entries[0].secret.expose_str(), Some("S3cret!"));
+    }
+
+    #[tokio::test]
+    async fn encrypted_importer_wrong_password_surfaces_decrypt_error() {
+        let body = build_synthetic_encrypted_export(
+            "correct-horse",
+            "s@e.com",
+            100_000,
+            r#"{"items":[]}"#,
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("enc.json");
+        std::fs::write(&path, body).unwrap();
+        let imp =
+            BitwardenJsonImporter::new(&path).with_password(SecretString::new("wrong".into()));
+        let err = imp.discover_entries().await.unwrap_err();
+        // The decrypt error (WrongPassword) is wrapped, never silently empty.
+        assert!(err.contains("decrypt Bitwarden export"), "got: {err}");
     }
 }

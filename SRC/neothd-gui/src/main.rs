@@ -1859,6 +1859,22 @@ mod chat_subprocess_tests {
         let msg = result.unwrap_err();
         assert!(msg.contains("could not start") || msg.contains("Chat subprocess"));
     }
+
+    #[test]
+    fn apply_active_preset_via_subprocess_with_reports_binary_missing() {
+        // GR-05: the apply seam degrades to an operator-readable status
+        // string (not a panic) when the pinned binary can't spawn — the
+        // first subprocess (`preset list`) fails to start. The
+        // active-name parsing the happy path relies on is covered
+        // separately by `parse_active_preset_name_*`.
+        let nonexistent =
+            std::path::PathBuf::from("/this/path/does/not/exist/neothd_test_fake_preset");
+        let result = crate::apply_active_preset_via_subprocess_with(&nonexistent);
+        assert!(
+            result.contains("could not start"),
+            "expected a spawn-failure status, got: {result}"
+        );
+    }
 }
 
 fn probe_hardware_via_subprocess() -> String {
@@ -1947,12 +1963,19 @@ pub fn shape_usage_summary(json: &str) -> String {
 /// then shell `neoth preset apply <active>`. Returns an operator-
 /// readable result string for the status line.
 fn apply_active_preset_via_subprocess() -> String {
-    let candidate = which_neothd();
-    let Some(bin) = candidate else {
+    let Some(bin) = which_neothd() else {
         return "Preset apply unavailable — `neothd` binary not on PATH.".to_string();
     };
+    apply_active_preset_via_subprocess_with(&bin)
+}
+
+/// GR-05 test-injection seam (mirrors [`chat_via_subprocess_with`]): the
+/// caller pins the binary path so a test can drive the full
+/// list → parse-active → apply flow against a staged fake `neothd`
+/// instead of requiring the real daemon on PATH.
+pub fn apply_active_preset_via_subprocess_with(bin: &std::path::Path) -> String {
     // First: list to find the active marker.
-    let list_output = spawn_neothd_plain(&bin).arg("preset").arg("list").output();
+    let list_output = spawn_neothd_plain(bin).arg("preset").arg("list").output();
     let stdout = match list_output {
         Ok(out) if out.status.success() => out.stdout,
         Ok(out) => {
@@ -1968,7 +1991,7 @@ fn apply_active_preset_via_subprocess() -> String {
     let Some(name) = active else {
         return "No active preset — `neoth preset activate <name>` first.".to_string();
     };
-    let apply_output = spawn_neothd_plain(&bin)
+    let apply_output = spawn_neothd_plain(bin)
         .arg("preset")
         .arg("apply")
         .arg(&name)
