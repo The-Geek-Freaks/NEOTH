@@ -71,6 +71,12 @@ pub struct Credentials {
     /// attaches it to every PearsBridge::post_message / .health()
     /// request via `bearer_auth`.
     pub pears_bearer_token: Option<SecretString>,
+    /// TD-01 (Session 30) — Todoist REST v2 API token (Settings →
+    /// Integrations → Developer in the Todoist app). Used by
+    /// `neoth todo {list,add,close}` via `tools::todoist`. Wrapped in
+    /// SecretString for the same mlock+zeroize protections as the other
+    /// keys. Optional override paths: `--token` flag, `NEOTH_TODOIST_TOKEN`.
+    pub todoist_token: Option<SecretString>,
 }
 
 impl Credentials {
@@ -142,6 +148,7 @@ impl Credentials {
             slack_app_token,
             keet_seed_phrase,
             pears_bearer_token,
+            todoist_token,
         } = self;
         provider_key.is_none()
             && telegram_token.is_none()
@@ -153,6 +160,7 @@ impl Credentials {
             && slack_app_token.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
+            && todoist_token.is_none()
     }
 
     /// True if either field is set. Mirror of `!is_empty()` for call-site

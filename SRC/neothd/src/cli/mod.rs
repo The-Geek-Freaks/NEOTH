@@ -83,6 +83,7 @@ pub mod slash;
 pub mod status;
 pub mod supervisor;
 pub mod telemetry;
+pub mod todo;
 pub mod tour;
 pub mod tts;
 pub mod tweaks;
@@ -460,6 +461,11 @@ pub enum Commands {
     /// calling `auth.test` + `apps.connections.open` and reports the
     /// WSS URL Phase-2 socket-mode loop will dial.
     Slack(slack::SlackArgs),
+
+    /// Todoist task management (TD-01). `list` / `add <content>` /
+    /// `close <id>` via the Todoist REST v2 API. Token from `--token`,
+    /// `credentials.yaml::todoist_token`, or `NEOTH_TODOIST_TOKEN`.
+    Todo(todo::TodoArgs),
 
     /// Text-to-speech synthesis (A-45). `speak` writes audio bytes to
     /// a file via ElevenLabs (cloud) or piper-rs (Phase 2 local).
@@ -863,6 +869,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Slack(mut args) => {
             args.output = global_output;
             slack::run_slack(args).await?;
+        }
+        Commands::Todo(mut args) => {
+            args.output = global_output;
+            todo::run_todo(args).await?;
         }
         Commands::Tts(mut args) => {
             args.output = global_output;
