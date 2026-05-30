@@ -49,6 +49,7 @@ pub mod proactive_dispatcher;
 /// (operator-tunable); the per-week dedup_key in the reflection
 /// item itself keeps emissions to one per ISO week regardless of
 /// tick frequency.
+pub mod profile_adapt_cron;
 pub mod reflection_cron;
 pub mod sidecar;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

@@ -255,24 +255,28 @@ async fn run_decline(
     Ok(())
 }
 
-async fn run_propose(
+/// Shared proposal-generation core (SPEC-05 extracted this from
+/// `run_propose` so the daemon's passive-adaptation cron
+/// (`daemon::profile_adapt_cron`) reuses the EXACT dedup + store + WAL-emit
+/// logic instead of duplicating it). Given an already-loaded behavioural
+/// profile + the current preset name, runs `propose_adjustments`, appends
+/// only proposals whose stable id isn't already in the store (idempotent),
+/// emits a `0x1C SELF_DEV_PROPOSED` frame per new proposal (direct when a
+/// `writer` is present, else enqueued to the self-dev outbox for the daemon
+/// to drain), persists the store, and returns the count of NEW proposals.
+pub(crate) async fn propose_and_store(
     home: &Path,
-    from_profile: &Path,
+    profile: &BehaviouralProfile,
     current_preset_name: &str,
     writer: Option<&WalWriterHandle>,
-) -> Result<()> {
-    let bytes =
-        std::fs::read(from_profile).with_context(|| format!("read {}", from_profile.display()))?;
-    let profile: BehaviouralProfile = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse BehaviouralProfile from {}", from_profile.display()))?;
+) -> Result<usize> {
     let current = match ProfilePreset::parse(current_preset_name) {
         Some(p) => apply_preset(p),
         None => apply_preset(ProfilePreset::Lowkey),
     };
-    let new_proposals = propose_adjustments(&profile, &current);
+    let new_proposals = propose_adjustments(profile, &current);
     if new_proposals.is_empty() {
-        println!("(no proposals — operator state matches current preset within thresholds)");
-        return Ok(());
+        return Ok(0);
     }
     let mut store = load_store(home)?;
     let ts = now_unix();
@@ -299,6 +303,24 @@ async fn run_propose(
         }
     }
     save_store(home, &store)?;
+    Ok(added)
+}
+
+async fn run_propose(
+    home: &Path,
+    from_profile: &Path,
+    current_preset_name: &str,
+    writer: Option<&WalWriterHandle>,
+) -> Result<()> {
+    let bytes =
+        std::fs::read(from_profile).with_context(|| format!("read {}", from_profile.display()))?;
+    let profile: BehaviouralProfile = serde_json::from_slice(&bytes)
+        .with_context(|| format!("parse BehaviouralProfile from {}", from_profile.display()))?;
+    let added = propose_and_store(home, &profile, current_preset_name, writer).await?;
+    if added == 0 {
+        println!("(no proposals — operator state matches current preset within thresholds)");
+        return Ok(());
+    }
     println!("✓ {added} new proposal(s) added to the store");
     if writer.is_some() {
         println!("  (one WAL frame 0x1C SELF_DEV_PROPOSED per new proposal)");

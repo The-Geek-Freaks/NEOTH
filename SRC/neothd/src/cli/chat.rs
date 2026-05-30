@@ -614,10 +614,16 @@ pub async fn run_chat_with(
         (layer, None)
     } else {
         // Day-14b Phase 2 — Stage-2 embedding cosine re-rank.
-        // Runs ONLY when keyword Stage-1 missed AND the operator
-        // configured `freedom.yaml::inference.embedding_provider`.
+        // PF-01 (Session 30): Stage-2 runs when EITHER keyword Stage-1
+        // missed OR `skills.always_embed_route` is set (the default) —
+        // so the skill library routes by SEMANTICS, not only on a literal
+        // keyword. A Stage-2 hit (cosine ≥ EMBEDDING_THRESHOLD) takes
+        // PRECEDENCE over the keyword match; when Stage-2 returns None
+        // (nothing crosses the bar) the keyword Stage-1 result stands as
+        // the fallback. Either way Stage-2 only fires when the operator
+        // configured `inference.embedding_provider` (off by default).
         let mut skill_match = crate::skills::route(&prompt, &installed_skills);
-        if skill_match.is_none() {
+        if skill_match.is_none() || config.skills.always_embed_route {
             if let Some(embed_provider) =
                 crate::providers::embed_provider_from_config(&config).await
             {
@@ -631,6 +637,7 @@ pub async fn run_chat_with(
                     info!(
                         skill = skill.id(),
                         cosine = score,
+                        overrode_keyword = skill_match.is_some(),
                         "skill activated via Stage-2 embedding re-rank"
                     );
                     skill_match = Some(crate::skills::router::RouteMatch {

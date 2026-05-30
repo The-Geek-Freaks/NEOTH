@@ -1450,6 +1450,31 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── Passive user-adaptation cron (SPEC-05) ────────────────────────────
+    // Re-aggregates the behavioural snapshot from the WAL every
+    // `profile_adapt.interval_secs` (daily default) + queues new self-dev
+    // adaptation PROPOSALS for operator review (nothing auto-applied). Off
+    // by default — `spawn_*` returns None when `profile_adapt.enabled =
+    // false` so opt-out operators carry no idle tokio task.
+    let profile_adapt_cron_handle: Option<tokio::task::JoinHandle<()>> = {
+        let home = FreedomConfig::default_neoth_home();
+        let wal_dir_for_adapt = wal_dir.clone();
+        let writer_for_adapt = writer.clone();
+        let handle = crate::daemon::profile_adapt_cron::spawn_profile_adapt_cron_loop(
+            config.profile_adapt,
+            home,
+            wal_dir_for_adapt,
+            writer_for_adapt,
+        );
+        if handle.is_some() {
+            info!(
+                interval_secs = config.profile_adapt.interval_secs,
+                "passive user-adaptation cron loop spawned (SPEC-05)"
+            );
+        }
+        handle
+    };
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -2135,6 +2160,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // discipline as the doctor cron: abort + await BEFORE the WAL writer
     // is dropped so an in-flight 0xBA frame isn't lost.
     if let Some(task) = drift_alert_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
+    if let Some(task) = profile_adapt_cron_handle {
         task.abort();
         let _ = task.await;
     }

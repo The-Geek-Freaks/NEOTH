@@ -315,6 +315,15 @@ pub struct FreedomConfig {
     /// Default OFF.
     #[serde(default)]
     pub drift_alert: DriftAlertConfig,
+    /// SPEC-05 — passive user-adaptation engine. When `enabled = true`,
+    /// a daemon cron (`daemon::profile_adapt_cron`) re-aggregates the
+    /// behavioural snapshot from the WAL every `interval_secs`, runs the
+    /// 5 passive estimators + `propose_adjustments`, and queues any new
+    /// self-dev PROPOSALS (operator reviews via `neoth self-dev review`;
+    /// nothing is auto-applied). Default OFF — opt-in to proactive
+    /// adaptation, matching the `drift_alert` precedent.
+    #[serde(default)]
+    pub profile_adapt: ProfileAdaptConfig,
     /// SPEC-03b — per-provider HTTP-429 fallback chain. Empty (default) =
     /// no fallback, pre-SPEC-03b behaviour preserved exactly.
     #[serde(default)]
@@ -531,6 +540,43 @@ impl DriftAlertConfig {
     /// Tick interval as a `Duration`, clamped to a 60s minimum so an
     /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
     /// Mirrors `DoctorCronConfig::interval_duration`.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// SPEC-05 — passive user-adaptation cron config. When `enabled`, the
+/// daemon re-aggregates the behavioural snapshot + generates self-dev
+/// proposals every `interval_secs`. Default OFF (opt-in), matching the
+/// `drift_alert` precedent — the proposals are non-destructive (pending
+/// operator review) but the aggregation scans the WAL, so it stays
+/// opt-in until the operator wants proactive adaptation.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(default)]
+pub struct ProfileAdaptConfig {
+    /// Master switch for the passive-adaptation cron. Default `false`.
+    pub enabled: bool,
+    /// Cron tick interval, seconds. Default 24h — behavioural patterns
+    /// shift over days, so daily re-aggregation is ample. Clamped to a
+    /// 60s floor by [`Self::interval_duration`].
+    pub interval_secs: u64,
+}
+
+/// 24 hours — the passive-adaptation cron default cadence.
+pub const DEFAULT_PROFILE_ADAPT_INTERVAL_SECS: u64 = 24 * 3600;
+
+impl Default for ProfileAdaptConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
+        }
+    }
+}
+
+impl ProfileAdaptConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }
@@ -1590,7 +1636,7 @@ fn warn_if_world_readable(path: &Path) {
 /// `eval_session_active`: marker flag operators flip when starting
 /// an eval run. Persists across daemon restarts so a long eval
 /// suite doesn't accidentally reset.
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct SkillsConfig {
     /// Suppress skill injection during eval sessions.
     /// Default false — operators opt in for eval runs.
@@ -1624,6 +1670,41 @@ pub struct SkillsConfig {
     /// without pinning every one).
     #[serde(default)]
     pub pinned_hashes: std::collections::HashMap<String, String>,
+    /// PF-01 (Session 30) — when `true`, the chat router runs Stage-2
+    /// embedding cosine re-rank on EVERY turn (not only on a keyword
+    /// Stage-1 miss), and a Stage-2 hit (cosine ≥ `EMBEDDING_THRESHOLD`)
+    /// takes precedence over the keyword match. This makes the skill
+    /// library route by SEMANTICS by default rather than only when a
+    /// literal keyword is present — so a request whose wording misses
+    /// the keyword, or hits the wrong skill's keyword, still lands on
+    /// the semantically-closest skill.
+    ///
+    /// Cost note: Stage-2 only runs at all when the operator has
+    /// configured `inference.embedding_provider` (off by default), so a
+    /// default install pays NOTHING here. For operators who DID opt into
+    /// an embedding provider, this adds N+1 embed calls per turn (1
+    /// message + 1 per enabled skill) on turns that previously short-
+    /// circuited on a keyword hit — acceptable because configuring an
+    /// embedding provider is itself the opt-in to that cost, and the
+    /// per-skill embeds are cached within `route_stage2_embedding`'s
+    /// invocation. Set `false` to restore the keyword-miss-only fallback.
+    #[serde(default = "default_skills_always_embed_route")]
+    pub always_embed_route: bool,
+}
+
+fn default_skills_always_embed_route() -> bool {
+    true
+}
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            disabled_for_eval_sessions: false,
+            eval_session_active: false,
+            pinned_hashes: std::collections::HashMap::new(),
+            always_embed_route: default_skills_always_embed_route(),
+        }
+    }
 }
 
 impl SkillsConfig {
@@ -1679,6 +1760,24 @@ mod sub_config_tests {
         assert!(!cfg.disabled_for_eval_sessions);
         assert!(!cfg.eval_session_active);
         assert!(!cfg.should_suppress_for_eval());
+    }
+
+    #[test]
+    fn skills_config_always_embed_route_defaults_true_consistently() {
+        // PF-01: `::default()` AND a freedom.yaml that OMITS the field
+        // must agree (both true) — a divergence would make code-built
+        // configs route differently from loaded ones.
+        assert!(SkillsConfig::default().always_embed_route);
+        let from_empty: SkillsConfig =
+            serde_yaml::from_str("{}").expect("empty skills block deserialises");
+        assert!(
+            from_empty.always_embed_route,
+            "omitted always_embed_route must default true to match ::default()"
+        );
+        // And an explicit false round-trips.
+        let off: SkillsConfig =
+            serde_yaml::from_str("always_embed_route: false\n").expect("explicit false");
+        assert!(!off.always_embed_route);
     }
 
     #[test]
