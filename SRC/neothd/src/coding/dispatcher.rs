@@ -223,13 +223,13 @@ pub struct DispatchOutcome {
 /// loop is a single thread; if a future pick wants concurrent
 /// hemispheres, refactor to `spawn` per hemisphere with a shared
 /// budget gate.
-pub fn dispatch_session(
+pub async fn dispatch_session(
     conn: &Connection,
     session_id: KanbanSessionId,
     workers: &HemisphereWorkerSet,
     budget: DispatchBudget,
 ) -> Result<DispatchOutcome> {
-    dispatch_session_with_apply(conn, session_id, workers, budget, None)
+    dispatch_session_with_apply(conn, session_id, workers, budget, None).await
 }
 
 /// Pick #6 Phase 4 — variant that also applies worker patches
@@ -237,7 +237,7 @@ pub fn dispatch_session(
 /// `Some`. The simple `dispatch_session` calls this with `None`
 /// for backward-compat. New CLI surfaces (`neoth code --apply`)
 /// call this directly.
-pub fn dispatch_session_with_apply(
+pub async fn dispatch_session_with_apply(
     conn: &Connection,
     session_id: KanbanSessionId,
     workers: &HemisphereWorkerSet,
@@ -321,7 +321,7 @@ pub fn dispatch_session_with_apply(
         let writer_for_progress = apply_config.and_then(|cfg| cfg.wal_writer.as_deref());
         emit_kanban_task_progress_wal(writer_for_progress, &task, 0, "dispatched");
 
-        let exec_result = worker.execute(&task);
+        let exec_result = worker.execute(&task).await;
         match exec_result {
             // QU-01 harte-Kritik fix (Session 28): a refusal can
             // arrive STRUCTURALLY review-ready — the worker emits
@@ -1158,6 +1158,7 @@ fn recent_output_refs(
 mod tests {
     use super::*;
     use crate::coding::types::TestSummary;
+    use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -1168,8 +1169,9 @@ mod tests {
         name: &'static str,
     }
 
+    #[async_trait]
     impl Worker for CannedWorker {
-        fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             Ok(self.outcome.clone())
         }
         fn name(&self) -> &'static str {
@@ -1181,8 +1183,9 @@ mod tests {
     /// without touching real provider code.
     struct FailingWorker;
 
+    #[async_trait]
     impl Worker for FailingWorker {
-        fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             anyhow::bail!("simulated worker failure")
         }
         fn name(&self) -> &'static str {
@@ -1199,8 +1202,9 @@ mod tests {
         calls: std::sync::atomic::AtomicUsize,
     }
 
+    #[async_trait]
     impl Worker for VaryingFailWorker {
-        fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             let n = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             anyhow::bail!("distinct failure #{n}")
         }
@@ -1232,8 +1236,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dispatch_with_no_workers_returns_zero_outcome() {
+    #[tokio::test]
+    async fn dispatch_with_no_workers_returns_zero_outcome() {
         // Pre-condition: dispatch with empty worker set MUST bail out
         // cleanly without touching the session. Operators can run
         // `neoth code` against a hemisphere-less freedom.yaml without
@@ -1241,15 +1245,16 @@ mod tests {
         let (_dir, conn) = fresh_db();
         let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let workers = HemisphereWorkerSet::new();
-        let outcome =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
         assert_eq!(outcome.tasks_attempted, 0);
         assert_eq!(outcome.tasks_completed, 0);
         assert!(!outcome.budget_exhausted);
     }
 
-    #[test]
-    fn dispatch_runs_one_left_task_end_to_end() {
+    #[tokio::test]
+    async fn dispatch_runs_one_left_task_end_to_end() {
         // Pin the happy path: one BACKLOG task on Left, one CannedWorker
         // bound, dispatch ends with task in Review + outcome.completed=1.
         let (_dir, conn) = fresh_db();
@@ -1265,8 +1270,9 @@ mod tests {
                 name: "test-left",
             }),
         );
-        let outcome =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
         assert_eq!(outcome.tasks_attempted, 1);
         assert_eq!(outcome.tasks_completed, 1);
         assert_eq!(outcome.tasks_blocked, 0);
@@ -1279,8 +1285,8 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Review);
     }
 
-    #[test]
-    fn left_ceiling_escalates_to_right_then_completes() {
+    #[tokio::test]
+    async fn left_ceiling_escalates_to_right_then_completes() {
         // QU-05 escalate: a Left worker that always fails exhausts its
         // retry budget; the dispatcher hands the task to the Right
         // hemisphere with a fresh budget. A green Right worker then
@@ -1304,8 +1310,9 @@ mod tests {
                 name: "test-right",
             }),
         );
-        let outcome =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
 
         let task = store::list_tasks_for_session(&conn, session_id)
             .unwrap()
@@ -1320,8 +1327,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn right_ceiling_blocks_without_further_escalation() {
+    #[tokio::test]
+    async fn right_ceiling_blocks_without_further_escalation() {
         // A task that fails on the Right (deepest) hemisphere has
         // nowhere to escalate → Blocked after the ceiling, with no
         // ping-pong back to Left.
@@ -1337,8 +1344,9 @@ mod tests {
                 calls: std::sync::atomic::AtomicUsize::new(0),
             }),
         );
-        let outcome =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
 
         let task = store::list_tasks_for_session(&conn, session_id)
             .unwrap()
@@ -1349,8 +1357,8 @@ mod tests {
         assert_eq!(outcome.tasks_blocked, 1);
     }
 
-    #[test]
-    fn dispatch_blocks_unassigned_hemisphere() {
+    #[tokio::test]
+    async fn dispatch_blocks_unassigned_hemisphere() {
         // A task with hemisphere Right but no Right worker bound MUST
         // surface as `tasks_unassigned` and the row MUST land in
         // Blocked, not in InProgress (otherwise the audit chain shows
@@ -1368,8 +1376,9 @@ mod tests {
                 name: "test-left",
             }),
         );
-        let outcome =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
         assert_eq!(outcome.tasks_unassigned, 1);
         assert_eq!(outcome.tasks_completed, 0);
 
@@ -1380,8 +1389,8 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Blocked);
     }
 
-    #[test]
-    fn dispatch_blocks_when_worker_errors() {
+    #[tokio::test]
+    async fn dispatch_blocks_when_worker_errors() {
         // Worker.execute returning Err must transition the task to
         // Blocked, NOT InProgress, so an audit consumer never sees a
         // task stuck in InProgress without a worker producing output.
@@ -1392,8 +1401,9 @@ mod tests {
 
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(Hemisphere::Left, Box::new(FailingWorker));
-        let outcome =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
         assert_eq!(outcome.tasks_blocked, 1);
         assert_eq!(outcome.tasks_completed, 0);
 
@@ -1404,8 +1414,8 @@ mod tests {
         assert_eq!(task.status, TaskStatus::Blocked);
     }
 
-    #[test]
-    fn dispatch_respects_max_tasks_budget() {
+    #[tokio::test]
+    async fn dispatch_respects_max_tasks_budget() {
         // 3 backlog tasks, budget capped at 2 → dispatcher attempts
         // exactly 2 and surfaces budget_exhausted=true. The third
         // task stays in Backlog.
@@ -1428,7 +1438,9 @@ mod tests {
             max_tasks: 2,
             max_duration: Duration::from_secs(60),
         };
-        let outcome = dispatch_session(&conn, session_id, &workers, budget).unwrap();
+        let outcome = dispatch_session(&conn, session_id, &workers, budget)
+            .await
+            .unwrap();
         assert_eq!(outcome.tasks_attempted, 2);
         assert!(outcome.budget_exhausted);
 
@@ -1440,8 +1452,8 @@ mod tests {
         assert_eq!(backlog_count, 1);
     }
 
-    #[test]
-    fn dispatch_is_reentrant() {
+    #[tokio::test]
+    async fn dispatch_is_reentrant() {
         // Calling dispatch twice on the same session is a no-op the
         // second time — the first run drained the Backlog, the second
         // finds nothing to do and returns zero outcome.
@@ -1459,18 +1471,20 @@ mod tests {
             }),
         );
 
-        let first =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let first = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
         assert_eq!(first.tasks_attempted, 1);
 
-        let second =
-            dispatch_session(&conn, session_id, &workers, DispatchBudget::default()).unwrap();
+        let second = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
+            .unwrap();
         assert_eq!(second.tasks_attempted, 0);
         assert_eq!(second.tasks_completed, 0);
     }
 
-    #[test]
-    fn worker_set_bind_replaces_existing() {
+    #[tokio::test]
+    async fn worker_set_bind_replaces_existing() {
         // Last-write-wins matches the YAML-config reload contract.
         // An operator who re-binds a hemisphere via /reload should see
         // the new worker take over on the next dispatch tick.
@@ -1492,8 +1506,8 @@ mod tests {
         assert_eq!(set.get(Hemisphere::Left).unwrap().name(), "second");
     }
 
-    #[test]
-    fn dispatch_budget_default_is_30_minutes_and_20_tasks() {
+    #[tokio::test]
+    async fn dispatch_budget_default_is_30_minutes_and_20_tasks() {
         let b = DispatchBudget::default();
         assert_eq!(b.max_duration.as_secs(), 30 * 60);
         assert_eq!(b.max_tasks, 20);
@@ -1569,8 +1583,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dispatch_session_with_apply_creates_worktree_and_applies_patch() {
+    #[tokio::test]
+    async fn dispatch_session_with_apply_creates_worktree_and_applies_patch() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
             return;
@@ -1606,6 +1620,7 @@ mod tests {
             DispatchBudget::default(),
             Some(&cfg),
         )
+        .await
         .expect("dispatch with apply");
 
         assert_eq!(outcome.tasks_completed, 1);
@@ -1622,8 +1637,8 @@ mod tests {
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
     }
 
-    #[test]
-    fn dispatch_session_with_apply_marks_task_blocked_on_conflict() {
+    #[tokio::test]
+    async fn dispatch_session_with_apply_marks_task_blocked_on_conflict() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
             return;
@@ -1671,6 +1686,7 @@ mod tests {
             DispatchBudget::default(),
             Some(&cfg),
         )
+        .await
         .expect("dispatch with apply");
 
         // Task transitions through retries and finally lands in
@@ -1710,8 +1726,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn dispatch_session_with_apply_runs_test_cmd_and_marks_completed_on_zero_exit() {
+    #[tokio::test]
+    async fn dispatch_session_with_apply_runs_test_cmd_and_marks_completed_on_zero_exit() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
             return;
@@ -1747,6 +1763,7 @@ mod tests {
             DispatchBudget::default(),
             Some(&apply_cfg),
         )
+        .await
         .expect("dispatch with test_cmd");
 
         assert_eq!(outcome.tasks_completed, 1, "passing tests must complete");
@@ -1755,8 +1772,8 @@ mod tests {
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
     }
 
-    #[test]
-    fn dispatch_session_with_apply_routes_test_failure_to_retry_path() {
+    #[tokio::test]
+    async fn dispatch_session_with_apply_routes_test_failure_to_retry_path() {
         if !git_available() {
             eprintln!("skipping: git not on PATH");
             return;
@@ -1792,6 +1809,7 @@ mod tests {
             DispatchBudget::default(),
             Some(&apply_cfg),
         )
+        .await
         .expect("dispatch with failing test_cmd");
 
         // Failing tests must NOT mark complete + must route the
@@ -1859,22 +1877,18 @@ mod tests {
         let apply_cfg =
             DispatchApplyConfig::new(&repo).with_wal_writer(std::sync::Arc::clone(&writer));
 
-        // The dispatcher itself is sync; spawn_blocking keeps
-        // the inner sync path off the runtime thread.
-        let conn_arc = std::sync::Arc::new(std::sync::Mutex::new(conn));
-        let conn_for_task = std::sync::Arc::clone(&conn_arc);
-        let outcome = tokio::task::spawn_blocking(move || {
-            let conn = conn_for_task.lock().unwrap();
-            dispatch_session_with_apply(
-                &conn,
-                session_id,
-                &workers,
-                DispatchBudget::default(),
-                Some(&apply_cfg),
-            )
-        })
+        // QU-10d: the dispatcher is now async — await it directly. The
+        // prior spawn_blocking + Arc<Mutex<conn>> wrapper (needed when the
+        // dispatcher was sync) is obsolete; the WAL writer task still
+        // flushes concurrently on the multi-thread runtime.
+        let outcome = dispatch_session_with_apply(
+            &conn,
+            session_id,
+            &workers,
+            DispatchBudget::default(),
+            Some(&apply_cfg),
+        )
         .await
-        .unwrap()
         .expect("dispatch");
 
         assert_eq!(outcome.tasks_completed, 1);
@@ -1898,8 +1912,8 @@ mod tests {
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
     }
 
-    #[test]
-    fn dispatch_session_with_apply_strict_autonomy_denies_before_any_io() {
+    #[tokio::test]
+    async fn dispatch_session_with_apply_strict_autonomy_denies_before_any_io() {
         // Strict autonomy MUST refuse the apply BEFORE creating
         // the worktree. The task ends in Blocked/Backlog via the
         // retry path; no `.neoth-task-N/` directory is created.
@@ -1929,6 +1943,7 @@ mod tests {
             DispatchBudget::default(),
             Some(&apply_cfg),
         )
+        .await
         .expect("dispatch with strict autonomy");
 
         assert_eq!(outcome.tasks_completed, 0, "strict must NOT complete");
@@ -1938,8 +1953,8 @@ mod tests {
         assert!(!wt.exists(), "strict gate must run BEFORE worktree IO");
     }
 
-    #[test]
-    fn dispatch_session_with_apply_full_autonomy_still_applies_under_confirm() {
+    #[tokio::test]
+    async fn dispatch_session_with_apply_full_autonomy_still_applies_under_confirm() {
         // Full autonomy yields Decision::Confirm for
         // PatchApplyToRepo (v0.2-conservative). The CLI
         // pre-confirmed via --apply, so the dispatcher
@@ -1978,6 +1993,7 @@ mod tests {
             DispatchBudget::default(),
             Some(&apply_cfg),
         )
+        .await
         .expect("dispatch full");
 
         assert_eq!(
@@ -1989,8 +2005,8 @@ mod tests {
         let _ = crate::coding::worktree::cleanup_worktree(&repo, &wt, true);
     }
 
-    #[test]
-    fn dispatch_session_with_apply_none_behaves_like_phase_3() {
+    #[tokio::test]
+    async fn dispatch_session_with_apply_none_behaves_like_phase_3() {
         // Backward compat: passing None for apply_config preserves
         // the Phase-3 behaviour where the dispatcher records the
         // patch_path but never actually applies anything.
@@ -2015,6 +2031,7 @@ mod tests {
             DispatchBudget::default(),
             None,
         )
+        .await
         .expect("dispatch without apply");
         assert_eq!(outcome.tasks_completed, 1);
     }
@@ -2032,8 +2049,9 @@ mod tests {
     /// Drives the greeting-regression bypass through the dispatcher.
     struct RefusalWorker;
 
+    #[async_trait]
     impl Worker for RefusalWorker {
-        fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             Ok(WorkerOutcome {
                 // Worker "succeeded" structurally (non-empty
                 // patch_text) so the Ok branch hits the apply path —
@@ -2051,8 +2069,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn refusal_disguised_as_patch_blocks_even_without_apply() {
+    #[tokio::test]
+    async fn refusal_disguised_as_patch_blocks_even_without_apply() {
         // QU-01 harte-Kritik fix (Session 28): a refusal that arrives
         // as non-empty patch_text is STRUCTURALLY review-ready, so the
         // pre-fix dispatcher promoted it to Review on the no-`--apply`
@@ -2070,6 +2088,7 @@ mod tests {
         // NO apply path (apply_config = None) — this is the exact
         // edge Alex flagged.
         let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
             .expect("dispatch");
         assert_eq!(outcome.tasks_attempted, 1);
         assert_eq!(
@@ -2094,8 +2113,9 @@ mod tests {
     /// detection path.
     struct EmptyRefusalWorker;
 
+    #[async_trait]
     impl Worker for EmptyRefusalWorker {
-        fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             Ok(WorkerOutcome {
                 patch_text: String::new(),
                 patch_path: PathBuf::from("/tmp/empty.patch"),
@@ -2108,8 +2128,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn empty_refusal_outcome_triggers_greeting_regression_bypass() {
+    #[tokio::test]
+    async fn empty_refusal_outcome_triggers_greeting_regression_bypass() {
         let (_dir, conn) = fresh_db();
         let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
         let task_id = store::insert_task(&conn, session_id, 10, "t", None, "ui", None).unwrap();
@@ -2117,6 +2137,7 @@ mod tests {
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(Hemisphere::Left, Box::new(EmptyRefusalWorker));
         let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
+            .await
             .expect("dispatch");
         // Greeting-regression on the summary surface → straight to
         // Blocked, not Retry-Backlog. Only one attempt counted.
@@ -2138,8 +2159,9 @@ mod tests {
     /// patch-spiral ceiling.
     struct EmptyOutcomeWorker;
 
+    #[async_trait]
     impl Worker for EmptyOutcomeWorker {
-        fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
             Ok(WorkerOutcome {
                 patch_text: String::new(),
                 patch_path: PathBuf::from("/tmp/empty.patch"),
@@ -2152,8 +2174,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn repeated_empty_outcome_lands_blocked_via_retry_ceiling() {
+    #[tokio::test]
+    async fn repeated_empty_outcome_lands_blocked_via_retry_ceiling() {
         // EmptyOutcomeWorker keeps producing failed outcomes. With
         // QU-01 wire-in, the patch-spiral tracker counts each one;
         // when retry_policy's ceiling fires first (default 3
@@ -2172,7 +2194,9 @@ mod tests {
             max_tasks: 50,
             ..DispatchBudget::default()
         };
-        let outcome = dispatch_session(&conn, session_id, &workers, budget).expect("dispatch");
+        let outcome = dispatch_session(&conn, session_id, &workers, budget)
+            .await
+            .expect("dispatch");
         // Eventually Blocked. With identical failing outputs the
         // repetition-loop detector (3-sample tail) fires at attempt 3,
         // one before the patch-spiral ceiling (4) — either way the
@@ -2188,8 +2212,8 @@ mod tests {
 
     // ── QU-01 Phase 3 repetition-ring helpers ──────────────────────
 
-    #[test]
-    fn worker_output_text_joins_summary_and_patch() {
+    #[tokio::test]
+    async fn worker_output_text_joins_summary_and_patch() {
         let o = WorkerOutcome {
             patch_text: "diff body".into(),
             patch_path: PathBuf::from("/tmp/x.patch"),
@@ -2201,8 +2225,8 @@ mod tests {
         assert!(text.contains("diff body"));
     }
 
-    #[test]
-    fn record_recent_output_caps_ring_at_capacity() {
+    #[tokio::test]
+    async fn record_recent_output_caps_ring_at_capacity() {
         let mut map: HashMap<KanbanTaskId, Vec<String>> = HashMap::new();
         let tid = KanbanTaskId(1);
         // Push more than the cap; oldest must drop, newest survive.
@@ -2222,15 +2246,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn recent_output_refs_empty_for_unknown_task() {
+    #[tokio::test]
+    async fn recent_output_refs_empty_for_unknown_task() {
         let map: HashMap<KanbanTaskId, Vec<String>> = HashMap::new();
         let refs = recent_output_refs(&map, KanbanTaskId(99));
         assert!(refs.is_empty());
     }
 
-    #[test]
-    fn recent_output_refs_round_trips_into_repetition_detector() {
+    #[tokio::test]
+    async fn recent_output_refs_round_trips_into_repetition_detector() {
         // The whole point: a per-task ring of identical outputs must
         // make `is_repetition_loop` fire once it reaches the sample
         // floor. Proves the wire-in glue produces a slice the
@@ -2254,8 +2278,8 @@ mod tests {
 
     // ── QU-05 reinjection_hint ─────────────────────────────────────
 
-    #[test]
-    fn reinjection_hint_combines_strategy_and_diagnosis() {
+    #[tokio::test]
+    async fn reinjection_hint_combines_strategy_and_diagnosis() {
         let h = reinjection_hint(
             "[retry hint: split the file]",
             "error[E0425]: cannot find value `x`",
@@ -2265,16 +2289,16 @@ mod tests {
         assert!(h.contains("E0425"));
     }
 
-    #[test]
-    fn reinjection_hint_falls_back_to_strategy_when_diagnosis_empty() {
+    #[tokio::test]
+    async fn reinjection_hint_falls_back_to_strategy_when_diagnosis_empty() {
         // An empty / whitespace-only diagnosis must not produce a
         // dangling "[previous attempt failed]:" header with no body.
         assert_eq!(reinjection_hint("[hint]", ""), "[hint]");
         assert_eq!(reinjection_hint("[hint]", "   \n\t "), "[hint]");
     }
 
-    #[test]
-    fn reinjection_hint_truncates_long_diagnosis_at_char_boundary() {
+    #[tokio::test]
+    async fn reinjection_hint_truncates_long_diagnosis_at_char_boundary() {
         // A multi-byte char straddling the cap must not panic the
         // byte slice. Build a diagnosis well past the cap of
         // multi-byte arrows + umlauts (rustc emits `-->`, German
@@ -2286,8 +2310,8 @@ mod tests {
         assert!(h.len() < REINJECTED_DIAGNOSIS_CAP + 200);
     }
 
-    #[test]
-    fn reinjection_hint_short_diagnosis_not_truncated() {
+    #[tokio::test]
+    async fn reinjection_hint_short_diagnosis_not_truncated() {
         let h = reinjection_hint("[hint]", "boom");
         assert!(h.contains("boom"));
         assert!(!h.contains("truncated"));
@@ -2295,15 +2319,15 @@ mod tests {
 
     // ── QU-05 is_cargo_check_cmd routing ───────────────────────────
 
-    #[test]
-    fn is_cargo_check_cmd_matches_check_with_and_without_flags() {
+    #[tokio::test]
+    async fn is_cargo_check_cmd_matches_check_with_and_without_flags() {
         assert!(is_cargo_check_cmd("cargo check"));
         assert!(is_cargo_check_cmd("cargo check --workspace"));
         assert!(is_cargo_check_cmd("  cargo   check   --all-targets "));
     }
 
-    #[test]
-    fn is_cargo_check_cmd_rejects_other_commands() {
+    #[tokio::test]
+    async fn is_cargo_check_cmd_rejects_other_commands() {
         assert!(!is_cargo_check_cmd("cargo test"));
         assert!(!is_cargo_check_cmd("cargo build"));
         assert!(!is_cargo_check_cmd("pytest -q"));

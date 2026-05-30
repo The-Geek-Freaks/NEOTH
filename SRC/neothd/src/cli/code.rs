@@ -259,9 +259,11 @@ async fn run_dispatch_phase(
             DispatchBudget::default(),
             Some(&apply_cfg),
         )
+        .await
         .context("dispatch_session_with_apply run")?
     } else {
         dispatch_session(conn, session_id, &workers, DispatchBudget::default())
+            .await
             .context("dispatch_session run")?
     };
 
@@ -290,7 +292,6 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
     use crate::coding::provider_worker::ProviderWorker;
     use std::sync::Arc;
 
-    let runtime = tokio::runtime::Handle::current();
     let patch_root = FreedomConfig::default_neoth_home();
     let mut workers = HemisphereWorkerSet::new();
     for (role, hemi, name) in [
@@ -310,8 +311,7 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
                 // audit trail benefits from the hemisphere/provider pair.
                 let label: &'static str =
                     Box::leak(format!("{name}/{provider_name}").into_boxed_str());
-                let worker =
-                    ProviderWorker::new(label, Arc::from(p), patch_root.clone(), runtime.clone());
+                let worker = ProviderWorker::new(label, Arc::from(p), patch_root.clone());
                 workers.bind(hemi, Box::new(worker));
                 println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
             }
@@ -364,6 +364,7 @@ async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
         DispatchBudget::default(),
         apply_cfg.as_ref(),
     )
+    .await
     .context("run pending sessions")?;
 
     println!(

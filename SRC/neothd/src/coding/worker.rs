@@ -7,11 +7,15 @@
 //! Qwen / RightWorker against claude_cli or openai_compat) land in
 //! Phase 2 once the Chorus verdict on patch safety (Q1) settles.
 //!
-//! The trait stays small + sync-friendly for v1.0; an async variant
-//! is the natural extension once provider calls move off the chat
-//! dispatcher's blocking surface.
+//! QU-10d (Session 30): the trait is now `async` (via `async_trait`) —
+//! the prerequisite Alex picked for parallel dispatch. Provider-backed
+//! workers `.await` their `provider.complete` directly instead of the
+//! prior `runtime.block_on` hack, and `task_executor` can drive several
+//! sessions concurrently (`run_pending_sessions_parallel`).
 
 use std::path::PathBuf;
+
+use async_trait::async_trait;
 
 use crate::coding::types::{KanbanTask, TestSummary};
 
@@ -21,13 +25,16 @@ use crate::coding::types::{KanbanTask, TestSummary};
 /// `InProgress` and applies the returned outcome via
 /// `store::patch_task_result` + status transition to `Review` (or
 /// `Blocked` on `WorkerOutcome.failed()`).
+#[async_trait]
 pub trait Worker: Send + Sync {
-    /// Execute the worker against the given task. Blocking — callers
-    /// that want concurrency spawn one worker per hemisphere. The
-    /// hemisphere wiring guarantees only one task at a time per
-    /// hemisphere; `WorkerOutcome.summary` lands in the activity feed
+    /// Execute the worker against the given task. `async` (QU-10d) so a
+    /// provider-backed worker awaits `provider.complete` on the ambient
+    /// runtime instead of holding a `block_on` handle, and the executor
+    /// can drive multiple sessions concurrently. The hemisphere wiring
+    /// still guarantees one task at a time per hemisphere within a
+    /// session; `WorkerOutcome.summary` lands in the activity feed
     /// regardless of success.
-    fn execute(&self, task: &KanbanTask) -> anyhow::Result<WorkerOutcome>;
+    async fn execute(&self, task: &KanbanTask) -> anyhow::Result<WorkerOutcome>;
 
     /// Operator-readable name of this worker, e.g. `"left/local_qwen"`,
     /// `"right/claude_cli"`. Used in WAL frames + the activity feed +
@@ -111,8 +118,9 @@ mod tests {
         outcome: WorkerOutcome,
     }
 
+    #[async_trait]
     impl Worker for CannedWorker {
-        fn execute(&self, _task: &KanbanTask) -> anyhow::Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> anyhow::Result<WorkerOutcome> {
             Ok(self.outcome.clone())
         }
         fn name(&self) -> &'static str {
@@ -169,8 +177,8 @@ mod tests {
         assert!(o.review_ready());
     }
 
-    #[test]
-    fn canned_worker_returns_outcome_unchanged() {
+    #[tokio::test]
+    async fn canned_worker_returns_outcome_unchanged() {
         // The test harness contract: a CannedWorker echoes its outcome
         // through `execute` so test bodies can exercise dispatch
         // logic without provider plumbing.
@@ -184,7 +192,7 @@ mod tests {
             name_: "test-worker",
             outcome: outcome.clone(),
         };
-        let result = w.execute(&sample_task()).expect("canned worker ok");
+        let result = w.execute(&sample_task()).await.expect("canned worker ok");
         assert_eq!(result.patch_text, outcome.patch_text);
         assert_eq!(w.name(), "test-worker");
     }

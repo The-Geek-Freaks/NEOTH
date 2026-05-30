@@ -19,6 +19,7 @@
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
+use tracing::warn;
 
 use super::dispatcher::{
     DispatchApplyConfig, DispatchBudget, DispatchOutcome, HemisphereWorkerSet,
@@ -52,7 +53,7 @@ pub struct ExecutorReport {
 /// dispatch error aborts the pass with context — the already-driven
 /// sessions stay committed (the dispatcher writes per-task as it goes),
 /// so a re-run resumes the remaining Backlog.
-pub fn run_pending_sessions(
+pub async fn run_pending_sessions(
     conn: &Connection,
     workers: &HemisphereWorkerSet,
     budget: DispatchBudget,
@@ -66,18 +67,106 @@ pub fn run_pending_sessions(
     };
     for session_id in sessions {
         let outcome = dispatch_session_with_apply(conn, session_id, workers, budget, apply_config)
+            .await
             .with_context(|| format!("dispatch pending session {}", session_id.raw()))?;
-        report.sessions_dispatched += 1;
-        report.tasks_attempted += outcome.tasks_attempted;
-        report.tasks_completed += outcome.tasks_completed;
-        report.tasks_blocked += outcome.tasks_blocked;
-        report.tasks_unassigned += outcome.tasks_unassigned;
-        if outcome.budget_exhausted {
-            report.budget_exhausted_sessions += 1;
-        }
-        report.per_session.push((session_id, outcome));
+        accumulate(&mut report, session_id, outcome);
     }
     Ok(report)
+}
+
+/// QU-10d / SP-A2 — PARALLEL variant of [`run_pending_sessions`]. Sessions
+/// are independent units of work, so their dispatch futures (each
+/// dominated by the per-task `provider.complete` await) are run
+/// CONCURRENTLY rather than back-to-back. Wall-clock collapses from the
+/// sum of per-session times toward the slowest single session.
+///
+/// ## Why a `db_path` instead of a shared `&Connection`
+///
+/// `rusqlite::Connection` is `!Sync`, so a `&Connection` held across the
+/// worker `.await` makes the dispatch future `!Send` — it can't be
+/// `tokio::spawn`'d, and sharing ONE connection across interleaved futures
+/// risks reentrant-statement corruption. Instead each session opens its
+/// OWN connection from `db_path` (WAL journal + `busy_timeout` so the
+/// concurrent writers serialise at the SQLite layer instead of erroring
+/// `SQLITE_BUSY`). The futures run on the current task via
+/// [`futures::future::join_all`] (no `spawn`, so `!Send` is fine);
+/// `max_concurrency` bounds how many are in flight at once.
+///
+/// A per-session open/dispatch error drops THAT session to `None` (logged)
+/// without aborting the others — the already-driven sessions stay
+/// committed, a re-run resumes the rest. Falls back to the sequential
+/// [`run_pending_sessions`] semantics for aggregation.
+pub async fn run_pending_sessions_parallel(
+    db_path: &std::path::Path,
+    workers: &HemisphereWorkerSet,
+    budget: DispatchBudget,
+    apply_config: Option<&DispatchApplyConfig>,
+    max_concurrency: usize,
+) -> Result<ExecutorReport> {
+    use futures_util::future::join_all;
+
+    let lister = open_session_conn(db_path).context("open db to list pending sessions")?;
+    let sessions =
+        store::sessions_with_backlog_tasks(&lister).context("list sessions with backlog tasks")?;
+    drop(lister);
+
+    let mut report = ExecutorReport {
+        sessions_seen: sessions.len(),
+        ..Default::default()
+    };
+    let cap = max_concurrency.max(1);
+    // Bounded fan-out: chunk the session list so at most `cap` dispatch
+    // futures are awaited together. Order within a chunk is concurrent;
+    // chunks run in id order so the aggregate stays deterministic.
+    for chunk in sessions.chunks(cap) {
+        let results = join_all(chunk.iter().map(|&session_id| async move {
+            let conn = open_session_conn(db_path)
+                .with_context(|| format!("open db for session {}", session_id.raw()))?;
+            let outcome =
+                dispatch_session_with_apply(&conn, session_id, workers, budget, apply_config)
+                    .await
+                    .with_context(|| format!("dispatch pending session {}", session_id.raw()))?;
+            Ok::<_, anyhow::Error>((session_id, outcome))
+        }))
+        .await;
+        for r in results {
+            match r {
+                Ok((session_id, outcome)) => accumulate(&mut report, session_id, outcome),
+                Err(e) => warn!(error = %e, "parallel dispatch: session dropped (others continue)"),
+            }
+        }
+    }
+    Ok(report)
+}
+
+/// Open a fresh connection for a parallel dispatch unit: WAL journal +
+/// a `busy_timeout` so concurrent writers block-then-retry at the SQLite
+/// layer instead of failing `SQLITE_BUSY`.
+fn open_session_conn(db_path: &std::path::Path) -> Result<Connection> {
+    let conn = Connection::open(db_path)
+        .with_context(|| format!("open coding db {}", db_path.display()))?;
+    // WAL allows one writer + many readers concurrently; busy_timeout
+    // serialises the writers that DO collide (different sessions rarely
+    // touch the same rows, but the schema-level writes can contend).
+    conn.busy_timeout(std::time::Duration::from_secs(10))
+        .context("set busy_timeout")?;
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    store::ensure_schema(&conn).context("ensure kanban schema")?;
+    Ok(conn)
+}
+
+/// Fold one session's outcome into the running report. Shared by the
+/// sequential + parallel passes so the aggregation stays identical.
+fn accumulate(report: &mut ExecutorReport, session_id: KanbanSessionId, outcome: DispatchOutcome) {
+    report.sessions_dispatched += 1;
+    report.tasks_attempted += outcome.tasks_attempted;
+    report.tasks_completed += outcome.tasks_completed;
+    report.tasks_blocked += outcome.tasks_blocked;
+    report.tasks_unassigned += outcome.tasks_unassigned;
+    if outcome.budget_exhausted {
+        report.budget_exhausted_sessions += 1;
+    }
+    report.per_session.push((session_id, outcome));
 }
 
 #[cfg(test)]
@@ -85,6 +174,7 @@ mod tests {
     use super::*;
     use crate::coding::types::{Hemisphere, KanbanTask, TestSummary};
     use crate::coding::worker::{Worker, WorkerOutcome};
+    use async_trait::async_trait;
 
     fn open() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -102,8 +192,9 @@ mod tests {
     }
 
     struct MockWorker;
+    #[async_trait]
     impl Worker for MockWorker {
-        fn execute(&self, _task: &KanbanTask) -> anyhow::Result<WorkerOutcome> {
+        async fn execute(&self, _task: &KanbanTask) -> anyhow::Result<WorkerOutcome> {
             Ok(WorkerOutcome {
                 patch_text: "diff --git a/x b/x\n@@\n+ok\n".into(),
                 patch_path: std::path::PathBuf::from("mock.patch"),
@@ -139,23 +230,25 @@ mod tests {
         assert_eq!(pending, vec![s1, s2]);
     }
 
-    #[test]
-    fn run_pending_empty_when_no_backlog() {
+    #[tokio::test]
+    async fn run_pending_empty_when_no_backlog() {
         let conn = open();
-        let report =
-            run_pending_sessions(&conn, &left_workers(), DispatchBudget::default(), None).unwrap();
+        let report = run_pending_sessions(&conn, &left_workers(), DispatchBudget::default(), None)
+            .await
+            .unwrap();
         assert_eq!(report.sessions_seen, 0);
         assert_eq!(report.sessions_dispatched, 0);
         assert_eq!(report.tasks_attempted, 0);
     }
 
-    #[test]
-    fn run_pending_drains_backlog_across_sessions() {
+    #[tokio::test]
+    async fn run_pending_drains_backlog_across_sessions() {
         let conn = open();
         seed_left_backlog(&conn, "t1");
         seed_left_backlog(&conn, "t2");
-        let report =
-            run_pending_sessions(&conn, &left_workers(), DispatchBudget::default(), None).unwrap();
+        let report = run_pending_sessions(&conn, &left_workers(), DispatchBudget::default(), None)
+            .await
+            .unwrap();
         assert_eq!(report.sessions_seen, 2);
         assert_eq!(report.sessions_dispatched, 2);
         assert_eq!(report.tasks_attempted, 2, "one task per session attempted");
@@ -178,20 +271,60 @@ mod tests {
         );
     }
 
-    #[test]
-    fn run_pending_with_no_workers_attempts_nothing_and_leaves_backlog() {
+    #[tokio::test]
+    async fn run_pending_with_no_workers_attempts_nothing_and_leaves_backlog() {
         let conn = open();
         let sid = seed_left_backlog(&conn, "t1");
         // Empty worker set: dispatch_session short-circuits (no worker
         // bound), so the task is never attempted and stays in Backlog.
         let empty = HemisphereWorkerSet::new();
-        let report = run_pending_sessions(&conn, &empty, DispatchBudget::default(), None).unwrap();
+        let report = run_pending_sessions(&conn, &empty, DispatchBudget::default(), None)
+            .await
+            .unwrap();
         assert_eq!(report.sessions_seen, 1);
         assert_eq!(report.tasks_attempted, 0);
         assert_eq!(
             store::sessions_with_backlog_tasks(&conn).unwrap(),
             vec![sid],
             "no worker → backlog untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_pending_parallel_drains_every_session_with_own_connection() {
+        // QU-10d: the parallel pass opens a connection PER session from a
+        // file-backed DB (in-memory DBs are per-connection, so they can't
+        // be shared across the per-session opens). Seed 3 sessions, run
+        // with max_concurrency=2, assert all drained + outcomes aggregated
+        // exactly like the sequential pass.
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("coding.db");
+        {
+            let seed = open_session_conn(&db_path).unwrap();
+            seed_left_backlog(&seed, "t1");
+            seed_left_backlog(&seed, "t2");
+            seed_left_backlog(&seed, "t3");
+        }
+        let report = run_pending_sessions_parallel(
+            &db_path,
+            &left_workers(),
+            DispatchBudget::default(),
+            None,
+            2,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.sessions_seen, 3);
+        assert_eq!(report.sessions_dispatched, 3);
+        assert_eq!(report.tasks_attempted, 3, "one task per session");
+        assert_eq!(report.tasks_completed, 3, "every session's task completed");
+        // Backlog fully drained — a re-list finds nothing.
+        let check = open_session_conn(&db_path).unwrap();
+        assert!(
+            store::sessions_with_backlog_tasks(&check)
+                .unwrap()
+                .is_empty(),
+            "parallel pass must drain every session's backlog"
         );
     }
 }

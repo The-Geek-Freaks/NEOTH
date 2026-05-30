@@ -2,10 +2,12 @@
 //!
 //! `ProviderWorker` wraps any `providers::Provider` (claude_cli,
 //! openai_api, openai_compat, gemini_api, local_qwen, hermes,
-//! openclaw) into a synchronous `Worker` impl that the dispatcher
-//! calls one task at a time. The provider is async; we hold a
-//! `tokio::runtime::Handle` and `block_on` inside execute so the
-//! sync `Worker` trait stays.
+//! openclaw) into an `async` `Worker` impl that the dispatcher calls
+//! one task at a time. QU-10d (Session 30): `Worker::execute` is now
+//! `async`, so this awaits `provider.complete` directly on the ambient
+//! runtime — the prior `tokio::runtime::Handle` + `block_on` hack is
+//! gone (block_on inside an async context risked a nested-runtime
+//! panic; awaiting is correct + lets the executor parallelise).
 //!
 //! Left vs Right is just a name label — the hemisphere binding lives
 //! in `HemisphereWorkerSet`, not here. The constructor takes the name
@@ -30,7 +32,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tokio::runtime::Handle;
+use async_trait::async_trait;
 
 use crate::coding::types::{KanbanTask, TestSummary};
 use crate::coding::worker::{Worker, WorkerOutcome};
@@ -45,42 +47,40 @@ pub struct ProviderWorker {
     /// task-<task-id>.patch`. The dispatcher provides the parent dir;
     /// this struct only knows the operator's home root.
     patch_root: PathBuf,
-    /// Tokio runtime the sync execute() blocks on. The daemon
-    /// already runs inside #[tokio::main]; tests construct a
-    /// `Runtime::new().handle().clone()` per test.
-    runtime: Handle,
 }
 
 impl ProviderWorker {
     /// Build a worker. `name` is operator-readable and surfaces in
     /// the WAL + activity feed; pin it to a stable string per
     /// hemisphere ("left/local_qwen", "right/claude_cli") so audit
-    /// chain readability survives renames.
+    /// chain readability survives renames. QU-10d: no longer takes a
+    /// `runtime` Handle — `execute` is async and awaits the provider on
+    /// the ambient runtime.
     pub fn new(
         name: &'static str,
         provider: Arc<dyn Provider>,
         patch_root: impl Into<PathBuf>,
-        runtime: Handle,
     ) -> Self {
         Self {
             name,
             provider,
             patch_root: patch_root.into(),
-            runtime,
         }
     }
 }
 
+#[async_trait]
 impl Worker for ProviderWorker {
-    fn execute(&self, task: &KanbanTask) -> Result<WorkerOutcome> {
+    async fn execute(&self, task: &KanbanTask) -> Result<WorkerOutcome> {
         let prompt = build_task_prompt(task);
         let req = Request {
             prompt,
             ..Default::default()
         };
         let completion = self
-            .runtime
-            .block_on(self.provider.complete(req))
+            .provider
+            .complete(req)
+            .await
             .with_context(|| format!("worker {} provider.complete", self.name))?;
         let parsed = parse_completion_text(&completion.text);
         let patch_path = patch_path_for(&self.patch_root, task);
