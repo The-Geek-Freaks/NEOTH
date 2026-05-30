@@ -66,13 +66,18 @@ pub struct CodeArgs {
     pub dispatch: bool,
     /// Pick #6 Phase 4 (2026-05-21): also APPLY each worker-
     /// produced patch inside a task-scoped git worktree per the
-    /// Chorus verdict (Strategy B). Requires `--dispatch`. The
-    /// value is the operator's repo root; the worktree lands at
+    /// Chorus verdict (Strategy B). Requires a dispatch path —
+    /// EITHER `--dispatch` (fresh decomposed session) OR
+    /// `--run-pending` (existing Backlog sessions); `--run-pending`
+    /// is itself a dispatch path, so it accepts `--apply` directly.
+    /// The value is the operator's repo root; the worktree lands at
     /// `<repo_parent>/.neoth-task-<task_id>/` and is left in
     /// place on success so the operator can inspect /
-    /// cherry-pick. Without this flag the dispatcher only
-    /// stores patches (Phase-3 behaviour preserved).
-    #[arg(long, value_name = "REPO_ROOT", requires = "dispatch")]
+    /// cherry-pick. Without `--apply` the dispatcher only
+    /// stores patches (Phase-3 behaviour preserved). The
+    /// dispatch-path requirement is enforced in `run_code`
+    /// (clap's `requires` can't express "one of A or B").
+    #[arg(long, value_name = "REPO_ROOT")]
     pub apply: Option<PathBuf>,
     /// QU-10b / SP-A1: skip decomposition and instead drive the
     /// dispatcher across EVERY session that still has a Backlog task.
@@ -88,6 +93,12 @@ pub struct CodeArgs {
 }
 
 pub async fn run_code(args: CodeArgs) -> Result<()> {
+    // `--apply` needs a dispatch path to apply INTO. Both `--dispatch`
+    // (fresh session) and `--run-pending` (existing Backlog) are dispatch
+    // paths, so accept either — clap's per-arg `requires` can only name one
+    // other flag, which wrongly forced operators to pass `--dispatch`
+    // alongside `--run-pending` just to apply pending work.
+    validate_apply_has_dispatch_path(args.apply.is_some(), args.dispatch, args.run_pending)?;
     // QU-10b: --run-pending drives the dispatcher across every session
     // with a Backlog task instead of decomposing a fresh prompt.
     if args.run_pending {
@@ -331,9 +342,11 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
 /// QU-10b / SP-A1 — `neoth code --run-pending`. Build the worker set, then
 /// drive the dispatcher across every session with a Backlog task via
 /// `coding::task_executor::run_pending_sessions`. Apply-aware when
-/// `--apply <repo>` is also set (note: `--apply` still requires
-/// `--dispatch` per its clap contract, so use `--dispatch --run-pending
-/// --apply <repo>` to apply patches; without it patches are stored only).
+/// `--apply <repo>` is also set: `--run-pending` is itself a dispatch path,
+/// so `neoth code --run-pending --apply <repo>` applies patches directly —
+/// no longer needs a spurious `--dispatch` (the run_code guard accepts
+/// `--apply` with EITHER `--dispatch` or `--run-pending`). Without `--apply`,
+/// patches are stored only.
 async fn run_pending_phase(args: &CodeArgs) -> Result<()> {
     use crate::coding::dispatcher::{ApplyOrigin, DispatchApplyConfig, DispatchBudget};
 
@@ -498,6 +511,21 @@ fn print_decomposition_summary(conn: &Connection, result: &DecompositionResult) 
     Ok(())
 }
 
+/// `--apply` requires a dispatch path. Returns `Err` when an apply is
+/// requested with neither `--dispatch` (fresh decomposed session) nor
+/// `--run-pending` (existing Backlog) — both are dispatch paths that can
+/// apply patches. Pure so the flag-combination contract is unit-testable
+/// without the full `run_code` config/db setup.
+fn validate_apply_has_dispatch_path(apply: bool, dispatch: bool, run_pending: bool) -> Result<()> {
+    if apply && !dispatch && !run_pending {
+        anyhow::bail!(
+            "--apply requires a dispatch path: pass --dispatch (to apply a freshly \
+             decomposed session) or --run-pending (to apply existing Backlog sessions)"
+        );
+    }
+    Ok(())
+}
+
 fn now_unix_ns() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -509,6 +537,20 @@ fn now_unix_ns() -> u64 {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn apply_requires_dispatch_or_run_pending() {
+        // apply with a dispatch path → ok (both paths accepted).
+        assert!(validate_apply_has_dispatch_path(true, true, false).is_ok());
+        assert!(validate_apply_has_dispatch_path(true, false, true).is_ok());
+        assert!(validate_apply_has_dispatch_path(true, true, true).is_ok());
+        // apply with NEITHER path → the operator-facing error.
+        let err = validate_apply_has_dispatch_path(true, false, false).unwrap_err();
+        assert!(err.to_string().contains("--run-pending"), "got: {err}");
+        // no apply → never gated, regardless of the other flags.
+        assert!(validate_apply_has_dispatch_path(false, false, false).is_ok());
+        assert!(validate_apply_has_dispatch_path(false, false, true).is_ok());
+    }
 
     fn fresh_db() -> (tempfile::TempDir, Connection) {
         let dir = tempdir().unwrap();
