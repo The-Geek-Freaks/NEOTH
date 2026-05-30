@@ -1416,6 +1416,30 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "G-02 surfacing cron loop spawned (Round-3 v0.4)"
     );
 
+    // ── 5d-quintus. Profile drift-alert cron — HO-09b. Runs the same
+    // drift evaluation as `neoth profile drift report` on a 6h schedule
+    // and emits a `0xBA PROFILE_DRIFT_ALERT` WAL frame when the operator's
+    // profile drifts past `freedom.yaml::drift_alert.threshold`. Off by
+    // default — `spawn_*` returns None when `drift_alert.enabled = false`
+    // so opt-out operators carry no idle tokio task.
+    let drift_alert_cron_handle: Option<tokio::task::JoinHandle<()>> = {
+        let home = FreedomConfig::default_neoth_home();
+        let writer_for_drift = writer.clone();
+        let handle = crate::daemon::drift_alert_cron::spawn_drift_alert_cron_loop(
+            config.drift_alert,
+            home,
+            writer_for_drift,
+        );
+        if handle.is_some() {
+            info!(
+                interval_secs = crate::daemon::drift_alert_cron::DEFAULT_CRON_INTERVAL_SECS,
+                threshold = config.drift_alert.threshold,
+                "profile drift-alert cron loop spawned (HO-09b)"
+            );
+        }
+        handle
+    };
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -2096,6 +2120,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // claims + re-enqueues are no-ops.
     g02_surfacing_cron_handle.abort();
     let _ = g02_surfacing_cron_handle.await;
+
+    // Abort the HO-09b drift-alert cron. Same drain-before-writer-close
+    // discipline as the doctor cron: abort + await BEFORE the WAL writer
+    // is dropped so an in-flight 0xBA frame isn't lost.
+    if let Some(task) = drift_alert_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
 
     // Abort the R-02 Phase 4c dreaming task. Embed-path callers
     // hit `spawn_blocking` for OuroModel/local_qwen forward;

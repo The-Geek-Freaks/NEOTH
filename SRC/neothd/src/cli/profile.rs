@@ -641,7 +641,7 @@ async fn run_seed_baseline(
 /// SHA-256 hash every active `idx_profile` claim (stable `field ASC`
 /// order). Mirrors the claim-collection in [`run_seed_baseline`] so the
 /// drift comparison hashes claims identically to the baseline anchor.
-fn current_active_claim_hashes(db_path: &std::path::Path) -> Result<Vec<String>> {
+pub(crate) fn current_active_claim_hashes(db_path: &std::path::Path) -> Result<Vec<String>> {
     let conn = store::open(db_path).context("open views.db")?;
     let mut stmt = conn
         .prepare(
@@ -662,7 +662,7 @@ fn current_active_claim_hashes(db_path: &std::path::Path) -> Result<Vec<String>>
 /// Scan the WAL for the `0xB3` migration anchor and return the FULL
 /// [`BaselineSnapshot`] (not just the id `scan_for_prior_baseline_snapshot`
 /// returns) so drift can diff against its `claim_hashes`.
-fn scan_for_baseline_snapshot_full(
+pub(crate) fn scan_for_baseline_snapshot_full(
     wal_dir: &std::path::Path,
 ) -> Option<crate::profile::baseline_snapshot::BaselineSnapshot> {
     let mut segments: Vec<std::path::PathBuf> = std::fs::read_dir(wal_dir)
@@ -725,6 +725,34 @@ fn find_baseline_snapshot_full(
         cursor = cursor.saturating_add(total);
     }
     None
+}
+
+/// HO-09b — resolve the drift baseline (operator working baseline first,
+/// else the immutable `0xB3` migration anchor) and compute drift against
+/// the current active claim set. Returns `Ok(None)` when no baseline
+/// exists yet (fresh install) so the daemon drift-alert cron skips
+/// silently rather than erroring. The returned `String` is the baseline
+/// source tag (`"working/<src>"` / `"anchor/<snapshot_id>"`), matching
+/// `neoth profile drift report`. Shared seam so the CLI report path and
+/// the cron resolve the baseline identically. `wal_dir` is explicit so
+/// the cron + tests can inject it (production passes
+/// `FreedomConfig::default_wal_dir()`, i.e. `home/wal`).
+pub(crate) fn compute_drift_against_baseline(
+    home: &std::path::Path,
+    db_path: &std::path::Path,
+    wal_dir: &std::path::Path,
+) -> Result<Option<(crate::profile::baseline_diff::DriftReport, String)>> {
+    use crate::profile::baseline_diff::{compute_drift, load_drift_baseline};
+    let (baseline_hashes, source) =
+        match load_drift_baseline(home).context("load working drift baseline")? {
+            Some(b) => (b.claim_hashes, format!("working/{}", b.source)),
+            None => match scan_for_baseline_snapshot_full(wal_dir) {
+                Some(s) => (s.claim_hashes, format!("anchor/{}", s.snapshot_id)),
+                None => return Ok(None),
+            },
+        };
+    let current = current_active_claim_hashes(db_path)?;
+    Ok(Some((compute_drift(&baseline_hashes, &current), source)))
 }
 
 /// HO-09 — `neoth profile drift {report, baseline, reset}`.

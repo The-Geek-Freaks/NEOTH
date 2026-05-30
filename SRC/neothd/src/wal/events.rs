@@ -770,6 +770,22 @@ pub const EVENT_TYPE_PROFILE_REDACT_BLOCKED: u8 = 0xB8;
 /// header (the dispatcher then falls back to `DEFAULT_BACKOFF`).
 pub const EVENT_TYPE_PROFILE_EXTRACT_SKIPPED: u8 = 0xB9;
 
+/// `0xBA PROFILE_DRIFT_ALERT` — the daemon's drift-alert cron (HO-09b)
+/// detected that the operator's profile drifted from its baseline by
+/// more than `freedom.yaml::drift_alert.threshold`. Emitted ONLY when
+/// `drift_alert.enabled = true` AND the drift ratio strictly exceeds the
+/// threshold, so every frame that fires is operator-actionable (review
+/// via `neoth profile show`, then re-anchor with `neoth profile drift
+/// baseline`). The cron reuses the same baseline-resolution path as
+/// `neoth profile drift report` — working baseline first, else the 0xB3
+/// migration anchor.
+///
+/// Payload (JSON): `{ drift_ratio, threshold, added_count, removed_count,
+/// baseline_source, ts_unix }`. `baseline_source` is `"working/<src>"`
+/// or `"anchor/<snapshot_id>"`. Claim hashes are NOT included — the
+/// frame is a drift SIGNAL, not a claim dump (operator inspects via CLI).
+pub const EVENT_TYPE_PROFILE_DRIFT_ALERT: u8 = 0xBA;
+
 // ---- 0xF0..=0xFF  Operator / system ---------------------------------------
 
 /// Daemon refused a WAL write because `~/.neoth/` exceeded the configured
@@ -1272,6 +1288,8 @@ const _: () = {
         || EVENT_TYPE_PROFILE_REDACT_BLOCKED > 0xBF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_EXTRACT_SKIPPED < 0xB0
         || EVENT_TYPE_PROFILE_EXTRACT_SKIPPED > 0xBF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_PROFILE_DRIFT_ALERT < 0xB0 || EVENT_TYPE_PROFILE_DRIFT_ALERT > 0xBF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -1454,6 +1472,7 @@ mod tests {
                 "PROFILE_EXTRACT_SKIPPED",
                 EVENT_TYPE_PROFILE_EXTRACT_SKIPPED,
             ),
+            ("PROFILE_DRIFT_ALERT", EVENT_TYPE_PROFILE_DRIFT_ALERT),
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),

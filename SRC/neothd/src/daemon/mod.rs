@@ -17,6 +17,12 @@ pub mod clock_floor;
 pub mod credentials_import_sidecar;
 pub mod detect_complete_sidecar;
 pub mod doctor_cron;
+/// HO-09b — profile drift-alert cron. Runs the same drift evaluation
+/// as `neoth profile drift report` on a 6h schedule + emits a
+/// `0xBA PROFILE_DRIFT_ALERT` WAL frame when drift strictly exceeds
+/// `freedom.yaml::drift_alert.threshold`. Off by default (master
+/// switch `drift_alert.enabled`).
+pub mod drift_alert_cron;
 pub mod export;
 /// Round-3 v0.4 G-02 cron-wiring — daily tick that scans
 /// `idx_profile` for novel high-confidence claims via
