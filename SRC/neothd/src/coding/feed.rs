@@ -25,7 +25,7 @@ use crate::wal::events::{
     EVENT_TYPE_KANBAN_SESSION_CLOSED, EVENT_TYPE_KANBAN_SESSION_OPENED,
     EVENT_TYPE_KANBAN_STATUS_CHANGED, EVENT_TYPE_KANBAN_TASK_ASSIGNED,
     EVENT_TYPE_KANBAN_TASK_COMMENT, EVENT_TYPE_KANBAN_TASK_COMPLETED,
-    EVENT_TYPE_KANBAN_TASK_CREATED,
+    EVENT_TYPE_KANBAN_TASK_CREATED, EVENT_TYPE_KANBAN_TASK_PROGRESS,
 };
 
 /// One formatted line in the activity feed. Pick #5's `neoth kanban
@@ -87,6 +87,7 @@ pub fn parse_kanban_payload(event_type: u8, ts_ns: u64, payload_bytes: &[u8]) ->
         EVENT_TYPE_KANBAN_TASK_COMMENT => parse_task_comment(ts_ns, payload_bytes),
         EVENT_TYPE_KANBAN_TASK_COMPLETED => parse_task_completed(ts_ns, payload_bytes),
         EVENT_TYPE_KANBAN_SESSION_CLOSED => parse_session_closed(ts_ns, payload_bytes),
+        EVENT_TYPE_KANBAN_TASK_PROGRESS => parse_task_progress(ts_ns, payload_bytes),
         _ => None,
     }
 }
@@ -178,6 +179,21 @@ struct SessionClosedPayload {
     tasks_archived: u32,
 }
 
+/// SD-02 — payload of `0x77 KANBAN_TASK_PROGRESS`, emitted by the
+/// dispatcher on each task lifecycle transition (dispatched=0% /
+/// review_ready=100%). Only the feed-rendered fields are decoded.
+#[derive(Deserialize)]
+struct TaskProgressPayload {
+    #[allow(dead_code)]
+    task_id: i64,
+    #[serde(default)]
+    hemisphere: String,
+    #[serde(default)]
+    progress_pct: u8,
+    #[serde(default)]
+    message: String,
+}
+
 // ── Parsers ────────────────────────────────────────────────────────────────
 
 fn parse_session_opened(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
@@ -257,6 +273,30 @@ fn parse_status_changed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
         event_type: EVENT_TYPE_KANBAN_STATUS_CHANGED,
         actor: "system".to_string(),
         message: format!("Status: {from} → {}", p.new_status),
+    })
+}
+
+/// SD-02 — render the dispatcher's lifecycle heartbeat (`0x77`) into a
+/// feed line, so `neoth kanban watch` shows "dispatched" / "review-ready"
+/// progress. The actor is the hemisphere that ran the task (or `system`
+/// when unset); the message carries the percent + the dispatcher's note.
+fn parse_task_progress(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
+    let p: TaskProgressPayload = serde_json::from_slice(payload).ok()?;
+    let actor = if p.hemisphere.is_empty() {
+        "system".to_string()
+    } else {
+        p.hemisphere
+    };
+    let message = if p.message.is_empty() {
+        format!("{}% complete", p.progress_pct)
+    } else {
+        format!("{}% — {}", p.progress_pct, p.message)
+    };
+    Some(FeedEntry {
+        ts_ns,
+        event_type: EVENT_TYPE_KANBAN_TASK_PROGRESS,
+        actor,
+        message,
     })
 }
 
@@ -471,6 +511,51 @@ mod tests {
             "ETA 102s must render as `1m 42s`: {}",
             entry.message
         );
+    }
+
+    #[test]
+    fn parse_task_progress_dispatched_renders_zero_pct_with_hemisphere_actor() {
+        // SD-02: the dispatcher's "dispatched" heartbeat (0% on
+        // BACKLOG→InProgress) must surface in `neoth kanban watch`.
+        let json = serde_json::json!({
+            "task_id": 5,
+            "session_id": 1,
+            "hemisphere": "left",
+            "progress_pct": 0,
+            "message": "dispatched"
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_PROGRESS,
+            100,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse task_progress");
+        assert_eq!(entry.actor, "left");
+        assert!(entry.message.contains("0%"), "got: {}", entry.message);
+        assert!(
+            entry.message.contains("dispatched"),
+            "got: {}",
+            entry.message
+        );
+    }
+
+    #[test]
+    fn parse_task_progress_review_ready_renders_100_pct_and_defaults_actor() {
+        // 100% review-ready, no hemisphere set → actor falls back to system;
+        // no message → bare "100% complete".
+        let json = serde_json::json!({
+            "task_id": 6,
+            "progress_pct": 100
+        });
+        let entry = parse_kanban_payload(
+            EVENT_TYPE_KANBAN_TASK_PROGRESS,
+            200,
+            json.to_string().as_bytes(),
+        )
+        .expect("parse task_progress");
+        assert_eq!(entry.actor, "system");
+        assert_eq!(entry.message, "100% complete");
+        assert_eq!(entry.event_type, EVENT_TYPE_KANBAN_TASK_PROGRESS);
     }
 
     #[test]
