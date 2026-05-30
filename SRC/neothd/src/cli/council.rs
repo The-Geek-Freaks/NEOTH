@@ -128,6 +128,12 @@ pub enum CouncilAction {
         #[arg(long)]
         off: bool,
     },
+
+    /// KF-08: show the council per-message budget posture — the
+    /// configured cap (`freedom.yaml::council`) plus the last debate's
+    /// live runtime usage from `~/.neoth/council_budget.json` (written
+    /// by the chat-layer council wrapper after each debate).
+    Budget,
 }
 
 pub async fn run_council(args: CouncilArgs) -> Result<()> {
@@ -159,6 +165,7 @@ pub async fn run_council(args: CouncilArgs) -> Result<()> {
         }
         CouncilAction::Inspect { prompt_hash } => run_inspect(&home, &prompt_hash, args.output),
         CouncilAction::Suppress { off } => run_suppress(&home, off, args.output),
+        CouncilAction::Budget => run_budget(&home, args.output),
     }
 }
 
@@ -823,6 +830,80 @@ fn run_suppress(home: &Path, off: bool, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// `neoth council budget` — KF-08 meter readout: the configured
+/// per-message cap (`freedom.yaml::council`) + the last debate's live
+/// runtime usage from the `council_budget.json` scratch file.
+fn run_budget(home: &Path, output: OutputFormat) -> Result<()> {
+    let yaml = home.join("freedom.yaml");
+    let cfg = if yaml.exists() {
+        FreedomConfig::load_from_path(&yaml).unwrap_or_default()
+    } else {
+        FreedomConfig::default()
+    };
+    let cap = cfg.council.effective_max_calls();
+    let daily_usd_cap = cfg.council.daily_usd_cap;
+    let snap = crate::council::budget::load_budget_snapshot(home);
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let runtime = snap.as_ref().map(|s| {
+                json!({
+                    "cap_at_last_debate": s.cap,
+                    "used_last_msg": s.used_last_msg,
+                    "exhausted_last_msg": s.exhausted_last_msg,
+                    "exhaustions_rolling": s.exhaustions_rolling,
+                    "updated_ts_unix": s.updated_ts_unix,
+                })
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "configured_cap": cap,
+                    "daily_usd_cap": daily_usd_cap,
+                    "runtime": runtime,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!("# council budget");
+            println!("  configured cap (calls/message): {cap}");
+            println!(
+                "  daily USD cap:                  {}",
+                daily_usd_cap
+                    .map(|n| format!("${n:.2}"))
+                    .unwrap_or_else(|| "(none)".into())
+            );
+            match snap {
+                Some(s) => {
+                    println!(
+                        "  last debate: used {}/{} call(s){}",
+                        s.used_last_msg,
+                        s.cap,
+                        if s.exhausted_last_msg {
+                            "  (CAP HIT)"
+                        } else {
+                            ""
+                        }
+                    );
+                    println!(
+                        "  debates that hit the cap (lifetime): {}",
+                        s.exhaustions_rolling
+                    );
+                    println!("  updated (unix): {}", s.updated_ts_unix);
+                    if s.exhaustions_rolling > 0 {
+                        println!(
+                            "(cap-hits climbing? raise it: \
+                             `neoth council tune --max-calls N`)"
+                        );
+                    }
+                }
+                None => println!("  runtime: (no council debate recorded yet)"),
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1021,6 +1102,25 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = run_suppress(dir.path(), false, OutputFormat::Json).unwrap_err();
         assert!(err.to_string().contains("freedom.yaml not found"));
+    }
+
+    #[test]
+    fn run_budget_renders_config_only_without_snapshot() {
+        let dir = tempfile::tempdir().unwrap();
+        write_freedom_yaml(&dir.path().join("freedom.yaml"), &FreedomConfig::default()).unwrap();
+        // No council_budget.json yet → config-only readout, no error.
+        assert!(run_budget(dir.path(), OutputFormat::Json).is_ok());
+    }
+
+    #[test]
+    fn run_budget_reads_snapshot_when_present() {
+        let dir = tempfile::tempdir().unwrap();
+        write_freedom_yaml(&dir.path().join("freedom.yaml"), &FreedomConfig::default()).unwrap();
+        crate::council::budget::record_budget_outcome(dir.path(), 15, 15, 1000);
+        assert!(run_budget(dir.path(), OutputFormat::Json).is_ok());
+        let snap = crate::council::budget::load_budget_snapshot(dir.path()).unwrap();
+        assert!(snap.exhausted_last_msg);
+        assert_eq!(snap.used_last_msg, 15);
     }
 
     #[tokio::test]

@@ -3628,7 +3628,10 @@ async fn run_council_debate(
     // embedding provider is configured; the orchestrator falls back to
     // Jaccard on any embed failure. `None` keeps the legacy heuristic.
     let dissent_embed = crate::providers::embed_provider_from_config(config).await;
-    Ok(crate::council::run_debate_with_depth_budget(
+    // KF-08: probe-clone shares the `Arc<AtomicU32>` counter so we can
+    // read the final tally after the orchestrator consumes `budget`.
+    let budget_probe = budget.clone();
+    let outcome = crate::council::run_debate_with_depth_budget(
         &req.prompt,
         prompt_hash,
         depth,
@@ -3638,7 +3641,17 @@ async fn run_council_debate(
         &cere,
         dissent_embed.as_deref(),
     )
-    .await)
+    .await;
+    // Persist the council-budget posture for `neoth council budget`
+    // (best-effort, OUTSIDE the orchestrator hot path — one funnel for
+    // both the CLI + channel council paths).
+    crate::council::budget::record_budget_outcome(
+        &FreedomConfig::default_neoth_home(),
+        budget_probe.used(),
+        budget_probe.cap(),
+        now_unix() as i64,
+    );
+    Ok(outcome)
 }
 
 /// CDX-05 wedge: drive the MCP dispatch loop using `provider` as the
