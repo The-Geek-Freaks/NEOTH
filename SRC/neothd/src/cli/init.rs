@@ -3199,11 +3199,10 @@ async fn step6g_credential_import(args: &InitArgs, interactive: bool, neoth_dir:
     // encrypted variant (the common plaintext export needs no password).
     #[cfg(feature = "wizard")]
     let bitwarden_password: Option<crate::secret::SecretString> = match bitwarden_path.as_deref() {
-        Some(path)
-            if std::fs::read_to_string(path)
-                .map(|body| crate::credentials::bitwarden::export_is_encrypted(&body))
-                .unwrap_or(false) =>
-        {
+        // Bounded peek (file_is_encrypted_export caps the read at
+        // MAX_PEEK_BYTES) — no unbounded synchronous read on the wizard
+        // thread. The importer re-reads + handles the file authoritatively.
+        Some(path) if crate::credentials::bitwarden::file_is_encrypted_export(path) => {
             match dialoguer::Password::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt("Bitwarden export is encrypted — export password")
                 .interact()

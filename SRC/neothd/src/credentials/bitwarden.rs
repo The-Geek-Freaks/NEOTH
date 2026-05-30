@@ -103,6 +103,35 @@ pub fn export_is_encrypted(body: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Maximum bytes read when PEEKING an export to decide the wizard's
+/// password prompt (C-02b). A real Bitwarden export — even tens of
+/// thousands of logins — is a few MB; 16 MiB is well above any plausible
+/// vault while bounding the wizard's synchronous read so a pathological
+/// file can't exhaust memory before the importer runs.
+pub const MAX_PEEK_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Bounded encrypted-variant detection for the wizard's prompt decision:
+/// reads at most [`MAX_PEEK_BYTES`] of `path` and checks the `encrypted`
+/// flag. A file larger than the cap, unreadable, or not valid JSON within
+/// the cap returns `false` — the importer then reads + handles it
+/// authoritatively (an encrypted export with no password surfaces a clear
+/// error, never a silent empty vault). Bounding here replaces the
+/// unbounded synchronous `read_to_string` the wizard would otherwise run.
+pub fn file_is_encrypted_export(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut buf = Vec::new();
+    if file.take(MAX_PEEK_BYTES).read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    match std::str::from_utf8(&buf) {
+        Ok(s) => export_is_encrypted(s),
+        Err(_) => false,
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct BwFolder {
     #[serde(default)]
@@ -691,5 +720,48 @@ mod tests {
         let err = imp.discover_entries().await.unwrap_err();
         // The decrypt error (WrongPassword) is wrapped, never silently empty.
         assert!(err.contains("decrypt Bitwarden export"), "got: {err}");
+        // Pin the INNER error too — a regression that drops `{e}` from the
+        // wrapper (leaving only the prefix) would still pass the line above.
+        assert!(
+            err.contains("password rejected") || err.contains("HMAC"),
+            "inner error must stay actionable (WrongPassword), got: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn encrypted_importer_account_key_export_surfaces_unsupported_error() {
+        // `encrypted:true` + `passwordProtected:false` = the Bitwarden
+        // account-key export path, which the decrypt module rejects as
+        // unsupported. The importer must surface that as a clear error
+        // (an operator on the account-key path hits this in production).
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("enc.json");
+        std::fs::write(
+            &path,
+            r#"{"encrypted":true,"passwordProtected":false,"salt":"","kdfType":0,"kdfIterations":600000,"encKeyValidation_DO_NOT_EDIT":"2.a|b|c","data":"2.d|e|f"}"#,
+        )
+        .unwrap();
+        let imp =
+            BitwardenJsonImporter::new(&path).with_password(SecretString::new("anything".into()));
+        let err = imp.discover_entries().await.unwrap_err();
+        assert!(err.contains("decrypt Bitwarden export"), "got: {err}");
+        assert!(
+            err.contains("not password-protected") || err.contains("account-key"),
+            "account-key export must surface an unsupported-path error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn file_is_encrypted_export_bounded_detection() {
+        let dir = tempfile::tempdir().unwrap();
+        let enc = dir.path().join("enc.json");
+        std::fs::write(&enc, r#"{"encrypted":true,"data":"x"}"#).unwrap();
+        assert!(file_is_encrypted_export(&enc), "encrypted export detected");
+        let plain = dir.path().join("plain.json");
+        std::fs::write(&plain, r#"{"items":[]}"#).unwrap();
+        assert!(!file_is_encrypted_export(&plain), "plaintext export");
+        // Missing file → false, no panic (the importer surfaces the real
+        // read error later).
+        assert!(!file_is_encrypted_export(&dir.path().join("nope.json")));
     }
 }

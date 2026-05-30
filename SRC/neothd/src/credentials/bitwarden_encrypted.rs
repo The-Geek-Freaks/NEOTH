@@ -62,6 +62,7 @@ use hmac::{Hmac, Mac};
 use serde::Deserialize;
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
+use zeroize::{Zeroize, Zeroizing};
 
 type Aes256CbcDec = cbc::Decryptor<Aes256>;
 type HmacSha256 = Hmac<Sha256>;
@@ -180,6 +181,13 @@ pub fn derive_keys_pbkdf2(password: &[u8], salt: &[u8], iterations: u32) -> ([u8
     let mut mac_key = [0u8; 32];
     hk.expand(b"mac", &mut mac_key)
         .expect("32 bytes fits in the 8160-byte HKDF output bound");
+    // Scrub the PRK once the subkeys are derived — `master_key` is the
+    // single point that compromises both subkeys, and NEOTH zeroizes all
+    // key material (consistent with SecretBytes). `hk` copied the PRK
+    // internally + isn't used past its last `expand`, so this `&mut`
+    // doesn't conflict. The returned subkeys are wrapped in `Zeroizing`
+    // by the caller (`parse_and_decrypt`).
+    master_key.zeroize();
     (enc_key, mac_key)
 }
 
@@ -271,6 +279,12 @@ pub fn parse_and_decrypt(body: &str, password: &str) -> Result<String, Bitwarden
     let envelope = parse_envelope_json(body)?;
     let (enc_key, mac_key) =
         derive_keys_pbkdf2(password.as_bytes(), &envelope.salt, envelope.kdf_iterations);
+    // Hold the derived subkeys in `Zeroizing` so they are scrubbed on every
+    // exit path (incl. the `?` early returns below), not left on the stack
+    // after the function returns. `&enc_key` / `&mac_key` deref-coerce to
+    // `&[u8; 32]` at the call sites.
+    let enc_key = Zeroizing::new(enc_key);
+    let mac_key = Zeroizing::new(mac_key);
     // Step 1: password pre-check via the validator EncString. Its
     // HMAC-SHA256 is keyed by `mac_key`, so `decrypt_encrypted_string`
     // returns `WrongPassword` (constant-time MAC mismatch) the moment
