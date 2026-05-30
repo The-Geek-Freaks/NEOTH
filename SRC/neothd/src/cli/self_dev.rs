@@ -259,11 +259,23 @@ async fn run_decline(
 /// `run_propose` so the daemon's passive-adaptation cron
 /// (`daemon::profile_adapt_cron`) reuses the EXACT dedup + store + WAL-emit
 /// logic instead of duplicating it). Given an already-loaded behavioural
-/// profile + the current preset name, runs `propose_adjustments`, appends
+/// profile + the current preset name, runs `propose_adjustments`, keeps
 /// only proposals whose stable id isn't already in the store (idempotent),
 /// emits a `0x1C SELF_DEV_PROPOSED` frame per new proposal (direct when a
 /// `writer` is present, else enqueued to the self-dev outbox for the daemon
-/// to drain), persists the store, and returns the count of NEW proposals.
+/// to drain), and returns the count of NEW proposals.
+///
+/// ORDERING (Session 30 review-fix): the store is persisted to
+/// `proposals.json` BEFORE any WAL frame is emitted. The earlier order
+/// (emit-then-save) had a crash window — a kill between the last
+/// `emit_proposed` and the single trailing `save_store` left `0x1C` frames
+/// in the WAL for proposals absent from `proposals.json`; the next cron
+/// tick's dedup (which reads the store) then missed them and re-emitted →
+/// duplicate WAL frames the operator never saw in `neoth self-dev review`.
+/// Persist-first inverts the failure mode to the benign one: a crash after
+/// `save_store` but before emit leaves a proposal that IS in the store
+/// (visible in review, dedup-safe) but lacks its audit frame — no
+/// duplicates, no phantom frames.
 pub(crate) async fn propose_and_store(
     home: &Path,
     profile: &BehaviouralProfile,
@@ -280,30 +292,38 @@ pub(crate) async fn propose_and_store(
     }
     let mut store = load_store(home)?;
     let ts = now_unix();
-    let mut added = 0usize;
-    for p in &new_proposals {
-        if store.entries.iter().any(|e| e.proposal.id == p.id) {
-            continue;
-        }
+    // Keep only proposals whose stable id isn't already stored.
+    let to_add: Vec<&SelfDevProposal> = new_proposals
+        .iter()
+        .filter(|p| !store.entries.iter().any(|e| e.proposal.id == p.id))
+        .collect();
+    if to_add.is_empty() {
+        return Ok(0);
+    }
+    for p in &to_add {
         store.entries.push(StoredProposal {
-            proposal: p.clone(),
+            proposal: (*p).clone(),
             status: ProposalStatus::Pending,
             status_at_unix: ts,
             decline_reason: String::new(),
         });
-        added += 1;
+    }
+    // Persist BEFORE emitting WAL frames (see doc above) — a crash here
+    // yields proposals-with-no-frame (benign), never frames-with-no-store
+    // (which would re-emit + duplicate on the next tick).
+    save_store(home, &store)?;
+    for p in &to_add {
         if let Some(w) = writer {
             emit_proposed(w, p, ts).await?;
         } else {
             super::self_dev_outbox::enqueue(
                 home,
-                &super::self_dev_outbox::PendingEvent::proposed(p.clone(), ts),
+                &super::self_dev_outbox::PendingEvent::proposed((*p).clone(), ts),
             )
             .await?;
         }
     }
-    save_store(home, &store)?;
-    Ok(added)
+    Ok(to_add.len())
 }
 
 async fn run_propose(

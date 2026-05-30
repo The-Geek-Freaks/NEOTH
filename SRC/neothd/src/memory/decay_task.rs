@@ -36,6 +36,14 @@ pub fn spawn(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) -> Jo
 /// matches the JoinHandle<()> the caller actually observes.
 async fn run(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) {
     let mut ticker = tokio::time::interval(interval);
+    // Skip missed ticks rather than bursting (the codebase-wide default for
+    // every periodic task — auto_update / doctor_cron / drift_alert_cron /
+    // cron::scheduler all set this). Without it, a consolidation pass that
+    // outran the interval would let tokio fire the next tick(s) immediately
+    // on completion, running two decay passes back-to-back with no spacing —
+    // a second pass can forget rows that only just crossed FORGET_FLOOR
+    // during the first pass's own decay UPDATE, WITHOUT a pre-decay draft.
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // First tick fires immediately. Skip the initial fire on the assumption
     // that fresh boot already has a recent consolidation state — gives
     // operators a clean log on `neoth serve` startup without an immediate
@@ -75,8 +83,29 @@ pub async fn run_once(
         // empty PassReport so the caller sees "ran, did nothing"
         // rather than "ran, blew away the hot tier". Emit a
         // tracing::error! so operators see the cause in NEOTH_LOG.
+        //
+        // BOTH clock-failure modes must skip identically — the pre-epoch
+        // Err arm AND the far-future nanosecond-overflow arm. The earlier
+        // `unwrap_or(i64::MAX)` re-introduced the M-03 hazard under a
+        // different trigger: a host clock reporting a time whose ns count
+        // exceeds i64 (~year 2262) would set now_ns = i64::MAX, making
+        // EVERY stored event look >7d old → the whole hot tier consolidates
+        // + below-floor rows are deleted in one pass (and, with a vault,
+        // pre-decay-drafted en masse). Refuse the pass instead.
         let now_ns = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-            Ok(d) => i64::try_from(d.as_nanos()).unwrap_or(i64::MAX),
+            Ok(d) => match i64::try_from(d.as_nanos()) {
+                Ok(ns) => ns,
+                Err(_) => {
+                    tracing::error!(
+                        nanos = d.as_nanos(),
+                        "memory::decay_task::run_once: host clock nanosecond count \
+                         overflows i64 (year >= 2262?) — refusing to run consolidation \
+                         (would mass-migrate the entire hot tier). Check NTP / VM / \
+                         hypervisor clock; rerun decay after fix."
+                    );
+                    return Ok(consolidate::PassReport::default());
+                }
+            },
             Err(e) => {
                 tracing::error!(
                     error = %e,

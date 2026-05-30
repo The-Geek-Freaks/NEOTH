@@ -126,12 +126,20 @@ pub fn cosine_rerank<'a>(
 /// [`EMBEDDING_THRESHOLD`], or `None` when nothing crosses the bar.
 ///
 /// **Cost**: N+1 embedding calls per invocation (1 message + 1 per
-/// enabled skill). For the default 22-skill bundle on CPU Qwen2.5-3B
-/// this is ~10-30s cold-start; warm calls run in seconds. Phase 2b
-/// adds a session-level cache (compute skill embeddings once, reuse
-/// across messages) — operators who want it today can run with
-/// `freedom.yaml::inference.embedding_provider: null` to skip Stage-2
-/// entirely.
+/// enabled skill), re-embedding every skill description on EVERY call —
+/// there is NO session/process embedding cache yet (a planned but
+/// unshipped optimisation). For the default 22-skill bundle on CPU
+/// Qwen2.5-3B this is ~10-30s cold-start; warm calls run in seconds.
+/// PF-01 (Session 30) made this path the default routing strategy
+/// (`freedom.yaml::skills.always_embed_route`, default `true`), but the
+/// cost is self-gating: Stage-2 only runs at all when the operator has
+/// configured `inference.embedding_provider` (null by default), and the
+/// chat CLI is single-shot (one turn per process) so the N+1 cost does
+/// not accumulate across turns. Operators who want to skip Stage-2
+/// entirely set `embedding_provider: null` (or `always_embed_route:
+/// false` to keep it as a keyword-miss-only fallback). A skill-embedding
+/// cache to amortise the per-skill embeds across a long-running session
+/// remains a tracked follow-up.
 ///
 /// Failure modes are silent + fall back to keyword-only:
 ///   - Provider returns Err on the message embed → returns None
