@@ -757,10 +757,7 @@ pub(crate) fn compute_drift_against_baseline(
 
 /// HO-09 — `neoth profile drift {report, baseline, reset}`.
 async fn run_drift(db_path: &std::path::Path, sub: DriftSub, output: &OutputFormat) -> Result<()> {
-    use crate::profile::baseline_diff::{
-        DriftBaseline, compute_drift, load_drift_baseline, reset_drift_baseline,
-        save_drift_baseline,
-    };
+    use crate::profile::baseline_diff::{DriftBaseline, reset_drift_baseline, save_drift_baseline};
     let home = FreedomConfig::default_neoth_home();
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -814,25 +811,22 @@ async fn run_drift(db_path: &std::path::Path, sub: DriftSub, output: &OutputForm
             Ok(())
         }
         DriftSub::Report => {
-            // Baseline source: operator working baseline first, else the
-            // immutable 0xB3 migration anchor.
-            let (baseline_hashes, source) =
-                match load_drift_baseline(&home).context("load working drift baseline")? {
-                    Some(b) => (b.claim_hashes, format!("working/{}", b.source)),
-                    None => {
-                        let wal_dir = FreedomConfig::default_wal_dir();
-                        match scan_for_baseline_snapshot_full(&wal_dir) {
-                            Some(s) => (s.claim_hashes, format!("anchor/{}", s.snapshot_id)),
-                            None => anyhow::bail!(
-                                "no baseline to compare against. Capture one with \
-                             `neoth profile drift baseline` (resettable working baseline) or \
-                             `neoth profile seed-baseline` (the one-shot 0xB3 migration anchor)."
-                            ),
-                        }
-                    }
-                };
-            let current = current_active_claim_hashes(db_path)?;
-            let report = compute_drift(&baseline_hashes, &current);
+            // Baseline resolution + drift computation via the shared seam
+            // (working baseline → 0xB3 anchor fallback) — the exact same
+            // path the daemon drift-alert cron uses, so the two can never
+            // diverge on what the baseline is.
+            let (report, source) = match compute_drift_against_baseline(
+                &home,
+                db_path,
+                &FreedomConfig::default_wal_dir(),
+            )? {
+                Some(x) => x,
+                None => anyhow::bail!(
+                    "no baseline to compare against. Capture one with \
+                     `neoth profile drift baseline` (resettable working baseline) or \
+                     `neoth profile seed-baseline` (the one-shot 0xB3 migration anchor)."
+                ),
+            };
             let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
             let threshold = cfg.drift_alert.threshold;
             let alerting = cfg.drift_alert.enabled;

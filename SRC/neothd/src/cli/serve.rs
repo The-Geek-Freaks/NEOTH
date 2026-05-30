@@ -1432,7 +1432,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         );
         if handle.is_some() {
             info!(
-                interval_secs = crate::daemon::drift_alert_cron::DEFAULT_CRON_INTERVAL_SECS,
+                interval_secs = config.drift_alert.interval_secs,
                 threshold = config.drift_alert.threshold,
                 "profile drift-alert cron loop spawned (HO-09b)"
             );

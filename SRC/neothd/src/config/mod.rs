@@ -487,9 +487,10 @@ pub struct ProactiveConfig {
 }
 
 /// HO-09 / V1x-03 — profile baseline drift alerting. `neoth profile drift
-/// report` flags drift over `threshold`; when `enabled` a future daemon
-/// cron consumer will emit an alert on the same threshold. Default OFF so
-/// the common path is unaffected.
+/// report` flags drift over `threshold`; when `enabled`, the daemon
+/// drift-alert cron (HO-09b, `daemon::drift_alert_cron`) emits a
+/// `0xBA PROFILE_DRIFT_ALERT` WAL frame on the same threshold every
+/// `interval_secs`. Default OFF so the common path is unaffected.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct DriftAlertConfig {
@@ -502,14 +503,32 @@ pub struct DriftAlertConfig {
     /// `baseline_diff::DriftReport::drift_ratio`). Default `0.25`
     /// (a quarter of the baseline churned).
     pub threshold: f64,
+    /// Daemon drift-alert cron tick interval, seconds. Default 6h
+    /// (drift changes slowly — claims accrete over days). Clamped to a
+    /// 60s floor by [`Self::interval_duration`] so a misconfigured `0`
+    /// can't tight-loop.
+    pub interval_secs: u64,
 }
+
+/// 6 hours — the drift-alert cron default cadence.
+pub const DEFAULT_DRIFT_ALERT_INTERVAL_SECS: u64 = 6 * 3600;
 
 impl Default for DriftAlertConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             threshold: 0.25,
+            interval_secs: DEFAULT_DRIFT_ALERT_INTERVAL_SECS,
         }
+    }
+}
+
+impl DriftAlertConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
+    /// Mirrors `DoctorCronConfig::interval_duration`.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
     }
 }
 

@@ -27,17 +27,10 @@
 //! hourly "still fine" noise.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::config::DriftAlertConfig;
 use crate::profile::baseline_diff::DriftReport;
 use crate::wal::writer::WalWriterHandle;
-
-/// Default cron interval — 6 hours. Profile drift changes slowly (claims
-/// accrete over days), so a tight loop would be pure noise. Operators who
-/// want a different cadence get it once `drift_alert.interval_secs` lands;
-/// today the master `enabled` switch is the only knob.
-pub const DEFAULT_CRON_INTERVAL_SECS: u64 = 6 * 3600;
 
 /// One drift-alert cron pass. Resolves the baseline + current claim set
 /// (shared seam with the CLI report path), and — when the drift ratio
@@ -120,8 +113,9 @@ pub async fn run_drift_alert_tick(
 /// Spawn the drift-alert cron loop. Returns the `JoinHandle` so the daemon
 /// tracks it alongside the other background tasks; `None` when
 /// `config.enabled == false` so opt-out operators (the default) carry no
-/// idle tokio task. The interval is clamped to a 60s floor so a future
-/// misconfigured 0 can't tight-loop.
+/// idle tokio task. The interval comes from `config.interval_secs`, clamped
+/// to a 60s floor by `DriftAlertConfig::interval_duration` so an
+/// operator-supplied `interval_secs: 0` can't tight-loop.
 pub fn spawn_drift_alert_cron_loop(
     config: DriftAlertConfig,
     home: PathBuf,
@@ -131,7 +125,7 @@ pub fn spawn_drift_alert_cron_loop(
         tracing::info!("drift-alert cron disabled in config (drift_alert.enabled = false)");
         return None;
     }
-    let interval = Duration::from_secs(DEFAULT_CRON_INTERVAL_SECS.max(60));
+    let interval = config.interval_duration();
     Some(tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -204,10 +198,36 @@ mod tests {
         count
     }
 
+    /// Return the first `0xBA` frame's JSON payload from an uncompressed
+    /// WAL segment, so a test can assert the on-disk payload contract (the
+    /// operator-facing `neoth wal show --type profile_drift_alert` output)
+    /// — not just that a frame exists.
+    fn first_drift_payload(seg: &std::path::Path) -> Option<serde_json::Value> {
+        let bytes = std::fs::read(seg).ok()?;
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).ok()?;
+        let mut cursor = hdr.header_len();
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => return None,
+            };
+            if dec.header.event_type == EVENT_TYPE_PROFILE_DRIFT_ALERT {
+                return serde_json::from_slice(dec.payload).ok();
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        None
+    }
+
     fn enabled_config(threshold: f64) -> DriftAlertConfig {
         DriftAlertConfig {
             enabled: true,
             threshold,
+            interval_secs: crate::config::DEFAULT_DRIFT_ALERT_INTERVAL_SECS,
         }
     }
 
@@ -220,6 +240,7 @@ mod tests {
         let cfg = DriftAlertConfig {
             enabled: false,
             threshold: 0.25,
+            interval_secs: crate::config::DEFAULT_DRIFT_ALERT_INTERVAL_SECS,
         };
         let handle = spawn_drift_alert_cron_loop(cfg, home.path().to_path_buf(), writer);
         assert!(handle.is_none());
@@ -260,10 +281,14 @@ mod tests {
 
     #[tokio::test]
     async fn tick_emits_alert_when_drift_over_threshold() {
-        // Working baseline whose hashes are fully disjoint from the current
-        // claim set → drift ratio 2.0 > 0.25 → emit 0xBA + return Some.
+        // ASYMMETRIC setup so added_count != removed_count are individually
+        // meaningful (a 1↔1 setup makes a count-swap invisible): TWO current
+        // claims vs a ONE-hash working baseline → added=2 (both current
+        // hashes absent from baseline), removed=1 (the zeros hash absent
+        // from current), drift_ratio = (2+1)/max(1,2) = 1.5 > 0.25.
         let home = tempfile::tempdir().unwrap();
         seed_claim(home.path(), "identity.location", "\"berlin\"");
+        seed_claim(home.path(), "identity.role", "\"operator\"");
         save_drift_baseline(
             home.path(),
             &DriftBaseline::new(
@@ -282,11 +307,24 @@ mod tests {
             .unwrap()
             .expect("drift over threshold must alert");
         assert!(report.is_over(0.25));
+        assert_eq!(report.added.len(), 2);
+        assert_eq!(report.removed.len(), 1);
         assert_eq!(
             count_drift_frames(&seg),
             1,
             "exactly one 0xBA frame emitted"
         );
+        // Pin the on-disk payload contract (the operator-facing WAL signal),
+        // not just frame presence — guards against a silent serialization
+        // regression in baseline_source / counts / ratio.
+        let payload = first_drift_payload(&seg).expect("0xBA payload must decode");
+        assert_eq!(payload["baseline_source"], "working/manual");
+        assert_eq!(payload["added_count"], 2);
+        assert_eq!(payload["removed_count"], 1);
+        assert_eq!(payload["threshold"], 0.25);
+        let ratio = payload["drift_ratio"].as_f64().expect("drift_ratio is f64");
+        assert!((ratio - report.drift_ratio()).abs() < 1e-9);
+        assert!(ratio > 0.25);
     }
 
     #[tokio::test]
@@ -315,6 +353,32 @@ mod tests {
 
     #[test]
     fn default_interval_is_six_hours() {
-        assert_eq!(DEFAULT_CRON_INTERVAL_SECS, 6 * 3600);
+        assert_eq!(
+            crate::config::DriftAlertConfig::default().interval_secs,
+            6 * 3600
+        );
+        assert_eq!(crate::config::DEFAULT_DRIFT_ALERT_INTERVAL_SECS, 6 * 3600);
+    }
+
+    #[test]
+    fn interval_duration_clamps_zero_to_sixty_seconds() {
+        // The HO-09b review (MEDIUM) flagged that the old `.max(60)` on
+        // the compile-time constant was vacuous. The clamp now applies to
+        // the operator-supplied config value — pin that contract.
+        let cfg = DriftAlertConfig {
+            enabled: true,
+            threshold: 0.25,
+            interval_secs: 0,
+        };
+        assert_eq!(cfg.interval_duration(), std::time::Duration::from_secs(60));
+        let cfg2 = DriftAlertConfig {
+            enabled: true,
+            threshold: 0.25,
+            interval_secs: 7200,
+        };
+        assert_eq!(
+            cfg2.interval_duration(),
+            std::time::Duration::from_secs(7200)
+        );
     }
 }
