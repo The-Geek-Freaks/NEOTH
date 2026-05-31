@@ -37,6 +37,8 @@ pub enum ModelsAction {
     /// Print every known model + whether its artifacts are cached.
     List,
     /// Download a model's artifacts into `~/.neoth/models/<flat>/`.
+    /// `neoth model fetch <name>` is an accepted alias for this.
+    #[command(visible_alias = "fetch")]
     Pull {
         /// Model id. Known: `clip`, `whisper`.
         name: String,

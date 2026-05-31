@@ -25,8 +25,8 @@ neoth model fetch whisper
 Inspect:
 
 ```bash
-neoth model status
-neoth model doctor
+neoth models list
+neoth doctor
 ```
 
 ## Hardware guidance
@@ -78,7 +78,7 @@ Audit:
 
 ```bash
 neoth privacy audit --last 30d
-neoth model doctor
+neoth doctor
 ```
 
 ## Cache layout
@@ -98,9 +98,9 @@ NEOTH should treat model downloads as explicit operator actions, log them, and a
 If local models are slow or failing:
 
 ```bash
-neoth model doctor
+neoth doctor
 neoth status
-neoth local resources
+neoth hardware
 ```
 
 Common fixes:

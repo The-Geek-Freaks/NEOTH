@@ -244,6 +244,7 @@ pub enum Commands {
     /// `--test "msg"` runs the keyword router and prints the match.
     /// `--install <path>` copies a local skill dir into ~/.neoth/skills/ (QM-11).
     /// `--uninstall <id>` removes ~/.neoth/skills/<id>/ (QM-11).
+    #[command(visible_alias = "skill")]
     Skills(skills::SkillsArgs),
 
     /// QM-3 mode-registry surface — list / show / match operator-facing
@@ -380,6 +381,7 @@ pub enum Commands {
     /// deletes a model directory. Operators run `pull` once after
     /// `neoth init` so the first media-extract doesn't block on a
     /// multi-GiB HF download.
+    #[command(visible_alias = "model")]
     Models(models::ModelsArgs),
 
     /// Multimodal asset ingest pipeline.
@@ -645,6 +647,7 @@ pub enum Commands {
     /// one provider. `add` / `test` / `remove` are reserved for a
     /// future session — operators configure providers via `neoth init`
     /// or `neoth hemispheres set` today.
+    #[command(visible_alias = "providers")]
     Provider {
         #[command(subcommand)]
         action: ProviderAction,
@@ -661,7 +664,7 @@ pub enum Commands {
     Undo(undo::UndoArgs),
 
     /// Manage channels (Telegram, WhatsApp, etc.) (Day 7+).
-    #[command(hide = true)]
+    #[command(hide = true, alias = "channels")]
     Channel {
         #[command(subcommand)]
         action: ChannelAction,
