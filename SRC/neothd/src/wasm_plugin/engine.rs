@@ -35,6 +35,7 @@
 use anyhow::{Context, Result};
 use wasmtime::{Config, Engine, Module, ResourceLimiter, Store};
 
+use super::hostcalls::HostcallPermission;
 use crate::wal::writer::WalWriterHandle;
 
 /// V10-04 Pick #34c (2026-05-19): shared read-only recall connection
@@ -95,6 +96,15 @@ pub struct PluginStoreState {
     /// never wired to wasmtime — a plugin could grow until the host
     /// OOM-killed the daemon.
     pub memory_limit_bytes: usize,
+    /// SC-04: the permission level the operator granted this plugin —
+    /// derived from its manifest `requested_permissions` (approved at
+    /// `neoth plugin enable`). Every hostcall closure reads this via
+    /// `caller.data().granted` and refuses fail-closed when a call
+    /// requires more than the grant. Defaults to
+    /// [`HostcallPermission::None`] so a store built without an explicit
+    /// grant can only reach the permission-`None` hostcalls — there is
+    /// no ambient plugin power.
+    pub granted: HostcallPermission,
 }
 
 /// Reviewer-1 P0-A enforcement (2026-05-20): wasmtime calls this
@@ -146,6 +156,10 @@ impl PluginStoreState {
             wal_writer: None,
             recall_db: None,
             memory_limit_bytes: DEFAULT_MEMORY_LIMIT_BYTES,
+            // Fail-closed: a store built without an explicit grant gets
+            // NO privileged capability. The daemon's plugin-load path
+            // sets the real level via `with_granted` from the manifest.
+            granted: HostcallPermission::None,
         }
     }
 
@@ -190,6 +204,17 @@ impl PluginStoreState {
     #[must_use]
     pub fn with_recall_db(mut self, db: RecallDbHandle) -> Self {
         self.recall_db = Some(db);
+        self
+    }
+
+    /// SC-04: set the permission level the operator granted this plugin
+    /// (from the manifest `requested_permissions`). The daemon's
+    /// plugin-load path calls this with
+    /// `HostcallPermission::from(manifest.requested_permissions)` so the
+    /// hostcall gate enforces exactly what the operator approved.
+    #[must_use]
+    pub fn with_granted(mut self, granted: HostcallPermission) -> Self {
+        self.granted = granted;
         self
     }
 }
@@ -282,6 +307,23 @@ mod tests {
     fn with_fuel_overrides_default_budget() {
         let s = PluginStoreState::new("heavy-job").with_fuel(10_000_000);
         assert_eq!(s.fuel_budget, 10_000_000);
+    }
+
+    #[test]
+    fn new_state_grant_defaults_to_none_fail_closed() {
+        // SC-04 core invariant: a store built without an explicit grant
+        // has NO ambient capability. The hostcall gate reads this field;
+        // None means only permission-None hostcalls (log, fuel_left)
+        // pass. If this default ever drifts to anything higher, every
+        // plugin silently regains ambient power — pin it.
+        let s = PluginStoreState::new("ungranted");
+        assert_eq!(s.granted, HostcallPermission::None);
+    }
+
+    #[test]
+    fn with_granted_sets_the_level() {
+        let s = PluginStoreState::new("reader").with_granted(HostcallPermission::ReadOnly);
+        assert_eq!(s.granted, HostcallPermission::ReadOnly);
     }
 
     #[test]

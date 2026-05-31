@@ -124,16 +124,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // via `config.plugins.wasm.enabled` (NOOB-UX-3) — operator on a
     // wasm-plugin-host-compiled release can still disable plugins
     // via freedom.yaml without recompiling.
-    #[cfg(feature = "wasm-plugin-host")]
-    {
-        if config.plugins.wasm.enabled {
-            bootstrap_plugin_invoker(&FreedomConfig::default_neoth_home());
-        } else {
-            info!(
-                "freedom.yaml::plugins.wasm.enabled = false; skipping plugin discovery + invoker bootstrap"
-            );
-        }
-    }
+    //
+    // SC-04: the actual `bootstrap_plugin_invoker` call moved DOWN to
+    // after the WAL writer is spawned (step 3) — the invoker needs a
+    // clone of the daemon's single writer so a denied plugin hostcall
+    // emits its 0xC7 PLUGIN_CAP_DENIED audit frame. Bootstrapping here
+    // (before the writer existed) left the production audit hollow.
 
     // V03-08 + A-2 preflight: daemon has no TTY so `ensure_all_granted_or_prompt`
     // bails with an actionable error if any cloud provider in the
@@ -325,6 +321,24 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         )))
     };
     info!(path = %segment_path.display(), "WAL writer spawned");
+
+    // ── 3c. Plugin invoker bootstrap (SC-04) ───────────────────────────────
+    // Deferred from step 1a so the invoker carries a clone of the live
+    // WAL writer: a denied plugin hostcall must emit its 0xC7
+    // PLUGIN_CAP_DENIED audit frame, and a used capability its 0xC4/0xC6
+    // frame, into the SAME segment the daemon writes. Reusing the writer
+    // handle (not spawning a second one) keeps the single-writer
+    // invariant that the WAL segment depends on.
+    #[cfg(feature = "wasm-plugin-host")]
+    {
+        if config.plugins.wasm.enabled {
+            bootstrap_plugin_invoker(&FreedomConfig::default_neoth_home(), writer.clone());
+        } else {
+            info!(
+                "freedom.yaml::plugins.wasm.enabled = false; skipping plugin discovery + invoker bootstrap"
+            );
+        }
+    }
 
     // E-2 Phase 4 (Session 14 Pick #23) — log a depth-cost warning at
     // boot when the operator's freedom.yaml has
@@ -4087,7 +4101,7 @@ pub(crate) async fn handle_media_attachment(
 /// without registering; the daemon stays up + Plugin hooks degrade
 /// to Allow (their pre-bootstrap behaviour).
 #[cfg(feature = "wasm-plugin-host")]
-fn bootstrap_plugin_invoker(home: &std::path::Path) {
+fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle) {
     use std::sync::Arc;
     let plugins_root = home.join("plugins");
     let mut report = crate::wasm_plugin::discovery::discover(&plugins_root);
@@ -4258,9 +4272,28 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
              see `neoth plugins list` for details"
         );
     }
+    // SC-04: the granted permission level for each plugin is its
+    // manifest `requested_permissions` — the level the operator approved
+    // by enabling it. Threaded into the invoker so the hostcall gate
+    // enforces it. Keyed by manifest.id, same as the compiled modules.
+    let grants = crate::wasm_plugin::dispatch::CompiledPluginInvoker::grants_from_report(&report);
+    // SC-04 audit: open views.db read-only so `recall_top` returns real
+    // hit counts in production, and thread the daemon's WAL writer (a
+    // clone of the single segment writer — NOT a second writer) so a
+    // denied hostcall actually emits its 0xC7 PLUGIN_CAP_DENIED frame.
+    // Best-effort: a db-open failure degrades recall_top to 0, never
+    // blocks plugin loading.
+    let recall_db = match crate::memory::store::open(&home.join("views.db")) {
+        Ok(conn) => Some(Arc::new(std::sync::Mutex::new(conn))),
+        Err(e) => {
+            warn!(error = %e, "plugin recall_db open failed — recall_top will return 0");
+            None
+        }
+    };
     let invoker = crate::wasm_plugin::dispatch::CompiledPluginInvoker::from_compile_outcomes(
-        engine, &outcomes, linker,
-    );
+        engine, &outcomes, linker, grants,
+    )
+    .with_runtime_handles(Some(wal_writer), recall_db);
     if invoker.is_empty() {
         warn!("plugin discovery returned entries but zero compiled — invoker not registered");
         return;

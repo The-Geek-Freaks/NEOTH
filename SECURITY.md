@@ -77,7 +77,7 @@ neoth doctor
 neoth privacy audit --last 30d
 neoth privacy audit --destinations
 neoth profile show --evidence
-neoth plugin audit
+neoth plugin ledger
 neoth wal verify
 ```
 

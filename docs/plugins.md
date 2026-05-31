@@ -99,7 +99,7 @@ No plugin should get ambient access to the operator's filesystem, network, profi
 
 ```bash
 neoth plugin list
-neoth plugin audit
+neoth plugin ledger
 neoth privacy audit --last 7d
 ```
 
@@ -120,7 +120,7 @@ neoth plugin install ./my-plugin
 neoth plugin enable my-plugin
 neoth plugin disable my-plugin
 neoth plugin remove my-plugin
-neoth plugin audit my-plugin
+neoth plugin ledger my-plugin
 ```
 
 ## Security expectations

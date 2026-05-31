@@ -31,6 +31,7 @@ use crate::wal::events::{EVENT_TYPE_PLUGIN_CAP_USED, EVENT_TYPE_PLUGIN_HOSTCALL}
 use crate::wal::frame::decode_frame;
 use crate::wal::segment_header::parse_segment_header;
 use crate::wasm_plugin::discovery::{PluginActivation, discover};
+use crate::wasm_plugin::manifest::RequestedPermission;
 
 #[derive(Args, Debug, Clone)]
 pub struct PluginArgs {
@@ -550,7 +551,21 @@ fn run_test_invoke(
             });
         }
     };
-    let outcome = invoke_plugin(&engine, module, &linker, manifest.id.clone());
+    // SC-04: test the plugin with EXACTLY the grant it would receive in
+    // production — its manifest `requested_permissions`. So `neoth plugin
+    // test` exercises the same capability gate the daemon enforces.
+    let granted = hostcalls::HostcallPermission::from(manifest.requested_permissions);
+    // `plugin test` is a dry run — pass no writer/db so a test invocation
+    // never pollutes the live WAL or touches the real views.db.
+    let outcome = invoke_plugin(
+        &engine,
+        module,
+        &linker,
+        manifest.id.clone(),
+        granted,
+        None,
+        None,
+    );
     let invoked_ok = matches!(outcome.stage, InvocationStage::Run) && outcome.error.is_none();
     Some(TestInvocationSummary {
         stage: invocation_stage_name(outcome.stage).to_string(),
@@ -752,6 +767,17 @@ fn set_activation(
         );
     }
 
+    // SC-04: enabling a plugin IS the operator's grant of the capability
+    // level the plugin's manifest declares. Surface that level so the
+    // operator gives INFORMED consent — they see exactly what they are
+    // authorising, and the runtime hostcall gate then enforces it.
+    let granted = report
+        .loaded
+        .iter()
+        .find(|p| p.manifest.id == id)
+        .map(|p| p.manifest.requested_permissions)
+        .unwrap_or_default();
+
     let mut cfg = FreedomConfig::load_from_default_path()
         .context("load freedom.yaml to update plugin activation")?;
     let prev = cfg
@@ -772,19 +798,48 @@ fn set_activation(
     cfg.save_public_to_default_path()
         .context("save freedom.yaml after plugin activation change")?;
 
-    emit_changed(id, prev, new_state, output);
+    emit_changed(id, prev, new_state, granted, output);
     Ok(())
 }
 
-fn emit_changed(id: &str, prev: PluginActivation, new: PluginActivation, output: OutputFormat) {
+/// Plain-language description of what a granted capability level lets a
+/// plugin do — shown to the operator at enable time so the consent is
+/// informed. The runtime gate (SC-04) enforces exactly this ceiling.
+fn capability_disclosure(level: RequestedPermission) -> &'static str {
+    match level {
+        RequestedPermission::None => {
+            "diagnostics only (log, fuel) — cannot read your memory or write to your WAL"
+        }
+        RequestedPermission::ReadOnly => "may READ your memory (recall hit-counts)",
+        RequestedPermission::Write => "may READ your memory AND WRITE audit frames to your WAL",
+        RequestedPermission::Execute => "may read/write AND run privileged host actions",
+        RequestedPermission::Dangerous => {
+            "FULL host access — enable only a plugin you completely trust"
+        }
+    }
+}
+
+fn emit_changed(
+    id: &str,
+    prev: PluginActivation,
+    new: PluginActivation,
+    granted: RequestedPermission,
+    output: OutputFormat,
+) {
+    let activating = matches!(new, PluginActivation::Active);
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let payload = json!({
+            let mut payload = json!({
                 "id": id,
                 "previous": prev.as_str(),
                 "new": new.as_str(),
                 "changed": true,
             });
+            if activating {
+                // Make the granted capability machine-readable too, so a
+                // GUI / script enabling a plugin records what it approved.
+                payload["granted_capability"] = json!(granted.as_str());
+            }
             println!("{}", serde_json::to_string_pretty(&payload).unwrap());
         }
         OutputFormat::Table => {
@@ -793,8 +848,17 @@ fn emit_changed(id: &str, prev: PluginActivation, new: PluginActivation, output:
                 prev.as_str(),
                 new.as_str()
             );
-            if matches!(new, PluginActivation::Active) {
+            if activating {
                 println!("The plugin will instantiate on the next `neoth serve` boot.");
+                println!(
+                    "Capability granted: {} — {}",
+                    granted.as_str(),
+                    capability_disclosure(granted)
+                );
+                println!(
+                    "Hostcalls above this level are refused at runtime and audited \
+                     (`neoth wal show --type plugin_cap_denied`)."
+                );
             }
         }
     }
@@ -831,6 +895,22 @@ mod tests {
     #[test]
     fn activation_default_is_pending() {
         assert_eq!(PluginActivation::default(), PluginActivation::Pending);
+    }
+
+    #[test]
+    fn capability_disclosure_distinguishes_read_from_write() {
+        use crate::wasm_plugin::manifest::RequestedPermission;
+        // SC-04 informed-consent: the operator must be able to tell a
+        // read-only plugin from one that can write to their WAL. None
+        // must clearly say it touches neither.
+        let none = super::capability_disclosure(RequestedPermission::None);
+        assert!(none.contains("cannot read") || none.contains("diagnostics"));
+        let read = super::capability_disclosure(RequestedPermission::ReadOnly);
+        assert!(read.contains("READ") && !read.contains("WRITE"));
+        let write = super::capability_disclosure(RequestedPermission::Write);
+        assert!(write.contains("WRITE"));
+        let dangerous = super::capability_disclosure(RequestedPermission::Dangerous);
+        assert!(dangerous.to_lowercase().contains("trust"));
     }
 
     #[test]

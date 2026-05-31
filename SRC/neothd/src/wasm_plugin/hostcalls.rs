@@ -1,11 +1,20 @@
 //! Wasmtime Linker + hostcall surface — V10-04 Pick #34.
 //!
 //! Plugins talk to NEOTH only through the hostcalls bound in this
-//! module. Each hostcall is gated by a [`PermissionToken<L>`] from
-//! the plugin SDK — a plugin holding `ReadOnly` cannot call
-//! `host_emit_event` (Write+) even if it manages to look up the
-//! function pointer. The Linker imports are namespaced under `neoth`
-//! so the wasm module declares them as `(import "neoth" "log" ...)`.
+//! module. SC-04: each hostcall is gated at runtime against the
+//! permission level the operator granted the plugin — carried on the
+//! per-instance [`PluginStoreState::granted`] field and read inside
+//! every closure via `caller.data().granted`. A plugin granted
+//! `ReadOnly` cannot call `emit_event` (requires `Write`) even though
+//! the import is bound: the closure checks
+//! `granted.allows(required)` and, on a shortfall, REFUSES fail-closed
+//! (`emit_event` → no WAL write + return code 7; `recall_top` →
+//! returns 0 hits) and emits a `0xC7 PLUGIN_CAP_DENIED` audit frame.
+//! The granted level equals the plugin's manifest `requested_permissions`
+//! (`RequestedPermission`), which the operator approved by running
+//! `neoth plugin enable <id>` — a plugin cannot forge a higher one.
+//! The Linker imports are namespaced under `neoth` so the wasm module
+//! declares them as `(import "neoth" "log" ...)`.
 //!
 //! ## Bound surface (Phase 1)
 //!
@@ -31,8 +40,11 @@ use anyhow::{Context, Result};
 use wasmtime::{Caller, Linker};
 
 use super::engine::{PluginStoreState, RecallDbHandle};
+use super::manifest::RequestedPermission;
 use crate::wal::builder::HeaderBuilder;
-use crate::wal::events::{EVENT_TYPE_PLUGIN_CAP_USED, EVENT_TYPE_PLUGIN_HOSTCALL};
+use crate::wal::events::{
+    EVENT_TYPE_PLUGIN_CAP_DENIED, EVENT_TYPE_PLUGIN_CAP_USED, EVENT_TYPE_PLUGIN_HOSTCALL,
+};
 
 /// V10-04 Pick #34 voll (2026-05-19): per-frame upper bound on the
 /// plugin-supplied payload that gets folded into the WAL frame body.
@@ -175,6 +187,100 @@ impl HostcallPermission {
             Self::Dangerous => "dangerous",
         }
     }
+
+    /// Monotonic ladder rank. Each higher level is a strict superset of
+    /// the capabilities below it, so a single `>=` comparison decides
+    /// whether a grant covers a requirement.
+    pub const fn level(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::ReadOnly => 1,
+            Self::Write => 2,
+            Self::Execute => 3,
+            Self::Dangerous => 4,
+        }
+    }
+
+    /// True when a plugin holding `self` may perform an action that
+    /// requires `required`. Fail-closed by construction: `None` (rank 0)
+    /// only ever covers a `None` requirement, so an un-granted plugin
+    /// (the default) passes only the permission-`None` hostcalls
+    /// (`log`, `fuel_left`). A higher grant covers every lower
+    /// requirement (a `Dangerous` plugin may also `Write`).
+    pub const fn allows(self, required: HostcallPermission) -> bool {
+        self.level() >= required.level()
+    }
+}
+
+/// The manifest declares `requested_permissions` (`RequestedPermission`,
+/// serde-backed); the runtime gate compares `HostcallPermission`
+/// (serde-free). The two ladders are 1:1 — convert at the store-build
+/// boundary so a manifest level flows into `PluginStoreState::granted`.
+impl From<RequestedPermission> for HostcallPermission {
+    fn from(r: RequestedPermission) -> Self {
+        match r {
+            RequestedPermission::None => HostcallPermission::None,
+            RequestedPermission::ReadOnly => HostcallPermission::ReadOnly,
+            RequestedPermission::Write => HostcallPermission::Write,
+            RequestedPermission::Execute => HostcallPermission::Execute,
+            RequestedPermission::Dangerous => HostcallPermission::Dangerous,
+        }
+    }
+}
+
+/// Build the body for a `0xC7 PLUGIN_CAP_DENIED` audit frame. Pure +
+/// deterministic (no clock/random — the timestamp lives in the header)
+/// so the cross-node equivalence rule that governs `0xC4`/`0xC6` holds
+/// here too. Operators grep `neoth wal show --type plugin_cap_denied
+/// --json | jq '.hostcall, .granted'`.
+fn build_cap_denied_payload(
+    plugin_id: &str,
+    hostcall: &str,
+    required: HostcallPermission,
+    granted: HostcallPermission,
+) -> Vec<u8> {
+    let value = serde_json::json!({
+        "plugin": plugin_id,
+        "hostcall": hostcall,
+        "required": required.as_str(),
+        "granted": granted.as_str(),
+    });
+    serde_json::to_vec(&value).unwrap_or_else(|_| {
+        format!(
+            "{{\"plugin\":\"{}\",\"hostcall\":\"{}\",\"required\":\"{}\",\"granted\":\"{}\"}}",
+            plugin_id.replace('"', ""),
+            hostcall,
+            required.as_str(),
+            granted.as_str()
+        )
+        .into_bytes()
+    })
+}
+
+/// Best-effort emit of a `0xC7 PLUGIN_CAP_DENIED` frame. Called from a
+/// hostcall's deny branch. A WAL issue here NEVER changes the refusal
+/// the plugin already received — the audit is a side record, not part
+/// of the gate decision.
+fn audit_cap_denied(
+    writer: &Option<crate::wal::writer::WalWriterHandle>,
+    plugin_id: &str,
+    hostcall: &str,
+    required: HostcallPermission,
+    granted: HostcallPermission,
+) {
+    if let Some(w) = writer {
+        let payload = build_cap_denied_payload(plugin_id, hostcall, required, granted);
+        let header = HeaderBuilder::new(EVENT_TYPE_PLUGIN_CAP_DENIED, &payload).build();
+        if let Err(e) = w.try_append_sync(header, payload) {
+            tracing::warn!(
+                target: "wasm_plugin",
+                plugin = %plugin_id,
+                hostcall,
+                error = %e,
+                "cap-denied audit-frame append failed (refusal still enforced)"
+            );
+        }
+    }
 }
 
 /// Build a wasmtime `Linker` pre-bound with NEOTH's hostcall surface.
@@ -268,6 +374,9 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
     //   4  — WAL writer queue full (`WriterBackpressured`)
     //   5  — WAL writer closed (`WriterClosed`, daemon shutting down)
     //   6  — WAL append failed for any other reason
+    //   7  — SC-04 PERMISSION DENIED: the plugin's grant is below `Write`.
+    //         No WAL frame is written; a 0xC7 PLUGIN_CAP_DENIED audit
+    //         frame is emitted instead. Fail-closed.
     linker
         .func_wrap(
             "neoth",
@@ -280,6 +389,31 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
              -> i32 {
                 let plugin_id = caller.data().plugin_id.clone();
                 let writer = caller.data().wal_writer.clone();
+
+                // ── SC-04 capability gate ──────────────────────────────
+                // emit_event WRITES a WAL frame → requires `Write`. A
+                // plugin granted below that is refused fail-closed: no
+                // frame written, a 0xC7 PLUGIN_CAP_DENIED audit frame
+                // emitted, return code 7. The gate reads the grant the
+                // operator approved (manifest level) off the store.
+                let granted = caller.data().granted;
+                if !granted.allows(HostcallPermission::Write) {
+                    tracing::warn!(
+                        target: "wasm_plugin",
+                        plugin = %plugin_id,
+                        granted = %granted.as_str(),
+                        required = "write",
+                        "host.emit_event: DENIED — plugin grant is below Write"
+                    );
+                    audit_cap_denied(
+                        &writer,
+                        &plugin_id,
+                        "emit_event",
+                        HostcallPermission::Write,
+                        granted,
+                    );
+                    return 7;
+                }
 
                 let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
                     Some(m) => m,
@@ -403,6 +537,33 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
             |caller: Caller<'_, PluginStoreState>, prompt_hash: i64| -> i32 {
                 let plugin_id = caller.data().plugin_id.clone();
                 let writer = caller.data().wal_writer.clone();
+
+                // ── SC-04 capability gate ──────────────────────────────
+                // recall_top READS operator memory → requires `ReadOnly`.
+                // A plugin granted `None` (the fail-closed default) is
+                // refused: a 0xC7 PLUGIN_CAP_DENIED audit frame is emitted
+                // and we return 0 — indistinguishable to the plugin from
+                // an empty store (recall is a pure hint), so the refusal
+                // is silent to the plugin but VISIBLE in the WAL.
+                let granted = caller.data().granted;
+                if !granted.allows(HostcallPermission::ReadOnly) {
+                    tracing::warn!(
+                        target: "wasm_plugin",
+                        plugin = %plugin_id,
+                        granted = %granted.as_str(),
+                        required = "read_only",
+                        "host.recall_top: DENIED — plugin grant is below ReadOnly"
+                    );
+                    audit_cap_denied(
+                        &writer,
+                        &plugin_id,
+                        "recall_top",
+                        HostcallPermission::ReadOnly,
+                        granted,
+                    );
+                    return 0;
+                }
+
                 let db_handle = caller.data().recall_db.clone();
                 let hits = match db_handle {
                     None => {
@@ -533,6 +694,102 @@ mod tests {
         assert_eq!(HostcallPermission::Write.as_str(), "write");
         assert_eq!(HostcallPermission::Execute.as_str(), "execute");
         assert_eq!(HostcallPermission::Dangerous.as_str(), "dangerous");
+    }
+
+    #[test]
+    fn allows_ladder_is_monotonic_and_fail_closed() {
+        use HostcallPermission::*;
+        // Fail-closed default: None grant covers ONLY None-required
+        // hostcalls (log, fuel_left), never a Read or Write.
+        assert!(None.allows(None));
+        assert!(!None.allows(ReadOnly));
+        assert!(!None.allows(Write));
+        // ReadOnly covers None + ReadOnly, but NOT Write.
+        assert!(ReadOnly.allows(None));
+        assert!(ReadOnly.allows(ReadOnly));
+        assert!(!ReadOnly.allows(Write));
+        // Write covers None/ReadOnly/Write, not Execute.
+        assert!(Write.allows(ReadOnly));
+        assert!(Write.allows(Write));
+        assert!(!Write.allows(Execute));
+        // A higher grant covers every lower requirement (Dangerous
+        // plugin may also Write — the ladder is monotonic).
+        assert!(Dangerous.allows(Write));
+        assert!(Dangerous.allows(ReadOnly));
+        assert!(Execute.allows(Write));
+    }
+
+    #[test]
+    fn ladder_levels_are_strictly_increasing() {
+        use HostcallPermission::*;
+        let order = [None, ReadOnly, Write, Execute, Dangerous];
+        for w in order.windows(2) {
+            assert!(
+                w[0].level() < w[1].level(),
+                "{:?} must rank below {:?}",
+                w[0],
+                w[1]
+            );
+        }
+    }
+
+    #[test]
+    fn from_requested_permission_is_one_to_one() {
+        use super::RequestedPermission as R;
+        assert_eq!(HostcallPermission::from(R::None), HostcallPermission::None);
+        assert_eq!(
+            HostcallPermission::from(R::ReadOnly),
+            HostcallPermission::ReadOnly
+        );
+        assert_eq!(
+            HostcallPermission::from(R::Write),
+            HostcallPermission::Write
+        );
+        assert_eq!(
+            HostcallPermission::from(R::Execute),
+            HostcallPermission::Execute
+        );
+        assert_eq!(
+            HostcallPermission::from(R::Dangerous),
+            HostcallPermission::Dangerous
+        );
+    }
+
+    #[test]
+    fn cap_denied_payload_shape_is_stable_json() {
+        // Operators grep `neoth wal show --type plugin_cap_denied --json
+        // | jq '.hostcall, .required, .granted'`. Pin the on-disk shape.
+        let bytes = build_cap_denied_payload(
+            "snoop-v1",
+            "emit_event",
+            HostcallPermission::Write,
+            HostcallPermission::ReadOnly,
+        );
+        let v: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("cap-denied payload must round-trip");
+        assert_eq!(v["plugin"], "snoop-v1");
+        assert_eq!(v["hostcall"], "emit_event");
+        assert_eq!(v["required"], "write");
+        assert_eq!(v["granted"], "read_only");
+    }
+
+    #[test]
+    fn cap_denied_payload_is_deterministic() {
+        // Same inputs → byte-identical (cross-node equivalence; no clock
+        // in the body — the timestamp lives in the header).
+        let a = build_cap_denied_payload(
+            "p",
+            "recall_top",
+            HostcallPermission::ReadOnly,
+            HostcallPermission::None,
+        );
+        let b = build_cap_denied_payload(
+            "p",
+            "recall_top",
+            HostcallPermission::ReadOnly,
+            HostcallPermission::None,
+        );
+        assert_eq!(a, b);
     }
 
     #[test]

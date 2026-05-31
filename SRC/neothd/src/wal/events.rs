@@ -886,10 +886,30 @@ pub const EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED: u8 = 0xC5;
 /// (the Write-side `emit_event` audit), the read hostcalls left NO durable
 /// signal — so a plugin could probe operator memory invisibly. This frame
 /// makes every read auditable via `neoth wal show --type plugin_cap_used`.
-/// Batchable (NOT immediate-sync): higher-volume than the lifecycle frames
-/// + a lost tail on crash is acceptable for a read-audit. Payload:
+/// Durable (immediate-sync): a plugin probing operator memory is a
+/// security-relevant signal and NEOTH's whole wedge is a *complete*,
+/// crash-survivable audit trail — dropping read-audit frames on crash
+/// would leave a hole exactly where a hostile plugin wants one. The emit
+/// is best-effort only at the CALL SITE (`try_append_sync` never blocks
+/// the plugin or changes the read hint); once queued the frame fsyncs
+/// like its `0xC4`/`0xC7` siblings. Payload:
 /// `{plugin, capability, prompt_hash, hits}`.
 pub const EVENT_TYPE_PLUGIN_CAP_USED: u8 = 0xC6;
+/// `0xC7 PLUGIN_CAP_DENIED` — SC-04. A WASM plugin attempted a hostcall
+/// whose required permission level EXCEEDS the level the operator granted
+/// it (the manifest's `requested_permissions`, approved at `neoth plugin
+/// enable`). The hostcall is REFUSED fail-closed (`emit_event` writes no
+/// frame + returns code 7; `recall_top` returns 0 hits) and this frame is
+/// the durable record of the refusal — so a plugin reaching beyond its
+/// grant is VISIBLE in `neoth wal show --type plugin_cap_denied`, never
+/// silent. Without this the capability gate would deny invisibly and the
+/// "No ambient plugin power" guarantee would be unauditable. Durable
+/// (immediate-sync, like its `0xC4`/`0xC6` siblings) so the refusal
+/// survives a crash; the emit is best-effort only at the CALL SITE
+/// (`try_append_sync` — a full WAL queue drops the audit frame but
+/// NEVER changes the fail-closed refusal the plugin already got).
+/// Payload: `{plugin, hostcall, required, granted}`.
+pub const EVENT_TYPE_PLUGIN_CAP_DENIED: u8 = 0xC7;
 /// `0xC1 MCP_TOOL_REJECTED` — operator's MCP client refused to invoke
 /// a tool because either (a) the tool name is not in the server's
 /// `allow_tools` list, (b) the tool description failed the prompt-
@@ -1369,6 +1389,8 @@ const _: () = {
         || EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED > 0xCF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_PLUGIN_CAP_USED < 0xC0 || EVENT_TYPE_PLUGIN_CAP_USED > 0xCF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_PLUGIN_CAP_DENIED < 0xC0 || EVENT_TYPE_PLUGIN_CAP_DENIED > 0xCF) as usize];
     // V11 Pick #38 (2026-05-19): coding-workflow band 0x70..=0x7F.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_OPENED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_OPENED > 0x7F) as usize];
@@ -1559,6 +1581,7 @@ mod tests {
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),
             ("PLUGIN_FUEL_EXHAUSTED", EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED),
             ("PLUGIN_CAP_USED", EVENT_TYPE_PLUGIN_CAP_USED),
+            ("PLUGIN_CAP_DENIED", EVENT_TYPE_PLUGIN_CAP_DENIED),
             ("KANBAN_SESSION_OPENED", EVENT_TYPE_KANBAN_SESSION_OPENED),
             ("KANBAN_TASK_CREATED", EVENT_TYPE_KANBAN_TASK_CREATED),
             ("KANBAN_TASK_ASSIGNED", EVENT_TYPE_KANBAN_TASK_ASSIGNED),
@@ -1630,12 +1653,14 @@ mod tests {
         assert_eq!(EVENT_TYPE_PLUGIN_HOSTCALL, 0xC4);
         assert_eq!(EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED, 0xC5);
         assert_eq!(EVENT_TYPE_PLUGIN_CAP_USED, 0xC6);
+        assert_eq!(EVENT_TYPE_PLUGIN_CAP_DENIED, 0xC7);
         for code in [
             EVENT_TYPE_PLUGIN_LOADED,
             EVENT_TYPE_PLUGIN_REJECTED,
             EVENT_TYPE_PLUGIN_HOSTCALL,
             EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED,
             EVENT_TYPE_PLUGIN_CAP_USED,
+            EVENT_TYPE_PLUGIN_CAP_DENIED,
         ] {
             assert!(
                 (0xC0..=0xCF).contains(&code),
@@ -1657,6 +1682,26 @@ mod tests {
         ] {
             assert!(needs_immediate_sync(code));
         }
+    }
+
+    #[test]
+    fn plugin_cap_audit_frames_are_durable() {
+        // SC-04 / KF-09: the capability-audit frames (read-probe 0xC6,
+        // refusal 0xC7) are security signals — NEOTH's audit wedge is a
+        // complete, crash-survivable trail, so they MUST fsync, not
+        // batch. `needs_immediate_sync` is a deny-list; these two are
+        // (deliberately) NOT on it. This pins that decision so a future
+        // "let's batch the high-volume read audit" change is a conscious
+        // edit to this test, not a silent durability regression that
+        // opens an audit hole exactly where a hostile plugin wants one.
+        assert!(
+            needs_immediate_sync(EVENT_TYPE_PLUGIN_CAP_USED),
+            "0xC6 PLUGIN_CAP_USED MUST be immediate-sync (read-probe audit)"
+        );
+        assert!(
+            needs_immediate_sync(EVENT_TYPE_PLUGIN_CAP_DENIED),
+            "0xC7 PLUGIN_CAP_DENIED MUST be immediate-sync (refusal audit)"
+        );
     }
 
     /// V11 Pick #38 (2026-05-19): coding-workflow event codes live in

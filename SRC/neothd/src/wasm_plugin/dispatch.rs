@@ -21,8 +21,10 @@ use std::sync::Arc;
 use wasmtime::Module;
 
 use crate::security::redact::redact_text;
+use crate::wal::writer::WalWriterHandle;
 use crate::wasm_plugin::discovery::{DiscoveredPlugin, DiscoveryReport};
-use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState};
+use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState, RecallDbHandle};
+use crate::wasm_plugin::hostcalls::HostcallPermission;
 
 /// Outcome of compiling one discovered plugin.
 #[derive(Debug, Clone)]
@@ -137,7 +139,9 @@ pub fn invocation_outcome_from_compile_failure(o: &CompileOutcome) -> Option<Inv
 ///
 /// Behaviour pinned for v0.1:
 ///   - Plugin store gets `PluginStoreState::new(plugin_id)` with the
-///     manifest's memory_limit + fuel budget honoured.
+///     manifest's memory_limit + fuel budget honoured, and the operator-
+///     granted permission level (`granted`) wired in via `with_granted`
+///     so the hostcall capability gate (SC-04) enforces it at run time.
 ///   - The exported function must be `fn neoth_run() -> i32` for
 ///     now. Future ABIs (struct returns, hostcall callbacks) extend
 ///     this with new typed_func sigs.
@@ -155,9 +159,25 @@ pub fn invoke_plugin(
     module: &wasmtime::Module,
     linker: &wasmtime::Linker<crate::wasm_plugin::engine::PluginStoreState>,
     plugin_id: impl Into<String>,
+    granted: HostcallPermission,
+    wal_writer: Option<WalWriterHandle>,
+    recall_db: Option<RecallDbHandle>,
 ) -> InvocationOutcome {
     let plugin_id = plugin_id.into();
-    let state = crate::wasm_plugin::engine::PluginStoreState::new(&plugin_id);
+    // SC-04: attach the grant AND the runtime handles so the hostcall
+    // gate can both ENFORCE (grant) and AUDIT (the writer emits 0xC7 on
+    // a denied call, 0xC4/0xC6 on a used one). Without the writer the
+    // refusal still holds, but the denial would be invisible in the WAL
+    // — and the "No ambient plugin power" guarantee is only worth
+    // anything if it is PROVABLE, so the production path must carry it.
+    let mut state =
+        crate::wasm_plugin::engine::PluginStoreState::new(&plugin_id).with_granted(granted);
+    if let Some(w) = wal_writer {
+        state = state.with_wal_writer(w);
+    }
+    if let Some(db) = recall_db {
+        state = state.with_recall_db(db);
+    }
 
     let mut store = match engine.new_store(state) {
         Ok(s) => s,
@@ -223,6 +243,22 @@ pub struct CompiledPluginInvoker {
     engine: Arc<NeothEngine>,
     modules: HashMap<String, Arc<Module>>,
     linker: Arc<wasmtime::Linker<PluginStoreState>>,
+    /// SC-04: per-plugin granted permission level, keyed by the SAME
+    /// `plugin_id` (= `manifest.id`) as `modules`. A plugin absent from
+    /// this map (or whose id mismatches) falls back to
+    /// `HostcallPermission::None` at invoke time — fail-closed, so a
+    /// keying bug denies capability rather than granting it silently.
+    grants: HashMap<String, HostcallPermission>,
+    /// SC-04: the daemon's WAL writer handle (a clone of the single
+    /// segment writer — NOT a second writer, which would race). Threaded
+    /// into every plugin store so the hostcall gate's `0xC7` deny audit
+    /// (and the `0xC4`/`0xC6` use frames) actually land in the WAL.
+    /// `None` in tests / the `neoth plugin test` dry-run path.
+    wal_writer: Option<WalWriterHandle>,
+    /// Shared read-only `views.db` handle so `recall_top` can return
+    /// real hit counts in production (not just 0). Best-effort: `None`
+    /// degrades recall_top to "no signal".
+    recall_db: Option<RecallDbHandle>,
 }
 
 impl CompiledPluginInvoker {
@@ -235,6 +271,7 @@ impl CompiledPluginInvoker {
         engine: Arc<NeothEngine>,
         outcomes: &[CompileOutcome],
         linker: Arc<wasmtime::Linker<PluginStoreState>>,
+        grants: HashMap<String, HostcallPermission>,
     ) -> Self {
         let mut modules: HashMap<String, Arc<Module>> = HashMap::new();
         for o in outcomes {
@@ -246,7 +283,44 @@ impl CompiledPluginInvoker {
             engine,
             modules,
             linker,
+            grants,
+            wal_writer: None,
+            recall_db: None,
         }
+    }
+
+    /// SC-04: attach the daemon's runtime handles (a CLONE of the single
+    /// WAL writer + a shared read-only views.db) so plugin hostcalls
+    /// audit + read in production. Builder-style so the daemon bootstrap
+    /// reads naturally and tests can omit it (None = no audit frames /
+    /// recall_top returns 0).
+    #[must_use]
+    pub fn with_runtime_handles(
+        mut self,
+        wal_writer: Option<WalWriterHandle>,
+        recall_db: Option<RecallDbHandle>,
+    ) -> Self {
+        self.wal_writer = wal_writer;
+        self.recall_db = recall_db;
+        self
+    }
+
+    /// SC-04 helper: build the per-plugin grants map from a discovery
+    /// report. The granted level for each loaded plugin is exactly its
+    /// manifest `requested_permissions` (which the operator approved by
+    /// enabling the plugin). Keyed by `manifest.id` so the lookup in
+    /// `invoke` matches the `modules` map built from the same id.
+    pub fn grants_from_report(report: &DiscoveryReport) -> HashMap<String, HostcallPermission> {
+        report
+            .loaded
+            .iter()
+            .map(|p| {
+                (
+                    p.manifest.id.clone(),
+                    HostcallPermission::from(p.manifest.requested_permissions),
+                )
+            })
+            .collect()
     }
 
     /// True when no plugins are registered. Useful for the daemon's
@@ -273,7 +347,24 @@ impl crate::hooks::dispatcher::PluginInvoker for CompiledPluginInvoker {
                 self.modules.keys().cloned().collect::<Vec<_>>().join(", ")
             )
         })?;
-        let outcome = invoke_plugin(&self.engine, module, &self.linker, plugin_id);
+        // SC-04: fail-closed lookup — an id missing from `grants`
+        // (keying bug, or a plugin compiled but never granted) gets
+        // `None`, denying every privileged hostcall rather than
+        // silently granting ambient power.
+        let granted = self
+            .grants
+            .get(plugin_id)
+            .copied()
+            .unwrap_or(HostcallPermission::None);
+        let outcome = invoke_plugin(
+            &self.engine,
+            module,
+            &self.linker,
+            plugin_id,
+            granted,
+            self.wal_writer.clone(),
+            self.recall_db.clone(),
+        );
         if let Some(err) = outcome.error {
             anyhow::bail!(
                 "plugin {plugin_id:?} stage={stage:?}: {err}",
@@ -454,6 +545,285 @@ mod tests {
         echo_wasm()
     }
 
+    /// SC-04 gate proof: build a module whose `neoth_run` body actually
+    /// CALLS a hostcall at runtime (the existing `echo_wasm` only
+    /// imports them and returns 0, so it never reaches the gate). The
+    /// import index space is: log=0, fuel_left=1, emit_event=2,
+    /// recall_top=3; the local `neoth_run` is index 4. `body_instrs` is
+    /// the code-section function body (locals-count byte + instructions
+    /// + `0x0b end`). The rest of the module is byte-identical to
+    /// `echo_wasm` so only the runtime behaviour differs.
+    fn calling_wasm(body_instrs: Vec<u8>) -> Vec<u8> {
+        fn uleb(n: u32) -> Vec<u8> {
+            let mut out = Vec::new();
+            let mut v = n;
+            loop {
+                let byte = (v & 0x7F) as u8;
+                v >>= 7;
+                if v == 0 {
+                    out.push(byte);
+                    break;
+                }
+                out.push(byte | 0x80);
+            }
+            out
+        }
+        fn with_len(body: Vec<u8>) -> Vec<u8> {
+            let mut out = uleb(body.len() as u32);
+            out.extend(body);
+            out
+        }
+        fn wasm_str(s: &str) -> Vec<u8> {
+            let mut out = uleb(s.len() as u32);
+            out.extend_from_slice(s.as_bytes());
+            out
+        }
+
+        let mut type_body: Vec<u8> = uleb(5);
+        type_body.extend([0x60, 0x02, 0x7f, 0x7f, 0x00]); // 0: (i32,i32)->()
+        type_body.extend([0x60, 0x00, 0x01, 0x7e]); // 1: ()->(i64)
+        type_body.extend([0x60, 0x04, 0x7f, 0x7f, 0x7f, 0x7f, 0x01, 0x7f]); // 2: (i32*4)->(i32)
+        type_body.extend([0x60, 0x01, 0x7e, 0x01, 0x7f]); // 3: (i64)->(i32)
+        type_body.extend([0x60, 0x00, 0x01, 0x7f]); // 4: ()->(i32)
+        let type_section = [vec![0x01], with_len(type_body)].concat();
+
+        let mut import_body: Vec<u8> = uleb(4);
+        for (module, name, type_idx) in &[
+            ("neoth", "log", 0u32),
+            ("neoth", "fuel_left", 1),
+            ("neoth", "emit_event", 2),
+            ("neoth", "recall_top", 3),
+        ] {
+            import_body.extend(wasm_str(module));
+            import_body.extend(wasm_str(name));
+            import_body.push(0x00);
+            import_body.extend(uleb(*type_idx));
+        }
+        let import_section = [vec![0x02], with_len(import_body)].concat();
+
+        let mut func_body: Vec<u8> = uleb(1);
+        func_body.extend(uleb(4)); // neoth_run uses type 4: ()->(i32)
+        let func_section = [vec![0x03], with_len(func_body)].concat();
+
+        let mem_body: Vec<u8> = vec![0x01, 0x00, 0x01];
+        let mem_section = [vec![0x05], with_len(mem_body)].concat();
+
+        let mut export_body: Vec<u8> = uleb(2);
+        export_body.extend(wasm_str("neoth_run"));
+        export_body.push(0x00);
+        export_body.extend(uleb(4));
+        export_body.extend(wasm_str("memory"));
+        export_body.push(0x02);
+        export_body.extend(uleb(0));
+        let export_section = [vec![0x07], with_len(export_body)].concat();
+
+        let mut code_body: Vec<u8> = uleb(1);
+        code_body.extend(with_len(body_instrs));
+        let code_section = [vec![0x0a], with_len(code_body)].concat();
+
+        let mut wasm = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        wasm.extend(type_section);
+        wasm.extend(import_section);
+        wasm.extend(func_section);
+        wasm.extend(mem_section);
+        wasm.extend(export_section);
+        wasm.extend(code_section);
+        wasm
+    }
+
+    /// `neoth_run` body: `i64.const 1; call recall_top; end`. Returns the
+    /// i32 the gated `recall_top` hostcall produces.
+    fn calling_recall_wasm() -> Vec<u8> {
+        calling_wasm(vec![0x00, 0x42, 0x01, 0x10, 0x03, 0x0b])
+    }
+
+    /// `neoth_run` body: `i32.const 0 ×4; call emit_event; end`. Returns
+    /// the i32 return code the gated `emit_event` hostcall produces.
+    fn calling_emit_wasm() -> Vec<u8> {
+        calling_wasm(vec![
+            0x00, 0x41, 0x00, 0x41, 0x00, 0x41, 0x00, 0x41, 0x00, 0x10, 0x02, 0x0b,
+        ])
+    }
+
+    fn views_db_with_hash(hash: &str) -> std::sync::Arc<std::sync::Mutex<rusqlite::Connection>> {
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            "CREATE TABLE idx_episode (
+                event_id   INTEGER PRIMARY KEY,
+                event_type INTEGER NOT NULL,
+                ts_ns      INTEGER NOT NULL,
+                text       TEXT NOT NULL,
+                text_hash  TEXT NOT NULL,
+                importance REAL NOT NULL DEFAULT 0.5,
+                last_access_ts INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX idx_episode_hash ON idx_episode (text_hash);",
+        )
+        .expect("fixture schema");
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
+             VALUES (1, 1, 1700000000000000000, 'probe', ?1)",
+            rusqlite::params![hash],
+        )
+        .expect("insert fixture row");
+        std::sync::Arc::new(std::sync::Mutex::new(conn))
+    }
+
+    /// Run a `calling_*` module against a store and return `neoth_run`'s
+    /// i32. Shared by the gate tests so each one only varies the grant.
+    fn run_neoth_run(wasm: &[u8], state: PluginStoreState) -> i32 {
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine.compile_from_bytes(wasm).expect("compile");
+        let linker =
+            crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker build");
+        let mut store = engine.new_store(state).expect("store seed");
+        let instance = linker
+            .instantiate(&mut store, &module)
+            .expect("instantiate");
+        let func = instance
+            .get_typed_func::<(), i32>(&mut store, "neoth_run")
+            .expect("neoth_run export");
+        func.call(&mut store, ()).expect("neoth_run must not trap")
+    }
+
+    #[test]
+    fn recall_top_gate_denies_at_none_grant() {
+        // recall_top(1) matches the {:016x} row, so a granted plugin
+        // would read 1 hit — but a None-granted plugin (the fail-closed
+        // default) must be REFUSED and get 0, indistinguishable from an
+        // empty store. Proves the gate fires (contrast with the allow
+        // test which gets 1 from the SAME db).
+        let db = views_db_with_hash("0000000000000001");
+        let state = PluginStoreState::new("snoop").with_recall_db(db);
+        // default grant is None
+        let rc = run_neoth_run(&calling_recall_wasm(), state);
+        assert_eq!(rc, 0, "None-granted recall_top MUST be denied (return 0)");
+    }
+
+    #[test]
+    fn recall_top_gate_allows_at_readonly_grant() {
+        // SAME db + row as the deny test; the only difference is the
+        // grant. ReadOnly covers recall_top → the real hit count (1)
+        // flows back. This pair is the definitive proof the gate is the
+        // thing controlling access, not db state.
+        let db = views_db_with_hash("0000000000000001");
+        let state = PluginStoreState::new("reader")
+            .with_recall_db(db)
+            .with_granted(HostcallPermission::ReadOnly);
+        let rc = run_neoth_run(&calling_recall_wasm(), state);
+        assert_eq!(rc, 1, "ReadOnly-granted recall_top MUST read the hit (1)");
+    }
+
+    #[test]
+    fn emit_event_gate_denies_below_write() {
+        // emit_event requires Write; a ReadOnly plugin must be refused
+        // with code 7 and write NO frame. No writer attached — the deny
+        // happens before any WAL touch.
+        let state =
+            PluginStoreState::new("writer-wannabe").with_granted(HostcallPermission::ReadOnly);
+        let rc = run_neoth_run(&calling_emit_wasm(), state);
+        assert_eq!(rc, 7, "below-Write emit_event MUST be denied (code 7)");
+    }
+
+    #[tokio::test]
+    async fn emit_event_gate_allows_at_write_grant() {
+        // Write grant + a real writer → emit_event succeeds (code 0).
+        // tokio runtime needed: `wal::writer::spawn` spawns a writer task.
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let (writer, _join) = spawn(dir.path().join("000001.wal")).expect("spawn writer");
+        let state = PluginStoreState::new("real-writer")
+            .with_wal_writer(writer)
+            .with_granted(HostcallPermission::Write);
+        let rc = run_neoth_run(&calling_emit_wasm(), state);
+        assert_eq!(rc, 0, "Write-granted emit_event MUST succeed (code 0)");
+    }
+
+    /// Count frames of a given event type in a WAL segment file. Mirrors
+    /// the robust v1/v2 read pattern the `neoth plugin ledger` walker uses.
+    fn count_event_frames(segment: &std::path::Path, event_type: u8) -> usize {
+        use crate::wal::compress::decompress_frames;
+        use crate::wal::frame::decode_frame;
+        use crate::wal::segment_header::parse_segment_header;
+        let bytes = std::fs::read(segment).expect("read segment");
+        let hdr = parse_segment_header(&bytes).expect("parse segment header");
+        let body = &bytes[hdr.header_len()..];
+        let frames = if hdr.is_compressed() {
+            decompress_frames(body).expect("decompress frames")
+        } else {
+            body.to_vec()
+        };
+        let mut count = 0usize;
+        let mut cursor = 0usize;
+        while cursor < frames.len() {
+            let dec = match decode_frame(&frames[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == event_type {
+                count += 1;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        count
+    }
+
+    /// SC-04 PRODUCTION-PATH proof: a denied hostcall invoked through the
+    /// real `CompiledPluginInvoker::invoke` (the path the daemon hook
+    /// engine uses) must leave a durable `0xC7 PLUGIN_CAP_DENIED` frame in
+    /// the WAL. This closes the gap where the gate refused correctly but
+    /// the production store carried no writer, so the denial was invisible
+    /// — making `neoth wal show --type plugin_cap_denied` hollow.
+    #[tokio::test]
+    async fn compiled_invoker_emits_cap_denied_frame_via_production_path() {
+        use crate::hooks::dispatcher::PluginInvoker;
+        use crate::wal::events::EVENT_TYPE_PLUGIN_CAP_DENIED;
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = spawn(seg.clone()).expect("spawn writer");
+
+        let engine = Arc::new(NeothEngine::new().expect("engine"));
+        let module = engine
+            .compile_from_bytes(&calling_emit_wasm())
+            .expect("compile calling-emit plugin");
+        let linker =
+            Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
+        let outcomes = vec![CompileOutcome::Compiled {
+            plugin_id: "snoop".into(),
+            module: Arc::new(module),
+        }];
+        // grants empty → "snoop" resolves to None → emit_event (Write)
+        // is denied at the gate. Writer attached via with_runtime_handles
+        // so the 0xC7 audit frame lands.
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new())
+                .with_runtime_handles(Some(writer), None);
+
+        // Invoke via the PRODUCTION trait path (not a direct store build).
+        // The denial is in-band (return code 7, not a trap), so invoke
+        // reaches Run and returns Ok.
+        inv.invoke("snoop").expect("invoke reaches Run");
+
+        // Flush: drop every writer clone (store clone already dropped
+        // inside invoke; the invoker holds the last one) then join.
+        drop(inv);
+        join.await.expect("writer task join");
+
+        let denied = count_event_frames(&seg, EVENT_TYPE_PLUGIN_CAP_DENIED);
+        assert!(
+            denied >= 1,
+            "production invoke path MUST emit a 0xC7 PLUGIN_CAP_DENIED frame on a denied hostcall; found {denied}"
+        );
+    }
+
     fn sample_manifest(id: &str) -> PluginManifest {
         PluginManifest {
             id: id.into(),
@@ -597,7 +967,15 @@ mod tests {
             .expect("minimal wasm must compile");
         let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw())
             .expect("hostcalls linker must build");
-        let outcome = invoke_plugin(&engine, &module, &linker, "test-no-export");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "test-no-export",
+            HostcallPermission::None,
+            None,
+            None,
+        );
 
         assert_eq!(outcome.plugin_id, "test-no-export");
         assert_eq!(outcome.stage, InvocationStage::ExportLookup);
@@ -613,7 +991,7 @@ mod tests {
         let engine = Arc::new(NeothEngine::new().expect("engine"));
         let linker =
             Arc::new(crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker"));
-        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &[], linker);
+        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &[], linker, HashMap::new());
         assert!(inv.is_empty());
         assert_eq!(inv.len(), 0);
     }
@@ -638,7 +1016,8 @@ mod tests {
                 error: "non-wasm bytes".into(),
             },
         ];
-        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
         assert!(!inv.is_empty());
         assert_eq!(inv.len(), 1);
     }
@@ -660,7 +1039,8 @@ mod tests {
             plugin_id: "alpha".into(),
             module: Arc::new(module),
         }];
-        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
         let err = inv.invoke("ghost").unwrap_err().to_string();
         assert!(err.contains("ghost"), "error must name unknown id: {err}");
         assert!(
@@ -686,7 +1066,8 @@ mod tests {
             plugin_id: "alpha".into(),
             module: Arc::new(module),
         }];
-        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
         let err = inv.invoke("alpha").unwrap_err().to_string();
         assert!(
             err.contains("neoth_run"),
@@ -736,7 +1117,15 @@ mod tests {
             .expect("echo_wasm must compile");
         let linker =
             crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker must build");
-        let outcome = invoke_plugin(&engine, &module, &linker, "echo");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "echo",
+            HostcallPermission::None,
+            None,
+            None,
+        );
 
         assert_eq!(outcome.plugin_id, "echo");
         assert_eq!(
@@ -765,7 +1154,15 @@ mod tests {
             .expect("recall_summariser_wasm must compile");
         let linker =
             crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker must build");
-        let outcome = invoke_plugin(&engine, &module, &linker, "recall-summariser");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "recall-summariser",
+            HostcallPermission::None,
+            None,
+            None,
+        );
 
         assert_eq!(outcome.plugin_id, "recall-summariser");
         assert_eq!(
@@ -798,7 +1195,8 @@ mod tests {
             plugin_id: "echo".into(),
             module: Arc::new(module),
         }];
-        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
         let result = inv.invoke("echo");
         assert!(
             result.is_ok(),
@@ -821,7 +1219,8 @@ mod tests {
             plugin_id: "recall-summariser".into(),
             module: Arc::new(module),
         }];
-        let inv = CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker);
+        let inv =
+            CompiledPluginInvoker::from_compile_outcomes(engine, &outcomes, linker, HashMap::new());
         let result = inv.invoke("recall-summariser");
         assert!(
             result.is_ok(),

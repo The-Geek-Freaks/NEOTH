@@ -26,7 +26,7 @@ neoth privacy audit --destinations
 neoth profile show --evidence
 neoth profile pending
 neoth wal verify
-neoth plugin audit
+neoth plugin ledger
 neoth doctor
 ```
 

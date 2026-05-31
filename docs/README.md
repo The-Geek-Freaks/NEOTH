@@ -25,7 +25,8 @@ normal users, explicit enough for pros.
 ### Normal user
 
 ```bash
-cargo install neoth
+# pre-1.0: install from the bootstrap script (crates.io publish lands with 1.0)
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
 neoth gui
 neoth doctor
 ```

@@ -50,15 +50,21 @@
 
 ## Install
 
-One-command install:
+> NEOTH is pre-1.0 (current crate version `0.2.1`, building toward the 1.0 target
+> below). It is **not yet published to crates.io**, so install from source or the
+> bootstrap script — `cargo install neoth` will land with the 1.0 release.
+
+One-command install (Linux/macOS):
 
 ```bash
-cargo install neoth
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
+neoth gui
 ```
 
-Start the app:
+Windows (PowerShell):
 
-```bash
+```powershell
+irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
 neoth gui
 ```
 
@@ -69,19 +75,6 @@ git clone https://github.com/The-Geek-Freaks/NEOTH
 cd NEOTH/SRC
 cargo install --path neothd
 cargo install --path neothd-gui
-neoth gui
-```
-
-No-sudo script install:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex
 neoth gui
 ```
 
@@ -141,14 +134,14 @@ operator.
 | Open the GUI and talk normally. | Use the CLI, local models, WAL, policies, plugins, and cluster commands. |
 | Say "remember this" and approve what matters. | Inspect exact evidence, confidence, provider destination, and redaction state. |
 | Connect Telegram, Slack, WhatsApp, Obsidian, Paperless, email, and calendar. | Script workflows, bind n8n, define hooks, use MCP, and review plugin capabilities. |
-| Ask "what did we decide?" and get useful recall. | Run `neoth recall`, `neoth wal verify`, `neoth privacy audit`, `neoth plugin audit`. |
+| Ask "what did we decide?" and get useful recall. | Run `neoth recall`, `neoth wal verify`, `neoth privacy audit`, `neoth plugin ledger`. |
 | Let NEOTH explain setup problems in plain language. | Pipe `neoth doctor --output json` into CI or fleet checks. |
 
 <img src=".github/assets/neoth-readme-surfaces.svg" alt="NEOTH surfaces" width="100%">
 
 ## What NEOTH Does
 
-| Area | 1.0 behavior |
+| Area | 1.0 target behavior |
 | :-- | :-- |
 | **Buddy** | Keeps a durable personal profile, remembers approved facts, adapts to your style, and asks before crossing trust boundaries. |
 | **Brain** | Routes work through role-bound brain paths for fast answers, deeper reasoning, and verification. |
@@ -171,7 +164,7 @@ NEOTH is local-first and fail-closed by design.
 | :-- | :-- |
 | **No silent profile extraction to cloud** | `neoth privacy audit --last 30d` |
 | **No silent provider fallback** | `neoth providers status` and `neoth privacy audit --destinations` |
-| **No ambient plugin power** | `neoth plugin audit` |
+| **No ambient plugin power** | `neoth plugin ledger` (capabilities used) and `neoth wal show --type plugin_cap_denied` (over-level calls refused at runtime) |
 | **No invisible memory mutation** | `neoth profile pending` and `neoth profile show --evidence` |
 | **No unverifiable history** | `neoth wal verify` |
 | **No accidental channel writes** | approval policy plus WAL events for outbound actions |
@@ -254,8 +247,16 @@ system, private mesh, and inspectable operator runtime in one product.
 | Paperless/email/calendar as memory inputs | **Yes** | Integrations | Skills/tools | Tools/skills |
 | n8n localhost automation | **Yes** | No | Partial | Cron/tools |
 | WASM plugin capability sandbox | **Yes** | No | Skills | Skills/tools |
-| Private mesh with Tailscale/Hysteria/Keet path | **Yes** | No | Gateway/nodes | Gateway/platforms |
-| Built for DAUs and pros at the same time | **Yes** | DAU-heavy | Power-user-heavy | Operator-heavy |
+| Private mesh with Tailscale/Hysteria/Keet path | **Partial** | No | Gateway/nodes | Gateway/platforms |
+| Built for DAUs and pros at the same time | **Goal** | DAU-heavy | Power-user-heavy | Operator-heavy |
+
+NEOTH is pre-1.0, so this table is honest about what is not finished: **Private mesh**
+is **Partial** — node discovery, Tailscale/mDNS pairing, the consent gate, and transport
+config ship today, but live cross-device memory sync (tracked as SL-01) is still in
+progress. **Built for DAUs and pros** is the explicit design **goal**, not a finished
+claim — it is the hard bet NEOTH is making, and the single thing most worth holding it
+accountable to. Everything marked **Yes** is implemented and exercised by tests; the live
+status of every line item is in [PLAN/PROGRESS_v1_0.md](PLAN/PROGRESS_v1_0.md).
 
 Read the detailed migration pages:
 

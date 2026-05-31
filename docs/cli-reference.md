@@ -62,7 +62,7 @@ neoth profile resume
 neoth privacy audit --last 30d
 neoth wal verify
 neoth wal show --last 50
-neoth plugin audit
+neoth plugin ledger
 ```
 
 | Command | Purpose |
@@ -70,7 +70,7 @@ neoth plugin audit
 | `privacy audit` | Show destinations, sensitive events, provider calls, plugin activity. |
 | `wal verify` | Verify local event chain. |
 | `wal show` | Inspect recent WAL events. |
-| `plugin audit` | Inspect plugin capabilities and activity. |
+| `plugin ledger` | Inspect plugin capabilities and activity. |
 
 ## Providers and models
 
@@ -158,7 +158,7 @@ neoth reload-skills
 neoth plugin list
 neoth plugin install ./plugin
 neoth plugin enable my-plugin
-neoth plugin audit my-plugin
+neoth plugin ledger my-plugin
 ```
 
 | Command | Purpose |
