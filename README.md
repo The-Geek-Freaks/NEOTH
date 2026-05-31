@@ -162,7 +162,7 @@ NEOTH is local-first and fail-closed by design.
 
 | Guarantee | How to verify |
 | :-- | :-- |
-| **No silent profile extraction to cloud** | `neoth privacy audit` |
+| **No silent profile extraction to cloud** | `neoth privacy audit --last 30d` (recent provider calls + profile writes + channel egress) |
 | **No silent provider fallback** | `neoth provider list` and `neoth wal show --type provider_fallback_attempted` (every 429 failover is a durable audit frame) |
 | **No ambient plugin power** | `neoth plugin ledger` (capabilities used) and `neoth wal show --type plugin_cap_denied` (over-level calls refused at runtime) |
 | **No invisible memory mutation** | `neoth profile pending` and `neoth profile show` |

@@ -59,9 +59,10 @@ neoth profile resume
 ## Privacy and audit
 
 ```bash
-neoth privacy audit
+neoth privacy audit            # config posture
+neoth privacy audit --last 30d # + what actually left the device recently
 neoth verify
-neoth wal show --last 50
+neoth wal show --type provider_request --last 50
 neoth plugin ledger
 ```
 
