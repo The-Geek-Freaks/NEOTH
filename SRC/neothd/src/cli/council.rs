@@ -119,6 +119,20 @@ pub enum CouncilAction {
         prompt_hash: String,
     },
 
+    /// KF-01 — Council Replay Glass: reconstruct ONE debate as a
+    /// chronological NARRATIVE timeline (convened → who refused → winner
+    /// depth → diversity warning) from the WAL audit frames, keyed by
+    /// `prompt_hash`. Richer than `inspect`'s raw frame list. NOTE: the
+    /// hemispheres' actual response PROSE is NOT persisted in the WAL
+    /// (only content hashes + metadata, for privacy), so replay
+    /// reconstructs the debate STRUCTURE — WHAT the council did — not the
+    /// verbatim text.
+    Replay {
+        /// The 16-hex `prompt_hash` copied from `council list`.
+        #[arg(value_name = "PROMPT_HASH")]
+        prompt_hash: String,
+    },
+
     /// SPEC-03: persistently disable the council smart-trigger by writing
     /// `freedom.yaml::council.disabled = true`. Every turn then takes the
     /// single-hemisphere path (both CLI + channels) until you clear it
@@ -164,6 +178,7 @@ pub async fn run_council(args: CouncilArgs) -> Result<()> {
             run_list(&home, limit, since_unix, args.output)
         }
         CouncilAction::Inspect { prompt_hash } => run_inspect(&home, &prompt_hash, args.output),
+        CouncilAction::Replay { prompt_hash } => run_replay(&home, &prompt_hash, args.output),
         CouncilAction::Suppress { off } => run_suppress(&home, off, args.output),
         CouncilAction::Budget => run_budget(&home, args.output),
     }
@@ -723,6 +738,122 @@ fn run_list(
     Ok(())
 }
 
+/// KF-01 — render ONE council frame as a narrative replay line. Pure;
+/// unit-tested per code without a real WAL.
+fn render_replay_line(row: &CouncilEventRow) -> String {
+    match row.code {
+        EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED => {
+            "convened — synthesis attempted across the hemispheres".to_string()
+        }
+        EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL => {
+            let refused = row
+                .payload
+                .get("refused_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let usable = row
+                .payload
+                .get("usable_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let roles = row
+                .payload
+                .get("refused")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .filter(|s| !s.is_empty())
+                .map(|s| format!(" ({s})"))
+                .unwrap_or_default();
+            format!("partial refusal — {refused} hemisphere(s) declined{roles}, {usable} usable")
+        }
+        EVENT_TYPE_COUNCIL_SKIP => {
+            let reason = row
+                .payload
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unspecified");
+            format!("skipped — {reason}")
+        }
+        EVENT_TYPE_COUNCIL_WINNER_SELECTED => {
+            match row.payload.get("depth").and_then(|v| v.as_u64()) {
+                Some(d) => format!("winner selected at depth {d}"),
+                None => "winner selected".to_string(),
+            }
+        }
+        EVENT_TYPE_COUNCIL_DIVERSITY_WARNING => {
+            "diversity warning — hemispheres converged suspiciously (possible groupthink)"
+                .to_string()
+        }
+        _ => row.code_name.to_string(),
+    }
+}
+
+/// KF-01 — `neoth council replay <prompt_hash>`: chronological NARRATIVE
+/// reconstruction of one debate. Reuses the SPEC-03 council WAL reader; no
+/// new frame, no orchestrator change. The hemisphere PROSE is not in the
+/// WAL (privacy — only content hashes + metadata persist), so replay
+/// reconstructs the debate STRUCTURE, not verbatim transcripts.
+fn run_replay(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()> {
+    let wal_dir = home.join("wal");
+    let mut rows: Vec<CouncilEventRow> = collect_council_events(&wal_dir)
+        .into_iter()
+        .filter(|r| {
+            r.prompt_hash
+                .as_deref()
+                .map(|h| h.eq_ignore_ascii_case(prompt_hash))
+                .unwrap_or(false)
+        })
+        .collect();
+    // Chronological (forward) — replay plays the debate in order.
+    rows.sort_by(|a, b| a.ts_ns.cmp(&b.ts_ns).then(a.event_id.cmp(&b.event_id)));
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let steps: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|r| {
+                    serde_json::json!({
+                        "event_id": r.event_id,
+                        "code": r.code_name,
+                        "narrative": render_replay_line(r),
+                        "payload": r.payload,
+                    })
+                })
+                .collect();
+            let obj = serde_json::json!({
+                "prompt_hash": prompt_hash,
+                "steps": steps,
+                "transcripts_available": false,
+            });
+            println!("{}", serde_json::to_string(&obj)?);
+        }
+        OutputFormat::Table => {
+            if rows.is_empty() {
+                println!(
+                    "No council debate found for prompt_hash `{prompt_hash}`. \
+                     Run `neoth council list` to see recorded debates."
+                );
+                return Ok(());
+            }
+            println!("Council replay — debate {prompt_hash}\n");
+            for (i, r) in rows.iter().enumerate() {
+                println!("  {}. {}", i + 1, render_replay_line(r));
+            }
+            println!(
+                "\n(Note: hemisphere response prose is not persisted in the WAL — only the \
+                 debate structure above + content hashes. Replay reconstructs WHAT the council \
+                 did, not the verbatim text.)"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// `neoth council inspect <prompt_hash>` — every council frame for one
 /// debate, matched by the prompt_hash linkage key (case-insensitive).
 fn run_inspect(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()> {
@@ -1042,6 +1173,76 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let rows = collect_council_events(&dir.path().join("nope"));
         assert!(rows.is_empty());
+    }
+
+    // ── KF-01 replay ───────────────────────────────────────────────────
+
+    fn row_coded(code: u8, code_name: &'static str, payload: serde_json::Value) -> CouncilEventRow {
+        CouncilEventRow {
+            event_id: 1,
+            ts_ns: 1,
+            ts_unix: None,
+            code,
+            code_name,
+            prompt_hash: Some("abc".into()),
+            payload,
+        }
+    }
+
+    #[test]
+    fn render_replay_line_renders_each_council_code() {
+        assert!(
+            render_replay_line(&row_coded(
+                EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED,
+                "synthesis_attempted",
+                serde_json::Value::Null
+            ))
+            .contains("convened")
+        );
+        let pr = render_replay_line(&row_coded(
+            EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL,
+            "partial_refusal",
+            json!({ "refused_count": 1, "usable_count": 2, "refused": ["left"] }),
+        ));
+        assert!(
+            pr.contains("partial refusal")
+                && pr.contains("1 hemisphere")
+                && pr.contains("left")
+                && pr.contains("2 usable"),
+            "got: {pr}"
+        );
+        assert!(
+            render_replay_line(&row_coded(
+                EVENT_TYPE_COUNCIL_SKIP,
+                "skip",
+                json!({ "reason": "rate_cooldown" })
+            ))
+            .contains("rate_cooldown")
+        );
+        assert!(
+            render_replay_line(&row_coded(
+                EVENT_TYPE_COUNCIL_WINNER_SELECTED,
+                "winner_selected",
+                json!({ "depth": 2 })
+            ))
+            .contains("depth 2")
+        );
+        assert!(
+            render_replay_line(&row_coded(
+                EVENT_TYPE_COUNCIL_DIVERSITY_WARNING,
+                "diversity_warning",
+                serde_json::Value::Null
+            ))
+            .contains("groupthink")
+        );
+    }
+
+    #[test]
+    fn run_replay_missing_wal_is_ok() {
+        // No wal dir under home → empty → "no debate" table line, Ok.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(run_replay(dir.path(), "deadbeef", OutputFormat::Table).is_ok());
+        assert!(run_replay(dir.path(), "deadbeef", OutputFormat::Json).is_ok());
     }
 
     #[test]
