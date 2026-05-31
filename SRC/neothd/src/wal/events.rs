@@ -1202,7 +1202,7 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
 /// (`--type 0xC7`). The `event_type_names_are_unique_and_resolve` test pins
 /// that every entry resolves to a distinct code so a rename can't silently
 /// orphan a documented `--type` name.
-pub const EVENT_TYPE_NAME_TABLE: &[(&str, u8)] = &[
+pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("raw_text", EVENT_TYPE_RAW_TEXT),
     ("reinforce", EVENT_TYPE_REINFORCE),
     ("boot", EVENT_TYPE_BOOT),
@@ -1257,7 +1257,7 @@ pub const EVENT_TYPE_NAME_TABLE: &[(&str, u8)] = &[
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
-/// a curated snake_case name from [`EVENT_TYPE_NAME_TABLE`] (case-
+/// a curated snake_case name from [`EVENT_NAME_TABLE`] (case-
 /// insensitive), a hex code (`0xC7` / `C7`), or a decimal code (`199`).
 /// Returns `None` when nothing matches so the caller can surface a clear
 /// "unknown event type" error instead of silently filtering to nothing.
@@ -1268,10 +1268,7 @@ pub fn event_code_from_filter(token: &str) -> Option<u8> {
     }
     // Name (case-insensitive).
     let lower = t.to_ascii_lowercase();
-    if let Some((_, code)) = EVENT_TYPE_NAME_TABLE
-        .iter()
-        .find(|(name, _)| *name == lower)
-    {
+    if let Some((_, code)) = EVENT_NAME_TABLE.iter().find(|(name, _)| *name == lower) {
         return Some(*code);
     }
     // Hex: 0xNN or bare NN.
@@ -1293,7 +1290,7 @@ pub fn event_code_from_filter(token: &str) -> Option<u8> {
 /// exists. Used by `neoth wal show` to label each frame; falls back to the
 /// hex code at the call site when this returns `None`.
 pub fn event_name_from_code(code: u8) -> Option<&'static str> {
-    EVENT_TYPE_NAME_TABLE
+    EVENT_NAME_TABLE
         .iter()
         .find(|(_, c)| *c == code)
         .map(|(name, _)| *name)
@@ -1812,7 +1809,7 @@ mod tests {
         // code AND round-trip back to the same name — a rename that
         // orphans a documented filter name (the `wal show --type` class of
         // false-guarantee) fails here.
-        for (name, code) in EVENT_TYPE_NAME_TABLE {
+        for (name, code) in EVENT_NAME_TABLE {
             assert_eq!(
                 event_code_from_filter(name),
                 Some(*code),
@@ -1826,7 +1823,7 @@ mod tests {
         }
         // Uniqueness of codes in the table.
         let mut seen = std::collections::HashSet::new();
-        for (name, code) in EVENT_TYPE_NAME_TABLE {
+        for (name, code) in EVENT_NAME_TABLE {
             assert!(
                 seen.insert(*code),
                 "name-table code collision at 0x{code:02X} ({name})"
