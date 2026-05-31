@@ -83,9 +83,13 @@ pub fn top_topics_last_7_days(conn: &Connection, now_ns: i64, n: usize) -> Resul
     Ok(score_topics(&rows, n))
 }
 
-/// Pure frequency-pass over a slice of texts. Public so tests can
-/// exercise the scoring without an open SQLite connection.
-pub fn score_topics(texts: &[String], n: usize) -> Vec<String> {
+/// Pure frequency map over a slice of texts: lowercased alphanumeric
+/// tokens, stopwords + sub-4-char words dropped. The shared core that
+/// [`score_topics`] ranks AND `daemon::pattern_cron`'s topic-burst
+/// detector (G-01) compares across two time windows. Public so both
+/// consumers + tests share one tokeniser (no drift between the weekly
+/// reflection topics and the burst detector's notion of a "topic").
+pub fn topic_counts(texts: &[String]) -> HashMap<String, usize> {
     let stopwords: std::collections::HashSet<&str> = STOPWORDS.iter().copied().collect();
     let mut counts: HashMap<String, usize> = HashMap::new();
     for text in texts {
@@ -103,7 +107,14 @@ pub fn score_topics(texts: &[String], n: usize) -> Vec<String> {
             *counts.entry(lower).or_insert(0) += 1;
         }
     }
-    let mut pairs: Vec<(String, usize)> = counts.into_iter().collect();
+    counts
+}
+
+/// Pure frequency-pass over a slice of texts. Public so tests can
+/// exercise the scoring without an open SQLite connection. Ranks
+/// [`topic_counts`] desc by count, ties broken alphabetically.
+pub fn score_topics(texts: &[String], n: usize) -> Vec<String> {
+    let mut pairs: Vec<(String, usize)> = topic_counts(texts).into_iter().collect();
     pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     pairs.truncate(n);
     pairs.into_iter().map(|(k, _)| k).collect()

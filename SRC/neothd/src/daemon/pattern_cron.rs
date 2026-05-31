@@ -1,26 +1,32 @@
-//! G-01 (first slice) — self-initiated message engine: the inactivity
-//! detector.
+//! G-01 — self-initiated message engine: the behaviour-pattern detectors.
 //!
-//! G-01's full vision is a "smart pattern engine" that watches the
-//! operator's behaviour and proactively surfaces "I noticed X, want me to
-//! do Y?" nudges. The channel-delivery substrate it needs is already
-//! shipped: `proactive::ProactiveQueue` (the bounded daily-budget queue),
+//! G-01's vision is a "smart pattern engine" that watches the operator's
+//! behaviour and proactively surfaces "I noticed X, want me to do Y?"
+//! nudges. The channel-delivery substrate it needs is already shipped:
+//! `proactive::ProactiveQueue` (the bounded daily-budget queue),
 //! `daemon::reflection_cron` + `daemon::g02_surfacing_cron` (sibling
 //! producers), and `daemon::proactive_dispatcher` (the drain+send loop
 //! that actually delivers enqueued items to the operator's channel).
 //!
-//! This module lands the FIRST detector on that substrate: an
-//! **inactivity gap** check. When the most recent `idx_episode` event is
-//! older than `inactivity_gap_secs`, it enqueues ONE proactive nudge
-//! ("haven't heard from you — all good?"), deduped per UTC day so a
-//! continued silence produces at most one nudge per day, not one per
-//! tick. This is a distinct signal from reflection's weekly "here's what
-//! you worked on" summary — it prompts RE-ENGAGEMENT after a cold period.
+//! Each detector is a pure fn over `idx_episode` returning
+//! `Option<ProactiveItem>`, run once per tick by `run_pattern_tick_once`
+//! and enqueued behind a per-UTC-day `dedup_key` (so a persistent
+//! condition produces at most one nudge per day, not one per tick):
+//!
+//!   - [`detect_inactivity_gap`] — silence longer than the gap threshold
+//!     ("haven't heard from you — all good?"); prompts RE-ENGAGEMENT after
+//!     a cold period (distinct from reflection's weekly summary).
+//!   - [`detect_query_repeat`] — the same message asked N+ times in a
+//!     window (candidate for a saved note/shortcut/skill).
+//!   - [`detect_topic_burst`] — a topic whose recent mention-rate spikes
+//!     over its baseline (focus shift), via the shared
+//!     `reflection::topic_counts` tokeniser.
+//!   - [`detect_time_of_day_shift`] — the peak active hour moved by N+
+//!     hours (so timed briefings/reminders can follow the operator).
 //!
 //! Default OFF (`freedom.yaml::pattern_cron.enabled`): a proactive ping is
-//! intrusive, so it stays opt-in (matching `drift_alert`/`profile_adapt`).
-//! Further detectors (topic-burst, time-of-day shift, query-repeat) layer
-//! onto the same `detect_*` + enqueue shape in follow-on slices.
+//! intrusive, so the whole engine stays opt-in (matching `drift_alert`/
+//! `profile_adapt`); once opted in, each detector has its own toggle.
 
 use std::path::PathBuf;
 
@@ -72,35 +78,313 @@ pub fn detect_inactivity_gap(
     })
 }
 
-/// One pattern-cron tick: open views.db, run the inactivity detector,
-/// enqueue any nudge into the on-disk proactive queue. Mirrors
-/// `reflection_cron::run_reflection_tick_once`. Returns `Ok(true)` when a
-/// new nudge was enqueued, `Ok(false)` on no-op (active operator / empty
-/// DB / dedup). `now_unix` is injected so tests can pin the clock.
+/// Collapse whitespace to single spaces and char-boundary-safe truncate
+/// to `max` chars (appending `…` when clipped) so an excerpt of operator
+/// text renders cleanly on one line in a chat nudge.
+fn excerpt(text: &str, max: usize) -> String {
+    let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one_line.chars().count() <= max {
+        one_line
+    } else {
+        let head: String = one_line.chars().take(max).collect();
+        format!("{head}…")
+    }
+}
+
+/// Episode texts whose `ts_ns` is in `(from_ns, to_ns]`. `None` only on
+/// a SQL error — an empty window is `Some(vec![])`.
+fn fetch_episode_texts(
+    conn: &rusqlite::Connection,
+    from_ns: i64,
+    to_ns: i64,
+) -> Option<Vec<String>> {
+    let mut stmt = conn
+        .prepare("SELECT text FROM idx_episode WHERE ts_ns > ?1 AND ts_ns <= ?2")
+        .ok()?;
+    let rows = stmt
+        .query_map(rusqlite::params![from_ns, to_ns], |r| r.get::<_, String>(0))
+        .ok()?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().ok()
+}
+
+/// Episode timestamps (ns) whose `ts_ns` is in `(from_ns, to_ns]`.
+fn fetch_episode_ts(conn: &rusqlite::Connection, from_ns: i64, to_ns: i64) -> Option<Vec<i64>> {
+    let mut stmt = conn
+        .prepare("SELECT ts_ns FROM idx_episode WHERE ts_ns > ?1 AND ts_ns <= ?2")
+        .ok()?;
+    let rows = stmt
+        .query_map(rusqlite::params![from_ns, to_ns], |r| r.get::<_, i64>(0))
+        .ok()?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().ok()
+}
+
+/// UTC hour (0..=23) with the most episodes; ties break to the smaller
+/// hour for determinism. `None` when the slice is empty / all bogus.
+fn peak_hour(ts_ns: &[i64]) -> Option<u32> {
+    let mut hist = [0u32; 24];
+    for &t in ts_ns {
+        if t <= 0 {
+            continue;
+        }
+        let hour = ((t / 1_000_000_000) % 86_400) / 3_600;
+        hist[hour as usize] += 1;
+    }
+    let mut best_h = 0usize;
+    let mut best_c = 0u32;
+    for (h, &c) in hist.iter().enumerate() {
+        if c > best_c {
+            best_c = c;
+            best_h = h;
+        }
+    }
+    (best_c > 0).then_some(best_h as u32)
+}
+
+/// Shortest distance between two clock hours, wrapping at 24
+/// (23→1 is 2 hours, not 22).
+fn circular_hour_distance(a: u32, b: u32) -> u32 {
+    let d = (a as i32 - b as i32).unsigned_abs();
+    d.min(24 - d)
+}
+
+/// Query-repeat detector: when the operator has sent byte-identical
+/// (same `text_hash`) non-trivial text `min_count`+ times within the
+/// last `window_secs`, nudge once — a recurring ask is a candidate for a
+/// saved note / shortcut / skill. Picks the single most-repeated text;
+/// the `length(text) >= 8` floor drops "ok"/"hi"/"ja" chatter. `None`
+/// when nothing qualifies, the clock is bogus, or `min_count == 0`.
+///
+/// `dedup_key` carries `text_hash` + the UTC day so one recurring query
+/// nudges at most once per day, and two different recurring queries can
+/// each fire.
+pub fn detect_query_repeat(
+    conn: &rusqlite::Connection,
+    now_ns: i64,
+    window_secs: u64,
+    min_count: u32,
+) -> Option<ProactiveItem> {
+    if now_ns <= 0 || min_count == 0 {
+        return None;
+    }
+    let window_ns = (window_secs as i64).saturating_mul(1_000_000_000);
+    let from_ns = now_ns.saturating_sub(window_ns);
+    let row: Option<(String, String, i64)> = conn
+        .query_row(
+            "SELECT text_hash, MAX(text) t, COUNT(*) c FROM idx_episode \
+             WHERE ts_ns > ?1 AND ts_ns <= ?2 AND length(text) >= 8 \
+             GROUP BY text_hash HAVING c >= ?3 \
+             ORDER BY c DESC, MAX(ts_ns) DESC LIMIT 1",
+            rusqlite::params![from_ns, now_ns, min_count as i64],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .ok();
+    let (text_hash, text, count) = row?;
+    let day_bucket = (now_ns / 1_000_000_000) / 86_400;
+    Some(ProactiveItem {
+        priority: 55,
+        dedup_key: format!("pattern:query-repeat:{text_hash}:{day_bucket}"),
+        channel: String::new(),
+        source: "pattern_cron".to_string(),
+        body: format!(
+            "Du hast in letzter Zeit ~{count}× das Gleiche gefragt (»{ex}«) — \
+             soll ich mir das merken oder eine Notiz/Shortcut dafür anlegen?",
+            ex = excerpt(&text, 80),
+        ),
+        scheduled_for_unix: 0,
+    })
+}
+
+/// Topic-burst detector: a topic whose mention-rate in the recent window
+/// `(now - recent_secs, now]` spikes by `factor`× over its rate in the
+/// baseline period `(now - baseline_secs, now - recent_secs]` — a sign
+/// the operator is suddenly focused on something. Uses the SAME tokeniser
+/// as the weekly reflection (`reflection::topic_counts`) so "topic" means
+/// one thing across the daemon. A topic must clear `min_count` recent
+/// mentions before it can burst (drops one-off noise); a brand-new topic
+/// with zero baseline always bursts once over the floor. Picks the
+/// highest recent count, ties broken alphabetically for determinism.
+/// `None` when nothing bursts, the windows are degenerate, or the clock
+/// is bogus.
+pub fn detect_topic_burst(
+    conn: &rusqlite::Connection,
+    now_ns: i64,
+    recent_secs: u64,
+    baseline_secs: u64,
+    min_count: u32,
+    factor: f64,
+) -> Option<ProactiveItem> {
+    if now_ns <= 0 || min_count == 0 || baseline_secs <= recent_secs {
+        return None;
+    }
+    let recent_from = now_ns.saturating_sub((recent_secs as i64).saturating_mul(1_000_000_000));
+    let baseline_from = now_ns.saturating_sub((baseline_secs as i64).saturating_mul(1_000_000_000));
+    let recent_texts = fetch_episode_texts(conn, recent_from, now_ns)?;
+    let baseline_texts = fetch_episode_texts(conn, baseline_from, recent_from)?;
+    let recent_counts = crate::reflection::topic_counts(&recent_texts);
+    let baseline_counts = crate::reflection::topic_counts(&baseline_texts);
+
+    let recent_days = (recent_secs as f64 / 86_400.0).max(1e-9);
+    let baseline_days = ((baseline_secs - recent_secs) as f64 / 86_400.0).max(1e-9);
+
+    let mut best: Option<(String, usize)> = None;
+    for (topic, &rc) in &recent_counts {
+        if (rc as u32) < min_count {
+            continue;
+        }
+        let bc = baseline_counts.get(topic).copied().unwrap_or(0);
+        let recent_rate = rc as f64 / recent_days;
+        let baseline_rate = bc as f64 / baseline_days;
+        let is_burst = baseline_rate <= 0.0 || recent_rate >= factor * baseline_rate;
+        if !is_burst {
+            continue;
+        }
+        let better = match &best {
+            None => true,
+            Some((bt, bcount)) => rc > *bcount || (rc == *bcount && topic < bt),
+        };
+        if better {
+            best = Some((topic.clone(), rc));
+        }
+    }
+    let (topic, count) = best?;
+    let day_bucket = (now_ns / 1_000_000_000) / 86_400;
+    Some(ProactiveItem {
+        priority: 55,
+        dedup_key: format!("pattern:topic-burst:{topic}:{day_bucket}"),
+        channel: String::new(),
+        source: "pattern_cron".to_string(),
+        body: format!(
+            "Du beschäftigst dich gerade viel mit »{topic}« (~{count} Erwähnungen in \
+             den letzten Tagen) — soll ich dazu was sammeln oder eine Notiz/Skill anlegen?"
+        ),
+        scheduled_for_unix: 0,
+    })
+}
+
+/// Time-of-day-shift detector: the operator's peak active hour in the
+/// recent window moved by `min_hours`+ hours (circular distance) from the
+/// baseline window. Both windows need `min_episodes`+ rows — a sparse
+/// histogram gives a noisy peak we shouldn't act on. `None` when data is
+/// thin, the peak is stable, the windows are degenerate, or the clock is
+/// bogus.
+pub fn detect_time_of_day_shift(
+    conn: &rusqlite::Connection,
+    now_ns: i64,
+    recent_secs: u64,
+    baseline_secs: u64,
+    min_hours: u32,
+    min_episodes: u32,
+) -> Option<ProactiveItem> {
+    if now_ns <= 0 || baseline_secs <= recent_secs {
+        return None;
+    }
+    let recent_from = now_ns.saturating_sub((recent_secs as i64).saturating_mul(1_000_000_000));
+    let baseline_from = now_ns.saturating_sub((baseline_secs as i64).saturating_mul(1_000_000_000));
+    let recent_ts = fetch_episode_ts(conn, recent_from, now_ns)?;
+    let baseline_ts = fetch_episode_ts(conn, baseline_from, recent_from)?;
+    if (recent_ts.len() as u32) < min_episodes || (baseline_ts.len() as u32) < min_episodes {
+        return None;
+    }
+    let recent_peak = peak_hour(&recent_ts)?;
+    let baseline_peak = peak_hour(&baseline_ts)?;
+    if circular_hour_distance(recent_peak, baseline_peak) < min_hours {
+        return None;
+    }
+    let day_bucket = (now_ns / 1_000_000_000) / 86_400;
+    Some(ProactiveItem {
+        priority: 50,
+        dedup_key: format!("pattern:tod-shift:{day_bucket}"),
+        channel: String::new(),
+        source: "pattern_cron".to_string(),
+        body: format!(
+            "Deine aktivsten Stunden haben sich verschoben (~{baseline_peak:02}:00 → \
+             ~{recent_peak:02}:00 UTC) — soll ich Briefings/Reminders entsprechend timen?"
+        ),
+        scheduled_for_unix: 0,
+    })
+}
+
+/// One pattern-cron tick: open views.db, run every ENABLED detector, and
+/// enqueue each nudge into the on-disk proactive queue. Mirrors
+/// `reflection_cron::run_reflection_tick_once`. Returns the number of NEW
+/// items enqueued this tick (0 on a no-op: active operator / empty DB /
+/// every nudge already deduped). The inactivity detector is always run
+/// (it is the engine's core signal); the other three are gated by their
+/// per-detector flags. `now_unix` is injected so tests can pin the clock.
 pub fn run_pattern_tick_once(
     home: &std::path::Path,
     now_unix: i64,
-    gap_secs: u64,
-) -> Result<bool, String> {
+    config: &PatternCronConfig,
+) -> Result<usize, String> {
     use crate::proactive::ProactiveQueue;
 
     let views_path = home.join("views.db");
     if !views_path.exists() {
         // Fresh install — no episodes yet; quiet no-op (don't log-spam
         // during the wizard's first run).
-        return Ok(false);
+        return Ok(0);
     }
     let conn = crate::memory::store::open(&views_path)
         .map_err(|e| format!("views.db open failed: {e}"))?;
     let now_ns = now_unix.saturating_mul(1_000_000_000);
-    let Some(item) = detect_inactivity_gap(&conn, now_ns, gap_secs) else {
-        return Ok(false);
-    };
+
+    let mut items: Vec<ProactiveItem> = Vec::new();
+    if let Some(i) = detect_inactivity_gap(&conn, now_ns, config.inactivity_gap_secs) {
+        items.push(i);
+    }
+    if config.query_repeat_enabled {
+        if let Some(i) = detect_query_repeat(
+            &conn,
+            now_ns,
+            config.query_repeat_window_secs,
+            config.query_repeat_min_count,
+        ) {
+            items.push(i);
+        }
+    }
+    if config.topic_burst_enabled {
+        if let Some(i) = detect_topic_burst(
+            &conn,
+            now_ns,
+            config.topic_burst_recent_secs,
+            config.topic_burst_baseline_secs,
+            config.topic_burst_min_count,
+            config.topic_burst_factor,
+        ) {
+            items.push(i);
+        }
+    }
+    if config.tod_shift_enabled {
+        if let Some(i) = detect_time_of_day_shift(
+            &conn,
+            now_ns,
+            config.tod_shift_recent_secs,
+            config.tod_shift_baseline_secs,
+            config.tod_shift_min_hours,
+            config.tod_shift_min_episodes,
+        ) {
+            items.push(i);
+        }
+    }
+    if items.is_empty() {
+        return Ok(0);
+    }
 
     let queue_path = home.join("proactive_queue.json");
     let mut queue =
         ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
-    let enqueued = queue.enqueue(item);
+    let mut enqueued = 0usize;
+    for item in items {
+        if queue.enqueue(item) {
+            enqueued += 1;
+        }
+    }
     queue
         .save_to(&queue_path)
         .map_err(|e| format!("queue save failed: {e}"))?;
@@ -120,21 +404,23 @@ pub fn spawn_pattern_cron_loop(
         return None;
     }
     let interval = config.interval_duration();
-    let gap_secs = config.inactivity_gap_secs;
     Some(tokio::spawn(async move {
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         tracing::info!(
             interval_secs = interval.as_secs(),
-            inactivity_gap_secs = gap_secs,
-            "pattern cron loop online (G-01 inactivity detector)",
+            inactivity_gap_secs = config.inactivity_gap_secs,
+            query_repeat = config.query_repeat_enabled,
+            topic_burst = config.topic_burst_enabled,
+            tod_shift = config.tod_shift_enabled,
+            "pattern cron loop online (G-01 behaviour detectors)",
         );
         loop {
             ticker.tick().await;
             let now_unix = chrono::Utc::now().timestamp();
-            match run_pattern_tick_once(&home, now_unix, gap_secs) {
-                Ok(true) => tracing::info!("pattern cron: inactivity nudge enqueued"),
-                Ok(false) => tracing::debug!("pattern cron: no nudge this tick"),
+            match run_pattern_tick_once(&home, now_unix, &config) {
+                Ok(0) => tracing::debug!("pattern cron: no nudge this tick"),
+                Ok(n) => tracing::info!(nudges = n, "pattern cron: proactive nudges enqueued"),
                 Err(e) => {
                     tracing::warn!(error = %e, "pattern cron tick failed; retrying next interval")
                 }
@@ -157,6 +443,28 @@ mod tests {
             rusqlite::params![ts_ns, ts_ns],
         )
         .unwrap();
+    }
+
+    fn seed_text(
+        conn: &rusqlite::Connection,
+        event_id: i64,
+        ts_ns: i64,
+        text: &str,
+        text_hash: &str,
+    ) {
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (?1, 1, ?2, ?3, ?4, 0.5, ?2)",
+            rusqlite::params![event_id, ts_ns, text, text_hash],
+        )
+        .unwrap();
+    }
+
+    /// Episode timestamp (ns) at a given UTC day index + hour + `k`-second
+    /// offset — for deterministic time-of-day histogram tests.
+    fn ts_at_hour(day_idx: i64, hour: i64, k: i64) -> i64 {
+        ((day_idx * 86_400) + hour * 3_600 + k) * 1_000_000_000
     }
 
     fn fresh_db() -> (tempfile::TempDir, rusqlite::Connection) {
@@ -216,9 +524,13 @@ mod tests {
     }
 
     #[test]
-    fn run_tick_no_views_db_is_ok_false() {
+    fn run_tick_no_views_db_is_zero() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(!run_pattern_tick_once(dir.path(), 1_700_000_000, 3 * 24 * 3600).unwrap());
+        assert_eq!(
+            run_pattern_tick_once(dir.path(), 1_700_000_000, &PatternCronConfig::default())
+                .unwrap(),
+            0
+        );
     }
 
     #[test]
@@ -226,11 +538,300 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
         let now_unix = 100 * 24 * 3600;
+        // One short episode 5 days ago: only the inactivity detector fires
+        // (text 'e' is too short for query-repeat/topic-burst, one row is
+        // too sparse for the tod histogram).
         seed_episode(&conn, (now_unix - 5 * 24 * 3600) * 1_000_000_000);
         drop(conn);
-        // First tick enqueues; second same-day tick dedups (Ok(false)).
-        assert!(run_pattern_tick_once(dir.path(), now_unix, 3 * 24 * 3600).unwrap());
-        assert!(!run_pattern_tick_once(dir.path(), now_unix, 3 * 24 * 3600).unwrap());
+        let cfg = PatternCronConfig::default();
+        // First tick enqueues 1; second same-day tick dedups → 0.
+        assert_eq!(
+            run_pattern_tick_once(dir.path(), now_unix, &cfg).unwrap(),
+            1
+        );
+        assert_eq!(
+            run_pattern_tick_once(dir.path(), now_unix, &cfg).unwrap(),
+            0
+        );
+    }
+
+    // --- query-repeat detector ---
+
+    #[test]
+    fn query_repeat_none_below_min_count() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        seed_text(
+            &conn,
+            1,
+            now - DAY_NS,
+            "what is the deployment status",
+            "qh",
+        );
+        seed_text(
+            &conn,
+            2,
+            now - DAY_NS + 1_000_000_000,
+            "what is the deployment status",
+            "qh",
+        );
+        assert!(detect_query_repeat(&conn, now, 7 * 24 * 3600, 3).is_none());
+    }
+
+    #[test]
+    fn query_repeat_fires_at_min_count() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        for k in 0..3 {
+            seed_text(
+                &conn,
+                10 + k,
+                now - DAY_NS + k * 1_000_000_000,
+                "what is the deployment status",
+                "qh",
+            );
+        }
+        let item = detect_query_repeat(&conn, now, 7 * 24 * 3600, 3).expect("nudge");
+        assert_eq!(item.source, "pattern_cron");
+        assert_eq!(item.priority, 55);
+        assert!(item.dedup_key.starts_with("pattern:query-repeat:qh:"));
+        assert!(item.body.contains("3×"), "count in body: {}", item.body);
+    }
+
+    #[test]
+    fn query_repeat_ignores_short_text() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        for k in 0..5 {
+            seed_text(&conn, 20 + k, now - DAY_NS + k * 1_000_000_000, "hi", "sh");
+        }
+        assert!(detect_query_repeat(&conn, now, 7 * 24 * 3600, 3).is_none());
+    }
+
+    #[test]
+    fn query_repeat_respects_window() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        // 3 identical asks 10 days ago — outside the 7-day window.
+        for k in 0..3 {
+            seed_text(
+                &conn,
+                30 + k,
+                now - 10 * DAY_NS + k * 1_000_000_000,
+                "what is the deployment status",
+                "qh",
+            );
+        }
+        assert!(detect_query_repeat(&conn, now, 7 * 24 * 3600, 3).is_none());
+    }
+
+    // --- topic-burst detector ---
+
+    #[test]
+    fn topic_burst_none_on_empty_db() {
+        let (_d, conn) = fresh_db();
+        assert!(
+            detect_topic_burst(&conn, 100 * DAY_NS, 2 * 24 * 3600, 14 * 24 * 3600, 4, 3.0)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn topic_burst_none_when_topic_stable() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        // "database tuning notes" 4× recent (rate 2/d) AND 20× across the
+        // baseline (rate ~1.7/d) → not a 3× spike.
+        for k in 0..4 {
+            seed_text(
+                &conn,
+                100 + k,
+                now - DAY_NS + k * 1_000_000_000,
+                "database tuning notes",
+                &format!("rb{k}"),
+            );
+        }
+        for k in 0..20 {
+            seed_text(
+                &conn,
+                200 + k,
+                now - 6 * DAY_NS - k * 3600 * 1_000_000_000,
+                "database tuning notes",
+                &format!("bb{k}"),
+            );
+        }
+        assert!(detect_topic_burst(&conn, now, 2 * 24 * 3600, 14 * 24 * 3600, 4, 3.0).is_none());
+    }
+
+    #[test]
+    fn topic_burst_fires_on_spike() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        for k in 0..5 {
+            seed_text(
+                &conn,
+                300 + k,
+                now - DAY_NS + k * 1_000_000_000,
+                "kubernetes migration plan",
+                &format!("kr{k}"),
+            );
+        }
+        seed_text(
+            &conn,
+            400,
+            now - 8 * DAY_NS,
+            "kubernetes notes earlier",
+            "kb0",
+        );
+        let item =
+            detect_topic_burst(&conn, now, 2 * 24 * 3600, 14 * 24 * 3600, 4, 3.0).expect("nudge");
+        assert_eq!(item.priority, 55);
+        assert_eq!(item.source, "pattern_cron");
+        assert!(item.dedup_key.starts_with("pattern:topic-burst:"));
+    }
+
+    #[test]
+    fn topic_burst_brand_new_topic_fires() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        // "rustlang async runtime" 4× recent, ZERO baseline.
+        for k in 0..4 {
+            seed_text(
+                &conn,
+                500 + k,
+                now - DAY_NS + k * 1_000_000_000,
+                "rustlang async runtime",
+                &format!("nr{k}"),
+            );
+        }
+        let item =
+            detect_topic_burst(&conn, now, 2 * 24 * 3600, 14 * 24 * 3600, 4, 3.0).expect("nudge");
+        assert!(item.dedup_key.contains("topic-burst"));
+    }
+
+    // --- time-of-day-shift detector ---
+
+    #[test]
+    fn tod_shift_none_when_data_sparse() {
+        let (_d, conn) = fresh_db();
+        let now = ts_at_hour(100, 0, 0);
+        for k in 0..5 {
+            seed_text(
+                &conn,
+                600 + k,
+                ts_at_hour(98, 8, k),
+                "x msg",
+                &format!("r{k}"),
+            );
+            seed_text(
+                &conn,
+                700 + k,
+                ts_at_hour(80, 20, k),
+                "x msg",
+                &format!("b{k}"),
+            );
+        }
+        assert!(
+            detect_time_of_day_shift(&conn, now, 7 * 24 * 3600, 30 * 24 * 3600, 4, 10).is_none()
+        );
+    }
+
+    #[test]
+    fn tod_shift_none_when_peak_stable() {
+        let (_d, conn) = fresh_db();
+        let now = ts_at_hour(100, 0, 0);
+        for k in 0..12 {
+            seed_text(
+                &conn,
+                600 + k,
+                ts_at_hour(98, 20, k),
+                "x msg",
+                &format!("r{k}"),
+            );
+            seed_text(
+                &conn,
+                700 + k,
+                ts_at_hour(80, 20, k),
+                "x msg",
+                &format!("b{k}"),
+            );
+        }
+        assert!(
+            detect_time_of_day_shift(&conn, now, 7 * 24 * 3600, 30 * 24 * 3600, 4, 10).is_none()
+        );
+    }
+
+    #[test]
+    fn tod_shift_fires_on_peak_move() {
+        let (_d, conn) = fresh_db();
+        let now = ts_at_hour(100, 0, 0);
+        // recent peak hour 8, baseline peak hour 20 → circular distance 12.
+        for k in 0..12 {
+            seed_text(
+                &conn,
+                600 + k,
+                ts_at_hour(98, 8, k),
+                "x msg",
+                &format!("r{k}"),
+            );
+            seed_text(
+                &conn,
+                700 + k,
+                ts_at_hour(80, 20, k),
+                "x msg",
+                &format!("b{k}"),
+            );
+        }
+        let item = detect_time_of_day_shift(&conn, now, 7 * 24 * 3600, 30 * 24 * 3600, 4, 10)
+            .expect("nudge");
+        assert_eq!(item.priority, 50);
+        assert!(item.dedup_key.starts_with("pattern:tod-shift:"));
+        assert!(item.body.contains("08:00"), "peak in body: {}", item.body);
+    }
+
+    // --- pure helpers ---
+
+    #[test]
+    fn circular_hour_distance_wraps() {
+        assert_eq!(circular_hour_distance(23, 1), 2);
+        assert_eq!(circular_hour_distance(1, 23), 2);
+        assert_eq!(circular_hour_distance(8, 20), 12);
+        assert_eq!(circular_hour_distance(10, 10), 0);
+        assert_eq!(circular_hour_distance(0, 12), 12);
+    }
+
+    #[test]
+    fn peak_hour_picks_modal_hour() {
+        let base = 9 * 3600 * 1_000_000_000;
+        let ts: Vec<i64> = vec![base, base + 1, base + 2, 14 * 3600 * 1_000_000_000];
+        assert_eq!(peak_hour(&ts), Some(9));
+        assert_eq!(peak_hour(&[]), None);
+    }
+
+    #[test]
+    fn excerpt_collapses_and_truncates() {
+        assert_eq!(excerpt("hello   world\n\nfoo", 100), "hello world foo");
+        let long = "a".repeat(200);
+        let ex = excerpt(&long, 80);
+        assert_eq!(ex.chars().count(), 81, "80 chars + ellipsis");
+        assert!(ex.ends_with('…'));
+    }
+
+    #[test]
+    fn config_back_compat_partial_deserialize() {
+        // An old freedom.yaml that only knows the original 3 fields must
+        // still deserialize — the new detector fields fall back to Default
+        // (serde(default) on the struct).
+        let json = r#"{"enabled":true,"interval_secs":3600,"inactivity_gap_secs":86400}"#;
+        let cfg: PatternCronConfig = serde_json::from_str(json).unwrap();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.interval_secs, 3600);
+        assert!(cfg.query_repeat_enabled);
+        assert_eq!(cfg.query_repeat_min_count, 3);
+        assert!(cfg.topic_burst_enabled);
+        assert_eq!(cfg.topic_burst_factor, 3.0);
+        assert!(cfg.tod_shift_enabled);
+        assert_eq!(cfg.tod_shift_min_episodes, 10);
     }
 
     #[tokio::test]

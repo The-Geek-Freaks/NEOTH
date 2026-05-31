@@ -588,22 +588,80 @@ impl ProfileAdaptConfig {
     }
 }
 
-/// G-01 (first slice) — passive inactivity-nudge cron config. When
-/// `enabled`, the daemon's `pattern_cron` checks every `interval_secs`
-/// whether the operator has gone quiet for longer than
-/// `inactivity_gap_secs` and, if so, enqueues ONE proactive "still there?"
-/// nudge (deduped per UTC day). Default OFF — a proactive ping is
-/// intrusive, so it stays opt-in, matching `drift_alert`/`profile_adapt`.
+/// G-01 — passive behaviour-pattern cron config. When `enabled`, the
+/// daemon's `pattern_cron` runs every `interval_secs` and fires up to
+/// four independent detectors, each enqueueing at most ONE proactive
+/// nudge per UTC day (deduped):
+///   - **inactivity-gap**: silence longer than `inactivity_gap_secs`.
+///   - **query-repeat**: the same message asked `query_repeat_min_count`+
+///     times within `query_repeat_window_secs` (candidate for a saved
+///     note/shortcut/skill).
+///   - **topic-burst**: a topic whose recent mention-rate spikes by
+///     `topic_burst_factor`× over its baseline (focus shift).
+///   - **time-of-day-shift**: the operator's peak active hour moved by
+///     `tod_shift_min_hours`+ hours.
+/// Master `enabled` is OFF by default — a proactive ping is intrusive,
+/// so the whole engine stays opt-in (matching `drift_alert`/
+/// `profile_adapt`). Once opted in, each detector has its own toggle so
+/// an operator can keep, say, inactivity + query-repeat but silence the
+/// topic-burst nudges.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 #[serde(default)]
 pub struct PatternCronConfig {
-    /// Master switch for the inactivity nudge. Default `false`.
+    /// Master switch for the whole pattern engine. Default `false`.
     pub enabled: bool,
     /// Cron tick interval, seconds. Default 24h.
     pub interval_secs: u64,
-    /// Quiet-gap threshold, seconds, beyond which a nudge fires. Default
-    /// 3 days — long enough that a normal weekend pause stays silent.
+    /// Quiet-gap threshold, seconds, beyond which an inactivity nudge
+    /// fires. Default 3 days — long enough that a normal weekend pause
+    /// stays silent.
     pub inactivity_gap_secs: u64,
+
+    // --- query-repeat detector ---
+    /// Enable the query-repeat detector. Default `true` (within the
+    /// opt-in engine).
+    pub query_repeat_enabled: bool,
+    /// Look-back window for repeated-message detection, seconds.
+    /// Default 7 days.
+    pub query_repeat_window_secs: u64,
+    /// How many byte-identical messages within the window trigger a
+    /// nudge. Default 3.
+    pub query_repeat_min_count: u32,
+
+    // --- topic-burst detector ---
+    /// Enable the topic-burst detector. Default `true`.
+    pub topic_burst_enabled: bool,
+    /// Recent window for burst detection, seconds. Default 2 days.
+    pub topic_burst_recent_secs: u64,
+    /// Total baseline window, seconds. The baseline period the recent
+    /// rate is compared against is `baseline_secs - recent_secs`.
+    /// Default 14 days.
+    pub topic_burst_baseline_secs: u64,
+    /// Absolute floor: a topic must appear at least this many times in
+    /// the recent window before it can burst (drops one-off noise).
+    /// Default 4.
+    pub topic_burst_min_count: u32,
+    /// Burst factor: recent mention-rate must exceed this multiple of
+    /// the baseline rate. Default 3.0. (A brand-new topic with zero
+    /// baseline always passes once over the min-count floor.)
+    pub topic_burst_factor: f64,
+
+    // --- time-of-day-shift detector ---
+    /// Enable the time-of-day-shift detector. Default `true`.
+    pub tod_shift_enabled: bool,
+    /// Recent window for the peak-hour histogram, seconds. Default
+    /// 7 days.
+    pub tod_shift_recent_secs: u64,
+    /// Baseline window for the peak-hour histogram, seconds. The
+    /// compared baseline period is `baseline_secs - recent_secs`.
+    /// Default 30 days.
+    pub tod_shift_baseline_secs: u64,
+    /// Minimum circular distance (hours) between the recent and baseline
+    /// peak active hour before a shift nudge fires. Default 4.
+    pub tod_shift_min_hours: u32,
+    /// Minimum episodes required in EACH window before the histogram is
+    /// trusted (sparse data gives a noisy peak). Default 10.
+    pub tod_shift_min_episodes: u32,
 }
 
 /// 24 hours — the pattern cron default cadence.
@@ -617,6 +675,19 @@ impl Default for PatternCronConfig {
             enabled: false,
             interval_secs: DEFAULT_PATTERN_CRON_INTERVAL_SECS,
             inactivity_gap_secs: DEFAULT_INACTIVITY_GAP_SECS,
+            query_repeat_enabled: true,
+            query_repeat_window_secs: 7 * 24 * 3600,
+            query_repeat_min_count: 3,
+            topic_burst_enabled: true,
+            topic_burst_recent_secs: 2 * 24 * 3600,
+            topic_burst_baseline_secs: 14 * 24 * 3600,
+            topic_burst_min_count: 4,
+            topic_burst_factor: 3.0,
+            tod_shift_enabled: true,
+            tod_shift_recent_secs: 7 * 24 * 3600,
+            tod_shift_baseline_secs: 30 * 24 * 3600,
+            tod_shift_min_hours: 4,
+            tod_shift_min_episodes: 10,
         }
     }
 }
