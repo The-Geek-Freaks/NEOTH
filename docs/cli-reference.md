@@ -150,22 +150,22 @@ neoth council show <id>
 ## Skills and plugins
 
 ```bash
-neoth skill list
-neoth skill install ./skill
-neoth skill enable rust-review
-neoth reload-skills
+neoth skills --list
+neoth skills --install ./skill
+neoth skills --test rust-review
+# Skills hot-reload automatically (file watcher) — no reload command needed.
 
 neoth plugin list
-neoth plugin install ./plugin
+# Install a WASM plugin by dropping it under ~/.neoth/plugins/<id>/, then:
+neoth plugin verify ./plugins/my-plugin   # check integrity before enabling
 neoth plugin enable my-plugin
 neoth plugin ledger my-plugin
 ```
 
 | Command | Purpose |
 | :-- | :-- |
-| `skill ...` | Manage data-only skills. |
-| `plugin ...` | Manage sandboxed WASM plugins. |
-| `reload-skills` | Reload skills without restarting where supported. |
+| `skills ...` | Manage data-only skills (`--list` / `--install` / `--test`). |
+| `plugin ...` | Manage sandboxed WASM plugins (`list` / `verify` / `enable` / `ledger`). |
 
 ## Automation
 
@@ -188,8 +188,8 @@ neoth n8n workflows
 neoth cluster discover
 neoth cluster confirm <peer>
 neoth cluster status
-neoth cluster topology
-neoth local resources
+neoth cluster list
+neoth hardware
 ```
 
 | Command | Purpose |

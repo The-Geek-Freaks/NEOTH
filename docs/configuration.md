@@ -162,7 +162,7 @@ Common environment variables:
 
 | Change | Reload |
 | :-- | :-- |
-| Skills | `neoth reload-skills` or daemon reload. |
+| Skills | Hot-reloaded automatically (file watcher); `neoth reload` re-reads tunable config. |
 | Provider config | Daemon reload or restart depending on provider. |
 | Channels | Restart `neoth serve` after credential changes. |
 | Plugins | Restart after enabling/disabling code plugins. |
@@ -172,6 +172,6 @@ Common environment variables:
 
 ```bash
 neoth doctor
-neoth config validate
+neoth doctor --explain freedom.yaml
 neoth privacy audit --last 24h
 ```

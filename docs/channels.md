@@ -169,14 +169,15 @@ Default behavior:
 
 ## Cross-channel identity
 
-NEOTH does not silently merge identities. If you talk to it from Telegram and Slack, those can stay separate until you link them.
+NEOTH does not silently merge identities. If you talk to it from Telegram and
+Slack, those stay separate by default — each channel is its own conversation
+surface with its own consent gate.
 
-```bash
-neoth identity list
-neoth identity merge <telegram-uuid> <slack-uuid>
-```
-
-After a merge, recall and profile can follow the same operator across surfaces.
+> **Planned (SPEC-11, not in the current build):** an operator-driven
+> `identity list` / `identity merge` surface to deliberately link two channel
+> identities so recall and profile can follow the same operator across
+> surfaces. Until it ships, channels stay independent — which is the
+> fail-closed default.
 
 ## Channel safety checklist
 

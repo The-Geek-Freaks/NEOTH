@@ -35,11 +35,11 @@ context_files:
 Commands:
 
 ```bash
-neoth skill list
-neoth skill install ./rust-review
-neoth skill enable rust-review
-neoth skill disable rust-review
-neoth reload-skills
+neoth skills --list
+neoth skills --install ./rust-review
+neoth skills --test rust-review
+neoth skills --uninstall rust-review
+# Skills hot-reload automatically (file watcher) — no reload command needed.
 ```
 
 ## Plugins
