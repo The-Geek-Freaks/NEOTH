@@ -15,6 +15,7 @@
 
 pub mod arxiv;
 pub mod github;
+pub mod google_tasks;
 pub mod todoist;
 pub mod tts;
 pub mod web_fetch;

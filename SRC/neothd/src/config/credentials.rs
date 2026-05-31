@@ -77,6 +77,23 @@ pub struct Credentials {
     /// SecretString for the same mlock+zeroize protections as the other
     /// keys. Optional override paths: `--token` flag, `NEOTH_TODOIST_TOKEN`.
     pub todoist_token: Option<SecretString>,
+    /// TD-02 (Session 32) — Google OAuth installed-app client id (the
+    /// `*.apps.googleusercontent.com` value from the Google Cloud console).
+    /// Shared across the Google integrations (Tasks today, Gmail/Calendar
+    /// next). Not a secret on its own, but kept beside the others so one
+    /// file holds the whole Google identity.
+    pub google_oauth_client_id: Option<String>,
+    /// TD-02 — Google OAuth client secret that pairs with the client id.
+    /// Installed-app secrets are not truly confidential, but it rides in
+    /// `SecretString` for the same mlock+zeroize handling as the rest.
+    pub google_oauth_client_secret: Option<SecretString>,
+    /// TD-02 — long-lived Google OAuth refresh token (scope
+    /// `https://www.googleapis.com/auth/tasks`). Exchanged for a
+    /// short-lived access token on each `neoth todo --provider google` run
+    /// via `tools::google_tasks::refresh_access_token`. The only durable
+    /// Google secret; access tokens are never persisted. Override:
+    /// `NEOTH_GOOGLE_REFRESH_TOKEN`.
+    pub google_oauth_refresh_token: Option<SecretString>,
 }
 
 impl Credentials {
@@ -149,6 +166,9 @@ impl Credentials {
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
+            google_oauth_client_id,
+            google_oauth_client_secret,
+            google_oauth_refresh_token,
         } = self;
         provider_key.is_none()
             && telegram_token.is_none()
@@ -161,6 +181,9 @@ impl Credentials {
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()
+            && google_oauth_client_id.is_none()
+            && google_oauth_client_secret.is_none()
+            && google_oauth_refresh_token.is_none()
     }
 
     /// True if either field is set. Mirror of `!is_empty()` for call-site
