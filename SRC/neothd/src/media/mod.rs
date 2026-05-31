@@ -16,6 +16,7 @@
 //! producer.
 
 pub mod audio;
+pub mod document;
 pub mod pdf;
 pub mod pdf_forms;
 pub mod stt_dispatch;
@@ -64,6 +65,10 @@ pub enum AssetKind {
     Image,
     Audio,
     Video,
+    /// Office / e-book documents (DOCX, PPTX, XLSX, ODT/ODS/ODP, EPUB,
+    /// RTF) routed to [`document::DocumentExtractor`]. PDF stays its own
+    /// kind because it has an image-aware extractor.
+    Document,
     /// Catch-all for formats NEOTH does not yet route. Operator's inbound
     /// channel adapter sets it; the pipeline returns an `Unsupported`
     /// extraction result.

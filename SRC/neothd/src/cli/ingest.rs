@@ -32,7 +32,8 @@ pub struct IngestArgs {
     /// File to ingest. Extension drives the kind:
     /// `.pdf` → pdf, `.png|.jpg|.jpeg|.webp|.gif` → image,
     /// `.wav|.mp3|.flac|.ogg|.m4a` → audio,
-    /// `.mp4|.mov|.mkv|.webm` → video.
+    /// `.mp4|.mov|.mkv|.webm` → video,
+    /// `.docx|.pptx|.xlsx|.odt|.ods|.odp|.epub|.rtf` → document.
     pub path: PathBuf,
 
     /// Override the views.db path. Defaults to `~/.neoth/views.db`.
@@ -70,7 +71,8 @@ pub async fn run_ingest(args: IngestArgs) -> Result<()> {
     let kind = detect_kind(&path).ok_or_else(|| {
         anyhow::anyhow!(
             "could not infer asset kind from extension on {} \
-             — supported: .pdf .png .jpg .jpeg .webp .gif .wav .mp3 .flac .ogg .m4a .mp4 .mov .mkv .webm",
+             — supported: .pdf .png .jpg .jpeg .webp .gif .wav .mp3 .flac .ogg .m4a \
+             .mp4 .mov .mkv .webm .docx .pptx .xlsx .odt .ods .odp .epub .rtf",
             path.display()
         )
     })?;
@@ -193,6 +195,7 @@ fn persist_embedding_if_any(
         AssetKind::Audio => "audio_segment",
         AssetKind::Video => "video_frame",
         AssetKind::Pdf => "pdf_page",
+        AssetKind::Document => "document",
         AssetKind::Other => "asset",
     };
     let model = extraction.metadata["extractor"]
@@ -278,6 +281,7 @@ async fn emit_audit_events(
                 AssetKind::Audio => "audio_segment",
                 AssetKind::Video => "video_frame",
                 AssetKind::Pdf => "pdf_page",
+                AssetKind::Document => "document",
                 AssetKind::Other => "asset",
             },
             "source_ref": source_ref,
@@ -321,6 +325,7 @@ fn detect_kind(p: &std::path::Path) -> Option<AssetKind> {
         "png" | "jpg" | "jpeg" | "webp" | "gif" => AssetKind::Image,
         "wav" | "mp3" | "flac" | "ogg" | "m4a" => AssetKind::Audio,
         "mp4" | "mov" | "mkv" | "webm" => AssetKind::Video,
+        "docx" | "pptx" | "xlsx" | "odt" | "ods" | "odp" | "epub" | "rtf" => AssetKind::Document,
         _ => return None,
     })
 }
@@ -333,6 +338,20 @@ fn mime_hint(kind: AssetKind, p: &std::path::Path) -> String {
         .unwrap_or_default();
     match (kind, ext.as_str()) {
         (AssetKind::Pdf, _) => "application/pdf".into(),
+        (AssetKind::Document, "docx") => {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document".into()
+        }
+        (AssetKind::Document, "pptx") => {
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation".into()
+        }
+        (AssetKind::Document, "xlsx") => {
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into()
+        }
+        (AssetKind::Document, "odt") => "application/vnd.oasis.opendocument.text".into(),
+        (AssetKind::Document, "ods") => "application/vnd.oasis.opendocument.spreadsheet".into(),
+        (AssetKind::Document, "odp") => "application/vnd.oasis.opendocument.presentation".into(),
+        (AssetKind::Document, "epub") => "application/epub+zip".into(),
+        (AssetKind::Document, "rtf") => "application/rtf".into(),
         (AssetKind::Image, "png") => "image/png".into(),
         (AssetKind::Image, "jpg" | "jpeg") => "image/jpeg".into(),
         (AssetKind::Image, "webp") => "image/webp".into(),
@@ -353,6 +372,7 @@ fn mime_hint(kind: AssetKind, p: &std::path::Path) -> String {
 fn default_backends() -> Vec<Arc<dyn MediaExtractor>> {
     vec![
         Arc::new(crate::media::pdf::PdfExtractor),
+        Arc::new(crate::media::document::DocumentExtractor),
         Arc::new(crate::media::vision::VisionExtractor),
         Arc::new(crate::media::audio::AudioExtractor),
         Arc::new(crate::media::video::VideoExtractor),

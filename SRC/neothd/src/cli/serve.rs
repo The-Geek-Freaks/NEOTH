@@ -3895,13 +3895,7 @@ pub(crate) async fn handle_media_attachment(
         MediaKind::Image => AssetKind::Image,
         MediaKind::Audio => AssetKind::Audio,
         MediaKind::Video => AssetKind::Video,
-        MediaKind::Document => {
-            return Ok(format!(
-                "[NEOTH] document attachments not supported in v0.1.x \
-                 (filename={:?}, mime={})",
-                media.filename, media.mime
-            ));
-        }
+        MediaKind::Document => AssetKind::Document,
         MediaKind::Sticker => {
             return Ok("[NEOTH] sticker received; v0.1.x ignores sticker payloads.".into());
         }
@@ -3914,6 +3908,7 @@ pub(crate) async fn handle_media_attachment(
     };
     let backends: Vec<Arc<dyn crate::media::MediaExtractor>> = vec![
         Arc::new(crate::media::pdf::PdfExtractor),
+        Arc::new(crate::media::document::DocumentExtractor),
         Arc::new(crate::media::vision::VisionExtractor),
         Arc::new(crate::media::audio::AudioExtractor),
         Arc::new(crate::media::video::VideoExtractor),
@@ -3928,6 +3923,7 @@ pub(crate) async fn handle_media_attachment(
         AssetKind::Audio => "audio_segment",
         AssetKind::Video => "video_frame",
         AssetKind::Pdf => "pdf_page",
+        AssetKind::Document => "document",
         AssetKind::Other => "asset",
     };
     let source_ref = format!(
@@ -4055,6 +4051,24 @@ pub(crate) async fn handle_media_attachment(
                     transcript.to_string()
                 } else {
                     format!("{prefix}\n\n[transcript]\n{transcript}")
+                }
+            }
+        }
+        AssetKind::Document => {
+            let body = extraction.text.trim();
+            let fmt = extraction.metadata["format"].as_str().unwrap_or("document");
+            if body.is_empty() {
+                format!(
+                    "[NEOTH] {} document received ({:?}) but no extractable text \
+                     was found (image-only or unsupported internals).",
+                    fmt, media.filename
+                )
+            } else {
+                let prefix = inbound.text.clone().unwrap_or_default();
+                if prefix.trim().is_empty() {
+                    body.to_string()
+                } else {
+                    format!("{prefix}\n\n[document:{fmt}]\n{body}")
                 }
             }
         }
