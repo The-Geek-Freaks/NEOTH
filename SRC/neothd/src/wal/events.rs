@@ -880,6 +880,16 @@ pub const EVENT_TYPE_PLUGIN_HOSTCALL: u8 = 0xC4;
 /// reads this in `neoth plugins list --crash-log`. Payload:
 /// `{plugin_id, fuel_budget, ts_unix}`.
 pub const EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED: u8 = 0xC5;
+/// `0xC6 PLUGIN_CAP_USED` — KF-09 (first slice). A WASM plugin exercised
+/// a READ capability that is otherwise UNTRACED. Today: `neoth.recall_top`
+/// (reads operator memory by prompt-hash). Unlike `0xC4 PLUGIN_HOSTCALL`
+/// (the Write-side `emit_event` audit), the read hostcalls left NO durable
+/// signal — so a plugin could probe operator memory invisibly. This frame
+/// makes every read auditable via `neoth wal show --type plugin_cap_used`.
+/// Batchable (NOT immediate-sync): higher-volume than the lifecycle frames
+/// + a lost tail on crash is acceptable for a read-audit. Payload:
+/// `{plugin, capability, prompt_hash, hits}`.
+pub const EVENT_TYPE_PLUGIN_CAP_USED: u8 = 0xC6;
 /// `0xC1 MCP_TOOL_REJECTED` — operator's MCP client refused to invoke
 /// a tool because either (a) the tool name is not in the server's
 /// `allow_tools` list, (b) the tool description failed the prompt-
@@ -1357,6 +1367,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_PLUGIN_HOSTCALL < 0xC0 || EVENT_TYPE_PLUGIN_HOSTCALL > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED < 0xC0
         || EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED > 0xCF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_PLUGIN_CAP_USED < 0xC0 || EVENT_TYPE_PLUGIN_CAP_USED > 0xCF) as usize];
     // V11 Pick #38 (2026-05-19): coding-workflow band 0x70..=0x7F.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_OPENED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_OPENED > 0x7F) as usize];
@@ -1546,6 +1558,7 @@ mod tests {
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),
             ("PLUGIN_FUEL_EXHAUSTED", EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED),
+            ("PLUGIN_CAP_USED", EVENT_TYPE_PLUGIN_CAP_USED),
             ("KANBAN_SESSION_OPENED", EVENT_TYPE_KANBAN_SESSION_OPENED),
             ("KANBAN_TASK_CREATED", EVENT_TYPE_KANBAN_TASK_CREATED),
             ("KANBAN_TASK_ASSIGNED", EVENT_TYPE_KANBAN_TASK_ASSIGNED),
@@ -1616,11 +1629,13 @@ mod tests {
         assert_eq!(EVENT_TYPE_PLUGIN_REJECTED, 0xC3);
         assert_eq!(EVENT_TYPE_PLUGIN_HOSTCALL, 0xC4);
         assert_eq!(EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED, 0xC5);
+        assert_eq!(EVENT_TYPE_PLUGIN_CAP_USED, 0xC6);
         for code in [
             EVENT_TYPE_PLUGIN_LOADED,
             EVENT_TYPE_PLUGIN_REJECTED,
             EVENT_TYPE_PLUGIN_HOSTCALL,
             EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED,
+            EVENT_TYPE_PLUGIN_CAP_USED,
         ] {
             assert!(
                 (0xC0..=0xCF).contains(&code),

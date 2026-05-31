@@ -32,7 +32,7 @@ use wasmtime::{Caller, Linker};
 
 use super::engine::{PluginStoreState, RecallDbHandle};
 use crate::wal::builder::HeaderBuilder;
-use crate::wal::events::EVENT_TYPE_PLUGIN_HOSTCALL;
+use crate::wal::events::{EVENT_TYPE_PLUGIN_CAP_USED, EVENT_TYPE_PLUGIN_HOSTCALL};
 
 /// V10-04 Pick #34 voll (2026-05-19): per-frame upper bound on the
 /// plugin-supplied payload that gets folded into the WAL frame body.
@@ -119,6 +119,34 @@ fn build_hostcall_payload(plugin_id: &str, kind: &[u8], payload_bytes: usize) ->
             "{{\"plugin\":\"{}\",\"kind\":\"\",\"payload_bytes\":{}}}",
             plugin_id.replace('"', ""),
             payload_bytes
+        )
+        .into_bytes()
+    })
+}
+
+/// KF-09 — body for a `0xC6 PLUGIN_CAP_USED` frame. `prompt_hash` renders
+/// as `{:016x}` (matching the wire form `recall_top` queries against), so
+/// an operator grepping `neoth wal show --type plugin_cap_used --json`
+/// can correlate a plugin's memory probe with the hashed prompt. The
+/// header carries the timestamp, so the body stays minimal.
+fn build_cap_used_payload(
+    plugin_id: &str,
+    capability: &str,
+    prompt_hash: i64,
+    hits: i32,
+) -> Vec<u8> {
+    let value = serde_json::json!({
+        "plugin": plugin_id,
+        "capability": capability,
+        "prompt_hash": format!("{:016x}", prompt_hash as u64),
+        "hits": hits,
+    });
+    serde_json::to_vec(&value).unwrap_or_else(|_| {
+        format!(
+            "{{\"plugin\":\"{}\",\"capability\":\"{}\",\"hits\":{}}}",
+            plugin_id.replace('"', ""),
+            capability,
+            hits
         )
         .into_bytes()
     })
@@ -374,29 +402,52 @@ pub fn build_linker(engine: &wasmtime::Engine) -> Result<Linker<PluginStoreState
             "recall_top",
             |caller: Caller<'_, PluginStoreState>, prompt_hash: i64| -> i32 {
                 let plugin_id = caller.data().plugin_id.clone();
+                let writer = caller.data().wal_writer.clone();
                 let db_handle = caller.data().recall_db.clone();
-                let Some(db) = db_handle else {
-                    tracing::debug!(
-                        target: "wasm_plugin",
-                        plugin = %plugin_id,
-                        prompt_hash,
-                        "host.recall_top: no views.db attached — returning 0"
-                    );
-                    return 0;
-                };
-                match recall_count_by_text_hash(&db, prompt_hash) {
-                    Ok(n) => n,
-                    Err(e) => {
-                        tracing::warn!(
+                let hits = match db_handle {
+                    None => {
+                        tracing::debug!(
                             target: "wasm_plugin",
                             plugin = %plugin_id,
                             prompt_hash,
-                            error = %e,
-                            "host.recall_top: views.db query failed — returning 0"
+                            "host.recall_top: no views.db attached — returning 0"
                         );
                         0
                     }
+                    Some(db) => match recall_count_by_text_hash(&db, prompt_hash) {
+                        Ok(n) => n,
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "wasm_plugin",
+                                plugin = %plugin_id,
+                                prompt_hash,
+                                error = %e,
+                                "host.recall_top: views.db query failed — returning 0"
+                            );
+                            0
+                        }
+                    },
+                };
+                // KF-09 — durable audit of the READ capability. recall_top
+                // reads operator memory; unlike emit_event (0xC4) it was
+                // previously UNTRACED, so a plugin could probe memory with
+                // no signal. Emit a 0xC6 PLUGIN_CAP_USED frame per call,
+                // BEST-EFFORT — a WAL writer issue must never change the
+                // read hint the plugin gets back (recall stays a pure hint).
+                if let Some(w) = writer {
+                    let payload =
+                        build_cap_used_payload(&plugin_id, "recall_top", prompt_hash, hits);
+                    let header = HeaderBuilder::new(EVENT_TYPE_PLUGIN_CAP_USED, &payload).build();
+                    if let Err(e) = w.try_append_sync(header, payload) {
+                        tracing::warn!(
+                            target: "wasm_plugin",
+                            plugin = %plugin_id,
+                            error = %e,
+                            "host.recall_top: capability-ledger WAL append failed (audit only)"
+                        );
+                    }
                 }
+                hits
             },
         )
         .context("bind neoth.recall_top")?;
@@ -601,6 +652,42 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
         assert_eq!(v["kind"], "");
         assert_eq!(v["payload_bytes"], 0);
+    }
+
+    // ── KF-09 (0xC6 PLUGIN_CAP_USED) read-capability audit payload ──────
+
+    #[test]
+    fn build_cap_used_payload_shape_is_stable_json() {
+        // Operators grep `neoth wal show --type plugin_cap_used --json
+        // | jq .capability`. Pin the on-disk shape.
+        let bytes = build_cap_used_payload("indexer-v1", "recall_top", 0x0123456789abcdef, 3);
+        let v: serde_json::Value =
+            serde_json::from_slice(&bytes).expect("payload must round-trip through serde_json");
+        assert_eq!(v["plugin"], "indexer-v1");
+        assert_eq!(v["capability"], "recall_top");
+        // prompt_hash is the {:016x} wire form recall_top queries against.
+        assert_eq!(v["prompt_hash"], "0123456789abcdef");
+        assert_eq!(v["hits"], 3);
+    }
+
+    #[test]
+    fn build_cap_used_payload_prompt_hash_is_unsigned_016x() {
+        // wasm sends u64 hashes as i64; a negative value must render as
+        // the UNSIGNED 16-hex form, matching recall_count_by_text_hash's
+        // `format!("{:016x}", prompt_hash as u64)`.
+        let bytes = build_cap_used_payload("p", "recall_top", -1, 0);
+        let v: serde_json::Value = serde_json::from_slice(&bytes).expect("valid JSON");
+        assert_eq!(v["prompt_hash"], "ffffffffffffffff");
+        assert_eq!(v["hits"], 0);
+    }
+
+    #[test]
+    fn build_cap_used_payload_is_deterministic() {
+        // Same inputs → byte-identical (cross-node equivalence; no clock /
+        // random in the body — the timestamp lives in the header).
+        let a = build_cap_used_payload("plug", "recall_top", 42, 7);
+        let b = build_cap_used_payload("plug", "recall_top", 42, 7);
+        assert_eq!(a, b);
     }
 
     // ── Concern-3 (Session 24) cross-node payload determinism ─────────
