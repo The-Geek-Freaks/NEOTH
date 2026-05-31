@@ -26,6 +26,10 @@ use serde_json::json;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::wal::compress::decompress_frames;
+use crate::wal::events::{EVENT_TYPE_PLUGIN_CAP_USED, EVENT_TYPE_PLUGIN_HOSTCALL};
+use crate::wal::frame::decode_frame;
+use crate::wal::segment_header::parse_segment_header;
 use crate::wasm_plugin::discovery::{PluginActivation, discover};
 
 #[derive(Args, Debug, Clone)]
@@ -79,6 +83,16 @@ pub enum PluginAction {
         /// `plugin.wasm.minisig`).
         path: std::path::PathBuf,
     },
+    /// KF-09 — per-plugin capability usage ledger. Scans the WAL for the
+    /// plugin audit frames (`0xC4 PLUGIN_HOSTCALL` writes via `emit_event`,
+    /// `0xC6 PLUGIN_CAP_USED` reads via `recall_top`) and aggregates a
+    /// per-plugin-per-capability call count + volume — so an operator can
+    /// see WHAT each plugin actually exercised. Read-only; works on a slim
+    /// daemon too (it reads historical frames, no wasm host needed).
+    Ledger {
+        /// Restrict to one plugin id. Omit for all plugins.
+        id: Option<String>,
+    },
 }
 
 pub async fn run_plugin(args: PluginArgs) -> Result<()> {
@@ -94,6 +108,7 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
         }
         PluginAction::Test { path } => run_test(&path, args.output),
         PluginAction::Verify { path } => run_verify(&path, args.output),
+        PluginAction::Ledger { id } => run_ledger(id.as_deref(), args.output),
     }
 }
 
@@ -295,6 +310,188 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
 
     if verdict.is_err() {
         anyhow::bail!("plugin failed the SC-03 integrity gate");
+    }
+    Ok(())
+}
+
+// ── KF-09 plugin capability ledger ────────────────────────────────────────
+
+/// One raw capability use parsed from a plugin audit frame.
+#[derive(Debug, Clone, PartialEq)]
+struct CapUse {
+    plugin: String,
+    capability: String,
+    /// `0xC4` write volume (`payload_bytes`); 0 for reads.
+    payload_bytes: u64,
+    /// `0xC6` read hit count (`hits`); 0 for writes.
+    hits: i64,
+}
+
+/// Aggregated per (plugin, capability) row.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+struct LedgerRow {
+    plugin: String,
+    capability: String,
+    calls: u64,
+    total_payload_bytes: u64,
+    total_hits: i64,
+}
+
+/// Parse a plugin audit frame into a [`CapUse`]. `None` for any other
+/// event type or a malformed payload (tolerant — a partially-corrupt WAL
+/// still yields its good records). Pure — unit-tested without a real WAL.
+fn parse_cap_frame(event_type: u8, payload: &[u8]) -> Option<CapUse> {
+    let v: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    let plugin = v.get("plugin")?.as_str()?.to_string();
+    if event_type == EVENT_TYPE_PLUGIN_HOSTCALL {
+        // 0xC4 emit_event WRITE: {plugin, kind, payload_bytes}.
+        let payload_bytes = v.get("payload_bytes").and_then(|x| x.as_u64()).unwrap_or(0);
+        Some(CapUse {
+            plugin,
+            capability: "emit_event".to_string(),
+            payload_bytes,
+            hits: 0,
+        })
+    } else if event_type == EVENT_TYPE_PLUGIN_CAP_USED {
+        // 0xC6 READ: {plugin, capability, prompt_hash, hits}.
+        let capability = v
+            .get("capability")
+            .and_then(|x| x.as_str())
+            .unwrap_or("read")
+            .to_string();
+        let hits = v.get("hits").and_then(|x| x.as_i64()).unwrap_or(0);
+        Some(CapUse {
+            plugin,
+            capability,
+            payload_bytes: 0,
+            hits,
+        })
+    } else {
+        None
+    }
+}
+
+/// Aggregate raw uses into per-(plugin, capability) rows, optionally
+/// filtered to one plugin id. `BTreeMap` keying yields stable
+/// plugin-then-capability ordering. Pure — unit-tested without a real WAL.
+fn aggregate_ledger(uses: Vec<CapUse>, filter_id: Option<&str>) -> Vec<LedgerRow> {
+    use std::collections::BTreeMap;
+    let mut acc: BTreeMap<(String, String), LedgerRow> = BTreeMap::new();
+    for u in uses {
+        if let Some(want) = filter_id {
+            if u.plugin != want {
+                continue;
+            }
+        }
+        let row = acc
+            .entry((u.plugin.clone(), u.capability.clone()))
+            .or_insert(LedgerRow {
+                plugin: u.plugin,
+                capability: u.capability,
+                calls: 0,
+                total_payload_bytes: 0,
+                total_hits: 0,
+            });
+        row.calls += 1;
+        row.total_payload_bytes = row.total_payload_bytes.saturating_add(u.payload_bytes);
+        row.total_hits = row.total_hits.saturating_add(u.hits);
+    }
+    acc.into_values().collect()
+}
+
+/// Walk the frame bytes of ONE segment body (decompressed if compressed),
+/// pushing every plugin-audit `CapUse`. Tail-tolerant (stops at the first
+/// torn frame) + zero-`total_len` loop guard — identical contract to every
+/// other WAL walker in the codebase.
+fn walk_cap_frames(frames: &[u8], out: &mut Vec<CapUse>) {
+    let mut cursor = 0usize;
+    while cursor < frames.len() {
+        let dec = match decode_frame(&frames[cursor..]) {
+            Ok(d) => d,
+            Err(_) => break,
+        };
+        if let Some(u) = parse_cap_frame(dec.header.event_type, dec.payload) {
+            out.push(u);
+        }
+        let total = dec.header.total_len as usize;
+        if total == 0 {
+            break;
+        }
+        cursor = cursor.saturating_add(total);
+    }
+}
+
+/// Scan every `*.wal` segment in `wal_dir` for plugin-audit frames.
+/// Robust across v1/v2 + compressed segments (mirrors the SPEC-10 refusal-
+/// history walker); a missing dir / unreadable / short / unknown-format /
+/// torn segment each skip rather than error.
+fn collect_cap_uses(wal_dir: &std::path::Path) -> Vec<CapUse> {
+    let entries = match std::fs::read_dir(wal_dir) {
+        Ok(it) => it,
+        Err(_) => return Vec::new(),
+    };
+    let mut segments: Vec<std::path::PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("wal"))
+        .collect();
+    segments.sort();
+
+    let mut out: Vec<CapUse> = Vec::new();
+    for path in segments {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(hdr) = parse_segment_header(&bytes) else {
+            continue;
+        };
+        let header_len = hdr.header_len();
+        if bytes.len() <= header_len {
+            continue;
+        }
+        let body = &bytes[header_len..];
+        if hdr.is_compressed() {
+            if let Ok(d) = decompress_frames(body) {
+                walk_cap_frames(&d, &mut out);
+            }
+        } else {
+            walk_cap_frames(body, &mut out);
+        }
+    }
+    out
+}
+
+/// KF-09 — `neoth plugin ledger [<id>]`. Aggregates the plugin capability
+/// audit frames so the operator sees what each plugin exercised.
+fn run_ledger(id: Option<&str>, output: OutputFormat) -> Result<()> {
+    let wal_dir = FreedomConfig::default_wal_dir();
+    let rows = aggregate_ledger(collect_cap_uses(&wal_dir), id);
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string(&rows)?);
+        }
+        OutputFormat::Table => {
+            if rows.is_empty() {
+                match id {
+                    Some(p) => println!("No recorded capability usage for plugin `{p}`."),
+                    None => println!(
+                        "No recorded plugin capability usage yet (no 0xC4/0xC6 frames in the WAL)."
+                    ),
+                }
+                return Ok(());
+            }
+            println!(
+                "{:<24} {:<14} {:>6} {:>12} {:>8}",
+                "PLUGIN", "CAPABILITY", "CALLS", "BYTES(w)", "HITS(r)"
+            );
+            for r in &rows {
+                println!(
+                    "{:<24} {:<14} {:>6} {:>12} {:>8}",
+                    r.plugin, r.capability, r.calls, r.total_payload_bytes, r.total_hits
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -788,5 +985,157 @@ version = \"0.1.0\"\n\
         let manifest =
             crate::wasm_plugin::manifest::parse_manifest(VALID_MANIFEST.as_bytes()).unwrap();
         assert!(run_test_invoke(&manifest, &[]).is_none());
+    }
+
+    // ── KF-09 capability ledger ───────────────────────────────────────
+
+    fn cap_used_payload(plugin: &str, capability: &str, hits: i64) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "plugin": plugin,
+            "capability": capability,
+            "prompt_hash": "0123456789abcdef",
+            "hits": hits,
+        }))
+        .unwrap()
+    }
+
+    fn hostcall_payload(plugin: &str, payload_bytes: u64) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "plugin": plugin,
+            "kind": "file_seen",
+            "payload_bytes": payload_bytes,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn parse_cap_frame_0xc4_is_emit_event_write() {
+        let u = parse_cap_frame(EVENT_TYPE_PLUGIN_HOSTCALL, &hostcall_payload("indexer", 42))
+            .expect("0xC4 parses");
+        assert_eq!(u.plugin, "indexer");
+        assert_eq!(u.capability, "emit_event");
+        assert_eq!(u.payload_bytes, 42);
+        assert_eq!(u.hits, 0);
+    }
+
+    #[test]
+    fn parse_cap_frame_0xc6_is_read_capability() {
+        let u = parse_cap_frame(
+            EVENT_TYPE_PLUGIN_CAP_USED,
+            &cap_used_payload("snoop", "recall_top", 5),
+        )
+        .expect("0xC6 parses");
+        assert_eq!(u.plugin, "snoop");
+        assert_eq!(u.capability, "recall_top");
+        assert_eq!(u.payload_bytes, 0);
+        assert_eq!(u.hits, 5);
+    }
+
+    #[test]
+    fn parse_cap_frame_rejects_other_event_type_and_garbage() {
+        // A non-plugin event type → None.
+        assert!(parse_cap_frame(0x01, &cap_used_payload("p", "recall_top", 1)).is_none());
+        // A 0xC6 frame with a non-JSON payload → None (tolerant).
+        assert!(parse_cap_frame(EVENT_TYPE_PLUGIN_CAP_USED, b"not json").is_none());
+    }
+
+    #[test]
+    fn aggregate_ledger_counts_sums_and_sorts() {
+        let uses = vec![
+            CapUse {
+                plugin: "b".into(),
+                capability: "recall_top".into(),
+                payload_bytes: 0,
+                hits: 2,
+            },
+            CapUse {
+                plugin: "a".into(),
+                capability: "emit_event".into(),
+                payload_bytes: 10,
+                hits: 0,
+            },
+            CapUse {
+                plugin: "b".into(),
+                capability: "recall_top".into(),
+                payload_bytes: 0,
+                hits: 3,
+            },
+            CapUse {
+                plugin: "a".into(),
+                capability: "emit_event".into(),
+                payload_bytes: 5,
+                hits: 0,
+            },
+        ];
+        let rows = aggregate_ledger(uses, None);
+        // Sorted plugin-then-capability: (a, emit_event), (b, recall_top).
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].plugin, "a");
+        assert_eq!(rows[0].capability, "emit_event");
+        assert_eq!(rows[0].calls, 2);
+        assert_eq!(rows[0].total_payload_bytes, 15);
+        assert_eq!(rows[1].plugin, "b");
+        assert_eq!(rows[1].calls, 2);
+        assert_eq!(rows[1].total_hits, 5);
+    }
+
+    #[test]
+    fn aggregate_ledger_filters_by_id() {
+        let uses = vec![
+            CapUse {
+                plugin: "keep".into(),
+                capability: "recall_top".into(),
+                payload_bytes: 0,
+                hits: 1,
+            },
+            CapUse {
+                plugin: "drop".into(),
+                capability: "recall_top".into(),
+                payload_bytes: 0,
+                hits: 9,
+            },
+        ];
+        let rows = aggregate_ledger(uses, Some("keep"));
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].plugin, "keep");
+    }
+
+    #[tokio::test]
+    async fn ledger_collects_and_aggregates_from_real_segment() {
+        // End-to-end: write two 0xC6 reads + one 0xC4 write + one unrelated
+        // frame through the REAL WAL writer, then assert the ledger
+        // aggregates exactly the plugin frames (the unrelated one filtered).
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path().join("wal");
+        std::fs::create_dir_all(&wal_dir).unwrap();
+        let seg = wal_dir.join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        for hits in [2i64, 3] {
+            let payload = cap_used_payload("snoop", "recall_top", hits);
+            let header =
+                crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_CAP_USED, &payload).build();
+            writer.append(header, payload).await.unwrap();
+        }
+        let w_payload = hostcall_payload("snoop", 64);
+        let w_header =
+            crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &w_payload).build();
+        writer.append(w_header, w_payload).await.unwrap();
+        // Unrelated frame must NOT appear in the ledger.
+        let other = serde_json::to_vec(&serde_json::json!({ "x": 1 })).unwrap();
+        let oh = crate::wal::HeaderBuilder::new(0x01, &other).build();
+        writer.append(oh, other).await.unwrap();
+
+        drop(writer);
+        let _ = join.await;
+
+        let rows = aggregate_ledger(collect_cap_uses(&wal_dir), None);
+        assert_eq!(rows.len(), 2, "recall_top + emit_event, unrelated filtered");
+        let recall = rows.iter().find(|r| r.capability == "recall_top").unwrap();
+        assert_eq!(recall.calls, 2);
+        assert_eq!(recall.total_hits, 5);
+        let emit = rows.iter().find(|r| r.capability == "emit_event").unwrap();
+        assert_eq!(emit.calls, 1);
+        assert_eq!(emit.total_payload_bytes, 64);
     }
 }
