@@ -22,6 +22,43 @@ use std::path::{Path, PathBuf};
 
 use super::manifest::{ManifestError, PluginManifest, parse_manifest};
 
+/// SC-03 — a minisign detached signature is tiny (~300 bytes); cap the
+/// read so a HOSTILE multi-GB `plugin.wasm.minisig` can't OOM the daemon
+/// at discovery (the plugin dir is attacker-controlled — that IS SC-03's
+/// threat model, and this read happens for every subdir before any
+/// manifest/activation filter).
+pub(crate) const MAX_MINISIG_BYTES: u64 = 4096;
+
+/// Read a `plugin.wasm.minisig` companion, capped at [`MAX_MINISIG_BYTES`].
+/// `None` when the file is absent OR unreadable; `Some(Err(..))` shape is
+/// avoided — an over-size file is reported by the caller (`load_one` /
+/// `run_verify`) so the operator sees WHY it was refused rather than a
+/// silently-dropped signature that would degrade to "unsigned".
+pub(crate) fn read_capped_minisig(path: &Path) -> Result<Option<String>, ()> {
+    use std::io::Read;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let Ok(meta) = fs::metadata(path) else {
+        return Ok(None); // unreadable metadata → treat as absent
+    };
+    if meta.len() > MAX_MINISIG_BYTES {
+        return Err(()); // over the cap — caller refuses the plugin
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return Ok(None);
+    };
+    let mut buf = String::new();
+    if file
+        .take(MAX_MINISIG_BYTES)
+        .read_to_string(&mut buf)
+        .is_err()
+    {
+        return Ok(None);
+    }
+    Ok(Some(buf))
+}
+
 /// One discovered plugin directory + its parsed manifest + the WASM
 /// bytes pre-loaded so the engine can compile without a second I/O
 /// hop. Bytes are owned; the `PluginManifest` is cloneable so the
@@ -159,6 +196,20 @@ pub enum DiscoveryError {
     /// key/signature, or tampered bytes.
     #[error("plugin {dir:?}: signature verification failed — {reason}")]
     SignatureInvalid { dir: PathBuf, reason: String },
+    /// SC-03 — `plugins.wasm.require_signature=true` but no
+    /// `plugins.wasm.author_pubkey` is configured. A CONFIG mistake, not a
+    /// bad signature — distinct so the operator is pointed at the right fix.
+    #[error(
+        "plugin {dir:?}: plugins.wasm.require_signature=true but no \
+         plugins.wasm.author_pubkey is set — add the plugin author's minisign \
+         public key to freedom.yaml::plugins.wasm.author_pubkey (or disable \
+         require_signature)"
+    )]
+    AuthorKeyNotConfigured { dir: PathBuf },
+    /// SC-03 — a symlink in the plugin root is refused (the operator must
+    /// place real plugin directories under `~/.neoth/plugins/`).
+    #[error("plugin {dir:?}: symlinks are not allowed in the plugin root — place a real directory")]
+    SymlinkRejected { dir: PathBuf },
 }
 
 /// Aggregate report of one discovery pass.
@@ -188,6 +239,18 @@ pub fn discover(plugins_root: &Path) -> DiscoveryReport {
     };
     for entry in entries.flatten() {
         let dir = entry.path();
+        // SC-03 — refuse symlinks in the plugin root. `is_dir()` follows
+        // symlinks, so without this an attacker who can write the plugin
+        // root could alias `<id>/` to an arbitrary path (its `plugin.wasm`
+        // bytes + the giant-`.minisig` OOM vector would come from the
+        // symlink target, and the dir-name the id-locality check keys on
+        // would be attacker-chosen). The operator places REAL dirs here.
+        if dir.is_symlink() {
+            report
+                .rejected
+                .push(DiscoveryError::SymlinkRejected { dir });
+            continue;
+        }
         if !dir.is_dir() {
             continue;
         }
@@ -248,7 +311,13 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
     // SC-03 — optional minisign detached signature. minisign's `-Sm
     // plugin.wasm` writes `plugin.wasm.minisig`; absence is fine (the
     // signature gate is opt-in via freedom.yaml::plugins.wasm.author_pubkey).
-    let signature = fs::read_to_string(dir.join("plugin.wasm.minisig")).ok();
+    // Capped read — a hostile over-size companion is refused, not OOM'd.
+    let signature = read_capped_minisig(&dir.join("plugin.wasm.minisig")).map_err(|()| {
+        DiscoveryError::SignatureInvalid {
+            dir: dir.to_path_buf(),
+            reason: format!("plugin.wasm.minisig exceeds {MAX_MINISIG_BYTES} bytes — refusing"),
+        }
+    })?;
     Ok(DiscoveredPlugin {
         dir: dir.to_path_buf(),
         manifest,
@@ -256,13 +325,6 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
         content_hash,
         signature,
     })
-}
-
-/// SC-03 — load + validate a single plugin directory (the per-plugin half
-/// of [`discover`]). Used by `neoth plugin verify <path>` to run the
-/// integrity gate against one plugin without scanning the whole root.
-pub fn load_plugin(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
-    load_one(dir)
 }
 
 /// Lowercase-hex SHA-256 of a byte slice. Shared by load + the
@@ -335,7 +397,9 @@ pub fn verify_integrity(
             id: plugin.manifest.id.clone(),
         });
     }
-    // 2. SHA-256 pin (tamper / supply-chain swap).
+    // 2. SHA-256 pin (tamper / supply-chain swap). `eq_ignore_ascii_case`
+    //    is intentional: `content_hash` is always lowercase, but the
+    //    operator-supplied pin may be pasted uppercase — tolerate it.
     match policy.pinned.get(&plugin.manifest.id) {
         Some(expected) if !expected.eq_ignore_ascii_case(&plugin.content_hash) => {
             return Err(DiscoveryError::HashMismatch {
@@ -361,8 +425,28 @@ pub fn verify_integrity(
         policy.author_pubkey,
         policy.require_signature,
     ) {
+        Ok(PluginSigOutcome::UnsignedAllowed) => {
+            // author_pubkey IS set but this plugin shipped no signature and
+            // require_signature is off → it loads UNVERIFIED. Surface the
+            // soft-gate so an operator who set a key isn't lulled into
+            // thinking every plugin is authenticated.
+            if policy.author_pubkey.is_some() {
+                tracing::warn!(
+                    id = %plugin.manifest.id,
+                    "plugin loaded WITHOUT signature verification — author_pubkey is \
+                     configured but plugins.wasm.require_signature=false; set it true to \
+                     enforce authorship on every plugin"
+                );
+            }
+            Ok(())
+        }
         Ok(_) => Ok(()),
         Err(PluginSigError::MissingSignature) => Err(DiscoveryError::SignatureMissing {
+            dir: plugin.dir.clone(),
+        }),
+        // require_signature=true but no author_pubkey → a CONFIG mistake, not
+        // a bad signature; point the operator at the right knob.
+        Err(PluginSigError::NoKeyConfigured) => Err(DiscoveryError::AuthorKeyNotConfigured {
             dir: plugin.dir.clone(),
         }),
         Err(e) => Err(DiscoveryError::SignatureInvalid {
@@ -452,11 +536,28 @@ pub fn verify_plugin_signature(
     };
     let pubkey = minisign_verify::PublicKey::from_base64(pubkey_b64.trim())
         .map_err(|e| PluginSigError::MalformedKey(e.to_string()))?;
-    let sig = minisign_verify::Signature::decode(sig_text)
+    // Trim like the pubkey — defends a hand-edited `.minisig` with a
+    // leading/trailing blank line (symmetry with `pubkey_b64.trim()`).
+    let sig = minisign_verify::Signature::decode(sig_text.trim())
         .map_err(|e| PluginSigError::MalformedSignature(e.to_string()))?;
-    pubkey
-        .verify(data, &sig, false)
-        .map_err(|e| PluginSigError::VerificationFailed(e.to_string()))?;
+    // `false` = allow_legacy off → reject legacy non-prehashed (Ed) sigs;
+    // NEOTH requires prehashed (ED) mode, the strictly stronger choice
+    // (matches updater::sig_verify::check_signature).
+    pubkey.verify(data, &sig, false).map_err(|e| {
+        let raw = e.to_string();
+        // minisign-verify surfaces a generic "algorithm not supported" for
+        // a legacy `.minisig` produced without prehashing — give the
+        // operator the actual fix instead of a key-mismatch red herring.
+        if raw.to_lowercase().contains("algorithm") {
+            PluginSigError::VerificationFailed(
+                "legacy non-prehashed signature — re-sign with `minisign -Sm plugin.wasm` \
+                 (current minisign uses prehashed mode by default)"
+                    .to_string(),
+            )
+        } else {
+            PluginSigError::VerificationFailed(raw)
+        }
+    })?;
     Ok(PluginSigOutcome::Verified)
 }
 
@@ -794,5 +895,39 @@ mod tests {
         // NOTE: the Verified path needs a real keypair + signature, which
         // a unit test can't mint without embedding a private key — same
         // documented limitation as updater::sig_verify.
+    }
+
+    #[test]
+    fn verify_integrity_require_signature_without_key_is_config_error() {
+        // require_signature=true but no author_pubkey → a CONFIG mistake,
+        // surfaced as AuthorKeyNotConfigured (not SignatureInvalid).
+        let p = discovered("needsconfig", MINIMAL_WASM);
+        let pinned = BTreeMap::new();
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+            author_pubkey: None,
+            require_signature: true,
+            revoked: &[],
+        };
+        assert!(matches!(
+            verify_integrity(&p, &policy),
+            Err(DiscoveryError::AuthorKeyNotConfigured { .. })
+        ));
+    }
+
+    #[test]
+    fn read_capped_minisig_rejects_oversize_allows_small() {
+        let dir = tempdir().unwrap();
+        // Over the cap → Err (caller refuses the plugin, no OOM).
+        let big = dir.path().join("big.minisig");
+        fs::write(&big, vec![b'x'; (MAX_MINISIG_BYTES + 1) as usize]).unwrap();
+        assert!(read_capped_minisig(&big).is_err());
+        // Absent → Ok(None).
+        assert_eq!(read_capped_minisig(&dir.path().join("nope")), Ok(None));
+        // Small → Ok(Some).
+        let small = dir.path().join("ok.minisig");
+        fs::write(&small, b"untrusted comment\nRWQabc\n").unwrap();
+        assert!(matches!(read_capped_minisig(&small), Ok(Some(_))));
     }
 }

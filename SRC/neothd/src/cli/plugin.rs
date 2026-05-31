@@ -187,11 +187,51 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
         );
     }
 
-    let plugin =
-        crate::wasm_plugin::discovery::load_plugin(path).map_err(|e| anyhow::anyhow!("{e}"))?;
+    // Read manifest + wasm + optional signature DIRECTLY (like run_test),
+    // NOT via discovery::load_one — so `neoth plugin verify` works on an
+    // out-of-tree checkout whose directory name doesn't match the plugin
+    // id (CI clones into arbitrary dirs). The daemon's load path keeps the
+    // id==dirname locality check; this is a pre-install INTEGRITY gate.
+    let manifest_path = path.join("plugin.toml");
+    let wasm_path = path.join("plugin.wasm");
+    if !manifest_path.exists() {
+        anyhow::bail!("missing `plugin.toml` at {}", manifest_path.display());
+    }
+    if !wasm_path.exists() {
+        anyhow::bail!("missing `plugin.wasm` at {}", wasm_path.display());
+    }
+    let manifest_bytes = std::fs::read(&manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest = crate::wasm_plugin::manifest::parse_manifest(&manifest_bytes)
+        .map_err(|e| anyhow::anyhow!("manifest invalid: {e}"))?;
+    let wasm_bytes =
+        std::fs::read(&wasm_path).with_context(|| format!("read {}", wasm_path.display()))?;
+    let content_hash = crate::wasm_plugin::discovery::sha256_hex(&wasm_bytes);
+    let signature =
+        crate::wasm_plugin::discovery::read_capped_minisig(&path.join("plugin.wasm.minisig"))
+            .map_err(|()| {
+                anyhow::anyhow!(
+                    "plugin.wasm.minisig exceeds {} bytes — refusing to parse",
+                    crate::wasm_plugin::discovery::MAX_MINISIG_BYTES
+                )
+            })?;
+    let plugin = crate::wasm_plugin::discovery::DiscoveredPlugin {
+        dir: path.to_path_buf(),
+        manifest,
+        wasm_bytes,
+        content_hash,
+        signature,
+    };
 
-    // Apply the SAME freedom.yaml policy the daemon uses at load time.
-    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    // Apply the SAME freedom.yaml policy the daemon uses at load time. A
+    // MISSING freedom.yaml yields Ok(default) (open policy — correct on a
+    // fresh install); a CORRUPT one is an Err → BAIL rather than silently
+    // verify against an empty (all-gates-off) policy, which would print
+    // PASS for plugins the daemon would actually refuse.
+    let cfg = FreedomConfig::load_from_default_path().context(
+        "could not load freedom.yaml — fix it before verifying (a verify against an \
+         empty policy would falsely PASS revoked/tampered/unsigned plugins)",
+    )?;
     let w = &cfg.plugins.wasm;
     let policy = crate::wasm_plugin::discovery::IntegrityPolicy {
         pinned: &w.pinned_hashes,
@@ -203,6 +243,9 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
     let verdict = crate::wasm_plugin::discovery::verify_integrity(&plugin, &policy);
     let sig_present = plugin.signature.is_some();
     let sig_checked = w.author_pubkey.is_some();
+    // A plugin is "verified" ONLY when the gate passed AND a key was
+    // configured AND a signature was actually present + checked.
+    let sig_verified = verdict.is_ok() && sig_checked && sig_present;
     let (status, reason) = match &verdict {
         Ok(()) => ("PASS", String::new()),
         Err(e) => ("FAIL", e.to_string()),
@@ -215,6 +258,7 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
                 "content_hash": plugin.content_hash,
                 "signature_present": sig_present,
                 "signature_checked": sig_checked,
+                "signature_verified": sig_verified,
                 "verdict": status,
                 "reason": reason,
             });
@@ -231,14 +275,17 @@ fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
                     "absent"
                 }
             );
-            println!(
-                "author key: {}",
-                if sig_checked {
-                    "configured (signature verified)"
-                } else {
-                    "not configured (signature check off)"
+            // Reflect the ACTUAL verdict — never claim "verified" on a FAIL
+            // or when the plugin shipped no signature.
+            let author_key_line = match (sig_checked, sig_present, &verdict) {
+                (false, _, _) => "not configured (signature check off)",
+                (true, _, Err(_)) => "configured (signature check FAILED)",
+                (true, true, Ok(())) => "configured (signature verified)",
+                (true, false, Ok(())) => {
+                    "configured but plugin is UNSIGNED (require_signature=false)"
                 }
-            );
+            };
+            println!("author key: {author_key_line}");
             println!("verdict:    {status}");
             if !reason.is_empty() {
                 println!("reason:     {reason}");

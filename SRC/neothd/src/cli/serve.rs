@@ -4178,8 +4178,8 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
     if !skipped_integrity.is_empty() {
         warn!(
             integrity_rejected = ?skipped_integrity,
-            "plugins REFUSED by SC-03 integrity gate (pinned-hash mismatch or \
-             unpinned under require_all_pinned) — NOT instantiated"
+            "plugins REFUSED by SC-03 integrity gate (revoked / hash mismatch / \
+             unpinned / signature invalid or missing) — NOT instantiated"
         );
     }
     // SC-03 — surface the inactive-gate state so an operator running
