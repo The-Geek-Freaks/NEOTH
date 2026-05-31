@@ -26,6 +26,7 @@ pub mod consent;
 pub mod cost;
 pub mod council;
 pub mod ctx;
+pub mod docgen;
 pub mod doctor;
 pub mod dreaming_task;
 pub mod events;

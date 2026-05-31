@@ -2,6 +2,11 @@
 
 The CLI is the operator cockpit for NEOTH. GUI users can ignore most of this; pros can script almost everything.
 
+> This page is the curated **guide** (workflows + the commands you reach for most).
+> For the exhaustive, always-current list of **every** command, subcommand, alias, and
+> flag — generated straight from the CLI so it can never drift — see
+> [cli-commands.md](cli-commands.md) (or run `neoth completions --reference`).
+
 ## First run
 
 ```bash

@@ -25,8 +25,14 @@ use clap_complete::{Shell, generate};
 
 #[derive(Args, Debug, Clone)]
 pub struct CompletionsArgs {
-    /// Target shell. `bash | zsh | fish | powershell | elvish`.
-    pub shell: CompletionShell,
+    /// Target shell. `bash | zsh | fish | powershell | elvish`. Omit when
+    /// using `--reference`.
+    pub shell: Option<CompletionShell>,
+    /// Emit the generated markdown CLI reference (every command + flag,
+    /// straight from the clap tree) instead of a shell-completion script.
+    /// `neoth completions --reference > docs/cli-commands.md`.
+    #[arg(long)]
+    pub reference: bool,
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,9 +58,22 @@ impl From<CompletionShell> for Shell {
 }
 
 pub async fn run_completions(args: CompletionsArgs) -> Result<()> {
+    if args.reference {
+        // DOC-01 anti-drift: emit the markdown CLI reference straight from
+        // the live clap tree. `neoth completions --reference > docs/cli-commands.md`.
+        let cmd = super::Cli::command();
+        print!("{}", super::docgen::render_cli_reference(&cmd));
+        return Ok(());
+    }
+    let shell = args.shell.ok_or_else(|| {
+        anyhow::anyhow!(
+            "specify a shell (bash | zsh | fish | powershell | elvish), \
+             or pass --reference for the markdown CLI reference"
+        )
+    })?;
     let mut cmd = super::Cli::command();
     let bin = cmd.get_name().to_string();
-    generate(Shell::from(args.shell), &mut cmd, bin, &mut io::stdout());
+    generate(Shell::from(shell), &mut cmd, bin, &mut io::stdout());
     Ok(())
 }
 
