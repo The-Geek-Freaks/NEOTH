@@ -13,6 +13,16 @@
 //! Non-streaming (one POST, full response) — mirrors `openai_api`; the
 //! `Provider::stream` default impl wraps `complete` in a single done-chunk,
 //! so `neoth chat --stream` still works (emitting one chunk at the end).
+//!
+//! ## ⚠ Cost — this path BILLS per-token
+//!
+//! Operator directive (2026-05-31): this adapter calls the metered
+//! Anthropic API. For a Claude subscription (Claude Pro/Max or Claude Code
+//! OAuth) the `ClaudeCli` provider — the `claude` CLI driven via tmux — is
+//! the cost-free path (OAuth, NO per-token metering) and stays the wizard
+//! default + the recommended Anthropic route. `anthropic_api` exists for
+//! operators who only have an API key (no subscription); the wizard warns
+//! loudly before selection so nobody bills themselves by accident.
 
 use std::time::Instant;
 

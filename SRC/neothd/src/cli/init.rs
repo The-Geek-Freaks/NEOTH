@@ -1340,7 +1340,8 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                 (ProviderKind::OpenaiApi, "openai_api (api.openai.com)"),
                 (
                     ProviderKind::AnthropicApi,
-                    "anthropic_api (api.anthropic.com — Claude via API key, no claude CLI needed)",
+                    "anthropic_api (api.anthropic.com — Claude via API key) — ⚠ BILLED PER-TOKEN; \
+                     pick claude_cli for OAuth/subscription (no metering)",
                 ),
                 (ProviderKind::GeminiApi, "gemini_api (Google Gemini REST)"),
                 (
@@ -1432,6 +1433,19 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
         | ProviderKind::AnthropicApi
         | ProviderKind::GeminiApi
         | ProviderKind::OpenaiCompat => {
+            // Cost guard (operator directive 2026-05-31): anthropic_api BILLS
+            // per-token; claude_cli via tmux is the OAuth/subscription path
+            // with NO metering. Make the distinction loud so a noob doesn't
+            // accidentally bill themselves by picking the API over the CLI.
+            if interactive && kind == ProviderKind::AnthropicApi {
+                println!(
+                    "  ⚠ anthropic_api BILLS PER-TOKEN via the Anthropic API. If you have a \
+                     Claude subscription (Claude Pro/Max or Claude Code OAuth), go back and \
+                     pick `claude_cli` instead — it routes through the `claude` CLI (tmux) \
+                     with NO per-token metering. Only use anthropic_api if you specifically \
+                     want API-key billing (e.g. no subscription, just an API key)."
+                );
+            }
             // Endpoint resolution: for OpenaiCompat we prompt explicitly because
             // there is no upstream default. For OpenaiApi we default to api.openai.com.
             // For GeminiApi the endpoint lives in code (URL has model in path), no field needed.

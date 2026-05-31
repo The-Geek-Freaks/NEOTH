@@ -112,7 +112,15 @@ pub fn build_sources_from_config(config: &FreedomConfig) -> Vec<Box<dyn ModelSou
 
 fn uses_anthropic_api(config: &FreedomConfig) -> bool {
     matches_any_kind(config, |k| {
-        matches!(k, crate::cli::init::ProviderKind::ClaudeCli)
+        // PF-02 — BOTH the `claude` CLI path AND the native key-based
+        // AnthropicApi adapter consume the same Anthropic model catalog, so
+        // both must trigger the Anthropic discovery source (model-version-
+        // agnostic HARD RULE — neither needs a code patch for a new Claude).
+        matches!(
+            k,
+            crate::cli::init::ProviderKind::ClaudeCli
+                | crate::cli::init::ProviderKind::AnthropicApi
+        )
     })
 }
 
