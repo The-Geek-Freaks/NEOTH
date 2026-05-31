@@ -59,8 +59,8 @@ neoth profile resume
 ## Privacy and audit
 
 ```bash
-neoth privacy audit --last 30d
-neoth wal verify
+neoth privacy audit
+neoth verify
 neoth wal show --last 50
 neoth plugin ledger
 ```
@@ -68,7 +68,7 @@ neoth plugin ledger
 | Command | Purpose |
 | :-- | :-- |
 | `privacy audit` | Show destinations, sensitive events, provider calls, plugin activity. |
-| `wal verify` | Verify local event chain. |
+| `verify` | Verify the local WAL event chain (HMAC audit-chain integrity). |
 | `wal show` | Inspect recent WAL events. |
 | `plugin ledger` | Inspect plugin capabilities and activity. |
 

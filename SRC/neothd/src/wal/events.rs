@@ -1194,6 +1194,111 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
     )
 }
 
+/// Operator-facing event-type name table for `neoth wal show --type <name>`.
+/// Maps the snake_case names operators see in `--type` filters + docs to
+/// their code. Curated to the auditable surfaces an operator actually
+/// filters on (plugin / provider / council / consent / refusal / lifecycle /
+/// ingest); any code not listed is still reachable by its hex value
+/// (`--type 0xC7`). The `event_type_names_are_unique_and_resolve` test pins
+/// that every entry resolves to a distinct code so a rename can't silently
+/// orphan a documented `--type` name.
+pub const EVENT_TYPE_NAME_TABLE: &[(&str, u8)] = &[
+    ("raw_text", EVENT_TYPE_RAW_TEXT),
+    ("reinforce", EVENT_TYPE_REINFORCE),
+    ("boot", EVENT_TYPE_BOOT),
+    ("shutdown", EVENT_TYPE_SHUTDOWN),
+    ("provider_request", EVENT_TYPE_PROVIDER_REQUEST),
+    ("provider_response", EVENT_TYPE_PROVIDER_RESPONSE),
+    ("provider_error", EVENT_TYPE_PROVIDER_ERROR),
+    (
+        "provider_quota_exceeded",
+        EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED,
+    ),
+    (
+        "provider_fallback_attempted",
+        EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
+    ),
+    ("budget_exceeded", EVENT_TYPE_BUDGET_EXCEEDED),
+    ("ingest_extracted", EVENT_TYPE_INGEST_EXTRACTED),
+    ("embed_persisted", EVENT_TYPE_EMBED_PERSISTED),
+    ("refusal_observed", EVENT_TYPE_REFUSAL_OBSERVED),
+    ("refusal_mirrored", EVENT_TYPE_REFUSAL_MIRRORED),
+    ("refusal_redirected", EVENT_TYPE_REFUSAL_REDIRECTED),
+    ("refusal_rerouted", EVENT_TYPE_REFUSAL_REROUTED),
+    ("refusal_persistent", EVENT_TYPE_REFUSAL_PERSISTENT),
+    (
+        "council_synthesis_attempted",
+        EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED,
+    ),
+    (
+        "council_partial_refusal",
+        EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL,
+    ),
+    ("council_skip", EVENT_TYPE_COUNCIL_SKIP),
+    (
+        "council_winner_selected",
+        EVENT_TYPE_COUNCIL_WINNER_SELECTED,
+    ),
+    (
+        "council_diversity_warning",
+        EVENT_TYPE_COUNCIL_DIVERSITY_WARNING,
+    ),
+    ("consent_decision", EVENT_TYPE_CONSENT_DECISION),
+    ("council_transcript", EVENT_TYPE_COUNCIL_TRANSCRIPT),
+    ("mcp_tool_called", EVENT_TYPE_MCP_TOOL_CALLED),
+    ("mcp_tool_rejected", EVENT_TYPE_MCP_TOOL_REJECTED),
+    ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
+    ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
+    ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
+    ("plugin_fuel_exhausted", EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED),
+    ("plugin_cap_used", EVENT_TYPE_PLUGIN_CAP_USED),
+    ("plugin_cap_denied", EVENT_TYPE_PLUGIN_CAP_DENIED),
+    ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
+];
+
+/// Resolve a `--type` filter token to an event code. Accepts (in order):
+/// a curated snake_case name from [`EVENT_TYPE_NAME_TABLE`] (case-
+/// insensitive), a hex code (`0xC7` / `C7`), or a decimal code (`199`).
+/// Returns `None` when nothing matches so the caller can surface a clear
+/// "unknown event type" error instead of silently filtering to nothing.
+pub fn event_code_from_filter(token: &str) -> Option<u8> {
+    let t = token.trim();
+    if t.is_empty() {
+        return None;
+    }
+    // Name (case-insensitive).
+    let lower = t.to_ascii_lowercase();
+    if let Some((_, code)) = EVENT_TYPE_NAME_TABLE
+        .iter()
+        .find(|(name, _)| *name == lower)
+    {
+        return Some(*code);
+    }
+    // Hex: 0xNN or bare NN.
+    let hex = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X"));
+    if let Some(h) = hex {
+        return u8::from_str_radix(h, 16).ok();
+    }
+    if let Ok(b) = u8::from_str_radix(t, 16) {
+        // Bare two-hex-digit form (e.g. `c7`) when it isn't valid decimal.
+        if t.len() <= 2 && t.chars().any(|c| c.is_ascii_alphabetic()) {
+            return Some(b);
+        }
+    }
+    // Decimal.
+    t.parse::<u8>().ok()
+}
+
+/// Reverse lookup: the curated operator-facing name for a code, if one
+/// exists. Used by `neoth wal show` to label each frame; falls back to the
+/// hex code at the call site when this returns `None`.
+pub fn event_name_from_code(code: u8) -> Option<&'static str> {
+    EVENT_TYPE_NAME_TABLE
+        .iter()
+        .find(|(_, c)| *c == code)
+        .map(|(name, _)| *name)
+}
+
 /// Operator-initiated GDPR-style erasure request. Records the intent
 /// and scope of a `neoth memory --forget <topic>` invocation in the WAL.
 /// The SQLite tier cascade-delete plus groundtruth-revoke happens
@@ -1699,6 +1804,53 @@ mod tests {
         ] {
             assert!(needs_immediate_sync(code));
         }
+    }
+
+    #[test]
+    fn event_type_name_table_is_unique_and_round_trips() {
+        // Every operator-facing `--type <name>` must resolve to a distinct
+        // code AND round-trip back to the same name — a rename that
+        // orphans a documented filter name (the `wal show --type` class of
+        // false-guarantee) fails here.
+        for (name, code) in EVENT_TYPE_NAME_TABLE {
+            assert_eq!(
+                event_code_from_filter(name),
+                Some(*code),
+                "name {name} did not resolve to its code"
+            );
+            assert_eq!(
+                event_name_from_code(*code),
+                Some(*name),
+                "code 0x{code:02X} did not round-trip to {name}"
+            );
+        }
+        // Uniqueness of codes in the table.
+        let mut seen = std::collections::HashSet::new();
+        for (name, code) in EVENT_TYPE_NAME_TABLE {
+            assert!(
+                seen.insert(*code),
+                "name-table code collision at 0x{code:02X} ({name})"
+            );
+        }
+    }
+
+    #[test]
+    fn event_code_from_filter_accepts_name_hex_decimal() {
+        // The three operator input forms for `wal show --type`.
+        assert_eq!(
+            event_code_from_filter("plugin_cap_denied"),
+            Some(EVENT_TYPE_PLUGIN_CAP_DENIED)
+        );
+        assert_eq!(
+            event_code_from_filter("PLUGIN_CAP_DENIED"),
+            Some(EVENT_TYPE_PLUGIN_CAP_DENIED)
+        );
+        assert_eq!(event_code_from_filter("0xC7"), Some(0xC7));
+        assert_eq!(event_code_from_filter("0xc7"), Some(0xC7));
+        assert_eq!(event_code_from_filter("c7"), Some(0xC7));
+        assert_eq!(event_code_from_filter("199"), Some(199)); // 0xC7 decimal
+        assert_eq!(event_code_from_filter("not_a_real_type"), None);
+        assert_eq!(event_code_from_filter(""), None);
     }
 
     #[test]

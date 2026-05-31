@@ -134,7 +134,7 @@ operator.
 | Open the GUI and talk normally. | Use the CLI, local models, WAL, policies, plugins, and cluster commands. |
 | Say "remember this" and approve what matters. | Inspect exact evidence, confidence, provider destination, and redaction state. |
 | Connect Telegram, Slack, WhatsApp, Obsidian, Paperless, email, and calendar. | Script workflows, bind n8n, define hooks, use MCP, and review plugin capabilities. |
-| Ask "what did we decide?" and get useful recall. | Run `neoth recall`, `neoth wal verify`, `neoth privacy audit`, `neoth plugin ledger`. |
+| Ask "what did we decide?" and get useful recall. | Run `neoth recall`, `neoth verify`, `neoth privacy audit`, `neoth plugin ledger`. |
 | Let NEOTH explain setup problems in plain language. | Pipe `neoth doctor --output json` into CI or fleet checks. |
 
 <img src=".github/assets/neoth-readme-surfaces.svg" alt="NEOTH surfaces" width="100%">
@@ -162,11 +162,11 @@ NEOTH is local-first and fail-closed by design.
 
 | Guarantee | How to verify |
 | :-- | :-- |
-| **No silent profile extraction to cloud** | `neoth privacy audit --last 30d` |
-| **No silent provider fallback** | `neoth providers status` and `neoth privacy audit --destinations` |
+| **No silent profile extraction to cloud** | `neoth privacy audit` |
+| **No silent provider fallback** | `neoth provider list` and `neoth wal show --type provider_fallback_attempted` (every 429 failover is a durable audit frame) |
 | **No ambient plugin power** | `neoth plugin ledger` (capabilities used) and `neoth wal show --type plugin_cap_denied` (over-level calls refused at runtime) |
-| **No invisible memory mutation** | `neoth profile pending` and `neoth profile show --evidence` |
-| **No unverifiable history** | `neoth wal verify` |
+| **No invisible memory mutation** | `neoth profile pending` and `neoth profile show` |
+| **No unverifiable history** | `neoth verify` |
 | **No accidental channel writes** | approval policy plus WAL events for outbound actions |
 
 Local-only mode is a first-class path:

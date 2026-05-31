@@ -146,7 +146,7 @@ more the more devices you run.
   machine. `neoth security backup-hmac-key` writes a plaintext backup you store in a password
   manager; `neoth security rewrap-hmac-key --source <backup>` restores it on a new machine.
   The full playbook is `PLAN/RUNBOOK_dpapi_hmac_recovery.md`. `neoth backup` covers the rest.
-- **Worst case.** `neoth wal verify` checks the audit chain's integrity; a corrupt config makes
+- **Worst case.** `neoth verify` checks the audit chain's integrity; a corrupt config makes
   `neoth` bail loudly with the exact fix rather than running on a permissive default.
 
 Nothing recovery-related is silent: every gate that blocks you, and every undo, lands in the
