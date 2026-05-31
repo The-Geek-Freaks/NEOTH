@@ -28,13 +28,15 @@ Check if another Neoth is actually running:
 ps aux | grep neoth
 ```
 
-If a process is running: stop it first (`neoth stop` or `kill <pid>`), then start again.
+If a process is running: stop it first (`kill $(cat ~/.neoth/neothd.pid)`, or Ctrl-C if
+it is running in the foreground), then start again. To check: `cat ~/.neoth/neothd.pid`
+then `ps -p <pid>` (or `neoth status`).
 
 If no process is running but the lock file exists (crashed process):
 
 ```
 rm ~/.neoth/wal/telegram.lock
-neoth start
+neoth serve
 ```
 
 If you previously registered a webhook with Telegram (e.g., for WhatsApp testing) and now
@@ -42,7 +44,7 @@ want polling:
 
 ```
 neoth channel telegram clear-webhook
-neoth start
+neoth serve
 ```
 
 ---
@@ -126,9 +128,11 @@ acceptable.
 If automatic recovery fails:
 
 ```
-neoth wal verify          # identify the corrupted segment
-neoth wal recover --from-checkpoint 0003.cpt   # recover from an earlier checkpoint
+neoth verify              # identify the corrupted segment (HMAC audit-chain check)
 ```
+
+NEOTH recovers automatically from the newest valid checkpoint on the next
+`neoth serve` start; there is no manual recover subcommand.
 
 **Prevention:** Do not use a WAL directory on a network filesystem or unreliable USB storage.
 Keep `~/.neoth/wal/` on a local disk. The default disk thresholds in freedom.yaml prevent
@@ -157,7 +161,7 @@ codex login           # same
 gemini auth login     # same
 ```
 
-After login, run `neoth start` again.
+After login, run `neoth serve` again.
 
 **API key mode:** If you're using API keys instead of OAuth:
 
@@ -194,9 +198,9 @@ event 0x3A LOCAL_INFERENCE_UNAVAILABLE
 Option 1 — Free GPU memory and restart Neoth:
 
 ```
-neoth stop
+kill $(cat ~/.neoth/neothd.pid)
 # stop whatever is using the GPU
-neoth start
+neoth serve
 ```
 
 Option 2 — Configure Neoth to use a different GPU:
@@ -257,20 +261,22 @@ Check what is taking disk:
 
 ```
 du -sh ~/.neoth/wal/
-neoth wal stats           # show segment sizes and count
+neoth wal stats ~/.neoth/wal/000001.wal   # per-segment frame count + sizes
 ```
 
-Delete old WAL segments you no longer need:
+The daemon compacts the WAL automatically (it writes periodic HMAC checkpoint
+markers and rolls segments). To reclaim space, free disk elsewhere, or back up
+and archive old segments:
 
 ```
-neoth wal compact --force     # run compaction immediately
-neoth wal prune --older-than 90d   # remove segments older than 90 days
+neoth backup                 # snapshot ~/.neoth/ before pruning by hand
+# then remove old ~/.neoth/wal/NNNNNN.wal segments you have archived
 ```
 
 Or free disk space elsewhere, then:
 
 ```
-neoth start               # will resume if disk is now below refuse_start_pct
+neoth serve               # will resume if disk is now below refuse_start_pct
 ```
 
 Adjust thresholds in freedom.yaml if you want earlier warnings:
