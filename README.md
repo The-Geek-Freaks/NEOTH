@@ -180,6 +180,37 @@ neoth privacy audit --last 30d
 
 Read the full privacy model in [docs/privacy.md](docs/privacy.md).
 
+## Why it holds up
+
+The differentiators are mechanisms you can inspect, not slogans.
+
+<img src=".github/assets/neoth-readme-verifiable-loyalty.svg" alt="NEOTH verifiable loyalty — every action lands in an append-only, HMAC-chained WAL you can verify, filter, and audit" width="100%">
+
+Every sensitive action lands in an append-only, HMAC-chained WAL — and you get
+the commands to prove what it did: `neoth verify` (chain integrity),
+`neoth wal show --type <event>` (every frame of one kind), `neoth privacy audit --last 30d`
+(what actually left the device).
+
+<img src=".github/assets/neoth-readme-capability-gate.svg" alt="NEOTH plugin capability gate — hostcalls are gated at runtime by the operator-granted level; over-level calls are refused and audited as a 0xC7 frame" width="100%">
+
+A WASM plugin can only use the hostcalls its manifest declared and you approved at
+`neoth plugin enable`; a call above that level is refused fail-closed at runtime and
+recorded as a `0xC7 PLUGIN_CAP_DENIED` audit frame — visible in
+`neoth wal show --type plugin_cap_denied`, never silent.
+
+<img src=".github/assets/neoth-readme-fail-closed.svg" alt="NEOTH fail-closed consent — boundary crossings are denied by default and proceed only on an explicit, persisted operator grant; both allow and deny are audited" width="100%">
+
+Crossing a trust boundary — cloud call, profile-to-cloud extract, channel egress,
+plugin capability, autonomy raise — is denied by default until you grant it once,
+on purpose. Both the grant and the refusal are logged.
+
+<img src=".github/assets/neoth-readme-model-agnostic.svg" alt="NEOTH model-version-agnostic provider layer — any model id passes through with no whitelist; CLIs self-update and the catalog is discovered at runtime" width="100%">
+
+Any model id passes through the provider layer with no hardcoded whitelist; the
+managed CLIs (claude-cli / codex / antigravity) self-update and the model catalog is
+discovered at runtime — so a new model ships and NEOTH already routes to it, no source
+patch.
+
 ## Coding Buddy
 
 <img src=".github/assets/neoth-readme-coding.svg" alt="NEOTH coding buddy" width="100%">

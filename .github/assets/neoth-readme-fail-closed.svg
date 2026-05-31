@@ -1,0 +1,83 @@
+<svg width="1400" height="540" viewBox="0 0 1400 540" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH fail-closed consent model</title>
+  <desc id="desc">Sensitive actions — cloud calls, profile extraction to cloud, channel egress, plugin capabilities, autonomy raises — are denied by default and proceed only on an explicit, persisted operator grant; every decision is audited.</desc>
+  <defs>
+    <radialGradient id="fc-bg" cx="50%" cy="46%" r="80%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".6" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <filter id="fc-glow" x="-40%" y="-90%" width="180%" height="280%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1400" height="540" rx="40" fill="url(#fc-bg)"/>
+  <rect x="1" y="1" width="1398" height="538" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="62" text-anchor="middle" fill="white" class="sans" font-size="32" font-weight="200" letter-spacing="6">FAIL-CLOSED BY DEFAULT</text>
+  <text x="700" y="96" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="15">The default answer to "may I cross this boundary?" is <tspan fill="#ff2a6d">no</tspan> — until you say yes, once, on purpose.</text>
+
+  <!-- inbound asks -->
+  <g class="sans">
+    <text x="78" y="156" fill="#7f7f7f" class="mono" font-size="11" letter-spacing="3">SOMETHING WANTS TO ACT</text>
+    <g class="mono" font-size="12.5">
+      <text x="80" y="196" fill="#cfcfcf">cloud provider call</text>
+      <text x="80" y="238" fill="#cfcfcf">profile → cloud extract</text>
+      <text x="80" y="280" fill="#cfcfcf">channel egress</text>
+      <text x="80" y="322" fill="#cfcfcf">plugin capability</text>
+      <text x="80" y="364" fill="#cfcfcf">autonomy raise</text>
+    </g>
+    <g stroke="#3a3a3a" stroke-width="1.5" fill="none">
+      <path d="M320 191 C400 191 420 270 500 270"/>
+      <path d="M320 233 C400 233 420 270 500 270"/>
+      <path d="M320 275 H500"/>
+      <path d="M320 317 C400 317 420 270 500 270"/>
+      <path d="M320 359 C400 359 420 270 500 270"/>
+    </g>
+  </g>
+
+  <!-- the gate -->
+  <g class="sans">
+    <rect x="516" y="196" width="200" height="150" rx="22" fill="#1a0c12" stroke="#ff2a6d" stroke-opacity=".55" filter="url(#fc-glow)"/>
+    <text x="616" y="244" text-anchor="middle" fill="white" font-size="18" font-weight="300">consent gate</text>
+    <text x="616" y="280" text-anchor="middle" fill="#ff2a6d" class="mono" font-size="12" letter-spacing="3">DEFAULT: DENY</text>
+    <text x="616" y="308" text-anchor="middle" fill="#8b8b8b" font-size="12">autonomy-aware ·</text>
+    <text x="616" y="326" text-anchor="middle" fill="#8b8b8b" font-size="12">CLI + local-auth only</text>
+  </g>
+
+  <!-- outcomes -->
+  <g class="sans">
+    <!-- blocked -->
+    <rect x="800" y="172" width="300" height="100" rx="18" fill="#1a0c12" stroke="#ff2a6d" stroke-opacity=".5"/>
+    <text x="824" y="208" fill="#ff2a6d" class="mono" font-size="11" letter-spacing="3">✕ BLOCKED</text>
+    <text x="824" y="236" fill="white" font-size="17" font-weight="300">no grant on file</text>
+    <text x="824" y="258" fill="#8b8b8b" font-size="12">refused + audited — never silent</text>
+    <!-- granted -->
+    <rect x="800" y="292" width="300" height="100" rx="18" fill="#0c140f" stroke="#00ff80" stroke-opacity=".5"/>
+    <text x="824" y="328" fill="#00ff80" class="mono" font-size="11" letter-spacing="3">✓ GRANTED</text>
+    <text x="824" y="356" fill="white" font-size="17" font-weight="300">you said yes, once</text>
+    <text x="824" y="378" fill="#8b8b8b" class="mono" font-size="11">persisted ·.granted marker</text>
+  </g>
+
+  <!-- audit sink -->
+  <g class="sans">
+    <rect x="1136" y="208" width="200" height="144" rx="18" fill="#111" stroke="#05d5ff" stroke-opacity=".44"/>
+    <text x="1236" y="244" text-anchor="middle" fill="#05d5ff" class="mono" font-size="11" letter-spacing="3">AUDIT</text>
+    <text x="1236" y="274" text-anchor="middle" fill="white" font-size="14" font-weight="300">0x65 CONSENT</text>
+    <text x="1236" y="292" text-anchor="middle" fill="white" font-size="14" font-weight="300">+ 0xA1 DENIED</text>
+    <text x="1236" y="324" text-anchor="middle" fill="#8b8b8b" font-size="11">allow OR deny, both logged</text>
+  </g>
+  <path d="M1100 222 C1118 222 1118 250 1136 250" stroke="#ff2a6d" stroke-opacity=".5" stroke-width="2" fill="none"/>
+  <path d="M1100 342 C1118 342 1118 300 1136 300" stroke="#00ff80" stroke-opacity=".5" stroke-width="2" fill="none"/>
+
+  <g class="mono" font-size="11" letter-spacing="2">
+    <rect x="404" y="456" width="592" height="36" rx="9" fill="#ff2a6d" fill-opacity=".07" stroke="#ff2a6d" stroke-opacity=".22"/>
+    <text x="700" y="479" text-anchor="middle" fill="#ff8aa6">no silent fallback · no ambient power · explicit grant only</text>
+  </g>
+</svg>

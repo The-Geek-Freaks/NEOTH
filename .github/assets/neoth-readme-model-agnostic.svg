@@ -1,0 +1,83 @@
+<svg width="1400" height="520" viewBox="0 0 1400 520" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH model-version-agnostic provider layer</title>
+  <desc id="desc">Any model id passes through the provider layer with no hardcoded whitelist; the managed CLIs auto-update and a live model catalog is discovered at runtime, so NEOTH never needs a source patch when a new model ships.</desc>
+  <defs>
+    <radialGradient id="ma-bg" cx="50%" cy="48%" r="80%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".6" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="ma-flow" x1="430" y1="0" x2="980" y2="0">
+      <stop offset="0" stop-color="#05d5ff"/>
+      <stop offset="1" stop-color="#00ff80"/>
+    </linearGradient>
+    <filter id="ma-glow" x="-40%" y="-90%" width="180%" height="280%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1400" height="520" rx="40" fill="url(#ma-bg)"/>
+  <rect x="1" y="1" width="1398" height="518" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="62" text-anchor="middle" fill="white" class="sans" font-size="32" font-weight="200" letter-spacing="6">MODEL-VERSION-AGNOSTIC</text>
+  <text x="700" y="96" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="15">A new model ships on a Tuesday — NEOTH already routes to it. <tspan fill="#00ff80">No source patch, ever.</tspan></text>
+
+  <!-- incoming model ids -->
+  <g class="mono" font-size="12">
+    <text x="78" y="152" fill="#7f7f7f" letter-spacing="3">ANY MODEL ID</text>
+    <g>
+      <rect x="74" y="172" width="210" height="34" rx="9" fill="#111" stroke="#05d5ff" stroke-opacity=".3"/>
+      <text x="92" y="194" fill="#cfcfcf">claude-opus-4-8</text>
+      <rect x="74" y="216" width="210" height="34" rx="9" fill="#111" stroke="#05d5ff" stroke-opacity=".3"/>
+      <text x="92" y="238" fill="#cfcfcf">claude-sonnet-4-6</text>
+      <rect x="74" y="260" width="210" height="34" rx="9" fill="#111" stroke="#00ff80" stroke-opacity=".3"/>
+      <text x="92" y="282" fill="#cfcfcf">gemini-3-pro</text>
+      <rect x="74" y="304" width="210" height="34" rx="9" fill="#111" stroke="#00ff80" stroke-opacity=".3"/>
+      <text x="92" y="326" fill="#cfcfcf">local_qwen3</text>
+      <rect x="74" y="348" width="210" height="34" rx="9" fill="#0a0a0a" stroke="#ff2a6d" stroke-opacity=".35" stroke-dasharray="4 3"/>
+      <text x="92" y="370" fill="#9a9a9a">…whatever ships next</text>
+    </g>
+  </g>
+
+  <!-- provider layer -->
+  <g stroke="url(#ma-flow)" stroke-width="1.5" opacity=".5" fill="none">
+    <path d="M284 189 C360 189 380 275 470 275"/>
+    <path d="M284 233 C360 233 380 275 470 275"/>
+    <path d="M284 277 H470"/>
+    <path d="M284 321 C360 321 380 275 470 275"/>
+    <path d="M284 365 C360 365 380 275 470 275"/>
+  </g>
+  <g class="sans">
+    <rect x="486" y="196" width="236" height="160" rx="22" fill="#0a0a0a" stroke="#00ff80" stroke-opacity=".5" filter="url(#ma-glow)"/>
+    <text x="604" y="240" text-anchor="middle" fill="white" font-size="18" font-weight="300">provider layer</text>
+    <text x="604" y="276" text-anchor="middle" fill="#00ff80" class="mono" font-size="12" letter-spacing="2">PASS-THROUGH</text>
+    <text x="604" y="304" text-anchor="middle" fill="#8b8b8b" font-size="12.5">no hardcoded</text>
+    <text x="604" y="322" text-anchor="middle" fill="#8b8b8b" font-size="12.5">model whitelist</text>
+  </g>
+
+  <!-- enablers -->
+  <g class="sans">
+    <g transform="translate(800 178)">
+      <rect width="540" height="78" rx="16" fill="#111" stroke="#05d5ff" stroke-opacity=".42"/>
+      <text x="24" y="32" fill="#05d5ff" class="mono" font-size="11" letter-spacing="2">LIVE CATALOG</text>
+      <text x="24" y="58" fill="white" font-size="15" font-weight="300">selection reads <tspan class="mono" fill="#cfcfcf" font-size="13">models::catalog</tspan> at runtime — discovered, not compiled</text>
+    </g>
+    <g transform="translate(800 274)">
+      <rect width="540" height="78" rx="16" fill="#111" stroke="#00ff80" stroke-opacity=".42"/>
+      <text x="24" y="32" fill="#00ff80" class="mono" font-size="11" letter-spacing="2">SELF-UPDATING CLIs</text>
+      <text x="24" y="58" fill="white" font-size="15" font-weight="300">claude-cli · codex · antigravity auto-update <tspan fill="#8b8b8b" font-size="13">(no per-token billing)</tspan></text>
+    </g>
+  </g>
+  <path d="M722 240 C758 240 760 217 798 217" stroke="#05d5ff" stroke-opacity=".5" stroke-width="2" fill="none"/>
+  <path d="M722 312 C758 312 760 313 798 313" stroke="#00ff80" stroke-opacity=".5" stroke-width="2" fill="none"/>
+
+  <g class="mono" font-size="11" letter-spacing="2">
+    <rect x="430" y="446" width="540" height="36" rx="9" fill="#00ff80" fill-opacity=".07" stroke="#00ff80" stroke-opacity=".22"/>
+    <text x="700" y="469" text-anchor="middle" fill="#00ff80">any model id · no hand-patch · CLIs self-update · live catalog</text>
+  </g>
+</svg>

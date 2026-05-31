@@ -1,0 +1,101 @@
+<svg width="1400" height="540" viewBox="0 0 1400 540" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH verifiable loyalty</title>
+  <desc id="desc">Every sensitive action is recorded in an append-only, HMAC-chained write-ahead log, which the operator can verify, filter by event type, and audit for recent egress.</desc>
+  <defs>
+    <radialGradient id="vl-bg" cx="50%" cy="48%" r="80%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".6" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <linearGradient id="vl-chain" x1="430" y1="0" x2="980" y2="0">
+      <stop offset="0" stop-color="#00ff80"/>
+      <stop offset=".5" stop-color="#05d5ff"/>
+      <stop offset="1" stop-color="#00ff80"/>
+    </linearGradient>
+    <filter id="vl-glow" x="-40%" y="-90%" width="180%" height="280%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1400" height="540" rx="40" fill="url(#vl-bg)"/>
+  <rect x="1" y="1" width="1398" height="538" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="62" text-anchor="middle" fill="white" class="sans" font-size="32" font-weight="200" letter-spacing="6">VERIFIABLE LOYALTY</text>
+  <text x="700" y="96" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="15">Not "trust me." NEOTH can <tspan fill="#00ff80">prove</tspan> what it did — byte for byte — and you own the proof.</text>
+
+  <!-- sources -->
+  <g class="mono" font-size="12">
+    <text x="80" y="190" fill="#9a9a9a">provider call</text>
+    <text x="80" y="232" fill="#9a9a9a">profile write</text>
+    <text x="80" y="274" fill="#9a9a9a">channel send</text>
+    <text x="80" y="316" fill="#9a9a9a">plugin hostcall</text>
+    <text x="80" y="358" fill="#9a9a9a">consent decision</text>
+    <path d="M250 185 C300 185 300 270 350 270" stroke="#3a3a3a" stroke-width="1.5" fill="none"/>
+    <path d="M250 227 C300 227 300 270 350 270" stroke="#3a3a3a" stroke-width="1.5" fill="none"/>
+    <path d="M250 269 H350" stroke="#3a3a3a" stroke-width="1.5" fill="none"/>
+    <path d="M250 311 C300 311 300 270 350 270" stroke="#3a3a3a" stroke-width="1.5" fill="none"/>
+    <path d="M250 353 C300 353 300 270 350 270" stroke="#3a3a3a" stroke-width="1.5" fill="none"/>
+  </g>
+
+  <!-- the WAL chain -->
+  <text x="700" y="170" text-anchor="middle" fill="#8e8e8e" class="mono" font-size="11" letter-spacing="4">THE WAL — APPEND-ONLY · HMAC-CHAINED</text>
+  <line x1="370" y1="270" x2="1010" y2="270" stroke="url(#vl-chain)" stroke-width="2" opacity=".5" filter="url(#vl-glow)"/>
+  <g class="sans">
+    <g transform="translate(372 232)">
+      <rect width="120" height="76" rx="14" fill="#0c140f" stroke="#00ff80" stroke-opacity=".4"/>
+      <text x="60" y="32" text-anchor="middle" fill="#00ff80" class="mono" font-size="11">0x20</text>
+      <text x="60" y="52" text-anchor="middle" fill="#cfcfcf" font-size="11">provider</text>
+    </g>
+    <g transform="translate(528 232)">
+      <rect width="120" height="76" rx="14" fill="#0c1418" stroke="#05d5ff" stroke-opacity=".4"/>
+      <text x="60" y="32" text-anchor="middle" fill="#05d5ff" class="mono" font-size="11">0xB0</text>
+      <text x="60" y="52" text-anchor="middle" fill="#cfcfcf" font-size="11">profile</text>
+    </g>
+    <g transform="translate(684 232)">
+      <rect width="120" height="76" rx="14" fill="#0c140f" stroke="#00ff80" stroke-opacity=".4"/>
+      <text x="60" y="32" text-anchor="middle" fill="#00ff80" class="mono" font-size="11">0x33</text>
+      <text x="60" y="52" text-anchor="middle" fill="#cfcfcf" font-size="11">egress</text>
+    </g>
+    <g transform="translate(840 232)">
+      <rect width="120" height="76" rx="14" fill="#1a0c12" stroke="#ff2a6d" stroke-opacity=".45"/>
+      <text x="60" y="32" text-anchor="middle" fill="#ff2a6d" class="mono" font-size="11">0xC7</text>
+      <text x="60" y="52" text-anchor="middle" fill="#cfcfcf" font-size="11">denied</text>
+    </g>
+    <!-- chain links -->
+    <g fill="#6f6f6f" class="mono" font-size="14">
+      <text x="503" y="276" text-anchor="middle">⛓</text>
+      <text x="659" y="276" text-anchor="middle">⛓</text>
+      <text x="815" y="276" text-anchor="middle">⛓</text>
+    </g>
+  </g>
+
+  <!-- verification surfaces -->
+  <g class="sans">
+    <g transform="translate(1040 168)">
+      <rect width="296" height="62" rx="14" fill="#111" stroke="#00ff80" stroke-opacity=".44"/>
+      <text x="22" y="28" fill="#00ff80" class="mono" font-size="11">neoth verify</text>
+      <text x="22" y="48" fill="#9a9a9a" font-size="12">chain integrity — tamper-evident</text>
+    </g>
+    <g transform="translate(1040 239)">
+      <rect width="296" height="62" rx="14" fill="#111" stroke="#05d5ff" stroke-opacity=".44"/>
+      <text x="22" y="28" fill="#05d5ff" class="mono" font-size="11">neoth wal show --type</text>
+      <text x="22" y="48" fill="#9a9a9a" font-size="12">every frame of one kind</text>
+    </g>
+    <g transform="translate(1040 310)">
+      <rect width="296" height="62" rx="14" fill="#111" stroke="#ff2a6d" stroke-opacity=".44"/>
+      <text x="22" y="28" fill="#ff2a6d" class="mono" font-size="11">neoth privacy audit --last 30d</text>
+      <text x="22" y="48" fill="#9a9a9a" font-size="12">what actually left your device</text>
+    </g>
+  </g>
+  <path d="M965 270 H1035" stroke="#3a3a3a" stroke-width="1.5" fill="none"/>
+
+  <g class="mono" font-size="11" letter-spacing="3">
+    <rect x="488" y="452" width="424" height="36" rx="9" fill="#00ff80" fill-opacity=".07" stroke="#00ff80" stroke-opacity=".22"/>
+    <text x="700" y="475" text-anchor="middle" fill="#00ff80">TAMPER-EVIDENT · APPEND-ONLY · YOURS, END TO END</text>
+  </g>
+</svg>

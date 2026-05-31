@@ -1,0 +1,90 @@
+<svg width="1400" height="560" viewBox="0 0 1400 560" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">NEOTH plugin capability gate</title>
+  <desc id="desc">A WASM plugin's hostcalls pass a runtime capability gate that enforces the operator-granted permission level; calls above it are refused fail-closed and recorded as a 0xC7 audit frame in the WAL.</desc>
+  <defs>
+    <radialGradient id="cg-bg" cx="50%" cy="46%" r="80%">
+      <stop offset="0" stop-color="#191919"/>
+      <stop offset=".6" stop-color="#0d0d0d"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <filter id="cg-glow" x="-40%" y="-80%" width="180%" height="260%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .sans{font-family:"SF Pro Display",Inter,"Helvetica Neue",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      .mono{font-family:"JetBrains Mono","SF Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+    </style>
+  </defs>
+
+  <rect width="1400" height="560" rx="40" fill="url(#cg-bg)"/>
+  <rect x="1" y="1" width="1398" height="558" rx="39" stroke="white" stroke-opacity=".08"/>
+
+  <text x="700" y="62" text-anchor="middle" fill="white" class="sans" font-size="32" font-weight="200" letter-spacing="6">NO AMBIENT PLUGIN POWER</text>
+  <text x="700" y="96" text-anchor="middle" fill="#8f8f8f" class="sans" font-size="15">Every WASM hostcall is gated at runtime by the level you approved at <tspan class="mono" fill="#05d5ff">neoth plugin enable</tspan> — and every refusal is auditable.</text>
+
+  <!-- Plugin -->
+  <g class="sans">
+    <rect x="64" y="178" width="244" height="206" rx="22" fill="#111" stroke="white" stroke-opacity=".12"/>
+    <text x="186" y="216" text-anchor="middle" fill="white" font-size="19" font-weight="300">WASM plugin</text>
+    <text x="186" y="242" text-anchor="middle" fill="#8b8b8b" class="mono" font-size="11">sandboxed · fuel-capped</text>
+    <rect x="92" y="262" width="188" height="44" rx="10" fill="#111f24" stroke="#05d5ff" stroke-opacity=".4"/>
+    <text x="186" y="282" text-anchor="middle" fill="#05d5ff" class="mono" font-size="10" letter-spacing="2">plugin.toml</text>
+    <text x="186" y="298" text-anchor="middle" fill="#cfcfcf" class="mono" font-size="11">requested = read_only</text>
+    <text x="186" y="344" text-anchor="middle" fill="#8b8b8b" font-size="12">declares what it needs;</text>
+    <text x="186" y="362" text-anchor="middle" fill="#8b8b8b" font-size="12">can never forge a higher level</text>
+  </g>
+
+  <!-- hostcall lanes -->
+  <g class="mono" font-size="12">
+    <line x1="308" y1="232" x2="556" y2="232" stroke="#00ff80" stroke-opacity=".5" stroke-width="1.5"/>
+    <line x1="308" y1="282" x2="556" y2="282" stroke="#05d5ff" stroke-opacity=".5" stroke-width="1.5"/>
+    <line x1="308" y1="332" x2="556" y2="332" stroke="#ff2a6d" stroke-opacity=".5" stroke-width="1.5"/>
+    <text x="330" y="226" fill="#00ff80">log / fuel_left</text>
+    <text x="540" y="226" text-anchor="end" fill="#6f6f6f">None</text>
+    <text x="330" y="276" fill="#05d5ff">recall_top</text>
+    <text x="540" y="276" text-anchor="end" fill="#6f6f6f">ReadOnly</text>
+    <text x="330" y="326" fill="#ff2a6d">emit_event</text>
+    <text x="540" y="326" text-anchor="end" fill="#6f6f6f">Write</text>
+  </g>
+
+  <!-- the gate -->
+  <g class="sans">
+    <rect x="566" y="172" width="180" height="218" rx="20" fill="#0a0a0a" stroke="#00ff80" stroke-opacity=".55" filter="url(#cg-glow)"/>
+    <text x="656" y="210" text-anchor="middle" fill="white" font-size="17" font-weight="300">capability</text>
+    <text x="656" y="232" text-anchor="middle" fill="white" font-size="17" font-weight="300">gate</text>
+    <text x="656" y="266" text-anchor="middle" fill="#8b8b8b" class="mono" font-size="11">granted.allows(</text>
+    <text x="656" y="282" text-anchor="middle" fill="#8b8b8b" class="mono" font-size="11">required)?</text>
+    <text x="656" y="332" text-anchor="middle" fill="#00ff80" class="mono" font-size="10" letter-spacing="2">FAIL-CLOSED</text>
+    <text x="656" y="352" text-anchor="middle" fill="#6f6f6f" class="mono" font-size="10">default = None</text>
+  </g>
+
+  <!-- outcomes -->
+  <g class="sans">
+    <!-- allowed -->
+    <rect x="800" y="170" width="300" height="100" rx="18" fill="#111" stroke="#00ff80" stroke-opacity=".44"/>
+    <text x="824" y="206" fill="#00ff80" class="mono" font-size="11" letter-spacing="3">✓ ALLOWED</text>
+    <text x="824" y="234" fill="white" font-size="17" font-weight="300">grant covers the call</text>
+    <text x="824" y="256" fill="#8b8b8b" font-size="12">runs · 0xC4/0xC6 use frame logged</text>
+    <!-- denied -->
+    <rect x="800" y="292" width="300" height="100" rx="18" fill="#1a0c12" stroke="#ff2a6d" stroke-opacity=".55"/>
+    <text x="824" y="328" fill="#ff2a6d" class="mono" font-size="11" letter-spacing="3">✕ REFUSED</text>
+    <text x="824" y="356" fill="white" font-size="17" font-weight="300">grant below required</text>
+    <text x="824" y="378" fill="#8b8b8b" font-size="12">no effect · returns deny code</text>
+  </g>
+
+  <!-- WAL sink -->
+  <g class="sans">
+    <rect x="1136" y="210" width="200" height="140" rx="18" fill="#111" stroke="#05d5ff" stroke-opacity=".44"/>
+    <text x="1236" y="246" text-anchor="middle" fill="#05d5ff" class="mono" font-size="11" letter-spacing="3">WAL</text>
+    <text x="1236" y="276" text-anchor="middle" fill="white" font-size="15" font-weight="300">0xC7</text>
+    <text x="1236" y="296" text-anchor="middle" fill="white" font-size="13" font-weight="300">PLUGIN_CAP_DENIED</text>
+    <text x="1236" y="324" text-anchor="middle" fill="#8b8b8b" font-size="11">durable · HMAC-chained</text>
+  </g>
+  <path d="M1100 342 C1118 342 1118 300 1136 300" stroke="#ff2a6d" stroke-opacity=".6" stroke-width="2" fill="none" filter="url(#cg-glow)"/>
+
+  <g class="mono" font-size="11" letter-spacing="2">
+    <rect x="430" y="476" width="540" height="36" rx="9" fill="#05d5ff" fill-opacity=".08" stroke="#05d5ff" stroke-opacity=".25"/>
+    <text x="700" y="499" text-anchor="middle" fill="#05d5ff">neoth wal show --type plugin_cap_denied</text>
+  </g>
+</svg>
