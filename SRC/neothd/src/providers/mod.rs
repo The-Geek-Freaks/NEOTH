@@ -11,6 +11,8 @@
 //! tmux + Claude Code daily. OpenAI / Gemini adapters come second; they are
 //! NOT the default fallback.
 
+/// PF-02 — native Anthropic Messages API adapter (key-based, no `claude` CLI).
+pub mod anthropic_api;
 pub mod aws_bedrock;
 pub mod aws_credentials;
 pub mod aws_sigv4;
@@ -496,6 +498,18 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
             Ok(Box::new(openai_api::OpenAiAdapter::new_compat(
                 endpoint, key, model,
             )?))
+        }
+        ProviderKind::AnthropicApi => {
+            // PF-02 — native key-based Anthropic Messages adapter (distinct
+            // from ClaudeCli). Uses the same single `provider_key` as the
+            // other cloud adapters; default model is operator-overridable
+            // via `provider_model`.
+            let key = require_provider_key(config, "anthropic_api")?;
+            let model = config
+                .provider_model
+                .clone()
+                .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+            Ok(Box::new(anthropic_api::AnthropicAdapter::new(key, model)?))
         }
         ProviderKind::GeminiApi => {
             let key = require_provider_key(config, "gemini_api")?;

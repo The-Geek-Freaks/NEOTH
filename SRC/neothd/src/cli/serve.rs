@@ -2703,6 +2703,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     .map(|k| match k {
                         crate::cli::init::ProviderKind::ClaudeCli => "claude_cli",
                         crate::cli::init::ProviderKind::OpenaiApi => "openai_api",
+                        crate::cli::init::ProviderKind::AnthropicApi => "anthropic_api",
                         crate::cli::init::ProviderKind::OpenaiCompat => "openai_compat",
                         crate::cli::init::ProviderKind::GeminiApi => "gemini_api",
                         crate::cli::init::ProviderKind::LocalQwen => "local_qwen",

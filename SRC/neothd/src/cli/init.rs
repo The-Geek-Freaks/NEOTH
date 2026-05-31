@@ -22,6 +22,11 @@ pub enum ProviderKind {
     ClaudeCli,
     /// OpenAI REST API (api.openai.com or compatible).
     OpenaiApi,
+    /// Native Anthropic Messages API (PF-02) — key-based
+    /// `api.anthropic.com/v1/messages`, distinct from `ClaudeCli` (which
+    /// drives the `claude` CLI binary). For operators who want Anthropic
+    /// access via an API key without installing the CLI.
+    AnthropicApi,
     /// Google Gemini REST API.
     GeminiApi,
     /// OpenAI-compatible endpoint at custom URL (LM Studio, vLLM, etc.).
@@ -1333,6 +1338,10 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
             const CHOICES: &[(ProviderKind, &str)] = &[
                 (ProviderKind::ClaudeCli, "claude_cli (Claude CLI binary)"),
                 (ProviderKind::OpenaiApi, "openai_api (api.openai.com)"),
+                (
+                    ProviderKind::AnthropicApi,
+                    "anthropic_api (api.anthropic.com — Claude via API key, no claude CLI needed)",
+                ),
                 (ProviderKind::GeminiApi, "gemini_api (Google Gemini REST)"),
                 (
                     ProviderKind::OpenaiCompat,
@@ -1419,7 +1428,10 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                 .unwrap_or_else(|| "claude-opus-4-7".to_string());
             state.provider_model = Some(args.provider_model.clone().unwrap_or(resolved_default));
         }
-        ProviderKind::OpenaiApi | ProviderKind::GeminiApi | ProviderKind::OpenaiCompat => {
+        ProviderKind::OpenaiApi
+        | ProviderKind::AnthropicApi
+        | ProviderKind::GeminiApi
+        | ProviderKind::OpenaiCompat => {
             // Endpoint resolution: for OpenaiCompat we prompt explicitly because
             // there is no upstream default. For OpenaiApi we default to api.openai.com.
             // For GeminiApi the endpoint lives in code (URL has model in path), no field needed.
@@ -1479,6 +1491,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
             // chosen provider.
             let bundled_default = match kind {
                 ProviderKind::OpenaiApi => "gpt-5.5",
+                ProviderKind::AnthropicApi => "claude-sonnet-4-6",
                 ProviderKind::GeminiApi => "gemini-3.1-pro-preview",
                 ProviderKind::OpenaiCompat => "opus-4.7",
                 _ => "",
@@ -2142,6 +2155,7 @@ fn default_model_for(
 fn catalog_key_for_provider_kind(kind: ProviderKind) -> Option<&'static str> {
     Some(match kind {
         ProviderKind::ClaudeCli => "anthropic_api",
+        ProviderKind::AnthropicApi => "anthropic_api",
         ProviderKind::OpenaiApi => "openai_api",
         ProviderKind::OpenaiCompat => "openai_compat",
         ProviderKind::GeminiApi => "gemini_api",
@@ -2350,6 +2364,7 @@ fn provider_kind_to_inference(
     match kind {
         ProviderKind::ClaudeCli => I::ClaudeCli,
         ProviderKind::OpenaiApi => I::OpenAi,
+        ProviderKind::AnthropicApi => I::AnthropicApi,
         ProviderKind::OpenaiCompat => I::OpenAiCompat,
         ProviderKind::GeminiApi => I::Gemini,
         ProviderKind::LocalQwen => I::LocalQwen,
@@ -3866,6 +3881,7 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     let provider_display = match state.provider_kind {
         Some(ProviderKind::ClaudeCli) => "claude_cli",
         Some(ProviderKind::OpenaiApi) => "openai_api",
+        Some(ProviderKind::AnthropicApi) => "anthropic_api",
         Some(ProviderKind::GeminiApi) => "gemini_api",
         Some(ProviderKind::OpenaiCompat) => "openai_compat",
         Some(ProviderKind::LocalQwen) => "local_qwen",

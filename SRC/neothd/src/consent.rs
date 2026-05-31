@@ -30,6 +30,7 @@ pub fn is_cloud(kind: ProviderKind) -> bool {
         kind,
         ProviderKind::ClaudeCli
             | ProviderKind::OpenaiApi
+            | ProviderKind::AnthropicApi
             | ProviderKind::GeminiApi
             | ProviderKind::OpenaiCompat
             | ProviderKind::AwsBedrock
@@ -43,6 +44,7 @@ pub fn slug(kind: ProviderKind) -> &'static str {
     match kind {
         ProviderKind::ClaudeCli => "claude_cli",
         ProviderKind::OpenaiApi => "openai_api",
+        ProviderKind::AnthropicApi => "anthropic_api",
         ProviderKind::GeminiApi => "gemini_api",
         ProviderKind::OpenaiCompat => "openai_compat",
         ProviderKind::LocalQwen => "local_qwen",
@@ -57,6 +59,7 @@ pub fn kind_from_slug(s: &str) -> Option<ProviderKind> {
     match s {
         "claude_cli" => Some(ProviderKind::ClaudeCli),
         "openai_api" => Some(ProviderKind::OpenaiApi),
+        "anthropic_api" => Some(ProviderKind::AnthropicApi),
         "gemini_api" => Some(ProviderKind::GeminiApi),
         "openai_compat" => Some(ProviderKind::OpenaiCompat),
         "local_qwen" => Some(ProviderKind::LocalQwen),
@@ -72,6 +75,7 @@ fn cloud_label(kind: ProviderKind) -> &'static str {
     match kind {
         ProviderKind::ClaudeCli => "Anthropic Claude",
         ProviderKind::OpenaiApi => "OpenAI",
+        ProviderKind::AnthropicApi => "Anthropic Claude (API key)",
         ProviderKind::GeminiApi => "Google Gemini",
         ProviderKind::OpenaiCompat => "the configured OpenAI-compatible endpoint",
         ProviderKind::AwsBedrock => "AWS Bedrock (region + IAM credential chain)",

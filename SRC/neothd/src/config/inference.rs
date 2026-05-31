@@ -149,16 +149,16 @@ impl InferenceProvider {
     /// `from_config_for_role` can reuse the same adapter-construction
     /// logic without duplicating wiring per role.
     ///
-    /// `AnthropicApi` collapses to `ClaudeCli` because NEOTH v0.1
-    /// doesn't ship a direct Anthropic REST adapter — operators using
-    /// Anthropic-direct go through `OpenaiCompat` against the
-    /// Anthropic-compatible endpoint. Future split when a dedicated
-    /// AnthropicAdapter lands.
+    /// PF-02 — `AnthropicApi` now maps to its OWN `ProviderKind::AnthropicApi`
+    /// (the native key-based Messages adapter), no longer collapsing to
+    /// `ClaudeCli`. Operators wanting Anthropic-direct via an API key get a
+    /// real adapter instead of being forced through the `claude` CLI or an
+    /// OpenAI-compat shim.
     pub fn to_provider_kind(self) -> crate::cli::init::ProviderKind {
         use crate::cli::init::ProviderKind;
         match self {
             InferenceProvider::ClaudeCli => ProviderKind::ClaudeCli,
-            InferenceProvider::AnthropicApi => ProviderKind::ClaudeCli,
+            InferenceProvider::AnthropicApi => ProviderKind::AnthropicApi,
             InferenceProvider::OpenAi => ProviderKind::OpenaiApi,
             InferenceProvider::OpenAiCompat => ProviderKind::OpenaiCompat,
             InferenceProvider::Gemini => ProviderKind::GeminiApi,
