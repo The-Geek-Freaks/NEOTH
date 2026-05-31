@@ -662,6 +662,13 @@ pub struct PatternCronConfig {
     /// Minimum episodes required in EACH window before the histogram is
     /// trusted (sparse data gives a noisy peak). Default 10.
     pub tod_shift_min_episodes: u32,
+
+    /// Max nudges the pattern engine enqueues in a SINGLE tick across all
+    /// detectors. Highest-priority detectors win the slots. Default 1 so
+    /// the engine takes at most a third of the shared 3/day ProactiveQueue
+    /// budget per tick, leaving room for the reflection + g02 producers.
+    /// Clamped to a 1 floor downstream (0 would silence the engine).
+    pub max_nudges_per_tick: u32,
 }
 
 /// 24 hours — the pattern cron default cadence.
@@ -688,6 +695,7 @@ impl Default for PatternCronConfig {
             tod_shift_baseline_secs: 30 * 24 * 3600,
             tod_shift_min_hours: 4,
             tod_shift_min_episodes: 10,
+            max_nudges_per_tick: 1,
         }
     }
 }

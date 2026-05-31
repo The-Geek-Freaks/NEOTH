@@ -1488,12 +1488,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
-    // ── Inactivity-nudge cron (G-01 first slice) ──────────────────────────
-    // Enqueues one proactive "still there?" nudge after the operator has
-    // been quiet for `pattern_cron.inactivity_gap_secs` (deduped per UTC
-    // day). Delivered by the existing proactive_dispatcher drain loop. Off
-    // by default — a proactive ping is intrusive — so `spawn_*` returns
-    // None when `pattern_cron.enabled = false`.
+    // ── Behaviour-pattern cron (G-01 full detector suite) ─────────────────
+    // Each tick runs the inactivity / query-repeat / topic-burst /
+    // time-of-day-shift detectors and enqueues their nudges (per-detector
+    // toggled, per-UTC-day deduped, per-tick capped). Delivered by the
+    // existing proactive_dispatcher drain loop. Off by default — a
+    // proactive ping is intrusive — so `spawn_*` returns None when
+    // `pattern_cron.enabled = false`.
     let pattern_cron_handle: Option<tokio::task::JoinHandle<()>> = {
         let home = FreedomConfig::default_neoth_home();
         let handle =
@@ -1502,7 +1503,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             info!(
                 interval_secs = config.pattern_cron.interval_secs,
                 inactivity_gap_secs = config.pattern_cron.inactivity_gap_secs,
-                "inactivity-nudge cron loop spawned (G-01)"
+                "pattern-detection cron loop spawned (G-01 detector suite)"
             );
         }
         handle

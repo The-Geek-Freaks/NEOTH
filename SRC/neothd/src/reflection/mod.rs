@@ -61,8 +61,14 @@ const STOPWORDS: &[&str] = &[
     "has", "had", "do", "does", "did", "be", "been", "being", "are", "was", "were", "will",
     "would", "should", "could", "can", "may", "might", "as", "at", "by", "from",
     // NEOTH chat noise
-    "neoth", "chat", "ok", "okay", "ja", "yes", "no", "nö", "hm", "danke", "thanks",
+    "neoth", "chat", "ok", "okay", "yes", "no", "nö", "hm", "danke", "thanks",
 ];
+
+/// `STOPWORDS` as a set, built once. `topic_counts` is on the hot path
+/// (the G-01 topic-burst detector calls it twice per pattern-cron tick),
+/// so we avoid rebuilding the HashSet on every call.
+static STOPWORD_SET: std::sync::LazyLock<std::collections::HashSet<&'static str>> =
+    std::sync::LazyLock::new(|| STOPWORDS.iter().copied().collect());
 
 /// Extract the top-`n` most-mentioned topics from the last 7 days
 /// of `idx_episode.text`, ordered by frequency descending. Splits on
@@ -75,10 +81,22 @@ const STOPWORDS: &[&str] = &[
 /// data rather than the cron's enqueue side effect.
 pub fn top_topics_last_7_days(conn: &Connection, now_ns: i64, n: usize) -> Result<Vec<String>> {
     let cutoff = now_ns.saturating_sub(7 * NS_PER_DAY);
-    let mut stmt =
-        conn.prepare("SELECT text FROM idx_episode WHERE ts_ns >= ?1 AND ts_ns <= ?2")?;
+    // Half-open `(cutoff, now]` + RAW_TEXT-only so the weekly summary
+    // reflects what the OPERATOR wrote, not NEOTH's own replies / the
+    // `[INGRESS]` placeholder rows (matches the G-01 detectors' filter).
+    let mut stmt = conn.prepare(
+        "SELECT text FROM idx_episode \
+         WHERE ts_ns > ?1 AND ts_ns <= ?2 AND event_type = ?3",
+    )?;
     let rows: Vec<String> = stmt
-        .query_map(rusqlite::params![cutoff, now_ns], |r| r.get::<_, String>(0))?
+        .query_map(
+            rusqlite::params![
+                cutoff,
+                now_ns,
+                crate::wal::events::EVENT_TYPE_RAW_TEXT as i64
+            ],
+            |r| r.get::<_, String>(0),
+        )?
         .collect::<rusqlite::Result<_>>()?;
     Ok(score_topics(&rows, n))
 }
@@ -90,7 +108,6 @@ pub fn top_topics_last_7_days(conn: &Connection, now_ns: i64, n: usize) -> Resul
 /// consumers + tests share one tokeniser (no drift between the weekly
 /// reflection topics and the burst detector's notion of a "topic").
 pub fn topic_counts(texts: &[String]) -> HashMap<String, usize> {
-    let stopwords: std::collections::HashSet<&str> = STOPWORDS.iter().copied().collect();
     let mut counts: HashMap<String, usize> = HashMap::new();
     for text in texts {
         for word in text
@@ -101,7 +118,7 @@ pub fn topic_counts(texts: &[String]) -> HashMap<String, usize> {
             if lower.chars().count() < 4 {
                 continue;
             }
-            if stopwords.contains(lower.as_str()) {
+            if STOPWORD_SET.contains(lower.as_str()) {
                 continue;
             }
             *counts.entry(lower).or_insert(0) += 1;

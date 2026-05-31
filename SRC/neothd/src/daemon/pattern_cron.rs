@@ -33,6 +33,27 @@ use std::path::PathBuf;
 use crate::config::PatternCronConfig;
 use crate::proactive::ProactiveItem;
 
+/// Operator-authored natural-language text lands in `idx_episode` as
+/// `EVENT_TYPE_RAW_TEXT` (0x01) — both the CLI prompt path
+/// (`cli/chat.rs`) and the sanitised channel-inbound path
+/// (`cli/serve.rs`) emit it. Assistant replies (`CHANNEL_EGRESS`), the
+/// `[INGRESS] N bytes` placeholder rows (`CHANNEL_INGRESS`), and
+/// dreaming/skill rows carry OTHER event types. Every detector filters
+/// to RAW_TEXT so it reasons over what the OPERATOR actually wrote, not
+/// NEOTH's own output (otherwise query-repeat fires on the byte-identical
+/// `[INGRESS]` placeholder, and topic-burst counts NEOTH's verbose
+/// replies as the operator's focus).
+const RAW_TEXT_EVENT_TYPE: i64 = crate::wal::events::EVENT_TYPE_RAW_TEXT as i64;
+
+/// Convert `u64` seconds to `i64` nanoseconds, CLAMPING absurd values
+/// (> ~292 years) instead of letting the `u64 -> i64` cast wrap to a
+/// negative threshold — a wrapped threshold reads as "always exceeded"
+/// and would silently make a detector fire every tick.
+fn secs_to_ns(secs: u64) -> i64 {
+    let clamped = secs.min(i64::MAX as u64 / 1_000_000_000);
+    (clamped as i64) * 1_000_000_000
+}
+
 /// Pure inactivity detector: returns a nudge item when the newest
 /// `idx_episode` row is older than `gap_secs` relative to `now_ns`.
 /// `None` when the operator is active, the DB is empty (fresh install —
@@ -46,9 +67,19 @@ pub fn detect_inactivity_gap(
     now_ns: i64,
     gap_secs: u64,
 ) -> Option<ProactiveItem> {
-    // Newest episode timestamp, or None when idx_episode is empty.
+    if gap_secs == 0 {
+        // A zero gap would nudge on every tick — treat as "off".
+        return None;
+    }
+    // Newest OPERATOR episode timestamp, or None when there is no operator
+    // text yet (fresh install). RAW_TEXT-only so an assistant reply /
+    // `[INGRESS]` placeholder doesn't count as the operator being active.
     let last_ns: Option<i64> = conn
-        .query_row("SELECT MAX(ts_ns) FROM idx_episode", [], |r| r.get(0))
+        .query_row(
+            "SELECT MAX(ts_ns) FROM idx_episode WHERE event_type = ?1",
+            [RAW_TEXT_EVENT_TYPE],
+            |r| r.get(0),
+        )
         .ok()
         .flatten();
     let last_ns = last_ns?;
@@ -58,20 +89,29 @@ pub fn detect_inactivity_gap(
         return None;
     }
     let gap_ns = now_ns - last_ns;
-    let threshold_ns = (gap_secs as i64).saturating_mul(1_000_000_000);
+    let threshold_ns = secs_to_ns(gap_secs);
     if gap_ns < threshold_ns {
         return None;
     }
     let now_unix = now_ns / 1_000_000_000;
-    let gap_days = gap_ns / (24 * 3600 * 1_000_000_000);
+    let day_ns: i64 = 24 * 3600 * 1_000_000_000;
+    let gap_days = gap_ns / day_ns;
     let day_bucket = now_unix / 86_400;
+    // Sub-day thresholds (operator lowered the gap) read better in hours
+    // than as "~0 Tag(en)".
+    let elapsed = if gap_days >= 1 {
+        format!("~{gap_days} Tag(en)")
+    } else {
+        let gap_hours = gap_ns / (3600 * 1_000_000_000);
+        format!("~{gap_hours} Stunde(n)")
+    };
     Some(ProactiveItem {
         priority: 60, // useful unprompted nudge, below operator-urgent (100)
         dedup_key: format!("pattern:inactivity:{day_bucket}"),
         channel: String::new(), // operator default channel
         source: "pattern_cron".to_string(),
         body: format!(
-            "Ich habe seit ~{gap_days} Tag(en) nichts von dir gehört — alles gut? \
+            "Ich habe seit {elapsed} nichts von dir gehört — alles gut? \
              (`neoth status` zeigt, woran wir zuletzt waren.)"
         ),
         scheduled_for_unix: 0,
@@ -91,29 +131,43 @@ fn excerpt(text: &str, max: usize) -> String {
     }
 }
 
-/// Episode texts whose `ts_ns` is in `(from_ns, to_ns]`. `None` only on
-/// a SQL error — an empty window is `Some(vec![])`.
+/// Operator-text episodes whose `ts_ns` is in `(from_ns, to_ns]`
+/// (RAW_TEXT-only). `None` only on a SQL error — an empty window is
+/// `Some(vec![])`.
 fn fetch_episode_texts(
     conn: &rusqlite::Connection,
     from_ns: i64,
     to_ns: i64,
 ) -> Option<Vec<String>> {
     let mut stmt = conn
-        .prepare("SELECT text FROM idx_episode WHERE ts_ns > ?1 AND ts_ns <= ?2")
+        .prepare(
+            "SELECT text FROM idx_episode \
+             WHERE ts_ns > ?1 AND ts_ns <= ?2 AND event_type = ?3",
+        )
         .ok()?;
     let rows = stmt
-        .query_map(rusqlite::params![from_ns, to_ns], |r| r.get::<_, String>(0))
+        .query_map(
+            rusqlite::params![from_ns, to_ns, RAW_TEXT_EVENT_TYPE],
+            |r| r.get::<_, String>(0),
+        )
         .ok()?;
     rows.collect::<rusqlite::Result<Vec<_>>>().ok()
 }
 
-/// Episode timestamps (ns) whose `ts_ns` is in `(from_ns, to_ns]`.
+/// Operator-text episode timestamps (ns) in `(from_ns, to_ns]`
+/// (RAW_TEXT-only).
 fn fetch_episode_ts(conn: &rusqlite::Connection, from_ns: i64, to_ns: i64) -> Option<Vec<i64>> {
     let mut stmt = conn
-        .prepare("SELECT ts_ns FROM idx_episode WHERE ts_ns > ?1 AND ts_ns <= ?2")
+        .prepare(
+            "SELECT ts_ns FROM idx_episode \
+             WHERE ts_ns > ?1 AND ts_ns <= ?2 AND event_type = ?3",
+        )
         .ok()?;
     let rows = stmt
-        .query_map(rusqlite::params![from_ns, to_ns], |r| r.get::<_, i64>(0))
+        .query_map(
+            rusqlite::params![from_ns, to_ns, RAW_TEXT_EVENT_TYPE],
+            |r| r.get::<_, i64>(0),
+        )
         .ok()?;
     rows.collect::<rusqlite::Result<Vec<_>>>().ok()
 }
@@ -163,18 +217,22 @@ pub fn detect_query_repeat(
     window_secs: u64,
     min_count: u32,
 ) -> Option<ProactiveItem> {
-    if now_ns <= 0 || min_count == 0 {
+    if now_ns <= 0 || min_count == 0 || window_secs == 0 {
         return None;
     }
-    let window_ns = (window_secs as i64).saturating_mul(1_000_000_000);
+    let window_ns = secs_to_ns(window_secs);
     let from_ns = now_ns.saturating_sub(window_ns);
+    // RAW_TEXT-only + length>=8. MAX(text) is a determinism tie-break
+    // within a `text_hash` group; the 64-bit `text_hash` (indexer writes
+    // `{:016x}`) makes intra-group text divergence a ~2^-64 collision,
+    // so MAX(text) is the group's actual text in practice.
     let row: Option<(String, String, i64)> = conn
         .query_row(
             "SELECT text_hash, MAX(text) t, COUNT(*) c FROM idx_episode \
-             WHERE ts_ns > ?1 AND ts_ns <= ?2 AND length(text) >= 8 \
-             GROUP BY text_hash HAVING c >= ?3 \
+             WHERE ts_ns > ?1 AND ts_ns <= ?2 AND event_type = ?3 AND length(text) >= 8 \
+             GROUP BY text_hash HAVING c >= ?4 \
              ORDER BY c DESC, MAX(ts_ns) DESC LIMIT 1",
-            rusqlite::params![from_ns, now_ns, min_count as i64],
+            rusqlite::params![from_ns, now_ns, RAW_TEXT_EVENT_TYPE, min_count as i64],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -219,11 +277,11 @@ pub fn detect_topic_burst(
     min_count: u32,
     factor: f64,
 ) -> Option<ProactiveItem> {
-    if now_ns <= 0 || min_count == 0 || baseline_secs <= recent_secs {
+    if now_ns <= 0 || min_count == 0 || baseline_secs <= recent_secs || factor <= 0.0 {
         return None;
     }
-    let recent_from = now_ns.saturating_sub((recent_secs as i64).saturating_mul(1_000_000_000));
-    let baseline_from = now_ns.saturating_sub((baseline_secs as i64).saturating_mul(1_000_000_000));
+    let recent_from = now_ns.saturating_sub(secs_to_ns(recent_secs));
+    let baseline_from = now_ns.saturating_sub(secs_to_ns(baseline_secs));
     let recent_texts = fetch_episode_texts(conn, recent_from, now_ns)?;
     let baseline_texts = fetch_episode_texts(conn, baseline_from, recent_from)?;
     let recent_counts = crate::reflection::topic_counts(&recent_texts);
@@ -253,10 +311,13 @@ pub fn detect_topic_burst(
         }
     }
     let (topic, count) = best?;
-    let day_bucket = (now_ns / 1_000_000_000) / 86_400;
+    // WEEK bucket (not day): a brand-new topic has zero baseline for the
+    // first ~recent_secs, so a day bucket would re-nudge daily until the
+    // baseline catches up. One nudge per topic per ISO-week is enough.
+    let week_bucket = (now_ns / 1_000_000_000) / 86_400 / 7;
     Some(ProactiveItem {
         priority: 55,
-        dedup_key: format!("pattern:topic-burst:{topic}:{day_bucket}"),
+        dedup_key: format!("pattern:topic-burst:{topic}:{week_bucket}"),
         channel: String::new(),
         source: "pattern_cron".to_string(),
         body: format!(
@@ -281,11 +342,11 @@ pub fn detect_time_of_day_shift(
     min_hours: u32,
     min_episodes: u32,
 ) -> Option<ProactiveItem> {
-    if now_ns <= 0 || baseline_secs <= recent_secs {
+    if now_ns <= 0 || baseline_secs <= recent_secs || min_hours == 0 || min_episodes == 0 {
         return None;
     }
-    let recent_from = now_ns.saturating_sub((recent_secs as i64).saturating_mul(1_000_000_000));
-    let baseline_from = now_ns.saturating_sub((baseline_secs as i64).saturating_mul(1_000_000_000));
+    let recent_from = now_ns.saturating_sub(secs_to_ns(recent_secs));
+    let baseline_from = now_ns.saturating_sub(secs_to_ns(baseline_secs));
     let recent_ts = fetch_episode_ts(conn, recent_from, now_ns)?;
     let baseline_ts = fetch_episode_ts(conn, baseline_from, recent_from)?;
     if (recent_ts.len() as u32) < min_episodes || (baseline_ts.len() as u32) < min_episodes {
@@ -296,10 +357,13 @@ pub fn detect_time_of_day_shift(
     if circular_hour_distance(recent_peak, baseline_peak) < min_hours {
         return None;
     }
-    let day_bucket = (now_ns / 1_000_000_000) / 86_400;
+    // WEEK bucket: a real lifestyle shift stays "shifted" for weeks while
+    // the 30-day baseline slowly absorbs it — a day bucket would nudge
+    // daily the whole time. One nudge per week is the right cadence.
+    let week_bucket = (now_ns / 1_000_000_000) / 86_400 / 7;
     Some(ProactiveItem {
         priority: 50,
-        dedup_key: format!("pattern:tod-shift:{day_bucket}"),
+        dedup_key: format!("pattern:tod-shift:{week_bucket}"),
         channel: String::new(),
         source: "pattern_cron".to_string(),
         body: format!(
@@ -375,12 +439,22 @@ pub fn run_pattern_tick_once(
     if items.is_empty() {
         return Ok(0);
     }
+    // Highest-priority first so the per-tick cap keeps the MOST important
+    // nudge when several detectors fire at once; the cap (default 1)
+    // bounds how much of the shared 3/day ProactiveQueue budget the
+    // pattern engine can consume in a single tick, leaving room for the
+    // reflection + g02 producers.
+    items.sort_by_key(|i| std::cmp::Reverse(i.priority));
+    let cap = config.max_nudges_per_tick.max(1) as usize;
 
     let queue_path = home.join("proactive_queue.json");
     let mut queue =
         ProactiveQueue::load_from(&queue_path).map_err(|e| format!("queue load failed: {e}"))?;
     let mut enqueued = 0usize;
     for item in items {
+        if enqueued >= cap {
+            break;
+        }
         if queue.enqueue(item) {
             enqueued += 1;
         }
@@ -457,6 +531,25 @@ mod tests {
              (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
              VALUES (?1, 1, ?2, ?3, ?4, 0.5, ?2)",
             rusqlite::params![event_id, ts_ns, text, text_hash],
+        )
+        .unwrap();
+    }
+
+    /// Like [`seed_text`] but with an explicit `event_type` — for the
+    /// RAW_TEXT-filter guard tests.
+    fn seed_typed(
+        conn: &rusqlite::Connection,
+        event_id: i64,
+        ts_ns: i64,
+        text: &str,
+        text_hash: &str,
+        event_type: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (?1, ?5, ?2, ?3, ?4, 0.5, ?2)",
+            rusqlite::params![event_id, ts_ns, text, text_hash, event_type],
         )
         .unwrap();
     }
@@ -817,6 +910,157 @@ mod tests {
         assert!(ex.ends_with('…'));
     }
 
+    // --- review-hardening guards ---
+
+    #[test]
+    fn secs_to_ns_clamps_absurd_values() {
+        assert_eq!(secs_to_ns(0), 0);
+        assert_eq!(secs_to_ns(3), 3_000_000_000);
+        // A naive `as i64` cast of a huge u64 would wrap negative; the
+        // clamp keeps it a large POSITIVE threshold.
+        let huge = secs_to_ns(u64::MAX);
+        assert!(huge > 0);
+        assert_eq!(huge, (i64::MAX / 1_000_000_000) * 1_000_000_000);
+    }
+
+    #[test]
+    fn inactivity_zero_gap_never_nudges() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        seed_episode(&conn, now - 5 * DAY_NS);
+        assert!(detect_inactivity_gap(&conn, now, 0).is_none());
+    }
+
+    #[test]
+    fn inactivity_subday_gap_reads_in_hours() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        seed_episode(&conn, now - 6 * 3600 * 1_000_000_000); // 6h ago
+        let item = detect_inactivity_gap(&conn, now, 5 * 3600).expect("nudge"); // gap 5h
+        assert!(item.body.contains("Stunde"), "body: {}", item.body);
+    }
+
+    #[test]
+    fn detectors_ignore_non_raw_text_events() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        // 4 identical assistant/INGRESS rows (event_type 0x33) — NOT
+        // operator text, so query-repeat + inactivity must ignore them.
+        for k in 0..4 {
+            seed_typed(
+                &conn,
+                800 + k,
+                now - DAY_NS + k * 1_000_000_000,
+                "[INGRESS] 42 bytes here",
+                "egr",
+                0x33,
+            );
+        }
+        assert!(detect_query_repeat(&conn, now, 7 * 24 * 3600, 3).is_none());
+        assert!(detect_inactivity_gap(&conn, now, 3 * 24 * 3600).is_none());
+    }
+
+    #[test]
+    fn query_repeat_zero_window_none() {
+        let (_d, conn) = fresh_db();
+        assert!(detect_query_repeat(&conn, 100 * DAY_NS, 0, 3).is_none());
+    }
+
+    #[test]
+    fn topic_burst_zero_or_negative_factor_none() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        for k in 0..5 {
+            seed_text(
+                &conn,
+                900 + k,
+                now - DAY_NS + k * 1_000_000_000,
+                "kubernetes migration plan",
+                &format!("z{k}"),
+            );
+        }
+        assert!(detect_topic_burst(&conn, now, 2 * 24 * 3600, 14 * 24 * 3600, 4, 0.0).is_none());
+        assert!(detect_topic_burst(&conn, now, 2 * 24 * 3600, 14 * 24 * 3600, 4, -1.0).is_none());
+    }
+
+    #[test]
+    fn topic_burst_dedup_key_is_per_week() {
+        let (_d, conn) = fresh_db();
+        let now = 100 * DAY_NS;
+        // Seed 12h ago so the events stay inside the recent window at BOTH
+        // `now` and `now + 1 day` (an event exactly on the window's
+        // exclusive lower bound would drop out at now+1d).
+        let twelve_h = 43_200 * 1_000_000_000;
+        for k in 0..4 {
+            seed_text(
+                &conn,
+                950 + k,
+                now - twelve_h + k * 1_000_000_000,
+                "rustlang async runtime",
+                &format!("w{k}"),
+            );
+        }
+        let a = detect_topic_burst(&conn, now, 2 * 24 * 3600, 14 * 24 * 3600, 4, 3.0).unwrap();
+        // +1 day, same ISO-week bucket → same dedup key (no daily re-nudge).
+        let b =
+            detect_topic_burst(&conn, now + DAY_NS, 2 * 24 * 3600, 14 * 24 * 3600, 4, 3.0).unwrap();
+        assert_eq!(a.dedup_key, b.dedup_key);
+    }
+
+    #[test]
+    fn tod_shift_zero_thresholds_none() {
+        let (_d, conn) = fresh_db();
+        let now = ts_at_hour(100, 0, 0);
+        for k in 0..12 {
+            seed_text(
+                &conn,
+                600 + k,
+                ts_at_hour(98, 8, k),
+                "x msg",
+                &format!("r{k}"),
+            );
+            seed_text(
+                &conn,
+                700 + k,
+                ts_at_hour(80, 20, k),
+                "x msg",
+                &format!("b{k}"),
+            );
+        }
+        assert!(
+            detect_time_of_day_shift(&conn, now, 7 * 24 * 3600, 30 * 24 * 3600, 0, 10).is_none()
+        );
+        assert!(
+            detect_time_of_day_shift(&conn, now, 7 * 24 * 3600, 30 * 24 * 3600, 4, 0).is_none()
+        );
+    }
+
+    #[test]
+    fn run_tick_caps_nudges_per_tick() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::memory::store::open(&dir.path().join("views.db")).unwrap();
+        let now_unix = 100 * 24 * 3600;
+        let now_ns = now_unix * 1_000_000_000;
+        // Same query 3× five days ago → BOTH inactivity (silence) AND
+        // query-repeat fire. Default cap of 1 keeps only the higher-
+        // priority one (inactivity, 60 > 55).
+        for k in 0..3 {
+            seed_text(
+                &conn,
+                1000 + k,
+                now_ns - 5 * DAY_NS + k * 1_000_000_000,
+                "what is the deployment status",
+                "qh",
+            );
+        }
+        drop(conn);
+        let cfg = PatternCronConfig::default();
+        assert_eq!(
+            run_pattern_tick_once(dir.path(), now_unix, &cfg).unwrap(),
+            1
+        );
+    }
+
     #[test]
     fn config_back_compat_partial_deserialize() {
         // An old freedom.yaml that only knows the original 3 fields must
@@ -832,6 +1076,7 @@ mod tests {
         assert_eq!(cfg.topic_burst_factor, 3.0);
         assert!(cfg.tod_shift_enabled);
         assert_eq!(cfg.tod_shift_min_episodes, 10);
+        assert_eq!(cfg.max_nudges_per_tick, 1);
     }
 
     #[tokio::test]
