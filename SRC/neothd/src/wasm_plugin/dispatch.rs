@@ -469,10 +469,13 @@ mod tests {
     }
 
     fn discovered(id: &str, bytes: Vec<u8>) -> DiscoveredPlugin {
+        let content_hash = super::super::discovery::sha256_hex(&bytes);
         DiscoveredPlugin {
             dir: PathBuf::from(format!("/tmp/{id}")),
             manifest: sample_manifest(id),
             wasm_bytes: bytes,
+            content_hash,
+            signature: None,
         }
     }
 

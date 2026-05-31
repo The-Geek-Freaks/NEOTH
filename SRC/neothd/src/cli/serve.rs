@@ -4092,15 +4092,28 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
     // the operator-visible bootstrap-skipped log line — they show up in
     // `neoth plugin list` so flipping them on is one command away.
     #[allow(clippy::type_complexity)]
-    let (activations, pinned_hashes, require_all_pinned): (
+    let (
+        activations,
+        pinned_hashes,
+        require_all_pinned,
+        author_pubkey,
+        require_signature,
+        revoked_ids,
+    ): (
         std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivation>,
         std::collections::BTreeMap<String, String>,
         bool,
+        Option<String>,
+        bool,
+        Vec<String>,
     ) = match FreedomConfig::load_from_default_path() {
         Ok(cfg) => (
             cfg.plugins.wasm.activations.clone(),
             cfg.plugins.wasm.pinned_hashes.clone(),
             cfg.plugins.wasm.require_all_pinned,
+            cfg.plugins.wasm.author_pubkey.clone(),
+            cfg.plugins.wasm.require_signature,
+            cfg.plugins.wasm.revoked_ids.clone(),
         ),
         Err(e) => {
             warn!(
@@ -4112,6 +4125,9 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
                 std::collections::BTreeMap::new(),
                 std::collections::BTreeMap::new(),
                 false,
+                None,
+                false,
+                Vec::new(),
             )
         }
     };
@@ -4131,6 +4147,9 @@ fn bootstrap_plugin_invoker(home: &std::path::Path) {
     let integrity_policy = crate::wasm_plugin::discovery::IntegrityPolicy {
         pinned: &pinned_hashes,
         require_all_pinned,
+        author_pubkey: author_pubkey.as_deref(),
+        require_signature,
+        revoked: &revoked_ids,
     };
     report.loaded.retain(|p| {
         let state = activations.get(&p.manifest.id).copied().unwrap_or_default();

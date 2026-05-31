@@ -901,6 +901,27 @@ pub struct WasmPluginsConfig {
     /// trusted"). Default `false` for back-compat.
     #[serde(default)]
     pub require_all_pinned: bool,
+    /// SC-03 — operator's trusted plugin-author minisign PUBLIC key
+    /// (base64 of the key line, as `minisign -G` / `rsign generate`
+    /// prints it). When set, the daemon verifies each plugin's
+    /// `plugin.wasm.minisig` companion against it before instantiation —
+    /// proving WHO signed the binary (authenticity), complementing the
+    /// hash pin (which only proves the bytes didn't change). `None`
+    /// (default) → no signature checking. Sign a plugin with
+    /// `minisign -Sm plugin.wasm`.
+    #[serde(default)]
+    pub author_pubkey: Option<String>,
+    /// SC-03 — when true AND `author_pubkey` is set, a plugin with no
+    /// valid signature companion is refused ("deny anything not signed
+    /// by my trusted author"). Default `false`: a missing signature is
+    /// allowed (soft gate) but a PRESENT-but-invalid signature is ALWAYS
+    /// refused regardless of this flag.
+    #[serde(default)]
+    pub require_signature: bool,
+    /// SC-03 — revoked plugin ids, refused outright regardless of hash
+    /// pin or signature (a known-bad-plugin kill switch). Default empty.
+    #[serde(default)]
+    pub revoked_ids: Vec<String>,
 }
 
 fn default_wasm_plugins_enabled() -> bool {
@@ -925,6 +946,9 @@ impl Default for WasmPluginsConfig {
             activations: std::collections::BTreeMap::new(),
             pinned_hashes: std::collections::BTreeMap::new(),
             require_all_pinned: false,
+            author_pubkey: None,
+            require_signature: false,
+            revoked_ids: Vec::new(),
         }
     }
 }
@@ -2449,6 +2473,7 @@ mod tests {
                     activations: std::collections::BTreeMap::new(),
                     pinned_hashes: std::collections::BTreeMap::new(),
                     require_all_pinned: false,
+                    ..Default::default()
                 },
             },
             ..Default::default()

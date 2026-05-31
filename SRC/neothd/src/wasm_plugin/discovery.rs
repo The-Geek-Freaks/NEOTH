@@ -39,6 +39,12 @@ pub struct DiscoveredPlugin {
     /// detection). Surfaced by `neoth plugin list` so the operator
     /// knows what to pin. Mirrors the skills `content_hash` (ARCH-07).
     pub content_hash: String,
+    /// SC-03 — raw text of the `plugin.wasm.minisig` companion (minisign
+    /// detached signature), read at discovery; `None` when absent. The
+    /// [`verify_integrity`] gate checks it against the operator's
+    /// configured `author_pubkey` to prove plugin AUTHORSHIP — the hash
+    /// pin only proves the bytes didn't change, not WHO produced them.
+    pub signature: Option<String>,
 }
 
 /// D-102 (Session 21, 2026-05-23, 6/6 agent panel) — per-plugin operator
@@ -136,6 +142,23 @@ pub enum DiscoveryError {
          pin {got} in freedom.yaml::plugins.wasm.pinned_hashes to allow it"
     )]
     HashUnpinned { dir: PathBuf, got: String },
+    /// SC-03 — plugin id appears in `freedom.yaml::plugins.wasm.revoked_ids`.
+    /// The operator's kill switch: a known-bad plugin is refused regardless
+    /// of hash pin or signature state.
+    #[error("plugin {dir:?}: id {id:?} is revoked (plugins.wasm.revoked_ids) — refusing to load")]
+    Revoked { dir: PathBuf, id: String },
+    /// SC-03 — an author pubkey is configured with `require_signature=true`
+    /// but this plugin ships no `plugin.wasm.minisig` companion.
+    #[error(
+        "plugin {dir:?}: no signature companion (plugin.wasm.minisig) and \
+         plugins.wasm.require_signature=true — sign it with the operator's \
+         minisign key (`minisign -Sm plugin.wasm`) to allow it"
+    )]
+    SignatureMissing { dir: PathBuf },
+    /// SC-03 — signature verification failed: wrong author key, malformed
+    /// key/signature, or tampered bytes.
+    #[error("plugin {dir:?}: signature verification failed — {reason}")]
+    SignatureInvalid { dir: PathBuf, reason: String },
 }
 
 /// Aggregate report of one discovery pass.
@@ -222,12 +245,24 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
         kind: e.kind(),
     })?;
     let content_hash = sha256_hex(&wasm_bytes);
+    // SC-03 — optional minisign detached signature. minisign's `-Sm
+    // plugin.wasm` writes `plugin.wasm.minisig`; absence is fine (the
+    // signature gate is opt-in via freedom.yaml::plugins.wasm.author_pubkey).
+    let signature = fs::read_to_string(dir.join("plugin.wasm.minisig")).ok();
     Ok(DiscoveredPlugin {
         dir: dir.to_path_buf(),
         manifest,
         wasm_bytes,
         content_hash,
+        signature,
     })
+}
+
+/// SC-03 — load + validate a single plugin directory (the per-plugin half
+/// of [`discover`]). Used by `neoth plugin verify <path>` to run the
+/// integrity gate against one plugin without scanning the whole root.
+pub fn load_plugin(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
+    load_one(dir)
 }
 
 /// Lowercase-hex SHA-256 of a byte slice. Shared by load + the
@@ -257,43 +292,172 @@ pub struct IntegrityPolicy<'a> {
     /// When true, a plugin with NO pin is rejected (`HashUnpinned`)
     /// instead of loaded — "deny anything I haven't explicitly trusted".
     pub require_all_pinned: bool,
+    /// SC-03 — operator's trusted plugin-author minisign PUBLIC key
+    /// (base64). `None` → signature checking is off (hash-pin-only, the
+    /// pre-signature behaviour). When `Some`, each plugin's
+    /// `plugin.wasm.minisig` is verified against it. Borrowed (not owned)
+    /// so `IntegrityPolicy` stays `Copy`.
+    pub author_pubkey: Option<&'a str>,
+    /// SC-03 — when true AND `author_pubkey` is set, a plugin with NO
+    /// signature companion is refused (`SignatureMissing`). A PRESENT-
+    /// but-invalid signature is ALWAYS refused regardless of this flag.
+    pub require_signature: bool,
+    /// SC-03 — revoked plugin ids (the operator's kill switch). A linear
+    /// scan is fine: revocation lists are a handful of ids. Borrowed to
+    /// keep `Copy`.
+    pub revoked: &'a [String],
 }
 
-/// SC-03 — verify one discovered plugin against the operator's pin
+/// SC-03 — verify one discovered plugin against the operator's integrity
 /// policy. Called by the daemon BEFORE instantiating the plugin (the
 /// hostcall surface is the attack vector, so the gate fires at
-/// instantiation, not at the read-only `plugins list`).
+/// instantiation, not at the read-only `plugins list`). Three layered
+/// checks, fail-closed in order:
 ///
-///   - pin present + matches    → `Ok(())`
-///   - pin present + mismatch   → `HashMismatch` (tamper / swap)
-///   - no pin + require_all     → `HashUnpinned`
-///   - no pin + !require_all    → `Ok(())` (back-compat default)
+///   1. **Revocation** — id in `revoked` → `Revoked` (kill switch first).
+///   2. **Hash pin** (tamper/swap): present+mismatch → `HashMismatch`;
+///      no pin + `require_all_pinned` → `HashUnpinned`; else pass-through.
+///   3. **Author signature** (authenticity, when `author_pubkey` set):
+///      valid `.minisig` → pass; missing + `require_signature` →
+///      `SignatureMissing`; invalid/wrong-key/tamper → `SignatureInvalid`.
 ///
-/// The compare is a plain string equality: both sides are SHA-256 of
-/// PUBLIC plugin bytes (no secret), so there is no timing channel to
-/// protect — unlike the credential-store HMAC checks.
+/// The hash compare is plain string equality over SHA-256 of PUBLIC plugin
+/// bytes (no secret → no timing channel). The signature check proves
+/// AUTHORSHIP, which the hash pin alone cannot.
 pub fn verify_integrity(
     plugin: &DiscoveredPlugin,
     policy: &IntegrityPolicy<'_>,
 ) -> Result<(), DiscoveryError> {
+    // 1. Revocation — refuse a known-bad plugin regardless of hash/sig.
+    if policy.revoked.iter().any(|id| id == &plugin.manifest.id) {
+        return Err(DiscoveryError::Revoked {
+            dir: plugin.dir.clone(),
+            id: plugin.manifest.id.clone(),
+        });
+    }
+    // 2. SHA-256 pin (tamper / supply-chain swap).
     match policy.pinned.get(&plugin.manifest.id) {
-        Some(expected) => {
-            if expected.eq_ignore_ascii_case(&plugin.content_hash) {
-                Ok(())
-            } else {
-                Err(DiscoveryError::HashMismatch {
-                    dir: plugin.dir.clone(),
-                    expected: expected.clone(),
-                    got: plugin.content_hash.clone(),
-                })
+        Some(expected) if !expected.eq_ignore_ascii_case(&plugin.content_hash) => {
+            return Err(DiscoveryError::HashMismatch {
+                dir: plugin.dir.clone(),
+                expected: expected.clone(),
+                got: plugin.content_hash.clone(),
+            });
+        }
+        None if policy.require_all_pinned => {
+            return Err(DiscoveryError::HashUnpinned {
+                dir: plugin.dir.clone(),
+                got: plugin.content_hash.clone(),
+            });
+        }
+        // pin matched, or no pin and not required — continue to the
+        // signature stage.
+        _ => {}
+    }
+    // 3. ed25519 author authenticity (only when a key is configured).
+    match verify_plugin_signature(
+        &plugin.wasm_bytes,
+        plugin.signature.as_deref(),
+        policy.author_pubkey,
+        policy.require_signature,
+    ) {
+        Ok(_) => Ok(()),
+        Err(PluginSigError::MissingSignature) => Err(DiscoveryError::SignatureMissing {
+            dir: plugin.dir.clone(),
+        }),
+        Err(e) => Err(DiscoveryError::SignatureInvalid {
+            dir: plugin.dir.clone(),
+            reason: e.to_string(),
+        }),
+    }
+}
+
+/// SC-03 — outcome of a plugin signature check that did NOT hard-fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginSigOutcome {
+    /// `plugin.wasm.minisig` present + verified against `author_pubkey`.
+    Verified,
+    /// No signature companion; allowed only because `require == false`.
+    UnsignedAllowed,
+    /// No author key configured; signature checking is off. Allowed only
+    /// because `require == false`.
+    NoKeyConfigured,
+}
+
+/// SC-03 — why a plugin signature check hard-failed. Mapped to a
+/// `DiscoveryError` by [`verify_integrity`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PluginSigError {
+    /// `require == true` but no author key is configured.
+    NoKeyConfigured,
+    /// `require == true` but the plugin has no `.minisig` companion.
+    MissingSignature,
+    /// The configured `author_pubkey` is not a valid minisign public key.
+    MalformedKey(String),
+    /// The `.minisig` companion text is malformed.
+    MalformedSignature(String),
+    /// The signature did not verify (wrong author key / tampered bytes).
+    VerificationFailed(String),
+}
+
+impl std::fmt::Display for PluginSigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PluginSigError::NoKeyConfigured => {
+                write!(f, "no author public key configured")
+            }
+            PluginSigError::MissingSignature => write!(f, "no signature companion"),
+            PluginSigError::MalformedKey(e) => {
+                write!(f, "configured author_pubkey is malformed: {e}")
+            }
+            PluginSigError::MalformedSignature(e) => {
+                write!(f, "plugin.wasm.minisig is malformed: {e}")
+            }
+            PluginSigError::VerificationFailed(e) => {
+                write!(f, "signature did not verify against author_pubkey: {e}")
             }
         }
-        None if policy.require_all_pinned => Err(DiscoveryError::HashUnpinned {
-            dir: plugin.dir.clone(),
-            got: plugin.content_hash.clone(),
-        }),
-        None => Ok(()),
     }
+}
+
+/// SC-03 — verify a minisign signature over `data` against the
+/// operator-configured author public key. Unlike
+/// [`crate::updater::sig_verify::check_signature`] (which uses the
+/// COMPILE-TIME pinned NEOTH release key), `pubkey_b64` here comes from
+/// `freedom.yaml::plugins.wasm.author_pubkey` at RUNTIME — an operator
+/// can trust a third-party plugin author without rebuilding NEOTH.
+///
+/// Two-tier gate (mirrors `check_signature`):
+///   - no key  → `NoKeyConfigured` unless `require` → `Err`
+///   - no sig  → `UnsignedAllowed` unless `require` → `Err`
+///   - present + valid   → `Verified`
+///   - present + invalid → `Err` (always, regardless of `require`)
+pub fn verify_plugin_signature(
+    data: &[u8],
+    signature: Option<&str>,
+    pubkey_b64: Option<&str>,
+    require: bool,
+) -> Result<PluginSigOutcome, PluginSigError> {
+    let Some(pubkey_b64) = pubkey_b64 else {
+        if require {
+            return Err(PluginSigError::NoKeyConfigured);
+        }
+        return Ok(PluginSigOutcome::NoKeyConfigured);
+    };
+    let Some(sig_text) = signature else {
+        if require {
+            return Err(PluginSigError::MissingSignature);
+        }
+        return Ok(PluginSigOutcome::UnsignedAllowed);
+    };
+    let pubkey = minisign_verify::PublicKey::from_base64(pubkey_b64.trim())
+        .map_err(|e| PluginSigError::MalformedKey(e.to_string()))?;
+    let sig = minisign_verify::Signature::decode(sig_text)
+        .map_err(|e| PluginSigError::MalformedSignature(e.to_string()))?;
+    pubkey
+        .verify(data, &sig, false)
+        .map_err(|e| PluginSigError::VerificationFailed(e.to_string()))?;
+    Ok(PluginSigOutcome::Verified)
 }
 
 #[cfg(test)]
@@ -496,27 +660,31 @@ mod tests {
         assert_eq!(p.content_hash, sha256_hex(MINIMAL_WASM));
     }
 
+    /// A hash-pin-only policy (no signature key, no revocations) — the
+    /// pre-SC-03-signature default. Keeps the existing pin tests terse.
+    fn pin_policy(pinned: &BTreeMap<String, String>, require_all: bool) -> IntegrityPolicy<'_> {
+        IntegrityPolicy {
+            pinned,
+            require_all_pinned: require_all,
+            author_pubkey: None,
+            require_signature: false,
+            revoked: &[],
+        }
+    }
+
     #[test]
     fn verify_integrity_no_pin_default_allows() {
         let p = discovered("free", MINIMAL_WASM);
         let pinned = BTreeMap::new();
-        let policy = IntegrityPolicy {
-            pinned: &pinned,
-            require_all_pinned: false,
-        };
-        assert!(verify_integrity(&p, &policy).is_ok());
+        assert!(verify_integrity(&p, &pin_policy(&pinned, false)).is_ok());
     }
 
     #[test]
     fn verify_integrity_no_pin_require_all_rejects() {
         let p = discovered("free", MINIMAL_WASM);
         let pinned = BTreeMap::new();
-        let policy = IntegrityPolicy {
-            pinned: &pinned,
-            require_all_pinned: true,
-        };
         assert!(matches!(
-            verify_integrity(&p, &policy),
+            verify_integrity(&p, &pin_policy(&pinned, true)),
             Err(DiscoveryError::HashUnpinned { .. })
         ));
     }
@@ -529,28 +697,102 @@ mod tests {
         let mut ok_map = BTreeMap::new();
         ok_map.insert("pinned".to_string(), good.clone());
         assert!(
-            verify_integrity(
-                &p,
-                &IntegrityPolicy {
-                    pinned: &ok_map,
-                    require_all_pinned: true,
-                }
-            )
-            .is_ok(),
+            verify_integrity(&p, &pin_policy(&ok_map, true)).is_ok(),
             "matching pin loads even under require_all_pinned"
         );
 
         let mut bad_map = BTreeMap::new();
         bad_map.insert("pinned".to_string(), "deadbeef".to_string());
         assert!(matches!(
-            verify_integrity(
-                &p,
-                &IntegrityPolicy {
-                    pinned: &bad_map,
-                    require_all_pinned: false,
-                }
-            ),
+            verify_integrity(&p, &pin_policy(&bad_map, false)),
             Err(DiscoveryError::HashMismatch { .. })
         ));
+    }
+
+    // --- SC-03 revocation + signature gate ---
+
+    #[test]
+    fn verify_integrity_revoked_id_rejected_first() {
+        let p = discovered("bad_plugin", MINIMAL_WASM);
+        let pinned = BTreeMap::new();
+        let revoked = vec!["bad_plugin".to_string()];
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+            author_pubkey: None,
+            require_signature: false,
+            revoked: &revoked,
+        };
+        assert!(matches!(
+            verify_integrity(&p, &policy),
+            Err(DiscoveryError::Revoked { .. })
+        ));
+    }
+
+    #[test]
+    fn verify_integrity_signature_missing_under_require_rejected() {
+        let p = discovered("unsigned", MINIMAL_WASM); // discover sets signature=None
+        let pinned = BTreeMap::new();
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+            author_pubkey: Some("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"),
+            require_signature: true,
+            revoked: &[],
+        };
+        assert!(matches!(
+            verify_integrity(&p, &policy),
+            Err(DiscoveryError::SignatureMissing { .. })
+        ));
+    }
+
+    #[test]
+    fn verify_integrity_present_but_invalid_signature_rejected() {
+        let mut p = discovered("signed", MINIMAL_WASM);
+        p.signature = Some("untrusted comment: x\nGARBAGE-not-a-real-sig\n".to_string());
+        let pinned = BTreeMap::new();
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+            // Malformed key → MalformedKey → SignatureInvalid (a present-
+            // but-invalid signature is refused regardless of require).
+            author_pubkey: Some("not-a-valid-minisign-key"),
+            require_signature: false,
+            revoked: &[],
+        };
+        assert!(matches!(
+            verify_integrity(&p, &policy),
+            Err(DiscoveryError::SignatureInvalid { .. })
+        ));
+    }
+
+    #[test]
+    fn verify_plugin_signature_two_tier_gate() {
+        // No key configured.
+        assert_eq!(
+            verify_plugin_signature(b"x", None, None, false),
+            Ok(PluginSigOutcome::NoKeyConfigured)
+        );
+        assert_eq!(
+            verify_plugin_signature(b"x", None, None, true),
+            Err(PluginSigError::NoKeyConfigured)
+        );
+        // Key set, no signature companion.
+        assert_eq!(
+            verify_plugin_signature(b"x", None, Some("RWQabc"), false),
+            Ok(PluginSigOutcome::UnsignedAllowed)
+        );
+        assert_eq!(
+            verify_plugin_signature(b"x", None, Some("RWQabc"), true),
+            Err(PluginSigError::MissingSignature)
+        );
+        // Malformed key with a signature present → MalformedKey.
+        assert!(matches!(
+            verify_plugin_signature(b"x", Some("sig"), Some("not-base64-!!"), false),
+            Err(PluginSigError::MalformedKey(_))
+        ));
+        // NOTE: the Verified path needs a real keypair + signature, which
+        // a unit test can't mint without embedding a private key — same
+        // documented limitation as updater::sig_verify.
     }
 }

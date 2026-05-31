@@ -67,6 +67,18 @@ pub enum PluginAction {
         /// Directory containing `plugin.toml` + `plugin.wasm`.
         path: std::path::PathBuf,
     },
+    /// SC-03 — verify a plugin directory against the operator's integrity
+    /// policy (revocation list + pinned hash + author signature) WITHOUT
+    /// instantiating it. Reads `<path>/plugin.toml` + `plugin.wasm` +
+    /// optional `plugin.wasm.minisig`, then applies
+    /// `freedom.yaml::plugins.wasm` (`author_pubkey` / `require_signature`
+    /// / `revoked_ids` / `pinned_hashes`). Prints PASS/FAIL + reason and
+    /// exits non-zero on FAIL so CI / a pre-install check can gate on it.
+    Verify {
+        /// Directory containing `plugin.toml` + `plugin.wasm` (+ optional
+        /// `plugin.wasm.minisig`).
+        path: std::path::PathBuf,
+    },
 }
 
 pub async fn run_plugin(args: PluginArgs) -> Result<()> {
@@ -81,6 +93,7 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
             set_activation(&home, &id, PluginActivation::Disabled, args.output)
         }
         PluginAction::Test { path } => run_test(&path, args.output),
+        PluginAction::Verify { path } => run_verify(&path, args.output),
     }
 }
 
@@ -153,6 +166,92 @@ fn run_test(path: &std::path::Path, output: OutputFormat) -> Result<()> {
     render_test_report(&manifest, wasm_bytes.len(), invocation_outcome, output)
 }
 
+/// SC-03 — `neoth plugin verify <path>`: run the operator's integrity
+/// policy against one plugin directory without instantiating it. Reuses
+/// the daemon's [`crate::wasm_plugin::discovery::verify_integrity`] gate
+/// so the CLI verdict and the daemon's load-time refusal can never
+/// disagree. Exits non-zero on FAIL.
+fn run_verify(path: &std::path::Path, output: OutputFormat) -> Result<()> {
+    if !path.exists() {
+        anyhow::bail!(
+            "plugin path `{}` does not exist — pass a directory containing \
+             `plugin.toml` + `plugin.wasm`",
+            path.display()
+        );
+    }
+    if !path.is_dir() {
+        anyhow::bail!(
+            "plugin path `{}` is not a directory — expected a directory with \
+             `plugin.toml` + `plugin.wasm`",
+            path.display()
+        );
+    }
+
+    let plugin =
+        crate::wasm_plugin::discovery::load_plugin(path).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // Apply the SAME freedom.yaml policy the daemon uses at load time.
+    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let w = &cfg.plugins.wasm;
+    let policy = crate::wasm_plugin::discovery::IntegrityPolicy {
+        pinned: &w.pinned_hashes,
+        require_all_pinned: w.require_all_pinned,
+        author_pubkey: w.author_pubkey.as_deref(),
+        require_signature: w.require_signature,
+        revoked: &w.revoked_ids,
+    };
+    let verdict = crate::wasm_plugin::discovery::verify_integrity(&plugin, &policy);
+    let sig_present = plugin.signature.is_some();
+    let sig_checked = w.author_pubkey.is_some();
+    let (status, reason) = match &verdict {
+        Ok(()) => ("PASS", String::new()),
+        Err(e) => ("FAIL", e.to_string()),
+    };
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let obj = serde_json::json!({
+                "id": plugin.manifest.id,
+                "content_hash": plugin.content_hash,
+                "signature_present": sig_present,
+                "signature_checked": sig_checked,
+                "verdict": status,
+                "reason": reason,
+            });
+            println!("{}", serde_json::to_string(&obj)?);
+        }
+        OutputFormat::Table => {
+            println!("plugin:     {}", plugin.manifest.id);
+            println!("sha256:     {}", plugin.content_hash);
+            println!(
+                "signature:  {}",
+                if sig_present {
+                    "present (plugin.wasm.minisig)"
+                } else {
+                    "absent"
+                }
+            );
+            println!(
+                "author key: {}",
+                if sig_checked {
+                    "configured (signature verified)"
+                } else {
+                    "not configured (signature check off)"
+                }
+            );
+            println!("verdict:    {status}");
+            if !reason.is_empty() {
+                println!("reason:     {reason}");
+            }
+        }
+    }
+
+    if verdict.is_err() {
+        anyhow::bail!("plugin failed the SC-03 integrity gate");
+    }
+    Ok(())
+}
+
 #[cfg(feature = "wasm-plugin-host")]
 fn run_test_invoke(
     manifest: &crate::wasm_plugin::manifest::PluginManifest,
@@ -177,7 +276,7 @@ fn run_test_invoke(
     let compile_outcome = match engine.compile_from_bytes(wasm_bytes) {
         Ok(module) => CompileOutcome::Compiled {
             plugin_id: manifest.id.clone(),
-            module,
+            module: std::sync::Arc::new(module),
         },
         Err(e) => CompileOutcome::Failed {
             plugin_id: manifest.id.clone(),
@@ -195,7 +294,18 @@ fn run_test_invoke(
         CompileOutcome::Compiled { module, .. } => module,
         CompileOutcome::Failed { .. } => unreachable!("invocation_outcome_from_compile_failure"),
     };
-    let linker = hostcalls::build_linker(&engine);
+    // `build_linker` takes the raw `wasmtime::Engine` and returns a
+    // `Result`; `invoke_plugin` takes `&NeothEngine` + `&Module`.
+    let linker = match hostcalls::build_linker(engine.raw()) {
+        Ok(l) => l,
+        Err(e) => {
+            return Some(TestInvocationSummary {
+                stage: "compile".to_string(),
+                error: Some(format!("linker build failed: {e}")),
+                invoked_ok: false,
+            });
+        }
+    };
     let outcome = invoke_plugin(&engine, module, &linker, manifest.id.clone());
     let invoked_ok = matches!(outcome.stage, InvocationStage::Run) && outcome.error.is_none();
     Some(TestInvocationSummary {
@@ -538,6 +648,23 @@ version = \"0.1.0\"\n\
         let file = dir.path().join("oops.txt");
         std::fs::write(&file, b"not a plugin dir").unwrap();
         let err = run_test(&file, OutputFormat::Table).unwrap_err();
+        assert!(format!("{err:#}").contains("not a directory"));
+    }
+
+    #[test]
+    fn sc03_verify_bails_when_path_does_not_exist() {
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("not_there");
+        let err = run_verify(&missing, OutputFormat::Table).unwrap_err();
+        assert!(format!("{err:#}").contains("does not exist"));
+    }
+
+    #[test]
+    fn sc03_verify_bails_when_path_is_a_file() {
+        let dir = TempDir::new().unwrap();
+        let file = dir.path().join("oops.txt");
+        std::fs::write(&file, b"not a plugin dir").unwrap();
+        let err = run_verify(&file, OutputFormat::Table).unwrap_err();
         assert!(format!("{err:#}").contains("not a directory"));
     }
 
