@@ -537,6 +537,20 @@ pub const EVENT_TYPE_COUNCIL_DIVERSITY_WARNING: u8 = 0x64;
 /// the existing channels band intact.
 pub const EVENT_TYPE_CONSENT_DECISION: u8 = 0x65;
 
+/// `0x66 COUNCIL_TRANSCRIPT` — KF-01 full. The verbatim response text of
+/// ONE hemisphere in a council debate, persisted so `neoth council replay
+/// <prompt_hash>` can show the actual prose, not just the hashed metadata
+/// the `0x60..=0x64` frames carry. OPT-IN: emitted only when
+/// `freedom.yaml::council.persist_transcripts = true` (default false —
+/// hemisphere prose is sensitive; the operator chooses durability over
+/// privacy explicitly, mirroring the PROVIDER_RESPONSE hash-by-default
+/// rule). Keyed by `prompt_hash` (same xxh3 wire form as the other
+/// council frames) so the replay reader correlates a transcript with its
+/// debate. Payload: `{prompt_hash, role, provider, text}`. Durable
+/// (immediate-sync) — a persisted transcript the operator opted into is
+/// part of the auditable record.
+pub const EVENT_TYPE_COUNCIL_TRANSCRIPT: u8 = 0x66;
+
 // ---- 0x70..=0x7F  Coding workflow (V11 Pick #38, 2026-05-19) --------------
 //
 // Hermes-adapted autonomous software engineering pipeline per
@@ -1325,6 +1339,8 @@ const _: () = {
         || EVENT_TYPE_COUNCIL_WINNER_SELECTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_DIVERSITY_WARNING < 0x60
         || EVENT_TYPE_COUNCIL_DIVERSITY_WARNING > 0x6F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_COUNCIL_TRANSCRIPT < 0x60 || EVENT_TYPE_COUNCIL_TRANSCRIPT > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_FIRED < 0x80 || EVENT_TYPE_HOOK_FIRED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_BLOCKED < 0x80 || EVENT_TYPE_HOOK_BLOCKED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_REPLACED < 0x80 || EVENT_TYPE_HOOK_REPLACED > 0x8F) as usize];
@@ -1533,6 +1549,7 @@ mod tests {
                 "COUNCIL_DIVERSITY_WARNING",
                 EVENT_TYPE_COUNCIL_DIVERSITY_WARNING,
             ),
+            ("COUNCIL_TRANSCRIPT", EVENT_TYPE_COUNCIL_TRANSCRIPT),
             ("HOOK_FIRED", EVENT_TYPE_HOOK_FIRED),
             ("HOOK_BLOCKED", EVENT_TYPE_HOOK_BLOCKED),
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),
@@ -1682,6 +1699,21 @@ mod tests {
         ] {
             assert!(needs_immediate_sync(code));
         }
+    }
+
+    #[test]
+    fn council_transcript_is_0x66_in_council_band_and_durable() {
+        // KF-01 full: pin the literal (operators bake `neoth wal show
+        // --type 0x66` into runbooks) + confirm it sits in the council
+        // band + is durable (an opted-in transcript is part of the
+        // auditable record, must survive a crash).
+        assert_eq!(EVENT_TYPE_COUNCIL_TRANSCRIPT, 0x66);
+        assert!(
+            (0x60..=0x6F).contains(&EVENT_TYPE_COUNCIL_TRANSCRIPT),
+            "0x{:02X} escaped council band 0x60..=0x6F",
+            EVENT_TYPE_COUNCIL_TRANSCRIPT
+        );
+        assert!(needs_immediate_sync(EVENT_TYPE_COUNCIL_TRANSCRIPT));
     }
 
     #[test]

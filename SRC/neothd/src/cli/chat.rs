@@ -1246,6 +1246,10 @@ pub async fn run_chat_with(
                     return Err(e);
                 }
             };
+            // KF-01 full: persist verbatim hemisphere transcripts (opt-in)
+            // so `neoth council replay` can show the actual prose. No-op
+            // unless freedom.yaml::council.persist_transcripts = true.
+            emit_council_transcripts(&writer, prompt_hash_pre, &outcome, &config).await;
             // B-3 (Session 13) — record this debate's wall-clock so the
             // NEXT prompt's trigger eval sees a real
             // `seconds_since_last_council`. Best-effort: a failed write
@@ -3260,6 +3264,73 @@ async fn emit_council_synthesis_attempted(
         warn!(error = %e, "could not append COUNCIL_SYNTHESIS_ATTEMPTED frame");
     }
     Ok(())
+}
+
+/// Per-hemisphere transcript-text cap. Keeps a single `0x66` frame
+/// scannable + well under the WAL `MAX_PAYLOAD_BYTES` ceiling even for a
+/// verbose model. A longer reply is truncated with a marker so replay
+/// shows the bulk of the prose without the frame failing to append.
+const MAX_TRANSCRIPT_BYTES: usize = 32 * 1024;
+
+/// KF-01 full — OPT-IN: persist each hemisphere's verbatim response text
+/// as a `0x66 COUNCIL_TRANSCRIPT` frame so `neoth council replay` can show
+/// the actual prose. No-op unless `freedom.yaml::council.persist_transcripts`
+/// is true (default false — hemisphere prose is sensitive). Best-effort:
+/// a failed append is logged but never blocks the chat turn, and the
+/// debate result is unchanged either way. Errored hemispheres (no text)
+/// are skipped — their `0x61`/metadata frames already record the refusal.
+async fn emit_council_transcripts(
+    writer: &crate::wal::writer::WalWriterHandle,
+    prompt_hash: u64,
+    outcome: &crate::council::CouncilDebate,
+    config: &FreedomConfig,
+) {
+    if !config.council.persist_transcripts {
+        return;
+    }
+    for resp in &outcome.responses {
+        let Some(text) = resp.text.as_deref() else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let stored = if text.len() > MAX_TRANSCRIPT_BYTES {
+            let mut t = text[..MAX_TRANSCRIPT_BYTES].to_string();
+            while !t.is_char_boundary(t.len()) {
+                t.pop();
+            }
+            t.push_str("\n[NEOTH] …transcript truncated…");
+            t
+        } else {
+            text.to_string()
+        };
+        let payload_value = serde_json::json!({
+            "prompt_hash": format!("{prompt_hash:016x}"),
+            "role": resp.role.as_str(),
+            "provider": resp.provider.as_str(),
+            "text": stored,
+        });
+        let payload = match serde_json::to_vec(&payload_value) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(error = %e, "could not serialize COUNCIL_TRANSCRIPT payload");
+                continue;
+            }
+        };
+        let header = crate::wal::HeaderBuilder::new(
+            crate::wal::events::EVENT_TYPE_COUNCIL_TRANSCRIPT,
+            &payload,
+        )
+        .build();
+        if let Err(e) = writer.append(header, payload).await {
+            warn!(
+                error = %e,
+                role = %resp.role.as_str(),
+                "could not append COUNCIL_TRANSCRIPT frame"
+            );
+        }
+    }
 }
 
 /// K-Wire-3 v2 2026-05-17: evaluate the council smart-trigger using

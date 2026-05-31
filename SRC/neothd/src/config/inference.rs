@@ -556,6 +556,18 @@ pub struct CouncilConfig {
     /// both are present.
     #[serde(default)]
     pub disabled: Option<bool>,
+
+    /// KF-01 full — persist each hemisphere's VERBATIM response text as a
+    /// `0x66 COUNCIL_TRANSCRIPT` WAL frame at debate time, so
+    /// `neoth council replay <prompt_hash>` can show the actual prose, not
+    /// just the hashed metadata the other council frames carry. DEFAULT
+    /// OFF: hemisphere prose is sensitive (it may quote the operator's
+    /// memory / the model's full reasoning), so durability-over-privacy is
+    /// an explicit operator choice — the same posture as PROVIDER_RESPONSE
+    /// hashing the reply by default. When `true`, transcripts land in the
+    /// audit chain and are visible to anyone who can read the WAL.
+    #[serde(default)]
+    pub persist_transcripts: bool,
 }
 
 /// SP-2 minimum-viable default: 15 calls per user message. Covers
@@ -1082,6 +1094,13 @@ left:
         assert!(!cfg.self_reflect_enabled);
         assert_eq!(cfg.diversity_bonus_weight, None);
         assert_eq!(cfg.max_recursion_depth, None);
+        // KF-01 full: transcript persistence is OPT-IN — default OFF so
+        // hemisphere prose is NOT written to the WAL unless the operator
+        // explicitly chooses durability over privacy.
+        assert!(
+            !cfg.persist_transcripts,
+            "persist_transcripts MUST default to false (privacy-first opt-in)"
+        );
     }
 
     #[test]

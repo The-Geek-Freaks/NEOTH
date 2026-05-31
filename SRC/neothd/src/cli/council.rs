@@ -29,7 +29,7 @@ use crate::memory::routing_weights::{RoutingWeights, now_unix};
 use crate::wal::compress::decompress_frames;
 use crate::wal::events::{
     EVENT_TYPE_COUNCIL_DIVERSITY_WARNING, EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL,
-    EVENT_TYPE_COUNCIL_SKIP, EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED,
+    EVENT_TYPE_COUNCIL_SKIP, EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED, EVENT_TYPE_COUNCIL_TRANSCRIPT,
     EVENT_TYPE_COUNCIL_WINNER_SELECTED,
 };
 use crate::wal::frame::decode_frame;
@@ -529,6 +529,7 @@ fn council_code_name(event_type: u8) -> Option<&'static str> {
         EVENT_TYPE_COUNCIL_SKIP => Some("skip"),
         EVENT_TYPE_COUNCIL_WINNER_SELECTED => Some("winner_selected"),
         EVENT_TYPE_COUNCIL_DIVERSITY_WARNING => Some("diversity_warning"),
+        EVENT_TYPE_COUNCIL_TRANSCRIPT => Some("transcript"),
         _ => None,
     }
 }
@@ -789,15 +790,43 @@ fn render_replay_line(row: &CouncilEventRow) -> String {
             "diversity warning — hemispheres converged suspiciously (possible groupthink)"
                 .to_string()
         }
+        EVENT_TYPE_COUNCIL_TRANSCRIPT => {
+            // KF-01 full — the verbatim hemisphere prose the operator
+            // opted to persist. Header names the role + provider; the
+            // text follows on its own indented lines.
+            let role = row
+                .payload
+                .get("role")
+                .and_then(|v| v.as_str())
+                .unwrap_or("hemisphere");
+            let provider = row
+                .payload
+                .get("provider")
+                .and_then(|v| v.as_str())
+                .unwrap_or("?");
+            let text = row
+                .payload
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let indented = text
+                .lines()
+                .map(|l| format!("       {l}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("transcript [{role} / {provider}]:\n{indented}")
+        }
         _ => row.code_name.to_string(),
     }
 }
 
 /// KF-01 — `neoth council replay <prompt_hash>`: chronological NARRATIVE
-/// reconstruction of one debate. Reuses the SPEC-03 council WAL reader; no
-/// new frame, no orchestrator change. The hemisphere PROSE is not in the
-/// WAL (privacy — only content hashes + metadata persist), so replay
-/// reconstructs the debate STRUCTURE, not verbatim transcripts.
+/// reconstruction of one debate from the council WAL frames. By default the
+/// hemisphere PROSE is NOT in the WAL (privacy — only content hashes +
+/// metadata persist), so replay reconstructs the debate STRUCTURE. When the
+/// operator opts into `freedom.yaml::council.persist_transcripts`, each
+/// hemisphere's verbatim text is persisted as a `0x66 COUNCIL_TRANSCRIPT`
+/// frame and replay renders it inline (and reports `transcripts_available`).
 fn run_replay(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()> {
     let wal_dir = home.join("wal");
     let mut rows: Vec<CouncilEventRow> = collect_council_events(&wal_dir)
@@ -811,6 +840,10 @@ fn run_replay(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()
         .collect();
     // Chronological (forward) — replay plays the debate in order.
     rows.sort_by(|a, b| a.ts_ns.cmp(&b.ts_ns).then(a.event_id.cmp(&b.event_id)));
+
+    // KF-01 full: verbatim prose is present only when the operator opted
+    // into `council.persist_transcripts` and a 0x66 frame was written.
+    let transcripts_available = rows.iter().any(|r| r.code == EVENT_TYPE_COUNCIL_TRANSCRIPT);
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -828,7 +861,7 @@ fn run_replay(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()
             let obj = serde_json::json!({
                 "prompt_hash": prompt_hash,
                 "steps": steps,
-                "transcripts_available": false,
+                "transcripts_available": transcripts_available,
             });
             println!("{}", serde_json::to_string(&obj)?);
         }
@@ -844,11 +877,21 @@ fn run_replay(home: &Path, prompt_hash: &str, output: OutputFormat) -> Result<()
             for (i, r) in rows.iter().enumerate() {
                 println!("  {}. {}", i + 1, render_replay_line(r));
             }
-            println!(
-                "\n(Note: hemisphere response prose is not persisted in the WAL — only the \
-                 debate structure above + content hashes. Replay reconstructs WHAT the council \
-                 did, not the verbatim text.)"
-            );
+            if transcripts_available {
+                println!(
+                    "\n(Verbatim hemisphere transcripts above are persisted because \
+                     `freedom.yaml::council.persist_transcripts` is enabled — they are part \
+                     of the auditable WAL record.)"
+                );
+            } else {
+                println!(
+                    "\n(Note: hemisphere response prose is not persisted — only the debate \
+                     structure above + content hashes. Enable \
+                     `freedom.yaml::council.persist_transcripts` to record verbatim \
+                     transcripts for future debates. Replay reconstructs WHAT the council \
+                     did, not the verbatim text.)"
+                );
+            }
         }
     }
     Ok(())
@@ -1235,6 +1278,40 @@ mod tests {
             ))
             .contains("groupthink")
         );
+        // KF-01 full — the verbatim transcript arm renders role, provider,
+        // and the (indented) prose.
+        let tr = render_replay_line(&row_coded(
+            EVENT_TYPE_COUNCIL_TRANSCRIPT,
+            "transcript",
+            json!({
+                "role": "left",
+                "provider": "local_qwen",
+                "text": "I think the answer is 42.\nHere is why."
+            }),
+        ));
+        assert!(
+            tr.contains("transcript [left / local_qwen]")
+                && tr.contains("I think the answer is 42.")
+                && tr.contains("Here is why."),
+            "got: {tr}"
+        );
+    }
+
+    #[test]
+    fn transcripts_available_flips_when_a_0x66_frame_is_present() {
+        // The narrative-only debate (no 0x66) reports transcripts absent;
+        // a debate carrying a transcript row reports them available. This
+        // pins the honesty flag the replay footer + JSON depend on.
+        let no_tr = [
+            EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED,
+            EVENT_TYPE_COUNCIL_SKIP,
+        ];
+        assert!(!no_tr.contains(&EVENT_TYPE_COUNCIL_TRANSCRIPT));
+        let with_tr = [
+            EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED,
+            EVENT_TYPE_COUNCIL_TRANSCRIPT,
+        ];
+        assert!(with_tr.contains(&EVENT_TYPE_COUNCIL_TRANSCRIPT));
     }
 
     #[test]
