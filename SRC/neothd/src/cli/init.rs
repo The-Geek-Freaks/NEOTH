@@ -29,6 +29,9 @@ pub enum ProviderKind {
     AnthropicApi,
     /// Google Gemini REST API.
     GeminiApi,
+    /// PF-02 — native Cohere v2 Chat API (`api.cohere.com/v2`, key-based,
+    /// BILLED per-token; no subscription path).
+    Cohere,
     /// OpenAI-compatible endpoint at custom URL (LM Studio, vLLM, etc.).
     OpenaiCompat,
     /// Local Qwen3 inference. ~3 GB disk + first-load model download.
@@ -1345,6 +1348,10 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                 ),
                 (ProviderKind::GeminiApi, "gemini_api (Google Gemini REST)"),
                 (
+                    ProviderKind::Cohere,
+                    "cohere_api (api.cohere.com — Cohere v2 Chat, ⚠ BILLED per-token)",
+                ),
+                (
                     ProviderKind::OpenaiCompat,
                     "openai_compat (OpenRouter / Together / Groq / LM Studio / vLLM / Ollama / custom)",
                 ),
@@ -1432,6 +1439,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
         ProviderKind::OpenaiApi
         | ProviderKind::AnthropicApi
         | ProviderKind::GeminiApi
+        | ProviderKind::Cohere
         | ProviderKind::OpenaiCompat => {
             // Cost guard (operator directive 2026-05-31): anthropic_api BILLS
             // per-token; claude_cli via tmux is the OAuth/subscription path
@@ -1444,6 +1452,13 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                      pick `claude_cli` instead — it routes through the `claude` CLI (tmux) \
                      with NO per-token metering. Only use anthropic_api if you specifically \
                      want API-key billing (e.g. no subscription, just an API key)."
+                );
+            }
+            if interactive && kind == ProviderKind::Cohere {
+                println!(
+                    "  ⚠ cohere_api BILLS PER-TOKEN via the Cohere API (no subscription \
+                     path). For a free local option pick `local_qwen`; for a Claude \
+                     subscription pick `claude_cli`."
                 );
             }
             // Endpoint resolution: for OpenaiCompat we prompt explicitly because
@@ -1507,6 +1522,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
                 ProviderKind::OpenaiApi => "gpt-5.5",
                 ProviderKind::AnthropicApi => "claude-sonnet-4-6",
                 ProviderKind::GeminiApi => "gemini-3.1-pro-preview",
+                ProviderKind::Cohere => "command-a-plus-05-2026",
                 ProviderKind::OpenaiCompat => "opus-4.7",
                 _ => "",
             };
@@ -2177,6 +2193,7 @@ fn catalog_key_for_provider_kind(kind: ProviderKind) -> Option<&'static str> {
         ProviderKind::LocalQwen
         | ProviderKind::LocalOuro
         | ProviderKind::AzureOpenAi
+        | ProviderKind::Cohere
         | ProviderKind::Skip => return None,
     })
 }
@@ -2224,9 +2241,9 @@ fn catalog_key_for_provider(
         I::OpenAiCompat => "openai_compat",
         I::Gemini => "gemini_api",
         I::AwsBedrock => "aws_bedrock",
-        // Local Qwen + AzureOpenAi don't have a model-catalog source
-        // today — fall through to bundled defaults.
-        I::LocalQwen | I::LocalOuro | I::AzureOpenAi => return None,
+        // Local Qwen + AzureOpenAi + Cohere don't have a model-catalog
+        // source today — fall through to bundled defaults.
+        I::LocalQwen | I::LocalOuro | I::AzureOpenAi | I::Cohere => return None,
     })
 }
 
@@ -2381,6 +2398,7 @@ fn provider_kind_to_inference(
         ProviderKind::AnthropicApi => I::AnthropicApi,
         ProviderKind::OpenaiCompat => I::OpenAiCompat,
         ProviderKind::GeminiApi => I::Gemini,
+        ProviderKind::Cohere => I::Cohere,
         ProviderKind::LocalQwen => I::LocalQwen,
         ProviderKind::LocalOuro => I::LocalOuro,
         ProviderKind::AwsBedrock => I::AwsBedrock,
@@ -3897,6 +3915,7 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
         Some(ProviderKind::OpenaiApi) => "openai_api",
         Some(ProviderKind::AnthropicApi) => "anthropic_api",
         Some(ProviderKind::GeminiApi) => "gemini_api",
+        Some(ProviderKind::Cohere) => "cohere_api",
         Some(ProviderKind::OpenaiCompat) => "openai_compat",
         Some(ProviderKind::LocalQwen) => "local_qwen",
         Some(ProviderKind::LocalOuro) => "local_ouro",

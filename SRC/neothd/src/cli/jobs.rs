@@ -226,6 +226,7 @@ pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
                 ProviderKind::OpenaiApi => "openai_api",
                 ProviderKind::AnthropicApi => "anthropic_api",
                 ProviderKind::GeminiApi => "gemini_api",
+                ProviderKind::Cohere => "cohere_api",
                 ProviderKind::OpenaiCompat => "openai_compat",
                 ProviderKind::LocalQwen => "local_qwen",
                 ProviderKind::LocalOuro => "local_ouro",

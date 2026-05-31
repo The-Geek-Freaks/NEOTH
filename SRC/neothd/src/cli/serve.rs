@@ -2706,6 +2706,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                         crate::cli::init::ProviderKind::AnthropicApi => "anthropic_api",
                         crate::cli::init::ProviderKind::OpenaiCompat => "openai_compat",
                         crate::cli::init::ProviderKind::GeminiApi => "gemini_api",
+                        crate::cli::init::ProviderKind::Cohere => "cohere_api",
                         crate::cli::init::ProviderKind::LocalQwen => "local_qwen",
                         crate::cli::init::ProviderKind::LocalOuro => "local_ouro",
                         crate::cli::init::ProviderKind::AwsBedrock => "aws_bedrock",

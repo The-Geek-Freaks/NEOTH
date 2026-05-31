@@ -71,6 +71,11 @@ pub enum InferenceProvider {
     /// like LocalQwen; default checkpoint `ByteDance/Ouro-1.4B-Thinking`
     /// (~3 GB BF16, noob-safe on ≥4 GB VRAM).
     LocalOuro,
+    /// PF-02 (Session 31) — direct Cohere v2 Chat API
+    /// (`api.cohere.com/v2`, Bearer key). A metered API (no subscription
+    /// path). Hybrid wire format: OpenAI-like request (messages with a
+    /// `system` role) + Anthropic-like response (`message.content[].text`).
+    Cohere,
 }
 
 impl InferenceProvider {
@@ -85,6 +90,7 @@ impl InferenceProvider {
             InferenceProvider::AwsBedrock => "aws_bedrock",
             InferenceProvider::AzureOpenAi => "azure_openai",
             InferenceProvider::LocalOuro => "local_ouro",
+            InferenceProvider::Cohere => "cohere_api",
         }
     }
 
@@ -108,6 +114,7 @@ impl InferenceProvider {
             InferenceProvider::LocalOuro => {
                 "Local Ouro thinking-models via candle (ByteDance LoopLM, Apache-2.0; 4× compute, explicit reasoning prose)"
             }
+            InferenceProvider::Cohere => "Cohere v2 Chat API (key required, BILLED per-token)",
         }
     }
 
@@ -118,6 +125,7 @@ impl InferenceProvider {
             "openai_api" | "openai" => Some(Self::OpenAi),
             "openai_compat" | "compat" => Some(Self::OpenAiCompat),
             "gemini_api" | "gemini" => Some(Self::Gemini),
+            "cohere_api" | "cohere" => Some(Self::Cohere),
             "local_qwen" | "qwen" | "local" => Some(Self::LocalQwen),
             "aws_bedrock" | "bedrock" => Some(Self::AwsBedrock),
             "azure_openai" | "azure" => Some(Self::AzureOpenAi),
@@ -166,6 +174,7 @@ impl InferenceProvider {
             InferenceProvider::AwsBedrock => ProviderKind::AwsBedrock,
             InferenceProvider::AzureOpenAi => ProviderKind::AzureOpenAi,
             InferenceProvider::LocalOuro => ProviderKind::LocalOuro,
+            InferenceProvider::Cohere => ProviderKind::Cohere,
         }
     }
 }

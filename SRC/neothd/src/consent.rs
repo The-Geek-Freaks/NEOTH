@@ -32,6 +32,7 @@ pub fn is_cloud(kind: ProviderKind) -> bool {
             | ProviderKind::OpenaiApi
             | ProviderKind::AnthropicApi
             | ProviderKind::GeminiApi
+            | ProviderKind::Cohere
             | ProviderKind::OpenaiCompat
             | ProviderKind::AwsBedrock
             | ProviderKind::AzureOpenAi
@@ -46,6 +47,7 @@ pub fn slug(kind: ProviderKind) -> &'static str {
         ProviderKind::OpenaiApi => "openai_api",
         ProviderKind::AnthropicApi => "anthropic_api",
         ProviderKind::GeminiApi => "gemini_api",
+        ProviderKind::Cohere => "cohere_api",
         ProviderKind::OpenaiCompat => "openai_compat",
         ProviderKind::LocalQwen => "local_qwen",
         ProviderKind::LocalOuro => "local_ouro",
@@ -61,6 +63,7 @@ pub fn kind_from_slug(s: &str) -> Option<ProviderKind> {
         "openai_api" => Some(ProviderKind::OpenaiApi),
         "anthropic_api" => Some(ProviderKind::AnthropicApi),
         "gemini_api" => Some(ProviderKind::GeminiApi),
+        "cohere_api" => Some(ProviderKind::Cohere),
         "openai_compat" => Some(ProviderKind::OpenaiCompat),
         "local_qwen" => Some(ProviderKind::LocalQwen),
         "local_ouro" => Some(ProviderKind::LocalOuro),
@@ -77,6 +80,7 @@ fn cloud_label(kind: ProviderKind) -> &'static str {
         ProviderKind::OpenaiApi => "OpenAI",
         ProviderKind::AnthropicApi => "Anthropic Claude (API key)",
         ProviderKind::GeminiApi => "Google Gemini",
+        ProviderKind::Cohere => "Cohere",
         ProviderKind::OpenaiCompat => "the configured OpenAI-compatible endpoint",
         ProviderKind::AwsBedrock => "AWS Bedrock (region + IAM credential chain)",
         ProviderKind::AzureOpenAi => "Azure OpenAI (api-version + deployment name)",

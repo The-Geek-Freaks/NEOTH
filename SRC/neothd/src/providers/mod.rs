@@ -25,6 +25,8 @@ pub mod claude_retry;
 pub mod claude_session;
 pub mod claude_tmux;
 pub mod clip_engine;
+/// PF-02 — native Cohere v2 Chat adapter (hybrid OAI-request/Anthropic-response).
+pub mod cohere_api;
 pub mod context_guards;
 pub mod cooldown_pair;
 pub mod cost;
@@ -518,6 +520,16 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 .clone()
                 .unwrap_or_else(|| "gemini-3.1-pro-preview".to_string());
             Ok(Box::new(gemini_api::GeminiAdapter::new(key, model)?))
+        }
+        ProviderKind::Cohere => {
+            // PF-02 — native Cohere v2 Chat (Bearer key, metered). Same
+            // single `provider_key` as the other cloud adapters.
+            let key = require_provider_key(config, "cohere_api")?;
+            let model = config
+                .provider_model
+                .clone()
+                .unwrap_or_else(|| "command-a-plus-05-2026".to_string());
+            Ok(Box::new(cohere_api::CohereAdapter::new(key, model)?))
         }
         ProviderKind::LocalQwen => {
             // First construction downloads model artifacts from Hugging Face

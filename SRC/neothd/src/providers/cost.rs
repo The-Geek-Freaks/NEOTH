@@ -114,6 +114,18 @@ pub fn lookup_price(provider: &str, model: &str) -> Option<PriceRow> {
             input_eur_per_mtok: 1.15, // $1.25
             output_eur_per_mtok: 9.2,
         }),
+        // Cohere v2 (command-a / command-r family). Approximate USD→EUR
+        // snapshots; operators override via freedom.yaml::cost_override
+        // for exact billing. `command-a` + `r-plus` are the premium tier;
+        // plain `command-r`/`command` is the cheaper tier.
+        ("cohere_api", m) if m.contains("command-a") || m.contains("r-plus") => Some(PriceRow {
+            input_eur_per_mtok: 2.3,  // ~$2.5
+            output_eur_per_mtok: 9.2, // ~$10
+        }),
+        ("cohere_api", m) if m.contains("command") => Some(PriceRow {
+            input_eur_per_mtok: 0.14,  // ~$0.15
+            output_eur_per_mtok: 0.55, // ~$0.6
+        }),
         // Local — always free
         ("local_qwen" | "local_ouro", _) => Some(PriceRow::free()),
         _ => None,
