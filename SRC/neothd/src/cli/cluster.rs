@@ -98,6 +98,13 @@ pub enum ClusterAction {
         /// (operator typed the pub_key in directly).
         #[arg(long, default_value = "manual")]
         via: String,
+        /// SL-01c: optional network hostname to record for the peer so
+        /// you can later reference it by a memorable name
+        /// (`neoth cluster revoke <hostname>`) instead of the 64-char
+        /// pub_key. Not collected in `--interactive` mode — re-confirm
+        /// with `--hostname` to set it.
+        #[arg(long)]
+        hostname: Option<String>,
         /// Interactive picker: run a mDNS scan first, render a
         /// numbered list of discovered peers, prompt operator for a
         /// selection, then confirm the pick. Skips the positional
@@ -147,6 +154,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
             label,
             addr,
             via,
+            hostname,
             interactive,
             interactive_timeout,
         } => {
@@ -160,7 +168,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("missing --label (or pass --interactive)"))?;
                 let addr =
                     addr.ok_or_else(|| anyhow::anyhow!("missing --addr (or pass --interactive)"))?;
-                run_confirm(&pub_key, &label, &addr, &via)
+                run_confirm(&pub_key, &label, &addr, &via, hostname.as_deref())
             }
         }
         ClusterAction::Revoke { pub_key } => run_revoke(&pub_key),
@@ -298,7 +306,10 @@ async fn run_confirm_interactive(timeout_secs: u64, via: &str) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("read stdin: {e}"))?;
     let idx = parse_pick(&line, peers.len())?;
     let picked = &peers[idx];
-    run_confirm(&picked.pub_key_hex, &picked.label, &picked.addr, via)
+    // Interactive picker doesn't collect a hostname (the mDNS announce
+    // carries label + addr, not a stable hostname) — re-confirm with
+    // `--hostname` to set it. SL-01c.
+    run_confirm(&picked.pub_key_hex, &picked.label, &picked.addr, via, None)
 }
 
 async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
@@ -579,6 +590,7 @@ fn run_topology(output: &OutputFormat) -> Result<()> {
                         "pub_key_short": &p.pub_key_hex[..16.min(p.pub_key_hex.len())],
                         "pub_key_hex": p.pub_key_hex,
                         "label": p.instance_label,
+                        "hostname": p.hostname,
                         "addr": p.addr,
                         "via": p.discovered_via.as_str(),
                         "paired_at_unix": p.paired_at_unix,
@@ -616,7 +628,13 @@ fn run_topology(output: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> {
+fn run_confirm(
+    pub_key: &str,
+    label: &str,
+    addr: &str,
+    via: &str,
+    hostname: Option<&str>,
+) -> Result<()> {
     let pub_key_norm = pub_key.trim().to_ascii_lowercase();
     // Strict validation per Phase 4 audit: 64-char lowercase hex.
     // Prefix matching is reserved for `revoke` where we have a
@@ -644,9 +662,11 @@ fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> 
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
+    let hostname_norm = hostname.map(|h| h.trim()).unwrap_or("").to_string();
     let peer = crate::cluster::registry::PairedPeer {
         pub_key_hex: pub_key_norm.clone(),
         instance_label: label.into(),
+        hostname: hostname_norm,
         addr: addr.into(),
         discovered_via: via_enum,
         paired_at_unix: now,
@@ -677,23 +697,79 @@ fn run_confirm(pub_key: &str, label: &str, addr: &str, via: &str) -> Result<()> 
     Ok(())
 }
 
+/// Best-effort sidecar drop for the WAL `0xE7` PeerRevoked audit frame.
+/// Sidecar write failure is non-fatal — the registry change already
+/// landed; the daemon emits the frame on its next tick when it can.
+fn emit_revoke_sidecar(home: &std::path::Path, pub_key_hex: &str) {
+    let payload = serde_json::json!({});
+    if let Err(e) = crate::cluster::audit_sidecar::write_sidecar(
+        home,
+        crate::cluster::audit_sidecar::ClusterAuditKind::PeerRevoked,
+        pub_key_hex,
+        payload,
+    ) {
+        tracing::warn!(error = %e, "cluster revoke sidecar write failed (non-fatal)");
+    }
+}
+
+/// What a revoke resolved to. Lets `revoke_peer` stay a pure
+/// home-injectable core (tempdir-testable) while `run_revoke` owns the
+/// operator-facing printing.
+#[derive(Debug, PartialEq, Eq)]
+enum RevokeOutcome {
+    /// Removed by pub_key (full or unique prefix).
+    ByKey(String),
+    /// SL-01c: removed by resolving a recorded hostname → pub_key.
+    ByHostname {
+        label: String,
+        hostname: String,
+        key: String,
+    },
+    /// Nothing matched by either key or hostname.
+    NoMatch,
+}
+
+/// Resolve + remove a peer from the registry under `home`. Tries the
+/// arg as a pub_key (full or unique prefix) FIRST so an all-hex
+/// hostname can never shadow a real key; on no key-match, falls back
+/// to resolving the arg as a recorded hostname (SL-01c).
+fn revoke_peer(home: &std::path::Path, arg: &str) -> Result<RevokeOutcome> {
+    let key = arg.trim().to_ascii_lowercase();
+    if crate::cluster::registry::remove(home, &key)? {
+        emit_revoke_sidecar(home, &key);
+        return Ok(RevokeOutcome::ByKey(key));
+    }
+    if let Some(peer) = crate::cluster::registry::find_by_hostname(home, arg.trim()) {
+        if crate::cluster::registry::remove(home, &peer.pub_key_hex)? {
+            emit_revoke_sidecar(home, &peer.pub_key_hex);
+            return Ok(RevokeOutcome::ByHostname {
+                label: peer.instance_label,
+                hostname: arg.trim().to_string(),
+                key: peer.pub_key_hex,
+            });
+        }
+    }
+    Ok(RevokeOutcome::NoMatch)
+}
+
 fn run_revoke(pub_key: &str) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
-    let key = pub_key.trim().to_ascii_lowercase();
-    if crate::cluster::registry::remove(&home, &key)? {
-        // Best-effort sidecar drop for the WAL 0xE7 audit frame.
-        let payload = serde_json::json!({});
-        if let Err(e) = crate::cluster::audit_sidecar::write_sidecar(
-            &home,
-            crate::cluster::audit_sidecar::ClusterAuditKind::PeerRevoked,
-            &key,
-            payload,
-        ) {
-            tracing::warn!(error = %e, "cluster revoke sidecar write failed (non-fatal)");
+    match revoke_peer(&home, pub_key)? {
+        RevokeOutcome::ByKey(key) => println!("revoked peer `{key}`"),
+        RevokeOutcome::ByHostname {
+            label,
+            hostname,
+            key,
+        } => {
+            let short = &key[..16.min(key.len())];
+            println!("revoked peer `{label}` (resolved hostname `{hostname}` → {short})");
         }
-        println!("revoked peer `{key}`");
-    } else {
-        println!("no peer matched `{key}` (no-op)");
+        RevokeOutcome::NoMatch => {
+            println!(
+                "no peer matched `{}` by pub_key or hostname (no-op)",
+                pub_key.trim().to_ascii_lowercase()
+            );
+        }
     }
     Ok(())
 }
@@ -1160,6 +1236,7 @@ mod tests {
             label: None,
             addr: None,
             via: "manual".into(),
+            hostname: None,
             interactive: true,
             interactive_timeout: 15,
         };
@@ -1171,10 +1248,12 @@ mod tests {
                 interactive,
                 interactive_timeout,
                 via,
+                hostname,
             } => {
                 assert!(pub_key.is_none());
                 assert!(label.is_none());
                 assert!(addr.is_none());
+                assert!(hostname.is_none());
                 assert!(interactive);
                 assert_eq!(interactive_timeout, 15);
                 assert_eq!(via, "manual");
@@ -1191,6 +1270,7 @@ mod tests {
                 label: Some("x".into()),
                 addr: Some("127.0.0.1:1".into()),
                 via: "manual".into(),
+                hostname: None,
                 interactive: false,
                 interactive_timeout: 10,
             },
@@ -1200,12 +1280,79 @@ mod tests {
         assert!(err.to_string().contains("pub_key"));
     }
 
+    // ── SL-01c revoke-by-hostname ─────────────────────────────────────────
+
+    #[test]
+    fn revoke_resolves_by_hostname_when_arg_is_not_a_pubkey() {
+        let dir = tempfile::tempdir().unwrap();
+        let peer = crate::cluster::registry::PairedPeer {
+            pub_key_hex: "cd".repeat(32),
+            instance_label: "the-laptop".into(),
+            hostname: "workstation-7".into(),
+            addr: "192.0.2.9:4242".into(),
+            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+            paired_at_unix: 1_700_000_000,
+            last_seen_unix: 1_700_000_000,
+        };
+        crate::cluster::registry::upsert(dir.path(), peer.clone()).unwrap();
+        // "workstation-7" is not hex → key path misses → hostname resolves.
+        match revoke_peer(dir.path(), "workstation-7").unwrap() {
+            RevokeOutcome::ByHostname { label, key, .. } => {
+                assert_eq!(label, "the-laptop");
+                assert_eq!(key, peer.pub_key_hex);
+            }
+            other => panic!("expected ByHostname, got {other:?}"),
+        }
+        // Peer is gone; a second revoke is a clean no-op.
+        assert!(!crate::cluster::registry::is_paired(dir.path(), &peer.pub_key_hex));
+        assert_eq!(
+            revoke_peer(dir.path(), "workstation-7").unwrap(),
+            RevokeOutcome::NoMatch
+        );
+    }
+
+    #[test]
+    fn revoke_prefers_pubkey_prefix_over_hostname() {
+        let dir = tempfile::tempdir().unwrap();
+        // Peer A: key starts with "abab…"; Peer B: hostname == "abab"
+        // (an all-hex hostname). Revoking "abab" must hit A by key
+        // prefix, NOT B by hostname.
+        let a = crate::cluster::registry::PairedPeer {
+            pub_key_hex: "ab".repeat(32),
+            instance_label: "key-match".into(),
+            hostname: String::new(),
+            addr: "192.0.2.1:1".into(),
+            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+            paired_at_unix: 1,
+            last_seen_unix: 1,
+        };
+        let b = crate::cluster::registry::PairedPeer {
+            pub_key_hex: "cd".repeat(32),
+            instance_label: "host-match".into(),
+            hostname: "abab".into(),
+            addr: "192.0.2.2:2".into(),
+            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+            paired_at_unix: 1,
+            last_seen_unix: 1,
+        };
+        crate::cluster::registry::upsert(dir.path(), a.clone()).unwrap();
+        crate::cluster::registry::upsert(dir.path(), b.clone()).unwrap();
+        match revoke_peer(dir.path(), "abab").unwrap() {
+            RevokeOutcome::ByKey(k) => assert_eq!(k, "abab"),
+            other => panic!("expected ByKey precedence, got {other:?}"),
+        }
+        // A removed (key prefix), B survives (hostname not consulted).
+        assert!(!crate::cluster::registry::is_paired(dir.path(), &a.pub_key_hex));
+        assert!(crate::cluster::registry::is_paired(dir.path(), &b.pub_key_hex));
+    }
+
     // ── SL-02 topology view ───────────────────────────────────────────────
 
     fn peer(label: &str, last_seen_unix: i64) -> crate::cluster::registry::PairedPeer {
         crate::cluster::registry::PairedPeer {
             pub_key_hex: "ab".repeat(32),
             instance_label: label.into(),
+            hostname: String::new(),
             addr: "192.168.1.5:49737".into(),
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: 1_700_000_000,

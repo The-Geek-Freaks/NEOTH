@@ -2580,6 +2580,7 @@ mod tests {
         let peer = crate::cluster::registry::PairedPeer {
             pub_key_hex: "ab".repeat(32),
             instance_label: "laptop".into(),
+            hostname: String::new(),
             addr: "192.0.2.1:4242".into(),
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: now - 3600,
@@ -2601,6 +2602,7 @@ mod tests {
         let peer = crate::cluster::registry::PairedPeer {
             pub_key_hex: "ab".repeat(32),
             instance_label: "old-laptop".into(),
+            hostname: String::new(),
             addr: "192.0.2.1:4242".into(),
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: now - 30 * 86_400,

@@ -23,6 +23,14 @@ pub struct PairedPeer {
     pub pub_key_hex: String,
     /// Operator-readable label as the peer announced.
     pub instance_label: String,
+    /// Network hostname the operator recorded for this peer (SL-01c).
+    /// Lets the operator reference a peer by a stable, memorable name
+    /// (`neoth cluster confirm <key> --hostname laptop`, then
+    /// `neoth cluster revoke laptop`) instead of the 64-char pub_key
+    /// hex. Empty when unknown — older `cluster.yaml` files + peers
+    /// confirmed without `--hostname`. The struct-level `#[serde(default)]`
+    /// keeps pre-SL-01c registries deserialising clean.
+    pub hostname: String,
     /// Last-known socket address. Phase 6 gossip updates this on
     /// successful reconnect.
     pub addr: String,
@@ -40,6 +48,7 @@ impl Default for PairedPeer {
         Self {
             pub_key_hex: String::new(),
             instance_label: String::new(),
+            hostname: String::new(),
             addr: String::new(),
             discovered_via: DiscoveryVia::Manual,
             paired_at_unix: 0,
@@ -153,6 +162,25 @@ pub fn is_paired(home: &Path, key_or_prefix: &str) -> bool {
         .any(|p| p.pub_key_hex.starts_with(key_or_prefix))
 }
 
+/// SL-01c: resolve a paired peer by its recorded network hostname
+/// (case-insensitive). Returns the first match — `load` sorts by
+/// `pub_key_hex`, so the result is deterministic when two peers share
+/// a hostname. An empty / whitespace-only `hostname` NEVER matches:
+/// peers confirmed without `--hostname` carry an empty field, and a
+/// `""` lookup must not silently resolve to one of them (fail-closed,
+/// same discipline as `is_paired`). Returns `None` when the registry
+/// can't be read (mirrors `is_paired`'s load-failure posture).
+pub fn find_by_hostname(home: &Path, hostname: &str) -> Option<PairedPeer> {
+    let needle = hostname.trim();
+    if needle.is_empty() {
+        return None;
+    }
+    let reg = load(home).ok()?;
+    reg.peers
+        .into_iter()
+        .find(|p| !p.hostname.is_empty() && p.hostname.eq_ignore_ascii_case(needle))
+}
+
 /// Update `last_seen_unix` for a paired peer. No-op when the peer
 /// isn't paired yet — Phase 2 discovery passes every authenticated
 /// announce through this; only the paired ones update.
@@ -182,6 +210,7 @@ mod tests {
         PairedPeer {
             pub_key_hex: full,
             instance_label: label.into(),
+            hostname: String::new(),
             addr: "192.0.2.1:4242".into(),
             discovered_via: DiscoveryVia::Mdns,
             paired_at_unix: 1_700_000_000,
@@ -315,6 +344,7 @@ mod tests {
         let original = PairedPeer {
             pub_key_hex: "ab".repeat(32),
             instance_label: "label".into(),
+            hostname: "workstation-01".into(),
             addr: "10.0.0.5:443".into(),
             discovered_via: DiscoveryVia::Tailscale,
             paired_at_unix: 1_234_567_890,
@@ -323,5 +353,60 @@ mod tests {
         let yaml = serde_yaml::to_string(&original).unwrap();
         let back: PairedPeer = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(original, back);
+    }
+
+    #[test]
+    fn paired_peer_deserialises_pre_sl01c_yaml_without_hostname() {
+        // A cluster.yaml written before SL-01c carries no `hostname`
+        // key. The struct-level #[serde(default)] must fill it with an
+        // empty string rather than failing the whole registry load —
+        // otherwise an upgrade would silently disable every paired peer.
+        let legacy = "\
+peers:
+  - pub_key_hex: ".to_string()
+            + &"ab".repeat(32)
+            + "
+    instance_label: laptop
+    addr: 10.0.0.5:443
+    discovered_via: mdns
+    paired_at_unix: 1700000000
+    last_seen_unix: 1700000000
+";
+        let reg: ClusterRegistry = serde_yaml::from_str(&legacy).unwrap();
+        assert_eq!(reg.peers.len(), 1);
+        assert_eq!(reg.peers[0].hostname, "");
+        assert_eq!(reg.peers[0].instance_label, "laptop");
+    }
+
+    #[test]
+    fn find_by_hostname_matches_case_insensitive() {
+        let dir = tempdir().unwrap();
+        let mut peer = sample_peer("ab", "laptop");
+        peer.hostname = "Workstation-01".into();
+        upsert(dir.path(), peer.clone()).unwrap();
+        // Exact + case-insensitive both resolve.
+        assert_eq!(
+            find_by_hostname(dir.path(), "Workstation-01").unwrap().pub_key_hex,
+            peer.pub_key_hex
+        );
+        assert_eq!(
+            find_by_hostname(dir.path(), "workstation-01").unwrap().pub_key_hex,
+            peer.pub_key_hex
+        );
+    }
+
+    #[test]
+    fn find_by_hostname_none_for_unknown_or_empty() {
+        let dir = tempdir().unwrap();
+        let mut peer = sample_peer("ab", "laptop");
+        peer.hostname = "laptop".into();
+        upsert(dir.path(), peer).unwrap();
+        // Unknown hostname → None.
+        assert!(find_by_hostname(dir.path(), "server").is_none());
+        // Empty / whitespace needle never matches (fail-closed) even
+        // though a peer with an empty hostname could exist.
+        upsert(dir.path(), sample_peer("cd", "no-host")).unwrap(); // hostname == ""
+        assert!(find_by_hostname(dir.path(), "").is_none());
+        assert!(find_by_hostname(dir.path(), "   ").is_none());
     }
 }

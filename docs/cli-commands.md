@@ -160,6 +160,7 @@ Confirm a discovered peer + add to the registry. Phase 4 of the SPEC — Phase 2
 - `--label <LABEL>` — Operator-readable label. Required unless `--interactive`. In interactive mode the label is taken from the discovered peer's announce TXT record
 - `--addr <ADDR>` — Reachable socket address. Required unless `--interactive`. In interactive mode the addr is taken from the discovered peer's announce. Phase 6 gossip overrides
 - `--via <VIA>` — Transport that surfaced the peer. Defaults to "manual" (operator typed the pub_key in directly)
+- `--hostname <HOSTNAME>` — SL-01c: optional network hostname to record for the peer so you can later reference it by a memorable name (`neoth cluster revoke <hostname>`) instead of the 64-char pub_key. Not collected in `--interactive` mode — re-confirm with `--hostname` to set it
 - `--interactive <INTERACTIVE>` — Interactive picker: run a mDNS scan first, render a numbered list of discovered peers, prompt operator for a selection, then confirm the pick. Skips the positional pub_key + --label + --addr requirement (values come from the selected announce). Tailscale candidates are excluded from the picker — they don't carry a pub_key
 - `--interactive-timeout <INTERACTIVE_TIMEOUT>` — Scan timeout for `--interactive`. Default 10s
 
