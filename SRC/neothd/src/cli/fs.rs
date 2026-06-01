@@ -1,0 +1,126 @@
+//! `neoth fs read` — PC-01 operator/agent surface for gated OS file reads.
+//!
+//! The real runtime consumer of the `os_tools` gate: an operator (or the
+//! agent) fetches file contents THROUGH the allowlist + autonomy gate instead
+//! of an ungated `std::fs::read`. Allowed only when the path is under
+//! `freedom.yaml::tools.os.allowed_paths` (default empty = deny-all) and the
+//! autonomy level permits it; the read (or denial) is WAL-audited (`0xA8` /
+//! `0xA9`). Audit emit mirrors the HF-01 best-effort one-shot writer — skip if
+//! `neothd serve` owns the WAL, else append one frame.
+
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use clap::{Args, Subcommand};
+
+use crate::cli::OutputFormat;
+use crate::config::FreedomConfig;
+use crate::os_tools::{OsGateError, read_os_file};
+
+#[derive(Args, Debug, Clone)]
+pub struct FsArgs {
+    #[command(subcommand)]
+    pub action: FsAction,
+    /// Inherited from the global `--output` flag.
+    #[arg(skip)]
+    pub output: OutputFormat,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum FsAction {
+    /// Read a file through the gated OS-tool surface. Permitted only when the
+    /// path is under `freedom.yaml::tools.os.allowed_paths` (default deny-all)
+    /// AND the autonomy level allows it (Strict confirms ⇒ blocked here, since
+    /// this path has no interactive prompt). WAL-audited (`0xA8`/`0xA9`).
+    Read {
+        /// File to read.
+        path: PathBuf,
+    },
+}
+
+pub async fn run_fs(args: FsArgs) -> Result<()> {
+    let cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml — run `neoth init` first if absent")?;
+    match &args.action {
+        FsAction::Read { path } => run_read(path, &cfg, args.output).await,
+    }
+}
+
+async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
+    let now = now_unix();
+    // Best-effort one-shot WAL audit (HF-01 pattern): if `neothd serve` owns
+    // the writer, pass None (the read is still gated; we just don't open a 2nd
+    // writer racing the segment). Inlined rather than a generic higher-order
+    // helper to avoid an unnameable borrow lifetime across the awaited future.
+    let result = {
+        let pidfile = crate::daemon::pidfile::default_pidfile();
+        let daemon_live = matches!(
+            crate::daemon::pidfile::live_daemon_pid(&pidfile),
+            Ok(Some(_))
+        );
+        if daemon_live {
+            read_os_file(path, &cfg.tools.os, cfg.autonomy, None, now).await
+        } else {
+            let segment = FreedomConfig::default_neoth_home()
+                .join("wal")
+                .join("000001.wal");
+            if let Some(parent) = segment.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match crate::wal::spawn(segment) {
+                Ok((writer, join)) => {
+                    let r =
+                        read_os_file(path, &cfg.tools.os, cfg.autonomy, Some(&writer), now).await;
+                    drop(writer);
+                    let _ = join.await;
+                    r
+                }
+                Err(e) => {
+                    // Audit-unavailable is NOT silently swallowed: the read
+                    // still runs gated, but we surface that no WAL frame was
+                    // written so the "every read is audited" contract failing
+                    // is visible (disk-full / locked wal dir / perms).
+                    tracing::warn!(
+                        error = %e,
+                        "fs read proceeding WITHOUT WAL audit — could not open a one-shot WAL writer"
+                    );
+                    read_os_file(path, &cfg.tools.os, cfg.autonomy, None, now).await
+                }
+            }
+        }
+    };
+
+    match result {
+        Ok(text) => {
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "path": path.display().to_string(),
+                            "bytes": text.len(),
+                            "content": text,
+                        })
+                    );
+                }
+                OutputFormat::Table => print!("{text}"),
+            }
+            Ok(())
+        }
+        // The gate already audited the denial; surface a clean operator error.
+        Err(OsGateError::Allowlist(e)) => {
+            anyhow::bail!(
+                "denied: {e}\n(add the path's prefix to freedom.yaml::tools.os.allowed_paths)"
+            )
+        }
+        Err(e) => anyhow::bail!("{e}"),
+    }
+}
+
+fn now_unix() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}

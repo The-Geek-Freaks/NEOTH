@@ -108,6 +108,7 @@ pub mod memory;
 pub mod migrate;
 pub mod models;
 pub mod n8n_api;
+pub mod os_tools;
 pub mod paperless;
 pub mod permissions;
 pub mod pipeline;

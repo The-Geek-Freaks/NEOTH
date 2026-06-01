@@ -406,6 +406,16 @@ Fetch a URL + return its text content (A-21)
 
 - `<URL>` — URL to fetch. Only http(s) schemes accepted
 
+## `neoth fs`
+
+`fs read <path>` — read a file through the PC-01 OS-tool gate: allowlist (`freedom.yaml::tools.os.allowed_paths`, default deny-all) + autonomy gate + WAL audit (`0xA8`/`0xA9`). The gated alternative to an ungated filesystem read
+
+### `neoth fs read`
+
+Read a file through the gated OS-tool surface. Permitted only when the path is under `freedom.yaml::tools.os.allowed_paths` (default deny-all) AND the autonomy level allows it (Strict confirms ⇒ blocked here, since this path has no interactive prompt). WAL-audited (`0xA8`/`0xA9`)
+
+- `<PATH>` — File to read
+
 ## `neoth github`
 
 GitHub workflow shim — wraps the operator's `gh` CLI (A-3 + A-4)

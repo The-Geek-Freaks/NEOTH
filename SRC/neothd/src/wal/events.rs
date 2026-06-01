@@ -720,6 +720,16 @@ pub const EVENT_TYPE_LEASE_EXPIRED: u8 = 0xA6;
 /// before its TTL (`neoth lease revoke <id>`). The kill switch for a
 /// delegated capability. Payload: `{lease_id, granted_to, scope}`.
 pub const EVENT_TYPE_LEASE_REVOKED: u8 = 0xA7;
+/// `0xA8 OS_FILE_READ` — PC-01. NEOTH read a file on the operator's OS via
+/// the gated OS-tool surface, AFTER it passed the path allowlist + the
+/// autonomy gate. OS file access is an autonomy/permission decision, so it
+/// sits in the permissions band. Payload: `{path, bytes, ts_unix}`.
+pub const EVENT_TYPE_OS_FILE_READ: u8 = 0xA8;
+/// `0xA9 OS_FILE_DENIED` — PC-01. An OS file read was refused — by the path
+/// allowlist (default deny-all / not-in-allowlist / traversal attempt) or by
+/// the autonomy gate (Deny / Confirm-with-no-TTY). The audit trail records
+/// every blocked filesystem reach. Payload: `{path, reason, ts_unix}`.
+pub const EVENT_TYPE_OS_FILE_DENIED: u8 = 0xA9;
 
 // ---- 0xB0..=0xBF  Hypothalamus / user-profile -----------------------------
 //
@@ -1277,6 +1287,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
     ("lease_expired", EVENT_TYPE_LEASE_EXPIRED),
     ("lease_revoked", EVENT_TYPE_LEASE_REVOKED),
+    ("os_file_read", EVENT_TYPE_OS_FILE_READ),
+    ("os_file_denied", EVENT_TYPE_OS_FILE_DENIED),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
 ];
 
@@ -1508,6 +1520,9 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_LEASE_GRANTED < 0xA0 || EVENT_TYPE_LEASE_GRANTED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_LEASE_EXPIRED < 0xA0 || EVENT_TYPE_LEASE_EXPIRED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_LEASE_REVOKED < 0xA0 || EVENT_TYPE_LEASE_REVOKED > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OS_FILE_READ < 0xA0 || EVENT_TYPE_OS_FILE_READ > 0xAF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_OS_FILE_DENIED < 0xA0 || EVENT_TYPE_OS_FILE_DENIED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_DELTA < 0xB0 || EVENT_TYPE_PROFILE_DELTA > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PROFILE_REINFORCED < 0xB0 || EVENT_TYPE_PROFILE_REINFORCED > 0xBF) as usize];
@@ -1708,6 +1723,8 @@ mod tests {
             ("LEASE_GRANTED", EVENT_TYPE_LEASE_GRANTED),
             ("LEASE_EXPIRED", EVENT_TYPE_LEASE_EXPIRED),
             ("LEASE_REVOKED", EVENT_TYPE_LEASE_REVOKED),
+            ("OS_FILE_READ", EVENT_TYPE_OS_FILE_READ),
+            ("OS_FILE_DENIED", EVENT_TYPE_OS_FILE_DENIED),
             ("COST_ESTIMATE_SHOWN", EVENT_TYPE_COST_ESTIMATE_SHOWN),
             ("PROFILE_DELTA", EVENT_TYPE_PROFILE_DELTA),
             ("PROFILE_REINFORCED", EVENT_TYPE_PROFILE_REINFORCED),

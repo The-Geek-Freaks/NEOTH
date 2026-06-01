@@ -136,6 +136,19 @@ pub enum Action {
         /// Channel family the message targets ("telegram", "keet", ...).
         channel: String,
     },
+    /// PC-01: read a file on the operator's OS through the gated OS-tool
+    /// surface. The `path` is the POST-canonicalization resolved path — the
+    /// allowlist gate (`os_tools`) has already confirmed it falls under a
+    /// `freedom.yaml::tools.os.allowed_paths` prefix (default empty =
+    /// deny-all) BEFORE this autonomy gate runs. So the autonomy decision
+    /// here is only the second layer: Strict confirms (show the operator
+    /// every external read), Standard/Elevated/Full allow (the allowlist is
+    /// the operator's explicit opt-in). NO registry / system-paths /
+    /// process-kill — those are not representable as an `OsFileRead`.
+    OsFileRead {
+        /// Canonical, allowlist-validated path being read.
+        path: std::path::PathBuf,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -245,6 +258,9 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
     match action {
         // Coverable — a lease maps to the matching coarse scope.
         Action::Read => Some(LeaseScope::Read),
+        // An OS file read is a read capability — the operator can delegate it
+        // to a subject (plugin / peer) under the Read lease scope.
+        Action::OsFileRead { .. } => Some(LeaseScope::Read),
         Action::WriteNeothHome => Some(LeaseScope::WriteNeothHome),
         Action::ChannelSend => Some(LeaseScope::ChannelSend),
         Action::McpToolInvocation { server_id, tool } => {
@@ -308,6 +324,10 @@ fn evaluate_strict(action: &Action) -> Decision {
         Action::ProactiveChannelSend { channel } => Decision::Deny(format!(
             "strict: daemon never sends unsolicited messages — proactive send to '{channel}' denied"
         )),
+        Action::OsFileRead { path } => Decision::Confirm(format!(
+            "strict: OS file read of {} requires confirm",
+            path.display()
+        )),
     }
 }
 
@@ -346,6 +366,9 @@ fn evaluate_standard(action: &Action) -> Decision {
             "standard: unsolicited proactive send to '{channel}' requires confirm \
              (no TTY in daemon ⇒ effectively suppressed until Elevated)"
         )),
+        // The allowlist (default deny-all) is the operator's explicit opt-in;
+        // a path that reaches here already passed it, so Standard+ allows.
+        Action::OsFileRead { .. } => Decision::Allow,
     }
 }
 
@@ -396,6 +419,7 @@ fn evaluate_elevated(action: &Action) -> Decision {
         // behaviour — proactive outbound is allowed (the `proactive.enabled`
         // master switch is the operator's explicit opt-in upstream).
         Action::ProactiveChannelSend { .. } => Decision::Allow,
+        Action::OsFileRead { .. } => Decision::Allow,
     }
 }
 
@@ -809,6 +833,25 @@ mod tests {
             }),
             None
         );
+    }
+
+    #[test]
+    fn os_file_read_gate_and_lease_scope() {
+        use lease::LeaseScope;
+        let a = Action::OsFileRead {
+            path: std::path::PathBuf::from("/x/y"),
+        };
+        // Strict confirms (operator sees every external read); Standard+ allow
+        // (the allowlist that already validated the path is the opt-in).
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Strict),
+            Decision::Confirm(_)
+        ));
+        assert!(evaluate(&a, AutonomyLevel::Standard).is_allow());
+        assert!(evaluate(&a, AutonomyLevel::Elevated).is_allow());
+        assert!(evaluate(&a, AutonomyLevel::Full).is_allow());
+        // Lease-coverable under the Read scope.
+        assert_eq!(lease_scope_for(&a), Some(LeaseScope::Read));
     }
 
     #[test]

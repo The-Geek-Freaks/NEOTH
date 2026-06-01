@@ -32,6 +32,7 @@ pub mod dreaming_task;
 pub mod events;
 pub mod export;
 pub mod fetch;
+pub mod fs;
 pub mod github;
 pub mod glossary;
 pub mod groundtruth;
@@ -478,6 +479,12 @@ pub enum Commands {
     /// task delegation (SL-01) + proactive bounded writes (G-01).
     Lease(lease::LeaseArgs),
 
+    /// `fs read <path>` — read a file through the PC-01 OS-tool gate:
+    /// allowlist (`freedom.yaml::tools.os.allowed_paths`, default deny-all) +
+    /// autonomy gate + WAL audit (`0xA8`/`0xA9`). The gated alternative to an
+    /// ungated filesystem read.
+    Fs(fs::FsArgs),
+
     /// Text-to-speech synthesis (A-45). `speak` writes audio bytes to
     /// a file via ElevenLabs (cloud) or piper-rs (Phase 2 local).
     Tts(tts::TtsArgs),
@@ -889,6 +896,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Lease(mut args) => {
             args.output = global_output;
             lease::run_lease(args).await?;
+        }
+        Commands::Fs(mut args) => {
+            args.output = global_output;
+            fs::run_fs(args).await?;
         }
         Commands::Tts(mut args) => {
             args.output = global_output;

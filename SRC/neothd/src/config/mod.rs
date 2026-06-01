@@ -352,6 +352,46 @@ pub struct FreedomConfig {
     /// `~/.neoth/n8n_api_token` mode-0600.
     #[serde(default)]
     pub n8n_api: N8nApiConfig,
+    /// PC-01 — OS-tool surface (file/folder access). Default DENY-ALL: an
+    /// empty `tools.os.allowed_paths` means NEOTH can read no operator file.
+    /// Operators at `elevated`/`full` autonomy opt in by listing absolute
+    /// path prefixes. NO registry / system-paths / process-kill — those are
+    /// not representable. Every gated read/deny lands in the WAL
+    /// (`0xA8`/`0xA9`).
+    #[serde(default)]
+    pub tools: ToolsConfig,
+}
+
+/// PC-01 OS-tool surface config. Default-safe: every sub-surface is
+/// deny-all until the operator explicitly opts in.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ToolsConfig {
+    pub os: OsToolsConfig,
+}
+
+/// PC-01 OS file-access config. `allowed_paths` is the operator's allowlist
+/// of absolute path PREFIXES the daemon may read under; empty = deny-all
+/// (the default). A read is permitted only when the canonical target path
+/// is under one of these (canonical) prefixes — see `os_tools::allowlist`.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct OsToolsConfig {
+    /// Allowlisted absolute path prefixes. Empty = deny-all (default).
+    /// Example: `["/home/alice/workspace", "/tmp/neoth-scratch"]`.
+    pub allowed_paths: Vec<std::path::PathBuf>,
+    /// Max bytes a single `OsFileRead` may return. Default 1 MiB — a guard
+    /// against pulling a multi-GB file into memory / a provider prompt.
+    pub max_read_bytes: usize,
+}
+
+impl Default for OsToolsConfig {
+    fn default() -> Self {
+        Self {
+            allowed_paths: Vec::new(),
+            max_read_bytes: 1024 * 1024,
+        }
+    }
 }
 
 /// Workstream F (CT-10/E-20/V1x-06) — WAL compression policy.
@@ -424,6 +464,22 @@ mod wal_config_tests {
     #[test]
     fn default_wal_config_is_none_compression() {
         assert_eq!(WalConfig::default().compression, WalCompression::None);
+    }
+
+    #[test]
+    fn tools_os_defaults_to_deny_all() {
+        // PC-01: a fresh config (or a freedom.yaml with no `tools:` block)
+        // must read as deny-all — empty allowed_paths, 1 MiB read cap.
+        let cfg = ToolsConfig::default();
+        assert!(
+            cfg.os.allowed_paths.is_empty(),
+            "default OS allowlist must be empty (deny-all)"
+        );
+        assert_eq!(cfg.os.max_read_bytes, 1024 * 1024);
+        // Round-trips through YAML with the field absent.
+        let parsed: FreedomConfig =
+            serde_yaml::from_str("operator_id: alice\n").expect("parse minimal freedom.yaml");
+        assert!(parsed.tools.os.allowed_paths.is_empty());
     }
 
     #[test]
