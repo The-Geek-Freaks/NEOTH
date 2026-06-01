@@ -51,6 +51,18 @@ impl Dimension {
             Dimension::Brevity => "brevity",
         }
     }
+
+    /// SPEC §7.1 absolute-quality floor — the mean NEOTH score (0–5) this
+    /// dimension must clear REGARDLESS of parity. Parity alone is
+    /// NEOTH-relative-to-Jarvis; if Jarvis itself is bad, 85% parity of a 2/5
+    /// Jarvis is still useless. This is the gate's defence against passing on a
+    /// low-quality baseline.
+    pub fn absolute_floor(self) -> f64 {
+        match self {
+            Dimension::Factual | Dimension::Usefulness => 3.5,
+            Dimension::Completeness | Dimension::OnTone | Dimension::Brevity => 3.0,
+        }
+    }
 }
 
 /// Pass threshold for the aggregate parity score (SPEC §6): NEOTH must reach
@@ -60,6 +72,11 @@ pub const PARITY_PASS_THRESHOLD: f64 = 0.85;
 /// Per-query CRITICAL floor (SPEC §7): a factual/usefulness kappa-parity below
 /// this aborts the migration regardless of the aggregate.
 pub const CRITICAL_FLOOR: f64 = 0.50;
+
+/// SPEC §5 inter-rater reliability floor: the mean kappa must clear this or the
+/// rubric is too under-specified to trust the grades (re-grade required). The
+/// gate fails when unmet — distinct from a low-quality FAIL.
+pub const KAPPA_RELIABILITY_FLOOR: f64 = 0.60;
 
 /// Maximum valid Likert score (0..=5).
 pub const LIKERT_MAX: u8 = 5;
@@ -138,7 +155,14 @@ pub fn cohen_kappa_within1(a: &[u8], b: &[u8]) -> Result<f64, ParityError> {
 /// `[0,1]`. A `jarvis == 0` baseline yields `1.0` (NEOTH meets-or-exceeds a
 /// zero baseline), matching the SPEC's edge-case rule.
 pub fn parity_raw(neoth: f64, jarvis: f64) -> f64 {
-    if jarvis <= 0.0 {
+    // Fail-closed on invalid (negative / NaN) inputs — Likert is 0..=5, so a
+    // negative score is corrupt data and must not produce a misleading 1.0.
+    if !neoth.is_finite() || !jarvis.is_finite() || neoth < 0.0 || jarvis < 0.0 {
+        return 0.0;
+    }
+    if jarvis == 0.0 {
+        // SPEC §6: a zero Jarvis baseline ⇒ NEOTH meets-or-exceeds it. (The
+        // absolute-quality floor — not parity — guards the "both bad" case.)
         return 1.0;
     }
     (neoth / jarvis).clamp(0.0, 1.0)
@@ -256,25 +280,42 @@ fn looks_like_error_text(text: &str) -> bool {
         || head.contains("internal server error")
 }
 
-/// Aggregate gate verdict (SPEC §6). `passed` ⇒ aggregate ≥ threshold AND zero
-/// CRITICAL divergences (a single CRITICAL aborts, SPEC §7).
+/// Full gate verdict (SPEC §10): `passed` ⇒ ALL of — aggregate ≥ 0.85
+/// (parity), every dimension's absolute-quality floor met (§7.1), zero CRITICAL
+/// divergences (§7), AND mean inter-rater kappa ≥ 0.60 (§5 reliability). Any one
+/// failing fails the gate (fail-closed — a wrong PASS authorises an
+/// irreversible memory cutover).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParityVerdict {
     pub aggregate: f64,
     pub threshold: f64,
     pub critical_count: usize,
+    pub absolute_floors_met: bool,
+    pub kappa_gate_met: bool,
     pub passed: bool,
 }
 
-/// Compose the final verdict from the aggregate score + the per-query
-/// divergence classes.
-pub fn parity_verdict(aggregate: f64, divergences: &[DivergenceClass]) -> ParityVerdict {
+/// Compose the final verdict. `absolute_floors_met` comes from comparing each
+/// dimension's mean NEOTH score to [`Dimension::absolute_floor`]; `mean_kappa`
+/// is the mean inter-rater agreement.
+pub fn parity_verdict(
+    aggregate: f64,
+    divergences: &[DivergenceClass],
+    absolute_floors_met: bool,
+    mean_kappa: f64,
+) -> ParityVerdict {
     let critical_count = divergences.iter().filter(|d| d.is_critical()).count();
+    let kappa_gate_met = mean_kappa >= KAPPA_RELIABILITY_FLOOR;
     ParityVerdict {
         aggregate,
         threshold: PARITY_PASS_THRESHOLD,
         critical_count,
-        passed: aggregate >= PARITY_PASS_THRESHOLD && critical_count == 0,
+        absolute_floors_met,
+        kappa_gate_met,
+        passed: aggregate >= PARITY_PASS_THRESHOLD
+            && critical_count == 0
+            && absolute_floors_met
+            && kappa_gate_met,
     }
 }
 
@@ -387,21 +428,49 @@ mod tests {
     }
 
     #[test]
-    fn verdict_passes_only_above_threshold_and_zero_critical() {
-        // Above threshold + clean ⇒ pass.
-        let v = parity_verdict(0.90, &[DivergenceClass::Clean, DivergenceClass::Clean]);
-        assert!(v.passed);
-        // Above threshold but one CRITICAL ⇒ FAIL (a single CRITICAL aborts).
+    fn verdict_requires_all_four_gates() {
+        let clean = [DivergenceClass::Clean, DivergenceClass::Clean];
+        // All four gates met ⇒ PASS.
+        assert!(parity_verdict(0.90, &clean, true, 0.70).passed);
+        // One CRITICAL ⇒ FAIL (a single CRITICAL aborts, SPEC §7).
         let v = parity_verdict(
             0.95,
             &[
                 DivergenceClass::Clean,
                 DivergenceClass::Critical(CriticalReason::FactualBelow50),
             ],
+            true,
+            0.70,
         );
         assert!(!v.passed);
         assert_eq!(v.critical_count, 1);
-        // Below threshold ⇒ FAIL even if clean.
-        assert!(!parity_verdict(0.84, &[DivergenceClass::Clean]).passed);
+        // Below parity threshold ⇒ FAIL even if everything else is fine.
+        assert!(!parity_verdict(0.84, &clean, true, 0.70).passed);
+        // Absolute floor NOT met ⇒ FAIL even at high parity (the §7.1
+        // "parity against an unvalidated Jarvis" gap — the false-PASS the
+        // review found).
+        let v = parity_verdict(1.0, &clean, false, 0.90);
+        assert!(!v.passed, "high parity but floors unmet must FAIL");
+        assert!(!v.absolute_floors_met);
+        // Kappa below the §5 reliability floor ⇒ FAIL (rubric untrustworthy).
+        let v = parity_verdict(0.95, &clean, true, 0.45);
+        assert!(!v.passed, "low inter-rater kappa must FAIL");
+        assert!(!v.kappa_gate_met);
+    }
+
+    #[test]
+    fn parity_raw_rejects_negative_and_nan() {
+        assert_eq!(parity_raw(-1.0, 4.0), 0.0, "negative neoth ⇒ fail-closed");
+        assert_eq!(parity_raw(3.0, -2.0), 0.0, "negative jarvis ⇒ fail-closed");
+        assert_eq!(parity_raw(f64::NAN, 4.0), 0.0);
+    }
+
+    #[test]
+    fn absolute_floors_are_the_spec_values() {
+        assert_eq!(Dimension::Factual.absolute_floor(), 3.5);
+        assert_eq!(Dimension::Usefulness.absolute_floor(), 3.5);
+        assert_eq!(Dimension::Completeness.absolute_floor(), 3.0);
+        assert_eq!(Dimension::OnTone.absolute_floor(), 3.0);
+        assert_eq!(Dimension::Brevity.absolute_floor(), 3.0);
     }
 }
