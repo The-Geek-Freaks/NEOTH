@@ -384,7 +384,87 @@ pub fn run_audit_collect(args: &AuditArgs) -> Result<AuditReport> {
     check_wal_segment(&home, &mut report);
     check_memory_drift(&home, args.drift_display_cap, &mut report);
     check_credential_files(&home, &mut report);
+    check_permission_decisions(&home, args.permissions_lookback_hours, &mut report);
     Ok(report)
+}
+
+/// 5th check (SC-04 follow-on): summarise the operator's permission
+/// decisions in the last `lookback_hours`. Always INFORMATIONAL — a
+/// DENY is the fail-closed gate working, not a failure — but surfacing
+/// the counts (+ the most-denied actions) puts "what did NEOTH refuse or
+/// allow lately" one command away, on the verifiable-loyalty wedge.
+/// Scans the latest WAL segment via `permissions::audit::audit_segment`.
+fn check_permission_decisions(home: &Path, lookback_hours: u64, report: &mut AuditReport) {
+    use crate::permissions::audit::{AuditDecision, audit_segment};
+    let wal_dir = home.join("wal");
+    let Some(segment) = latest_wal_segment(&wal_dir) else {
+        report.push(
+            "Permission decisions",
+            CheckStatus::Ok,
+            format!("no WAL segment yet (last {lookback_hours}h) — nothing decided"),
+        );
+        return;
+    };
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(i64::MAX);
+    let from_ns = now_ns.saturating_sub(
+        (lookback_hours as i64)
+            .saturating_mul(3_600)
+            .saturating_mul(1_000_000_000),
+    );
+    let rep = match audit_segment(&segment, from_ns, now_ns, 5) {
+        Ok(r) => r,
+        Err(e) => {
+            report.push(
+                "Permission decisions",
+                CheckStatus::Warn,
+                format!(
+                    "could not read permission audit from {}: {e}",
+                    segment.display()
+                ),
+            );
+            return;
+        }
+    };
+    let count = |d: AuditDecision| rep.by_decision.get(&d).copied().unwrap_or(0);
+    let mut detail = format!(
+        "last {lookback_hours}h: {} granted, {} denied, {} consent-allow, {} consent-deny",
+        count(AuditDecision::Granted),
+        count(AuditDecision::Denied),
+        count(AuditDecision::ConsentAllow),
+        count(AuditDecision::ConsentDeny),
+    );
+    if !rep.top_denied_actions.is_empty() {
+        let top = rep
+            .top_denied_actions
+            .iter()
+            .map(|(a, n)| format!("{a}×{n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        detail.push_str(&format!("\nmost-denied: {top}"));
+    }
+    detail.push_str(
+        "\nFull trail: `neoth permissions audit` — denials are the fail-closed gate working.",
+    );
+    report.push("Permission decisions", CheckStatus::Ok, detail);
+}
+
+/// Lexically-latest `*.wal` in `wal_dir` (zero-padded segment names sort
+/// chronologically). `None` when the dir is missing or empty.
+fn latest_wal_segment(wal_dir: &Path) -> Option<PathBuf> {
+    let mut latest: Option<PathBuf> = None;
+    for entry in std::fs::read_dir(wal_dir).ok()?.flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("wal") {
+            continue;
+        }
+        if latest.as_ref().map(|l| &p > l).unwrap_or(true) {
+            latest = Some(p);
+        }
+    }
+    latest
 }
 
 fn check_hmac_key(home: &Path, report: &mut AuditReport) {
@@ -838,11 +918,38 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let args = empty_audit_args(tmp.path());
         let report = run_audit_collect(&args).unwrap();
-        assert_eq!(report.checks.len(), 4, "4 checks ship in this revision");
+        assert_eq!(report.checks.len(), 5, "5 checks ship in this revision");
         // On an empty home: HMAC missing (Fail), WAL absent (Warn),
-        // drift absent (Warn), sidecars none (Ok). Exit code 1 due
-        // to the HMAC fail.
+        // drift absent (Warn), sidecars none (Ok), permission decisions
+        // none (Ok). Exit code 1 due to the HMAC fail.
         assert_eq!(report.exit_code(), 1);
+    }
+
+    #[test]
+    fn permission_decisions_check_is_wired_and_ok_on_empty_home() {
+        // SC-04 5th check: present in the report, and on a fresh install
+        // (no WAL) it is Ok with "nothing decided" — never a false FAIL.
+        let tmp = TempDir::new().unwrap();
+        let report = run_audit_collect(&empty_audit_args(tmp.path())).unwrap();
+        let pd = report
+            .checks
+            .iter()
+            .find(|c| c.name == "Permission decisions")
+            .expect("the permission-decisions check must be wired");
+        assert!(matches!(pd.status, CheckStatus::Ok));
+        assert!(pd.detail.contains("nothing decided"), "got: {}", pd.detail);
+    }
+
+    #[test]
+    fn latest_wal_segment_picks_lexically_latest() {
+        let tmp = TempDir::new().unwrap();
+        let wal = tmp.path().join("wal");
+        std::fs::create_dir_all(&wal).unwrap();
+        assert_eq!(latest_wal_segment(&wal), None, "empty dir → None");
+        std::fs::write(wal.join("000001.wal"), b"a").unwrap();
+        std::fs::write(wal.join("000007.wal"), b"b").unwrap();
+        std::fs::write(wal.join("notes.txt"), b"c").unwrap();
+        assert_eq!(latest_wal_segment(&wal), Some(wal.join("000007.wal")));
     }
 
     // ── SC-09 backup-hmac-key ─────────────────────────────────────
