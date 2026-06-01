@@ -31,8 +31,8 @@ use crate::installers::detect::DetectReport;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExperienceLevel {
-    /// "Alex's mom" — never touched a CLI; needs every default
-    /// chosen for her + most toggles hidden.
+    /// A non-technical operator — never touched a CLI; needs every default
+    /// chosen for them + most toggles hidden.
     #[default]
     Beginner,
     /// Comfortable with a terminal; will edit `freedom.yaml`; wants

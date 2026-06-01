@@ -380,14 +380,14 @@ mod tests {
         let body = r#"{
             "encrypted": true,
             "passwordProtected": true,
-            "salt": "alex@example.com",
+            "salt": "sam@example.com",
             "kdfType": 0,
             "kdfIterations": 600000,
             "encKeyValidation_DO_NOT_EDIT": "2.aaa|bbb|ccc",
             "data": "2.ddd|eee|fff"
         }"#;
         let env = parse_envelope_json(body).unwrap();
-        assert_eq!(env.salt, b"alex@example.com");
+        assert_eq!(env.salt, b"sam@example.com");
         assert_eq!(env.kdf_type, 0);
         assert_eq!(env.kdf_iterations, 600000);
     }
@@ -615,10 +615,10 @@ mod tests {
     #[test]
     fn parse_and_decrypt_round_trips_synthetic_export() {
         let password = "correct-horse-battery";
-        let salt = "alex@example.com";
+        let salt = "sam@example.com";
         let iters = 100_000;
         let data_plain =
-            r#"{"items":[{"name":"PayPal","login":{"username":"alex","password":"hunter2"}}]}"#;
+            r#"{"items":[{"name":"PayPal","login":{"username":"sam","password":"hunter2"}}]}"#;
         let body = build_synthetic_export(password, salt, iters, data_plain);
         let recovered = parse_and_decrypt(&body, password).unwrap();
         assert_eq!(recovered, data_plain);

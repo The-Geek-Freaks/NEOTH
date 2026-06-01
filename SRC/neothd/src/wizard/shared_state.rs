@@ -285,7 +285,7 @@ mod tests {
         // Real-world v0.2 freedom-yaml subset operators have on
         // disk. NEOTH v0.3 wizard must parse this cleanly.
         let yaml = r#"
-operator_id: alex
+operator_id: sam
 role: developer
 provider_kind: claude_cli
 steps_completed:
@@ -295,7 +295,7 @@ steps_completed:
 - 4
 "#;
         let s: WizardStateV2 = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(s.base.operator_id.as_deref(), Some("alex"));
+        assert_eq!(s.base.operator_id.as_deref(), Some("sam"));
         assert_eq!(s.base.role.as_deref(), Some("developer"));
         assert_eq!(s.base.provider_kind.as_deref(), Some("claude_cli"));
         assert_eq!(s.base.steps_completed, vec![1, 2, 3, 4]);
@@ -309,7 +309,7 @@ steps_completed:
         // unchanged — flatten contract.
         let s = WizardStateV2 {
             base: BaseFields {
-                operator_id: Some("alex".into()),
+                operator_id: Some("sam".into()),
                 role: Some("developer".into()),
                 provider_kind: Some("claude_cli".into()),
                 steps_completed: vec![1, 2, 3, 4],
@@ -317,7 +317,7 @@ steps_completed:
             v2: V2Fields::default(),
         };
         let yaml = serde_yaml::to_string(&s).unwrap();
-        assert!(yaml.contains("operator_id: alex"));
+        assert!(yaml.contains("operator_id: sam"));
         assert!(yaml.contains("role: developer"));
         assert!(yaml.contains("provider_kind: claude_cli"));
         assert!(yaml.contains("steps_completed:"));
@@ -332,7 +332,7 @@ steps_completed:
         // v0.2 byte-clean round-trip.
         let s = WizardStateV2 {
             base: BaseFields {
-                operator_id: Some("alex".into()),
+                operator_id: Some("sam".into()),
                 ..Default::default()
             },
             v2: V2Fields::default(),
@@ -360,7 +360,7 @@ steps_completed:
     fn v2_roundtrip_after_upgrade_preserves_every_field() {
         let mut s = WizardStateV2 {
             base: BaseFields {
-                operator_id: Some("alex".into()),
+                operator_id: Some("sam".into()),
                 role: Some("developer".into()),
                 provider_kind: Some("claude_cli".into()),
                 steps_completed: vec![1, 2, 3, 4],
@@ -387,10 +387,10 @@ steps_completed:
         // Operator on v0.2 → NEOTH v0.3 daemon reads the file +
         // writes it back without touching the wizard. The v0.2
         // fields MUST survive verbatim (no silent default-fill).
-        let v02 = "operator_id: alex\nrole: developer\n";
+        let v02 = "operator_id: sam\nrole: developer\n";
         let parsed: WizardStateV2 = serde_yaml::from_str(v02).unwrap();
         let resaved = serde_yaml::to_string(&parsed).unwrap();
-        assert!(resaved.contains("operator_id: alex"));
+        assert!(resaved.contains("operator_id: sam"));
         assert!(resaved.contains("role: developer"));
         // No v2 keys leaked into a passive read+write cycle (other
         // than state_version which is always present).
@@ -417,7 +417,7 @@ steps_completed:
         let home = tempfile::tempdir().unwrap();
         let path = WizardStateV2::default_path(home.path());
         let mut s = WizardStateV2::default();
-        s.base.operator_id = Some("alex".into());
+        s.base.operator_id = Some("sam".into());
         s.v2.experience_level = Some(ExperienceLevel::Advanced);
         s.v2.privacy_first = true;
         s.mark_v2_upgraded();
@@ -458,7 +458,7 @@ steps_completed:
         let home = tempfile::tempdir().unwrap();
         let path = WizardStateV2::default_path(home.path());
         let mut a = WizardStateV2::default();
-        a.base.operator_id = Some("alex".into());
+        a.base.operator_id = Some("sam".into());
         a.save(&path).unwrap();
         let mut b = WizardStateV2::default();
         b.base.operator_id = Some("bob".into());

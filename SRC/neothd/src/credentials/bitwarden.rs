@@ -350,7 +350,7 @@ mod tests {
             "items": [{
                 "name": "PayPal",
                 "type": 1,
-                "login": {"username":"alex","password":"x","uris":[{"uri":"https://paypal.com"}]}
+                "login": {"username":"sam","password":"x","uris":[{"uri":"https://paypal.com"}]}
             }]
         }"#;
         assert!(is_within_depth_limit(body, MAX_NESTING_DEPTH));
@@ -372,7 +372,7 @@ mod tests {
 
     #[test]
     fn within_depth_ignores_braces_inside_strings() {
-        let body = r#"{"name":"alex { has { quotes } inside"}"#;
+        let body = r#"{"name":"sam { has { quotes } inside"}"#;
         assert!(is_within_depth_limit(body, 2));
     }
 
@@ -401,7 +401,7 @@ mod tests {
                 "type":1,
                 "folderId":"f1",
                 "login":{
-                    "username":"alex@example.com",
+                    "username":"sam@example.com",
                     "password":"S3cret!",
                     "uris":[{"uri":"https://paypal.com"}]
                 }
@@ -412,7 +412,7 @@ mod tests {
         let c = &r.entries[0];
         assert_eq!(c.name, "PayPal");
         assert_eq!(c.url, "https://paypal.com");
-        assert_eq!(c.username, "alex@example.com");
+        assert_eq!(c.username, "sam@example.com");
         assert_eq!(c.secret.expose_str(), Some("S3cret!"));
         assert_eq!(c.tags, vec!["work"]);
     }
@@ -587,7 +587,7 @@ mod tests {
             "folders":[{"id":"f1","name":"work"}],
             "items":[{
                 "name":"PayPal","type":1,"folderId":"f1",
-                "login":{"username":"alex","password":"x","uris":[{"uri":"https://paypal.com"}]}
+                "login":{"username":"sam","password":"x","uris":[{"uri":"https://paypal.com"}]}
             }]
         }"#;
         std::fs::write(&path, body).unwrap();
@@ -690,8 +690,8 @@ mod tests {
 
     #[tokio::test]
     async fn encrypted_importer_round_trip_decrypts_and_parses() {
-        let vault = r#"{"folders":[],"items":[{"name":"PayPal","type":1,"login":{"username":"alex","password":"S3cret!","uris":[{"uri":"https://paypal.com"}]}}]}"#;
-        let body = build_synthetic_encrypted_export("hunter2", "alex@example.com", 100_000, vault);
+        let vault = r#"{"folders":[],"items":[{"name":"PayPal","type":1,"login":{"username":"sam","password":"S3cret!","uris":[{"uri":"https://paypal.com"}]}}]}"#;
+        let body = build_synthetic_encrypted_export("hunter2", "sam@example.com", 100_000, vault);
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("enc.json");
         std::fs::write(&path, body).unwrap();
@@ -700,7 +700,7 @@ mod tests {
         let d = imp.discover_entries().await.unwrap();
         assert_eq!(d.entries.len(), 1, "decrypted vault must yield the login");
         assert_eq!(d.entries[0].name, "PayPal");
-        assert_eq!(d.entries[0].username, "alex");
+        assert_eq!(d.entries[0].username, "sam");
         assert_eq!(d.entries[0].secret.expose_str(), Some("S3cret!"));
     }
 

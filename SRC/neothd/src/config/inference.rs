@@ -16,7 +16,7 @@
 //!
 //! `InferenceProvider` is the union of LLM backends NEOTH can dispatch to.
 //!
-//! Removed Session-14 / 2026-05-18 (Codex feedback + Alex's architectural
+//! Removed Session-14 / 2026-05-18 (Codex feedback + the operator's architectural
 //! correction): `Hermes` and `OpenClaw` are NOT LLM providers — they are
 //! competing gateway systems that NEOTH supersedes. Operators wanting
 //! direct access to the LLMs those gateways front (Claude, OpenAI,

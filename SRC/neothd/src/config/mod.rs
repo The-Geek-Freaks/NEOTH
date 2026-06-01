@@ -1530,9 +1530,9 @@ fn default_profile_allow_cloud_fallback() -> bool {
 pub struct ClaudeCliConfig {
     /// Backend selection. `auto` (default) probes tmux availability +
     /// picks the best option; `tmux` forces warm-session mode (the
-    /// only path that works reliably for Alex's stack — see memory
+    /// only path that works reliably for tmux-based setups — see memory
     /// `neoth-claude-cli-tmux-mandatory.md`); `subprocess` forces the
-    /// cold-start `claude --print` path (broken on Alex's host but
+    /// cold-start `claude --print` path (broken on some hosts but
     /// kept as a Windows-without-WSL escape hatch).
     #[serde(default)]
     pub backend: ClaudeCliBackendCfg,
@@ -2143,7 +2143,7 @@ mod tests {
         let cfg = FreedomConfig::load_from_path(&example_path)
             .expect("freedom.yaml.example must parse via FreedomConfig::load_from_path");
         // Spot-check the documented defaults landed.
-        assert_eq!(cfg.operator_id.as_deref(), Some("alex"));
+        assert_eq!(cfg.operator_id.as_deref(), Some("demo-user"));
         assert_eq!(cfg.role, Some(OperatorRole::Developer));
         assert_eq!(cfg.provider_kind, Some(ProviderKind::ClaudeCli));
         assert!(

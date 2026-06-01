@@ -444,14 +444,14 @@ mod tests {
             ImportSource::Bitwarden,
             "Acme",
             "https://acme.com",
-            "alex",
+            "sam",
             "pass".to_string(),
             vec!["work".into()],
         );
         assert_eq!(c.source, ImportSource::Bitwarden);
         assert_eq!(c.name, "Acme");
         assert_eq!(c.url, "https://acme.com");
-        assert_eq!(c.username, "alex");
+        assert_eq!(c.username, "sam");
         assert_eq!(c.secret.expose_str(), Some("pass"));
         assert_eq!(c.tags, vec!["work"]);
     }
@@ -462,7 +462,7 @@ mod tests {
             ImportSource::Bitwarden,
             "Acme",
             "https://acme.com",
-            "alex",
+            "sam",
             "supersecret".to_string(),
             vec![],
         );
@@ -508,7 +508,7 @@ mod tests {
             ImportSource::Bitwarden,
             name,
             "https://x",
-            "alex",
+            "demo-user",
             secret.to_string(),
             vec!["work".into()],
         )
@@ -623,7 +623,7 @@ mod tests {
         let json = serde_json::to_string(&redacted).unwrap();
         assert!(!json.contains("PayPal"));
         assert!(!json.contains("supersecret"));
-        assert!(!json.contains("alex"));
+        assert!(!json.contains("demo-user"));
         assert!(redacted.services_redacted);
         assert_eq!(redacted.entry_count, 1);
     }

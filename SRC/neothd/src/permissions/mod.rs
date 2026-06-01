@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn dangerous_target_is_deny_until_elevated_then_confirm_at_full() {
-        let target = Action::DangerousTarget("100.68.210.50".into());
+        let target = Action::DangerousTarget("192.0.2.1".into());
         assert!(evaluate(&target, AutonomyLevel::Strict).is_deny());
         assert!(evaluate(&target, AutonomyLevel::Standard).is_deny());
         assert!(matches!(
@@ -875,7 +875,7 @@ mod tests {
         // pre-authorise these. If a refactor maps any of them to Some, this
         // test fails and forces a security conversation.
         assert_eq!(
-            lease_scope_for(&Action::DangerousTarget("cube".into())),
+            lease_scope_for(&Action::DangerousTarget("home-server".into())),
             None
         );
         assert_eq!(

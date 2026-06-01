@@ -20,7 +20,7 @@
 # Stable short identifier — 2-32 chars, [a-zA-Z0-9_-]. Used as the
 # author tag on every WAL event the daemon emits. Pick something
 # meaningful; you cannot easily change this without retagging history.
-operator_id: alex
+operator_id: demo-user
 
 # BCP-47 primary language. Drives default replies + onboarding text.
 language_primary: de
@@ -47,7 +47,7 @@ provider_kind: claude_cli
 
 # Path to the provider binary (for `claude_cli`). Auto-detected via $PATH
 # when the wizard runs; override here for non-standard installs.
-# provider_binary: /home/alex/.npm-global/bin/claude
+# provider_binary: /home/user/.npm-global/bin/claude
 
 # API endpoint (for `openai_compat` only — e.g. LM Studio, vLLM, Ollama).
 # provider_endpoint: http://127.0.0.1:1234/v1
@@ -186,7 +186,7 @@ review_gate_enabled: false
 
 # When set, the daemon mirrors `~/.neoth/archive/sessions/<day>/<file>.md`
 # into the operator's Obsidian vault on a schedule.
-# obsidian_vault: /home/alex/vaults/main
+# obsidian_vault: /home/user/vaults/main
 # obsidian_subdir: NEOTH       # default: "NEOTH"
 # obsidian_auto_sync_secs: 3600 # default: 1 hour
 
@@ -210,7 +210,7 @@ review_gate_enabled: false
 # `~/.neoth/archive/sessions/` into this folder on a schedule. Cloud
 # auth + transport are owned by the cloud vendor's desktop client —
 # NEOTH stays out of it.
-# cloud_archive_dest: /home/alex/Dropbox/NEOTH-archive
+# cloud_archive_dest: /home/user/Dropbox/NEOTH-archive
 # cloud_archive_subdir: NEOTH
 # cloud_archive_auto_sync_secs: 3600
 
@@ -249,7 +249,7 @@ rollback:
 #   auto       — probe tmux availability at startup; tmux wins when
 #                present, subprocess otherwise. Default + recommended.
 #   tmux       — force the warm session. Errors at startup if tmux is
-#                missing. Recommended for Alex's stack — subprocess
+#                missing. Recommended for tmux-based setups — subprocess
 #                mode is documented broken there.
 #   subprocess — force `claude --print`. Use only on Windows-without-WSL
 #                where tmux is not an option.

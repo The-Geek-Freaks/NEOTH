@@ -237,7 +237,7 @@ mod tests {
             "folders":[],
             "items":[{
                 "name":"PayPal","type":1,
-                "login":{"username":"alex","password":"supersecret","uris":[{"uri":"https://paypal.com"}]}
+                "login":{"username":"sam","password":"supersecret","uris":[{"uri":"https://paypal.com"}]}
             }]
         }"#;
         std::fs::write(&path, body).unwrap();
@@ -250,7 +250,7 @@ mod tests {
 
         let json = serde_json::to_string(&result.redacted_payload).unwrap();
         assert!(!json.contains("PayPal"));
-        assert!(!json.contains("alex"));
+        assert!(!json.contains("sam"));
         assert!(!json.contains("supersecret"));
         assert!(result.redacted_payload.services_redacted);
         assert_eq!(result.redacted_payload.entry_count, 1);

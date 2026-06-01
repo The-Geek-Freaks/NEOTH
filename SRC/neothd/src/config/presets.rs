@@ -513,7 +513,7 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(
             dir.path().join("freedom.yaml"),
-            "operator_id: alex\nprovider_kind: claude_cli\n",
+            "operator_id: sam\nprovider_kind: claude_cli\n",
         )
         .unwrap();
         let preset = Preset {
@@ -522,7 +522,7 @@ mod tests {
         };
         apply_preset_to_freedom_yaml(dir.path(), &preset).unwrap();
         let body = std::fs::read_to_string(dir.path().join("freedom.yaml")).unwrap();
-        assert!(body.contains("operator_id: alex"));
+        assert!(body.contains("operator_id: sam"));
         assert!(body.contains("provider_kind: claude_cli"));
         assert!(body.contains("daily_usd_cap: 2"));
     }

@@ -1,7 +1,7 @@
 //! G-03 — rule-based follow-up tone scorer. NO LLM call: a pure, fast,
 //! deterministic heuristic over an operator's chat turn, used to detect when
 //! the turn reads as a CORRECTION of the preceding reply (negative) or a
-//! reinforcement (positive). EN + DE patterns (Alex's two languages).
+//! reinforcement (positive). EN + DE patterns (the operator's two languages).
 //!
 //! Scores in `[-1.0, 1.0]`. A turn below [`NEGATIVE_THRESHOLD`] is treated as
 //! operator pushback (emits an `OPERATOR_FEEDBACK` frame); above

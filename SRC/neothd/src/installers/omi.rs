@@ -11,7 +11,7 @@
 //!   - Default self-hosted local endpoint constant.
 //!   - The forbidden cloud-managed hostname so SC-14 has one
 //!     central source of truth.
-//!   - `is_jarvis_local_endpoint(url)` validator the wizard +
+//!   - `is_local_endpoint(url)` validator the wizard +
 //!     daemon both call.
 //!   - Probe for the operator's local OMI backend health.
 
@@ -25,7 +25,7 @@ pub const DEFAULT_OMI_ENDPOINT: &str = "http://127.0.0.1:8002";
 
 /// The cloud-managed OMI hostname SC-14 forbids. Anything that
 /// resolves to or names this host is rejected by
-/// [`is_jarvis_local_endpoint`].
+/// [`is_local_endpoint`].
 pub const FORBIDDEN_CLOUD_HOSTNAME: &str = "api.omi.me";
 
 /// Upstream docs URL for operators wanting to self-host the OMI
@@ -37,7 +37,7 @@ pub const OMI_SELF_HOST_DOCS_URL: &str = "https://docs.omi.me/docs/developer/Bac
 /// Returns `Ok(())` when the URL points at a loopback / private
 /// host. Returns `Err(reason)` when the URL names the forbidden
 /// cloud host or is malformed.
-pub fn is_jarvis_local_endpoint(url: &str) -> Result<(), String> {
+pub fn is_local_endpoint(url: &str) -> Result<(), String> {
     if url.is_empty() {
         return Err("empty endpoint".to_string());
     }
@@ -89,7 +89,7 @@ impl ProbeOutcome {
 /// `Forbidden` immediately when the URL trips SC-14 — we don't
 /// TCP-connect to the cloud-managed host even briefly.
 pub async fn probe_endpoint(url: &str) -> ProbeOutcome {
-    if is_jarvis_local_endpoint(url).is_err() {
+    if is_local_endpoint(url).is_err() {
         return ProbeOutcome::Forbidden;
     }
     let host_port = match url
@@ -140,24 +140,24 @@ mod tests {
 
     #[test]
     fn validator_accepts_loopback_endpoint() {
-        assert!(is_jarvis_local_endpoint("http://127.0.0.1:8002").is_ok());
-        assert!(is_jarvis_local_endpoint("http://localhost:8002").is_ok());
+        assert!(is_local_endpoint("http://127.0.0.1:8002").is_ok());
+        assert!(is_local_endpoint("http://localhost:8002").is_ok());
     }
 
     #[test]
     fn validator_accepts_https_loopback() {
-        assert!(is_jarvis_local_endpoint("https://127.0.0.1:8443").is_ok());
+        assert!(is_local_endpoint("https://127.0.0.1:8443").is_ok());
     }
 
     #[test]
     fn validator_accepts_lan_addresses() {
-        assert!(is_jarvis_local_endpoint("http://192.168.1.50:8002").is_ok());
-        assert!(is_jarvis_local_endpoint("http://10.0.0.5:8002").is_ok());
+        assert!(is_local_endpoint("http://192.168.1.50:8002").is_ok());
+        assert!(is_local_endpoint("http://10.0.0.5:8002").is_ok());
     }
 
     #[test]
     fn validator_rejects_cloud_endpoint_with_message() {
-        let err = is_jarvis_local_endpoint("https://api.omi.me/v1/streams").unwrap_err();
+        let err = is_local_endpoint("https://api.omi.me/v1/streams").unwrap_err();
         assert!(err.contains(FORBIDDEN_CLOUD_HOSTNAME));
         assert!(err.contains("SC-14"));
         assert!(err.contains("self-host"));
@@ -165,19 +165,19 @@ mod tests {
 
     #[test]
     fn validator_rejects_cloud_case_insensitive() {
-        let err = is_jarvis_local_endpoint("HTTPS://API.OMI.ME/v1/streams").unwrap_err();
+        let err = is_local_endpoint("HTTPS://API.OMI.ME/v1/streams").unwrap_err();
         assert!(err.contains(FORBIDDEN_CLOUD_HOSTNAME));
     }
 
     #[test]
     fn validator_rejects_empty_url() {
-        let err = is_jarvis_local_endpoint("").unwrap_err();
+        let err = is_local_endpoint("").unwrap_err();
         assert!(err.contains("empty"));
     }
 
     #[test]
     fn validator_rejects_non_http_scheme() {
-        let err = is_jarvis_local_endpoint("ws://127.0.0.1:8002").unwrap_err();
+        let err = is_local_endpoint("ws://127.0.0.1:8002").unwrap_err();
         assert!(err.contains("http"));
     }
 

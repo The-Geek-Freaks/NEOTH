@@ -389,11 +389,11 @@ mod tests {
     fn sample_draft(ts: i64) -> EmailDraft {
         build_draft(
             "vendor@example.com",
-            "Alex Müller",
+            "Sam Müller",
             "Re: Invoice #1234",
             "die Zahlung ist heute angewiesen. Danke für die Geduld.",
             SalutationLocale::GermanFormal,
-            "Alex",
+            "Sam",
             vec![DraftContextSnippet {
                 source_label: "Invoice doc-001.md".into(),
                 excerpt: "Total due: 42.00 EUR — paid 2026-05-26".into(),
@@ -422,8 +422,8 @@ mod tests {
 
     #[test]
     fn salutation_for_named_recipient_german_formal() {
-        let s = SalutationLocale::GermanFormal.salutation_for("Alex Müller");
-        assert_eq!(s, "Sehr geehrte/r Alex Müller,");
+        let s = SalutationLocale::GermanFormal.salutation_for("Sam Müller");
+        assert_eq!(s, "Sehr geehrte/r Sam Müller,");
     }
 
     #[test]
@@ -481,12 +481,12 @@ mod tests {
     fn render_body_has_salutation_brief_references_closing_signature() {
         let d = sample_draft(100);
         let body = d.render_body();
-        assert!(body.contains("Sehr geehrte/r Alex Müller,"));
+        assert!(body.contains("Sehr geehrte/r Sam Müller,"));
         assert!(body.contains("die Zahlung ist heute angewiesen"));
         assert!(body.contains("--- Referenzen ---"));
         assert!(body.contains("Invoice doc-001.md"));
         assert!(body.contains("Mit freundlichen Grüßen"));
-        assert!(body.ends_with("Alex\n"));
+        assert!(body.ends_with("Sam\n"));
     }
 
     #[test]

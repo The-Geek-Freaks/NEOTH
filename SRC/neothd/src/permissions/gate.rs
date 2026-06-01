@@ -450,7 +450,7 @@ mod tests {
     async fn deny_path_returns_denied() {
         let gate = Gate::for_level(AutonomyLevel::Standard);
         let r = gate
-            .check(&Action::DangerousTarget("cube".into()), None)
+            .check(&Action::DangerousTarget("home-server".into()), None)
             .await;
         assert!(matches!(r, Err(GateError::Denied(_))), "got {:?}", r);
     }
@@ -627,7 +627,7 @@ mod tests {
 
         let gate = Gate::for_level(AutonomyLevel::Standard);
         let _ = gate
-            .check(&Action::DangerousTarget("cube".into()), Some(&writer))
+            .check(&Action::DangerousTarget("home-server".into()), Some(&writer))
             .await;
 
         drop(writer);
@@ -809,7 +809,7 @@ mod tests {
         let gate = Gate::for_level(AutonomyLevel::Full).with_confirm(ConfirmStrategy::FailClosed);
         let r = gate
             .check(
-                &Action::DangerousTarget("100.68.210.50".into()),
+                &Action::DangerousTarget("192.0.2.1".into()),
                 Some(&writer),
             )
             .await;

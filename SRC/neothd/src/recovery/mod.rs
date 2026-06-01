@@ -275,10 +275,10 @@ mod tests {
     fn bak_path_appends_dot_bak_to_full_filename() {
         // Pin the canonical bak naming so R-06 and shrink_safe_write
         // agree.
-        let p = Path::new("/home/alex/.neoth/freedom.yaml");
+        let p = Path::new("/home/user/.neoth/freedom.yaml");
         assert_eq!(
             bak_path(p),
-            PathBuf::from("/home/alex/.neoth/freedom.yaml.bak")
+            PathBuf::from("/home/user/.neoth/freedom.yaml.bak")
         );
     }
 

@@ -22,7 +22,7 @@
 //! atomic swap, then delete the sentinel.
 //!
 //! Why filesystem signaling, not SIGHUP/notify:
-//!   - SIGHUP doesn't exist on Windows (Alex's primary)
+//!   - SIGHUP doesn't exist on Windows (the operator's primary target)
 //!   - `notify` crate adds a background thread + cross-platform FS
 //!     event complexity that for a solo operator with explicit
 //!     intent (typing `neoth reload`) is overkill
@@ -304,7 +304,7 @@ mod tests {
 
     fn fresh_config() -> FreedomConfig {
         FreedomConfig {
-            operator_id: Some("alex".into()),
+            operator_id: Some("sam".into()),
             provider_kind: Some(ProviderKind::ClaudeCli),
             telegram_user_id: Some(42),
             ..Default::default()
@@ -323,7 +323,7 @@ mod tests {
     fn validate_immutable_operator_id_rejects() {
         let old = fresh_config();
         let mut new = old.clone();
-        new.operator_id = Some("not-alex".into());
+        new.operator_id = Some("not-sam".into());
         let reason = validate_reload(&old, &new).expect("must reject");
         assert!(reason.contains("operator_id"));
         assert!(reason.contains("restart"));
@@ -439,7 +439,7 @@ mod tests {
             other => panic!("expected Rejected, got {other:?}"),
         }
         // Critically: latest() still returns the ORIGINAL config.
-        assert_eq!(ctrl.latest().operator_id, Some("alex".into()));
+        assert_eq!(ctrl.latest().operator_id, Some("sam".into()));
     }
 
     #[test]
