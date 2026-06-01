@@ -27,7 +27,7 @@ runbook is the operator procedure; the deterministic scoring is shipped in
 - Extracting the 100-query goldset from the live Jarvis `recall.sh`.
 - The 14-day shadow-run with Telegram dual-write.
 - The 4-grader grading itself (Claude / Codex / Gemini / external family-D +
-  Alex's 20-query operator anchor).
+  the operator's 20-query anchor).
 - The YubiKey/TOTP-gated primary-store switch + the 30-minute rollback window.
 
 ## Procedure
@@ -35,7 +35,7 @@ runbook is the operator procedure; the deterministic scoring is shipped in
 1. **Goldset** — extract 100 representative queries → `eval/goldset.jsonl`
    (`{query_id, query_text, category, expected_sources, expected_response}` per
    line). Categories: `recall`/`summarize`/`action`/`factual`.
-2. **Anchor** — Alex hand-grades 20 of the 100 against the 5-dimension rubric
+2. **Anchor** — the operator hand-grades 20 of the 100 against the 5-dimension rubric
    → `eval/operator-anchor.jsonl`.
 3. **Shadow-run (14 days)** — dual-write every Telegram turn to NEOTH + Jarvis;
    collect both systems' answers to the goldset queries.

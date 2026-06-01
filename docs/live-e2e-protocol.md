@@ -41,7 +41,7 @@ cargo install neoth
 export NEOTH_HOME=/tmp/neoth-e2e
 mkdir -p "$NEOTH_HOME"
 neoth init --home "$NEOTH_HOME"
-# Wizard asks: operator id (e.g. "alex"), provider (pick claude_cli
+# Wizard asks: operator id (e.g. "you"), provider (pick claude_cli
 # OR openai_compat with an api key you have), autonomy (pick
 # "standard" — strict refuses cloud + you need cloud for this proto),
 # memory tier defaults (keep defaults).

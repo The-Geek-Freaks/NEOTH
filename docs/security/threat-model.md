@@ -214,7 +214,7 @@ verifies authenticity with minisign.
 
 **Open CI dependency:** the release workflow's minisign signing step is
 in place (additive, graceful-skip when the secret is unset) but
-**inactive until Alex provisions the keypair** — set
+**inactive until the maintainer provisions the keypair** — set
 `NEOTH_RELEASE_MINISIGN_SECRET_KEY` (and optional
 `NEOTH_RELEASE_MINISIGN_PASSWORD`) repo secrets + build the binaries
 with `NEOTH_RELEASE_MINISIGN_PUBKEY` env baked in. Until then, releases
