@@ -1618,17 +1618,27 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 ));
                 let cluster_key = std::sync::Arc::new(identity.key);
                 let cluster_wal = Some(std::sync::Arc::new(writer.clone()));
-                // SL-00(1c): the outbound peer-stream registry. SL-01/SL-01b
-                // will hold a clone here to send directed task/gossip frames;
-                // today the transport owns it for the heartbeat-send path.
+                // SL-00(1c): the outbound peer-stream registry, shared between
+                // the transport (drains it to write) and the SL-01 executor
+                // (queues TaskResult replies onto it).
                 let peer_streams =
                     std::sync::Arc::new(crate::cluster::peer_streams::PeerStreamRegistry::new());
+                // SL-01: spawn the single task executor (holds the provider +
+                // a clone of peer_streams) and thread its bounded dispatch
+                // sender into the transport's accept gate.
+                let dispatch_tx = crate::cluster::executor::spawn_cluster_executor(
+                    shared_provider.clone(),
+                    std::sync::Arc::clone(&peer_streams),
+                );
                 match crate::cluster::hyperswarm::spawn_discovery_with_wal(
                     &identity.name,
                     Some(cluster_key),
                     registry,
                     cluster_wal,
                     peer_streams,
+                    config.autonomy,
+                    crate::config::FreedomConfig::default_neoth_home(),
+                    Some(dispatch_tx),
                 )
                 .await
                 {

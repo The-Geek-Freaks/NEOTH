@@ -1199,9 +1199,28 @@ pub const EVENT_TYPE_CLUSTER_REQUEST_FORWARDED: u8 = 0xE9;
 /// SL-00(1c) (Session 33).
 pub const EVENT_TYPE_CLUSTER_HEARTBEAT_SENT: u8 = 0xEA;
 
-// Cluster band 0xE0..=0xEA currently assigned. 0xEB..=0xEF reserved
-// for further cluster lifecycle events (task accept/reject, gossip,
-// split-brain detection, leader stand-down, ...).
+/// `0xEB CLUSTER_TASK_ACCEPTED` — the 3-checkpoint accept gate passed for a
+/// task DELEGATED by a cluster master (SL-01): the peer is paired, holds an
+/// active `ClusterTaskAccept` lease, and the autonomy floor allows. The task
+/// is dispatched to the local provider. Security-relevant audit anchor.
+///
+/// Payload (JSON): `{task_id, peer_pubkey, lease_backed, autonomy, ts_unix}`.
+/// `peer_pubkey` is the AUTHENTICATED Noise static key (never a payload field).
+/// SL-01 (Session 33).
+pub const EVENT_TYPE_CLUSTER_TASK_ACCEPTED: u8 = 0xEB;
+
+/// `0xEC CLUSTER_TASK_REJECTED` — a delegated task was refused. `reason`
+/// distinguishes the failed checkpoint (`malformed` / `not_paired` /
+/// `no_active_lease` / `autonomy_deny` / `busy` / `no_provider`) so the
+/// operator's audit trail shows exactly why. Security-relevant.
+///
+/// Payload (JSON): `{task_id, peer_pubkey, reason, ts_unix}`.
+/// SL-01 (Session 33).
+pub const EVENT_TYPE_CLUSTER_TASK_REJECTED: u8 = 0xEC;
+
+// Cluster band 0xE0..=0xEC currently assigned. 0xED..=0xEF reserved
+// for further cluster lifecycle events (gossip, split-brain detection,
+// leader stand-down, ...).
 
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
@@ -1635,6 +1654,10 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT < 0xE0
         || EVENT_TYPE_CLUSTER_HEARTBEAT_SENT > 0xEF) as usize];
     let _ = [(); 1]
+        [(EVENT_TYPE_CLUSTER_TASK_ACCEPTED < 0xE0 || EVENT_TYPE_CLUSTER_TASK_ACCEPTED > 0xEF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_CLUSTER_TASK_REJECTED < 0xE0 || EVENT_TYPE_CLUSTER_TASK_REJECTED > 0xEF) as usize];
+    let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
     // true (clippy::absurd_extreme_comparisons). Only lower-bound check
@@ -1828,6 +1851,14 @@ mod tests {
             (
                 "CLUSTER_HEARTBEAT_SENT",
                 EVENT_TYPE_CLUSTER_HEARTBEAT_SENT,
+            ),
+            (
+                "CLUSTER_TASK_ACCEPTED",
+                EVENT_TYPE_CLUSTER_TASK_ACCEPTED,
+            ),
+            (
+                "CLUSTER_TASK_REJECTED",
+                EVENT_TYPE_CLUSTER_TASK_REJECTED,
             ),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),
@@ -2038,6 +2069,29 @@ mod tests {
         assert!(
             needs_immediate_sync(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT),
             "CLUSTER_HEARTBEAT_SENT MUST be immediate-sync (outbound heartbeat audit anchor)"
+        );
+    }
+
+    #[test]
+    fn cluster_task_accept_reject_are_0xeb_0xec_durable() {
+        assert_eq!(EVENT_TYPE_CLUSTER_TASK_ACCEPTED, 0xEB);
+        assert_eq!(EVENT_TYPE_CLUSTER_TASK_REJECTED, 0xEC);
+        for code in [
+            EVENT_TYPE_CLUSTER_TASK_ACCEPTED,
+            EVENT_TYPE_CLUSTER_TASK_REJECTED,
+        ] {
+            assert!(
+                (0xE0..=0xEF).contains(&code),
+                "task event 0x{code:02X} escaped the cluster band"
+            );
+            assert!(
+                needs_immediate_sync(code),
+                "task accept/reject 0x{code:02X} MUST be immediate-sync (security audit anchor)"
+            );
+        }
+        assert_ne!(
+            EVENT_TYPE_CLUSTER_TASK_ACCEPTED, EVENT_TYPE_CLUSTER_TASK_REJECTED,
+            "accept and reject must be distinct codes"
         );
     }
 

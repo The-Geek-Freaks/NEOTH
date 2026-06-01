@@ -44,6 +44,10 @@ pub mod local_load;
 /// connected peer (consumed by SL-01 task replies + SL-01b gossip).
 pub mod peer_streams;
 
+/// SL-01 cluster task executor — runs a delegated task through the local
+/// provider off the per-peer read loop + replies via the peer-stream registry.
+pub mod executor;
+
 /// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
 /// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
 /// Phase 6 gossip refreshes `last_seen_unix` on each authenticated

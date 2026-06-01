@@ -149,6 +149,16 @@ pub enum Action {
         /// Canonical, allowlist-validated path being read.
         path: std::path::PathBuf,
     },
+    /// SL-01: accept a task DELEGATED by a cluster master and run it through
+    /// this node's local provider. The peer has already authenticated (Noise +
+    /// cluster_key proof) and been operator-paired; this gate is the autonomy
+    /// floor on top. Strict denies (no unattended delegation); Standard
+    /// **confirms** so a standing `LeaseScope::ClusterTaskAccept` lease for the
+    /// peer UPGRADES it to Allow (the operator's explicit, TTL-bounded
+    /// delegation grant — exactly the SL-01a lease semantics) while a bare
+    /// Standard node with no lease stays fail-closed (no TTY); Elevated/Full
+    /// allow. Maps to `LeaseScope::ClusterTaskAccept` in `lease_scope_for`.
+    ClusterTaskAccept,
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -268,6 +278,11 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
             // `neoth lease grant <plugin> mcp_tool:<server_id>:<tool>`.
             Some(LeaseScope::McpTool(format!("{server_id}:{tool}")))
         }
+        // SL-01: the lease IS the cross-entity delegation grant here — an
+        // operator grants a specific cluster peer the standing right to
+        // delegate tasks for a bounded TTL. This is the consumer of the
+        // long-dormant `LeaseScope::ClusterTaskAccept`.
+        Action::ClusterTaskAccept => Some(LeaseScope::ClusterTaskAccept),
         // Unleasable by hard rule — see fn doc.
         Action::DangerousTarget(_)
         | Action::SelfBinaryReplace { .. }
@@ -328,6 +343,9 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: OS file read of {} requires confirm",
             path.display()
         )),
+        Action::ClusterTaskAccept => Decision::Deny(
+            "strict: no unattended cluster-delegated task execution".into(),
+        ),
     }
 }
 
@@ -369,6 +387,14 @@ fn evaluate_standard(action: &Action) -> Decision {
         // The allowlist (default deny-all) is the operator's explicit opt-in;
         // a path that reaches here already passed it, so Standard+ allows.
         Action::OsFileRead { .. } => Decision::Allow,
+        // Confirm — so a standing ClusterTaskAccept lease for the peer upgrades
+        // it to Allow (the SL-01a lease semantics), while a bare Standard node
+        // with no lease stays fail-closed (no TTY ⇒ effectively suppressed).
+        Action::ClusterTaskAccept => Decision::Confirm(
+            "standard: accept cluster-delegated task requires confirm \
+             (a ClusterTaskAccept lease for the peer upgrades this to allow)"
+                .into(),
+        ),
     }
 }
 
@@ -420,6 +446,10 @@ fn evaluate_elevated(action: &Action) -> Decision {
         // master switch is the operator's explicit opt-in upstream).
         Action::ProactiveChannelSend { .. } => Decision::Allow,
         Action::OsFileRead { .. } => Decision::Allow,
+        // Elevated is the operator's autonomous-behaviour opt-in; a
+        // paired+leased peer's delegated task runs. (is_paired + lease are
+        // separate checkpoints in the cluster gate; this is the autonomy floor.)
+        Action::ClusterTaskAccept => Decision::Allow,
     }
 }
 
@@ -1022,6 +1052,40 @@ mod tests {
     fn self_replace_custom_inherits_standard_confirm() {
         let d = evaluate(&self_replace_action(), AutonomyLevel::Custom);
         assert!(matches!(d, Decision::Confirm(_)));
+    }
+
+    #[test]
+    fn cluster_task_accept_autonomy_mapping() {
+        let a = Action::ClusterTaskAccept;
+        // Strict denies unattended delegation outright.
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Strict),
+            Decision::Deny(_)
+        ));
+        // Standard confirms — so a ClusterTaskAccept lease can upgrade it to
+        // Allow; bare Standard (no TTY) stays fail-closed.
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        // Custom mirrors Standard.
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Custom),
+            Decision::Confirm(_)
+        ));
+        // Elevated + Full allow.
+        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Allow));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
+    }
+
+    #[test]
+    fn cluster_task_accept_is_lease_scoped_not_hard_floor() {
+        // The lease IS the cross-entity delegation grant — it must map to a
+        // scope (not None), else checkpoint-2 could never pass.
+        assert_eq!(
+            lease_scope_for(&Action::ClusterTaskAccept),
+            Some(lease::LeaseScope::ClusterTaskAccept)
+        );
     }
 
     #[test]

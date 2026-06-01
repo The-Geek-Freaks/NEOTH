@@ -57,7 +57,13 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 /// v2 (SL-00 1b): the Hello now carries a mandatory `cluster_key_proof`.
 /// This is a breaking change — all nodes in a cluster must run >= v2
 /// together (a v1 peer's Hello omits the proof and is rejected fail-closed).
-pub const PROTOCOL_VERSION: u16 = 2;
+///
+/// v3 (SL-01): adds `FrameKind::TaskDelegate` + `TaskResult` (tagged-enum
+/// variants). A v2 peer cannot decode the new tags (ciborium errors on an
+/// unknown enum variant), so this is a breaking change — the handshake
+/// version check keeps v2 and v3 nodes from pairing, so a v3 task frame never
+/// reaches a v2 decoder. All cluster nodes upgrade to >= v3 together.
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
@@ -113,6 +119,13 @@ pub enum FrameKind {
     /// `PeerLoad` row immediately instead of waiting for the
     /// unhealthy timeout.
     Goodbye,
+    /// SL-01: a master delegates a task (a prompt to run through
+    /// the local provider) to this node. Subject to the
+    /// 3-checkpoint accept gate.
+    TaskDelegate,
+    /// SL-01: the slave's reply to a `TaskDelegate` — the
+    /// completion, a rejection reason, or an execution error.
+    TaskResult,
 }
 
 /// Wire envelope every frame carries. Body varies per kind;
@@ -147,6 +160,8 @@ pub enum FrameBody {
     Heartbeat(HeartbeatBody),
     CapabilityUpdate(CapabilityUpdateBody),
     Goodbye(GoodbyeBody),
+    TaskDelegate(TaskDelegateBody),
+    TaskResult(TaskResultBody),
 }
 
 /// Hello body — sent first on each connection.
@@ -212,6 +227,90 @@ pub struct CapabilityUpdateBody {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GoodbyeBody {
     pub reason: Option<String>,
+}
+
+/// SL-01 maximum delegated-prompt size (bytes). A master cannot force the slave
+/// to run a maximal-context inference; 8 KiB is generous for a real delegated
+/// task and well under [`MAX_FRAME_BYTES`]. Validated BEFORE the accept gate.
+pub const MAX_TASK_PROMPT_BYTES: usize = 8 * 1024;
+/// SL-01 maximum `task_id` / `model_hint` string length (bytes).
+pub const MAX_TASK_ID_BYTES: usize = 64;
+
+/// SL-01 TaskDelegate body — a master delegating a prompt to this node.
+/// The requester identity is NEVER carried here: it is the authenticated Noise
+/// static key (`remote_pk_hex`) of the connection. Bounds are enforced by
+/// [`validate_task_delegate`] before the accept gate spends any work.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskDelegateBody {
+    /// Master-generated correlation id (UUID). Echoed back in the result.
+    pub task_id: String,
+    /// The prompt to run through the slave's local provider.
+    pub prompt: String,
+    /// Preferred model id. ADVISORY ONLY in this lane — the slave runs its own
+    /// configured provider and ignores an unknown hint (no confused-deputy:
+    /// a master can't force the slave to call an arbitrary/expensive model).
+    /// Capability-aware routing is v1.0 hardening.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_hint: Option<String>,
+}
+
+/// SL-01 result status. `Rejected` = the accept gate refused (with a reason
+/// the master can act on); `Failed` = accepted but execution errored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "status")]
+pub enum TaskResultStatus {
+    Completed,
+    Rejected { reason: String },
+    Failed { error: String },
+}
+
+/// SL-01 TaskResult body — the slave's reply to a delegated task.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskResultBody {
+    /// Echoes [`TaskDelegateBody::task_id`] for correlation on the master.
+    pub task_id: String,
+    pub status: TaskResultStatus,
+    /// The completion text — present only on `Completed`. The slave truncates
+    /// to keep the encoded frame under [`MAX_FRAME_BYTES`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    /// Which provider the slave actually ran (observability for the master).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_name: Option<String>,
+}
+
+/// Validate an inbound [`TaskDelegateBody`] BEFORE the accept gate. Fail-closed
+/// on oversized / empty input so a malicious peer can't exhaust resources or
+/// pollute the WAL with a giant `task_id`. A peer need not be paired for its
+/// malformed frame to be rejected.
+pub fn validate_task_delegate(body: &TaskDelegateBody) -> Result<()> {
+    if body.task_id.is_empty() {
+        anyhow::bail!("task_delegate: empty task_id");
+    }
+    if body.task_id.len() > MAX_TASK_ID_BYTES {
+        anyhow::bail!(
+            "task_delegate: task_id {} bytes exceeds cap {MAX_TASK_ID_BYTES}",
+            body.task_id.len()
+        );
+    }
+    if body.prompt.is_empty() {
+        anyhow::bail!("task_delegate: empty prompt");
+    }
+    if body.prompt.len() > MAX_TASK_PROMPT_BYTES {
+        anyhow::bail!(
+            "task_delegate: prompt {} bytes exceeds cap {MAX_TASK_PROMPT_BYTES}",
+            body.prompt.len()
+        );
+    }
+    if let Some(hint) = &body.model_hint {
+        if hint.len() > MAX_TASK_ID_BYTES {
+            anyhow::bail!(
+                "task_delegate: model_hint {} bytes exceeds cap {MAX_TASK_ID_BYTES}",
+                hint.len()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// CBOR-encode a wire frame. Pure — no IO, no allocations
@@ -441,6 +540,118 @@ mod tests {
     }
 
     #[test]
+    fn task_delegate_round_trips_and_validates() {
+        let frame = WireFrame {
+            kind: FrameKind::TaskDelegate,
+            sequence: 7,
+            sent_unix_ms: 1_700_000_000_000,
+            peer_id: "master-1".into(),
+            body: FrameBody::TaskDelegate(TaskDelegateBody {
+                task_id: "task-abc".into(),
+                prompt: "summarize this".into(),
+                model_hint: Some("qwen3".into()),
+            }),
+        };
+        let bytes = encode_frame(&frame).unwrap();
+        match decode_frame(&bytes).unwrap().body {
+            FrameBody::TaskDelegate(b) => {
+                assert_eq!(b.task_id, "task-abc");
+                assert_eq!(b.prompt, "summarize this");
+                validate_task_delegate(&b).expect("well-formed delegate validates");
+            }
+            other => panic!("expected TaskDelegate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn task_result_round_trips_with_status_tag() {
+        let frame = WireFrame {
+            kind: FrameKind::TaskResult,
+            sequence: 8,
+            sent_unix_ms: 1_700_000_000_001,
+            peer_id: "slave-1".into(),
+            body: FrameBody::TaskResult(TaskResultBody {
+                task_id: "task-abc".into(),
+                status: TaskResultStatus::Rejected {
+                    reason: "no_active_lease".into(),
+                },
+                result: None,
+                provider_name: None,
+            }),
+        };
+        let bytes = encode_frame(&frame).unwrap();
+        match decode_frame(&bytes).unwrap().body {
+            FrameBody::TaskResult(b) => {
+                assert_eq!(b.task_id, "task-abc");
+                assert_eq!(
+                    b.status,
+                    TaskResultStatus::Rejected {
+                        reason: "no_active_lease".into()
+                    }
+                );
+            }
+            other => panic!("expected TaskResult, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validate_task_delegate_enforces_bounds() {
+        let ok = TaskDelegateBody {
+            task_id: "t".into(),
+            prompt: "p".into(),
+            model_hint: None,
+        };
+        assert!(validate_task_delegate(&ok).is_ok());
+
+        // Empty task_id / empty prompt rejected.
+        assert!(
+            validate_task_delegate(&TaskDelegateBody {
+                task_id: String::new(),
+                prompt: "p".into(),
+                model_hint: None,
+            })
+            .is_err()
+        );
+        assert!(
+            validate_task_delegate(&TaskDelegateBody {
+                task_id: "t".into(),
+                prompt: String::new(),
+                model_hint: None,
+            })
+            .is_err()
+        );
+
+        // Oversized prompt rejected (resource-exhaustion guard).
+        assert!(
+            validate_task_delegate(&TaskDelegateBody {
+                task_id: "t".into(),
+                prompt: "x".repeat(MAX_TASK_PROMPT_BYTES + 1),
+                model_hint: None,
+            })
+            .is_err(),
+            "prompt over {MAX_TASK_PROMPT_BYTES} bytes must be rejected"
+        );
+
+        // Oversized task_id + model_hint rejected.
+        assert!(
+            validate_task_delegate(&TaskDelegateBody {
+                task_id: "x".repeat(MAX_TASK_ID_BYTES + 1),
+                prompt: "p".into(),
+                model_hint: None,
+            })
+            .is_err()
+        );
+        assert!(
+            validate_task_delegate(&TaskDelegateBody {
+                task_id: "t".into(),
+                prompt: "p".into(),
+                model_hint: Some("x".repeat(MAX_TASK_ID_BYTES + 1)),
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
     fn encode_produces_compact_cbor_smaller_than_json() {
         // Sanity check on the Q1 choice — CBOR really is more
         // compact than the equivalent JSON for our shape.
@@ -662,7 +873,7 @@ mod tests {
         // values is intentional + needs a Chorus re-review.
         assert_eq!(PROTOCOL_NAME, "neoth-r7-heartbeat");
         // v2: SL-00(1b) added the mandatory cluster_key_proof to the Hello.
-        assert_eq!(PROTOCOL_VERSION, 2);
+        assert_eq!(PROTOCOL_VERSION, 3);
         assert_eq!(MAX_FRAME_BYTES, 64 * 1024);
         assert_eq!(HEARTBEAT_INTERVAL_MS, 5_000);
         assert_eq!(HEARTBEAT_JITTER_PCT, 20);

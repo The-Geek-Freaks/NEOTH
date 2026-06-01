@@ -69,17 +69,19 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::discovery::ClusterKey;
+use super::executor::ClusterTaskJob;
 use super::heartbeat::{
     self, FrameBody, FrameKind, HeartbeatBody, HelloBody, PROTOCOL_NAME, PROTOCOL_VERSION,
-    WireFrame,
+    TaskDelegateBody, TaskResultBody, TaskResultStatus, WireFrame,
 };
 use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
 use super::{PeerId, PeerLoad, PeerLoadRegistry};
+use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
 
 /// Optional WAL writer handle threaded into `spawn_discovery`
@@ -196,6 +198,11 @@ pub(crate) async fn spawn_discovery(
         registry,
         None,
         Arc::new(PeerStreamRegistry::new()),
+        // No-auth path never accepts delegated tasks: Strict autonomy + no
+        // executor ⇒ any TaskDelegate is rejected. neoth_home for completeness.
+        AutonomyLevel::Strict,
+        crate::config::FreedomConfig::default_neoth_home(),
+        None,
     )
     .await
 }
@@ -216,6 +223,10 @@ pub async fn spawn_discovery_with_wal(
     // SL-00(1c): shared registry of per-peer outbound channels. The daemon
     // holds a clone so SL-01/SL-01b can send directed frames to a peer.
     peer_streams: Arc<PeerStreamRegistry>,
+    // SL-01 accept-gate inputs threaded into every peer session.
+    autonomy: AutonomyLevel,
+    neoth_home: std::path::PathBuf,
+    dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     let config = peeroxide::SwarmConfig::with_public_bootstrap();
@@ -263,6 +274,8 @@ pub async fn spawn_discovery_with_wal(
             let wal = wal_writer.clone();
             let ckey = cluster_key.clone();
             let streams = Arc::clone(&peer_streams);
+            let home = neoth_home.clone();
+            let dtx = dispatch_tx.clone();
             tokio::spawn(async move {
                 // Hold the permit until this session ends.
                 let _permit = permit;
@@ -276,6 +289,9 @@ pub async fn spawn_discovery_with_wal(
                     ckey,
                     own_noise_pk,
                     streams,
+                    autonomy,
+                    home,
+                    dtx,
                 )
                 .await
                 {
@@ -342,6 +358,7 @@ fn local_peer_id() -> String {
 /// length-prefix layer in [`super::heartbeat::write_framed`] +
 /// [`read_framed`] — those exist for the `tokio::io::duplex`
 /// test path and any future non-Noise transport.
+#[allow(clippy::too_many_arguments)]
 async fn handle_peeroxide_connection(
     mut conn: peeroxide::SwarmConnection,
     cluster_name: String,
@@ -356,6 +373,14 @@ async fn handle_peeroxide_connection(
     // SL-00(1c): registry of outbound channels so other subsystems can send
     // directed frames to this peer; the session loop drains its receiver.
     peer_streams: Arc<PeerStreamRegistry>,
+    // SL-01: the 3-checkpoint accept-gate inputs. `autonomy` is the node's
+    // level; `neoth_home` locates cluster.yaml (pairing) + leases.json;
+    // `dispatch_tx` hands an accepted task to the executor (None ⇒ no executor,
+    // e.g. no-provider / CLI one-shot — a delegate then gets a "no_provider"
+    // rejection).
+    autonomy: AutonomyLevel,
+    neoth_home: std::path::PathBuf,
+    dispatch_tx: Option<tokio::sync::mpsc::Sender<ClusterTaskJob>>,
 ) -> Result<()> {
     let remote_pk_hex = hex_encode(conn.remote_public_key());
     // Peer's Noise static key from the authenticated channel — the identity
@@ -685,6 +710,41 @@ async fn handle_peeroxide_connection(
                 return Err(e).context("decode peer frame");
             }
         };
+
+        // ── SL-01: intercept task frames BEFORE the sync handler (which has no
+        // provider / lease / autonomy access). TaskDelegate runs the accept
+        // gate + dispatches to the executor; TaskResult (we were the master) is
+        // audited. Both `continue` — they never reach handle_inbound_frame.
+        if frame.kind == FrameKind::TaskDelegate {
+            if let FrameBody::TaskDelegate(delegate) = frame.body {
+                handle_task_delegate(
+                    delegate,
+                    &remote_pk_hex,
+                    &own_peer_id,
+                    autonomy,
+                    &neoth_home,
+                    wal_writer.clone(),
+                    &peer_streams,
+                    dispatch_tx.as_ref(),
+                )
+                .await;
+            }
+            continue;
+        }
+        if frame.kind == FrameKind::TaskResult {
+            if let FrameBody::TaskResult(r) = &frame.body {
+                // Master-side: we delegated a task and got a reply. Full
+                // correlation (task_id → pending request) is the SL-01-master
+                // follow-up; today we audit-log receipt.
+                info!(
+                    peer_id = %peer_id,
+                    task_id = %r.task_id,
+                    "cluster: received TaskResult from peer"
+                );
+            }
+            continue;
+        }
+
         let kind = frame.kind;
         let body_clone = frame.body.clone();
         match handle_inbound_frame(frame, &peer_id, &mut peer_capabilities, &registry) {
@@ -901,6 +961,252 @@ fn now_unix_secs() -> u64 {
         .unwrap_or(0)
 }
 
+// ── SL-01 task-delegation accept gate + handler ────────────────────────────
+
+/// Outcome of the 3-checkpoint accept gate. `Accept{lease_backed}` records
+/// whether a lease (vs an Allow-level autonomy) authorized it, for the audit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TaskGateOutcome {
+    Accept { lease_backed: bool },
+    Reject(&'static str),
+}
+
+/// The pure accept-gate decision (SL-01). Mirrors the shipped capability-lease
+/// semantics ([[neoth_session32_burndown]]): a lease upgrades a `Confirm` to
+/// `Allow` but NEVER overrides a `Deny`. `is_paired` is a hard pre-checkpoint.
+///
+/// - not paired ⇒ Reject("not_paired")
+/// - autonomy `Deny` (Strict) ⇒ Reject("autonomy_deny") regardless of lease
+/// - autonomy `Confirm` (Standard) ⇒ Accept iff an active lease, else
+///   Reject("no_active_lease") — the lease is the operator's standing grant
+/// - autonomy `Allow` (Elevated/Full) ⇒ Accept (is_paired is the per-peer gate
+///   here; no lease required once the operator opted into that autonomy level)
+fn cluster_task_gate(is_paired: bool, decision: &Decision, lease_active: bool) -> TaskGateOutcome {
+    if !is_paired {
+        return TaskGateOutcome::Reject("not_paired");
+    }
+    match decision {
+        Decision::Allow => TaskGateOutcome::Accept { lease_backed: lease_active },
+        Decision::Confirm(_) => {
+            if lease_active {
+                TaskGateOutcome::Accept { lease_backed: true }
+            } else {
+                TaskGateOutcome::Reject("no_active_lease")
+            }
+        }
+        Decision::Deny(_) => TaskGateOutcome::Reject("autonomy_deny"),
+    }
+}
+
+/// Handle an inbound `TaskDelegate` frame: validate → run the 3-checkpoint gate
+/// → on accept dispatch to the executor (WAL 0xEB) → on reject reply a
+/// `TaskResult{Rejected}` (WAL 0xEC). Best-effort: never returns Err (a bad
+/// task is not a transport error). `remote_pk_hex` is the AUTHENTICATED Noise
+/// key — the only identity the gate trusts.
+#[allow(clippy::too_many_arguments)]
+async fn handle_task_delegate(
+    body: TaskDelegateBody,
+    remote_pk_hex: &str,
+    own_peer_id: &str,
+    autonomy: AutonomyLevel,
+    neoth_home: &std::path::Path,
+    wal_writer: ClusterWalWriter,
+    peer_streams: &PeerStreamRegistry,
+    dispatch_tx: Option<&tokio::sync::mpsc::Sender<ClusterTaskJob>>,
+) {
+    let task_id = body.task_id.clone();
+
+    // Pre-checkpoint: validate the frame BEFORE spending gate work. A malformed
+    // frame is rejected even from an unpaired peer.
+    if let Err(e) = heartbeat::validate_task_delegate(&body) {
+        debug!(error = %e, "cluster: rejecting malformed TaskDelegate");
+        reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "malformed");
+        emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "malformed");
+        return;
+    }
+
+    // Checkpoint 3 (pure, zero-cost) FIRST so a flood of frames can't force
+    // disk I/O on a guaranteed-Deny path (review DoS finding). Strict ⇒ Deny ⇒
+    // reject without touching the registry or lease store.
+    let decision = permissions::evaluate(&Action::ClusterTaskAccept, autonomy);
+    if matches!(decision, Decision::Deny(_)) {
+        reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "autonomy_deny");
+        emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "autonomy_deny");
+        return;
+    }
+
+    // Checkpoint 1: the peer is operator-paired (registry membership of the
+    // AUTHENTICATED Noise key, never a payload field). One disk read.
+    let is_paired = crate::cluster::registry::is_paired(neoth_home, remote_pk_hex);
+
+    // Checkpoint 2: a fresh lease read — but ONLY when it can change the
+    // outcome (a `Confirm` level, i.e. Standard). At an `Allow` level
+    // (Elevated/Full) the lease is not required, so skip the I/O. Fresh load is
+    // cross-process correct (a CLI `neoth lease grant` must be visible) + runs
+    // off the runtime thread.
+    let lease_active = if is_paired && matches!(decision, Decision::Confirm(_)) {
+        check_cluster_lease(neoth_home, remote_pk_hex).await
+    } else {
+        false
+    };
+
+    match cluster_task_gate(is_paired, &decision, lease_active) {
+        TaskGateOutcome::Reject(reason) => {
+            reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, reason);
+            emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, reason);
+        }
+        TaskGateOutcome::Accept { lease_backed } => {
+            // Dispatch off-loop to the executor. Bounded channel ⇒ a busy
+            // executor (one inference already running) means try_send fails and
+            // we reply busy rather than queueing unboundedly.
+            let job = ClusterTaskJob {
+                task_id: task_id.clone(),
+                prompt: body.prompt,
+                reply_peer_pk: remote_pk_hex.to_string(),
+                wal_writer: wal_writer.clone(),
+            };
+            match dispatch_tx {
+                Some(tx) => match tx.try_send(job) {
+                    Ok(()) => {
+                        emit_task_accepted_wal(
+                            wal_writer.as_deref(),
+                            &task_id,
+                            remote_pk_hex,
+                            lease_backed,
+                            autonomy,
+                        );
+                    }
+                    // Full ⇒ an inference is already running (bounded(1)) — back
+                    // off. Closed ⇒ the executor task died (panic) — surface it
+                    // as a DISTINCT, operator-visible reason rather than hiding
+                    // a dead executor behind "busy" (review finding).
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        reply_task_rejected(peer_streams, remote_pk_hex, own_peer_id, &task_id, "busy");
+                        emit_task_rejected_wal(wal_writer.as_deref(), &task_id, remote_pk_hex, "busy");
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        error!(task_id = %task_id, "cluster executor channel closed — executor task is gone");
+                        reply_task_rejected(
+                            peer_streams,
+                            remote_pk_hex,
+                            own_peer_id,
+                            &task_id,
+                            "executor_dead",
+                        );
+                        emit_task_rejected_wal(
+                            wal_writer.as_deref(),
+                            &task_id,
+                            remote_pk_hex,
+                            "executor_dead",
+                        );
+                    }
+                },
+                None => {
+                    // No executor wired (no provider / CLI one-shot path).
+                    reply_task_rejected(
+                        peer_streams,
+                        remote_pk_hex,
+                        own_peer_id,
+                        &task_id,
+                        "no_provider",
+                    );
+                    emit_task_rejected_wal(
+                        wal_writer.as_deref(),
+                        &task_id,
+                        remote_pk_hex,
+                        "no_provider",
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Fresh, off-thread lease check for `ClusterTaskAccept` on `subject`.
+/// Fail-closed: any load error ⇒ no lease.
+async fn check_cluster_lease(neoth_home: &std::path::Path, subject: &str) -> bool {
+    let path = crate::permissions::lease::LeaseStore::default_path(neoth_home);
+    let subject = subject.to_string();
+    let now = now_unix_secs() as i64;
+    tokio::task::spawn_blocking(move || {
+        match crate::permissions::lease::LeaseStore::load(&path) {
+            Ok(store) => store.active_for(
+                &subject,
+                &crate::permissions::lease::LeaseScope::ClusterTaskAccept,
+                now,
+            ),
+            Err(_) => false,
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// Queue a `TaskResult{Rejected}` reply via the peer's outbound channel.
+fn reply_task_rejected(
+    peer_streams: &PeerStreamRegistry,
+    remote_pk_hex: &str,
+    own_peer_id: &str,
+    task_id: &str,
+    reason: &str,
+) {
+    let frame = WireFrame {
+        kind: FrameKind::TaskResult,
+        sequence: 0,
+        sent_unix_ms: now_unix_ms(),
+        peer_id: own_peer_id.to_string(),
+        body: FrameBody::TaskResult(TaskResultBody {
+            task_id: task_id.to_string(),
+            status: TaskResultStatus::Rejected {
+                reason: reason.to_string(),
+            },
+            result: None,
+            provider_name: None,
+        }),
+    };
+    if let Err(e) = peer_streams.send_to(remote_pk_hex, frame) {
+        debug!(error = %e, task_id, "cluster: could not deliver rejection (peer gone)");
+    }
+}
+
+fn emit_task_accepted_wal(
+    writer: Option<&WalWriterHandle>,
+    task_id: &str,
+    peer_pk_hex: &str,
+    lease_backed: bool,
+    autonomy: AutonomyLevel,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "task_id": task_id,
+        "peer_pubkey": peer_pk_hex,
+        "lease_backed": lease_backed,
+        "autonomy": format!("{autonomy:?}"),
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_TASK_ACCEPTED, payload);
+}
+
+fn emit_task_rejected_wal(
+    writer: Option<&WalWriterHandle>,
+    task_id: &str,
+    peer_pk_hex: &str,
+    reason: &str,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "task_id": task_id,
+        "peer_pubkey": peer_pk_hex,
+        "reason": reason,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_TASK_REJECTED, payload);
+}
+
 // ── Connection-loop primitives (testable against tokio::io::duplex) ────────
 //
 // Per-connection lifecycle:
@@ -1021,6 +1327,15 @@ pub fn handle_inbound_frame(
             );
             Ok(false)
         }
+        // SL-01: task frames are intercepted in the async session loop BEFORE
+        // this sync handler (they need provider/lease/autonomy access this fn
+        // doesn't have). Reaching here means the intercept has a bug — fail
+        // loudly rather than silently no-op.
+        FrameBody::TaskDelegate(_) | FrameBody::TaskResult(_) => {
+            anyhow::bail!(
+                "task frame reached sync handle_inbound_frame — must be intercepted in the session loop"
+            );
+        }
     }
 }
 
@@ -1102,6 +1417,47 @@ fn hex_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cluster_task_gate_truth_table() {
+        let allow = Decision::Allow;
+        let confirm = Decision::Confirm("c".into());
+        let deny = Decision::Deny("d".into());
+
+        // Unpaired ⇒ always reject regardless of autonomy/lease.
+        assert_eq!(
+            cluster_task_gate(false, &allow, true),
+            TaskGateOutcome::Reject("not_paired")
+        );
+
+        // Deny (Strict) ⇒ reject even when paired + leased (lease never
+        // overrides a Deny — the shipped lease semantics).
+        assert_eq!(
+            cluster_task_gate(true, &deny, true),
+            TaskGateOutcome::Reject("autonomy_deny")
+        );
+
+        // Confirm (Standard): accept IFF an active lease; else fail-closed.
+        assert_eq!(
+            cluster_task_gate(true, &confirm, true),
+            TaskGateOutcome::Accept { lease_backed: true }
+        );
+        assert_eq!(
+            cluster_task_gate(true, &confirm, false),
+            TaskGateOutcome::Reject("no_active_lease")
+        );
+
+        // Allow (Elevated/Full): accept; lease_backed reflects whether a lease
+        // also covered it (audit detail), but is not required.
+        assert_eq!(
+            cluster_task_gate(true, &allow, false),
+            TaskGateOutcome::Accept { lease_backed: false }
+        );
+        assert_eq!(
+            cluster_task_gate(true, &allow, true),
+            TaskGateOutcome::Accept { lease_backed: true }
+        );
+    }
 
     #[test]
     fn derive_topic_is_deterministic_for_same_input() {
