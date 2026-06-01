@@ -115,8 +115,20 @@ impl CapabilityLease {
 
     /// True when this lease authorises `subject` to perform `scope` right
     /// now. The single predicate the autonomy gate will call.
+    ///
+    /// Fail-closed against the empty string on BOTH sides: a lease minted
+    /// with `granted_to == ""` (or a caller passing an empty `subject`)
+    /// must never match — otherwise an empty grant would behave as a
+    /// match-all wildcard for any caller that produced an empty subject
+    /// (a parsing edge case or a `--subject ""` probe). The authentic
+    /// identities this is compared against (peer pub-key-hex, plugin id)
+    /// are never empty.
     pub fn covers(&self, subject: &str, scope: &LeaseScope, now_unix: i64) -> bool {
-        self.is_active(now_unix) && self.granted_to == subject && &self.scope == scope
+        !subject.is_empty()
+            && !self.granted_to.is_empty()
+            && self.is_active(now_unix)
+            && self.granted_to == subject
+            && &self.scope == scope
     }
 
     /// Seconds left before expiry (0 once dead).
@@ -202,9 +214,23 @@ impl LeaseStore {
     /// True when SOME active lease authorises `subject` for `scope`. The
     /// fail-closed default (no covering lease) is `false`.
     pub fn active_for(&self, subject: &str, scope: &LeaseScope, now_unix: i64) -> bool {
+        self.find_covering(subject, scope, now_unix).is_some()
+    }
+
+    /// The first active lease authorising `subject` for `scope`, or `None`.
+    /// Unlike [`Self::active_for`] this hands the caller the lease itself so
+    /// the autonomy gate can record WHICH lease drove a `Confirm → Allow`
+    /// upgrade in the WAL audit frame (the verifiable-loyalty grant chain).
+    /// Fail-closed default (no covering lease) is `None`.
+    pub fn find_covering(
+        &self,
+        subject: &str,
+        scope: &LeaseScope,
+        now_unix: i64,
+    ) -> Option<&CapabilityLease> {
         self.leases
             .iter()
-            .any(|l| l.covers(subject, scope, now_unix))
+            .find(|l| l.covers(subject, scope, now_unix))
     }
 
     /// Every currently-active lease, newest grant first.
@@ -278,6 +304,23 @@ mod tests {
         assert!(!l.covers("peerA", &LeaseScope::Read, T0 + 50));
         // expired
         assert!(!l.covers("peerA", &LeaseScope::ChannelSend, T0 + 200));
+    }
+
+    #[test]
+    fn covers_is_fail_closed_against_empty_subject() {
+        // An empty granted_to must NOT behave as a match-all wildcard, and
+        // an empty caller subject must never match. Both directions deny.
+        let empty_grant = CapabilityLease::new("", LeaseScope::ChannelSend, 100, T0);
+        assert!(
+            !empty_grant.covers("", &LeaseScope::ChannelSend, T0 + 50),
+            "empty == empty must NOT authorise"
+        );
+        assert!(!empty_grant.covers("peerA", &LeaseScope::ChannelSend, T0 + 50));
+        let real = CapabilityLease::new("peerA", LeaseScope::ChannelSend, 100, T0);
+        assert!(
+            !real.covers("", &LeaseScope::ChannelSend, T0 + 50),
+            "empty subject must never match a real lease"
+        );
     }
 
     #[test]

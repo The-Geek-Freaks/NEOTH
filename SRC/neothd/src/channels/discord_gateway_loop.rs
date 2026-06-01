@@ -111,6 +111,12 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 41_250;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedMessageCreate {
     pub channel_id: String,
+    /// Immutable, platform-assigned Discord user id (the "snowflake"). This
+    /// is the STABLE identity — used as `sender_id` for rate-limiting,
+    /// audit, and capability-lease subject matching. A user can rename their
+    /// account freely, so the username must NEVER be used as an identity.
+    pub author_id: String,
+    /// Mutable display name. Surfaced via `sender_display` for humans only.
     pub author_username: String,
     pub author_is_bot: bool,
     pub content: String,
@@ -397,7 +403,7 @@ async fn forward_message(
         channel: crate::channels::ChannelKind::Discord,
         chat_id: msg.channel_id.clone(),
         thread_id: None,
-        sender_id: msg.author_username.clone(),
+        sender_id: msg.author_id.clone(),
         sender_display: Some(msg.author_username.clone()),
         text: Some(msg.content.clone()),
         media: None,
@@ -519,6 +525,10 @@ pub fn parse_message_create(d: &Value) -> Option<ParsedMessageCreate> {
     let channel_id = d.get("channel_id")?.as_str()?.to_string();
     let message_id = d.get("id")?.as_str()?.to_string();
     let author = d.get("author")?;
+    // The numeric snowflake is the canonical identity. A message with no
+    // author id is malformed — reject it rather than fall back to a
+    // spoofable display name (would let a renamed account match a lease).
+    let author_id = author.get("id")?.as_str()?.to_string();
     let author_username = author.get("username")?.as_str().unwrap_or("").to_string();
     let author_is_bot = author.get("bot").and_then(|v| v.as_bool()).unwrap_or(false);
     let content = d
@@ -531,6 +541,7 @@ pub fn parse_message_create(d: &Value) -> Option<ParsedMessageCreate> {
     }
     Some(ParsedMessageCreate {
         channel_id,
+        author_id,
         author_username,
         author_is_bot,
         content,
@@ -626,14 +637,33 @@ mod tests {
             "id": "M1",
             "channel_id": "C1",
             "content": "hello",
-            "author": { "username": "alice", "bot": false }
+            "author": { "id": "1234567890", "username": "alice", "bot": false }
         });
         let parsed = parse_message_create(&d).unwrap();
         assert_eq!(parsed.channel_id, "C1");
+        // sender identity is the immutable snowflake, NOT the username
+        assert_eq!(parsed.author_id, "1234567890");
         assert_eq!(parsed.author_username, "alice");
         assert_eq!(parsed.content, "hello");
         assert!(!parsed.author_is_bot);
         assert_eq!(parsed.message_id, "M1");
+    }
+
+    #[test]
+    fn parse_message_create_rejects_author_without_id() {
+        // A spoofable display name must never become the identity: a
+        // message whose author carries no snowflake id is rejected outright
+        // rather than falling back to the username.
+        let d = json!({
+            "id": "M9",
+            "channel_id": "C1",
+            "content": "hi",
+            "author": { "username": "alice" }
+        });
+        assert!(
+            parse_message_create(&d).is_none(),
+            "missing author.id must be rejected, not username-fallback"
+        );
     }
 
     #[test]
@@ -642,7 +672,7 @@ mod tests {
             "id": "M2",
             "channel_id": "C1",
             "content": "ping",
-            "author": { "username": "neoth-bot", "bot": true }
+            "author": { "id": "999", "username": "neoth-bot", "bot": true }
         });
         let parsed = parse_message_create(&d).unwrap();
         assert!(parsed.author_is_bot);
@@ -657,7 +687,7 @@ mod tests {
             "id": "M3",
             "channel_id": "C1",
             "content": "",
-            "author": { "username": "alice" }
+            "author": { "id": "1234567890", "username": "alice" }
         });
         assert!(parse_message_create(&d).is_none());
     }

@@ -968,6 +968,7 @@ Run a single permission evaluation against the configured level. `<action>` name
 - `<ACTION>`
 - `--eur <EUR>`
 - `--target <TARGET>`
+- `--subject <SUBJECT>` — SL-01a-b: evaluate as this subject (a peer pub-key-hex or a plugin id). When set, an active capability lease in `~/.neoth/leases.json` that covers the action upgrades a `Confirm` decision to `Allow` — exactly as the autonomy gate would at runtime. Lets the operator verify "does peerX's lease let them do this right now?" before trusting it
 
 ### `neoth permissions show`
 

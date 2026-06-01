@@ -17,7 +17,8 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::permissions::{Action, AutonomyLevel, Decision, evaluate};
+use crate::permissions::lease::{LeaseScope, LeaseStore};
+use crate::permissions::{Action, AutonomyLevel, Decision, evaluate, lease_scope_for};
 
 #[derive(Args, Debug, Clone)]
 pub struct PermissionsArgs {
@@ -49,6 +50,14 @@ pub enum PermissionsAction {
         eur: Option<f32>,
         #[arg(long)]
         target: Option<String>,
+        /// SL-01a-b: evaluate as this subject (a peer pub-key-hex or a
+        /// plugin id). When set, an active capability lease in
+        /// `~/.neoth/leases.json` that covers the action upgrades a
+        /// `Confirm` decision to `Allow` — exactly as the autonomy gate
+        /// would at runtime. Lets the operator verify "does peerX's lease
+        /// let them do this right now?" before trusting it.
+        #[arg(long)]
+        subject: Option<String>,
     },
 }
 
@@ -61,7 +70,15 @@ pub async fn run_permissions(args: PermissionsArgs) -> Result<()> {
             action,
             eur,
             target,
-        } => run_check(cfg.autonomy, &action, eur, target.as_deref(), &args.output),
+            subject,
+        } => run_check(
+            cfg.autonomy,
+            &action,
+            eur,
+            target.as_deref(),
+            subject.as_deref(),
+            &args.output,
+        ),
     }
 }
 
@@ -179,10 +196,55 @@ fn run_check(
     action_name: &str,
     eur: Option<f32>,
     target: Option<&str>,
+    subject: Option<&str>,
     output: &OutputFormat,
 ) -> Result<()> {
     let action = parse_action(action_name, eur, target)?;
-    let decision = evaluate(&action, level);
+    let base = evaluate(&action, level);
+
+    // SL-01a-b: mirror the autonomy gate's lease upgrade so the operator can
+    // probe "does this subject's lease let them do this right now?". Only a
+    // `Confirm` is upgradeable (never a `Deny` — the hard floor); only when a
+    // subject is given AND an active lease covers the action's scope. This is
+    // a READ-ONLY probe: it computes the same decision the gate would, but
+    // emits no WAL frame (a check must not pollute the audit log).
+    // An empty/whitespace `--subject` is treated as no subject (fail-closed:
+    // never probe against a possible `granted_to == ""` match-all lease).
+    let subject = subject.map(str::trim).filter(|s| !s.is_empty());
+    // Probe the lease store only on a `Confirm` with a real subject whose
+    // action maps to a scope. `(lease_id, scope)` when a lease covers it.
+    let via_lease: Option<(String, LeaseScope)> =
+        if let (Some(subj), Decision::Confirm(_)) = (subject, &base) {
+            match lease_scope_for(&action) {
+                Some(scope) => {
+                    let path = LeaseStore::default_path(&FreedomConfig::default_neoth_home());
+                    let store = LeaseStore::load(&path)
+                        .with_context(|| format!("load leases at {}", path.display()))?;
+                    store
+                        .find_covering(subj, &scope, now_unix())
+                        .map(|lease| (lease.lease_id.clone(), scope))
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+    // A covering lease upgrades the decision to Allow; otherwise it is the
+    // base decision unchanged.
+    let effective = if via_lease.is_some() {
+        Decision::Allow
+    } else {
+        base.clone()
+    };
+
+    // McpTool carries an inner tool id that `as_str()` drops; render the
+    // qualified `mcp_tool:<id>` form so the probe identifies WHICH tool the
+    // lease covered (an operator may hold several MCP-tool leases).
+    let scope_display = |s: &LeaseScope| match s {
+        LeaseScope::McpTool(id) => format!("mcp_tool:{id}"),
+        other => other.as_str().to_string(),
+    };
+
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!(
@@ -190,28 +252,48 @@ fn run_check(
                 serde_json::to_string_pretty(&serde_json::json!({
                     "level": level.as_str(),
                     "action": action_name,
-                    "decision": decision.tag(),
-                    "reason": match &decision {
+                    "subject": subject,
+                    "base_decision": base.tag(),
+                    "decision": effective.tag(),
+                    "reason": match &effective {
                         Decision::Allow => "".to_string(),
                         Decision::Confirm(r) | Decision::Deny(r) => r.clone(),
                     },
-                    "allowed": decision.is_allow(),
+                    "lease_id": via_lease.as_ref().map(|(id, _)| id.clone()),
+                    "lease_scope": via_lease.as_ref().map(|(_, s)| scope_display(s)),
+                    "allowed": effective.is_allow(),
                 }))?
             );
         }
         OutputFormat::Table => {
-            let reason = match &decision {
+            let reason = match &effective {
                 Decision::Allow => "(no reason)".to_string(),
                 Decision::Confirm(r) | Decision::Deny(r) => r.clone(),
             };
             println!(
-                "# Permission check\n  level:    {}\n  action:   {action_name}\n  decision: {}\n  reason:   {reason}",
+                "# Permission check\n  level:    {}\n  action:   {action_name}\n  subject:  {}\n  decision: {}\n  reason:   {reason}",
                 level.as_str(),
-                decision.tag(),
+                subject.unwrap_or("(none)"),
+                effective.tag(),
             );
+            if let Some((id, scope)) = &via_lease {
+                println!(
+                    "  ⮑ upgraded confirm → allow via lease {} (scope {})",
+                    id.chars().take(12).collect::<String>(),
+                    scope_display(scope),
+                );
+            }
         }
     }
     Ok(())
+}
+
+fn now_unix() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn parse_action(name: &str, eur: Option<f32>, target: Option<&str>) -> Result<Action> {
@@ -307,6 +389,39 @@ mod tests {
             "read",
             None,
             None,
+            None,
+            &OutputFormat::Json,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn run_check_without_subject_does_not_consult_leases() {
+        // No subject ⇒ the probe never touches leases.json; a Confirm stays
+        // a Confirm (here WriteOutsideHome at Standard).
+        run_check(
+            AutonomyLevel::Standard,
+            "write_outside_home",
+            None,
+            None,
+            None,
+            &OutputFormat::Json,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn run_check_deny_is_never_lease_upgradable_even_with_subject() {
+        // dangerous_target is Deny at Standard. Passing a subject must NOT
+        // flip it — the probe only upgrades Confirm, never Deny. (No real
+        // lease store is needed: the base decision is Deny so the lease
+        // branch is never entered.)
+        run_check(
+            AutonomyLevel::Standard,
+            "dangerous_target",
+            None,
+            Some("cube"),
+            Some("peerA"),
             &OutputFormat::Json,
         )
         .unwrap();

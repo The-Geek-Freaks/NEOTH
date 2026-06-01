@@ -211,6 +211,61 @@ impl Decision {
     }
 }
 
+/// SL-01a-b — map a concrete [`Action`] to the [`lease::LeaseScope`] a
+/// capability lease would need to cover it, or `None` when the action is
+/// **unleasable**: no lease may ever pre-authorise it and the autonomy
+/// gate always runs its normal `Deny`/`Confirm` path.
+///
+/// This is the seam between the fine-grained `Action` and the deliberately
+/// coarse `LeaseScope`. The match is exhaustive **on purpose** — no `_`
+/// wildcard — so adding a new `Action` variant forces a conscious
+/// leasability decision at compile time instead of silently defaulting to
+/// "leasable" (fail-open) or "unleasable" (silent feature gap).
+///
+/// Unleasable by hard rule (always `None`):
+/// - [`Action::DangerousTarget`] — the absolute floor; operator confirms live.
+/// - [`Action::SelfBinaryReplace`] — highest blast radius (RCE surface),
+///   confirmed at every level including `Full`.
+/// - [`Action::PatchApplyToRepo`] — Chorus Q1a explicit-confirm-at-every-level.
+/// - [`Action::ProactiveChannelSend`] — daemon-INITIATED outbound. Deliberately
+///   NOT mapped to [`lease::LeaseScope::ChannelSend`]: that scope is the REPLY
+///   path, and conflating them would let a `channel_send` lease silently
+///   unlock unsolicited daemon messages (blast-radius escalation). Proactive
+///   stays gated by autonomy level + the `proactive.enabled` master switch;
+///   it is a first-party decision, not a cross-entity delegation, so a lease
+///   (which authenticates a *subject*) is the wrong instrument for it.
+///
+/// Unleasable for now (no `LeaseScope` variant models them yet — `None` until
+/// a deliberate scope is added with its own CLI controls):
+/// - [`Action::WriteOutsideHome`], [`Action::ExecScripts`],
+///   [`Action::ExecArbitrary`], [`Action::PaidProviderCall`],
+///   [`Action::ClusterPeerPairing`].
+pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
+    use lease::LeaseScope;
+    match action {
+        // Coverable — a lease maps to the matching coarse scope.
+        Action::Read => Some(LeaseScope::Read),
+        Action::WriteNeothHome => Some(LeaseScope::WriteNeothHome),
+        Action::ChannelSend => Some(LeaseScope::ChannelSend),
+        Action::McpToolInvocation { server_id, tool } => {
+            // Qualified `server_id:tool` id — matches the CLI grant form
+            // `neoth lease grant <plugin> mcp_tool:<server_id>:<tool>`.
+            Some(LeaseScope::McpTool(format!("{server_id}:{tool}")))
+        }
+        // Unleasable by hard rule — see fn doc.
+        Action::DangerousTarget(_)
+        | Action::SelfBinaryReplace { .. }
+        | Action::PatchApplyToRepo { .. }
+        | Action::ProactiveChannelSend { .. } => None,
+        // Unleasable for now — no scope variant models these yet.
+        Action::WriteOutsideHome
+        | Action::ExecScripts
+        | Action::ExecArbitrary
+        | Action::PaidProviderCall { .. }
+        | Action::ClusterPeerPairing { .. } => None,
+    }
+}
+
 /// Decide whether `action` may proceed under `level`. Conservative default
 /// while R-23 wizard is unimplemented — see module docs.
 ///
@@ -684,6 +739,93 @@ mod tests {
     fn full_allows_arbitrary_exec_and_outside_writes() {
         assert!(evaluate(&Action::ExecArbitrary, AutonomyLevel::Full).is_allow());
         assert!(evaluate(&Action::WriteOutsideHome, AutonomyLevel::Full).is_allow());
+    }
+
+    // ── SL-01a-b lease_scope_for mapping (panel-pinned security floor) ──
+
+    #[test]
+    fn lease_scope_maps_coverable_actions() {
+        use lease::LeaseScope;
+        assert_eq!(lease_scope_for(&Action::Read), Some(LeaseScope::Read));
+        assert_eq!(
+            lease_scope_for(&Action::WriteNeothHome),
+            Some(LeaseScope::WriteNeothHome)
+        );
+        assert_eq!(
+            lease_scope_for(&Action::ChannelSend),
+            Some(LeaseScope::ChannelSend)
+        );
+        assert_eq!(
+            lease_scope_for(&Action::McpToolInvocation {
+                server_id: "fs".into(),
+                tool: "read_file".into()
+            }),
+            Some(LeaseScope::McpTool("fs:read_file".into()))
+        );
+    }
+
+    /// Round-trip test: the scope produced by `lease_scope_for()` for
+    /// `McpToolInvocation` must equal the scope produced by `parse()` with
+    /// the CLI grant token `mcp_tool:<server_id>:<tool>` (single colon).
+    /// If `lease_scope_for` formats with `::` and `parse` stores `:`, this
+    /// test fails — which is the exact separator-mismatch bug.
+    #[test]
+    fn mcp_tool_lease_scope_round_trip() {
+        let parsed = lease::LeaseScope::parse("mcp_tool:fs:read_file").unwrap();
+        let from_action = lease_scope_for(&Action::McpToolInvocation {
+            server_id: "fs".into(),
+            tool: "read_file".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            parsed, from_action,
+            "CLI grant token `mcp_tool:fs:read_file` must produce the same \
+             LeaseScope as lease_scope_for(McpToolInvocation{{\"fs\",\"read_file\"}}). \
+             If this fails, the separator in lease_scope_for() mismatches parse()."
+        );
+    }
+
+    #[test]
+    fn lease_scope_is_none_for_hard_floor_actions() {
+        // The whole point of SL-01a-b's safety: no lease may EVER
+        // pre-authorise these. If a refactor maps any of them to Some, this
+        // test fails and forces a security conversation.
+        assert_eq!(
+            lease_scope_for(&Action::DangerousTarget("cube".into())),
+            None
+        );
+        assert_eq!(
+            lease_scope_for(&Action::SelfBinaryReplace {
+                from: "0.2".into(),
+                to: "0.3".into(),
+                repo: "x/y".into()
+            }),
+            None
+        );
+        assert_eq!(
+            lease_scope_for(&Action::PatchApplyToRepo {
+                repo_root: std::path::PathBuf::from("/r"),
+                task_id: 1
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn proactive_channel_send_is_not_lease_coverable() {
+        // Lens 3+4 (SL-01a-b panel): ProactiveChannelSend must NOT map to
+        // LeaseScope::ChannelSend — a reply-path lease must never silently
+        // unlock daemon-initiated unsolicited sends.
+        assert_eq!(
+            lease_scope_for(&Action::ProactiveChannelSend {
+                channel: "telegram".into()
+            }),
+            None,
+            "proactive (daemon-initiated) is not lease-delegable; it is a \
+             first-party decision gated by autonomy + proactive.enabled"
+        );
+        // The reply path, by contrast, IS coverable.
+        assert!(lease_scope_for(&Action::ChannelSend).is_some());
     }
 
     #[test]

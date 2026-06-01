@@ -64,6 +64,12 @@ pub async fn run_lease(args: LeaseArgs) -> Result<()> {
             scope,
             ttl,
         } => {
+            if granted_to.trim().is_empty() {
+                anyhow::bail!(
+                    "subject (granted_to) must not be empty — a lease needs a real \
+                     peer pub-key-hex or plugin id; an empty subject would never match"
+                );
+            }
             let scope = LeaseScope::parse(scope)?;
             let ttl_secs = crate::cli::privacy::parse_duration(ttl)? as i64;
             let lease = CapabilityLease::new(granted_to.clone(), scope, ttl_secs, now);

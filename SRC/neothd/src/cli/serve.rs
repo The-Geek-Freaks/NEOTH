@@ -3735,9 +3735,35 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             // (no gate needed there — TTY local print, not network
             // egress). Strict level: denies + emits WAL audit frame.
             {
+                use crate::permissions::lease::LeaseStore;
                 use crate::permissions::{Action, ConfirmStrategy, Gate};
                 let action = Action::ChannelSend;
-                let gate = Gate::for_level(autonomy).with_confirm(ConfirmStrategy::FailClosed);
+                // SL-01a-b: honour an operator-granted capability lease for
+                // this sender. At Strict, ChannelSend evaluates to Confirm and
+                // the daemon has no TTY ⇒ the reply is blocked; a `channel_send`
+                // lease granted to the sender pre-authorises it (Confirm→Allow).
+                // The sender id is the channel-platform-verified identity, which
+                // satisfies the lease subject-authenticity contract. Loaded
+                // fresh per reply so `neoth lease revoke` takes effect at once;
+                // a missing/corrupt leases.json → empty store → fail-closed.
+                let lease_store = {
+                    let path = LeaseStore::default_path(
+                        &crate::config::FreedomConfig::default_neoth_home(),
+                    );
+                    // Blocking fs read off the async worker thread so a burst
+                    // of replies can't starve the Tokio pool; JoinError →
+                    // empty store (fail-closed).
+                    tokio::task::spawn_blocking(move || LeaseStore::load(&path).unwrap_or_default())
+                        .await
+                        .unwrap_or_default()
+                };
+                let now = ::std::time::SystemTime::now()
+                    .duration_since(::std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let gate = Gate::for_level(autonomy)
+                    .with_confirm(ConfirmStrategy::FailClosed)
+                    .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
                 if let Err(e) = gate.check(&action, Some(&writer)).await {
                     warn!(
                         channel = channel_str,

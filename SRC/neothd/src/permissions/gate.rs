@@ -27,7 +27,8 @@ use thiserror::Error;
 use crate::wal::events::{EVENT_TYPE_PERMISSION_DENIED, EVENT_TYPE_PERMISSION_GRANTED};
 use crate::wal::writer::WalWriterHandle;
 
-use super::{Action, AutonomyLevel, Decision, evaluate};
+use super::lease::{CapabilityLease, LeaseStore};
+use super::{Action, AutonomyLevel, Decision, evaluate, lease_scope_for};
 
 #[derive(Error, Debug)]
 pub enum GateError {
@@ -80,6 +81,55 @@ pub trait ChannelAsker: Send + Sync {
     async fn ask(&self, reason: &str) -> Option<bool>;
 }
 
+/// SL-01a-b — an immutable, point-in-time snapshot of the operator's
+/// active leases plus the **authenticated** subject the gate is deciding
+/// for. Cloned at `Gate` construction (via [`Gate::with_lease_snapshot`])
+/// so [`Gate::check`] never holds a live borrow of the daemon's
+/// `LeaseStore` across its internal await points.
+///
+/// Two-clock model (deliberate): the candidate `leases` are filtered ONCE
+/// at snapshot time so the daemon's store lock is never held across an
+/// await — a lease granted AFTER the snapshot is not visible to this call
+/// (fail-closed). But the authoritative expiry check runs at DECISION time
+/// against a fresh wall-clock ([`Self::covering_lease_id`] takes `now_unix`
+/// from [`Gate::check`], not a frozen field). Because decision-time is
+/// always ≥ snapshot-time, the fresh check can only tighten the candidate
+/// set — a lease that lapses between snapshot and decision is correctly
+/// denied. The snapshot never *grants* a lease the live clock would refuse.
+///
+/// SECURITY CONTRACT: `subject` MUST be an identity the caller already
+/// authenticated (an HMAC-verified peer pub-key-hex, a loaded plugin id, a
+/// channel-platform-verified sender id, or an operator-typed value at a CLI
+/// probe) — NEVER a string lifted from an untrusted inbound message body.
+/// The gate compares it by equality against `lease.granted_to`; it cannot
+/// itself verify authenticity. An empty subject is rejected at construction
+/// ([`Gate::with_lease_snapshot`]) and again in [`CapabilityLease::covers`].
+#[derive(Clone, Debug)]
+pub struct LeaseContext {
+    /// Leases that were active at snapshot time (already pruned of expired
+    /// by [`LeaseStore::active`]). Expiry is RE-checked at decision time
+    /// against a fresh clock — see the type-level two-clock note.
+    leases: Vec<CapabilityLease>,
+    /// The authenticated subject this gate decides for. Never empty
+    /// (guarded at construction).
+    subject: String,
+}
+
+impl LeaseContext {
+    /// The first lease authorising `subject` for the scope `action` maps
+    /// to, evaluated at `now_unix` (the caller's fresh decision-time
+    /// clock), or `None`. Returns the lease id so the audit frame can
+    /// record WHICH grant drove a `Confirm → Allow` upgrade. Actions that
+    /// are unleasable ([`lease_scope_for`] → `None`) can never match here.
+    fn covering_lease_id(&self, action: &Action, now_unix: i64) -> Option<String> {
+        let scope = lease_scope_for(action)?;
+        self.leases
+            .iter()
+            .find(|l| l.covers(&self.subject, &scope, now_unix))
+            .map(|l| l.lease_id.clone())
+    }
+}
+
 /// One per autonomy decision site. Cheap to construct.
 pub struct Gate {
     level: AutonomyLevel,
@@ -94,6 +144,11 @@ pub struct Gate {
     /// 90s (matches `confirm::DEFAULT_CHANNEL_TIMEOUT`). Operators
     /// running NEOTH in proactive-mode can lower it via builder.
     channel_timeout: Duration,
+    /// SL-01a-b: when `Some`, a covering capability lease upgrades a
+    /// `Confirm` decision to `Allow` (NEVER a `Deny` — see [`Gate::check`]).
+    /// `None` preserves the pre-lease behaviour for call sites that don't
+    /// pass a lease context.
+    lease_ctx: Option<LeaseContext>,
 }
 
 impl Gate {
@@ -103,6 +158,7 @@ impl Gate {
             confirm: ConfirmStrategy::FailClosed,
             channel_asker: None,
             channel_timeout: Duration::from_secs(90),
+            lease_ctx: None,
         }
     }
 
@@ -128,6 +184,39 @@ impl Gate {
         self
     }
 
+    /// SL-01a-b: attach a capability-lease snapshot so the gate can upgrade
+    /// a `Confirm` decision to `Allow` when the operator pre-authorised this
+    /// `subject` for the action's scope. A read-only snapshot of the active
+    /// leases is taken here (via [`LeaseStore::active`]) so [`Gate::check`]
+    /// holds no live borrow across its await points.
+    ///
+    /// `subject` MUST be a pre-authenticated identity (verified peer
+    /// pub-key-hex / loaded plugin id / channel-verified sender id /
+    /// operator-typed probe value), never a value lifted from an untrusted
+    /// message payload — see [`LeaseContext`]. `now_unix` is the snapshot
+    /// clock used ONLY to pre-filter the candidate set; the authoritative
+    /// expiry check happens at decision time in [`Gate::check`].
+    ///
+    /// An empty `subject` is rejected: the gate is returned unchanged (no
+    /// lease context), so the decision falls through to the normal
+    /// confirm/deny path. Defence-in-depth with [`CapabilityLease::covers`].
+    pub fn with_lease_snapshot(
+        mut self,
+        store: &LeaseStore,
+        subject: impl Into<String>,
+        now_unix: i64,
+    ) -> Self {
+        let subject = subject.into();
+        if subject.is_empty() {
+            return self; // fail-closed: never build a context for an empty subject
+        }
+        self.lease_ctx = Some(LeaseContext {
+            leases: store.active(now_unix).into_iter().cloned().collect(),
+            subject,
+        });
+        self
+    }
+
     /// Convenience: TTY confirm if stdin is a terminal, else fail closed.
     /// Used by interactive CLI commands. The channel pipeline uses
     /// `with_confirm(ConfirmStrategy::FailClosed)` until AU-4-part-2 lands.
@@ -140,6 +229,17 @@ impl Gate {
         }
     }
 
+    /// Decision-time wall-clock (unix seconds). Read fresh on every
+    /// [`Self::check`] so lease expiry is enforced at the moment the action
+    /// is decided, not at snapshot construction.
+    fn now_unix() -> i64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    }
+
     /// Resolve `action` under the configured level + confirm strategy.
     /// Emits a single WAL audit frame (PERMISSION_GRANTED or PERMISSION_DENIED)
     /// when `writer` is `Some`.
@@ -150,17 +250,61 @@ impl Gate {
         action: &Action,
         writer: Option<&WalWriterHandle>,
     ) -> Result<(), GateError> {
+        self.check_at(action, writer, Self::now_unix()).await
+    }
+
+    /// [`Self::check`] with an explicit decision-time clock. The lease
+    /// expiry re-check uses `now_unix`; `check()` passes a fresh wall-clock,
+    /// tests pass a deterministic value. Splitting it out keeps the lease
+    /// liveness check testable without a real clock while production always
+    /// re-enforces expiry at the live moment.
+    ///
+    /// `pub(crate)` ON PURPOSE: an explicit clock could be set to the past to
+    /// make an expired lease appear live, so production code outside this
+    /// crate must go through [`Self::check`] (which always reads a fresh
+    /// wall-clock). Only the in-crate test module supplies a fixed clock.
+    pub(crate) async fn check_at(
+        &self,
+        action: &Action,
+        writer: Option<&WalWriterHandle>,
+        now_unix: i64,
+    ) -> Result<(), GateError> {
         let decision = evaluate(action, self.level);
-        let final_decision = match decision {
-            Decision::Allow => Decision::Allow,
-            Decision::Deny(reason) => Decision::Deny(reason),
-            Decision::Confirm(reason) => self.resolve_confirm(action, &reason).await,
+        // SL-01a-b: a covering capability lease upgrades `Confirm → Allow`,
+        // and ONLY `Confirm`. `Deny` is the operator's hard floor at this
+        // autonomy level — it is final and a lease can NEVER override it
+        // (so `Strict` stays `Strict`). `Allow` already needs no lease. The
+        // lease is therefore consulted on the `Confirm` branch alone,
+        // BEFORE the (TTY / channel / fail-closed) confirm round-trip. When
+        // a lease wins, its id is threaded into the audit frame so `neoth
+        // wal show --type permission_granted` records WHY the action was
+        // allowed — the verifiable-loyalty grant chain.
+        let (final_decision, lease_id) = match decision {
+            Decision::Allow => (Decision::Allow, None),
+            Decision::Deny(reason) => (Decision::Deny(reason), None),
+            Decision::Confirm(reason) => match self
+                .lease_ctx
+                .as_ref()
+                .and_then(|ctx| ctx.covering_lease_id(action, now_unix))
+            {
+                Some(id) => (Decision::Allow, Some(id)),
+                None => (self.resolve_confirm(action, &reason).await, None),
+            },
         };
 
         if let Some(w) = writer {
             // Best-effort audit. A WAL append failure must not block the
             // decision the operator just made.
-            let _ = audit(w, action, self.level, &final_decision).await;
+            let subject = self.lease_ctx.as_ref().map(|c| c.subject.as_str());
+            let _ = audit(
+                w,
+                action,
+                self.level,
+                &final_decision,
+                subject,
+                lease_id.as_deref(),
+            )
+            .await;
         }
 
         match final_decision {
@@ -244,11 +388,22 @@ impl Gate {
 }
 
 /// Append a single permission-decision frame to the WAL.
+///
+/// `subject` and `lease_id` are SL-01a-b additions (both `None` for call
+/// sites that pass no lease context). When a capability lease upgraded a
+/// `Confirm` to `Allow`, `lease_id` names the grant that authorised it so
+/// the operator can cross-reference `0xA5 LEASE_GRANTED` and prove the
+/// chain: "subject S was allowed action A at T because of lease L". No new
+/// event code is allocated — the existing `0xA0 PERMISSION_GRANTED` /
+/// `0xA1 PERMISSION_DENIED` payload is enriched (single frame per decision,
+/// inherits immediate-sync, no SC-01a band churn).
 async fn audit(
     writer: &WalWriterHandle,
     action: &Action,
     level: AutonomyLevel,
     decision: &Decision,
+    subject: Option<&str>,
+    lease_id: Option<&str>,
 ) -> Result<()> {
     let (event_type, reason): (u8, Option<&str>) = match decision {
         Decision::Allow => (EVENT_TYPE_PERMISSION_GRANTED, None),
@@ -260,6 +415,8 @@ async fn audit(
         "action": format!("{action:?}"),
         "decision": decision.tag(),
         "reason": reason,
+        "subject": subject,
+        "lease_id": lease_id,
         "ts_ns": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
@@ -712,5 +869,203 @@ mod tests {
                 r
             );
         }
+    }
+
+    // ── SL-01a-b: capability-lease → gate integration ────────────────────
+    //
+    // The panel's core rule: a covering lease upgrades Confirm → Allow and
+    // ONLY Confirm. Deny is the operator's hard floor and is never
+    // overridable. Wrong-subject / expired / uncoverable all fail closed.
+
+    use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore};
+
+    const LT0: i64 = 1_700_000_000;
+
+    fn store_with(subject: &str, scope: LeaseScope, ttl: i64, granted_at: i64) -> LeaseStore {
+        let mut s = LeaseStore::default();
+        s.grant(CapabilityLease::new(subject, scope, ttl, granted_at));
+        s
+    }
+
+    #[tokio::test]
+    async fn lease_upgrades_confirm_to_allow() {
+        // Strict + WriteNeothHome = Confirm. Under FailClosed that is Deny…
+        let base = Gate::for_level(AutonomyLevel::Strict).with_confirm(ConfirmStrategy::FailClosed);
+        assert!(
+            matches!(
+                base.check(&Action::WriteNeothHome, None).await,
+                Err(GateError::Denied(_))
+            ),
+            "no lease ⇒ FailClosed Deny"
+        );
+        // …but a covering lease for the subject upgrades it to Allow without
+        // any confirm round-trip.
+        let store = store_with("peerA", LeaseScope::WriteNeothHome, 3600, LT0);
+        let leased = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&store, "peerA", LT0 + 10);
+        assert!(
+            leased
+                .check_at(&Action::WriteNeothHome, None, LT0 + 10)
+                .await
+                .is_ok(),
+            "covering lease must upgrade Confirm → Allow"
+        );
+    }
+
+    #[tokio::test]
+    async fn lease_never_overrides_deny() {
+        // Strict + ProactiveChannelSend = Deny (the operator's hard floor).
+        // Even with a ChannelSend lease present for the subject, Deny is
+        // final — and ProactiveChannelSend maps to no scope anyway.
+        let store = store_with("peerA", LeaseScope::ChannelSend, 3600, LT0);
+        let gate = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&store, "peerA", LT0 + 10);
+        let r = gate
+            .check_at(
+                &Action::ProactiveChannelSend {
+                    channel: "telegram".into(),
+                },
+                None,
+                LT0 + 10,
+            )
+            .await;
+        assert!(
+            matches!(r, Err(GateError::Denied(_))),
+            "a lease must NEVER rescue a Deny; got {r:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn lease_wrong_subject_fails_closed() {
+        // Lease granted to peerA; the gate is deciding for peerB.
+        let store = store_with("peerA", LeaseScope::WriteNeothHome, 3600, LT0);
+        let gate = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&store, "peerB", LT0 + 10);
+        assert!(
+            matches!(
+                gate.check_at(&Action::WriteNeothHome, None, LT0 + 10).await,
+                Err(GateError::Denied(_))
+            ),
+            "a lease for a different subject must not authorise peerB"
+        );
+    }
+
+    #[tokio::test]
+    async fn expired_lease_fails_closed() {
+        // Lease granted at LT0-7200 with 3600s TTL ⇒ expired at LT0-3600.
+        // Snapshot taken at LT0 must exclude it (active() filters expired).
+        let store = store_with("peerA", LeaseScope::WriteNeothHome, 3600, LT0 - 7200);
+        let gate = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&store, "peerA", LT0);
+        assert!(
+            matches!(
+                gate.check_at(&Action::WriteNeothHome, None, LT0).await,
+                Err(GateError::Denied(_))
+            ),
+            "an expired lease must never upgrade a decision"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_snapshot_expiry_denied_at_decision_time() {
+        // The frozen-clock regression (review HIGH): a lease that is active
+        // at SNAPSHOT time but expires before the DECISION must be denied —
+        // the gate re-checks expiry against the fresh decision clock, not
+        // the snapshot clock. Lease expires at LT0+100; snapshot at LT0+10
+        // (in the candidate set); decision at LT0+200 (past expiry).
+        let store = store_with("peerA", LeaseScope::WriteNeothHome, 100, LT0);
+        let gate = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&store, "peerA", LT0 + 10);
+        // Sanity: at a decision time still inside the TTL it WOULD upgrade.
+        assert!(
+            gate.check_at(&Action::WriteNeothHome, None, LT0 + 50)
+                .await
+                .is_ok(),
+            "still-live lease upgrades"
+        );
+        // …but past expiry the same snapshot must fail closed.
+        assert!(
+            matches!(
+                gate.check_at(&Action::WriteNeothHome, None, LT0 + 200)
+                    .await,
+                Err(GateError::Denied(_))
+            ),
+            "a lease that lapsed after the snapshot must be denied at decision time"
+        );
+    }
+
+    #[tokio::test]
+    async fn uncoverable_action_ignores_lease() {
+        // WriteOutsideHome is Confirm at Standard but maps to no LeaseScope.
+        // Even a (mismatched) lease present must not upgrade it.
+        let store = store_with("peerA", LeaseScope::WriteNeothHome, 3600, LT0);
+        let gate = Gate::for_level(AutonomyLevel::Standard)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&store, "peerA", LT0 + 10);
+        assert!(
+            matches!(
+                gate.check_at(&Action::WriteOutsideHome, None, LT0 + 10)
+                    .await,
+                Err(GateError::Denied(_))
+            ),
+            "unleasable action must fall through to the normal confirm path"
+        );
+    }
+
+    #[tokio::test]
+    async fn audit_frame_records_lease_id_and_subject_on_upgrade() {
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+
+        let store = store_with("peerA", LeaseScope::WriteNeothHome, 3600, LT0);
+        let lease_id = store.leases[0].lease_id.clone();
+        let gate = Gate::for_level(AutonomyLevel::Strict)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&store, "peerA", LT0 + 10);
+        gate.check_at(&Action::WriteNeothHome, Some(&writer), LT0 + 10)
+            .await
+            .unwrap();
+
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = read(&seg).await.unwrap();
+        let f = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        assert_eq!(
+            f.header.event_type, EVENT_TYPE_PERMISSION_GRANTED,
+            "lease upgrade is a GRANTED frame"
+        );
+        let v: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
+        assert_eq!(
+            v["lease_id"], lease_id,
+            "the WAL must record WHICH lease authorised the grant"
+        );
+        assert_eq!(v["subject"], "peerA");
+    }
+
+    #[tokio::test]
+    async fn audit_frame_has_null_lease_id_without_lease() {
+        // Regression: a plain Allow (no lease) carries lease_id: null —
+        // operators filter `lease_id != null` to find lease-driven grants.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = wal_spawn(seg.clone()).unwrap();
+
+        let gate = Gate::for_level(AutonomyLevel::Standard);
+        gate.check(&Action::Read, Some(&writer)).await.unwrap();
+
+        drop(writer);
+        join.await.unwrap();
+
+        let bytes = read(&seg).await.unwrap();
+        let f = decode_frame(&bytes[SEGMENT_HEADER_LEN..]).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
+        assert!(v["lease_id"].is_null(), "no lease ⇒ lease_id null");
     }
 }

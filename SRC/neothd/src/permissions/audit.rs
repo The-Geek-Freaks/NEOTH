@@ -62,6 +62,15 @@ pub struct AuditEntry {
     /// when the frame was the last in the segment or the next
     /// frame is not a recognised effect type.
     pub downstream: Option<String>,
+    /// SL-01a-b: the authenticated subject the decision was made for
+    /// (peer pub-key-hex / plugin id / channel sender). `None` for frames
+    /// written before lease wiring or with no lease context.
+    pub subject: Option<String>,
+    /// SL-01a-b: the capability lease that upgraded a `Confirm` to `Allow`,
+    /// if any. `None` means the decision was reached without a lease. This
+    /// is the pointer the operator joins against `0xA5 LEASE_GRANTED` to
+    /// prove the grant chain.
+    pub lease_id: Option<String>,
 }
 
 /// Three-way decision discriminator. Pinned `serde(rename_all =
@@ -177,6 +186,8 @@ pub fn audit_segment(
         let decision = classify_decision(event_type, &parsed);
         let action = parsed.action.clone();
         let reason = parsed.reason.clone();
+        let subject = parsed.subject.clone();
+        let lease_id = parsed.lease_id.clone();
         let downstream = next_after
             .get(&event_id)
             .map(|(et, _)| describe_downstream(*et));
@@ -193,6 +204,8 @@ pub fn audit_segment(
             action,
             reason,
             downstream,
+            subject,
+            lease_id,
         });
     }
 
@@ -230,6 +243,8 @@ struct ParsedPayload {
     action: String,
     reason: String,
     decision_label: String,
+    subject: Option<String>,
+    lease_id: Option<String>,
 }
 
 fn parse_payload(bytes: &[u8]) -> ParsedPayload {
@@ -242,10 +257,15 @@ fn parse_payload(bytes: &[u8]) -> ParsedPayload {
             .unwrap_or("")
             .to_string()
     };
+    // Optional fields stay `None` when absent OR JSON-null (the gate writes
+    // `null` for these on a non-lease decision).
+    let pick_opt = |key: &str| v.get(key).and_then(|x| x.as_str()).map(str::to_string);
     ParsedPayload {
         action: pick("action"),
         reason: pick("reason"),
         decision_label: pick("decision"),
+        subject: pick_opt("subject"),
+        lease_id: pick_opt("lease_id"),
     }
 }
 
@@ -402,6 +422,41 @@ mod tests {
         std::fs::write(&seg, b"").unwrap();
         let r = audit_segment(&seg, 0, i64::MAX, 10).unwrap();
         assert!(r.entries.is_empty());
+    }
+
+    #[test]
+    fn audit_surfaces_subject_and_lease_id_when_present() {
+        // SL-01a-b: a lease-upgraded GRANTED frame carries subject + lease_id;
+        // the audit reader must surface them (the grant-chain proof) and leave
+        // them None on a plain frame that has neither.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let with_lease = serde_json::to_vec(&serde_json::json!({
+            "action": "ChannelSend",
+            "reason": serde_json::Value::Null,
+            "decision": "allow",
+            "subject": "peerA",
+            "lease_id": "0193f8a0-dead-7abc-9999-000000000001",
+        }))
+        .unwrap();
+        write_segment(
+            &seg,
+            &[
+                (EVENT_TYPE_PERMISSION_GRANTED, &with_lease),
+                (EVENT_TYPE_PERMISSION_GRANTED, &pl("read", "", "")),
+            ],
+        );
+        let r = audit_segment(&seg, 0, i64::MAX, 10).unwrap();
+        assert_eq!(r.entries.len(), 2);
+        let leased = &r.entries[0];
+        assert_eq!(leased.subject.as_deref(), Some("peerA"));
+        assert_eq!(
+            leased.lease_id.as_deref(),
+            Some("0193f8a0-dead-7abc-9999-000000000001")
+        );
+        let plain = &r.entries[1];
+        assert!(plain.subject.is_none(), "no subject ⇒ None");
+        assert!(plain.lease_id.is_none(), "no lease ⇒ None");
     }
 
     #[test]
