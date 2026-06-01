@@ -91,7 +91,7 @@ pub struct RelayRegistration {
     pub cluster_key_hex: String,
     /// 64-char lowercase-hex of the peer's ed25519 pub key.
     pub peer_pub_key_hex: String,
-    /// Operator-readable instance label ("alex-laptop", "home-server", ...).
+    /// Operator-readable instance label ("my-laptop", "home-server", ...).
     pub instance_label: String,
     /// Listen port the peer expects relayed connections on.
     pub listen_port: u16,

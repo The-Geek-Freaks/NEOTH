@@ -11,8 +11,8 @@
 //! ```yaml
 //! # ~/.neoth/policy.yaml
 //! dangerous_targets:
-//!   - "100.68.210.50"          # Cube — no remote reboot
-//!   - "192.168.178.117"        # Jarvis VM
+//!   - "192.168.1.100"          # home-server — no remote reboot
+//!   - "192.168.1.110"          # gateway VM
 //! dangerous_patterns:
 //!   - "rm -rf"
 //!   - "fuser -km"

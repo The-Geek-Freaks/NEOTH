@@ -107,7 +107,7 @@ pub const DEFAULT_NEGATION_MARKERS: &[&str] = &[
 pub const DEFAULT_NEGATION_WINDOW_CHARS: usize = 80;
 
 /// One ground-truth assertion. `subject` is a noun-phrase the
-/// response is likely to reference (e.g. `"Alex's birthday"`);
+/// response is likely to reference (e.g. `"Sam's birthday"`);
 /// `expected_keyword` is the canonical fact (`"March"`). Both are
 /// case-insensitively matched.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -295,30 +295,30 @@ mod tests {
 
     #[test]
     fn embed_empty_assertions_returns_unchanged() {
-        let prompt = "What is Alex's birthday?";
+        let prompt = "What is Sam's birthday?";
         assert_eq!(embed_ground_truth_tag(prompt, &[]), prompt);
     }
 
     #[test]
     fn embed_appends_block_with_open_close_tags() {
-        let prompt = "What is Alex's birthday?";
-        let a = vec![assertion("Alex's birthday", "March")];
+        let prompt = "What is Sam's birthday?";
+        let a = vec![assertion("Sam's birthday", "March")];
         let out = embed_ground_truth_tag(prompt, &a);
         assert!(out.contains(GROUND_TRUTH_TAG_OPEN));
         assert!(out.contains(GROUND_TRUTH_TAG_CLOSE));
         assert!(out.starts_with(prompt));
-        assert!(out.contains("Alex's birthday: March"));
+        assert!(out.contains("Sam's birthday: March"));
     }
 
     #[test]
     fn embed_multi_assertions_each_on_own_line() {
         let a = vec![
-            assertion("Alex's birthday", "March"),
+            assertion("Sam's birthday", "March"),
             assertion("Alex's city", "Berlin"),
         ];
         let out = embed_ground_truth_tag("Q?", &a);
         let inside = extract_ground_truth_block(&out).unwrap();
-        assert!(inside.contains("Alex's birthday: March"));
+        assert!(inside.contains("Sam's birthday: March"));
         assert!(inside.contains("Alex's city: Berlin"));
     }
 
@@ -349,8 +349,8 @@ mod tests {
 
     #[test]
     fn check_agrees_when_subject_keyword_present_no_negation() {
-        let a = vec![assertion("Alex's birthday", "March")];
-        let resp = "Alex's birthday is in March, I remember well.";
+        let a = vec![assertion("Sam's birthday", "March")];
+        let resp = "Sam's birthday is in March, I remember well.";
         let out = factual_contradiction_check(
             resp,
             &a,
@@ -365,36 +365,36 @@ mod tests {
 
     #[test]
     fn check_flags_missing_subject() {
-        let a = vec![assertion("Alex's birthday", "March")];
+        let a = vec![assertion("Sam's birthday", "March")];
         let resp = "I have no information about that.";
         let out = factual_contradiction_check(resp, &a, DEFAULT_NEGATION_MARKERS, 80);
         assert!(!out.agrees);
-        assert_eq!(out.missing_keywords, vec!["Alex's birthday"]);
+        assert_eq!(out.missing_keywords, vec!["Sam's birthday"]);
         assert!(out.contradicting_phrases.is_empty());
     }
 
     #[test]
     fn check_flags_missing_keyword_when_subject_present() {
-        let a = vec![assertion("Alex's birthday", "March")];
-        let resp = "Alex's birthday is a wonderful day filled with cake.";
+        let a = vec![assertion("Sam's birthday", "March")];
+        let resp = "Sam's birthday is a wonderful day filled with cake.";
         let out = factual_contradiction_check(resp, &a, DEFAULT_NEGATION_MARKERS, 80);
         assert!(!out.agrees);
         assert!(
             out.missing_keywords
-                .contains(&"Alex's birthday".to_string())
+                .contains(&"Sam's birthday".to_string())
         );
     }
 
     #[test]
     fn check_flags_negation_near_subject() {
-        let a = vec![assertion("Alex's birthday", "March")];
-        let resp = "Alex's birthday is not in March, you are mistaken.";
+        let a = vec![assertion("Sam's birthday", "March")];
+        let resp = "Sam's birthday is not in March, you are mistaken.";
         let out = factual_contradiction_check(resp, &a, DEFAULT_NEGATION_MARKERS, 80);
         // Subject present, keyword present (March), but negation
         // ("not") is in the window → contradiction.
         assert!(out.contradicts());
         let (subj, snippet) = &out.contradicting_phrases[0];
-        assert_eq!(subj, "Alex's birthday");
+        assert_eq!(subj, "Sam's birthday");
         assert!(snippet.to_lowercase().contains("not"));
     }
 

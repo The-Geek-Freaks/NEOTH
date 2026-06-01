@@ -95,3 +95,6 @@ nul
 
 # NOTE: Cargo.lock is intentionally NOT ignored.
 # neothd is a binary crate → lock file ensures reproducible CI builds.
+
+# Operator-personal Claude Code hook config (machine-specific paths) — never publish
+.github/hooks/

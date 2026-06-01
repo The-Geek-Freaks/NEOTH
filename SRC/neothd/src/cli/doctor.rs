@@ -262,8 +262,8 @@ const CHECK_DOCS: &[CheckDoc] = &[
                   past 1 GiB free, fails past 100 MiB. Below the fail \
                   threshold the WAL writer's quota guard will reject new \
                   writes — better to warn early.",
-        common_failures: "Cube with `disk3` filling up; laptop with \
-                         OS-disk pressure.",
+        common_failures: "A NAS or always-on home server with a data disk \
+                         filling up; a laptop with OS-disk pressure.",
         fix: "Prune backups (`neoth backup --prune`); compact WAL (`neoth \
               wal compact`); move `~/.neoth/` to a larger volume via \
               symlink + `chown`.",
@@ -460,9 +460,9 @@ const CHECK_DOCS: &[CheckDoc] = &[
         name: "tmux for claude-cli",
         purpose: "NOOB-UX-6 AIO-compliance probe. claude-cli's working \
                   backend is the tmux warm-session path \
-                  (subprocess --print mode is broken on Alex's setup \
-                  per memory note; same applies to operators on the \
-                  same Anthropic build). Pass when `tmux -V` answers; \
+                  (subprocess --print mode is unreliable on some Anthropic \
+                  OAuth/build configurations; the tmux warm-session is the \
+                  supported path). Pass when `tmux -V` answers; \
                   Warn when missing AND the operator's provider_kind \
                   is ClaudeCli; silent otherwise.",
         common_failures: "Operator picks claude-cli in the wizard on a \

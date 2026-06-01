@@ -18,7 +18,7 @@
 //! [[prompts]]
 //! id          = "morning-greet"
 //! description = "Morning greeting prefix"
-//! prompt      = "Good morning, Alex. Start with: "
+//! prompt      = "Good morning, {operator}. Start with: "
 //! ```
 //!
 //! Missing file → defaults. Bad TOML → loud error (operator typo'd; better

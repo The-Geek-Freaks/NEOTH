@@ -26,7 +26,7 @@ questions:
     prompt:
       en: "What name or handle should NEOTH use for you?"
       de: "Welchen Namen oder Handle soll NEOTH für dich benutzen?"
-    placeholder: "e.g. Alex / alex / @alex"
+    placeholder: "e.g. Sam / sam / @sam"
     scope: global
     skip_ok: false
 
@@ -60,7 +60,7 @@ questions:
     prompt:
       en: "List the machines you actively use, one per line: hostname — role (server/laptop/desktop)."
       de: "Liste deine aktiv genutzten Rechner, einer pro Zeile: hostname — rolle (server/laptop/desktop)."
-    placeholder: "e.g. cube — homeserver / shadow-pc — windows desktop"
+    placeholder: "e.g. homeserver — always-on box / desktop — windows workstation"
     scope: global
     skip_ok: true
 
@@ -172,7 +172,7 @@ questions:
     prompt:
       en: "Operations that must ALWAYS confirm, even at full autonomy? (comma list)"
       de: "Operationen die IMMER bestätigt werden müssen, auch bei voller Autonomie? (Komma-Liste)"
-    placeholder: "e.g. rm -rf, sudo, ssh tgf@cube"
+    placeholder: "e.g. rm -rf, sudo, ssh admin@homeserver"
     scope: global
     skip_ok: true
 

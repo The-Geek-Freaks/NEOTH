@@ -143,7 +143,7 @@ mod tests {
             prompts: vec![PromptSnippet {
                 id: "morning-greet".into(),
                 description: "Morning greeting".into(),
-                prompt: "Good morning, Alex.".into(),
+                prompt: "Good morning, {operator}.".into(),
             }],
             theme: Default::default(), // HO-05
         }

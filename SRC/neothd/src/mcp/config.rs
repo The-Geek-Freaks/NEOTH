@@ -4,7 +4,7 @@
 //! servers:
 //!   - id: filesystem
 //!     command: npx
-//!     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/alex/notes"]
+//!     args: ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/notes"]
 //!     env:
 //!       LOG_LEVEL: info
 //!
