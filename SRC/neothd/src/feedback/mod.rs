@@ -7,13 +7,14 @@
 //! operator exactly where NEOTH underperformed.
 //!
 //! This slice ships the PRODUCER (the chat hook) + the durable signal. The
-//! adaptation CONSUMER (the profile-adapt cron biasing self-dev proposals on
-//! the feedback signal) is a follow-on slice — the frame format already
-//! carries everything that loop needs.
+//! adaptation CONSUMER ([`consume`]) reads those `0xBB` frames — aggregating
+//! them into a [`consume::FeedbackSummary`] for `neoth feedback summary` and
+//! feeding the profile-adapt cron a sustained-pushback self-dev proposal.
 //!
 //! The prompt text itself is never stored (a `prompt_hash` only) so a
 //! feedback frame can't leak message content.
 
+pub mod consume;
 pub mod tone;
 
 pub use tone::{NEGATIVE_THRESHOLD, POSITIVE_THRESHOLD, ToneScore, score_follow_up};

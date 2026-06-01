@@ -287,13 +287,28 @@ pub(crate) async fn propose_and_store(
         None => apply_preset(ProfilePreset::Lowkey),
     };
     let new_proposals = propose_adjustments(profile, &current);
-    if new_proposals.is_empty() {
+    store_proposals(home, &new_proposals, writer).await
+}
+
+/// Dedup-and-store a set of proposals + emit `0x1C SELF_DEV_PROPOSED` per NEW
+/// one. Shared by the behavioural-snapshot path ([`propose_and_store`]) and the
+/// G-03 feedback path (the profile-adapt cron). Returns the count newly added.
+///
+/// Persist BEFORE emitting WAL frames — a crash here yields proposals-with-no
+/// -frame (benign), never frames-with-no-store (which would re-emit + duplicate
+/// on the next tick). Dedup is by stable `proposal.id`, so re-running is
+/// idempotent (the operator never sees the same suggestion twice).
+pub(crate) async fn store_proposals(
+    home: &Path,
+    proposals: &[SelfDevProposal],
+    writer: Option<&WalWriterHandle>,
+) -> Result<usize> {
+    if proposals.is_empty() {
         return Ok(0);
     }
     let mut store = load_store(home)?;
     let ts = now_unix();
-    // Keep only proposals whose stable id isn't already stored.
-    let to_add: Vec<&SelfDevProposal> = new_proposals
+    let to_add: Vec<&SelfDevProposal> = proposals
         .iter()
         .filter(|p| !store.entries.iter().any(|e| e.proposal.id == p.id))
         .collect();
@@ -308,9 +323,6 @@ pub(crate) async fn propose_and_store(
             decline_reason: String::new(),
         });
     }
-    // Persist BEFORE emitting WAL frames (see doc above) — a crash here
-    // yields proposals-with-no-frame (benign), never frames-with-no-store
-    // (which would re-emit + duplicate on the next tick).
     save_store(home, &store)?;
     for p in &to_add {
         if let Some(w) = writer {

@@ -404,6 +404,16 @@ GDPR-style operator data export — JSONL or markdown dump of every row NEOTH st
 - `--format <FORMAT>` — Output format. `jsonl` = one event per line (default, lossless). `md` = human-readable digest grouped by day
 - `--home <DIR>` — Override the `~/.neoth/` home dir (mostly for tests)
 
+## `neoth feedback`
+
+G-03 — `feedback summary [--window 7d]`: aggregate the operator self-correction (`0xBB`) signals into an actionable report (count, top correction patterns, pressure level). The consumer side of the self-correction loop; the same aggregate drives the profile-adapt cron's sustained-pushback self-dev proposal
+
+### `neoth feedback summary`
+
+Aggregate recent operator-correction (`0xBB`) signals into a report: count, top correction patterns, pressure level. The consumer side of the G-03 self-correction loop
+
+- `--window <WINDOW>` — Look-back window, e.g. `7d`, `48h`, `3600` (bare seconds). Default 7d
+
 ## `neoth fetch`
 
 Fetch a URL + return its text content (A-21)

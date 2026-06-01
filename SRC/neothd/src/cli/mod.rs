@@ -46,6 +46,7 @@ pub mod ingest;
 pub mod init;
 pub mod installer;
 pub mod jobs;
+pub mod feedback;
 pub mod kanban;
 pub mod keys;
 pub mod lease;
@@ -479,6 +480,13 @@ pub enum Commands {
     /// task delegation (SL-01) + proactive bounded writes (G-01).
     Lease(lease::LeaseArgs),
 
+    /// G-03 — `feedback summary [--window 7d]`: aggregate the operator
+    /// self-correction (`0xBB`) signals into an actionable report (count, top
+    /// correction patterns, pressure level). The consumer side of the
+    /// self-correction loop; the same aggregate drives the profile-adapt cron's
+    /// sustained-pushback self-dev proposal.
+    Feedback(feedback::FeedbackArgs),
+
     /// `fs read <path>` — read a file through the PC-01 OS-tool gate:
     /// allowlist (`freedom.yaml::tools.os.allowed_paths`, default deny-all) +
     /// autonomy gate + WAL audit (`0xA8`/`0xA9`). The gated alternative to an
@@ -896,6 +904,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Lease(mut args) => {
             args.output = global_output;
             lease::run_lease(args).await?;
+        }
+        Commands::Feedback(mut args) => {
+            args.output = global_output;
+            feedback::run_feedback(args).await?;
         }
         Commands::Fs(mut args) => {
             args.output = global_output;

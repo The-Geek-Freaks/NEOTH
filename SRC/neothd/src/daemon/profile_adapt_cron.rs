@@ -39,6 +39,11 @@ use crate::wal::writer::WalWriterHandle;
 /// `neoth self-dev propose` CLI default; see the module doc for why.
 const CRON_BASIS_PRESET: &str = "lowkey";
 
+/// G-03: window the feedback consumer aggregates over each tick. 7 days — long
+/// enough that a sustained-pushback episode (not a one-off bad turn) drives a
+/// proposal, short enough that resolved pushback stops re-surfacing.
+const FEEDBACK_WINDOW_SECS: i64 = 7 * 24 * 3600;
+
 /// One passive-adaptation cron pass:
 ///   1. Re-aggregate the behavioural snapshot from the WAL window
 ///      (`aggregate_profile_snapshot` persists it under `home`).
@@ -59,14 +64,60 @@ pub async fn run_profile_adapt_tick(
         .await
         .map_err(|e| format!("aggregate snapshot: {e}"))?;
 
+    // G-03 consumer: aggregate recent OPERATOR_FEEDBACK (0xBB) and, on
+    // SUSTAINED pushback, queue ONE operator-reviewable self-dev proposal. This
+    // runs even when there is no behavioural snapshot yet — feedback is its own
+    // signal. Best-effort: a feedback-path error never blocks the snapshot path.
+    let feedback_added = run_feedback_consumer(home, wal_dir, writer).await;
+
     let Some(profile) = crate::profile::snapshot::load_snapshot(home) else {
-        // Fresh install / empty WAL → no behavioural data to adapt from.
-        return Ok(0);
+        // Fresh install / empty WAL → no behavioural snapshot to adapt from,
+        // but a feedback proposal may still have been queued above.
+        return Ok(feedback_added);
     };
 
-    crate::cli::self_dev::propose_and_store(home, &profile, CRON_BASIS_PRESET, Some(writer))
+    let snapshot_added =
+        crate::cli::self_dev::propose_and_store(home, &profile, CRON_BASIS_PRESET, Some(writer))
+            .await
+            .map_err(|e| format!("propose + store: {e}"))?;
+    Ok(feedback_added + snapshot_added)
+}
+
+/// G-03 consumer half: read the recent feedback window + queue a sustained
+/// -pushback proposal. Returns the number of NEW proposals queued (0 below
+/// `High` pressure or when already queued). Errors are swallowed to a debug log
+/// — the feedback path must never break the snapshot adaptation path.
+async fn run_feedback_consumer(
+    home: &std::path::Path,
+    wal_dir: &std::path::Path,
+    writer: &WalWriterHandle,
+) -> usize {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let summary =
+        crate::feedback::consume::aggregate_recent_feedback(wal_dir, FEEDBACK_WINDOW_SECS, now);
+    let Some(proposal) = crate::feedback::consume::propose_from_feedback(&summary) else {
+        return 0;
+    };
+    match crate::cli::self_dev::store_proposals(home, std::slice::from_ref(&proposal), Some(writer))
         .await
-        .map_err(|e| format!("propose + store: {e}"))
+    {
+        Ok(n) => {
+            if n > 0 {
+                tracing::info!(
+                    corrections = summary.corrections,
+                    "profile-adapt cron: queued a sustained-pushback self-dev proposal (G-03)"
+                );
+            }
+            n
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "profile-adapt cron: feedback proposal store failed");
+            0
+        }
+    }
 }
 
 /// Spawn the passive-adaptation cron loop. Returns the `JoinHandle` so the
@@ -167,6 +218,51 @@ mod tests {
             .await
             .expect("tick on empty wal must not error");
         assert_eq!(n, 0, "empty WAL → no behavioural data → no proposals");
+    }
+
+    #[tokio::test]
+    async fn sustained_pushback_queues_a_feedback_proposal() {
+        // G-03 consumer end-to-end: writing >= HIGH_AT operator-feedback (0xBB)
+        // frames into the WAL ⇒ the tick's feedback consumer queues ONE
+        // operator-reviewable self-dev proposal (deduped on re-run).
+        let home = tempfile::tempdir().unwrap();
+        let wal_dir = tempfile::tempdir().unwrap();
+        let seg = wal_dir.path().join("fb-000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        for i in 0..(crate::feedback::consume::HIGH_AT + 1) {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "sentiment_score": -0.8,
+                "matched_patterns": ["wrong_answer"],
+                "prompt_hash": i,
+                "ts_unix": now - 10,
+            }))
+            .unwrap();
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_OPERATOR_FEEDBACK,
+                &payload,
+            )
+            .build();
+            writer.append(header, payload).await.unwrap();
+        }
+
+        // First tick queues the feedback proposal.
+        let n1 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer)
+            .await
+            .expect("tick must not error");
+        assert!(n1 >= 1, "high pushback must queue a self-dev proposal, got {n1}");
+
+        // Second tick is idempotent — the proposal is deduped by stable id.
+        let n2 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer)
+            .await
+            .expect("tick must not error");
+        assert_eq!(n2, 0, "the feedback proposal must not re-queue on the next tick");
+
+        drop(writer);
+        let _ = join.await;
     }
 
     #[test]
