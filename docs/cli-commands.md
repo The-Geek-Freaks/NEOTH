@@ -1683,6 +1683,15 @@ Verify HMAC compaction markers across the WAL. Phase 33b SP-2. Reads every segme
 
 Read-only WAL segment inspector. `stats <file>` counts frames per event-type; `show <file>` pretty-prints frames (offset, code, importance, ts_ns, payload hash). Works on backups too
 
+### `neoth wal export`
+
+KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in a time window, plus the HMAC compaction marker(s) sealing those bytes. A third party re-checks integrity offline. The bundle is sign-ready; `--sign` lands once the operator's minisign keypair is provisioned
+
+- `--window <WINDOW>` — Window: a duration back from now (`24h`, `7d`, `30m`, `3600`) or a UTC RFC3339 range (`2026-05-01T00:00:00Z..2026-05-02T00:00:00Z`)
+- `--out <PATH>` — Output path. Default: `~/.neoth/exports/neoth-<unix>.neoth-proof`
+- `--verify-chain <VERIFY_CHAIN>` — Re-verify each included compaction marker's HMAC against the local key at export time (sets `chain_verified`). Off by default so an operator without the key can still export the metadata bundle
+- `--wal-dir <DIR>` — WAL directory override (tests / inspecting a backup)
+
 ### `neoth wal show`
 
 Pretty-print frames, newest first. With no `<segment>`, scans EVERY `~/.neoth/wal/*.wal` segment so an operator can audit the whole chain without naming a file. `--type` filters to one event type — this is how an operator proves a guarantee, e.g. `neoth wal show --type plugin_cap_denied` (every denied plugin hostcall) or `--type provider_fallback_attempted` (every 429 failover)

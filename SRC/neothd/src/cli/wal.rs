@@ -19,9 +19,15 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::wal::compaction::{self, MarkerPayload};
 use crate::wal::compress::decompress_frames;
-use crate::wal::events::{event_code_from_filter, event_name_from_code};
+use crate::wal::events::{
+    EVENT_TYPE_COMPACTION_MARKER, event_code_from_filter, event_name_from_code,
+};
 use crate::wal::frame::decode_frame;
+use crate::wal::proof_bundle::{
+    PROOF_SCHEMA_VERSION, ProofBundle, ProofEnvelope, ProofFrame, ProofMarker,
+};
 use crate::wal::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader, parse_segment_header};
 
 #[derive(Args, Debug, Clone)]
@@ -61,6 +67,28 @@ pub enum WalAction {
         #[arg(long, default_value_t = 0)]
         skip: usize,
     },
+    /// KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every
+    /// frame in a time window, plus the HMAC compaction marker(s) sealing
+    /// those bytes. A third party re-checks integrity offline. The bundle is
+    /// sign-ready; `--sign` lands once the operator's minisign keypair is
+    /// provisioned.
+    Export {
+        /// Window: a duration back from now (`24h`, `7d`, `30m`, `3600`) or a
+        /// UTC RFC3339 range (`2026-05-01T00:00:00Z..2026-05-02T00:00:00Z`).
+        #[arg(long, value_name = "WINDOW")]
+        window: String,
+        /// Output path. Default: `~/.neoth/exports/neoth-<unix>.neoth-proof`.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+        /// Re-verify each included compaction marker's HMAC against the local
+        /// key at export time (sets `chain_verified`). Off by default so an
+        /// operator without the key can still export the metadata bundle.
+        #[arg(long, default_value_t = false)]
+        verify_chain: bool,
+        /// WAL directory override (tests / inspecting a backup).
+        #[arg(long, value_name = "DIR")]
+        wal_dir: Option<PathBuf>,
+    },
 }
 
 pub async fn run_wal(args: WalArgs) -> Result<()> {
@@ -81,6 +109,15 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
                 &home,
                 args.output,
             )
+        }
+        WalAction::Export {
+            window,
+            out,
+            verify_chain,
+            wal_dir,
+        } => {
+            let wal_dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
+            run_wal_export(&window, out.as_deref(), &wal_dir, verify_chain, args.output)
         }
     }
 }
@@ -384,6 +421,239 @@ fn read_segment_frames(
     Ok(())
 }
 
+// ── KF-03 tamper-evidence export ─────────────────────────────────────────
+
+/// Parse a `--window` spec into `(start_ns, end_ns)` unix nanoseconds.
+/// Two forms: a duration back from now (`24h` / `7d` / `30m` / bare seconds
+/// via [`crate::cli::privacy::parse_duration`]) or a UTC RFC3339 range
+/// `<from>..<to>`. The range is half-open `[start, end)`.
+fn parse_window(spec: &str, now_ns: u64) -> Result<(u64, u64)> {
+    if let Some((lo, hi)) = spec.split_once("..") {
+        let from = chrono::DateTime::parse_from_rfc3339(lo.trim())
+            .with_context(|| format!("parse window start `{lo}` as RFC3339"))?;
+        let to = chrono::DateTime::parse_from_rfc3339(hi.trim())
+            .with_context(|| format!("parse window end `{hi}` as RFC3339"))?;
+        let s = from.timestamp_nanos_opt().unwrap_or(0).max(0) as u64;
+        let e = to.timestamp_nanos_opt().unwrap_or(0).max(0) as u64;
+        if e <= s {
+            anyhow::bail!("window end must be after start (`{lo}` .. `{hi}`)");
+        }
+        Ok((s, e))
+    } else {
+        let secs = crate::cli::privacy::parse_duration(spec)
+            .with_context(|| format!("parse window duration `{spec}`"))?;
+        let span_ns = secs.saturating_mul(1_000_000_000);
+        Ok((now_ns.saturating_sub(span_ns), now_ns))
+    }
+}
+
+/// A collected compaction marker plus the on-disk segment path it lives in
+/// (needed to re-run `verify_marker` against the original bytes).
+type CollectedMarker = (PathBuf, MarkerPayload);
+
+/// Walk every segment, collecting frames in `[start_ns, end_ns)` plus all
+/// compaction markers encountered (markers seal byte ranges — a verifier
+/// uses them to re-check tamper evidence). Returns `(frames, markers)` where
+/// each marker carries its full on-disk segment path for later verification.
+fn collect_proof(
+    wal_dir: &Path,
+    start_ns: u64,
+    end_ns: u64,
+) -> Result<(Vec<ProofFrame>, Vec<CollectedMarker>)> {
+    let mut frames: Vec<ProofFrame> = Vec::new();
+    let mut markers: Vec<CollectedMarker> = Vec::new();
+
+    for seg_path in sorted_segments(wal_dir) {
+        let seg_name = seg_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?.wal")
+            .to_string();
+        let bytes =
+            std::fs::read(&seg_path).with_context(|| format!("read {}", seg_path.display()))?;
+        let hdr = match parse_segment_header(&bytes) {
+            Ok(h) => h,
+            Err(_) => continue, // skip an unreadable header rather than abort the export
+        };
+        let header_len = hdr.header_len();
+        if bytes.len() <= header_len {
+            continue;
+        }
+        let body = &bytes[header_len..];
+        let decompressed;
+        let stream: &[u8] = if hdr.is_compressed() {
+            decompressed = match decompress_frames(body) {
+                Ok(d) => d,
+                Err(_) => continue,
+            };
+            &decompressed
+        } else {
+            body
+        };
+
+        let mut cursor = 0usize;
+        while cursor < stream.len() {
+            let dec = match decode_frame(&stream[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break, // torn tail — stop this segment cleanly
+            };
+            let et = dec.header.event_type;
+            let ts = dec.header.hlc.physical_ns();
+            if et == EVENT_TYPE_COMPACTION_MARKER {
+                // Markers anchor the HMAC chain; include every one we see so a
+                // verifier can re-check whatever range covers the window.
+                if let Ok(m) = serde_json::from_slice::<MarkerPayload>(dec.payload) {
+                    markers.push((seg_path.clone(), m));
+                }
+            } else if ts >= start_ns && ts < end_ns {
+                frames.push(ProofFrame {
+                    segment: seg_name.clone(),
+                    offset: cursor as u64,
+                    event_type: et,
+                    event_id: dec.header.event_id.0,
+                    ts_ns: ts,
+                    payload_hash: dec.header.payload_hash,
+                    payload_len: dec.header.payload_len,
+                    importance: dec.header.importance.raw(),
+                });
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+    }
+    Ok((frames, markers))
+}
+
+fn run_wal_export(
+    window: &str,
+    out: Option<&Path>,
+    wal_dir: &Path,
+    verify_chain: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let now_unix = (now_ns / 1_000_000_000) as i64;
+    let (start_ns, end_ns) = parse_window(window, now_ns)?;
+
+    let (frames, raw_markers) = collect_proof(wal_dir, start_ns, end_ns)?;
+
+    // Optionally re-verify each marker's HMAC against the local key NOW so the
+    // bundle records a verified-at-export verdict. Without the key (or with the
+    // flag off) the verifier checks it themselves — `verified_at_export: None`.
+    let key = if verify_chain {
+        compaction::load_or_init_key(&compaction::default_key_path()).ok()
+    } else {
+        None
+    };
+    let mut all_verified = !raw_markers.is_empty();
+    let markers: Vec<ProofMarker> = raw_markers
+        .iter()
+        .map(|(seg, m)| {
+            let verified = key
+                .as_ref()
+                .map(|k| compaction::verify_marker(seg, k, m).is_ok());
+            if verified != Some(true) {
+                all_verified = false;
+            }
+            ProofMarker {
+                segment: seg
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?.wal")
+                    .to_string(),
+                from_offset: m.from_offset,
+                to_offset: m.to_offset,
+                frame_count: m.frame_count,
+                hmac_hex: m.hmac_hex.clone(),
+                verified_at_export: verified,
+            }
+        })
+        .collect();
+
+    let frame_count = frames.len();
+    let marker_count = markers.len();
+    let bundle = ProofBundle {
+        schema_version: PROOF_SCHEMA_VERSION,
+        neoth_version: env!("CARGO_PKG_VERSION").to_string(),
+        window_start_ts_ns: start_ns,
+        window_end_ts_ns: end_ns,
+        generated_unix: now_unix,
+        frames,
+        markers,
+        chain_verified: all_verified,
+    };
+    let envelope = ProofEnvelope::seal(bundle);
+
+    // Default output: ~/.neoth/exports/neoth-<unix>.neoth-proof (predictable
+    // dir so the doctor freshness check can find it).
+    let out_path: PathBuf = match out {
+        Some(p) => p.to_path_buf(),
+        None => {
+            let dir = FreedomConfig::default_neoth_home().join("exports");
+            std::fs::create_dir_all(&dir)
+                .with_context(|| format!("create export dir {}", dir.display()))?;
+            dir.join(format!("neoth-{now_unix}.neoth-proof"))
+        }
+    };
+    if let Some(parent) = out_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create export dir {}", parent.display()))?;
+    }
+    let body = serde_json::to_string_pretty(&envelope).context("serialise proof envelope")?;
+    // Atomic tmp + rename so a crash mid-write can't leave a truncated proof.
+    let tmp = out_path.with_extension("neoth-proof.tmp");
+    std::fs::write(&tmp, body.as_bytes()).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &out_path)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), out_path.display()))?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "out": out_path.display().to_string(),
+                    "frames": frame_count,
+                    "markers": marker_count,
+                    "chain_verified": envelope.bundle.chain_verified,
+                    "digest_sha256": envelope.digest_sha256,
+                    "window_start_ts_ns": start_ns,
+                    "window_end_ts_ns": end_ns,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            println!("# Tamper-evidence proof written");
+            println!("  out:            {}", out_path.display());
+            println!("  frames:         {frame_count}");
+            println!(
+                "  markers:        {marker_count} (chain_verified={})",
+                envelope.bundle.chain_verified
+            );
+            println!("  digest_sha256:  {}", envelope.digest_sha256);
+            if marker_count == 0 {
+                println!(
+                    "  note: window is not yet sealed by a compaction marker — \
+                     per-frame payload_hash still anchors integrity; \
+                     re-export later once a marker covers it for full chain proof."
+                );
+            }
+            if !envelope.bundle.chain_verified && verify_chain && marker_count > 0 {
+                println!(
+                    "  WARNING: at least one marker FAILED HMAC re-verification — \
+                     the WAL window may have been tampered with."
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,6 +681,117 @@ mod tests {
         }
         std::fs::write(&path, &bytes).unwrap();
         path
+    }
+
+    // ── KF-03 export tests ────────────────────────────────────────────────
+
+    /// Write a segment with `raw` RAW_TEXT frames plus one COMPACTION_MARKER.
+    fn write_segment_with_marker(dir: &std::path::Path, seq: u64, raw: usize) -> PathBuf {
+        let path = dir.join(format!("{:06}.wal", seq));
+        let mut bytes: Vec<u8> = Vec::new();
+        let sh = SegmentHeader::new(0, seq, 0, 0, [0u8; 16]);
+        bytes.extend_from_slice(&sh.to_le_bytes());
+        for i in 0..raw {
+            let payload = format!("frame {i}").into_bytes();
+            let header: EventHeaderV2 = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, &payload).build();
+            bytes.extend_from_slice(&encode_frame(&header, &payload));
+        }
+        let marker = MarkerPayload {
+            from_offset: 0,
+            to_offset: 64,
+            frame_count: raw as u32,
+            hmac_hex: "deadbeef".into(),
+        };
+        let mpayload = serde_json::to_vec(&marker).unwrap();
+        let mheader: EventHeaderV2 =
+            HeaderBuilder::new(EVENT_TYPE_COMPACTION_MARKER, &mpayload).build();
+        bytes.extend_from_slice(&encode_frame(&mheader, &mpayload));
+        std::fs::write(&path, &bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn parse_window_duration_forms() {
+        let now = 1_000_000_000_000_000u64; // 1e6 s in ns — bigger than any span here
+        let (s, e) = parse_window("100", now).unwrap(); // 100 bare seconds
+        assert_eq!(e, now);
+        assert_eq!(s, now - 100 * 1_000_000_000);
+        let (s2, _) = parse_window("1h", now).unwrap();
+        assert_eq!(now - s2, 3600 * 1_000_000_000);
+    }
+
+    #[test]
+    fn parse_window_rfc3339_range() {
+        let (s, e) = parse_window("2026-05-01T00:00:00Z..2026-05-02T00:00:00Z", 0).unwrap();
+        assert_eq!(e - s, 86_400 * 1_000_000_000, "exactly one day apart");
+        assert!(s > 0);
+    }
+
+    #[test]
+    fn parse_window_rejects_garbage_and_inverted_range() {
+        assert!(parse_window("notawindow", 0).is_err());
+        assert!(
+            parse_window("2026-05-02T00:00:00Z..2026-05-01T00:00:00Z", 0).is_err(),
+            "end before start must error"
+        );
+    }
+
+    #[test]
+    fn collect_proof_picks_window_frames_and_markers() {
+        let dir = tempdir().unwrap();
+        write_segment_with_marker(dir.path(), 1, 3);
+        // Wide-open window catches everything regardless of the now-stamped HLC.
+        let (frames, markers) = collect_proof(dir.path(), 0, u64::MAX).unwrap();
+        assert_eq!(frames.len(), 3, "3 RAW_TEXT frames in window");
+        assert_eq!(markers.len(), 1, "the COMPACTION_MARKER is collected");
+        assert_eq!(markers[0].1.frame_count, 3);
+        // Frames carry their segment + a payload_hash anchor.
+        assert_eq!(frames[0].segment, "000001.wal");
+    }
+
+    #[test]
+    fn collect_proof_excludes_out_of_window_frames() {
+        let dir = tempdir().unwrap();
+        write_segment(dir.path(), 1, 4);
+        // A window entirely in the past (ns 1..2) excludes the now-stamped frames.
+        let (frames, _) = collect_proof(dir.path(), 1, 2).unwrap();
+        assert!(frames.is_empty(), "no frames fall in a long-past window");
+    }
+
+    #[test]
+    fn export_round_trip_writes_verifiable_envelope() {
+        let waldir = tempdir().unwrap();
+        write_segment_with_marker(waldir.path(), 1, 5);
+        let outdir = tempdir().unwrap();
+        let out = outdir.path().join("proof.neoth-proof");
+        run_wal_export("100d", Some(&out), waldir.path(), false, OutputFormat::Json).unwrap();
+
+        let body = std::fs::read_to_string(&out).unwrap();
+        let env: ProofEnvelope = serde_json::from_str(&body).unwrap();
+        assert!(env.digest_matches(), "written envelope must self-verify");
+        assert_eq!(env.bundle.frames.len(), 5);
+        assert_eq!(env.bundle.markers.len(), 1);
+        assert!(env.signature.is_none(), "unsigned slice");
+        // verify_chain=false ⇒ marker not re-checked ⇒ chain_verified false.
+        assert!(!env.bundle.chain_verified);
+        assert_eq!(env.bundle.markers[0].verified_at_export, None);
+    }
+
+    #[test]
+    fn export_tamper_in_envelope_is_detectable() {
+        let waldir = tempdir().unwrap();
+        write_segment_with_marker(waldir.path(), 1, 3);
+        let outdir = tempdir().unwrap();
+        let out = outdir.path().join("p.neoth-proof");
+        run_wal_export("100d", Some(&out), waldir.path(), false, OutputFormat::Json).unwrap();
+        let mut env: ProofEnvelope =
+            serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        // Flip a frame's hash after export: the envelope digest must reject it.
+        env.bundle.frames[0].payload_hash ^= 0xFFFF_FFFF;
+        assert!(
+            !env.digest_matches(),
+            "post-export frame tampering must break the digest"
+        );
     }
 
     #[test]
