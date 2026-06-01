@@ -11,7 +11,7 @@
 //!
 //! ## Detection scope
 //!
-//! Bilingual (English + German per Alex's operator profile mixing
+//! Bilingual (English + German — the operator's profile mixes
 //! both freely). Two signal classes:
 //!
 //! 1. **Verb-led patterns** — first-word coding verbs in either

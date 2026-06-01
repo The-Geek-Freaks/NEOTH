@@ -11,7 +11,7 @@
   baseline (which itself shipped the C-04b Firefox decrypt + C-03b
   Chrome per-OS work + the G-01 substrate). See "Shipped this session"
   below for the per-item table.
-- **Final v1.0-blocker list (Alex's harte-Kritik audit, end of
+- **Final v1.0-blocker list (operator harte-Kritik audit, end of
   session)**, prioritised:
   1. **SPEC-04** local Qwen3-4B profile extraction (privacy-critical;
      today the extractor can still hit Gemini).
@@ -66,9 +66,9 @@ Approximate diff: ~3,500 LOC + ~75 new tests across 17 commits.
 
 ---
 
-## Alex's harte-Kritik findings (still open at session end)
+## Operator harte-Kritik findings (still open at session end)
 
-These are the residual issues Alex flagged after the QU-09a / HO-06 /
+These are the residual issues flagged after the QU-09a / HO-06 /
 QU-01 wire-in pushes. None are blocking the audit, but each is a
 real edge that should land before v1.0 public.
 
@@ -212,7 +212,7 @@ If next session targets v1.0-public-ready:
    - SC-09 second + third recovery commands
      (`rewrap-hmac-key --plaintext-source` + `wal verify
      --since-rotation`).
-   - QU-01 greeting-regression no-apply edge per Alex's
+   - QU-01 greeting-regression no-apply edge per the
      harte-Kritik note above.
 
 ---

@@ -28,7 +28,7 @@ NEOTH uses CLI-OAuth-first across all three providers:
 
 **Confidence: high.** These are public 2025/2026 prices. No volume discounts apply at single-user scale.
 
-**What makes it lower:** Alex may already have Claude MAX. If so, subtract $100 — floor drops to $220.  
+**What makes it lower:** Operator may already have Claude MAX. If so, subtract $100 — floor drops to $220.  
 **What makes it higher:** GPT-5.5 may not be on ChatGPT Pro tier; could require API-only → add $0 in subscription but pay-as-you-go on every Council call.
 
 ---
@@ -79,7 +79,7 @@ The spec overstates cost by ~4×, which means the `cost_budget_usd: 0.027` daily
 
 **Trigger:** keywords `[architecture, security, refactor, destructive, breaking]` OR complexity > 800 tokens OR dissent_score > 0.4.
 
-**Critical observation:** Alex is a security researcher. The word "security" alone will trigger Council on nearly every security-research turn. At minimum 15% trigger rate, realistically 25-35% for Alex's workload.
+**Critical observation:** For a security-researcher operator, the word "security" alone will trigger Council on nearly every security-research turn. At minimum 15% trigger rate, realistically 25-35% for such a workload.
 
 | Metric | Conservative (15%) | Realistic (25%) |
 |---|---|---|
@@ -149,12 +149,12 @@ Gemini reviewer already flagged: `"default-ON will hard-crash or fail to allocat
 
 | Component | Low estimate | High estimate |
 |---|---|---|
-| Subscriptions (all 3 providers) | $220 (Alex has MAX) | $320 |
+| Subscriptions (all 3 providers) | $220 (operator has MAX) | $320 |
 | API overage (10 heavy quota-hit days/mo) | $0 (quota never hit) | $272 |
 | API overage (20 heavy days) | — | $543 |
 | **Monthly total** | **$220** | **$863** |
 
-**Realistic for Alex's usage pattern: $320–$600/month.**  
+**Realistic for this usage pattern: $320–$600/month.**  
 Annual: **$3,840–$7,200/year** in subscription costs alone, excluding API overages.
 
 **RAM:** +800 MB locked hugepages (Tailslayer) + neothd baseline ~200 MB = **~1 GB new RAM on debian VM**.  
@@ -308,9 +308,9 @@ Phase 2 (spec: Day 31-60, 30 days) contains:
 | **Letta** (formerly MemGPT) | Active, YC-backed | Archival + in-context + recall | 2-4 weeks to customize | ~70% of NEOTH features |
 | **Cognee** | Active | Knowledge graph + vector | 1-2 weeks | ~60% (missing council) |
 | **Mem0** | Active, API-based | Multi-level memory | Days (managed API) | ~50% (no local WAL) |
-| **NEOTH from scratch** | Alex solo | WAL + 6 brain regions + council | 6-9 months | 100% but delayed |
+| **NEOTH from scratch** | operator solo | WAL + 6 brain regions + council | 6-9 months | 100% but delayed |
 
-**Concrete comparison:** Letta (open-source, self-hosted) already provides: persistent memory, tool use, multi-model support, recall search, profile injection. Customizing Letta to match NEOTH Phase-1 scope ≈ **2-3 weeks** vs. 45 days for NEOTH Phase 1. The delta buys: Alex's custom WAL binary format, council pipeline, WASM plugin system — all Phase 2+ features.
+**Concrete comparison:** Letta (open-source, self-hosted) already provides: persistent memory, tool use, multi-model support, recall search, profile injection. Customizing Letta to match NEOTH Phase-1 scope ≈ **2-3 weeks** vs. 45 days for NEOTH Phase 1. The delta buys: the operator's custom WAL binary format, council pipeline, WASM plugin system — all Phase 2+ features.
 
 **The question isn't "should NEOTH exist?" — it's "should all features be built from scratch simultaneously?"**
 
@@ -329,7 +329,7 @@ The spec (RUNBOOK_phase3_cutover.md exists) implies cutover, not parallel. But P
 
 **Risk:** Jarvis already has stuck processes and autokill crons. A second heavy Rust daemon writing WAL events at 2 MB/day alongside 12 existing memory stores = increased I/O contention on the single debian VM.
 
-**If replace early (before parity is proven):** Alex loses Jarvis's working memory (Obsidian sync, 1014 embedded files, hippocampus curated notes) during the gap.
+**If replace early (before parity is proven):** The operator loses Jarvis's working memory (Obsidian sync, 1014 embedded files, hippocampus curated notes) during the gap.
 
 **Confidence: high** that the 14-day shadow run will take 30+ days due to parity failures requiring NEOTH fixes.
 
@@ -338,13 +338,13 @@ The spec (RUNBOOK_phase3_cutover.md exists) implies cutover, not parallel. But P
 ## Summary: 3 Biggest Cost Shocks Not Anticipated in Spec
 
 ### Shock 1: Subscription floor is $320/month regardless of usage
-The spec frames CLI-OAuth as a cost-saving strategy. But three provider subscriptions at Claude MAX + ChatGPT Pro + Gemini Advanced = **$320/month fixed**, before a single production turn runs. This is higher than a moderate API-pay-as-go usage pattern for Alex's actual 100 turns/day:
+The spec frames CLI-OAuth as a cost-saving strategy. But three provider subscriptions at Claude MAX + ChatGPT Pro + Gemini Advanced = **$320/month fixed**, before a single production turn runs. This is higher than a moderate API-pay-as-go usage pattern for 100 turns/day:
 - Claude Opus via API at 12k in + 1k out × 100 turns/day × 30 days = (360M/1M×$15) + (3M/1M×$75) = $5,400 + $225 = **$5,625/month at API pricing** — far more than subscriptions.
 - But with profile extraction (145 Gemini calls/day via API): $21/month.
 - So subscriptions ARE the right call — but $320/month is the floor, not zero.
 
 ### Shock 2: Council auto-triggers on "security" destroy the quota budget in week 1
-The trigger keyword list includes `security`. Alex's primary domain is security research. At 25-35% trigger rate (realistic), Council runs 25-35 times/day, each consuming 9 LLM calls across all 3 providers in parallel. During Phase 2 dev when anti-pattern tests are running, this multiplies 3-5×. **The quota wall will be hit on Day 1 of Phase 2 testing**, likely before breakfast. The spec's `usd_max: 0.50` council budget cap only works if API pricing is active — on CLI-OAuth subscriptions, there's no circuit breaker.
+The trigger keyword list includes `security`. For a security-researcher operator, at 25-35% trigger rate (realistic), Council runs 25-35 times/day, each consuming 9 LLM calls across all 3 providers in parallel. During Phase 2 dev when anti-pattern tests are running, this multiplies 3-5×. **The quota wall will be hit on Day 1 of Phase 2 testing**, likely before breakfast. The spec's `usd_max: 0.50` council budget cap only works if API pricing is active — on CLI-OAuth subscriptions, there's no circuit breaker.
 
 ### Shock 3: 900 hours of solo Rust dev at €80-150/hr = €72k-135k opportunity cost for a system 60-70% achievable by forking Letta in 2-3 weeks
 The design history (v0.1 → v1.0 = 8 versions, 6+ months) shows the cost of perfectionism under complexity. The spec's Phase 2 (30 days, 14 features) is structurally impossible at solo pace. Every day Phase 1 overruns = one more day Jarvis's fragile stack runs unimproved. The net "build from scratch" premium over "fork Letta + customize" is **5-7 months of solo time** — for WAL binary format purity, council pipeline, and WASM plugins. These are real architectural wins, but the time-cost is not acknowledged in the spec.

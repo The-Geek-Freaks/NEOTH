@@ -56,7 +56,7 @@
 | **tweakcc** | REFERENCE | Statusline customization concepts — AGENTER builds own |
 | **oh-my-claudecode** | REFERENCE | Conductor 3-layer-context pattern (product.md/spec.md/plan.md) — adopted as Day-1 skill |
 | **oh-my-codex** | REFERENCE | OMX agent orchestration pattern — adopted in Callosum binding |
-| claude-cli bridge (Alex's) | ADOPT-PARTIAL | BRAIN_ARCH panel design, hook patterns, statusline, stale-cleanup, pre-compact backup; SOUL.md/CLAUDE.md/BOOT.md/GUIDANCE_BLOCK seed |
+| claude-cli bridge (operator's) | ADOPT-PARTIAL | BRAIN_ARCH panel design, hook patterns, statusline, stale-cleanup, pre-compact backup; SOUL.md/CLAUDE.md/BOOT.md/GUIDANCE_BLOCK seed |
 | **LOWKEY 16 modules** | ADOPT-AS-SKILLS | L.O.W.K.E.Y 9.4 + DEBIAS + POWER FIST + IMBA = always-injected base stack. MAGI ULTRA + OMEGA-PRIME + POLYMORPH + MAX++ + PME = activatable council/skills |
 
 ---
@@ -224,7 +224,7 @@ fallback_on_low_confidence = 0.4   # below this score, escalate to main provider
 
 ## 7. LOWKEY Base Stack (always-injected, Block-B)
 
-From claude-cli bridge / Alex's MODULE.md analysis:
+From claude-cli bridge / operator's MODULE.md analysis:
 
 ```yaml
 # ~/.agenter/skills/lowkey_base.yaml
@@ -314,7 +314,7 @@ Else → fall through to provider cascade (Left Hemisphere).
 
 ---
 
-## 11. Settings + Hooks inheritance from Alex's `.claude/settings.json`
+## 11. Settings + Hooks inheritance from the operator's `.claude/settings.json`
 
 AGENTER honors:
 - `permissions.allow` patterns — list of regex/glob patterns auto-allowed for tools
@@ -323,7 +323,7 @@ AGENTER honors:
 - MCP server bindings — agenterd exposes MCP-server endpoint that mirrors `mcp__agenter__*` namespace
 - Chorus pre-commit hook integration — agenterd-internal Council can substitute for external Chorus daemon
 
-Specifically migrate from Alex's existing files:
+Specifically migrate from the operator's existing files:
 - `~/.claude/settings.json` permissions section → `~/.agenter/settings.toml [permissions]`
 - `~/.claude/hooks/hooks.json` → `~/.agenter/hooks.toml`
 - Plugin install state → `~/.agenter/plugins/state.toml`
@@ -469,7 +469,7 @@ SRC/ (empty — Day-1 starts cargo new agenterd)
 ## 18. Day-1 Command
 
 ```
-cd c:\Users\Shadow-PC\CascadeProjects\AGENTER\SRC
+cd <your-workspace>\AGENTER\SRC
 cargo new agenterd
 cd agenterd
 cargo add tokio --features="full"

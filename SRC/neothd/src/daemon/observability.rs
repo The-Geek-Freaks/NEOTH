@@ -435,7 +435,7 @@ mod tests {
     fn render_table_includes_every_field() {
         let snap = Snapshot {
             daemon_version: "0.1.0",
-            operator_id: Some("alex".into()),
+            operator_id: Some("sam".into()),
             autonomy: "standard".into(),
             provider_kind: Some("claude_cli".into()),
             channels: vec!["telegram".into()],
@@ -451,7 +451,7 @@ mod tests {
             provider_meter: None,
         };
         let s = snap.render_table();
-        assert!(s.contains("alex"));
+        assert!(s.contains("sam"));
         assert!(s.contains("standard"));
         assert!(s.contains("3 segments"));
         assert!(s.contains("telegram"));

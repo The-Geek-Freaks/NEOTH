@@ -216,7 +216,7 @@ mod tests {
     fn save_then_load_round_trips_non_secret_fields() {
         let dir = tempdir().unwrap();
         let mut state = WizardState::default();
-        state.operator_id = Some("alex".into());
+        state.operator_id = Some("sam".into());
         state.language_primary = Some("German".into());
         state.language_code = Some("de".into());
         state.role = Some(OperatorRole::SecurityResearcher);
@@ -226,7 +226,7 @@ mod tests {
 
         save_checkpoint(dir.path(), &state).expect("save");
         let loaded = load_checkpoint(dir.path()).unwrap().expect("Some");
-        assert_eq!(loaded.operator_id.as_deref(), Some("alex"));
+        assert_eq!(loaded.operator_id.as_deref(), Some("sam"));
         assert_eq!(loaded.language_primary.as_deref(), Some("German"));
         assert_eq!(loaded.language_code.as_deref(), Some("de"));
         assert_eq!(loaded.role, Some(OperatorRole::SecurityResearcher));
@@ -243,7 +243,7 @@ mod tests {
         // serde-skip-bypass via a future field rename.
         let dir = tempdir().unwrap();
         let mut state = WizardState::default();
-        state.operator_id = Some("alex".into());
+        state.operator_id = Some("sam".into());
         state.provider_key = Some(crate::secret::SecretString::new(
             "PROVIDER-SECRET-DEADBEEF".into(),
         ));
@@ -267,7 +267,7 @@ mod tests {
     fn apply_to_hydrates_state_without_touching_secrets() {
         let dir = tempdir().unwrap();
         let mut original = WizardState::default();
-        original.operator_id = Some("alex".into());
+        original.operator_id = Some("sam".into());
         original.language_code = Some("de".into());
         original.steps_completed = vec![1, 2, 3, 4, 5];
         original.bootstrap_vault = true;
@@ -280,7 +280,7 @@ mod tests {
         let loaded = load_checkpoint(dir.path()).unwrap().expect("Some");
         loaded.apply_to(&mut restored);
 
-        assert_eq!(restored.operator_id.as_deref(), Some("alex"));
+        assert_eq!(restored.operator_id.as_deref(), Some("sam"));
         assert_eq!(restored.language_code.as_deref(), Some("de"));
         assert_eq!(restored.steps_completed, vec![1, 2, 3, 4, 5]);
         assert!(restored.bootstrap_vault);

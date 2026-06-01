@@ -124,7 +124,7 @@ mod tests {
     #[test]
     fn safe_username_accepts_valid_names() {
         assert!(safe_username("Alice"));
-        assert!(safe_username("Shadow-PC"));
+        assert!(safe_username("User-PC"));
         assert!(safe_username("john.doe"));
         assert!(safe_username("user_name"));
         // Backslash is NOT in the allowed set — domain prefixes are rejected.

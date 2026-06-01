@@ -608,7 +608,7 @@ mod tests {
                 operator_id TEXT
             );
             INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id)
-                VALUES (1, 1, 1000, 'hello world', 'h1', 'cli', NULL, 'alex');
+                VALUES (1, 1, 1000, 'hello world', 'h1', 'cli', NULL, 'operator');
             INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash)
                 VALUES (2, 1, 2000, 'second', 'h2');
             "#,
@@ -807,7 +807,7 @@ mod tests {
         conn.execute(
             "INSERT INTO idx_episode \
              (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id) \
-             VALUES (42, 1, 1700000000000000000, 'survives migration', 'h', 'cli', 'alex', 'alex')",
+             VALUES (42, 1, 1700000000000000000, 'survives migration', 'h', 'cli', 'operator', 'operator')",
             [],
         )
         .unwrap();

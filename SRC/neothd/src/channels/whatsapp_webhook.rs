@@ -13,7 +13,7 @@
 //!       "field": "messages",
 //!       "value": {
 //!         "metadata": { "phone_number_id": "<PNID>", ... },
-//!         "contacts": [{ "profile": {"name": "Alex"}, "wa_id": "49151..." }],
+//!         "contacts": [{ "profile": {"name": "Sam"}, "wa_id": "49151..." }],
 //!         "messages": [{
 //!           "from": "49151...",
 //!           "id": "wamid....",
@@ -235,7 +235,7 @@ mod tests {
                         "display_phone_number": "+4915112345678"
                     },
                     "contacts": [{
-                        "profile": {"name": "Alex"},
+                        "profile": {"name": "Sam"},
                         "wa_id": "4915112345678"
                     }],
                     "messages": [{
@@ -259,7 +259,7 @@ mod tests {
                 assert!(matches!(m.channel, ChannelKind::WhatsAppBusiness));
                 assert_eq!(m.chat_id, "4915112345678");
                 assert_eq!(m.sender_id, "4915112345678");
-                assert_eq!(m.sender_display.as_deref(), Some("Alex"));
+                assert_eq!(m.sender_display.as_deref(), Some("Sam"));
                 assert_eq!(m.text.as_deref(), Some("hello neoth"));
                 assert_eq!(m.channel_ts_unix, 1_700_000_000);
                 assert_eq!(m.raw_ts_ms, Some(1_700_000_000_000));
@@ -435,10 +435,10 @@ mod tests {
     fn decode_populates_sender_display_from_contacts() {
         // Operator-facing detail: the `contacts` block carries human
         // names. Match by wa_id + populate sender_display so log
-        // messages show "Alex" rather than just the phone number.
+        // messages show the contact name rather than just the phone number.
         match decode_payload(FIXTURE_TEXT) {
             DecodedWebhook::Messages(m) => {
-                assert_eq!(m[0].sender_display.as_deref(), Some("Alex"));
+                assert_eq!(m[0].sender_display.as_deref(), Some("Sam"));
             }
             other => panic!("expected Messages, got {other:?}"),
         }

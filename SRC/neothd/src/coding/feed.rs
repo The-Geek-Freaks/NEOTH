@@ -441,7 +441,7 @@ mod tests {
             "session_id": 42,
             "prompt_hash": "deadbeefcafebabe",
             "source_channel": "cli",
-            "operator_id": "alex"
+            "operator_id": "sam"
         });
         let entry = parse_kanban_payload(
             EVENT_TYPE_KANBAN_SESSION_OPENED,
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(entry.event_type, EVENT_TYPE_KANBAN_SESSION_OPENED);
         assert_eq!(entry.actor, "system");
         assert!(entry.message.contains("cli"));
-        assert!(entry.message.contains("alex"));
+        assert!(entry.message.contains("sam"));
     }
 
     #[test]

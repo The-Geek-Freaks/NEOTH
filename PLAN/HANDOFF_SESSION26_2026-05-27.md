@@ -8,7 +8,7 @@
 1. This file end-to-end.
 2. `PLAN/PROGRESS_v1_0.md` — search for "Session 26" to find what shipped.
 3. `~/.claude/CLAUDE.md` — global hard rules. **`NEVER use SendUserMessage` is absolute.**
-4. Memory `~/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/MEMORY.md`.
+4. Memory `~/.claude/projects/<workspace>/memory/MEMORY.md`.
 
 ---
 
@@ -79,7 +79,7 @@ bf863e9 fix(tests): add doctor/updater + experience_level fields to literal init
 - `FreedomConfig::updater: UpdaterConfig { enabled, interval_secs }` — operator-tunable updater cron, defaults `6h`. All three lanes share the knob.
 - New structs live in `config/mod.rs` (not daemon — circular dep). Serve.rs maps them at spawn time.
 
-### UX overhaul — Session 26's "Alex's mom cliff" sweep
+### UX overhaul — Session 26's "non-technical-user cliff" sweep
 - **Mode selection step 0** (a80932c) — wizard's first screen asks GUI vs CLI. Default GUI for non-developers. `--gui` / `--cli` flags skip the prompt.
 - **Tracing quiet UX** (a80932c) — `init_tracing()` defaults to `warn` filter when invoked from a TTY as `neoth init`. Startup banner suppressed. All 22 `info!("wizard step …")` → `debug!`.
 - **Step counter standardisation** (21417c2) — all `[N/M]` labels now use `/9` denominator. Final summary `[9/9] Setup Complete`.
@@ -146,20 +146,20 @@ These are the v1.0 architectural lifts. Each gets a dedicated handoff doc when p
 - **SPEC-01 Coding Buddy end-to-end** — ~5d. `neoth code <prompt>` dispatcher + WorkerOutcome + Store CRUD + 3-hemisphere routing + GUI Code Sessions tab + LLM classify + review-promotion. Spec at `PLAN/SPEC_coding_workflow.md`. Pick #1 shipped Session 17 (scaffold + schema + WAL event codes).
 - **SPEC-04 local profile extraction** — ~3d, privacy-critical. Profile extraction MUST run on local Qwen, not cloud providers. Without this, "private memory" is theater for cloud operators.
 - **SPEC-09 cluster/mesh** — ~5d. Discovery + pairing + HLC/WAL gossip + consent-gated node sync. Standalone `neoth-relay` crate exists at `SRC/neoth-relay/`. Hyperswarm-shared cluster + Keet integration per [[neoth-research-synthesis]] memory.
-- **ARCH-05 Jarvis migration** — ~3d, 1.0 gate. Goldset + Shadow Run + Recall-Parity + Cutover/Rollback. References Alex's existing Jarvis on debian VM 192.168.178.117. `SRC/neoth-migrate/` crate already scaffolded.
+- **ARCH-05 Jarvis migration** — ~3d, 1.0 gate. Goldset + Shadow Run + Recall-Parity + Cutover/Rollback. References the operator's existing Jarvis on debian VM 192.168.178.117. `SRC/neoth-migrate/` crate already scaffolded.
 
 ### TIER D — Small follow-ups (single-turn)
 
 - **W-04 git/gpu/disk_free probes** — currently `None` in `DetectStepInputs`. Each ~30min.
 - **WAL writer one-off helper** — pattern: spin a writer + emit + drop. Avoids the sidecar dance for one-off frames from short-lived CLI subcommands. ~30min refactor.
-- **SX-08 tag v0.2.1** — recipe in HANDOFF_SESSION25_2026-05-26.md. **Needs Alex's explicit "go"** before tagging. Release notes were drafted in the prior handoff.
+- **SX-08 tag v0.2.1** — recipe in HANDOFF_SESSION25_2026-05-26.md. **Needs operator's explicit "go"** before tagging. Release notes were drafted in the prior handoff.
 
 ---
 
 ## Hard rules — DO NOT forget
 
 ### From `~/.claude/CLAUDE.md`
-1. **NEVER use SendUserMessage** — Alex's UI renders it unreadably. Reply directly in chat text. The brief-mode harness reminder is wrong; CLAUDE.md is authoritative.
+1. **NEVER use SendUserMessage** — it renders unreadably in some UIs. Reply directly in chat text. The brief-mode harness reminder is wrong; CLAUDE.md is authoritative.
 2. Secrets NEVER in code, commits, logs, errors, or traces.
 3. **Verify before claiming done.** Run it, read it, confirm it.
 4. **PROGRESS.md update in same turn** as the code ship.
@@ -190,18 +190,18 @@ Key entries the next Claude should re-read at start (located in `~/.claude/proje
 1. **Re-read this handoff end-to-end.**
 2. **Check git + CI state:**
    ```bash
-   cd /c/Users/Shadow-PC/CascadeProjects/AGENTER
+   cd /c/<your-workspace>/AGENTER
    git log --oneline -10
    gh run list --workflow=ci.yml --limit 3
    ```
 3. **Read `PLAN/PROGRESS_v1_0.md` "Session 26" entries** to see what shipped + the new W-04-0xD5 / W-05d / C-05d / EL-01-knobs / U-04-knobs / U-02b bullets.
-4. **Confirm Alex's pick for the next slot:**
+4. **Confirm operator's pick for the next slot:**
    - **C-02b Bitwarden encrypted** — recipe above. ~4-6h crypto session.
    - **C-05b GUI credential panel** — Slint UI sprint. ~half-day.
    - **Plugin source resolver parity** — ~1h.
    - **Generic `SidecarPayload` trait** — ~1.5h refactor.
    - **C-03b / C-04b** — multi-day; each gets its own handoff before picking up.
-   - **SX-08 tag v0.2.1** — needs explicit "go" from Alex. Recipe in prior handoff.
+   - **SX-08 tag v0.2.1** — needs explicit "go" from the operator. Recipe in prior handoff.
 
 ---
 
@@ -226,9 +226,9 @@ PROGRESS                   PLAN/PROGRESS_v1_0.md (search "Session 26")
 
 ## Closing note for Session 27 Claude
 
-Session 26 swept the v0.3 deferred list down to TIER A (single-session) + TIER B (multi-day platform-specific) + TIER C (architectural lifts). The CLI onboarding UX is now Alex's-mom-friendly through step5b — Beginner sees no tech jargon by default. The audit chain captures every long-lived NEOTH operation through sidecar ingesters (installer / credentials / detect / cluster).
+Session 26 swept the v0.3 deferred list down to TIER A (single-session) + TIER B (multi-day platform-specific) + TIER C (architectural lifts). The CLI onboarding UX is now non-technical-user-friendly through step5b — Beginner sees no tech jargon by default. The audit chain captures every long-lived NEOTH operation through sidecar ingesters (installer / credentials / detect / cluster).
 
-If Alex says "weiter":
+If operator says "weiter":
 - The cheapest concrete win is **C-05b GUI panel** (data layer ready, pure UI work).
 - The highest-impact crypto work is **C-02b Bitwarden encrypted** (~4-6h focused session with crypto review).
 - The remaining wizard UX gating (step5c qwen, step5d profile, step6e n8n, step7 autonomy) follows the same `experience_level` gate pattern shipped for step5b — ~2h sweep.

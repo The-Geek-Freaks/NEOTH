@@ -428,7 +428,7 @@ mod tests {
              (statement, source, scope, asserted_at, revoked_at) \
              VALUES (?1, ?2, ?3, ?4, NULL)",
             params![
-                "alex is the operator",
+                "sam is the operator",
                 "onboarding",
                 "global",
                 1_700_000_000_000_000_000_i64
@@ -500,7 +500,7 @@ mod tests {
         assert!(body.contains("## 2023-11-14")); // 1_700_000_000 → 2023-11-14
         assert!(body.contains("hello"));
         let gt = std::fs::read_to_string(out.path().join("groundtruth.md")).unwrap();
-        assert!(gt.contains("alex is the operator"));
+        assert!(gt.contains("sam is the operator"));
         assert!(gt.contains("scope = `global`"));
     }
 

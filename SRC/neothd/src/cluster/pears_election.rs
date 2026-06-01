@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn empty_peer_set_returns_none_orchestrator() {
         let set = BTreeSet::new();
-        let e = elect_orchestrator(&set, &pk("alex"));
+        let e = elect_orchestrator(&set, &pk("ada"));
         assert!(e.orchestrator.is_none());
         assert_eq!(e.peer_count, 0);
         assert!(!e.local_is_orchestrator);
@@ -133,9 +133,9 @@ mod tests {
 
     #[test]
     fn solo_peer_self_elects_as_orchestrator() {
-        let set = set_of(&["alex"]);
-        let e = elect_orchestrator(&set, &pk("alex"));
-        assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("alex"));
+        let set = set_of(&["ada"]);
+        let e = elect_orchestrator(&set, &pk("ada"));
+        assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("ada"));
         assert_eq!(e.peer_count, 1);
         assert!(e.local_is_orchestrator);
     }
@@ -144,17 +144,17 @@ mod tests {
     fn lowest_pubkey_wins_among_three_peers() {
         // a < b < c lexically; election picks `a` regardless of which
         // peer is the local one.
-        let set = set_of(&["alex", "bob", "carol"]);
-        let from_alex = elect_orchestrator(&set, &pk("alex"));
+        let set = set_of(&["ada", "bob", "carol"]);
+        let from_ada = elect_orchestrator(&set, &pk("ada"));
         let from_bob = elect_orchestrator(&set, &pk("bob"));
         let from_carol = elect_orchestrator(&set, &pk("carol"));
-        assert_eq!(from_alex.orchestrator, from_bob.orchestrator);
+        assert_eq!(from_ada.orchestrator, from_bob.orchestrator);
         assert_eq!(from_bob.orchestrator, from_carol.orchestrator);
         assert_eq!(
-            from_alex.orchestrator.as_ref().map(|p| p.as_str()),
-            Some("alex")
+            from_ada.orchestrator.as_ref().map(|p| p.as_str()),
+            Some("ada")
         );
-        assert!(from_alex.local_is_orchestrator);
+        assert!(from_ada.local_is_orchestrator);
         assert!(!from_bob.local_is_orchestrator);
         assert!(!from_carol.local_is_orchestrator);
     }
@@ -187,7 +187,7 @@ mod tests {
         // accidental "I am orchestrator" claim from a stale local
         // pubkey.
         let set = set_of(&["bob", "carol"]);
-        let e = elect_orchestrator(&set, &pk("alex"));
+        let e = elect_orchestrator(&set, &pk("ada"));
         assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("bob"));
         assert!(!e.local_is_orchestrator);
     }
@@ -196,20 +196,20 @@ mod tests {
 
     #[test]
     fn apply_joined_event_inserts_peer_and_returns_new_election() {
-        let mut set = set_of(&["alex"]);
-        let e = apply_peer_event(&mut set, PeerEvent::Joined(pk("bob")), &pk("alex"));
+        let mut set = set_of(&["ada"]);
+        let e = apply_peer_event(&mut set, PeerEvent::Joined(pk("bob")), &pk("ada"));
         assert!(set.contains(&pk("bob")));
         assert_eq!(e.peer_count, 2);
-        // alex still wins (alex < bob lexically).
-        assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("alex"));
+        // ada still wins (ada < bob lexically).
+        assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("ada"));
     }
 
     #[test]
     fn apply_left_event_removes_peer_and_recomputes() {
-        // alex leaves; bob now wins (lowest remaining).
-        let mut set = set_of(&["alex", "bob"]);
-        let e = apply_peer_event(&mut set, PeerEvent::Left(pk("alex")), &pk("bob"));
-        assert!(!set.contains(&pk("alex")));
+        // ada leaves; bob now wins (lowest remaining).
+        let mut set = set_of(&["ada", "bob"]);
+        let e = apply_peer_event(&mut set, PeerEvent::Left(pk("ada")), &pk("bob"));
+        assert!(!set.contains(&pk("ada")));
         assert_eq!(e.peer_count, 1);
         assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("bob"));
         assert!(e.local_is_orchestrator);
@@ -222,10 +222,10 @@ mod tests {
         // peer that bounces (left + rejoined) should land us back in
         // the same state as before the bounce, not in some derived
         // half-state. Pinned here.
-        let mut set = set_of(&["alex", "carol"]);
-        let before = elect_orchestrator(&set, &pk("alex"));
-        let _ = apply_peer_event(&mut set, PeerEvent::Joined(pk("bob")), &pk("alex"));
-        let after = apply_peer_event(&mut set, PeerEvent::Left(pk("bob")), &pk("alex"));
+        let mut set = set_of(&["ada", "carol"]);
+        let before = elect_orchestrator(&set, &pk("ada"));
+        let _ = apply_peer_event(&mut set, PeerEvent::Joined(pk("bob")), &pk("ada"));
+        let after = apply_peer_event(&mut set, PeerEvent::Left(pk("bob")), &pk("ada"));
         assert_eq!(before, after);
     }
 
@@ -235,8 +235,8 @@ mod tests {
         // not panic — the cluster transport can replay stale events
         // during reconnection; an idempotent remove is the right
         // semantic.
-        let mut set = set_of(&["alex"]);
-        let e = apply_peer_event(&mut set, PeerEvent::Left(pk("ghost")), &pk("alex"));
+        let mut set = set_of(&["ada"]);
+        let e = apply_peer_event(&mut set, PeerEvent::Left(pk("ghost")), &pk("ada"));
         assert_eq!(set.len(), 1);
         assert_eq!(e.peer_count, 1);
         assert!(e.local_is_orchestrator);

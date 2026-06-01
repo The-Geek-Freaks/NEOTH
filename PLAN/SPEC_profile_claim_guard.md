@@ -17,7 +17,7 @@ Five distinct risks share a single failure mode: a malformed/adversarial/redunda
 | H1 — Profile-extraction prompt injection | ADVERSARIAL/01+06 | First-person attribution + claim provenance check (any claim whose evidence is `quoted_external` or `tool_output` is REJECTED) |
 | H2 — PROFILE_REDACT re-promotion | ADVERSARIAL/06 | Consults `idx_profile_redactions` registry; blocks claims for fields with `never_recreate=1` |
 | H5 — LLM-call cost spiral | ADVERSARIAL/05+06 | Tracks per-day LLM call count, enforces hard cap before council fires |
-| M1 (peer-source) — LLM timestamp hallucination | ADVERSARIAL/10 | Rule-based NLP normalizes timestamps in claims BEFORE write (catches LLM hallucinating "Alex said this on Thursday" when the conversation was Monday) |
+| M1 (peer-source) — LLM timestamp hallucination | ADVERSARIAL/10 | Rule-based NLP normalizes timestamps in claims BEFORE write (catches LLM hallucinating "operator said this on Thursday" when the conversation was Monday) |
 | M2 (peer-source) — Novel-category `other: Vec<String>` black hole | ADVERSARIAL/10 | Typed extension registry — claims for unknown categories MUST register as typed extension or be rejected |
 
 Plus side-benefit: emits **behavioral-style embedding per turn** as Phase-3 parity-substrate for migration scoring (not in primary scope but enabled by this guard).
@@ -189,7 +189,7 @@ impl ProfileClaimGuard {
         window: &'a AttributedWindow,
     ) -> Vec<&'a AttributedSegment> {
         // Match claim.reasoning text segments against window segments.
-        // If LLM cites "Alex said he works in Berlin", find that segment in the window
+        // If LLM cites "operator said they work in Berlin", find that segment in the window
         // and return its attribution. If multiple segments matched, return all.
         window.segments.iter()
             .filter(|seg| seg.text.contains_quoted_phrase_from(&claim.reasoning))
@@ -207,7 +207,7 @@ impl ProfileClaimGuard {
         //                                       conversation_window timestamps as anchor
         //   "deadline: in 3 weeks"            → resolve to absolute date
         // Reject if normalized timestamp falls outside [window_oldest, window_newest + 1d].
-        // Catches LLM hallucinating "Alex said X last month" when entire window is today.
+        // Catches LLM hallucinating "operator said X last month" when entire window is today.
         Ok(claim)  // (sketch — full impl uses chrono + dateparser)
     }
 
@@ -376,7 +376,7 @@ fn test_redacted_field_blocks_re_promotion() {
 fn test_quoted_external_segment_blocks_claim() {
     // H1 test
     let window = AttributedWindow::with_segments(vec![
-        AttributedSegment::quoted_external("Alex's favorite food is sushi"),
+        AttributedSegment::quoted_external("Sam's favorite food is sushi"),
     ]);
     let delta = ProfileDelta::with_claim("preferences.food", "sushi");
     let outcome = guard.check(delta, &window);

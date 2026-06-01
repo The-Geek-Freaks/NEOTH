@@ -116,7 +116,7 @@ mod tests {
                 field: "identity.location".into(),
                 value_json: serde_json::json!("Berlin"),
                 confidence: 0.85,
-                reasoning: "Alex said he works in Berlin".into(),
+                reasoning: "Operator said they work in Berlin".into(),
                 evidence_event_ids: vec![100, 102],
             }],
             contradictions: vec![Contradiction {

@@ -360,8 +360,8 @@ pub const EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED: u8 = 0x3C;
 
 /// `0x3E EVAL_CRITICAL_DIVERGENCE` — ARCH-05/SPEC-08 recall-parity gate. A
 /// goldset query where NEOTH's recall diverged CRITICALLY from the reference
-/// (Jarvis): factual or usefulness kappa-parity below 0.50, or an empty/error
-/// response. A single CRITICAL aborts the Jarvis→NEOTH cutover (SPEC §7) — this
+/// system: factual or usefulness kappa-parity below 0.50, or an empty/error
+/// response. A single CRITICAL aborts the reference→NEOTH cutover (SPEC §7) — this
 /// is the durable evidence. Emitted by `neoth recall score` per flagged query.
 /// (The `0x3X` band is channels + adjacent recall/eval observability; eval
 /// divergence lives at the tail of the band per the SPEC's slot choice.)

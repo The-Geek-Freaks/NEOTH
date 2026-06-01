@@ -72,8 +72,8 @@ pub const GROUND_TRUTH_TAG_CLOSE: &str = "[/GROUND_TRUTH]";
 
 /// Default negation markers — words within
 /// [`DEFAULT_NEGATION_WINDOW_CHARS`] of a subject-mention that
-/// indicate a contradiction. Bilingual (German + English) per Alex's
-/// operator profile mixing both freely.
+/// indicate a contradiction. Bilingual (German + English) per the
+/// operator's profile mixing both freely.
 pub const DEFAULT_NEGATION_MARKERS: &[&str] = &[
     // English
     "not",
@@ -314,12 +314,12 @@ mod tests {
     fn embed_multi_assertions_each_on_own_line() {
         let a = vec![
             assertion("Sam's birthday", "March"),
-            assertion("Alex's city", "Berlin"),
+            assertion("Sam's city", "Berlin"),
         ];
         let out = embed_ground_truth_tag("Q?", &a);
         let inside = extract_ground_truth_block(&out).unwrap();
         assert!(inside.contains("Sam's birthday: March"));
-        assert!(inside.contains("Alex's city: Berlin"));
+        assert!(inside.contains("Sam's city: Berlin"));
     }
 
     // ── extract_ground_truth_block ────────────────────────────────
@@ -400,16 +400,16 @@ mod tests {
 
     #[test]
     fn check_german_negation_marker_caught() {
-        let a = vec![assertion("Alex's Geburtstag", "März")];
-        let resp = "Alex's Geburtstag ist nicht im März, das ist falsch.";
+        let a = vec![assertion("Sam's Geburtstag", "März")];
+        let resp = "Sam's Geburtstag ist nicht im März, das ist falsch.";
         let out = factual_contradiction_check(resp, &a, DEFAULT_NEGATION_MARKERS, 80);
         assert!(out.contradicts());
     }
 
     #[test]
     fn check_case_insensitive_subject_and_keyword() {
-        let a = vec![assertion("Alex's Birthday", "MARCH")];
-        let resp = "alex's birthday is in march.";
+        let a = vec![assertion("Sam's Birthday", "MARCH")];
+        let resp = "sam's birthday is in march.";
         let out = factual_contradiction_check(resp, &a, DEFAULT_NEGATION_MARKERS, 80);
         assert!(out.agrees, "case-insensitive matching MUST pass");
     }

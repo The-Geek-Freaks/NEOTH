@@ -105,9 +105,9 @@ pub struct ClaudePluginManifest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Author {
-    /// Bare string form: `"author": "Alex"`.
+    /// Bare string form: `"author": "Sam"`.
     Name(String),
-    /// Object form: `"author": {"name": "Alex", "email": "alex@x"}`.
+    /// Object form: `"author": {"name": "Sam", "email": "sam@example.com"}`.
     Object {
         name: String,
         #[serde(default)]
@@ -286,7 +286,7 @@ mod tests {
             "version": "0.2.1-rc.1+build.7",
             "description": "A plugin",
             "display_name": "NEOTH Plugin",
-            "author": {"name": "Alex", "email": "a@x", "url": "https://x"},
+            "author": {"name": "Sam", "email": "sam@example.com", "url": "https://example.com"},
             "commands": ["commands/greet.md"],
             "agents": ["agents/reviewer.md"],
             "skills": ["skills/morning-news/SKILL.md"],
@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(m.version, "0.2.1-rc.1+build.7");
         assert_eq!(m.description.as_deref(), Some("A plugin"));
         assert_eq!(m.display_name.as_deref(), Some("NEOTH Plugin"));
-        assert_eq!(m.author.unwrap().name(), "Alex");
+        assert_eq!(m.author.unwrap().name(), "Sam");
         assert_eq!(m.commands, vec!["commands/greet.md"]);
         assert_eq!(m.agents, vec!["agents/reviewer.md"]);
         assert_eq!(m.skills, vec!["skills/morning-news/SKILL.md"]);
@@ -311,9 +311,9 @@ mod tests {
 
     #[test]
     fn author_accepts_bare_string_form() {
-        let json = br#"{"name":"x","version":"1.0.0","author":"Alex"}"#;
+        let json = br#"{"name":"x","version":"1.0.0","author":"Sam"}"#;
         let m = parse_manifest(json).unwrap();
-        assert_eq!(m.author.as_ref().unwrap().name(), "Alex");
+        assert_eq!(m.author.as_ref().unwrap().name(), "Sam");
     }
 
     #[test]

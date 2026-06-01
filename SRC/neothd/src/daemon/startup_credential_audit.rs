@@ -342,7 +342,7 @@ mod tests {
     #[test]
     fn no_findings_for_clean_file() {
         let dir = TempDir::new().unwrap();
-        let p = write_file(&dir, "config", "operator_id: alex\nlevel: standard\n");
+        let p = write_file(&dir, "config", "operator_id: sam\nlevel: standard\n");
         let findings = run_credential_scan(&[p], false).unwrap();
         assert!(findings.is_empty());
     }
@@ -393,7 +393,7 @@ mod tests {
 
     #[test]
     fn inline_token_excerpt_finds_password_in_https_url() {
-        let url = "https://alex:ghp_AAAAAAAAAAAAAAAAAAAA@github.com/foo/bar.git";
+        let url = "https://sam:ghp_AAAAAAAAAAAAAAAAAAAA@github.com/foo/bar.git";
         let excerpt = inline_token_excerpt(url).expect("should match");
         assert!(excerpt.starts_with("ghp_"));
         // 8-char prefix + ellipsis.
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn inline_token_excerpt_returns_none_when_password_empty() {
-        let url = "https://alex:@github.com/foo/bar.git";
+        let url = "https://sam:@github.com/foo/bar.git";
         assert!(inline_token_excerpt(url).is_none());
     }
 
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn format_finding_includes_line_for_file_hits() {
         let f = CredentialFinding {
-            path: PathBuf::from("/home/alex/.env"),
+            path: PathBuf::from("/home/user/.env"),
             line: 7,
             secret_kind: "github_pat".into(),
             secret_excerpt: "ghp_AAAAA…".into(),

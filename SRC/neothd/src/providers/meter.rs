@@ -26,7 +26,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Default window — 60 seconds. Matches the Jarvis `metering.py` constant.
+/// Default window — 60 seconds. Matches the reference `metering.py` constant.
 pub const DEFAULT_WINDOW: Duration = Duration::from_secs(60);
 
 /// One recorded provider-call event.

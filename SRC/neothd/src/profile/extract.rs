@@ -448,7 +448,7 @@ mod tests {
       "field": "identity.location",
       "value_json": "Berlin",
       "confidence": 0.9,
-      "reasoning": "Alex said he works in Berlin",
+      "reasoning": "Operator said they work in Berlin",
       "evidence_event_ids": [10]
     }
   ],

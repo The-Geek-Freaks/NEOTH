@@ -179,7 +179,7 @@ pub enum Commands {
     /// Runs the indexer once before querying.
     Recall(recall::RecallArgs),
 
-    /// ARCH-05/SPEC-08 — score the Jarvis→NEOTH recall-parity gate over grader
+    /// ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader
     /// sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity +
     /// per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL.
     /// `recall-score --grades a.jsonl --grades b.jsonl [--goldset g.jsonl]`.

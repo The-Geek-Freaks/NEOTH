@@ -636,7 +636,7 @@ mod tests {
             "Add dark mode toggle to settings",
             "deadbeefcafebabe",
             "cli",
-            Some("alex"),
+            Some("sam"),
         )
         .expect("insert session");
         assert!(
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(fetched.prompt, "Add dark mode toggle to settings");
         assert_eq!(fetched.prompt_hash, "deadbeefcafebabe");
         assert_eq!(fetched.source_channel, "cli");
-        assert_eq!(fetched.operator_id.as_deref(), Some("alex"));
+        assert_eq!(fetched.operator_id.as_deref(), Some("sam"));
         assert_eq!(fetched.status, SessionStatus::Planning);
         assert!(fetched.summary.is_none());
         assert!(fetched.artifact_path.is_none());

@@ -320,7 +320,7 @@ mod tests {
         for prompt in [
             "what was the last telegram message",
             "show me the discord channel ingress",
-            "was war die letzte nachricht von alex",
+            "was war die letzte nachricht von sam",
         ] {
             let plan = route_query(prompt);
             assert_eq!(plan.primary, MemoryRegion::Insula, "prompt: {prompt:?}");
@@ -441,13 +441,13 @@ mod tests {
     #[test]
     fn routed_recall_returns_only_matching_primary_region_rows() {
         let (_dir, conn) = open();
-        seed(&conn, 1, 0x32, "telegram alex hi", 0.5); // Insula
+        seed(&conn, 1, 0x32, "telegram sam hi", 0.5); // Insula
         seed(&conn, 2, 0x65, "claude provider call", 0.5); // Cerebellum
         seed(&conn, 3, 0x01, "generic note", 0.5); // Hippocampus
 
         let plan = route_query("show telegram messages");
         assert_eq!(plan.primary, MemoryRegion::Insula);
-        let hits = run_routed_recall(&conn, &plan, "alex", 10).unwrap();
+        let hits = run_routed_recall(&conn, &plan, "sam", 10).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].event_id, 1);
     }

@@ -1,13 +1,13 @@
 //! `neoth recall-score` — ARCH-05/SPEC-08 recall-parity gate runner.
 //!
-//! The operator-facing entry to the Jarvis→NEOTH migration gate. Loads the
+//! The operator-facing entry to the legacy-AI→NEOTH migration gate. Loads the
 //! grader sheets (NEOTH + reference, scored offline by the 4-grader protocol),
 //! computes the inter-rater kappa + kappa-adjusted weighted-harmonic parity +
 //! per-query CRITICAL divergences, prints the report, emits a WAL
 //! `0x3E EVAL_CRITICAL_DIVERGENCE` per flagged query (durable abort evidence),
 //! and **exits non-zero if the gate fails** so a cutover script can gate on it.
 //!
-//! 100% offline: it scores grade FILES — no live Jarvis, no LLM, no grading
+//! 100% offline: it scores grade FILES — no live legacy-AI, no LLM, no grading
 //! here (the grading is the operator's run; the file format is the contract).
 
 use std::path::PathBuf;

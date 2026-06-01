@@ -357,7 +357,7 @@ Interface: 192.168.178.20 --- 0x4
     fn parse_nmap_sn_output() {
         let sample = "\
 Starting Nmap 7.93 ( https://nmap.org )
-Nmap scan report for cube.local (192.168.178.50)
+Nmap scan report for server.local (192.168.178.50)
 Host is up (0.00021s latency).
 Nmap scan report for 192.168.178.117
 Host is up (0.00045s latency).
@@ -365,7 +365,7 @@ Nmap done: 256 IP addresses (2 hosts up) scanned in 2.42s
 ";
         let hosts = parse_nmap_output(sample);
         assert_eq!(hosts.len(), 2);
-        assert_eq!(hosts[0].hostname.as_deref(), Some("cube.local"));
+        assert_eq!(hosts[0].hostname.as_deref(), Some("server.local"));
         assert_eq!(hosts[0].ip, "192.168.178.50");
         assert_eq!(hosts[1].ip, "192.168.178.117");
         assert!(hosts[1].hostname.is_none());
@@ -436,12 +436,12 @@ Nmap done: 256 IP addresses (2 hosts up) scanned in 2.42s
     fn statement_for_host_formats_known_fields() {
         let h = Host {
             ip: "192.168.178.50".into(),
-            hostname: Some("cube.local".into()),
+            hostname: Some("server.local".into()),
             mac: None,
             source: ScanSource::Nmap,
         };
         let s = statement_for_host(&h);
-        assert!(s.contains("cube.local"));
+        assert!(s.contains("server.local"));
         assert!(s.contains("192.168.178.50"));
         assert!(s.contains("nmap"));
     }

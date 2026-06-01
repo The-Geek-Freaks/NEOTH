@@ -110,7 +110,7 @@ pub fn find_novel_high_confidence_claims(
 /// Render a `NovelClaim` as a `ProactiveItem` ready for
 /// `ProactiveQueue::enqueue`. Bilingual EN+DE one-liner template —
 /// matches the rest of the operator-facing strings in NEOTH for
-/// Alex's mixed-language profile.
+/// the operator's mixed-language profile.
 ///
 /// dedup_key uses the (field, value) pair so a re-extracted
 /// identical claim doesn't re-surface. confidence is rounded to
@@ -384,14 +384,14 @@ mod tests {
     fn build_item_strips_json_quotes_on_simple_string_value() {
         let claim = NovelClaim {
             field: "name".to_string(),
-            value_json: "\"Alex\"".to_string(),
+            value_json: "\"Sam\"".to_string(),
             confidence: 0.99,
             applied_at_unix: 0,
         };
         let item = build_g02_proactive_item(&claim, "cli", 0);
-        assert!(item.body.contains("Alex"));
+        assert!(item.body.contains("Sam"));
         assert!(
-            !item.body.contains("\\\"Alex\\\""),
+            !item.body.contains("\\\"Sam\\\""),
             "JSON quote escaping must be removed from operator-facing body",
         );
     }

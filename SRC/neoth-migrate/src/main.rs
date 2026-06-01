@@ -1,6 +1,6 @@
 //! `neoth-migrate` — Phase-3 cutover binary (V10-06 GA blocker).
 //!
-//! Reads 12 Jarvis memory stores, emits a `dry-run` report or an
+//! Reads 12 prior-agent memory stores, emits a `dry-run` report or an
 //! `apply` migration into the NEOTH WAL + tier views.
 //!
 //! Lives outside `neothd` so a daemon release doesn't carry the
@@ -32,7 +32,7 @@ mod readers;
 #[command(
     name = "neoth-migrate",
     version,
-    about = "Phase-3 Jarvis-store cutover for NEOTH (V10-06)"
+    about = "Phase-3 prior-agent store cutover for NEOTH (V10-06)"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -100,7 +100,7 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
     // writer + per-reader emitters are wired in.
     anyhow::bail!(
         "apply path not yet implemented — Phase-3 deliverable. Use dry-run today \
-         to validate your Jarvis store layout; apply ships in the V10-06 follow-up."
+         to validate your prior-agent store layout; apply ships in the V10-06 follow-up."
     );
 }
 

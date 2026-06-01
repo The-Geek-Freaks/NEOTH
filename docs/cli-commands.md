@@ -661,7 +661,7 @@ Interactive onboarding wizard. Sets up ~/.neoth/ config
 - `--install-obsidian <INSTALL_OBSIDIAN>` — O-1 (Workstream B) — opt into the Obsidian-install wizard step. With no flag the wizard skips Obsidian in non-interactive mode; with the flag the wizard renders the OS-specific install command + records the opt-in. Interactive mode prompts independently of this flag
 - `--bootstrap-vault <BOOTSTRAP_VAULT>` — O-2 (Workstream B) — bootstrap a fresh NEOTH-Vault under the operator's `~/Documents/NEOTH-Vault/`. Writes the curated `.obsidian/` config + templates from `installers::obsidian_vault::bootstrap_files`. Non- interactive: skipped without this flag; with it, the vault is created at the default path. Interactive: prompted with operator-pickable path
 - `--install-n8n <INSTALL_N8N>` — N-1 (Workstream B) — opt into the n8n install wizard step. Non- interactive: skipped unless this flag is set. Interactive: prompts + auto-picks Docker over npm when both are available
-- `--import-jarvis <PATH>` — E-16 (Workstream B) — Jarvis seed migration. Path to the operator's `HIPPOCAMPUS_CORE.md` (or the directory holding the 12 Jarvis stores). When set, the wizard records the import intent + surfaces the `neoth-migrate dry-run` / `apply --confirm` runbook against the path. Heavyweight migrations stay operator-triggered — the wizard never auto-applies. Non-interactive only honours the flag; interactive prompts for the path independently
+- `--import-jarvis <PATH>` — E-16 (Workstream B) — legacy-AI seed migration. Path to the operator's `HIPPOCAMPUS_CORE.md` (or the directory holding the legacy memory stores). When set, the wizard records the import intent + surfaces the `neoth-migrate dry-run` / `apply --confirm` runbook against the path. Heavyweight migrations stay operator-triggered — the wizard never auto-applies. Non-interactive only honours the flag; interactive prompts for the path independently
 - `--force <FORCE>` — Re-run full wizard even if already initialized
 - `--dry-run <DRY_RUN>` — Print what would be written, write nothing
 - `--output-json <OUTPUT_JSON>` — Output final config as JSON to stdout
@@ -1335,7 +1335,7 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 
 ## `neoth recall-score`
 
-ARCH-05/SPEC-08 — score the Jarvis→NEOTH recall-parity gate over grader sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity + per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL. `recall-score --grades a.jsonl --grades b.jsonl [--goldset g.jsonl]`
+ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity + per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL. `recall-score --grades a.jsonl --grades b.jsonl [--goldset g.jsonl]`
 
 - `--grades <GRADES>` — Grader-sheet JSONL file(s) (each line a GraderGrade: query_id, grader_id, system, 5×Likert). Pass one per grader; all are merged. Need ≥ 2 graders
 - `--goldset <GOLDSET>` — Optional goldset JSONL — validated + its query count reported (the scoring runs off the grades, not the goldset)

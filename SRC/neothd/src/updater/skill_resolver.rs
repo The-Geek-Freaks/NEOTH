@@ -17,7 +17,7 @@
 //!      Requires a NEOTH-operated HTTPS endpoint + signature
 //!      story.
 //!
-//! Alex picked option 1 for the v0.3 ship: smaller surface, no new
+//! Option 1 was chosen for the v0.3 ship: smaller surface, no new
 //! NEOTH-operated infrastructure, operators already understand
 //! GitHub-as-registry from npm/cargo. The community-registry path
 //! lands as a second scheme (`registry+https://…`) when an

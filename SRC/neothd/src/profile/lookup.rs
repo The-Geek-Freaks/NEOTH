@@ -527,7 +527,7 @@ mod tests {
         let claims = vec![
             claim("identity.location", "\"Berlin\"", 0.9),
             claim("skills.rust", "\"5y\"", 0.8),
-            claim("identity.name", "\"Alex\"", 0.95),
+            claim("identity.name", "\"Sam\"", 0.95),
         ];
         let disabled = vec!["identity".to_string()];
         let filtered = filter_pii_disabled(claims, &disabled);
@@ -598,7 +598,7 @@ mod tests {
         let claims = vec![
             claim("identity.location", "\"Berlin\"", 0.9),
             claim("identity.role", "\"developer\"", 0.85),
-            claim("identity.name", "\"Alex\"", 0.95),
+            claim("identity.name", "\"Sam\"", 0.95),
         ];
         let disabled = vec!["identity.location".to_string()];
         let filtered = filter_pii_disabled(claims, &disabled);

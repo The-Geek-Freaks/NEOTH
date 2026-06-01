@@ -380,7 +380,7 @@ mod tests {
             chat_id: "C123".into(),
             thread_id: None,
             sender_id: "U999".into(),
-            sender_display: Some("alex".into()),
+            sender_display: Some("sam".into()),
             text: Some(text.into()),
             media: None,
             reply_to: None,

@@ -2223,7 +2223,7 @@ mod tests {
         let mut workers = HemisphereWorkerSet::new();
         workers.bind(Hemisphere::Left, Box::new(RefusalWorker));
         // NO apply path (apply_config = None) — this is the exact
-        // edge Alex flagged.
+        // edge flagged in review.
         let outcome = dispatch_session(&conn, session_id, &workers, DispatchBudget::default())
             .await
             .expect("dispatch");

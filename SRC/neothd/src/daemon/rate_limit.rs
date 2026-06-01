@@ -150,10 +150,10 @@ mod tests {
     #[test]
     fn separate_channels_have_separate_buckets_for_same_sender() {
         let rl = RateLimiter::new(1.0, 0.0);
-        assert!(rl.allow("tg", "alex"));
-        assert!(!rl.allow("tg", "alex"));
+        assert!(rl.allow("tg", "sam"));
+        assert!(!rl.allow("tg", "sam"));
         assert!(
-            rl.allow("keet", "alex"),
+            rl.allow("keet", "sam"),
             "different channel must not share bucket"
         );
     }
@@ -176,21 +176,21 @@ mod tests {
     #[test]
     fn tokens_remaining_decreases_with_each_allow() {
         let rl = RateLimiter::new(10.0, 0.0);
-        let before = rl.tokens_remaining("tg", "alex");
+        let before = rl.tokens_remaining("tg", "sam");
         assert!((before - 10.0).abs() < 1e-3);
-        rl.allow("tg", "alex");
-        rl.allow("tg", "alex");
-        let after = rl.tokens_remaining("tg", "alex");
+        rl.allow("tg", "sam");
+        rl.allow("tg", "sam");
+        let after = rl.tokens_remaining("tg", "sam");
         assert!((after - 8.0).abs() < 1e-3, "got {after}");
     }
 
     #[test]
     fn reset_clears_all_buckets() {
         let rl = RateLimiter::new(1.0, 0.0);
-        rl.allow("tg", "alex");
-        assert!(!rl.allow("tg", "alex"));
+        rl.allow("tg", "sam");
+        assert!(!rl.allow("tg", "sam"));
         rl.reset();
-        assert!(rl.allow("tg", "alex"), "post-reset must replenish");
+        assert!(rl.allow("tg", "sam"), "post-reset must replenish");
     }
 
     #[test]

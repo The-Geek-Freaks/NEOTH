@@ -2771,7 +2771,7 @@ mod tests {
 
     fn empty_snapshot() -> WizardSnapshot {
         WizardSnapshot {
-            operator_id: "alex".into(),
+            operator_id: "sam".into(),
             provider_kind: "claude_cli".into(),
             autonomy: "standard".into(),
             license_accepted: true,
@@ -2895,7 +2895,7 @@ mod tests {
         assert!(freedom.exists());
         assert!(credentials.is_none());
         let body = std::fs::read_to_string(&freedom).unwrap();
-        assert!(body.contains("operator_id: alex"));
+        assert!(body.contains("operator_id: sam"));
         assert!(body.contains("autonomy: standard"));
         assert!(body.contains("channels:"));
         // No telegram channel because enable_telegram=false.

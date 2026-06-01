@@ -8,7 +8,7 @@ Phase 5 (Hysteria-shared lookup).
 
 ## Use case
 
-Two NEOTH operators (Alex on home server + Alex on travelling
+Two NEOTH operators (one on home server + one on a travelling
 laptop) both connect outbound through the same Hysteria QUIC
 server. Phase 2 mDNS doesn't reach across NATs; Tailscale isn't
 installed on the home-server side. They want to pair anyway.

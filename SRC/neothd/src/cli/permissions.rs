@@ -420,7 +420,7 @@ mod tests {
             AutonomyLevel::Standard,
             "dangerous_target",
             None,
-            Some("cube"),
+            Some("nodeA"),
             Some("peerA"),
             &OutputFormat::Json,
         )

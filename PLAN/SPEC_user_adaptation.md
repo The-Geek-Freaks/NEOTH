@@ -2,7 +2,7 @@
 
 > Status: BUILD-READY (planning)
 > Phase: 2 (extends `SPEC_proactive_learning.md` already at 6/6 stages live)
-> Trigger: Alex 2026-05-16 — "Verhaltensmuster erkennung für user, user profiling für anpassung an den user, profil selector in gui - profil presets - 5 stück mit empfehlung (lowkey basis maybe), proactive selbst entwicklung für neoth aufgrundlage des peofils des nutzers"
+> Trigger: operator 2026-05-16 — "Verhaltensmuster erkennung für user, user profiling für anpassung an den user, profil selector in gui - profil presets - 5 stück mit empfehlung (lowkey basis maybe), proactive selbst entwicklung für neoth aufgrundlage des peofils des nutzers"
 
 ---
 
@@ -11,7 +11,7 @@
 This spec adds four interconnected capabilities to NEOTH's user-adaptation surface:
 
 1. **Behavior-pattern detection** — passive observation of *when*, *how*, and *what* the operator does. Complements the existing claim-based profile (which captures *who* and *what they say*).
-2. **Profile presets** — 5 operator-selectable starting points that bundle persona / tone / verbosity / refusal-style / autonomy defaults into one switch. Default recommendation: **LOWKEY** (Alex's house style — blunt, technical, no padding).
+2. **Profile presets** — 5 operator-selectable starting points that bundle persona / tone / verbosity / refusal-style / autonomy defaults into one switch. Default recommendation: **LOWKEY** (blunt, technical, no padding).
 3. **GUI profile selector** — Slint wizard screen + post-onboarding switcher. Operator picks one of the 5 presets (or "Custom") and NEOTH reconfigures itself.
 4. **Proactive self-development** — periodic review where NEOTH inspects its own behavior-pattern + profile state and proposes adjustments (persona override, sampling params, response length defaults) to better match the operator. Operator-gated under autonomy.
 
@@ -87,7 +87,7 @@ Behavior claims **never leave the machine**. They're derived from WAL events alr
 
 | ID | Name | Persona override | Sampling | Reply length | Refusal style | Autonomy hint |
 |---|---|---|---|---|---|---|
-| `lowkey` | **LOWKEY** *(recommended)* | "Blunt, technical, no padding. Use Alex's voice — direct, German if German, no apologies, no disclaimers." | `temperature=0.3, top_p=0.9` | Short by default | Mirror + retry (LOWKEY tricks) | elevated |
+| `lowkey` | **LOWKEY** *(recommended)* | "Blunt, technical, no padding. Direct, German if German, no apologies, no disclaimers." | `temperature=0.3, top_p=0.9` | Short by default | Mirror + retry (LOWKEY tricks) | elevated |
 | `standard` | Friendly Assistant | "Helpful, balanced, friendly. Explain when asked." | `temperature=0.5, top_p=0.95` | Medium | Standard | standard |
 | `concise` | Concise | "Minimal output. No chitchat. Answer the question, stop." | `temperature=0.2, top_p=0.9` | Very short | Standard | standard |
 | `mentor` | Mentor | "Patient teacher. Walk through reasoning step-by-step. Anticipate follow-up questions." | `temperature=0.4, top_p=0.95` | Long | Standard | strict |

@@ -6,8 +6,7 @@
 //! pdf url. Downstream skills can `neoth fetch <pdf_url>` + run the
 //! existing `media::pdf` extractor to land the paper text in recall.
 //!
-//! Alex explicitly requested this — research-workflow value high,
-//! build cost low.
+//! Included for research-workflow value — high value, low build cost.
 
 use anyhow::{Context, Result};
 

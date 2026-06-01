@@ -24,7 +24,7 @@ use tokio::process::Command;
 
 use super::tmux_socket::{TmuxSocket, socket_args};
 
-/// Default operator-grade TTL: 10 minutes idle = stale. Matches Alex's
+/// Default operator-grade TTL: 10 minutes idle = stale. Matches the
 /// bridge `TMUX_IDLE_SECS=600` env default.
 pub const DEFAULT_IDLE_TTL: Duration = Duration::from_secs(600);
 
@@ -327,8 +327,8 @@ mod tests {
 
     #[test]
     fn default_idle_ttl_matches_bridge_convention() {
-        // Alex's bridge env: TMUX_IDLE_SECS=600. Pin so a refactor
-        // doesn't silently drift away from operator's existing
+        // Bridge env: TMUX_IDLE_SECS=600. Pin so a refactor
+        // doesn't silently drift away from the operator's existing
         // expectation when the two stacks share a host.
         assert_eq!(DEFAULT_IDLE_TTL, Duration::from_secs(600));
     }

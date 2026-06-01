@@ -336,7 +336,7 @@ When Workstreams K + D + H + I all land:
 2. **Update `PLAN/PROGRESS.md` summary header** (search for "deferred" near top of file).
 3. **Run final gates:** `cargo fmt --all --check` + `cargo test --workspace --all-targets` + `cargo clippy --workspace --all-targets -- -D warnings`.
 4. **Commit doc-update:** `docs(progress): all v0.x deferred items shipped — ready for v0.2 release`.
-5. **Push** + tag if Alex wants: `git tag v0.2.0 && git push origin v0.2.0`.
+5. **Push** + tag if operator confirms: `git tag v0.2.0 && git push origin v0.2.0`.
 
 After v0.2 release, the v1.x track opens with handoffs already written:
 - `PLAN/HANDOFF_R1_SLINT_2026-05-24.md` (Workstream P GUI, ~6 weeks)

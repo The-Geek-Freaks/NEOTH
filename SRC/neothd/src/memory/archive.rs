@@ -160,7 +160,7 @@ mod tests {
         let opened = Utc.with_ymd_and_hms(2026, 5, 14, 9, 34, 12).unwrap();
         let sa = SessionArchive::new(dir.path().to_path_buf(), "abc-123", opened);
 
-        sa.append_turn("Hi Neoth.", "Hi Alex.", opened)
+        sa.append_turn("Hi Neoth.", "Hi operator.", opened)
             .await
             .expect("append");
 
@@ -173,7 +173,7 @@ mod tests {
         let body = fs::read_to_string(&path).await.unwrap();
         assert!(body.starts_with("---\nsession: abc-123\n"));
         assert!(body.contains("**You:**\n\nHi Neoth."));
-        assert!(body.contains("**Neoth:**\n\nHi Alex."));
+        assert!(body.contains("**Neoth:**\n\nHi operator."));
     }
 
     #[tokio::test]

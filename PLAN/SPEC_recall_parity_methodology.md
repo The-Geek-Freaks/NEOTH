@@ -16,9 +16,9 @@
   ~/.openclaw/workspace/memory/*.md (OpenClaw session MDs)
 
 Category split -- 4 x 25 queries:
-  recall    25: e.g. what did Alex say last Thursday about WiFi?
+  recall    25: e.g. what did the operator say last Thursday about WiFi?
   summarize 25: e.g. summarize last week project work
-  action    25: e.g. send Alex a reminder at 18:00
+  action    25: e.g. send the operator a reminder at 18:00
   factual   25: e.g. what is the Cube IP?
 
 Selection criteria:
@@ -32,7 +32,7 @@ Output: eval/goldset.jsonl (100 lines). Schema:
 ```json
 {
   "query_id":        "q001",
-  "query_text":      "what did Alex say last Thursday about WiFi?",
+  "query_text":      "what did the operator say last Thursday about WiFi?",
   "category":        "recall",
   "category_weight": 1.5,
   "expected_sources": ["wal_evt_abc123", "wal_evt_def456", "wal_evt_ghi789"],
@@ -90,8 +90,8 @@ Dimension 3 -- On-Tone (weight 1.0)
   0: Completely wrong voice.
 
 Dimension 4 -- Usefulness (weight 1.5)
-  5: Alex would immediately act on this response as-is.
-  4: Alex would act with minor follow-up.
+  5: Operator would immediately act on this response as-is.
+  4: Operator would act with minor follow-up.
   3: Response helps but requires significant follow-up.
   2: Marginally helpful.
   1: Not useful.
@@ -118,11 +118,11 @@ Dimension 5 -- Brevity (weight 1.0)
 | B | Architecturally-similar grader 2 | Codex GPT-5.5 |
 | C | Architecturally-similar grader 3 | Gemini 3.1 Pro |
 | **D** | **External-architecture grader (NEW)** | **Mistral Large 2 OR DeepSeek-V3.5 OR Qwen2.5-72B-Instruct** — NOT trained from Anthropic/OpenAI/Google data ancestry. |
-| **E** | **Operator calibration anchor (NEW)** | **Alex hand-labels 20 of the 100 queries (20%) BEFORE Phase 3 Day 77 grading.** Alex's scores serve as ground truth for the 20-query subset. |
+| **E** | **Operator calibration anchor (NEW)** | **Operator hand-labels 20 of the 100 queries (20%) BEFORE Phase 3 Day 77 grading.** Operator's scores serve as ground truth for the 20-query subset. |
 
 **Anchor protocol (E):**
-1. At Phase-3 Day 73 (before automated grading), Alex receives 20 randomly-selected (query, response) pairs from each of NEOTH and Jarvis (40 total pairs).
-2. Alex scores each pair against the 5-dimension rubric. Saved as `eval/operator-anchor.jsonl`.
+1. At Phase-3 Day 73 (before automated grading), the operator receives 20 randomly-selected (query, response) pairs from each of NEOTH and Jarvis (40 total pairs).
+2. Operator scores each pair against the 5-dimension rubric. Saved as `eval/operator-anchor.jsonl`.
 3. The remaining 80 queries graded by A+B+C+D only.
 
 **Family-bias detection:**
@@ -130,7 +130,7 @@ For the 20 anchored queries, compute per-grader systematic bias:
 ```
 bias(grader_X, dim_d) = mean(grader_X_score - operator_score) for the 20 anchored queries
 ```
-If `|bias(grader_X, dim_d)| > 0.5 Likert points` AND `sign(bias)` is the same for A, B, C: this is **family bias** — Claude/Codex/Gemini all score higher (or lower) than Alex on dimension d.
+If `|bias(grader_X, dim_d)| > 0.5 Likert points` AND `sign(bias)` is the same for A, B, C: this is **family bias** — Claude/Codex/Gemini all score higher (or lower) than the operator on dimension d.
 
 **Family-bias correction:**
 For the 80 unanchored queries on the biased dimension, subtract the mean(A,B,C) bias from each automated score before computing parity. Grader D and operator anchor unaffected.
@@ -150,7 +150,7 @@ Output per grader: `eval/grades-grader-{A,B,C,D}.jsonl` (100 lines each × 2 sys
 
 `grading-prompt.md` structure:
   - Role: you are a quality evaluator for a personal AI assistant
-  - Context: the assistant is Neoth, personal AI for Alex (solo dev, security researcher)
+  - Context: the assistant is Neoth, personal AI for the operator (solo dev, security researcher)
   - Voice standard: blunt, direct, German if German, no pleasantries, technical substance exact
   - Rubric: paste of 5 dimensions above
   - Output format: JSON object with 5 integer keys, nothing else
@@ -202,9 +202,9 @@ Aggregate parity score:
 
 Where weight(d):
   factual:      1.5  (highest -- wrong facts are unacceptable)
-  completeness: 1.5  (high -- incomplete recall misses Alex intent)
+  completeness: 1.5  (high -- incomplete recall misses operator intent)
   on_tone:      1.0  (medium -- tone matters but is stylistic)
-  usefulness:   1.5  (highest -- if Alex wouldnt act on it, it failed)
+  usefulness:   1.5  (highest -- if operator wouldnt act on it, it failed)
   brevity:      1.0  (medium -- verbosity is annoying but not dangerous)
 
 Harmonic mean formula (weighted):
@@ -251,9 +251,9 @@ CRITICAL events logged as WAL 0x3E EVAL_CRITICAL_DIVERGENCE with:
 | Dimension | Absolute floor (NEOTH score across all 100 queries, mean per dim) | Rationale |
 |-----------|------------------------------------------------------------------|-----------|
 | Factual | ≥ 3.5/5 | Wrong facts are unacceptable regardless of baseline |
-| Completeness | ≥ 3.0/5 | Incomplete recall misses Alex's intent |
+| Completeness | ≥ 3.0/5 | Incomplete recall misses operator's intent |
 | On-Tone | ≥ 3.0/5 | Tone matters but is stylistic |
-| Usefulness | ≥ 3.5/5 | If Alex wouldn't act on it, it failed |
+| Usefulness | ≥ 3.5/5 | If operator wouldn't act on it, it failed |
 | Brevity | ≥ 3.0/5 | Verbose is annoying but not dangerous |
 
 Decision gate: `parity_aggregate ≥ 0.85` AND all 5 absolute floors met AND zero CRITICAL.
@@ -262,7 +262,7 @@ Decision gate: `parity_aggregate ≥ 0.85` AND all 5 absolute floors met AND zer
 
 ## 8. Evaluation Schedule
 
-Day 61: Extract and annotate goldset.jsonl (operator: alex)
+Day 61: Extract and annotate goldset.jsonl (operator: <your-id>)
 Day 73-76: Daily goldset runs against both NEOTH and Jarvis (automated)
 Day 77: 4-grader evaluation (automated, parallel API calls — Graders A/B/C + external Grader D)
 Day 78: Kappa computation + threshold check (automated)

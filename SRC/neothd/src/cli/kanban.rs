@@ -1197,7 +1197,7 @@ mod tests {
         // round-trips through serde so a field rename surfaces here, not
         // in the operator's settings panel.
         let (_dir, conn) = fresh_db();
-        let s = store::insert_session(&conn, 1, "prompt", "hash", "cli", Some("alex")).unwrap();
+        let s = store::insert_session(&conn, 1, "prompt", "hash", "cli", Some("demo-user")).unwrap();
         store::insert_task(&conn, s, 10, "Task title", None, "ui", None).unwrap();
 
         let sessions = select_sessions(&conn, false).unwrap();

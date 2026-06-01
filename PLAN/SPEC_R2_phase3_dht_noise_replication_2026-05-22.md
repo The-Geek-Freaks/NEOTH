@@ -100,7 +100,7 @@ The closest production-grade pattern is to either:
 
 ## Decision deferred
 
-Operator (Alex) to ratify the port-as-you-go vs Node-subprocess
+Operator to ratify the port-as-you-go vs Node-subprocess
 trade-off before R-2 Phase 3 starts. Default leans port-as-you-go
 to stay AIO; revisit if the timeline matters more than the
 zero-extra-dep guarantee.

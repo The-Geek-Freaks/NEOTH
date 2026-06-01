@@ -11,7 +11,7 @@
 | Was | NEOTH |
 |-----|-------|
 | Project | NEOTH |
-| Project dir | `c:\Users\Shadow-PC\CascadeProjects\NEOTH\` (rename from `AGENTER\` pending operator action) |
+| Project dir | `<your-workspace>\NEOTH\` (rename from `AGENTER\` pending operator action) |
 | Binary | `neothd` |
 | CLI | `neoth` (verb-form: `neoth recall`, `neoth profile`) |
 | Config | `~/.neoth/` |
@@ -19,7 +19,7 @@
 | Brand | friendly companion with depth — Kumpel-vibe, not corporate-AI |
 | Logo concept | minimalist ibis silhouette (Thoth's sacred bird) + abstract "N" mark — or pure typographic |
 | Color palette | open (deferred to design pass) |
-| Voice | blunt-direct DE / clean EN code & commits — matches Alex's LOWKEY baseline already in Block-B |
+| Voice | blunt-direct DE / clean EN code & commits — matches the operator's LOWKEY baseline already in Block-B |
 | Etymology | "Neo" (new) + "Thoth" (Egyptian deity of memory, writing, knowledge, judgment, scribe of the gods) = the modern incarnation of the memory-keeper |
 
 **Why Neoth beats the prior candidates:**
@@ -81,7 +81,7 @@ neoth metrics --since 24h
 neoth doctor                          # diagnostic, WAL integrity check
 
 # Recall + memory
-neoth recall "what did Alex say about WiFi last week"
+neoth recall "what did the operator say about WiFi last week"
 neoth recall --since=2026-05-01 --top-k=10
 
 # Profile (the core feature)
@@ -126,7 +126,7 @@ neoth settings show
 ## 4. Day-1 Command (updated)
 
 ```
-cd c:\Users\Shadow-PC\CascadeProjects\NEOTH\SRC      # after dir rename
+cd <your-workspace>\NEOTH\SRC      # after dir rename
 cargo new neothd
 cd neothd
 cargo add tokio --features="full"
@@ -151,7 +151,7 @@ WAL writer Day 2 emits magic `b"NEOT"` + 96-byte header + CRC32c + HLC + LE wire
 ## 5. Operator Actions Pending
 
 1. **Confirm NEOTH** as final name — done if you're reading this and didn't object.
-2. **Directory rename** `c:\Users\Shadow-PC\CascadeProjects\AGENTER\` → `c:\Users\Shadow-PC\CascadeProjects\NEOTH\` — operator-destructive (renames workspace). Confirm to execute.
+2. **Directory rename** `<your-workspace>\AGENTER\` → `<your-workspace>\NEOTH\` — operator-destructive (renames workspace). Confirm to execute.
 3. **Day-30 MVP scope confirmation:** Telegram-only + Left-Claude + recall=Keyword+Top-K-cosine. Profile-learning lands Phase 2 Day 38-42. OK?
 4. **GitHub-PAT revocation** (standing since v0.5): `ghp_OVViPfYc6Y...` in `~/.openclaw-git-mirror/.git/config` on Jarvis VM. Revoke + rotate before any push from Neoth.
 

@@ -18,9 +18,9 @@ Sources:
 Extraction script: eval/extract_goldset.py
 
 Category split -- 4 x 25 queries:
-- recall    25: e.g. "what did Alex say last Thursday about WiFi?"
+- recall    25: e.g. "what did the operator say last Thursday about WiFi?"
 - summarize 25: e.g. "summarize last week project work"
-- action    25: e.g. "send Alex a reminder at 18:00"
+- action    25: e.g. "send the operator a reminder at 18:00"
 - factual   25: e.g. "what is the Cube IP?"
 
 Per query annotate:

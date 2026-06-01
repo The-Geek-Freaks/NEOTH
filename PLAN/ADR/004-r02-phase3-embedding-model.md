@@ -30,7 +30,7 @@ The choice affects:
   to the wizard's bandwidth ask; BGE-small adds ~130 MB.
 - Privacy: both are local, so neither sends episode text to a
   cloud API. The privacy story is equivalent.
-- Multilingual: Alex's operator profile mixes German + English
+- Multilingual: the operator's profile mixes German + English
   freely. Qwen3 handles both natively; BGE-small-en is English-only
   (operator would see degraded clustering on German episodes
   without a multilingual swap-in like BGE-M3).
@@ -59,9 +59,9 @@ The accepted shape per architect-panel direction:
 - **Fallback opt-in:** BGE-M3 (the multilingual sibling of
   BGE-small) for operators on memory-constrained devices where
   Qwen3-Q8 won't fit. `freedom.yaml::embed.model = "bge_m3"`.
-- **English-only operators (none currently — Alex is bilingual)**
-  could opt into BGE-small-en for speed, but no default operator
-  profile justifies this branch.
+- **English-only operators** (none in the reference profile — the
+  default operator is bilingual) could opt into BGE-small-en for speed,
+  but no default profile justifies this branch.
 
 This pairs with the Day-14b open work: once the `qwen2_embed.rs`
 fork lands (per [[neoth-d14b-status-correction]]), the embed surface
@@ -97,8 +97,8 @@ exists + this ADR can flip to Accepted.
 
 ## Alternatives considered
 
-- **BGE-small-en as default** — rejected because Alex's profile is
-  bilingual; English-only embeddings would degrade German episode
+- **BGE-small-en as default** — rejected because the reference operator
+  profile is bilingual; English-only embeddings would degrade German episode
   clustering without operator-visible warning.
 - **Cloud embedding (OpenAI text-embedding-3-small etc.)** —
   rejected outright. R-02 Phase 3 privacy is explicitly local-only

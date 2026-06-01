@@ -133,8 +133,8 @@ mod tests {
     #[test]
     fn solo_cluster_routes_local() {
         // Single node = local handles every request.
-        let set = set_of(&["alex"]);
-        let d = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("alex"));
+        let set = set_of(&["ada"]);
+        let d = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("ada"));
         assert_eq!(d.target, RoutingTarget::Local);
         assert!(d.reason.contains("orchestrator"));
     }
@@ -144,28 +144,28 @@ mod tests {
         // Defensive: if the registry is somehow empty (transport just
         // came up, no peers yet), default to local handling.
         let set: BTreeSet<PeerPubkey> = BTreeSet::new();
-        let d = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("alex"));
+        let d = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("ada"));
         assert_eq!(d.target, RoutingTarget::Local);
         assert!(d.reason.contains("no peers"));
     }
 
     #[test]
     fn local_orchestrator_routes_local() {
-        // alex is lexicographically lowest → orchestrator → local
+        // ada is lexicographically lowest → orchestrator → local
         // routes to itself.
-        let set = set_of(&["alex", "bob", "carol"]);
-        let d = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("alex"));
+        let set = set_of(&["ada", "bob", "carol"]);
+        let d = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("ada"));
         assert_eq!(d.target, RoutingTarget::Local);
         assert!(d.reason.contains("local node is the elected orchestrator"));
     }
 
     #[test]
     fn remote_orchestrator_routes_to_that_peer() {
-        // bob is local; alex (lower pubkey) is orchestrator → bob
-        // routes to alex.
-        let set = set_of(&["alex", "bob", "carol"]);
+        // bob is local; ada (lower pubkey) is orchestrator → bob
+        // routes to ada.
+        let set = set_of(&["ada", "bob", "carol"]);
         let d = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("bob"));
-        assert_eq!(d.target, RoutingTarget::Remote(pk("alex")));
+        assert_eq!(d.target, RoutingTarget::Remote(pk("ada")));
     }
 
     #[test]
@@ -177,8 +177,8 @@ mod tests {
             RoutingPolicy::SendToOrchestrator,
             RoutingPolicy::SendToLowestLoadPeerWithCapability,
         ] {
-            let set = set_of(&["alex"]);
-            let d = route_from_peer_set(policy, &set, &pk("alex"));
+            let set = set_of(&["ada"]);
+            let d = route_from_peer_set(policy, &set, &pk("ada"));
             assert!(!d.reason.is_empty(), "policy {policy:?} reason empty");
         }
     }
@@ -190,7 +190,7 @@ mod tests {
         // fall back to local rather than panic — the unit test catches
         // a future implementation that accidentally panics or returns
         // a wrong-shape decision.
-        let set = set_of(&["alex", "bob"]);
+        let set = set_of(&["ada", "bob"]);
         let d = route(
             RoutingPolicy::SendToLowestLoadPeerWithCapability,
             &super::super::pears_election::elect_orchestrator(&set, &pk("bob")),
@@ -206,7 +206,7 @@ mod tests {
         // RoutingDecision. Pinned so a future refactor that
         // accidentally introduces RNG / time-based tiebreaks trips
         // here at unit-test time.
-        let set = set_of(&["alex", "bob", "carol"]);
+        let set = set_of(&["ada", "bob", "carol"]);
         let a = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("bob"));
         let b = route_from_peer_set(RoutingPolicy::SendToOrchestrator, &set, &pk("bob"));
         assert_eq!(a, b);

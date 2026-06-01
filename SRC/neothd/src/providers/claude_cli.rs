@@ -1,7 +1,7 @@
 //! Claude CLI subprocess adapter — built-in bridge for `claude` CLI.
 //!
-//! Owns the full local-bridge logic so NEOTH does not depend on Alex's
-//! external `claude_openai_bridge.py`. Any operator who installs NEOTH +
+//! Owns the full local-bridge logic so NEOTH does not depend on the
+//! operator's external `claude_openai_bridge.py`. Any operator who installs NEOTH +
 //! claude-cli via the wizard gets working `neoth chat` without a separate
 //! service. See `memory/neoth-bridge-builtin.md`.
 //!
@@ -15,7 +15,7 @@
 //!   - On Windows: spawns through `cmd /C` so npm shell-shims (`claude.cmd`)
 //!     resolve correctly (per `memory/neoth-windows-build.md`).
 //!
-//! **Deferred (V2 — port from Alex's `bridge/claude_openai_bridge.py`):**
+//! **Deferred (V2 — port from the operator's `bridge/claude_openai_bridge.py`):**
 //!   - tmux backend for persistent warm DM sessions.
 //!
 //! **B-7 system-prompt sanitizer** (Phase 33c hardening): the operator's
@@ -75,8 +75,8 @@ struct ClaudeUsage {
 /// Backend mode for the Claude CLI provider. `Auto` (default) picks
 /// tmux when available + falls back to subprocess; `Tmux` forces the
 /// warm-session path (errors at startup if tmux is missing); `Subprocess`
-/// forces the cold-start `claude --print` path (broken in Alex's stack
-/// per `[[neoth-claude-cli-tmux-mandatory]]`, kept for environments
+/// forces the cold-start `claude --print` path (broken on some operator
+/// setups per `[[neoth-claude-cli-tmux-mandatory]]`, kept for environments
 /// where tmux isn't an option — Windows without WSL).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum ClaudeBackend {
@@ -164,7 +164,7 @@ pub struct ClaudeCliAdapter {
     /// Audit 2026-05-19 (Session 15 Pick #3): per-adapter once-flag for
     /// the "auto → subprocess" fallback diagnostic. Memory hard rule
     /// `neoth_claude_cli_tmux_mandatory.md` says the subprocess path is
-    /// broken on Alex's setup; operators silently falling into it (most
+    /// broken on some setups; operators silently falling into it (most
     /// often Windows where tmux is not on PATH) saw empty-result errors
     /// with no actionable hint. Fires once per adapter instance — second
     /// + Nth `complete` calls stay quiet.
@@ -247,7 +247,7 @@ impl ClaudeCliAdapter {
     /// When `Auto` resolves to `Subprocess` (tmux not on PATH or not
     /// runnable), fire a one-shot WARN with platform-specific install
     /// hints — the memory hard rule says the subprocess path is broken
-    /// on Alex's reference setup, so the operator needs to see the
+    /// on some reference setups, so the operator needs to see the
     /// install path before the first empty-result error lands.
     async fn effective_backend(&self) -> ClaudeBackend {
         match self.backend {
@@ -327,7 +327,7 @@ impl ClaudeCliAdapter {
 ///
 /// Env scrubbing: harness identifier vars (`OPENCLAW_*`, `JARVIS_*`,
 /// `NEOTH_*` except `NEOTH_LOG`) are dropped before exec so they do not
-/// contaminate Claude's view. Ported from Alex's `_sanitize_outbound_env`
+/// contaminate Claude's view. Ported from the operator's `_sanitize_outbound_env`
 /// in `claude_openai_bridge.py`.
 ///
 /// B-6 / Agent 5 perf wedge 2026-05-16: the scrub result is cached
@@ -483,7 +483,7 @@ fn inject_or_override(env: &mut Vec<(String, String)>, key: &str, value: &str) {
 
 /// Normalise legacy model aliases to their canonical names. `opusplan`
 /// is the pre-rebrand alias for the 1M-context Opus variant; bridge.py
-/// translates it because Alex's older configs still reference the
+/// translates it because some operator configs still reference the
 /// alias + claude-cli rejects unknown model names. Pure mapping —
 /// unknown inputs pass through unchanged.
 pub(super) fn normalise_model(model: &str) -> String {
@@ -755,7 +755,7 @@ async fn complete_uncached(binary: &str, model_default: &str, req: Request) -> R
         // Surface a clear actionable error instead of an empty success.
         //
         // Pick #35 (Session 14, B-6 design-audit gap-fix): added the
-        // tmux warm-session path as a THIRD fix. On Alex's OAuth setup
+        // tmux warm-session path as a THIRD fix. On OAuth setups
         // the subprocess `--print` path is the documented-broken case;
         // installing tmux + setting `claude_cli.backend: tmux` (or
         // leaving `auto` to auto-detect) routes around it entirely

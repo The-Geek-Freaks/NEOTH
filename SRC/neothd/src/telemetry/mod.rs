@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn anonymous_id_is_16_lowercase_hex() {
-        let id = anonymous_id_from_operator("alex");
+        let id = anonymous_id_from_operator("sam");
         assert_eq!(id.len(), 16);
         assert!(
             id.chars()
@@ -202,32 +202,32 @@ mod tests {
 
     #[test]
     fn anonymous_id_deterministic() {
-        let a = anonymous_id_from_operator("alex");
-        let b = anonymous_id_from_operator("alex");
+        let a = anonymous_id_from_operator("sam");
+        let b = anonymous_id_from_operator("sam");
         assert_eq!(a, b);
     }
 
     #[test]
     fn anonymous_id_differs_per_operator() {
-        let a = anonymous_id_from_operator("alex");
+        let a = anonymous_id_from_operator("sam");
         let b = anonymous_id_from_operator("bob");
         assert_ne!(a, b);
     }
 
     #[test]
     fn anonymous_id_does_not_leak_operator_string() {
-        // Operator id "alex" must NOT appear anywhere in the
+        // Operator id "sam" must NOT appear anywhere in the
         // anonymous_id output. Pin so a future refactor that
         // accidentally returns the operator id verbatim surfaces.
-        let id = anonymous_id_from_operator("alex");
-        assert!(!id.contains("alex"));
+        let id = anonymous_id_from_operator("sam");
+        assert!(!id.contains("sam"));
     }
 
     // ── build_payload ───────────────────────────────────────────
 
     #[test]
     fn payload_carries_required_fields() {
-        let p = build_payload("0.1.0", "alex");
+        let p = build_payload("0.1.0", "sam");
         assert_eq!(p.neoth_version, "0.1.0");
         assert!(!p.os.is_empty());
         assert!(!p.arch.is_empty());
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn payload_serde_round_trips() {
-        let p = build_payload("0.1.0", "alex");
+        let p = build_payload("0.1.0", "sam");
         let s = serde_json::to_string(&p).unwrap();
         let back: TelemetryPayload = serde_json::from_str(&s).unwrap();
         assert_eq!(back, p);
@@ -246,7 +246,7 @@ mod tests {
     fn payload_has_no_operator_id_field() {
         // Drift guard — a future refactor that adds an
         // `operator_id` field would leak the unhashed id.
-        let p = build_payload("0.1.0", "alex");
+        let p = build_payload("0.1.0", "sam");
         let v: serde_json::Value = serde_json::to_value(&p).unwrap();
         assert!(v.get("operator_id").is_none());
         assert!(v.get("user_id").is_none());
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn preview_mentions_every_payload_field() {
-        let p = build_payload("0.1.0", "alex");
+        let p = build_payload("0.1.0", "sam");
         let text = preview_for_operator(&p);
         assert!(text.contains("0.1.0"));
         assert!(text.contains(&p.os));
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn preview_explicitly_states_opt_in_default_off() {
-        let p = build_payload("0.1.0", "alex");
+        let p = build_payload("0.1.0", "sam");
         let text = preview_for_operator(&p).to_lowercase();
         assert!(text.contains("opt-in"));
         assert!(text.contains("off"));
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn preview_lists_what_is_not_sent() {
-        let p = build_payload("0.1.0", "alex");
+        let p = build_payload("0.1.0", "sam");
         let text = preview_for_operator(&p).to_lowercase();
         assert!(text.contains("no chat content"));
         assert!(text.contains("no provider keys"));

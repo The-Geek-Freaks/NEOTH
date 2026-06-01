@@ -206,7 +206,7 @@ mod tests {
         let reg = RelayRegistration {
             cluster_key_hex: cluster.into(),
             peer_pub_key_hex: peer.into(),
-            instance_label: "alex-laptop".into(),
+            instance_label: "demo-laptop".into(),
             listen_port: 4242,
             registered_at_unix: 1,
         };

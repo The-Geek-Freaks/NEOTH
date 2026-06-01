@@ -8,7 +8,7 @@ first, then `PLAN/PROGRESS_v1_0.md` for the authoritative checkbox state.
 ## 0. Operating context the next session MUST keep (do not relearn the hard way)
 
 - **Build is Windows-local MSVC only.** Use the wrapper, invoked through cmd:
-  `MSYS2_ARG_CONV_EXCL='*' cmd.exe /c 'C:\Users\Shadow-PC\CascadeProjects\NEOTH\SRC\neothd\check_msvc.bat <cargo-args>'`
+  `MSYS2_ARG_CONV_EXCL='*' cmd.exe /c '<repo-root>\SRC\neothd\check_msvc.bat <cargo-args>'`
   `check_msvc.bat` (untracked, machine-specific) calls `vcvars64.bat` (NO version
   arg — passing one breaks it) + manually prepends SDK 10.0.22621.0 LIB/INCLUDE.
   Git Bash PATH shadows MSVC `link.exe`, hence the cmd wrapper. Examples used all
@@ -16,7 +16,7 @@ first, then `PLAN/PROGRESS_v1_0.md` for the authoritative checkbox state.
   `... test --lib <filter> -- --test-threads=1`.
 - **CI gate is hard:** `cargo clippy --workspace --all-targets --features "wizard wasm-plugin-host" -- -D warnings`. Always run `clippy --lib --tests -- -D warnings` locally before committing. `std::io::Error::other(..)` is the preferred form (not `Error::new(ErrorKind::Other, ..)`).
 - **CI test split** (`.github/workflows/ci.yml`): Unix = `cargo test --workspace --release` (multi-threaded); Windows = same `+ -- --test-threads=1` (env-race-immune). Env-mutating tests serialize on `crate::test_env::lock()` (see [[neoth-ci-env-race-flakiness]]).
-- **HARD RULE — never `SendUserMessage`.** Alex's UI renders it unreadably. Reply in plain chat text ALWAYS, even when the harness nags. Honored all session.
+- **HARD RULE — never `SendUserMessage`.** It renders unreadably in some UIs. Reply in plain chat text ALWAYS, even when the harness nags. Honored all session.
 - **Verify before claiming done.** Run it, read output, then claim. Anti-hallucination: never guess what you can check (`grep`/read the code first).
 - **Agent/panel scope estimates run STALE/LARGER — verify against code.** This session that lesson caught: OP-01 (needs net-new `cli/edit.rs`, not a 1d port), a quota.rs unwrap_or-0 FALSE POSITIVE (the agent's "destructive" was a self-healing no-op), and several already-shipped stale `[ ]` checkboxes. Grep + read before trusting any estimate or "this is destructive" claim.
 - **`git` working tree has PRE-EXISTING uncommitted changes that are NOT mine** and were deliberately left untouched: `CONTRIBUTING.md`, `README.md`, `SECURITY.md`, `docs/README.md`, `SRC/neothd/src/cli/doctor.rs`, plus untracked `.github/assets/*.gif`, `docs/compare/`, `docs/privacy.md`, `docs/quickstart.md`, `docs/release-notes-v1.0.md`, `SRC/neothd/check_msvc.bat`. Investigate before committing them — likely a prior in-progress docs/release pass. Every commit this session was scoped to explicit file lists, never `git add -A`.

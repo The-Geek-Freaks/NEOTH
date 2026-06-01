@@ -1,7 +1,7 @@
 # v1.0 Operator wish-list — verbatim dump
 
 **Date:** 2026-05-24
-**Source:** operator-typed plain text (`C:\Users\Shadow-PC\Desktop\Textdokument (neu) (14).txt`)
+**Source:** operator-typed plain text (local file)
 **Status:** raw — to be triaged into ROAD_TO_1.0.md by 5-agent review (audit / QUELLEN-diff / new-repos research / wizard architect / logic-integration audit).
 
 This file is the canonical capture so the wish-list survives long

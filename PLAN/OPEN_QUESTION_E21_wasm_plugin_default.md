@@ -48,7 +48,7 @@ Rationale:
    screen; the "explain why a malicious plugin ran" UX cost is much
    higher for non-developer operators.
 
-## What ships when Alex picks one
+## What ships when operator picks one
 
 - **(A) verdict** → flip `PluginsConfig::wasm.enabled` default ON
   for individual discovered plugins (currently true for the host

@@ -487,7 +487,7 @@ mod tests {
         // freedom.yaml carrying a legacy single-file install with
         // `provider_key: sk-abc123...`. The before_state captured for
         // the WAL must NOT contain the literal key bytes.
-        let yaml = b"operator_id: alex\nprovider_key: sk-abc1234567890abcdefxyz\n";
+        let yaml = b"operator_id: sam\nprovider_key: sk-abc1234567890abcdefxyz\n";
         let out = redact_before_state_if_credential_bearing(MutationKind::ConfigWrite, yaml);
         let s = std::str::from_utf8(&out).unwrap();
         assert!(
@@ -499,7 +499,7 @@ mod tests {
             "redaction marker must be present: {s}"
         );
         // Non-secret fields stay intact.
-        assert!(s.contains("operator_id: alex"));
+        assert!(s.contains("operator_id: sam"));
     }
 
     #[test]
@@ -631,7 +631,7 @@ mod tests {
         let (writer, join) = spawn(seg.clone()).unwrap();
         let policy = RollbackConfig::default();
 
-        let yaml = b"operator_id: alex\nprovider_key: sk-abc1234567890leakedxyz\n";
+        let yaml = b"operator_id: sam\nprovider_key: sk-abc1234567890leakedxyz\n";
         let _ = emit_if_policy_allows(
             &writer,
             &policy,

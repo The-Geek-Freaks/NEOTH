@@ -230,16 +230,16 @@ animation_speed = "reduced"
             ..Default::default()
         };
         assert_eq!(
-            t.render_statusline(Some("alex"), Some("opus"), Some("standard")),
-            "[alex/opus/standard]",
+            t.render_statusline(Some("sam"), Some("opus"), Some("standard")),
+            "[sam/opus/standard]",
         );
     }
 
     #[test]
     fn renders_default_statusline_when_unset() {
         let t = Tweaks::default();
-        let s = t.render_statusline(Some("alex"), Some("opus"), Some("strict"));
-        assert!(s.contains("alex"));
+        let s = t.render_statusline(Some("sam"), Some("opus"), Some("strict"));
+        assert!(s.contains("sam"));
         assert!(s.contains("opus"));
         assert!(s.contains("strict"));
     }

@@ -1,6 +1,6 @@
 //! Claude CLI tmux backend (B-6 full warm-session port).
 //!
-//! Ports the protocol from Alex's `claude_openai_bridge.py` v6.2 — the
+//! Ports the protocol from the operator's `claude_openai_bridge.py` v6.2 — the
 //! only path that reliably produces output for the operator's stack
 //! (per `memory/neoth-claude-cli-tmux-mandatory.md`). `claude --print`
 //! subprocess mode is documented broken in the operator's environment;
@@ -33,7 +33,7 @@
 //!     NEOTH v0.1 ships with `send_text` + `send_enter` from
 //!     `TmuxSession`; large prompts that hit the arg limit will need
 //!     the buffer path added.
-//!   - wa-send.js detection — Alex's stack uses a side-channel for
+//!   - wa-send.js detection — the operator's stack uses a side-channel for
 //!     WhatsApp delivery. Not relevant to NEOTH's pipeline.
 //!
 //! ## Failure mode
@@ -413,7 +413,7 @@ pub async fn send_and_wait_with_timeouts(
 /// Extract the actual response text from the captured pane content.
 ///
 /// Ported from bridge.py v6.3.2 "hardened extractor" (live in
-/// v6.4.3-jarvis-live). Strategy:
+/// v6.4.3-production). Strategy:
 ///   1. Walk pane backwards finding the LAST `●` bullet line that
 ///      is NOT a tool-output bullet (skip "Searched", "Read",
 ///      "Edited", "Wrote", "Ran", etc.).
@@ -1001,7 +1001,7 @@ mod tests {
     #[test]
     fn timeout_constants_match_bridge_py_defaults() {
         // Drift guard — bridge.py operator-tested these. Don't lower
-        // them without re-validating against Alex's SOUL.md workload.
+        // them without re-validating against the operator's SOUL.md workload.
         assert_eq!(IDLE_TIMEOUT_SECS, 120);
         assert_eq!(HARD_TIMEOUT_SECS, 300);
         assert_eq!(STABLE_CONFIRM_DELAY_MS, 2000);

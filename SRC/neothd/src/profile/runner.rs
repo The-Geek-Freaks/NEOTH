@@ -138,7 +138,7 @@ pub async fn run_pipeline(
     // ADV-07 (Session 28c): true when THIS turn's reply came from the
     // mirror refusal-recovery path (a refusal was auto-reframed + retried).
     // On such turns the `operator_preferences` the extractor infers are
-    // about the REFRAMING, not the operator (self-amplifying loop "Alex
+    // about the REFRAMING, not the operator (self-amplifying loop "operator
     // values limitation-reflection"). When true, drop every
     // `operator_preferences` claim post-extract; other categories extract
     // normally.

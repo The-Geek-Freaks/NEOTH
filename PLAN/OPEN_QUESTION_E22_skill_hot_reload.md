@@ -63,7 +63,7 @@ Rationale:
    (clone an `Arc<SkillBody>` at invocation start) — much cheaper
    than the operator-friction of (1).
 
-## What ships when Alex picks one
+## What ships when operator picks one
 
 - **(1) verdict** → close as "no work; existing reload flow
   documented".

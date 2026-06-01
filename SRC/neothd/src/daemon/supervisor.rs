@@ -15,7 +15,7 @@
 //!
 //! The content generators are pure (unit-tested); `install` / `uninstall`
 //! wrap them with the platform's enable/disable command. Everything is
-//! user-scoped — the AIO "Alex's mom, no dev tools, no admin" rule.
+//! user-scoped — the AIO "non-technical user, no dev tools, no admin" rule.
 
 use std::path::{Path, PathBuf};
 
@@ -336,8 +336,8 @@ mod tests {
 
     #[test]
     fn systemd_unit_has_restart_always_and_exec() {
-        let txt = systemd_unit_text(Path::new("/home/alex/.cargo/bin/neoth"));
-        assert!(txt.contains("ExecStart=/home/alex/.cargo/bin/neoth serve"));
+        let txt = systemd_unit_text(Path::new("/home/user/.cargo/bin/neoth"));
+        assert!(txt.contains("ExecStart=/home/user/.cargo/bin/neoth serve"));
         assert!(txt.contains("Restart=always"));
         assert!(txt.contains("WantedBy=default.target"));
     }
@@ -346,7 +346,7 @@ mod tests {
     fn launchd_plist_has_keepalive_and_runatload() {
         let txt = launchd_plist_text(
             Path::new("/usr/local/bin/neoth"),
-            Path::new("/Users/alex/.neoth"),
+            Path::new("/Users/user/.neoth"),
         );
         assert!(txt.contains("<string>io.neoth.daemon</string>"));
         assert!(txt.contains("<key>KeepAlive</key><true/>"));
@@ -370,13 +370,13 @@ mod tests {
 
     #[test]
     fn systemd_unit_path_is_user_scoped() {
-        let p = systemd_unit_path(Path::new("/home/alex/.config"));
+        let p = systemd_unit_path(Path::new("/home/user/.config"));
         assert!(p.ends_with("systemd/user/neoth.service"));
     }
 
     #[test]
     fn launchd_plist_path_is_user_scoped() {
-        let p = launchd_plist_path(Path::new("/Users/alex"));
+        let p = launchd_plist_path(Path::new("/Users/user"));
         assert!(p.ends_with("Library/LaunchAgents/io.neoth.daemon.plist"));
     }
 

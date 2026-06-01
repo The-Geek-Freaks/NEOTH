@@ -3,7 +3,7 @@
 //!
 //! Looks for any of these markers at the start of a line (case-insensitive):
 //!   - `DECISION:`
-//!   - `Beschluss:`   (German equivalent — Alex's primary language)
+//!   - `Beschluss:`   (German equivalent — the operator's primary language)
 //!   - `ADR:`
 //!
 //! Each marker line plus subsequent non-blank lines until a blank line OR

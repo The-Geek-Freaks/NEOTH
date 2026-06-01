@@ -19,8 +19,8 @@ NEOTH is built as a public OSS daemon. Pre-1.0 naming, paths, and operator-ident
 | Test/log filenames | `agenter-response.jsonl`, `agenter-monitor`, `agenter-wa-shim` | `neoth-*` | 3 |
 | Scoring variable | `agenter_score` | `neoth_score` | 4 |
 | Endpoint flag | `--agenter-endpoint` | `--neoth-endpoint` | 1 |
-| Operator example | `--operator alex`, `id: "alex"`, `author = "alex"` | `<your-operator-id>`, `"yourname"` | 4 |
-| Day-1 prep section | "Decide directory rename" Alex-specific path | Generic 3-item OSS operator checklist | 1 |
+| Operator example | `--operator <name>`, `id: "<name>"`, `author = "<name>"` | `<your-operator-id>`, `"yourname"` | 4 |
+| Day-1 prep section | "Decide directory rename" operator-specific path | Generic 3-item OSS operator checklist | 1 |
 
 Total: 293 individual edits across 15 active spec files. Verified: zero residual hits via `grep -rEn "agenterctl\|~/\.agenter\|AGENTER_\|\bAGENTER\b\|\bagenter\b\|agenter-\|agenter_"`.
 
@@ -33,7 +33,7 @@ These references stay because they're either historical context, third-party doc
 - **`PLAN/CHORUS_v06_*.md`, `CLAUDE_v07_review.md`** — historical adversarial reviews. KEEP-AS-IS.
 - **`PLAN/BLUEPRINT_v06_synthesis.md` / `CHERRY_PICK_RANKING.md` references to `*.py` files in QUELLEN/** — these are Source-FROM pointers (predecessor's Python implementations that we port to Rust). Filename references are appropriate.
 - **`Jarvis` references** — Jarvis is the predecessor system NEOTH is migrating from. `RUNBOOK_phase3_cutover.md` Days 66-79 describe shadow-run against Jarvis. Predecessor name stays.
-- **`Alex` mentions in eval-query examples** (RUNBOOK Z.21, Z.23) and "original operator calibration anchor" — these are clearly contextual. Anyone running their own eval substitutes their own operator name.
+- **Operator-name mentions in eval-query examples** (RUNBOOK Z.21, Z.23) and "original operator calibration anchor" — these are clearly contextual. Anyone running their own eval substitutes their own operator name.
 
 ## What was tagged but not yet swept
 
@@ -69,7 +69,7 @@ grep -rEn "agenterctl|~/\.agenter|AGENTER_|\bAGENTER\b|\bagenter\b|agenter-|agen
   $(ls *.md ADVERSARIAL/*.md | grep -v "^archive/")
 
 # Operator-hardcoding residual check (must return zero results)
-grep -rEn '"alex"|--operator alex|operator_id.*alex|author = "alex"' \
+grep -rEn '"<your-operator-id>"|operator_id.*<your-id>|author = "<your-id>"' \
   *.md ADVERSARIAL/*.md
 ```
 
@@ -79,4 +79,4 @@ This sweep was applied by sed-based bulk replacement. To roll back: revert the r
 
 ---
 
-Companion document: `REFERENCE_DEPLOYMENT.md` — describes the original development deployment (Alex's setup) as one example reference architecture, not as a required configuration.
+Companion document: `REFERENCE_DEPLOYMENT.md` — describes the original development deployment (the author's setup) as one example reference architecture, not as a required configuration.

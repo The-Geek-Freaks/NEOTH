@@ -962,14 +962,14 @@ mod tests {
         conn.execute(
             "INSERT INTO idx_groundtruth \
              (id, statement, source, scope, asserted_at, revoked_at) \
-             VALUES (1, 'cube IP is 100.68.210.50', 'manual', 'global', 1, NULL)",
+             VALUES (1, 'server IP is 192.0.2.1', 'manual', 'global', 1, NULL)",
             [],
         )
         .unwrap();
         conn.execute(
             "INSERT INTO idx_groundtruth \
              (id, statement, source, scope, asserted_at, revoked_at) \
-             VALUES (2, 'never reboot Cube', 'manual', 'global', 2, NULL)",
+             VALUES (2, 'never reboot server', 'manual', 'global', 2, NULL)",
             [],
         )
         .unwrap();
@@ -977,12 +977,12 @@ mod tests {
         conn.execute(
             "INSERT INTO idx_groundtruth \
              (id, statement, source, scope, asserted_at, revoked_at) \
-             VALUES (3, 'old cube fact', 'manual', 'global', 3, 100)",
+             VALUES (3, 'old server fact', 'manual', 'global', 3, 100)",
             [],
         )
         .unwrap();
 
-        let hits = recall_groundtruth_like(&conn, "cube", 10).expect("gt recall");
+        let hits = recall_groundtruth_like(&conn, "server", 10).expect("gt recall");
 
         assert_eq!(hits.len(), 2, "active matches surface, revoked is hidden");
         assert!(hits.iter().all(|h| h.tier == "groundtruth"));

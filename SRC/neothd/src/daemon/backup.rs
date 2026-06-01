@@ -188,7 +188,7 @@ mod tests {
     fn fake_home(dir: &Path) -> PathBuf {
         let home = dir.join("neoth");
         std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(home.join("freedom.yaml"), "operator_id: alex\n").unwrap();
+        std::fs::write(home.join("freedom.yaml"), "operator_id: sam\n").unwrap();
         std::fs::write(home.join("views.db"), b"\x00not really sqlite").unwrap();
         std::fs::write(home.join("tweaks.toml"), "banner = \"x\"\n").unwrap();
         let archive = home.join("archive").join("sessions").join("2026-05-14");
@@ -246,7 +246,7 @@ mod tests {
         let target = dir.path().join("restored");
         restore_backup(&out, &target, false).unwrap();
         let body = std::fs::read_to_string(target.join("freedom.yaml")).unwrap();
-        assert_eq!(body.trim(), "operator_id: alex");
+        assert_eq!(body.trim(), "operator_id: sam");
         let session =
             std::fs::read_to_string(target.join("archive/sessions/2026-05-14/093412-abc.md"))
                 .unwrap();

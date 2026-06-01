@@ -152,7 +152,7 @@ mod tests {
         // tricked into thinking shipping landed.
         let fed = PearsWalFederator::default();
         let meta = ShippedSegment {
-            origin_pubkey: "alex".into(),
+            origin_pubkey: "sam".into(),
             segment_seq: 1,
             segment_bytes: 100,
             origin_sealed_unix_ts: 1000,
@@ -173,7 +173,7 @@ mod tests {
             deferred_reason: "cluster.transport currently disabled".into(),
         };
         let meta = ShippedSegment {
-            origin_pubkey: "alex".into(),
+            origin_pubkey: "sam".into(),
             segment_seq: 1,
             segment_bytes: 100,
             origin_sealed_unix_ts: 1000,

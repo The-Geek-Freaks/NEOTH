@@ -17,7 +17,7 @@
 ## 0. Motivation
 
 **Problem v1.0 (H5):**
-Alex is a security researcher. The word "security" appears in his conversations constantly. With v1.0 council auto-trigger keywords `[architecture, security, refactor, destructive, breaking]`:
+For a security-researcher operator, the word "security" appears constantly. With v1.0 council auto-trigger keywords `[architecture, security, refactor, destructive, breaking]`:
 - 25-35% realistic trigger rate (vs spec's implied ~10%)
 - Per council debate: 3-10 rounds × 3 hemispheres × ~14k tokens each = 100-450k tokens
 - Pro-Plan quotas (Claude Pro ~200 req/day, Gemini Premium ~250 req/day, ChatGPT Pro ~200 req/day) exhausted by 14:00 daily

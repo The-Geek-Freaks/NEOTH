@@ -1,7 +1,7 @@
 # SPEC — NEOTH cluster auto-discovery + pairing
 
 **Status**: design phase. Logic-Diskussion open, primitive scaffolded.
-**Source**: Alex operator-request 2026-05-22 Session 20 ("NEOTH-Instanzen
+**Source**: operator-request 2026-05-22 Session 20 ("NEOTH-Instanzen
 im gleichen Netz — LAN / Hysteria / Tailscale — sollen sich gegenseitig
 erkennen und als Cluster pairen").
 
@@ -91,7 +91,7 @@ Out of scope for the discovery primitive. Multi-week follow-up:
   Hysteria config + relay-side support). Multi-week.
 - **Phase 6**: State-sync gossip protocol. Multi-week.
 
-## Open questions (Alex to ratify) — RATIFIED 2026-05-22
+## Open questions (operator to ratify) — RATIFIED 2026-05-22
 
 4-agent audit (security-auditor + security-auditor + architect +
 planner) ran 2026-05-22 Session 20. Verdicts:

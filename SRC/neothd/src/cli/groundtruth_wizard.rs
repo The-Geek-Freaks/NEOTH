@@ -281,8 +281,8 @@ mod tests {
 
     #[test]
     fn statement_for_strips_trailing_question_mark() {
-        let s = statement_for("What's your name?", "Alex");
-        assert_eq!(s, "What's your name: Alex");
+        let s = statement_for("What's your name?", "Sam");
+        assert_eq!(s, "What's your name: Sam");
     }
 
     #[test]
@@ -295,7 +295,7 @@ mod tests {
                 question_id: "name-handle".into(),
                 category: "identity".into(),
                 scope: "global".into(),
-                value: Some("Alex".into()),
+                value: Some("Sam".into()),
             },
             Answer {
                 question_id: "role".into(),

@@ -1,7 +1,7 @@
 //! R-08 — zero-install entry primitives.
 //!
-//! The "Alex's mom on a fresh Win11 laptop" cliff: today she
-//! needs `cargo build` to even reach the wizard. R-08 closes that
+//! The "non-technical user on a fresh Win11 laptop" cliff: today they
+//! need `cargo build` to even reach the wizard. R-08 closes that
 //! by shipping:
 //!
 //!   - A `cargo-dist` config block (rendered at build time) that

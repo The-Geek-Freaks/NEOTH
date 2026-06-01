@@ -1,6 +1,6 @@
 # NEOTH feature evaluation — input for parallel agent review
 
-This file lists the candidate features Alex collected from the OpenClaw / OpenHuman / Hermes ecosystems plus power-user wishlist items. Each agent reads this + the NEOTH source at `C:\Users\Shadow-PC\CascadeProjects\AGENTER\SRC\` and produces a scorecard. Design specs live at `C:\Users\Shadow-PC\CascadeProjects\NEOTH\docs\superpowers\specs` (junction).
+This file lists the candidate features collected from the OpenClaw / OpenHuman / Hermes ecosystems plus power-user wishlist items. Each agent reads this + the NEOTH source at `<your-workspace>/SRC/` and produces a scorecard. Design specs live at `<your-workspace>/docs/superpowers/specs`.
 
 NEOTH's current shipped surface (from `PLAN/PROGRESS.md`):
 - WAL persistent memory (4 tiers: hot 7d / warm 90d / long-term Hebbian / ground-truth)
@@ -57,7 +57,7 @@ NEOTH's current shipped surface (from `PLAN/PROGRESS.md`):
 21. Web Fetch / Scraper (HTML → Markdown, token-efficient)
 22. OpenStreetMap / OSRM (geocode, POIs, routes)
 23. Tenor GIF Search
-24. ArXiv (paper search + retrieval) — Alex specifically asks if this should land
+24. ArXiv (paper search + retrieval) — specifically flagged as a candidate feature to evaluate
 
 ### Coding & Dev (25-32)
 25. Claude Code Delegation (features, PRs, refactors)
@@ -123,7 +123,7 @@ NEOTH's current shipped surface (from `PLAN/PROGRESS.md`):
 - Terminal backends — local, Docker, SSH, Singularity, Modal, Daytona, Vercel Sandbox (Daytona + Modal hibernate cheaply)
 - Cron + Subagents — Hermes' killer feature for background loops
 - Moltbook / Molthub — OpenClaw social network (demo)
-- ArXiv learner from Alex's Jarvis stack
+- ArXiv learner from the operator's Jarvis stack
 
 ---
 
@@ -150,7 +150,7 @@ NEOTH's current shipped surface (from `PLAN/PROGRESS.md`):
 
 ---
 
-## Block D — Design constraints from Alex
+## Block D — Design constraints from the operator
 
 - All UI surfaces must align with `docs/superpowers/specs` design definition
 - Need clients for: macOS, Windows, Linux, Android, iOS — chat client via Hysteria/Tailscale

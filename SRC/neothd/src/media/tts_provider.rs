@@ -306,9 +306,9 @@ mod tests {
     #[test]
     fn build_args_mac_say_includes_voice_when_set() {
         let path = std::path::PathBuf::from("/tmp/out.wav");
-        let (_, args) = build_native_args(NativeBinary::MacSay, "hi", &path, "Alex");
+        let (_, args) = build_native_args(NativeBinary::MacSay, "hi", &path, "Sam");
         assert!(args.iter().any(|a| a == "-v"));
-        assert!(args.iter().any(|a| a == "Alex"));
+        assert!(args.iter().any(|a| a == "Sam"));
     }
 
     #[test]
@@ -356,13 +356,13 @@ mod tests {
         let path = std::path::PathBuf::from("/tmp/out.wav");
         let (_, args) = build_native_args(
             NativeBinary::WindowsPowerShellSapi,
-            "alex's voice",
+            "sam's voice",
             &path,
             "",
         );
         let script = args.last().unwrap();
         assert!(
-            script.contains("alex''s voice"),
+            script.contains("sam''s voice"),
             "single quote not doubled — PowerShell would break: {script}",
         );
     }

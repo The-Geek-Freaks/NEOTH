@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn record_announce_returns_true_for_new_pubkey() {
         let mut reg = PeerRegistry::new();
-        let new = reg.record_announce(&payload("alex", 100));
+        let new = reg.record_announce(&payload("sam", 100));
         assert!(new);
         assert_eq!(reg.len(), 1);
     }
@@ -441,12 +441,12 @@ mod tests {
     #[test]
     fn record_announce_returns_false_on_duplicate_pubkey() {
         let mut reg = PeerRegistry::new();
-        reg.record_announce(&payload("alex", 100));
-        let dup = reg.record_announce(&payload("alex", 200));
+        reg.record_announce(&payload("sam", 100));
+        let dup = reg.record_announce(&payload("sam", 200));
         assert!(!dup);
         assert_eq!(reg.len(), 1);
         // Last-seen should bump to the newer timestamp.
-        assert_eq!(reg.last_seen.get(&PeerPubkey("alex".into())), Some(&200));
+        assert_eq!(reg.last_seen.get(&PeerPubkey("sam".into())), Some(&200));
     }
 
     #[test]
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn sweep_stale_returns_empty_when_no_peers_expired() {
         let mut reg = PeerRegistry::new();
-        reg.record_announce(&payload("alex", 1000));
+        reg.record_announce(&payload("sam", 1000));
         let evicted = reg.sweep_stale(1001);
         assert!(evicted.is_empty());
         assert_eq!(reg.len(), 1);
@@ -658,11 +658,11 @@ mod tests {
     #[tokio::test]
     async fn handle_inbound_announce_records_peer_and_returns_election() {
         let bridge = Arc::new(PearsBridge::local().unwrap());
-        let disc = PearsPeerDiscovery::new(bridge, "my-cluster", "alex");
+        let disc = PearsPeerDiscovery::new(bridge, "my-cluster", "sam");
         let e = disc.handle_inbound_announce(payload("bob", 100)).await;
         assert_eq!(e.peer_count, 1);
         assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("bob"));
-        // alex isn't in the registry yet (no announce_self call), so
+        // sam isn't in the registry yet (no announce_self call), so
         // local_is_orchestrator stays false.
         assert!(!e.local_is_orchestrator);
     }
@@ -670,14 +670,14 @@ mod tests {
     #[tokio::test]
     async fn sweep_and_elect_evicts_then_returns_new_election() {
         let bridge = Arc::new(PearsBridge::local().unwrap());
-        let disc = PearsPeerDiscovery::new(bridge, "my-cluster", "alex");
-        let _ = disc.handle_inbound_announce(payload("alex", 100)).await;
+        let disc = PearsPeerDiscovery::new(bridge, "my-cluster", "sam");
+        let _ = disc.handle_inbound_announce(payload("sam", 100)).await;
         let _ = disc.handle_inbound_announce(payload("bob", 100)).await;
         let _ = disc.handle_inbound_announce(payload("carol", 5_000)).await;
 
         let now = 5_001;
         let (evicted, e) = disc.sweep_and_elect(now).await;
-        // alex + bob were at ts=100; now - STALE_PEER (60s) = 4941. Both stale.
+        // sam + bob were at ts=100; now - STALE_PEER (60s) = 4941. Both stale.
         assert_eq!(evicted.len(), 2);
         assert_eq!(e.peer_count, 1);
         assert_eq!(e.orchestrator.as_ref().map(|p| p.as_str()), Some("carol"));
@@ -688,7 +688,7 @@ mod tests {
         // The bridge points at an unbound port; announce MUST surface
         // an error rather than panic. Supervisor caller decides retry.
         let bridge = Arc::new(PearsBridge::new("http://127.0.0.1:65430").unwrap());
-        let disc = PearsPeerDiscovery::new(bridge, "my-cluster", "alex");
+        let disc = PearsPeerDiscovery::new(bridge, "my-cluster", "sam");
         let result = disc.announce_self().await;
         assert!(result.is_err());
         let msg = format!("{}", result.unwrap_err());

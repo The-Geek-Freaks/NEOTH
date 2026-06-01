@@ -27,7 +27,7 @@ The range [0.1, 0.6) is a WAL dead zone.
 
 Silent outcome: identity.employer was injected into Block-B last week at confidence=0.72.
 Today it decayed to 0.58. Block-B no longer contains employer. The assistant stops using
-that context. Alex notices the assistant asks where he works.
+that context. The operator notices the assistant asks where they work.
 No event, no log, no alert. Time-to-notice: weeks or never.
 
 Fix: Emit WAL 0x37 PROFILE_THRESHOLD_CROSS on crossing 0.6 in either direction.
@@ -192,7 +192,7 @@ Second pass reimports all events. All Jarvis memory exists 2x in WAL.
 Silent outcome: profile reinforcement fires on every duplicate. Confidence values inflated.
 Fields promoted to Block-B that should not be (boosted by duplicate evidence).
 Seems like a feature (high confidence) not a bug (inflated from duplicates).
-Time-to-notice: when Alex notices confidence=0.97 on a field he mentioned once.
+Time-to-notice: when the operator notices confidence=0.97 on a field they mentioned once.
 
 Fix: Add post-import WAL event count verification to runbook Day 65.
 Emit WAL 0x3F MIGRATION_DUPLICATE_DETECTED on second import of same content.
@@ -208,7 +208,7 @@ with no write-back to WAL until the next actual mutation.
 User experience: assistant responds without employer context. User thinks it has a bug.
 No anomaly in neoth profile show unless run on the exact session where decay crossed 0.6.
 Time-to-notice: months if employer rarely referenced. Days if daily -- but only
-if Alex connects wrong behavior to profile state, which is non-obvious.
+if the operator connects wrong behavior to profile state, which is non-obvious.
 
 ### SF-02 Detection Gap
 Per-spec detection: 0x2E CLOCK_SKEW_DETECTED when abs(now_wall - hlc.physical) > 60s.
@@ -230,7 +230,7 @@ Per-spec detection: CRC32c per WAL frame (wire integrity). payload_hash (xxh3-64
 Gap: content_hash is application-level semantic dedup, not wire integrity.
 Different implementations produce logically valid WAL events with wrong dedup identity.
 CRC passes. payload_hash passes. Dedup fails semantically.
-User experience: recall returns duplicate results. Alex thinks it is a recall bug.
+User experience: recall returns duplicate results. The operator thinks it is a recall bug.
 Diagnosis requires knowing the implementation divergence.
 
 ### SF-05 Detection Gap
@@ -253,7 +253,7 @@ Per-spec detection: neoth migrate parity-check on Day 65.
 Gap: parity-check evaluates recall quality, not storage dedup parity.
 User experience: parity-check passes. WAL has 2x events. Confidence inflated.
 neoth profile show shows high confidence on everything. Seems like a feature.
-Time-to-notice: when Alex notices confidence=0.97 on a field he mentioned once.
+Time-to-notice: when the operator notices confidence=0.97 on a field they mentioned once.
 ---
 
 ## ROUND 3 -- Orthogonal Silent-Failure Categories

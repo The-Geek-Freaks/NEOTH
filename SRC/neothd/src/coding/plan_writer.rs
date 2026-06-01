@@ -217,7 +217,7 @@ mod tests {
     fn good_plan() -> Plan {
         Plan {
             source: "spec-2026-05-22".into(),
-            owner: "alex".into(),
+            owner: "sam".into(),
             scope: "build the cost dashboard".into(),
             out_of_scope: "cross-provider price normalisation".into(),
             tasks: vec![good_task("T-01"), good_task("T-02")],

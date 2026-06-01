@@ -29,10 +29,10 @@
 | H2 | **PROFILE_REDACT re-promotion** — `neoth profile redact identity.location` removes from `idx_profile` but `profile.apply` consults only current state, not redaction history. Next "Berlin" mention reborn with no memory of deletion. | 06 abuse |
 | H3 | **Profile-extraction-via-Gemini = privacy hole in 2 cloud providers** — `freedom.yaml profile.learn.health=false` prevents NEOTH storing health, but doesn't prevent sending health-containing conversation to Gemini API for analysis. Privacy table "Profile to outbound providers: Never" is technically true, operationally false. | 04 arch, 05 cost, 10 comparative |
 | H4 | **Time-dependent confidence + static `idx_profile` incompatible** — Hebbian decay 0.995/day means same WAL produces different `idx_profile` over time. Lazy on-read recomputation = latency on every Block-B assembly (critical path of every LLM call). | 02 silent, 04 arch |
-| H5 | **`council.should_trigger` keyword "security" exhausts quota by 14:00** — Alex is a security researcher; word appears constantly. 25-35% trigger rate × 9 LLM calls/council × 3 providers in parallel. Spec has zero handling for HTTP 429 quota exhaustion (only refusal). Profile-extraction silently dark for the rest of day. | 05 cost |
+| H5 | **`council.should_trigger` keyword "security" exhausts quota by 14:00** — for a security-researcher operator this word appears constantly. 25-35% trigger rate × 9 LLM calls/council × 3 providers in parallel. Spec has zero handling for HTTP 429 quota exhaustion (only refusal). Profile-extraction silently dark for the rest of day. | 05 cost |
 | H6 | **`council_test1_unfalsifiable`** — `factual_contradiction_check` fires on hemisphere disagreement. Unanimous wrong = no disagreement = tool silent = test passes with NEOTH shipping wrong answer. Test as-specified cannot work. | 07 eval |
 | H7 | **Grader-family bias** — Claude grades Claude, Gemini grades Gemini, Codex grades Codex. All share stylistic priors. High kappa + shared upward bias = confidently wrong evaluation. | 07 eval |
-| H8 | **Mirror-refusal feedback loop** — every refusal triggers mirror pipeline → Alex engages positively → "Alex values limitation-reflection" climbs in profile → Block-B primes Left toward hedged responses → more refusals → death spiral. | 06 abuse |
+| H8 | **Mirror-refusal feedback loop** — every refusal triggers mirror pipeline → operator engages positively → "operator values limitation-reflection" climbs in profile → Block-B primes Left toward hedged responses → more refusals → death spiral. | 06 abuse |
 | H9 | **Skill template semantic injection** — `SkillSandboxViolation` checks template functions, not template text. Keyword-conditional injected instruction passes `test_render` with benign input, activates when relevant topic appears. Code sandbox ≠ semantic sandbox. | 06 abuse |
 | H10 | **Channel-Ingress dedup-bloom false-positive** — legit user message dropped (bloom always has FP at scale), no error returned, user sees silence. | 02 silent |
 
@@ -40,7 +40,7 @@
 
 | # | Finding | Source |
 |---|---------|--------|
-| A1 | **No local generative model for extraction** — must lock `model:` abstraction in pipeline YAML in Phase 1. Retrofit = pipeline schema change + new inference runtime. Alex's Cube has 3 GPUs. Qwen3-4B INT4 fits ~3GB. | 04 arch |
+| A1 | **No local generative model for extraction** — must lock `model:` abstraction in pipeline YAML in Phase 1. Retrofit = pipeline schema change + new inference runtime. Operator's Cube has 3 GPUs. Qwen3-4B INT4 fits ~3GB. | 04 arch |
 | A2 | **No `send_proactive()` on Channel trait** — reserve method signature now. Trait-lock without this = breaking change to all adapters when proactive output added. Kumpel-brand requires this. | 04 arch |
 | A3 | **No `PROFILE_BASELINE_SNAPSHOT` event** — must be emitted at Phase 3 Day 65 seed migration. Miss that window = no drift comparison possible Phase 4. One event type (0x37), importance=1.0, never compacted. | 04 arch |
 | A4 | **Custom WAL is reimplementing SQLite/fjall** — importance-weighted GC is the ONLY thing justifying custom. Could be a SQLite trigger. Saves ~2000 LOC + months of WAL correctness work. | 04 arch |
@@ -61,7 +61,7 @@
 
 - **Subscriptions:** $320/month floor (Claude MAX $100 + ChatGPT Pro $200 + Gemini Premium $20). No circuit breaker, regardless of usage.
 - **API overage on quota walls:** $0-272/month additional.
-- **Alex-hours:** 900-1,050 hours total build = **€72k-€135k opportunity cost** at researcher rate.
+- **Operator-hours:** 900-1,050 hours total build = **€72k-€135k opportunity cost** at researcher rate.
 - **RAM lock:** 1 GB Tailslayer hugepages permanent.
 
 ## Cross-Cutting Themes (5 most damaging)
@@ -95,7 +95,7 @@ Combined with **local Qwen3-4B for extraction** (decision A1) eliminates the pri
 02_silent_failures.md               ← 19 failure modes, top-7 ranked
 03_type_design_holes.md             ← 15 type holes, 8 refactors, top-5 ranked
 04_architecture_alternatives.md     ← 8 decisions challenged, 5 missing features
-05_cost_reality.md                  ← $320-600/month, 900-1050 Alex-hours
+05_cost_reality.md                  ← $320-600/month, 900-1050 operator-hours
 06_operator_abuse.md                ← 5 self-pwn vectors, prompt-injection priority
 07_eval_methodology.md              ← 5 eval gaps, single regression_anchor test
 08_schedule_reality.md              ← Day-by-day realistic vs claimed, +30 to +150d

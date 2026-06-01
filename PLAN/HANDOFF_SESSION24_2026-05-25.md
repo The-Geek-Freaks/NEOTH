@@ -500,7 +500,7 @@ Refs: PLAN/HANDOFF_SESSION24_2026-05-25.md ADV-03 + F4 forgotten-hunt.
 [target.x86_64-pc-windows-gnu]
 rustflags = ["-C", "link-arg=-Wl,--whole-archive", "-C", "link-arg=-Wl,--no-whole-archive"]
 ```
-OR (simpler) enforce MSVC target in README + CI by failing if the build runs against `x86_64-pc-windows-gnu`. Pick MSVC enforcement — GNU target adds maintenance burden for an audience that doesn't exist (Alex's mom doesn't have MinGW).
+OR (simpler) enforce MSVC target in README + CI by failing if the build runs against `x86_64-pc-windows-gnu`. Pick MSVC enforcement — GNU target adds maintenance burden for an audience that doesn't exist (a non-technical user on Win11 won't have MinGW).
 
 **Test:**
 - `inventory_iter_returns_registered_hooks_on_msvc_build` (existing test in `hooks::tests`)
@@ -771,6 +771,6 @@ These memories will fire automatically per `[[name]]` resolution; flagged here f
 - `[[neoth-features-default-on-runtime-toggle]]` — every new Cargo feature pairs with runtime toggle in freedom.yaml; the hotfix lane adds no new features but follow this for v0.3.
 - `[[neoth-design-v11-is-norm]]` — `PLAN/00_DESIGN_v1.1_FINAL.md` + `SPEC_*.md` are authoritative; ignore older `*_v1.0_FINAL` despite the filename.
 - `[[neoth-progress-md-update-rule]]` — every shipped item MUST flip `[ ]` → `[x]` in the same commit. Stale checkboxes cost time.
-- `[[neoth-hard-rule-self-contained]]` — no external services, no Alex-specific deps; SX-01..03 + ADV-01..03 all respect this.
+- `[[neoth-hard-rule-self-contained]]` — no external services, no operator-specific deps; SX-01..03 + ADV-01..03 all respect this.
 
 End of handoff.

@@ -1,6 +1,6 @@
 //! Per-store readers — V10-06 Phase-3 dry-run path.
 //!
-//! Each Jarvis store kind (Markdown / Json / LanceArrow / Sqlite /
+//! Each legacy-agent store kind (Markdown / Json / LanceArrow / Sqlite /
 //! GitTree / FaissFlat per `RUNBOOK_phase3_cutover.md` Day-62) gets
 //! its own reader. Phase 1 (this binary) implements the scan-only
 //! variants — count rows, surface sample entries, validate the shape.
@@ -47,7 +47,7 @@ pub enum ScanStatus {
     Error { detail: String },
 }
 
-/// Hard-coded registry of the 12 Jarvis stores per
+/// Hard-coded registry of the 12 prior-agent stores per
 /// `PLAN/RUNBOOK_phase3_cutover.md`. Duplicated from
 /// `neothd/src/migrate/mod.rs::JARVIS_STORES` because this binary
 /// doesn't depend on `neothd` — keeping it independent is the whole

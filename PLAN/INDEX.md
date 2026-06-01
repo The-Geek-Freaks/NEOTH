@@ -67,7 +67,7 @@ _Last updated: 2026-05-14. v1.1 = post-adversarial-fixes. All build-relevant fil
 | `ADVERSARIAL/02_silent_failures.md` | 19 failure modes |
 | `ADVERSARIAL/03_type_design_holes.md` | 15 type-system holes |
 | `ADVERSARIAL/04_architecture_alternatives.md` | 8 design decisions challenged |
-| `ADVERSARIAL/05_cost_reality.md` | $320-600/month + 900-1050 Alex-hours |
+| `ADVERSARIAL/05_cost_reality.md` | $320-600/month + 900-1050 operator-hours |
 | `ADVERSARIAL/06_operator_abuse.md` | 5 operator-self-pwn vectors |
 | `ADVERSARIAL/07_eval_methodology.md` | 5 eval gaps |
 | `ADVERSARIAL/08_schedule_reality.md` | Day-30 → realistic Day-60 |

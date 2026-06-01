@@ -7,7 +7,7 @@
 //! in plaintext (mode 0600 on unix, owner-only DACL on Windows). That
 //! defeats casual `Explorer → copy` exfiltration but NOT a hand-rolled
 //! enumerator running as the same Windows user account (e.g. a malicious
-//! VS Code extension Alex installed).
+//! VS Code extension the operator installed).
 //!
 //! ## DPAPI binding choice
 //!

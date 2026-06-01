@@ -1,8 +1,8 @@
 //! Hebbian-decay background task — Q-8 adoption.
 //!
 //! Runs `memory::consolidate::run_consolidation_pass` every `interval` on
-//! a long-lived tokio task. Cadence default 2h matches Jarvis'
-//! `hippocampus-preprocess.timer` from the Q-8 audit row — frequent enough
+//! a long-lived tokio task. Cadence default 2h matches the
+//! `hippocampus-preprocess.timer` cadence from the Q-8 audit row — frequent enough
 //! that importance scores stay current within a day, infrequent enough
 //! that the writer never competes for the SQLite lock on a hot loop.
 //!
@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 
 use crate::memory::{consolidate, store};
 
-/// 2 hours. Matches the Jarvis hippocampus-preprocess.timer pattern.
+/// 2 hours. Matches the hippocampus-preprocess.timer cadence pattern.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Spawn the decay task. Returns a `JoinHandle` the caller aborts on shutdown.

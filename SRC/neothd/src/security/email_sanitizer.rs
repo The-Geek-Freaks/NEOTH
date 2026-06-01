@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn english_quoted_reply_block_stripped() {
-        let raw = "thanks for the update\n\nOn Mon, May 25 2026, Alex <a@x> wrote:\n> hello\n> how are you\n> i wanted to ask";
+        let raw = "thanks for the update\n\nOn Mon, May 25 2026, Sam <a@x> wrote:\n> hello\n> how are you\n> i wanted to ask";
         let r = sanitize_email_body(raw);
         assert!(r.body.contains("thanks for the update"));
         assert!(!r.body.contains("hello"));
@@ -465,7 +465,7 @@ mod tests {
 
     #[test]
     fn german_quoted_reply_block_stripped() {
-        let raw = "danke fuer die antwort\n\nAm 25.05.2026 schrieb Alex:\n> hallo\n> bis bald";
+        let raw = "danke fuer die antwort\n\nAm 25.05.2026 schrieb Sam:\n> hallo\n> bis bald";
         let r = sanitize_email_body(raw);
         assert!(r.body.contains("danke fuer die antwort"));
         assert!(!r.body.contains("hallo"));
@@ -485,7 +485,7 @@ mod tests {
     fn ps_after_quoted_block_survives() {
         // Operator typed a P.S. AFTER the quoted block. The
         // quoted-reply stripper must leave it intact.
-        let raw = "Reply text\n\nOn Mon, Alex wrote:\n> old text\n> more\n\nP.S. one more thing";
+        let raw = "Reply text\n\nOn Mon, Sam wrote:\n> old text\n> more\n\nP.S. one more thing";
         let r = sanitize_email_body(raw);
         assert!(r.body.contains("Reply text"));
         assert!(r.body.contains("P.S. one more thing"));

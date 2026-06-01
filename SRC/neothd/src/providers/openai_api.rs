@@ -276,7 +276,7 @@ mod tests {
     // the request shape + response handling for the four classes
     // (200 OK / 429 rate-limited / 401 auth-fail / 500 server-error)
     // without burning real tokens. The live half (real OpenAI key)
-    // is on Alex to run + post results — flagged in PROGRESS.md.
+    // is on the operator to run + post results — flagged in PROGRESS.md.
 
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};

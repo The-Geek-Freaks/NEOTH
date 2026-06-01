@@ -323,12 +323,12 @@ description: daily-news skill
 version: "0.1.0"
 trigger_keywords: ["news", "headlines"]
 system_prompt: "ok"
-author: "alex"
+author: "sam"
 tags: ["news", "daily"]
 homepage: "https://example.com/morning-news"
 "#;
         let m: SkillManifest = serde_yaml::from_str(yaml).expect("parse");
-        assert_eq!(m.author.as_deref(), Some("alex"));
+        assert_eq!(m.author.as_deref(), Some("sam"));
         assert_eq!(m.tags, vec!["news".to_string(), "daily".to_string()]);
         assert_eq!(
             m.homepage.as_deref(),
@@ -345,7 +345,7 @@ homepage: "https://example.com/morning-news"
             trigger_keywords: vec!["k".into()],
             system_prompt: "p".into(),
             tool_allowlist: vec![],
-            author: Some("alex".into()),
+            author: Some("sam".into()),
             tags: vec!["one".into(), "two".into()],
             homepage: Some("https://x".into()),
             source: None,
@@ -357,7 +357,7 @@ homepage: "https://example.com/morning-news"
             path: PathBuf::from("/tmp/x"),
             content_hash: String::new(),
         };
-        assert_eq!(s.author(), Some("alex"));
+        assert_eq!(s.author(), Some("sam"));
         assert_eq!(s.tags(), &["one".to_string(), "two".to_string()]);
         assert_eq!(s.homepage(), Some("https://x"));
         assert!(s.is_enabled());

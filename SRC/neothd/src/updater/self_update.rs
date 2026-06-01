@@ -1301,7 +1301,7 @@ mod tests {
             archive_sha256: "a".repeat(64),
             download_url: "https://example.com/neoth.tar.gz".into(),
             signature_status: "verified".into(),
-            staged_archive: "/home/alex/.neoth/staged/neoth.tar.gz".into(),
+            staged_archive: "/home/user/.neoth/staged/neoth.tar.gz".into(),
             target_triple: "x86_64-unknown-linux-gnu".into(),
             staged_ts_unix: 1_700_000_000,
         };
@@ -1312,7 +1312,7 @@ mod tests {
 
     #[test]
     fn pending_json_path_is_under_stage_dir() {
-        let p = pending_json_path(Path::new("/home/alex/.neoth/staged"));
+        let p = pending_json_path(Path::new("/home/user/.neoth/staged"));
         assert!(p.ends_with("pending.json"));
     }
 

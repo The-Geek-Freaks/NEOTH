@@ -101,7 +101,7 @@
 
 ---
 
-### 9. Jarvis / OpenClaw / Veronica (Alex's current system)
+### 9. Jarvis / OpenClaw / Veronica (operator's current system)
 **What exists (from JARVIS_DEEP_AUDIT.md):**
 - 12 separate memory stores with documented drift
 - hippo-turbo dedup threshold = 0.85 (documented in audit)
@@ -120,11 +120,11 @@
 |---|---|---|
 | **MemGPT: LLM edits own memory → corruption** | WAL + extraction pipeline; LLM writes profile_delta, not raw WAL | **MEDIUM** — profile_extract (Gemini 3.1 Pro, temp=0.0) still hallucinates; deterministic seed reduces variance but doesn't eliminate false claims. No external ground-truth oracle. |
 | **Mem0: timestamp hallucination** | `first_observed_ts: Hlc` and `last_confirmed_ts: Hlc` in ProfileClaim | **HIGH** — these timestamps are set by the extraction LLM or by the pipeline clock? Spec unclear. If extraction LLM sets the timestamp from conversation text, #4963-class bug is live. If pipeline sets from system clock, temporal references ("I used to work at X") lose their actual date. Lose either way without explicit timestamp-extraction step. |
-| **Mem0: cross-context contamination** | WAL events tagged with channel_id; `idx_profile` is per-user | **MEDIUM** — profile merging across Telegram/WhatsApp/Slack is intentional. If Alex uses two channels with different personas or sensitivity levels, cross-channel contamination is a design choice, not a bug. But the extractor doesn't know which channel's context should dominate. |
+| **Mem0: cross-context contamination** | WAL events tagged with channel_id; `idx_profile` is per-user | **MEDIUM** — profile merging across Telegram/WhatsApp/Slack is intentional. If the operator uses two channels with different personas or sensitivity levels, cross-channel contamination is a design choice, not a bug. But the extractor doesn't know which channel's context should dominate. |
 | **Mem0: config endpoint auth hole** | `neothctl` CLI; no mentioned auth on daemon API | **HIGH** — SPEC_skill_plugin shows WASM plugins get host function access. If a plugin can call `freedom_yaml.set()` or equivalent, it bypasses all category filters. No capability-restriction per plugin documented in the spec. |
 | **Cognee: fixed schema breaks on novel data** | `UserProfile` is a fixed Rust struct; `preferences.other: Vec<String>` is the escape hatch | **HIGH** — `Vec<String>` is a black hole. Over time, everything that doesn't fit the schema lands there. Retrieval from `other` degrades to keyword search over unstructured strings — which is what Jarvis's 12-store drift produced organically. |
-| **Replika: personality erasure via model update** | Migration: `neoth migrate import-jarvis` | **CRITICAL** — see Round 3, item 5 below. This is the highest-risk failure for Alex personally. |
-| **Pi.ai: cost-per-user economics** | 3 hemispheres + Council (2-10 rounds) + profile_extract per turn | **MEDIUM for solo-Alex, HIGH if ever multi-user** — see Round 3, item 4 below. |
+| **Replika: personality erasure via model update** | Migration: `neoth migrate import-jarvis` | **CRITICAL** — see Round 3, item 5 below. This is the highest-risk failure for the operator personally. |
+| **Pi.ai: cost-per-user economics** | 3 hemispheres + Council (2-10 rounds) + profile_extract per turn | **MEDIUM for solo operator, HIGH if ever multi-user** — see Round 3, item 4 below. |
 | **Friend.com: always-on privacy backlash** | OMI audio bridge deferred to Phase 2+ | **LOW now, HIGH in Phase 2** — spec has no "voice off by default" + visible indicator requirement. Add it before Phase 2 design starts. |
 | **Joel Spolsky: rewrite failure** | 14-day shadow run + parity-check | **MEDIUM** — 14 days catches functional regressions, not 6-month personality drift. See Round 3. |
 | **Jarvis 12-store drift** | Single WAL | **LOW → MEDIUM over time** — WAL solves day-1 drift. But as NEOTH adds features (each needs new event types), WAL becomes a mega-table. Already at 7 profile event types (0x30–0x36); tool events, session events, channel events, skill events are separate codes. This is organic accumulation — same root cause as the 12 stores. |
@@ -146,7 +146,7 @@ None of these is correct. The spec has no explicit stage for timestamp normaliza
 
 ### R3-2: The WAL-GDPR Paradox
 **Failure source:** GDPR Article 17 (right to erasure); WAL design in SPEC_wal_.  
-**NEOTH exposure:** PROFILE_REDACT (0x33) zero-fills the old value in the WAL segment. But the WAL event itself remains — it records `field_name`, `operator_id`, and the existence of a redaction. Under GDPR, if the field name itself constitutes personal data (e.g., a health condition fieldname that reveals a diagnosis), the tombstone record is not compliant. More critically: WAL segments are append-only by design. "Zero-filling" in an append-only log means writing a new event that says "old value = [ZERO]" — but the old event still physically exists in the segment until compaction. If compaction never runs (solo-Alex system, no operational pressure), the old value sits in the raw segment file indefinitely.
+**NEOTH exposure:** PROFILE_REDACT (0x33) zero-fills the old value in the WAL segment. But the WAL event itself remains — it records `field_name`, `operator_id`, and the existence of a redaction. Under GDPR, if the field name itself constitutes personal data (e.g., a health condition fieldname that reveals a diagnosis), the tombstone record is not compliant. More critically: WAL segments are append-only by design. "Zero-filling" in an append-only log means writing a new event that says "old value = [ZERO]" — but the old event still physically exists in the segment until compaction. If compaction never runs (solo-operator system, no operational pressure), the old value sits in the raw segment file indefinitely.
 
 **The spec says:** "The redaction event records only field name and operator_id; the old value is zero-filled in the WAL segment." This does not describe physical deletion — it describes in-place modification of an append-only log, which is a contradiction in terms for WAL files.
 
@@ -157,7 +157,7 @@ None of these is correct. The spec has no explicit stage for timestamp normaliza
 ### R3-3: Permission-Fatigue on `freedom.yaml`
 **Failure source:** Every PII opt-in product (Replika, Friend.com, Pi).  
 **NEOTH exposure:** `freedom.yaml` has `profile.learn.categories.health = false` as default-off. Two observed user behaviors from peer products:
-- **Type A (Alex):** Power user who reads the YAML, sets fine-grained config on day 1, then never touches it. Six months later, the config no longer reflects reality because interests/sensitivity changed. No re-consent mechanism.
+- **Type A (power user):** Reads the YAML, sets fine-grained config on day 1, then never touches it. Six months later, the config no longer reflects reality because interests/sensitivity changed. No re-consent mechanism.
 - **Type B (future users if NEOTH ever expands):** Never reads YAML, uses whatever default is set. Default-off health means health conversations generate zero profile signal — the agent appears dumb about health topics. User adds `health = true` once, forgets. Agent now stores every health mention indefinitely.
 
 **The spec has no re-consent or config-staleness mechanism.** Fix: `PROFILE_PAUSE` (0x34) exists for pause-on-demand, but there's no periodic "does this still reflect your preferences?" trigger. Add a decay-driven config review: if `freedom.yaml` hasn't been touched in N days, surface a single review prompt. One prompt, not a nagging loop.
@@ -173,9 +173,9 @@ None of these is correct. The spec has no explicit stage for timestamp normaliza
 - `corpus_callosum_check`: GPT-5.5, dissent evaluation
 - If dissent_score > 0.4: `council_debate.yaml` — 2-10 additional rounds across all three models
 
-**Conservative estimate for a contested turn:** 3 LLM calls × ~2000 tokens average + council (4 rounds × 3 models × ~1500 tokens) = ~26,000 tokens. At Claude Opus 4.7 pricing (~$0.015/K output tokens), a single council-triggered turn costs ~$0.39. At 50 messages/day, that's ~$19.50/day or ~$585/month for solo-Alex. At $0.10/turn (non-council average), still ~$150/month.
+**Conservative estimate for a contested turn:** 3 LLM calls × ~2000 tokens average + council (4 rounds × 3 models × ~1500 tokens) = ~26,000 tokens. At Claude Opus 4.7 pricing (~$0.015/K output tokens), a single council-triggered turn costs ~$0.39. At 50 messages/day, that's ~$19.50/day or ~$585/month for a solo operator. At $0.10/turn (non-council average), still ~$150/month.
 
-**This is not a problem for solo-Alex if budget allows.** It IS a problem if:
+**This is not a problem for a solo operator if budget allows.** It IS a problem if:
 - The council trigger threshold (0.4) is calibrated too low → council fires on benign disagreements
 - The spec has a `cost_budget_usd: 0.05` per-turn cap on respond_to_user pipeline — but council_debate is a separate pipeline with its own budget, meaning the $0.05 cap doesn't cover the full turn cost
 
@@ -199,7 +199,7 @@ neoth migrate parity-check
 
 **`parity-check` tests functional correctness** — does NEOTH answer questions Jarvis answered correctly? It does NOT test "does NEOTH feel like Jarvis?" Replika's users lost their AI not because it forgot facts but because its behavioral texture changed. 14-day shadow run cannot measure 6-month personality divergence.
 
-**The risk is real and personal for Alex:** After cutover, NEOTH will be factually complete but behaviorally new. Alex will notice immediately — the Kumpel-vibe (documented in spec as a brand concern) is a behavioral property that requires interaction history to calibrate, not a flag you import.
+**The risk is real and personal for the operator:** After cutover, NEOTH will be factually complete but behaviorally new. The operator will notice immediately — the Kumpel-vibe (documented in spec as a brand concern) is a behavioral property that requires interaction history to calibrate, not a flag you import.
 
 **Fix:** Explicit behavioral regression test suite that measures tone/register/humor distribution across 100 historical Jarvis conversations, compared against NEOTH responses to identical prompts. Not functional equality — behavioral similarity scoring. This is a solvable engineering problem (cosine similarity on embedding of response style vectors) but it's not in the spec.
 
@@ -210,7 +210,7 @@ neoth migrate parity-check
 **NEOTH exposure:** SPEC_skill_plugin mentions WASM plugins with host function access. WASM provides memory sandboxing but:
 - Host functions exposed to WASM guests define the capability boundary. If `freedom_yaml.read()` is a host function (needed for plugins to respect user preferences), `freedom_yaml.write()` is one API call away from a bypass.
 - Plugin identity: how does NEOTH verify a WASM binary hasn't been tampered with after install? SHA-256 hash in `marketplace.json` at install time is correct — but does NEOTH re-verify on each load? Cold-start replay attacks on modified WASM binaries are a real class.
-- Marketplace vs. local plugins: the spec allows local WASM files (inferred from skill directory structure). A local file has no marketplace provenance. Social-engineering Alex into installing a malicious local skill is a credible attack vector given NEOTH's privileged access to all communication channels.
+- Marketplace vs. local plugins: the spec allows local WASM files (inferred from skill directory structure). A local file has no marketplace provenance. Social-engineering the operator into installing a malicious local skill is a credible attack vector given NEOTH's privileged access to all communication channels.
 
 **Fix (minimum):** Define a whitelist of host functions that plugins can call. `freedom_yaml.write()` should not be a plugin-callable host function. Plugin manifest must declare required host functions at install time — any undeclared calls fail at WASM boundary.
 
@@ -228,10 +228,10 @@ Novel personal data categories will accumulate in untyped escape hatches. After 
 Zero-filling in an append-only log is not deletion. For personal use this is acceptable; for any multi-user Phase 3+, it's a compliance blocker. The spec uses "zero-filled" language that implies deletion without specifying compaction semantics. Severity: MEDIUM now, CRITICAL at any multi-user scale.
 
 **4. Gestalt personality is not importable** (Replika February 2023 / Joel Spolsky rewrite)  
-Parity-check measures functional correctness, not behavioral texture. After cutover, NEOTH will be factually correct and behaviorally unfamiliar. This is the highest personal-risk failure for Alex specifically — and the one with no technical workaround in the current spec. Severity: CRITICAL for user experience continuity.
+Parity-check measures functional correctness, not behavioral texture. After cutover, NEOTH will be factually correct and behaviorally unfamiliar. This is the highest personal-risk failure for the operator specifically — and the one with no technical workaround in the current spec. Severity: CRITICAL for user experience continuity.
 
 **5. Council trigger threshold drives unbounded cost** (Pi.ai unit economics)  
-`dissent_score > 0.4` threshold for council_debate is not calibrated against actual dissent rate distributions. If 30% of turns exceed threshold, the real per-turn cost is 4-10x the spec's $0.05 budget. The spec's cost cap covers respond_to_user, not council_debate, which is a separate pipeline. Severity: MEDIUM for solo-Alex, HIGH as daily usage scales.
+`dissent_score > 0.4` threshold for council_debate is not calibrated against actual dissent rate distributions. If 30% of turns exceed threshold, the real per-turn cost is 4-10x the spec's $0.05 budget. The spec's cost cap covers respond_to_user, not council_debate, which is a separate pipeline. Severity: MEDIUM for solo operator, HIGH as daily usage scales.
 
 ---
 

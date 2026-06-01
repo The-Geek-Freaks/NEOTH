@@ -21,7 +21,7 @@ Of the 96 deferred, **breakdown by closure path**:
 |------|-------|--------|
 | **Already shipped — stale doc** | 14 | One PROGRESS.md cleanup commit (Workstream A) |
 | **Bounded code wire-up** | 32 | Workstreams B-N, grouped by file |
-| **Operator-side (Alex's infra/keys/hardware)** | 18 | Workstream O — mark `[x] operator-side` |
+| **Operator-side (infra/keys/hardware)** | 18 | Workstream O — mark `[x] operator-side` |
 | **Slint GUI R-1 (multi-week parent)** | 13 | Workstream P — single roadmap item |
 | **Multi-week parents (already split)** | 19 | Folded into Workstreams G/H/I/L/M |
 
@@ -92,7 +92,7 @@ lines were carrying stale documentation. References to the shipping commits
 are now in each line so future grep-archaeologists find the actual ship.
 
 Operator-side items (4) flip to [x] with explicit "operator action: <cmd>"
-notes so the deferred list reflects what's actually NEOTH-side vs Alex-side.
+notes so the deferred list reflects what's actually NEOTH-side vs operator-side.
 
 K-Wire-3 (3 dupes) consolidates into the main entry at line 2720. GUI
 dupes (AU-7, CH-07, P-03, G-4) point at their canonical G-XX entries.
@@ -617,7 +617,7 @@ remains OFF + drift-guarded.
 
 ---
 
-## Workstream O — Operator-side actions (Alex does these, NO code session)
+## Workstream O — Operator-side actions (NO code session needed)
 
 These 18 items need operator infrastructure, keys, hardware, or cloud accounts. Flip to `[x] operator-side` with a one-line "operator action: <cmd>" in PROGRESS:
 

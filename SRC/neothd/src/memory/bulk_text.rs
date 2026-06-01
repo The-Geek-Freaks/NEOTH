@@ -239,13 +239,13 @@ mod tests {
     fn heuristic_splits_paragraphs_and_drops_short_chunks() {
         let text = "\
             NEOTH builds locally on Windows only.\n\
-            Cube is at 100.68.210.50 and must not be remote-rebooted.\n\
+            Primary server is at 10.0.0.1 and must not be remote-rebooted.\n\
             \n\
             Telegram bot uses long-polling for v0.1.\n\
             ok\n";
         let claims = extract_claims_heuristic(text);
         assert!(claims.iter().any(|c| c.statement.contains("Windows")));
-        assert!(claims.iter().any(|c| c.statement.contains("100.68.210.50")));
+        assert!(claims.iter().any(|c| c.statement.contains("10.0.0.1")));
         assert!(claims.iter().any(|c| c.statement.contains("Telegram")));
         // "ok" is below MIN_CLAIM_CHARS → dropped.
         assert!(!claims.iter().any(|c| c.statement == "ok"));
@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn heuristic_dedup_ignores_trailing_punctuation() {
-        let text = "The Cube is 100.68.210.50.\n\nThe Cube is 100.68.210.50";
+        let text = "The server is 10.0.0.1.\n\nThe server is 10.0.0.1";
         let claims = extract_claims_heuristic(text);
         assert_eq!(claims.len(), 1);
     }
@@ -293,13 +293,13 @@ mod tests {
     #[test]
     fn heuristic_splits_list_items() {
         let text = "Bullet list of facts:\n\
-            - The Cube runs Unraid with three GPUs at 100.68.210.50\n\
-            - The Jarvis VM is on 192.168.178.117 and serves as the gateway\n\
+            - The primary server runs Unraid with three GPUs at 10.0.0.1\n\
+            - The gateway VM is on 10.0.0.2 and serves as the proxy\n\
             * Star-bullet works too if the operator prefers it\n\
             1. Numbered list items also work after stripping the prefix\n";
         let claims = extract_claims_heuristic(text);
         assert!(claims.len() >= 3, "expected ≥3 claims, got {claims:?}");
-        assert!(claims.iter().any(|c| c.statement.starts_with("The Cube")));
+        assert!(claims.iter().any(|c| c.statement.starts_with("The primary server")));
         assert!(claims.iter().any(|c| c.statement.starts_with("Numbered")));
     }
 
@@ -353,15 +353,15 @@ mod tests {
 
     #[test]
     fn llm_output_parses_lines_and_strips_bullets() {
-        let raw = "- Alex prefers German for chat\n\
+        let raw = "- The operator prefers German for chat\n\
                    * Code stays in English\n\
                    1. NEOTH uses MSVC on Windows\n\
                    • Bullet-with-unicode also strips\n\
                    \n\
                    The daemon writes WAL frames before any provider call.\n";
         let claims = parse_llm_output(raw);
-        // First claim ("Alex prefers German for chat") is 29 chars — passes MIN.
-        assert!(claims.iter().any(|c| c.statement.contains("Alex prefers")));
+        // First claim ("The operator prefers German for chat") is 37 chars — passes MIN.
+        assert!(claims.iter().any(|c| c.statement.contains("operator prefers")));
         assert!(
             claims
                 .iter()
@@ -379,9 +379,9 @@ mod tests {
 
     #[test]
     fn llm_output_dedupes_across_lines() {
-        let raw = "Alex builds NEOTH on Windows.\n\
-                   alex builds neoth on windows\n\
-                   ALEX BUILDS NEOTH ON WINDOWS.\n";
+        let raw = "The operator builds NEOTH on Windows.\n\
+                   the operator builds neoth on windows\n\
+                   THE OPERATOR BUILDS NEOTH ON WINDOWS.\n";
         let claims = parse_llm_output(raw);
         assert_eq!(claims.len(), 1);
     }

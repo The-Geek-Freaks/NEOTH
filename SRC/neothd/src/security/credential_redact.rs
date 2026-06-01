@@ -85,7 +85,7 @@ impl ImportSource {
 /// just allocate a transient plaintext `String` on the way to
 /// /dev/null. Caller keeps the secret in a [`super::super::credentials::SecretBytes`]
 /// outside this redaction path and hands it to the secret-store
-/// writer directly. Field removed 2026-05-26 per Alex's review:
+/// writer directly. Field removed 2026-05-26 per operator review:
 /// "redaction record rebuilds Strings from secrets".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialEntry {
@@ -286,7 +286,7 @@ mod tests {
             vec![entry(
                 "PayPal",
                 "https://paypal.com",
-                "alex@example.com",
+                "sam@example.com",
                 &["work"],
             )],
         );
@@ -296,7 +296,7 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         assert!(!json.contains("PayPal"));
         assert!(!json.contains("paypal.com"));
-        assert!(!json.contains("alex@example.com"));
+        assert!(!json.contains("sam@example.com"));
     }
 
     #[test]

@@ -17,15 +17,15 @@
 //!    standard `messages` envelope. Adapters that need their own
 //!    request format (Cohere, classic Bedrock invoke) get their own
 //!    `InferenceProvider` variant instead.
-//! 2. **Direct provider, not a gateway** — Alex's architectural
-//!    correction (Session 14, 2026-05-18): NEOTH supersedes gateways
+//! 2. **Direct provider, not a gateway** — architectural correction
+//!    (Session 14, 2026-05-18): NEOTH supersedes gateways
 //!    like Hermes / OpenClaw / Airforce / Routeway. Those don't
 //!    belong here. OpenRouter is the deliberate exception — it's a
 //!    routing service explicitly designed to expose every provider
 //!    behind one endpoint, complementary to NEOTH's per-provider
 //!    config rather than competing with it.
 //! 3. **Public API documentation** — operators must be able to
-//!    obtain credentials + read the spec without contacting Alex.
+//!    obtain credentials + read the spec independently.
 //! 4. **Currently maintained** — last platform update within 6
 //!    months at curation time. Drift-checked annually.
 //!
@@ -383,9 +383,9 @@ mod tests {
     }
 
     #[test]
-    fn alex_curated_providers_present() {
+    fn curated_providers_present() {
         // Pin the AIRFORCE-research outcomes: every direct-provider
-        // identified in Alex's competitor scan must be in the catalog.
+        // identified in the competitor scan must be in the catalog.
         let must_have = [
             "deepseek",
             "xai",

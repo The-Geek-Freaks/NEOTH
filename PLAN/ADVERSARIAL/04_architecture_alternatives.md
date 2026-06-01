@@ -7,7 +7,7 @@ Source: architect agent, 3-round adversarial.
 | Decision | NEOTH choice | Best alternative | Verdict |
 |----------|--------------|------------------|---------|
 | WAL backend | Custom 96B binary | SQLite WAL-mode + FTS5 OR fjall (Rust LSM) OR LMDB | **Alt wins Phase 1-2.** Custom WAL is reimplementing what SQLite/fjall do correctly with 20 years of testing. Importance-weighted GC is the ONLY thing justifying custom — and it could be a SQLite trigger. |
-| 3 LLM hemispheres | Claude+Gemini+Codex | Single LLM + multi-pass reflection OR single+tool-use | **Partially wrong.** Privacy model undocumented: Alex's conversations go to BOTH Anthropic AND Google APIs on every exchange. Profile-extraction-via-Gemini = personal data permanently routed through 2 cloud providers. |
+| 3 LLM hemispheres | Claude+Gemini+Codex | Single LLM + multi-pass reflection OR single+tool-use | **Partially wrong.** Privacy model undocumented: the operator's conversations go to BOTH Anthropic AND Google APIs on every exchange. Profile-extraction-via-Gemini = personal data permanently routed through 2 cloud providers. |
 | Pipeline framework | YAML declarative pipelines | Tokio actor model OR no framework | **Both OK, costs understated.** Pipeline template engine + hash verifier = custom infrastructure built BEFORE first feature. Rust type system does the actual safety; YAML is documentation+operability. |
 | WASM plugins | Compiled-in inventory crate | WASM via wasmtime OR MCP-only | **NEOTH wins for solo operator.** WASM justified only if non-Rust extension authors exist. |
 | 6 brain regions | RegionTag enum 7 values | No tag, route by event_type | **Both OK, but `brain_region` in PayloadPrefixV4 is DECORATIVE** — not in EventHeaderV2 hot-path. Routing already uses event_type. The metaphor is for developer cognition, runtime cost ≈ 0. |
@@ -19,8 +19,8 @@ Source: architect agent, 3-round adversarial.
 
 **M1 — No local generative model for extraction (CRITICAL — Phase 1 decision)**
 Spec: Qwen3-Embedding 0.6B (encoder only). Profile-extraction via Gemini 3.1 Pro API.
-Reality: Alex's Cube has 3 GPUs. Qwen3-4B INT4 fits ~3GB VRAM, runs ~25 tok/s.
-Consequence of missing: every Alex conversation goes to Google's API permanently. `freedom.yaml profile.learn.health=false` prevents NEOTH storing health claims, but doesn't prevent SENDING health-containing conversation text to Gemini for analysis. **The privacy table claim "Profile to outbound providers: Never" is technically true but operationally false: the source data goes to Google.**
+Reality: Operator's Cube has 3 GPUs. Qwen3-4B INT4 fits ~3GB VRAM, runs ~25 tok/s.
+Consequence of missing: every operator conversation goes to Google's API permanently. `freedom.yaml profile.learn.health=false` prevents NEOTH storing health claims, but doesn't prevent SENDING health-containing conversation text to Gemini for analysis. **The privacy table claim "Profile to outbound providers: Never" is technically true but operationally false: the source data goes to Google.**
 Fix: model abstraction in `profile_learn.yaml` = `model: local_qwen3_4b | gemini | claude` from day one. Decision must lock in Phase 1, retrofit is major architecture change.
 
 **M2 — No proactive output architecture**
@@ -30,12 +30,12 @@ Fix: reserve `async fn send_proactive(chat_id, text) -> Result<MessageId, _>` on
 
 **M3 — No personality baseline snapshot**
 Spec: Hebbian decay 0.995/day, no anchor.
-Reality: after 18 months Alex goes through stressful period × 200 messages → `emotional_baseline.typical_state = stressed` reaches 0.9. Stress passes, but old events never get SUPERSEDE (no contradiction). Confidence decays slowly while new claims keep reinforcing. NEOTH's model of Alex drifts to highest-volume periods, not stable baseline.
+Reality: after 18 months the operator goes through a stressful period × 200 messages → `emotional_baseline.typical_state = stressed` reaches 0.9. Stress passes, but old events never get SUPERSEDE (no contradiction). Confidence decays slowly while new claims keep reinforcing. NEOTH's model of the operator drifts to highest-volume periods, not stable baseline.
 Fix: emit `PROFILE_BASELINE_SNAPSHOT` event (0x37) at Phase 3 seed migration Day 65. Never decayed, never compacted (importance=1.0). Phase 4 drift report compares current `idx_profile` against this snapshot.
 
 **M4 — No sleep/consolidation tied to actual sleep**
 Spec: Dreaming-Pipeline every 2h wall-clock.
-Reality: humans consolidate memory during sleep. If `idx_profile.schedule.sleep_schedule` has confidence ≥ 0.7, NEOTH should run heavy consolidation when Alex sleeps (zero user-facing latency cost) and lightweight maintenance during waking hours.
+Reality: humans consolidate memory during sleep. If `idx_profile.schedule.sleep_schedule` has confidence ≥ 0.7, NEOTH should run heavy consolidation when the operator sleeps (zero user-facing latency cost) and lightweight maintenance during waking hours.
 Fix: `CircadianScheduler` reads `idx_profile.schedule.sleep_schedule`, adjusts cron triggers for `wal_compact.yaml`. Falls back to 03:30 if no schedule known. Phase 4.
 
 **M5 — Privacy architecture for cloud-routed data (THE HOLE)**

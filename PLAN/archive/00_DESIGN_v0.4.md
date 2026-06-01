@@ -1,6 +1,6 @@
 # AGENTER — Design v0.4 (Framework v4.1 "Pflegbarer Garten" + Hirn-Anatomie)
 
-> **Foundation:** `C:\Users\Shadow-PC\Downloads\tool_framework_v4_1.md` (3 Schichten, 5 Zutaten, GoL-Pattern, Via-Negativa-Kern).
+> **Foundation:** `tool_framework_v4_1.md` (3 Schichten, 5 Zutaten, GoL-Pattern, Via-Negativa-Kern).
 > **Architektur-Metapher:** menschliches Hirn. Zwei Hemisphären-LLMs + Corpus-Callosum-LLM, 12 Memory-Layer als anatomische Regionen.
 > **Locked-In Entscheidungen (User 2026-05-12):**
 > - Sprache: Rust core + ASM-Kernels via FFI

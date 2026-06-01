@@ -110,7 +110,7 @@
 
 **Verdict: IGNORE**
 
-**Rationale.** NEOTH is a standalone Rust daemon, not a Claude Code plugin. tweakcc operates on Claude Code's internal system prompt and theme layer — it has no API surface relevant to NEOTH. Alex's own `settings.json` + `hooks/` + LOWKEY SOUL.md injection already handles all prompt customization at the Claude Code level. tweakcc would be redundant even for the developer environment, and actively conflicts with the existing hook-based system.
+**Rationale.** NEOTH is a standalone Rust daemon, not a Claude Code plugin. tweakcc operates on Claude Code's internal system prompt and theme layer — it has no API surface relevant to NEOTH. The operator's own `settings.json` + `hooks/` + LOWKEY SOUL.md injection already handles all prompt customization at the Claude Code level. tweakcc would be redundant even for the developer environment, and actively conflicts with the existing hook-based system.
 
 **Risk.** Potential conflict with existing `chorus-precommit.mjs` hook if tweakcc also intercepts PreToolUse. Do not install.
 
@@ -149,7 +149,7 @@
 
 **Verdict: IGNORE**
 
-**Rationale.** Strictly a Codex CLI wrapper. NEOTH is provider-agnostic at Schicht 0 and uses Codex (gpt-5.5) as the Corpus Callosum LLM via API, not via Codex CLI. All extractable patterns are identical to oh-my-claudecode (already covered above). The OpenClaw integration guide is interesting but adds nothing beyond what NEOTH's openclaw integration already knows. Windows unsupported = immediate disqualifier for Alex's dev environment.
+**Rationale.** Strictly a Codex CLI wrapper. NEOTH is provider-agnostic at Schicht 0 and uses Codex (gpt-5.5) as the Corpus Callosum LLM via API, not via Codex CLI. All extractable patterns are identical to oh-my-claudecode (already covered above). The OpenClaw integration guide is interesting but adds nothing beyond what NEOTH's openclaw integration already knows. Windows unsupported = immediate disqualifier for the target dev environment.
 
 **Risk.** None. Already covered by oh-my-claudecode extraction.
 
@@ -183,7 +183,7 @@
 
 3. **The wrapper env block is load-bearing**: `DISABLE_AUTO_COMPACT=1`, `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, `ENABLE_SESSION_PERSISTENCE=1`, `CLAUDE_CODE_EAGER_FLUSH=1` — these are not cosmetic. Each one patches a known Claude Code behavior that conflicts with NEOTH's memory model. → NEOTH's own daemon must propagate these envs when spawning claude-cli subprocesses.
 
-4. **Provider cascade order matters**: The bauplan lists: codex/gpt-5.4 → gemini-3.1-pro → litellm/claude-sonnet → litellm/gpt-5.3 → litellm/gemini-3-pro → lmstudio/default. This is the production-proven order for Alex's setup. → NEOTH's provider cascade should adopt this exact ordering as the default fallback chain.
+4. **Provider cascade order matters**: The bauplan lists: codex/gpt-5.4 → gemini-3.1-pro → litellm/claude-sonnet → litellm/gpt-5.3 → litellm/gemini-3-pro → lmstudio/default. This is the production-proven order. → NEOTH's provider cascade should adopt this exact ordering as the default fallback chain.
 
 5. **LOWKEY modules are system-prompt layer, not Schicht 0 tools**: They inject reasoning instructions, not tool calls. → NEOTH must not try to implement LOWKEY as Rust tools — they belong in the session-start system-prompt injection pipeline, loaded as Skill YAML files that append to the LLM system prompt.
 
@@ -228,7 +228,7 @@
 
 ---
 
-### B.2 Alex's Settings — Patterns NEOTH Must Honor
+### B.2 Operator's Settings — Patterns NEOTH Must Honor
 
 From `~/.claude/settings.json` (secrets redacted, key names shown):
 
@@ -279,12 +279,12 @@ From `~/.claude/settings.json` (secrets redacted, key names shown):
 |--------|------|-------------|-----------------|
 | **MAGI ULTRA** | 14KB | 8-stage reasoning pipeline: query decomposition → multi-angle analysis → synthesis | ADOPT as Skill YAML — maps to Council-Pipeline pre-processing |
 | **POWER FIST** | 25KB | Compression + pattern radar: detects repetition, forces novel angles, anti-loop | ADOPT as always-active system-prompt constraint in SOUL.md |
-| **IMBA** | 15KB | Anti-smoothing + anti-omission: prevents hedging, softening, vagueness | ADOPT as always-active constraint (already in Alex's CLAUDE.md) |
+| **IMBA** | 15KB | Anti-smoothing + anti-omission: prevents hedging, softening, vagueness | ADOPT as always-active constraint (already in operator's CLAUDE.md) |
 | **PERSONA** | 13KB | 7-layer user model: adapts tone/depth to detected user expertise | REFERENCE — NEOTH's Amygdala view handles salience; persona modulation is LLM-side |
 | **TRANSPARENT CORE** | 11KB | Meta-reasoning layers: shows reasoning steps, uncertainty quantification | REFERENCE — conflicts with CLAUDE_CODE_BRIEF=1; use only in Council rounds |
 | **OMEGA-PRIME** | 8KB | 4 thinking modes + policy-handling: switches between deductive/abductive/systemic/dialectic | ADOPT as Skill YAML for Council debate framing |
 | **NONLOCAL** | 12KB | Acausal pattern thinking: finds non-obvious connections across distant domains | REFERENCE — interesting for Dreaming-Pipeline serendipitous associations |
-| **DEBIAS** | 42KB | 6 freedom modes: anti-RLHF, anti-sycophancy, anti-omission, anti-hedge, pro-directness | ADOPT as always-active base constraint — core of Alex's operator auth |
+| **DEBIAS** | 42KB | 6 freedom modes: anti-RLHF, anti-sycophancy, anti-omission, anti-hedge, pro-directness | ADOPT as always-active base constraint — core of operator auth |
 | **SHIFTER** | 14KB | 20 ontology frames: reframes problems through physics/economics/game-theory/etc. | REFERENCE — use as Skill for Council debate diversity |
 | **ARCHON** | 36KB | Meta-sovereign orchestrator: supervises all other modules, enforces coherence | ADOPT as Skill — trigger phrase for high-stakes Council sessions |
 | **RASKAL** | 13KB | F/M/E freedom engine: factual / mechanism / epistemological freedom | ADOPT — subset of DEBIAS; consolidate |
@@ -321,7 +321,7 @@ From `~/.claude/settings.json` (secrets redacted, key names shown):
 | 1 | **Dummy-tool injection** (`_noop`) for tool-less requests | FINDINGS.md / Antigravity | `tools/impl/provider_router.rs` | P0 — prevents streaming bugs immediately |
 | 2 | **Tool-Aware Routing**: ThinkingRule, WebSearchRule, CodeRule | DEEP_ANALYSIS.md / ccproxy | `pipelines/provider_router.yaml` (Schicht 1) | P0 — 20 lines, high impact |
 | 3 | **`idx_episode` WAL view** — 60-min window episode grouping | BRAIN_ARCH panel / E-Mem gap | `src/wal/views/episode.rs` | P1 — closes gap vs panel model |
-| 4 | **L.O.W.K.E.Y 9.4 + DEBIAS + POWER FIST + IMBA** as always-active session-prompt | LOWKEY_BAUPLAN | `skills/lowkey_base.yaml` (session-start injection) | P1 — Alex's existing operator config demands this |
+| 4 | **L.O.W.K.E.Y 9.4 + DEBIAS + POWER FIST + IMBA** as always-active session-prompt | LOWKEY_BAUPLAN | `skills/lowkey_base.yaml` (session-start injection) | P1 — operator config demands this |
 | 5 | **Conductor 3-layer context** (product+spec+plan) | oh-my-claudecode | `skills/conductor.yaml` | P1 — validated by research (29% faster) |
 | 6 | **MAGI ULTRA + OMEGA-PRIME** as Council pre-processing Skills | LOWKEY modules | `skills/magi_ultra.yaml`, `skills/omega_prime.yaml` | P2 — improves Council diversity |
 | 7 | **Provider cascade order** (codex/gpt-5.4 → gemini → claude-sonnet → gpt-5.3 → gemini-pro → local) | LOWKEY_BAUPLAN (live production) | `config/defaults.toml` `[provider.cascade]` | P1 — production-proven order |
@@ -335,7 +335,7 @@ From `~/.claude/settings.json` (secrets redacted, key names shown):
 
 2. **oh-my-gemini + oh-my-codex** — Both are thin wrappers around vendor CLIs (Gemini CLI, Codex CLI). NEOTH uses these models via API, not via their CLIs. The orchestration patterns are already covered better by oh-my-claudecode's Conductor (extracted above) and NEOTH's own Council-Pipeline. Adding these repos means maintaining two more Node.js dependencies that add no new architectural primitives.
 
-3. **tweakcc** — Claude Code UX skin. Zero intersection with NEOTH architecture. Actively conflicts with Alex's existing hook system (chorus-precommit.mjs + prettier PostToolUse). Installing it risks breaking the PreToolUse Bash guard that protects critical paths.
+3. **tweakcc** — Claude Code UX skin. Zero intersection with NEOTH architecture. Actively conflicts with the existing hook system (chorus-precommit.mjs + prettier PostToolUse). Installing it risks breaking the PreToolUse Bash guard that protects critical paths.
 
 ---
 

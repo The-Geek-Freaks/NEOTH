@@ -22,7 +22,7 @@
 //! application (paperless + redis + postgres + tika + gotenberg).
 //! The bare-metal install path requires the operator to install
 //! tesseract + redis + postgres + python venv themselves — out of
-//! scope for "would Alex's mom on a fresh Win11 laptop reach the
+//! scope for "would a non-technical user on a fresh Win11 laptop reach the
 //! wizard?". When Docker is unavailable, the wizard prints the
 //! upstream install URL + tells the operator we'll auto-detect
 //! once they have it running.

@@ -1369,8 +1369,8 @@ fn check_node_toolchain(home: &Path) -> CheckOutcome {
 }
 
 /// NOOB-UX-6: probe tmux on PATH. Warn only when provider_kind ==
-/// ClaudeCli, since claude-cli's only working backend in Alex's
-/// setup is the tmux warm-session path.
+/// ClaudeCli, since claude-cli's only working backend on some setups
+/// is the tmux warm-session path.
 fn check_tmux_for_claude_cli(home: &Path) -> CheckOutcome {
     let needs_tmux = freedom_uses_claude_cli(home);
     match (probe_version_sync("tmux"), needs_tmux) {
@@ -3063,7 +3063,7 @@ mod tests {
     #[test]
     fn freedom_yaml_present_and_parseable_passes() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("freedom.yaml"), "operator_id: alex\n").unwrap();
+        std::fs::write(dir.path().join("freedom.yaml"), "operator_id: demo-user\n").unwrap();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -3295,7 +3295,7 @@ mod tests {
         let bogus = dir.path().join("not-a-dir.txt");
         std::fs::write(&bogus, "x").unwrap();
         let yaml = format!(
-            "operator_id: alex\nautonomy: standard\ncloud_archive_dest: {}\n",
+            "operator_id: demo-user\nautonomy: standard\ncloud_archive_dest: {}\n",
             bogus.display().to_string().replace('\\', "/")
         );
         std::fs::write(dir.path().join("freedom.yaml"), yaml).unwrap();
@@ -3308,7 +3308,7 @@ mod tests {
     fn check_cloud_archive_warns_when_dest_missing() {
         let dir = tempdir().unwrap();
         let yaml =
-            "operator_id: alex\nautonomy: standard\ncloud_archive_dest: /definitely/not/here\n";
+            "operator_id: demo-user\nautonomy: standard\ncloud_archive_dest: /definitely/not/here\n";
         std::fs::write(dir.path().join("freedom.yaml"), yaml).unwrap();
         let o = check_cloud_archive_dest(dir.path());
         assert_eq!(o.status, CheckStatus::Warn);

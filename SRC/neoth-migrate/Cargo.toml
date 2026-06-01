@@ -5,7 +5,7 @@ edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 repository.workspace   = true
-description = "Phase-3 cutover binary — migrates 12 Jarvis memory stores into the NEOTH WAL + tier views."
+description = "Phase-3 cutover binary — migrates 12 prior-agent memory stores into the NEOTH WAL + tier views."
 
 # V10-06 GA blocker. Ships as a SEPARATE binary from `neothd` so a
 # release of the daemon doesn't carry the migration-only deps

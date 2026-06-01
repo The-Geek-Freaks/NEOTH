@@ -341,9 +341,9 @@ mod tests {
     }
 
     /// Real-skeleton drift guard #1: every body MUST carry the
-    /// workflow's name verbatim (Alex flagged 2026-05-26 that the
-    /// previous placeholder body claimed "Top-10 starter workflows"
-    /// while all 10 bodies were identical).
+    /// workflow's name verbatim (regression: the previous placeholder
+    /// body claimed "Top-10 starter workflows" while all 10 bodies
+    /// were identical).
     #[test]
     fn each_starter_body_contains_its_own_name() {
         for (spec, w) in STARTER_SPECS.iter().zip(starter_workflows().iter()) {
@@ -455,8 +455,8 @@ mod tests {
     }
 
     /// Real-skeleton drift guard #7: bodies MUST differ across
-    /// workflows (the regression Alex flagged was identical bodies
-    /// for all 10). Pairwise check.
+    /// workflows (regression: identical bodies for all 10 was the
+    /// original placeholder bug). Pairwise check.
     #[test]
     fn starter_bodies_are_distinct_across_workflows() {
         let bodies: Vec<&str> = starter_workflows().iter().map(|w| w.body).collect();

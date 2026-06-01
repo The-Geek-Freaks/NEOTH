@@ -38,7 +38,7 @@ File: ui/main.slint:408-423
 Root cause: LineEdit uses text <=> root.operator-id (correct two-way binding).
 operator-id initialises to empty string (line 80). Continue button gated on
 enabled: operator-id != empty string (line 423). Slint placeholder-text is cosmetic;
-it does NOT populate text. Operator sees "alex" in the empty field and believes
+it does NOT populate text. Operator sees the placeholder text in the empty field and believes
 the value is already set. Button stays disabled until they actively type.
 Reproduces the reported bug exactly.
 
@@ -47,7 +47,7 @@ Fix (main.rs before window.run()):
     if let Ok(user) = std::env::var("USERNAME").or_else(|_| std::env::var("USER")) {
         if !user.is_empty() { window.set_operator_id(user.into()); }
     }
-    // Also update placeholder-text: "Type your handle (e.g. alex)"
+    // Also update placeholder-text: "Type your handle (e.g. your-handle)"
 
 ---
 

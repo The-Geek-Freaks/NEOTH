@@ -1,15 +1,15 @@
 # Handoff — Session 25 → Session 26 (execution-ready)
 
 **Date:** 2026-05-26
-**Predecessor:** Session 24 closed the v0.3 lane (15 items: M-01/05/06/07 + AR-01..05 + R-01..06 + R-03, ~144 new tests). Session 25 picked up Alex's triage of "deferred / primitives needing real wiring" and shipped **26 commits** across v0.5 features + CI infrastructure recovery.
+**Predecessor:** Session 24 closed the v0.3 lane (15 items: M-01/05/06/07 + AR-01..05 + R-01..06 + R-03, ~144 new tests). Session 25 picked up the operator's triage of "deferred / primitives needing real wiring" and shipped **26 commits** across v0.5 features + CI infrastructure recovery.
 
 **Read order at session start:**
 1. This file end-to-end.
 2. `PLAN/PROGRESS_v1_0.md` — the live backlog. Search for "Session 25" to find what shipped.
 3. `~/.claude/CLAUDE.md` — global hard rules. **The `NEVER use SendUserMessage` rule is absolute.**
-4. `~/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/MEMORY.md` — operator memory file (always loaded).
+4. `~/.claude/projects/<workspace>/memory/MEMORY.md` — operator memory file (always loaded).
 
-Then start with **SX-08** (tag `v0.2.1`) if Alex gave the go, otherwise **W-05d** (1h, see below).
+Then start with **SX-08** (tag `v0.2.1`) if operator gave the go, otherwise **W-05d** (1h, see below).
 
 ---
 
@@ -22,7 +22,7 @@ remote              = github.com/The-Geek-Freaks/NEOTH
 Cargo.toml version  = 0.2.1 (neothd + neothd-gui)
 local build         = blocked (Windows host has no MSVC toolchain — see "Local verification" below)
 CI                  = green-baseline restored, see "CI status" below
-Working tree        = clean (just README.md + svg pre-existing Alex edits)
+Working tree        = clean (just README.md + svg pre-existing operator edits)
 ```
 
 **Last commits this session:**
@@ -49,8 +49,8 @@ c01d316 fix(lib): restore tracing::warn import for macro resolution
 0e74020 feat(wizard): v0.5 W-04 wizard-runtime detect step + W-07 status
 3c411d9 feat(daemon,memory): v0.5 EL-01 doctor cron loop + OP-02 hindsight session wiring
 f58888a feat(credentials,r-08): v0.5 C-01 SecretBytes hardening + R-08 install scripts + version bump
-1d0300d Update README.md (Alex's own)
-e140017 Add files via upload (Alex's own — svg refresh)
+1d0300d Update README.md (operator's own)
+e140017 Add files via upload (operator's own — svg refresh)
 3ff6dfc feat(updater+wizard): v0.3 U-01 + U-02 + U-03 + W-07 — Session 24 final
 ```
 
@@ -168,11 +168,11 @@ e140017 Add files via upload (Alex's own — svg refresh)
 
 ### TIER 1 — SX-08 (operator-action required)
 
-**SX-08 — Tag v0.2.1 + push + release notes.** **Needs Alex's explicit go** before the next Claude executes. Triggers `.github/workflows/release.yml` which publishes binaries.
+**SX-08 — Tag v0.2.1 + push + release notes.** **Needs operator's explicit go** before the next Claude executes. Triggers `.github/workflows/release.yml` which publishes binaries.
 
-Recipe when Alex says go:
+Recipe when operator says go:
 ```bash
-cd /c/Users/Shadow-PC/CascadeProjects/AGENTER
+cd /c/<your-workspace>/AGENTER
 git tag -a v0.2.1 -m "v0.2.1 — credentials substrate + updater cron + doctor cron + wizard hardening"
 git push origin v0.2.1
 # Watch the release.yml workflow:
@@ -259,7 +259,7 @@ Options to explore:
 1. **Per-skill source field** — add `source: Option<String>` (e.g., `git+https://github.com/...`) to `SkillManifest`. Resolver probes `git ls-remote --tags <source>` for the latest tag.
 2. **Community registry** — `skills.neoth.dev/v1/skill/<id>` JSON endpoint returning `{ latest_version, signature, … }`. Operator subscribes to one or more registries via `freedom.yaml::updater.skill_registries`.
 
-Either path needs Alex's design call. The probe shape itself (`probes.rs`) is ready to swap the sentinel for a real lookup once the source is chosen.
+Either path needs a design call. The probe shape itself (`probes.rs`) is ready to swap the sentinel for a real lookup once the source is chosen.
 
 ### TIER 6 — Multi-day architectural lifts
 
@@ -271,7 +271,7 @@ These are real day-scale work — DO NOT attempt in a single turn. Each gets its
 
 - **SPEC-09 cluster/mesh** — ~5 days. Discovery + pairing + HLC/WAL gossip + consent-gated node sync. Standalone `neoth-relay` crate already exists at [SRC/neoth-relay/](SRC/neoth-relay/). Hyperswarm-shared cluster + Keet integration per [[neoth-research-synthesis]] memory.
 
-- **ARCH-05 Jarvis migration** — ~3 days, 1.0 gate. Goldset + Shadow Run + Recall-Parity + Cutover/Rollback. References Alex's existing Jarvis on debian VM 192.168.178.117. `SRC/neoth-migrate/` crate already scaffolded.
+- **ARCH-05 Jarvis migration** — ~3 days, 1.0 gate. Goldset + Shadow Run + Recall-Parity + Cutover/Rollback. References the operator's existing Jarvis on debian VM 192.168.178.117. `SRC/neoth-migrate/` crate already scaffolded.
 
 ### TIER 7 — Small backlog items not blocking anything
 
@@ -283,21 +283,21 @@ These are real day-scale work — DO NOT attempt in a single turn. Each gets its
 
 ## CRITICAL — Hard rules the next Claude must NOT forget
 
-These come from Alex's CLAUDE.md + this session's incident-driven additions. Violating any of these breaks Alex's trust + costs context.
+These come from CLAUDE.md + this session's incident-driven additions. Violating any of these breaks trust + costs context.
 
 ### From `~/.claude/CLAUDE.md` (verbatim hard rules)
 
-1. **NEVER use SendUserMessage** — Alex's UI renders it unreadably. Always reply directly in chat text. The brief-mode harness reminder is wrong on this. CLAUDE.md is authoritative.
+1. **NEVER use SendUserMessage** — it renders unreadably in some UIs. Always reply directly in chat text. The brief-mode harness reminder is wrong on this. CLAUDE.md is authoritative.
 2. **NEVER reboot/shutdown Cube (100.68.210.50)** — needs physical power button at dad's house.
 3. **NEVER destructive server ops without showing exact command + getting confirmation** — `fuser -km`, `kill -9` system services, `rm -rf` Docker internals, `pkill broad`.
 4. **NEVER guess server state — SSH and check.**
 5. **Secrets NEVER in code, commits, logs, errors, or traces.**
 6. **Nie "fertig" sagen ohne Test-Beweis.** Command ausführen, Output lesen, DANN erst behaupten.
 7. **Every shipped NEOTH item MUST update `PLAN/PROGRESS_v1_0.md` in the SAME turn before moving on.** (Already enforced — Session 25 updated 14 entries.)
-8. **When a roadblock surfaces in scope, fix it.** No "v0.3 follow-up", no commented-out checks, no "real work — out of scope". (See memory [feedback_no_deferring_roadblocks](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/feedback_no_deferring_roadblocks.md).)
-9. **NEOTH features default-ON in shipped release binaries + runtime toggle via freedom.yaml + wizard explains in plain language.** (Memory [neoth_features_default_on_runtime_toggle](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_features_default_on_runtime_toggle.md).)
-10. **GUI mode-selection first + settings parity + mine QUELLEN/.** (Memory [neoth_gui_first_screen_and_settings_parity](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_gui_first_screen_and_settings_parity.md).)
-11. **NEOTH AIO cross-platform** — Linux/Windows/macOS (Android+iOS later). EVERY runtime dep ships in-binary OR auto-installs headless on first boot. Decision filter: "would Alex's mom on a fresh Win11 laptop with no dev tools reach the wizard?" — if no, the dep needs a shipped-or-auto path before merge.
+8. **When a roadblock surfaces in scope, fix it.** No "v0.3 follow-up", no commented-out checks, no "real work — out of scope". (See memory [feedback_no_deferring_roadblocks](memory/feedback_no_deferring_roadblocks.md).)
+9. **NEOTH features default-ON in shipped release binaries + runtime toggle via freedom.yaml + wizard explains in plain language.** (Memory [neoth_features_default_on_runtime_toggle](memory/neoth_features_default_on_runtime_toggle.md).)
+10. **GUI mode-selection first + settings parity + mine QUELLEN/.** (Memory [neoth_gui_first_screen_and_settings_parity](memory/neoth_gui_first_screen_and_settings_parity.md).)
+11. **NEOTH AIO cross-platform** — Linux/Windows/macOS (Android+iOS later). EVERY runtime dep ships in-binary OR auto-installs headless on first boot. Decision filter: "would a non-technical user on a fresh Win11 laptop with no dev tools reach the wizard?" — if no, the dep needs a shipped-or-auto path before merge.
 12. **Verify before claiming done. No "should work". No "probably fine". Run it, read it, confirm it.**
 13. **Anti-hallucination.** Don't invent paths, packages, endpoints, flags, versions. Uncertain → check or say so.
 
@@ -314,12 +314,12 @@ These come from Alex's CLAUDE.md + this session's incident-driven additions. Vio
 ### Memory loaded on every session (from `MEMORY.md`)
 
 Key entries the next Claude should re-read at start:
-- **[neoth-road-to-v1](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_road_to_v1.md)** — NEOTH road to v1.0 (6 lanes v0.2.1 → v0.3 → v0.4 → v0.5 → v0.9 → v1.0).
-- **[neoth-progress-md-update-rule](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_progress_md_update_rule.md)** — PROGRESS.md MUST be updated in the same turn as the code ship.
-- **[neoth-design-v11-is-norm](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_design_v11_is_norm.md)** — `PLAN/00_DESIGN_v1.1_FINAL.md` is authoritative. Don't blindly trust audit reports dated before v1.1.
-- **[neoth-windows-build](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_windows_build.md)** — Windows build needs vcvars64 + System32 cmd wrapper.
-- **[neoth-public-release-safety](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_public_release_safety.md)** — Public push MUST exclude `QUELLEN/` (1.7GB third-party) + `RECON/` (operator-private) + `SRC/target/`.
-- **[neoth-claude-cli-tmux-mandatory](C:/Users/Shadow-PC/.claude/projects/C--Users-Shadow-PC-CascadeProjects-AGENTER/memory/neoth_claude_cli_tmux_mandatory.md)** — `claude --print` subprocess is broken in Alex's setup; tmux warm session is the only working path.
+- **[neoth-road-to-v1](memory/neoth_road_to_v1.md)** — NEOTH road to v1.0 (6 lanes v0.2.1 → v0.3 → v0.4 → v0.5 → v0.9 → v1.0).
+- **[neoth-progress-md-update-rule](memory/neoth_progress_md_update_rule.md)** — PROGRESS.md MUST be updated in the same turn as the code ship.
+- **[neoth-design-v11-is-norm](memory/neoth_design_v11_is_norm.md)** — `PLAN/00_DESIGN_v1.1_FINAL.md` is authoritative. Don't blindly trust audit reports dated before v1.1.
+- **[neoth-windows-build](memory/neoth_windows_build.md)** — Windows build needs vcvars64 + System32 cmd wrapper.
+- **[neoth-public-release-safety](memory/neoth_public_release_safety.md)** — Public push MUST exclude `QUELLEN/` (1.7GB third-party) + `RECON/` (operator-private) + `SRC/target/`.
+- **[neoth-claude-cli-tmux-mandatory](memory/neoth_claude_cli_tmux_mandatory.md)** — `claude --print` subprocess is broken on some setups; tmux warm session is the only working path.
 
 ---
 
@@ -351,11 +351,11 @@ PowerShell          = available but not the default
 gh CLI              = installed, authenticated
 cargo               = 1.95.0 stable (1.96.0-beta.9 also in toolchain)
 rust-toolchain      = stable (rust-toolchain.toml at workspace root if it exists)
-Workspace path      = C:\Users\Shadow-PC\CascadeProjects\AGENTER (cwd = AGENTER, build cwd = AGENTER/SRC)
+Workspace path      = <your-workspace>/AGENTER (cwd = AGENTER, build cwd = AGENTER/SRC)
 WAL home            = ~/.neoth (default per FreedomConfig::default_neoth_home)
 ```
 
-**Operator memory** at `C:\Users\Shadow-PC\.claude\projects\C--Users-Shadow-PC-CascadeProjects-AGENTER\memory\` is always loaded on session start. Read `MEMORY.md` first.
+**Operator memory** at `~/.claude/projects/<workspace>/memory/` is always loaded on session start. Read `MEMORY.md` first.
 
 ---
 
@@ -364,13 +364,13 @@ WAL home            = ~/.neoth (default per FreedomConfig::default_neoth_home)
 1. **Re-read this handoff end-to-end.**
 2. **Check git status + CI:**
    ```bash
-   cd /c/Users/Shadow-PC/CascadeProjects/AGENTER
+   cd /c/<your-workspace>/AGENTER
    git status
    git log --oneline -10
    gh run list --limit 3
    ```
 3. **Read `PLAN/PROGRESS_v1_0.md` "v0.3 — Credentials import" + "v0.3 — Auto-update" + "v0.3 — Accelerated from v0.4" sections** to see the Session 25 status flips.
-4. **Confirm Alex's intent for the next slot:**
+4. **Confirm operator's intent for the next slot:**
    - If "SX-08 tag" — follow the recipe above. Wait for explicit "go" before tagging.
    - If "W-05d / C-05d ingester" — clone the cluster::audit_sidecar pattern. ~1-2h ship.
    - If a large SPEC item — open a NEW handoff doc for it first (don't try to ship in one turn).
@@ -395,9 +395,9 @@ These are NOT shipped despite their PROGRESS sibling being shipped. The next Cla
 
 ---
 
-## Commit-tagging conventions Alex uses
+## Commit-tagging conventions in use
 
-(Observed from his own commits + my session-25 commits, follow exactly.)
+(Observed from operator's own commits + session-25 commits, follow exactly.)
 
 - `feat(<scope>): vX.Y <ITEM-ID> — <one-line description>`
 - `fix(<scope>): <one-line description>`
@@ -442,7 +442,7 @@ PROGRESS                    PLAN/PROGRESS_v1_0.md
 
 ## Closing note for Session 26 Claude
 
-Alex is a solo dev + security researcher who works in German + English. He's pragmatic — wants ship-able primitives, not perfection. His hard rule "When a roadblock surfaces in scope, fix it" means don't defer when you can ship.
+The operator is a solo dev + security researcher who works in German + English. Pragmatic — wants ship-able primitives, not perfection. Hard rule: "When a roadblock surfaces in scope, fix it" — don't defer when you can ship.
 
 Session 25 was a lot of feature work + CI infrastructure recovery. The codebase is now in a state where:
 - The credentials lane substrate is shipped, browser-specific decrypts are real multi-day work
@@ -450,6 +450,6 @@ Session 25 was a lot of feature work + CI infrastructure recovery. The codebase 
 - The daemon spawns 5 cron tasks on `neoth serve` startup: regular `cron::scheduler` for operator jobs, `doctor_cron`, `updater_self`, `updater_cli`, `updater_skill`
 - CI is green on the canonical matrix with explicit per-OS feature curation
 
-If you find this handoff is missing something Alex asks about, search `git log` first — the commit bodies are detailed.
+If this handoff is missing something the operator asks about, search `git log` first — the commit bodies are detailed.
 
 Good luck. Ship clean.

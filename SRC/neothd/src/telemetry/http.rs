@@ -195,7 +195,7 @@ mod tests {
 
     #[tokio::test]
     async fn send_payload_to_invalid_url_returns_endpoint_rejected() {
-        let payload = build_payload("0.1.0", "alex");
+        let payload = build_payload("0.1.0", "sam");
         let outcome = send_payload("not a url", &payload).await;
         assert!(
             matches!(outcome, SendOutcome::EndpointRejected { .. }),
@@ -208,7 +208,7 @@ mod tests {
         // Defence-in-depth: an http:// endpoint must NEVER be
         // dialled. The validation gate short-circuits before any
         // TLS connect attempt.
-        let payload = build_payload("0.1.0", "alex");
+        let payload = build_payload("0.1.0", "sam");
         let outcome = send_payload("http://127.0.0.1:1/insecure", &payload).await;
         assert!(matches!(outcome, SendOutcome::EndpointRejected { .. }));
     }
@@ -217,7 +217,7 @@ mod tests {
     async fn send_payload_to_unreachable_host_returns_network_error_or_timeout() {
         // Hit a port that's almost certainly closed on loopback +
         // a short timeout so the test runner doesn't stall.
-        let payload = build_payload("0.1.0", "alex");
+        let payload = build_payload("0.1.0", "sam");
         let outcome = send_payload_with_timeout(
             "https://127.0.0.1:1/no-server-here",
             &payload,

@@ -30,7 +30,7 @@ fmt + clippy + test gate at the end; no lane merges with red gates.
 
 ## v0.3 — Wizard + Auto-Update + Crash Recovery
 
-**Theme:** "Alex's mom on Win11 with no dev tools" path lands.
+**Theme:** "Non-technical user on Win11 with no dev tools" path lands.
 
 ### v0.3 — must-haves (from A4 wizard architect)
 

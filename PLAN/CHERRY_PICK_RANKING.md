@@ -135,7 +135,7 @@
 
 **2. Cross-vendor provider cascade (Claude → GPT → Gemini → Qwen-local)**
 - Proven: systemd procs + `watchdog_providers.sh`
-- Why: Empirically validated on Alex's hardware. Formalized as `idx_motor` (Cerebellum) with per-provider success+latency tracking, auto-promote fastest healthy.
+- Why: Empirically validated on operator hardware. Formalized as `idx_motor` (Cerebellum) with per-provider success+latency tracking, auto-promote fastest healthy.
 - Maps to: **Cerebellum**
 
 **3. Nightly vault-git-commit as memory durability**
@@ -145,7 +145,7 @@
 
 **4. LanceDB schema contract (9 columns)**
 - Proven: `lancedb-schema-validator.sh` daily 04:30, `~/.openclaw/memory/lancedb-pro`
-- Why: Field set Alex's recall queries depend on. NEOTH WAL preserves all 9 as typed columns in SQLite views: id/text/vector/importance/category/createdAt/scope/timestamp/metadata. Validator cron = startup schema-version check.
+- Why: Field set operator's recall queries depend on. NEOTH WAL preserves all 9 as typed columns in SQLite views: id/text/vector/importance/category/createdAt/scope/timestamp/metadata. Validator cron = startup schema-version check.
 - Maps to: **WAL schema**
 
 **5. Dedup-aware multi-store import (SHA-256(text+scope+origin))**

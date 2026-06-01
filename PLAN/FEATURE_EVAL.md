@@ -14,7 +14,7 @@
 
 ---
 
-## Architectural Decisions Alex Must Make Before Roadmap Locks
+## Architectural Decisions the Operator Must Make Before Roadmap Locks
 
 Five decisions surfaced across agents. Each blocks at least one phase.
 
@@ -45,7 +45,7 @@ Items where **at least 4 of 7 agents** converged as top-priority. Each row carri
 | 1 | **C-14** | Cost transparency ex-ante (predict €0.07 before call) | architect#1, code-explorer (50%), security, perf #1, planner Ph1, architect#2 top-3, code-architect blueprint | 1-2 days | Phase 1 |
 | 2 | **C-1 + C-11** | Anti-sycophancy + adversarial critic sub-agent | architect#1, code-explorer (50% via `sub_agents/review.rs`), perf #6, planner Ph1, architect#2 top-3 | 1-2 days | Phase 1 |
 | 3 | **C-15** | Real GDPR forgetting (cascade across tiers + embeddings + archive) | architect#1, code-explorer (75%), security top-10, planner Ph1, architect#2 top-3 | 3 days | Phase 1 |
-| 4 | **A-24** | ArXiv learner (Alex explicitly asked) | architect#1 #1 pick, planner Ph3, perf top-10, security low-risk | 1-2 days | Phase 3 |
+| 4 | **A-24** | ArXiv learner (operator-requested) | architect#1 #1 pick, planner Ph3, perf top-10, security low-risk | 1-2 days | Phase 3 |
 | 5 | **A-20 / A-21** | Web Search + Web Fetch (Brave/Tavily + reqwest → MD) | architect#1, planner Ph3, perf top-10, code-architect blueprint | 1-2 days each | Phase 3 |
 | 6 | **B-rollback** | `/rollback` snapshot before file-mutating ops | architect#1, perf top-10, security medium-risk | 2-3 days | Phase 1 |
 | 7 | **A-7 Slack** | Live Slack channel (xoxb + xapp socket-mode) | architect#1, code-explorer (25% scaffold), planner Ph2, security medium-risk | 2-3 days | Phase 2 |
@@ -347,7 +347,7 @@ The auto-config should drop these into `.obsidian/plugins/` + `community-plugins
 
 ## Concrete Next Action Queue
 
-1. **Decide AD-1 through AD-5** (Alex)
+1. **Decide AD-1 through AD-5** (operator)
 2. **Phase 0 cleanup** in parallel (F-17..F-20 plugin SDK spec closure + D14b Qwen3 forward pass)
 3. **Phase 1 sprint** in order:
    - C-14 cost predictor (1-2d)

@@ -494,7 +494,7 @@ neoth init [OPTIONS]
 NEOTH_PROVIDER_KEY="sk-..." neoth init \
   --noninteractive \
   --accept-license \
-  --operator-id alex \
+  --operator-id <your-id> \
   --language de \
   --role security-researcher \
   --provider openai_api \

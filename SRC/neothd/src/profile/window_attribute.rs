@@ -11,8 +11,8 @@
 //! 1. **Origin-derived**: `ProviderOutbound` → `ToolOutput` (confidence 1.0).
 //!    The LLM produced these tokens; they are by definition not user speech.
 //! 2. **Quote markers**: lines starting with `>`, fenced code blocks
-//!    (``` ... ```), forwarded-message headers (`Alex schrieb:`,
-//!    `Alex wrote:`, `Forwarded from`, `---- Original Message ----`),
+//!    (``` ... ```), forwarded-message headers (`<Name> schrieb:`,
+//!    `<Name> wrote:`, `Forwarded from`, `---- Original Message ----`),
 //!    URL-only segments, raw email/reddit-style "On <date>, <user>
 //!    wrote:" lines → `QuotedExternal`.
 //! 3. **First-person ratio**: count first-person pronouns
@@ -247,10 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn alex_schrieb_header_triggers_quoted_external() {
+    fn schrieb_header_triggers_quoted_external() {
         let s = seg(
             SegmentOrigin::OperatorInbound,
-            "Alex schrieb:\n> the cube is at 100.68.210.50",
+            "Sam schrieb:\n> the server is at 10.0.0.1",
         );
         let a = attribute_segment(&s);
         assert_eq!(a.attribution, Attribution::QuotedExternal);

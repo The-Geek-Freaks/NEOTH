@@ -2,7 +2,7 @@
 //!
 //! `ClaudeCliAdapter` today spawns a fresh `claude --print` subprocess per
 //! `complete` call. Cold-start cost is real — model+memory load runs
-//! every request. On Linux/macOS, Alex's `claude_openai_bridge.py` keeps
+//! every request. On Linux/macOS, the operator's `claude_openai_bridge.py` keeps
 //! a long-lived `claude` instance inside a tmux pane and writes prompts
 //! into it via `tmux send-keys`; subsequent prompts hit a warm session.
 //!
@@ -43,7 +43,7 @@ use tokio::process::Command;
 
 use super::tmux_socket::{TmuxSocket, socket_args};
 
-/// Default prefix used by Alex's bridge. NEOTH inherits the convention so
+/// Default prefix used by the operator's bridge. NEOTH inherits the convention so
 /// existing operator scripts that list sessions starting with `cc-` keep
 /// working when both stacks share a host. Configurable via
 /// `NEOTH_TMUX_PREFIX` env var (set by the daemon at boot if the operator
@@ -51,7 +51,7 @@ use super::tmux_socket::{TmuxSocket, socket_args};
 pub const DEFAULT_SESSION_PREFIX: &str = "neoth-cc";
 
 /// Default capture-pane history limit (number of trailing lines).
-/// `-1000` matches Alex's bridge default; tmux interprets `-S -<n>` as
+/// `-1000` matches the bridge default; tmux interprets `-S -<n>` as
 /// "start n lines back from current".
 pub const DEFAULT_CAPTURE_HISTORY_LINES: i32 = 1000;
 
@@ -460,9 +460,9 @@ mod tests {
     }
 
     #[test]
-    fn default_session_prefix_matches_alex_bridge_convention() {
-        // The `cc-` prefix is what Alex's claude_openai_bridge.py uses
-        // on Jarvis. NEOTH adds `neoth-` in front so the two stacks
+    fn default_session_prefix_matches_bridge_convention() {
+        // The `cc-` prefix is what the operator's claude_openai_bridge.py uses.
+        // NEOTH adds `neoth-` in front so the two stacks
         // can share a host without colliding. Pinning this value keeps
         // the convention pinned across refactors.
         assert!(DEFAULT_SESSION_PREFIX.contains("cc"));

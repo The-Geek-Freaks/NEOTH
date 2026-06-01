@@ -43,7 +43,7 @@ Per `PLAN/SPEC_coding_workflow.md` build order:
   Backlog/Unassigned (after `neoth code`) until an operator manually
   moves them via `neoth kanban move/assign`. v1.1 work.
 - ⏸️ **Pick #8 GUI Code Sessions tab** — Slint UI panel, ~400 LOC.
-  **This is Session 18's primary focus** — Alex wants to test the GUI
+  **This is Session 18's primary focus** — operator wants to test the GUI
   visually together.
 - ⏸️ **Pick #9 LLM second-opinion classify** — Ambiguous-bucket gets
   re-classified via Cerebellum LLM. Sits in the dispatcher (Pick #6)
@@ -115,7 +115,7 @@ that mirrors the Twitter image layout:
 - Slint UI tests aren't easy on Windows headlessly. Pin instead:
   - Unit tests on any new pure functions (data formatting, status
     column grouping).
-  - Visual review with Alex — fire up the GUI binary, click through
+  - Visual review with the operator — fire up the GUI binary, click through
     the workflow against a real `neoth code "..."` session.
 - `coding::store::*` is already test-covered (Pick #38b).
 
@@ -172,7 +172,7 @@ implementation in ~600 LOC.
 
 ```powershell
 # From repo root
-cd C:\Users\Shadow-PC\CascadeProjects\AGENTER
+cd <your-workspace>/AGENTER
 
 # Full neothd suite — must show 2298 passed / 0 failed at start
 .\scripts\cargo-msvc.ps1 test -p neothd --bin neothd
@@ -212,15 +212,15 @@ cd C:\Users\Shadow-PC\CascadeProjects\AGENTER
 
 - German register, direct, blunt
 - Diff > description; no trailing summaries
-- NEVER use SendUserMessage (Alex's UI renders it unreadably) — reply
+- NEVER use SendUserMessage (it renders unreadably in some UIs) — reply
   directly in chat text
-- Match Alex's register: "ja weiter" / "los!" → ship + report
+- Match the operator's register: "ja weiter" / "los!" → ship + report
 - Risky / destructive ops: state consequence + ask before executing
 
 ## Session 18 communication points
 
-- **Before starting Pick #8 GUI**: tell Alex "starte GUI Pick #8 now",
-  he'll be at the keyboard ready to visually review
+- **Before starting Pick #8 GUI**: announce "starte GUI Pick #8 now",
+  operator will be at the keyboard ready to visually review
 - **Before firing dispatcher Chorus (Pick #6)**: draft the
   `PLAN/CHORUS_dispatcher_design.md` mirror of Pick #4's artifact;
   ask for verdicts on the 4 architectural questions
@@ -228,7 +228,7 @@ cd C:\Users\Shadow-PC\CascadeProjects\AGENTER
 ## Open lurking concerns
 
 - **GUI testability on Windows**: Slint headless rendering is not
-  trivial. Plan for "Alex runs the binary, I drive via screenshots"
+  trivial. Plan for "operator runs the binary, I drive via screenshots"
   rather than fully automated visual diff tests.
 - **`neoth code` without a configured cerebellum**: surfaces as
   `from_config_for_role` error. Pick #5b's CLI prints the resolver

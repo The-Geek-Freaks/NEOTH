@@ -48,7 +48,7 @@ even 'defer indefinitely' counts") closed by the Status table.
 | B. Raw stdin + clap arg parsing | 0KB extra. Works in any TTY or pipe. CI-friendly. | Manual validation. Less polish. |
 | C. Both: dialoguer when stdin is a TTY, fall back to clap-only otherwise | Best of both. `neoth init --non-interactive` works in cloud-init. | More code paths. |
 
-**REC:** **C (hybrid).** Operators on a real terminal get the wizard; CI/cloud-init operators run `neoth init --non-interactive --operator-id alex --left-provider claude --telegram-token $T` and skip prompts entirely. Adds ~50 LOC vs A.
+**REC:** **C (hybrid).** Operators on a real terminal get the wizard; CI/cloud-init operators run `neoth init --non-interactive --operator-id <your-id> --left-provider claude --telegram-token $T` and skip prompts entirely. Adds ~50 LOC vs A.
 
 ---
 
@@ -184,7 +184,7 @@ Lazy-ack ("REC all") is fine for any subset you're comfortable defaulting on.
 
 ## Session 21 follow-up decisions (added 2026-05-23)
 
-Three decision-notes shipped during Session 21 + are awaiting Alex's
+Three decision-notes shipped during Session 21 + are awaiting operator
 accept/decline before downstream code can land:
 
 ### D-101 (was K-1) — Hyperswarm path for Keet + Cluster

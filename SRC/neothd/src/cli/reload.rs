@@ -18,7 +18,7 @@
 //!
 //! Not a network call; not an IPC socket; just a filesystem flag.
 //! Works identically on every OS NEOTH targets (Linux/macOS/Windows
-//! — Alex's primary). No SIGHUP dependency, no `notify` crate
+//! — all supported). No SIGHUP dependency, no `notify` crate
 //! background thread.
 
 use std::path::PathBuf;

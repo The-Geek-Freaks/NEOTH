@@ -261,7 +261,7 @@ stages:
     #   quoted_external   — paste/quote/reddit/forwarded — NOT eligible
     #   tool_output       — agent or pipeline-produced text — NOT eligible
     #   ambiguous         — confidence < 0.6 on attribution — NOT eligible
-    # Heuristics: quote markers (">", code blocks, "Alex schrieb:"), first-person
+    # Heuristics: quote markers (">", code blocks, "Operator schrieb:"), first-person
     # pronouns ratio, syntactic patterns (forwarded headers, URL-only segments).
     # Documented in profile.attribute_segments tool spec.
 
@@ -507,7 +507,7 @@ Block-B (default 1500 tokens, hard 3000, per v0.8 s3) receives a profile summary
 
 ```
 [USER PROFILE -- confidence >= 0.6 fields only]
-identity.name: Alex (conf=0.97)
+identity.name: <operator-name> (conf=0.97)
 preferences.communication_style: BluntDirect (conf=0.91)
 preferences.language_mode: German UI / English code (conf=0.99)
 skills: security_research Expert (conf=0.88), Rust Advanced (conf=0.76)
@@ -649,7 +649,7 @@ Prerequisite: Council debate pipeline (Phase 2 base).
 
 ### 9.4 Phase 3 Day 65 -- Jarvis Seed Migration
 
-Alex's existing `HIPPOCAMPUS_CORE.md` "About the user" section provides the initial profile seed.
+The operator's existing `HIPPOCAMPUS_CORE.md` "About the user" section provides the initial profile seed.
 
 Migration procedure:
 1. Parse `HIPPOCAMPUS_CORE.md` entries (name, role, language preference, communication style, skills, stressors).
@@ -689,10 +689,10 @@ All tests in `tests/profile_learning.rs`.
 #[test] fn test_profile_reinforce_strengthens()
 
 // 4. Contradiction emits SUPERSEDE
-// Insert PROFILE_DELTA: identity.name = "Alex".
-// Extract window with "my name is not Alex, it is Alexander".
-// Assert: profile.apply emits PROFILE_SUPERSEDE (old=Alex, new=Alexander).
-// Assert: idx_profile.identity.name = Some(ProfileClaim { value: "Alexander", ... }).
+// Insert PROFILE_DELTA: identity.name = "Sam".
+// Extract window with "my name is not Sam, it is Samuel".
+// Assert: profile.apply emits PROFILE_SUPERSEDE (old=Sam, new=Samuel).
+// Assert: idx_profile.identity.name = Some(ProfileClaim { value: "Samuel", ... }).
 #[test] fn test_profile_supersede_contradicts()
 
 // 5. Redact removes from idx, preserves audit event

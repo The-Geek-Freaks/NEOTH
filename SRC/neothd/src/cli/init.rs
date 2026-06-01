@@ -223,8 +223,8 @@ pub struct InitArgs {
     #[arg(long = "install-n8n")]
     pub install_n8n: bool,
 
-    /// E-16 (Workstream B) — Jarvis seed migration. Path to the operator's
-    /// `HIPPOCAMPUS_CORE.md` (or the directory holding the 12 Jarvis stores).
+    /// E-16 (Workstream B) — legacy-AI seed migration. Path to the operator's
+    /// `HIPPOCAMPUS_CORE.md` (or the directory holding the legacy memory stores).
     /// When set, the wizard records the import intent + surfaces the
     /// `neoth-migrate dry-run` / `apply --confirm` runbook against the path.
     /// Heavyweight migrations stay operator-triggered — the wizard never
@@ -343,10 +343,10 @@ pub struct WizardState {
     /// operator-run.
     #[serde(default)]
     pub install_n8n: bool,
-    /// E-16 (Workstream B, Session 22) — Jarvis seed migration
+    /// E-16 (Workstream B, Session 22) — legacy-AI seed migration
     /// source path. When `Some`, the wizard recorded the operator's
     /// intent to run `neoth-migrate` against this path. `None` for
-    /// fresh-host operators with no Jarvis history.
+    /// fresh-host operators with no prior AI memory history.
     #[serde(default)]
     pub import_jarvis: Option<std::path::PathBuf>,
     pub steps_completed: Vec<u8>,
@@ -814,7 +814,7 @@ impl WizardModeChoice {
 /// `neoth_gui_first_screen_and_settings_parity` violation flagged
 /// in Session 26's UX review: a fresh `neoth init` run on a TTY
 /// landed straight in a license prompt with tracing INFO lines
-/// interleaved, which fails the "Alex's mom on Win11" sanity test.
+/// interleaved, which fails the "non-technical user on Win11" sanity test.
 ///
 /// Non-interactive runs (CI / scripted bring-up / `--non-interactive`)
 /// always pick CLI silently — there's no operator to ask, and the
@@ -1794,7 +1794,7 @@ fn step5b_inference_topology(
         // NOOB-UX gate: Beginner-level operators don't see the
         // manual accelerator pick — auto-detection is almost always
         // right, and surfacing the choice scares non-developers
-        // (see Session 26 UX review for the screenshot Alex flagged).
+        // (see Session 26 UX review for the screenshot that flagged this).
         // Intermediate + Advanced still get the prompt with the
         // detected pick pre-selected as default.
         let chosen_accel = if matches!(
@@ -2495,7 +2495,7 @@ async fn step5c_qwen_weights(
         // jargon ("Pre-download", "lazy-download", `huggingface-cli`)
         // scares non-developers and the safe default (lazy-fetch on
         // first chat with operator-visible progress) is already the
-        // right answer for the "Alex's mom" cliff. Intermediate and
+        // right answer for the "non-technical operator" cliff. Intermediate and
         // Advanced still see the prompt + the download recipe.
         if matches!(
             state.experience_level,
@@ -3081,7 +3081,7 @@ async fn step6e_n8n_install(
     Ok(())
 }
 
-/// Step 6f — E-16 (Workstream B): Jarvis seed migration record.
+/// Step 6f — E-16 (Workstream B): legacy-AI seed migration record.
 ///
 /// The actual migration is the separate `neoth-migrate` binary; the
 /// wizard records the operator's intent + surfaces the runbook so a
@@ -3089,7 +3089,7 @@ async fn step6e_n8n_install(
 /// auto-applies — migrating 12 stores is heavyweight + irreversible
 /// once the WAL frames land.
 fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    debug!("wizard step 6f: jarvis import intent");
+    debug!("wizard step 6f: legacy-ai import intent");
 
     let path = if !interactive {
         args.import_jarvis.clone()
@@ -3097,10 +3097,10 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
         #[cfg(feature = "wizard")]
         {
             let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("[6f/9] Migrate an existing Jarvis HIPPOCAMPUS_CORE.md into NEOTH?")
+                .with_prompt("[6f/9] Migrate an existing HIPPOCAMPUS_CORE.md into NEOTH?")
                 .default(false)
                 .interact()
-                .context("jarvis import confirm")?;
+                .context("legacy-ai import confirm")?;
             if !want {
                 state.steps_completed.push(64);
                 return Ok(());
@@ -3108,11 +3108,11 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
             let raw: String =
                 dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt(
-                        "  Path to HIPPOCAMPUS_CORE.md (or directory with 12 Jarvis stores)",
+                        "  Path to HIPPOCAMPUS_CORE.md (or directory with legacy memory stores)",
                     )
                     .allow_empty(true)
                     .interact_text()
-                    .context("jarvis path input")?;
+                    .context("legacy-ai path input")?;
             let trimmed = raw.trim();
             if trimmed.is_empty() {
                 None
@@ -3134,7 +3134,7 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
     if !path.exists() {
         warn!(
             path = %path.display(),
-            "jarvis import path does not exist; recording intent but operator must \
+            "legacy-ai import path does not exist; recording intent but operator must \
              repoint with `neoth-migrate dry-run --source <path>` before applying"
         );
     }
@@ -3155,7 +3155,7 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
     } else {
         info!(
             path = %path.display(),
-            "jarvis import intent recorded; operator runs `neoth-migrate apply --confirm` manually"
+            "legacy-ai import intent recorded; operator runs `neoth-migrate apply --confirm` manually"
         );
     }
 
@@ -4591,7 +4591,7 @@ mod tests {
         // payload is the source of truth for non-secret fields.
         let dir = tempfile::tempdir().unwrap();
         let mut saved = WizardState::default();
-        saved.operator_id = Some("alex".into());
+        saved.operator_id = Some("sam".into());
         saved.language_code = Some("de".into());
         saved.steps_completed = vec![1, 2, 3, 4];
         saved.bootstrap_vault = true;
@@ -4599,7 +4599,7 @@ mod tests {
 
         let mut state = WizardState::default();
         maybe_resume_from_checkpoint(dir.path(), false, &mut state).expect("auto-resume");
-        assert_eq!(state.operator_id.as_deref(), Some("alex"));
+        assert_eq!(state.operator_id.as_deref(), Some("sam"));
         assert_eq!(state.language_code.as_deref(), Some("de"));
         assert_eq!(state.steps_completed, vec![1, 2, 3, 4]);
         assert!(state.bootstrap_vault);
@@ -4743,7 +4743,7 @@ mod tests {
 
     #[test]
     fn operator_id_valid() {
-        assert!(validate_operator_id("alex").is_ok());
+        assert!(validate_operator_id("sam").is_ok());
         assert!(validate_operator_id("my-dev_1").is_ok());
     }
 
@@ -5995,13 +5995,13 @@ mod tests {
     #[test]
     fn step6f_non_interactive_records_path_when_flag_set() {
         let temp = tempfile::tempdir().unwrap();
-        let jarvis = temp.path().join("HIPPOCAMPUS_CORE.md");
-        std::fs::write(&jarvis, "synthetic jarvis seed").unwrap();
+        let memory_path = temp.path().join("HIPPOCAMPUS_CORE.md");
+        std::fs::write(&memory_path, "synthetic legacy-ai seed").unwrap();
 
         let mut state = fixture_state();
-        let args = args_with_flag(|a| a.import_jarvis = Some(jarvis.clone()));
+        let args = args_with_flag(|a| a.import_jarvis = Some(memory_path.clone()));
         step6f_import_jarvis(&args, false, &mut state).unwrap();
-        assert_eq!(state.import_jarvis.as_ref(), Some(&jarvis));
+        assert_eq!(state.import_jarvis.as_ref(), Some(&memory_path));
         assert!(state.steps_completed.contains(&64));
     }
 

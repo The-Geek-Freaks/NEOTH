@@ -253,12 +253,12 @@ mod tests {
         let f = PdfFormField {
             name: "operator_name".into(),
             kind: PdfFieldKind::Text,
-            value: "Alex".into(),
+            value: "Sam".into(),
             page_no: Some(1),
         };
         assert_eq!(f.name, "operator_name");
         assert_eq!(f.kind, PdfFieldKind::Text);
-        assert_eq!(f.value, "Alex");
+        assert_eq!(f.value, "Sam");
         assert_eq!(f.page_no, Some(1));
     }
 
@@ -292,7 +292,7 @@ mod tests {
     #[cfg(not(feature = "pdf-forms"))]
     #[tokio::test]
     async fn stub_set_text_field_errors_actionable_when_feature_off() {
-        let err = set_text_field(&fixture_asset(), "operator_name", "Alex")
+        let err = set_text_field(&fixture_asset(), "operator_name", "Sam")
             .await
             .unwrap_err();
         assert!(err.to_string().contains("pdf-forms"));

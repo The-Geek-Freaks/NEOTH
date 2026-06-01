@@ -1,14 +1,14 @@
-//! W-02 — OMI installer primitive (Jarvis-local mode).
+//! W-02 — OMI installer primitive (self-hosted local mode).
 //!
 //! OMI = Open Memory Interface. NEOTH's OM-01 lane consumes OMI
-//! transcript streams via the operator's OWN Jarvis-local OMI
+//! transcript streams via the operator's OWN self-hosted local OMI
 //! backend (NOT `api.omi.me`). SC-14 codifies the constraint as
 //! a hard rule: the daemon refuses to start if `omi.endpoint`
 //! points at the cloud-managed service.
 //!
 //! This primitive ships:
 //!
-//!   - Default Jarvis-local endpoint constant.
+//!   - Default self-hosted local endpoint constant.
 //!   - The forbidden cloud-managed hostname so SC-14 has one
 //!     central source of truth.
 //!   - `is_jarvis_local_endpoint(url)` validator the wizard +
@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-/// Default OMI endpoint when the wizard sets up Jarvis-local.
+/// Default OMI endpoint when the wizard sets up a self-hosted local backend.
 /// Operators override via `freedom.yaml::omi.endpoint`.
 pub const DEFAULT_OMI_ENDPOINT: &str = "http://127.0.0.1:8002";
 
@@ -29,7 +29,7 @@ pub const DEFAULT_OMI_ENDPOINT: &str = "http://127.0.0.1:8002";
 pub const FORBIDDEN_CLOUD_HOSTNAME: &str = "api.omi.me";
 
 /// Upstream docs URL for operators wanting to self-host the OMI
-/// backend on Jarvis or another local machine.
+/// backend on a local machine.
 pub const OMI_SELF_HOST_DOCS_URL: &str = "https://docs.omi.me/docs/developer/Backend/";
 
 /// Validate an OMI endpoint URL per the SC-14 hard rule.
@@ -49,7 +49,7 @@ pub fn is_jarvis_local_endpoint(url: &str) -> Result<(), String> {
     if lower.contains(FORBIDDEN_CLOUD_HOSTNAME) {
         return Err(format!(
             "OMI endpoint {url:?} resolves to the cloud-managed {FORBIDDEN_CLOUD_HOSTNAME} — \
-             SC-14 hard rule requires a Jarvis-local backend. See {OMI_SELF_HOST_DOCS_URL} \
+             SC-14 hard rule requires a self-hosted local backend. See {OMI_SELF_HOST_DOCS_URL} \
              for self-hosting.",
         ));
     }

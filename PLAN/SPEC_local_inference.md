@@ -1,7 +1,7 @@
 # SPEC: Local Inference (Qwen3-4B-INT4) — NEOTH v1.1
 
 > Status: BUILD-READY. Fixes: **H3 (Privacy theater)**, **A1 (local generative model for extraction)**.
-> Eliminates: profile-extraction sending Alex's conversations to Google Gemini API permanently.
+> Eliminates: profile-extraction sending the operator's conversations to Google Gemini API permanently.
 > Scope: Phase 2 Day 38-42 (after Right Hemisphere wired Day 31-37).
 
 ---
@@ -12,12 +12,12 @@
 - `profile.extract` pipeline sends conversation window to **Gemini 3.1 Pro API** on every PROVIDER_RESPONSE.
 - `freedom.yaml profile.learn.health = false` prevents NEOTH STORING health claims locally — but does NOT prevent SENDING health-containing conversation content to Gemini for analysis.
 - The privacy table in `SPEC_proactive_learning.md §11` claims "Profile to outbound providers: Never" — technically true (profile state stays local), operationally false (source data goes to cloud).
-- Alex's conversations are processed by both **Anthropic** (Left Hemisphere) AND **Google** (profile extraction). 200+ messages/day = permanent privacy surface across two cloud vendors.
+- The operator's conversations are processed by both **Anthropic** (Left Hemisphere) AND **Google** (profile extraction). 200+ messages/day = permanent privacy surface across two cloud vendors.
 - Mitigation (`freedom.yaml health=false`) is theater because conversation text containing health/PII is sent regardless.
 
 **Fix v1.1:** Run a **local generative model** for profile extraction. Conversations never leave the machine.
 
-**Hardware available:** Alex's Cube (192.168.178.156) has 3 GPUs (per memory). Qwen3-4B-INT4 fits in ~3GB VRAM. ~25 tok/s on a mid-range GPU. Extraction window 800 tokens out → ~32s. Acceptable for Day-N async extraction (not on user-facing critical path).
+**Hardware available:** Operator's Cube (192.168.178.156) has 3 GPUs (per memory). Qwen3-4B-INT4 fits in ~3GB VRAM. ~25 tok/s on a mid-range GPU. Extraction window 800 tokens out → ~32s. Acceptable for Day-N async extraction (not on user-facing critical path).
 
 ---
 
@@ -25,7 +25,7 @@
 
 | Model | Size | VRAM (Q4) | Throughput | Multilingual DE/EN | Function-calling | License |
 |-------|------|-----------|------------|---------------------|------------------|---------|
-| **Qwen3-4B-INT4** (default) | 4 B | ~3 GB | ~25 tok/s | Yes (Alex code-switches) | Native | Apache 2.0 |
+| **Qwen3-4B-INT4** (default) | 4 B | ~3 GB | ~25 tok/s | Yes (operator code-switches DE/EN) | Native | Apache 2.0 |
 | Qwen3-7B-INT4 | 7 B | ~5 GB | ~15 tok/s | Yes | Native | Apache 2.0 |
 | Llama-3.2-3B-Instruct-Q4 | 3 B | ~2.5 GB | ~30 tok/s | Yes | Limited | Llama 3 license |
 | Phi-3.5-Mini-Q4 | 3.8 B | ~3 GB | ~20 tok/s | Limited DE | Limited | MIT |
@@ -33,7 +33,7 @@
 
 **Decision: Qwen3-4B-INT4.gguf.** Reasons:
 - Native function-calling output schema (matches ProfileDelta JSON requirement)
-- Strong DE+EN bilingual capability (Alex code-switches)
+- Strong DE+EN bilingual capability (operator code-switches)
 - Apache 2.0 = no license friction
 - Smaller than Qwen3-7B (~3GB vs ~5GB) — leaves VRAM for parallel processing
 
@@ -46,7 +46,7 @@ Fallback chain: `local_qwen3_4b → local_qwen3_7b → cloud_gemini_3_1_pro_prev
 `candle-core` + `candle-transformers` (HuggingFace's Rust ML framework).
 
 Why candle (not llama.cpp via FFI):
-- Pure Rust — no C++ build dependencies on Alex's debian VM (already has issues with system glibc)
+- Pure Rust — no C++ build dependencies on the operator's debian VM (already has issues with system glibc)
 - Async-native (works with tokio)
 - GGUF quantization support built-in
 - candle is added to Cargo.toml at **Day 14** per v1.0 §9 schedule — same dep as embedding model. Single inference runtime.
@@ -224,7 +224,7 @@ Operator must explicitly opt in to cloud fallback. Without opt-in, profile extra
 
 ### 6.2 Explicit Statement
 
-> **NEOTH's profile extraction NEVER transmits Alex's conversation content to a third-party cloud provider unless `freedom.yaml inference.allow_cloud_fallback = true` is explicitly set by the operator.**
+> **NEOTH's profile extraction NEVER transmits the operator's conversation content to a third-party cloud provider unless `freedom.yaml inference.allow_cloud_fallback = true` is explicitly set by the operator.**
 
 Block-B injection still requires sending the profile **summary** (high-confidence fields only) to the Left Hemisphere provider during response generation — but this is the assembled profile (not raw conversations) and is the minimum necessary for the Left Hemisphere to produce a profile-aware response. This is documented as a known trade-off, not hidden.
 
@@ -366,4 +366,4 @@ fn test_cloud_fallback_used_when_opted_in() {
 ## 11. Status
 
 **v1.1 local inference BUILD-READY.** H3 (privacy theater) + A1 (local model) resolved.
-Alex's conversations stay on his hardware. Cloud cost saved: ~$985/year. Privacy gained: priceless.
+Operator's conversations stay on their hardware. Cloud cost saved: ~$985/year. Privacy gained: priceless.

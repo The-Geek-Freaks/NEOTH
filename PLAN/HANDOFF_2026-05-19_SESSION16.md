@@ -70,7 +70,7 @@ SRC/neothd/src/wal/
 
 ## 4. Picks 33-37 follow-ups (what next session ships)
 
-Per Alex's "alles davon nacheinander" — every follow-up is its own
+Per the operator's "alles davon nacheinander" — every follow-up is its own
 focused sprint with clear scope. Recommended order:
 
 ### Pick #34 voll — wasmtime Linker actual wiring (~200 LOC)
@@ -259,7 +259,7 @@ Extended Session 16:
 
 ## 10. Chorus gremium triggers für Session 17
 
-Per Alex's hard rule + handoff §13:
+Per hard rule + handoff §13:
 
 **MUST-FIRE Chorus before starting Pick #36 voll**:
 - sqlite-vec vs hnsw_rs decision
@@ -331,8 +331,8 @@ in MEMORY.md (line under 150 chars).
 Continue?
 ```
 
-German wenn Alex Deutsch schrieb. Direct chat text — NEVER
-SendUserMessage (Alex's hard rule from CLAUDE.md).
+German wenn das letzte message Deutsch war. Direct chat text — NEVER
+SendUserMessage (hard rule from CLAUDE.md).
 
 ---
 

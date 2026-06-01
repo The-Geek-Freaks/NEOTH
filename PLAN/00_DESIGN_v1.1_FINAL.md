@@ -4,7 +4,7 @@
 > **Tagline:** *Neoth knows.*
 > **Day-1: GREEN** — `cargo build --release` 4.85s on Jarvis VM. Binary prints banner.
 >
-> **Multi-operator clarification (2026-05-14):** Neoth is operator-agnostic. SOUL.md, CLAUDE.md, freedom.yaml, and policy.example.yaml templates carry NO hardcoded operator identity. Per-deployment operator (id, role, language) set via `neoth init` at install or by editing `~/.neoth/freedom.yaml`. Where this design document references "Alex" or specific infrastructure (Cube 192.168.178.156, Jarvis VM 192.168.178.117, Veronica 100.86.138.18) — those are concrete examples from the dev/test operator's environment, illustrative only. Any operator runs their own Neoth instance with their own profile.
+> **Multi-operator clarification (2026-05-14):** Neoth is operator-agnostic. SOUL.md, CLAUDE.md, freedom.yaml, and policy.example.yaml templates carry NO hardcoded operator identity. Per-deployment operator (id, role, language) set via `neoth init` at install or by editing `~/.neoth/freedom.yaml`. Where this design document references specific infrastructure (Cube 192.168.178.156, Jarvis VM 192.168.178.117, Veronica 100.86.138.18) — those are concrete examples from the dev/test operator's environment, illustrative only. Any operator runs their own Neoth instance with their own profile.
 
 ---
 
@@ -37,7 +37,7 @@
 | **H4** | Hebbian decay + static `idx_profile` view incompatible | `SPEC_proactive_learning.md` §5.2 — nightly batch decay at 03:30 (`pipelines/profile_decay_tick.yaml`) + on-reinforce immediate. **Zero on-read recomputation.** Max 24h staleness, acceptable for slow-drift profile state. |
 | **H5** | Council quota exhaustion ("security" keyword triggers 25-35% of turns) | `SPEC_council_governance.md` — smart trigger (keyword + complexity + dissent + rate gates) reducing council load 80%. HTTP 429 fallback cascade. Daily budget caps. |
 | **H6** | `test_all_three_agree_and_wrong` cannot work (unanimous-wrong = no disagreement → tool silent) | `SPEC_recall_parity_methodology.md` §11 — `GROUND_TRUTH_TAG` in test fixtures. `factual_contradiction_check` accepts ground_truth_tag (test mode only) and checks response-vs-tag, not just hemisphere-vs-hemisphere. |
-| **H7** | Grader-family bias (Claude grades Claude-output → high kappa + shared upward bias) | `SPEC_recall_parity_methodology.md` §4 — 4-grader protocol with 4th grader from external family (Mistral/DeepSeek/Qwen). Plus 20-query operator (Alex) calibration anchor. Family-bias detection + correction. |
+| **H7** | Grader-family bias (Claude grades Claude-output → high kappa + shared upward bias) | `SPEC_recall_parity_methodology.md` §4 — 4-grader protocol with 4th grader from external family (Mistral/DeepSeek/Qwen). Plus 20-query operator calibration anchor. Family-bias detection + correction. |
 | **H8** | Mirror-refusal feedback loop (refusal → engagement → profile learns "values reflection" → more refusals) | `SPEC_proactive_learning.md` §3.1 trigger — `exclude_event_types: [REFUSAL_OBSERVED, REFUSAL_MIRRORED, REFUSAL_REDIRECTED, REFUSAL_PERSISTENT]` + `exclude_originators: [Council]`. Profile never learns from refusal events. |
 
 ### A-class Architectural Gaps (Phase 1 lock decisions)

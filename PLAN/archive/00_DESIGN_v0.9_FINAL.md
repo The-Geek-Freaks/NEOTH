@@ -31,7 +31,7 @@ Per `SPEC_proactive_learning.md` (619 lines, 27 KB). Summary here.
 
 ### 1.1 What it does
 
-Munin continuously builds and refines a structured profile of the operator (Alex) from every conversation, every channel inbound, every vault edit. The profile is:
+Munin continuously builds and refines a structured profile of the operator from every conversation, every channel inbound, every vault edit. The profile is:
 - **Versioned** (every field tracks when first observed, last confirmed)
 - **Evidence-linked** (every claim cites the event_ids that introduced/reinforced it)
 - **Confidence-scored** (0..1, Hebbian reinforce + time decay)
@@ -180,7 +180,7 @@ Block-B (System Prompt) gets a `<profile_summary>` block injected — but only f
 
 ```
 <profile_summary version="2026-05-13" hash="abc123...">
-Identity: Alex, security researcher, Berlin, EN+DE
+Identity: <operator-name>, <role>, <location>, <languages>
 Preferences: blunt directness, technical depth, German conversation, English code/commits
 Schedule: chill-time bis 22 Uhr, work-mode after
 Relationships: Saskia (partner), recurring mentions of family + colleagues
@@ -300,7 +300,7 @@ munin metrics --since 24h
 munin doctor                              # diagnostic, WAL integrity check
 
 # Recall + memory
-munin recall "what did Alex say about WiFi last week"
+munin recall "what did the operator say about WiFi last week"
 munin recall --since=2026-05-01 --until=2026-05-13 --top-k=10
 munin profile show
 munin profile redact identity.location
@@ -369,7 +369,7 @@ Since no v0.8 WAL data exists yet (build hasn't started), zero migration cost. R
 - **Tagline:** *Munin remembers.*
 - **Iconography:** stylized raven (single black raven, profile view, eye visible)
 - **Color palette:** raven black + Norse-runic copper accent
-- **Voice:** blunt, direct, German conversation / English code (matches Alex's LOWKEY profile already baked into Block-B)
+- **Voice:** blunt, direct, German conversation / English code (matches the operator's LOWKEY profile already baked into Block-B)
 - **Versioning scheme:** `munin-<year>.<month>.<day>-<build>` (similar to openclaw's date-based scheme)
 
 ---

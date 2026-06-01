@@ -168,7 +168,7 @@ Mandelbrot would respect this only if we publish the log-log slopes per operator
 
 ## Decision required from operator
 
-Before EXP-FD-0 ships, Alex confirms:
+Before EXP-FD-0 ships, operator confirms:
 1. **Measurement target**: should `D_mem` be computed from byte counts, row counts, token counts, or embedding-cluster radii? Each gives a slightly different slope. Recommend byte counts as the simplest.
 2. **Trigger cadence**: weekly (via cron) or on-demand (via CLI)? Recommend on-demand for v0.1, cron later.
 3. **Failure mode if slope unstable**: `R² < 0.95` means the tiers aren't actually self-similar. Skip the feature for that operator, or fall back to a "hierarchical mode" without fractal claims? Recommend fall back, document the result.

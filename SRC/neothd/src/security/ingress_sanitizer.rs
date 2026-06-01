@@ -1,7 +1,7 @@
 //! Inbound text sanitizer — runs BEFORE any channel ingress hits the WAL or
 //! the LLM pipeline.
 //!
-//! Ported in spirit (not byte-for-byte) from Jarvis `ingress-sanitizer.mjs v3`
+//! Ported in spirit (not byte-for-byte) from an operator-private reference implementation (`ingress-sanitizer.mjs v3`)
 //! per `memory/neoth-research-synthesis.md` Phase 11a. The original JavaScript
 //! is not in QUELLEN so the implementation is reconstructed from the spec
 //! description plus the anti-pattern memory note:

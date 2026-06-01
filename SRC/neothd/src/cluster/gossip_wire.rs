@@ -243,28 +243,28 @@ mod tests {
     fn vc_default_is_empty() {
         let v = VectorClock::default();
         assert!(v.clocks.is_empty());
-        assert_eq!(v.get(&pid("alex-laptop")), 0);
+        assert_eq!(v.get(&pid("sam-laptop")), 0);
     }
 
     #[test]
     fn vc_tick_increments_only_self_slot() {
         let mut v = VectorClock::new();
-        let self_id = pid("alex-laptop");
+        let self_id = pid("sam-laptop");
         v.tick(&self_id);
         v.tick(&self_id);
         v.tick(&self_id);
         assert_eq!(v.get(&self_id), 3);
-        assert_eq!(v.get(&pid("alex-phone")), 0, "other slots untouched");
+        assert_eq!(v.get(&pid("sam-phone")), 0, "other slots untouched");
     }
 
     #[test]
     fn vc_merge_takes_elementwise_max() {
-        let mut local = vc(&[("alex-laptop", 5), ("alex-phone", 2)]);
-        let remote = vc(&[("alex-laptop", 3), ("alex-phone", 7), ("home-server", 1)]);
+        let mut local = vc(&[("sam-laptop", 5), ("sam-phone", 2)]);
+        let remote = vc(&[("sam-laptop", 3), ("sam-phone", 7), ("home-server", 1)]);
         let changed = local.merge(&remote);
         assert_eq!(changed, 2, "phone bumped from 2→7, home-server 0→1");
-        assert_eq!(local.get(&pid("alex-laptop")), 5, "stayed at 5 (higher)");
-        assert_eq!(local.get(&pid("alex-phone")), 7);
+        assert_eq!(local.get(&pid("sam-laptop")), 5, "stayed at 5 (higher)");
+        assert_eq!(local.get(&pid("sam-phone")), 7);
         assert_eq!(local.get(&pid("home-server")), 1);
     }
 
@@ -320,8 +320,8 @@ mod tests {
 
     fn fixture_frame(seq: u64, ts: i64, tag: GossipTag) -> GossipFrame {
         GossipFrame {
-            vector_clock: vc(&[("alex-laptop", seq)]),
-            origin: pid("alex-laptop"),
+            vector_clock: vc(&[("sam-laptop", seq)]),
+            origin: pid("sam-laptop"),
             event_seq: seq,
             timestamp_unix: ts,
             tag,
@@ -408,7 +408,7 @@ mod tests {
 
     #[test]
     fn vc_serde_round_trip_via_json() {
-        let v = vc(&[("alex-laptop", 12), ("home-server", 7)]);
+        let v = vc(&[("sam-laptop", 12), ("home-server", 7)]);
         let json = serde_json::to_string(&v).unwrap();
         let back: VectorClock = serde_json::from_str(&json).unwrap();
         assert_eq!(back, v);
@@ -416,9 +416,9 @@ mod tests {
 
     #[test]
     fn peer_id_transparent_serde_form() {
-        let p = pid("alex-laptop");
+        let p = pid("sam-laptop");
         let json = serde_json::to_string(&p).unwrap();
         // #[serde(transparent)] → just a string, no wrapper object.
-        assert_eq!(json, "\"alex-laptop\"");
+        assert_eq!(json, "\"sam-laptop\"");
     }
 }

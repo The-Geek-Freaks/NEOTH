@@ -78,7 +78,7 @@ NEXUS protocol formalises `{from, to, context, acceptance_criteria, evidence_req
 
 ### Finding E — cc-switch ports cherry-pick, not wholesale
 
-Alex hoped we could fork cc-switch wholesale. The cc-switch
+The hope was to fork cc-switch wholesale. The cc-switch
 agent's verdict: NO — cc-switch is Tauri 2 (React frontend)
 which doesn't map to NEOTH's Slint GUI; the Rust backend has
 extractable pieces but its core architecture (multi-CLI

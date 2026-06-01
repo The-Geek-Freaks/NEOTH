@@ -278,9 +278,9 @@ mod tests {
                 importance REAL
             );
             INSERT INTO memories (content, tags, created_at, importance)
-              VALUES ('Alex builds NEOTH on Windows', 'project,build', 1700000000, 0.9);
+              VALUES ('Operator builds NEOTH on Windows', 'project,build', 1700000000, 0.9);
             INSERT INTO memories (content, tags, created_at, importance)
-              VALUES ('Cube is unraid at 100.68.210.50', 'infra', 1700000100, 0.85);
+              VALUES ('Primary server is unraid at 10.0.0.1', 'infra', 1700000100, 0.85);
             INSERT INTO memories (content, tags, created_at, importance)
               VALUES ('  ', NULL, 1700000200, 0.5);
             INSERT INTO memories (content, tags, created_at, importance)
@@ -299,7 +299,7 @@ mod tests {
         assert!(
             claims
                 .iter()
-                .any(|c| c.statement.contains("Alex builds NEOTH")
+                .any(|c| c.statement.contains("Operator builds NEOTH")
                     && c.statement.contains("tags: project,build"))
         );
         assert!(
@@ -316,10 +316,10 @@ mod tests {
     #[test]
     fn openclaw_parses_blocks_with_frontmatter() {
         let text = "\
-scope: host:cube
+scope: host:primary
 layer: 02
 
-Cube is at 100.68.210.50 with three GPUs.
+Primary server is at 10.0.0.1 with three GPUs.
 Do not remote-reboot.
 
 \n---\n\
@@ -329,8 +329,8 @@ NEOTH never phones home.
 ";
         let claims = parse_openclaw_text(text).unwrap();
         assert_eq!(claims.len(), 2);
-        assert_eq!(claims[0].scope, "host:cube");
-        assert!(claims[0].statement.contains("Cube is at 100.68.210.50"));
+        assert_eq!(claims[0].scope, "host:primary");
+        assert!(claims[0].statement.contains("Primary server is at 10.0.0.1"));
         assert_eq!(claims[1].scope, "global");
         assert!(claims[1].statement.contains("never phones home"));
         for c in &claims {
@@ -373,9 +373,9 @@ NEOTH never phones home.
                 object TEXT,
                 confidence REAL
             );
-            INSERT INTO profile_facts VALUES ('alex', 'role', 'developer', 0.95);
-            INSERT INTO profile_facts VALUES ('alex', 'language', 'de', 0.80);
-            INSERT INTO profile_facts VALUES ('alex', 'maybe-likes', 'jazz', 0.40);",
+            INSERT INTO profile_facts VALUES ('operator', 'role', 'developer', 0.95);
+            INSERT INTO profile_facts VALUES ('operator', 'language', 'de', 0.80);
+            INSERT INTO profile_facts VALUES ('operator', 'maybe-likes', 'jazz', 0.40);",
         )
         .unwrap();
         path
@@ -405,7 +405,7 @@ NEOTH never phones home.
 {"statement":"beta"}
 not even json
 {"statement":""}
-{"statement":"gamma","scope":"host:cube","ts":1700000000}
+{"statement":"gamma","scope":"host:primary","ts":1700000000}
 "#,
         )
         .unwrap();
@@ -421,7 +421,7 @@ not even json
         assert!(
             claims
                 .iter()
-                .any(|c| c.statement == "gamma" && c.scope == "host:cube")
+                .any(|c| c.statement == "gamma" && c.scope == "host:primary")
         );
     }
 

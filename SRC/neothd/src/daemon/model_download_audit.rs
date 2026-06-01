@@ -177,7 +177,7 @@ mod tests {
         let seg = dir.path().join("000001.wal");
         let payload = serde_json::json!({
             "model_id": "Qwen/Qwen3-4B-Instruct-2507",
-            "cached_path": "/home/alex/.cache/huggingface/hub/models--Qwen--Qwen3-4B",
+            "cached_path": "/home/user/.cache/huggingface/hub/models--Qwen--Qwen3-4B",
             "duration_ms": 12345u64,
             "ts_unix": 1_700_000_042u64,
             "trigger": "implicit",

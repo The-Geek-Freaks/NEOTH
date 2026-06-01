@@ -1097,7 +1097,7 @@ mod tests {
         // the guard must not over-reject legitimate restore targets.
         let snap = crate::wal::snapshot::PreMutationSnapshot::new(
             MutationKind::FileWrite,
-            "/home/alex/.config/app.conf",
+            "/home/user/.config/app.conf",
             b"content",
             1_700_000_100,
         );

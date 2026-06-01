@@ -572,7 +572,7 @@ mod tests {
     fn p_04_walks_nested_objects_and_arrays() {
         let v = serde_json::json!({
             "user": {
-                "name": "alex",
+                "name": "sam",
                 "credentials": {
                     "token": "looks-short-but-field-says-secret",
                 }
@@ -583,7 +583,7 @@ mod tests {
             ]
         });
         let out = redact_params_for_log(&v);
-        assert_eq!(out["user"]["name"], "alex");
+        assert_eq!(out["user"]["name"], "sam");
         assert_eq!(out["user"]["credentials"]["token"], "[REDACTED:field]");
         assert_eq!(out["history"][0]["api_key"], "[REDACTED:field]");
         assert_eq!(out["history"][1]["api_key"], "[REDACTED:field]");

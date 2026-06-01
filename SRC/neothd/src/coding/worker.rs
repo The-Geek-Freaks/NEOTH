@@ -8,7 +8,7 @@
 //! Phase 2 once the Chorus verdict on patch safety (Q1) settles.
 //!
 //! QU-10d (Session 30): the trait is now `async` (via `async_trait`) —
-//! the prerequisite Alex picked for parallel dispatch. Provider-backed
+//! the prerequisite picked for parallel dispatch. Provider-backed
 //! workers `.await` their `provider.complete` directly instead of the
 //! prior `runtime.block_on` hack, and `task_executor` can drive several
 //! sessions concurrently (`run_pending_sessions_parallel`).

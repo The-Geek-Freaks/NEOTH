@@ -2,7 +2,7 @@
 
 > Status: BUILD-READY (planning)
 > Phase: 2 (extends `config/inference.rs::InferenceTopology` which already supports per-hemisphere config)
-> Trigger: Alex 2026-05-16 — "Llm auswahl peovider pro hemisphäre (3 stück - auswahl ausgängigen providern)"
+> Trigger: operator 2026-05-16 — "Llm auswahl peovider pro hemisphäre (3 stück - auswahl ausgängigen providern)"
 
 ---
 

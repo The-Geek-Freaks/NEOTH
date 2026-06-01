@@ -114,7 +114,7 @@ Damit: identische Hardware-Schonung wie Sawyer's Ansatz, aber:
 - [ ] Metric-Decomposition: daemon-RSS vs model-RSS getrennt
 - [ ] Sprach-Entscheidung: Rust/Zig-First vs ASM-First — **User-Entscheidung**
 
-## Verbleibende offene Frage an User Alex
+## Verbleibende offene Frage an den Operator
 
 **Die Architektur (single binary, mmap-WAL, no Node) ist OK. Die Sprach-Wahl ist die echte Frage.**
 

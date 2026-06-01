@@ -338,7 +338,7 @@ impl ProfileClaimGuard {
         // 4b. M1 — timestamp normalisation. Reject claims whose
         //     value_json embeds an ISO-8601 date outside the
         //     conversation-window anchor range plus padding. Catches
-        //     LLM "Alex visited Berlin in 2008" hallucinations when
+        //     LLM "Operator visited Berlin in 2008" hallucinations when
         //     the entire window is from yesterday. Runs only when the
         //     caller provided a policy.
         if let Some(policy) = timestamp_policy {
