@@ -68,6 +68,7 @@ pub mod profile;
 pub mod providers;
 pub mod quota;
 pub mod recall;
+pub mod recall_score;
 pub mod recover;
 pub mod refusal;
 pub mod reload;
@@ -177,6 +178,12 @@ pub enum Commands {
     /// Search the SQLite recall views for matching text.
     /// Runs the indexer once before querying.
     Recall(recall::RecallArgs),
+
+    /// ARCH-05/SPEC-08 — score the Jarvis→NEOTH recall-parity gate over grader
+    /// sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity +
+    /// per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL.
+    /// `recall-score --grades a.jsonl --grades b.jsonl [--goldset g.jsonl]`.
+    RecallScore(recall_score::RecallScoreArgs),
 
     /// Check or apply updates for NEOTH-managed CLIs (claude-cli, antigravity-cli, codex).
     ///
@@ -754,6 +761,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Recall(mut args) => {
             args.output = global_output;
             recall::run_recall(args).await?;
+        }
+        Commands::RecallScore(mut args) => {
+            args.output = global_output;
+            recall_score::run_recall_score(args).await?;
         }
         Commands::Update(mut args) => {
             args.output = global_output;

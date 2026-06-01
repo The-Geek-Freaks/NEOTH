@@ -358,6 +358,17 @@ pub const EVENT_TYPE_CHANNEL_GATE_REJECTED: u8 = 0x3B;
 /// `SlashAction::as_str()` wire name; no message text. ADV-09 (Session 30).
 pub const EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED: u8 = 0x3C;
 
+/// `0x3E EVAL_CRITICAL_DIVERGENCE` — ARCH-05/SPEC-08 recall-parity gate. A
+/// goldset query where NEOTH's recall diverged CRITICALLY from the reference
+/// (Jarvis): factual or usefulness kappa-parity below 0.50, or an empty/error
+/// response. A single CRITICAL aborts the Jarvis→NEOTH cutover (SPEC §7) — this
+/// is the durable evidence. Emitted by `neoth recall score` per flagged query.
+/// (The `0x3X` band is channels + adjacent recall/eval observability; eval
+/// divergence lives at the tail of the band per the SPEC's slot choice.)
+///
+/// Payload (JSON): `{query_id, reason, factual_parity_kappa, usefulness_parity_kappa, ts_unix}`.
+pub const EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE: u8 = 0x3E;
+
 // ---- 0x50..=0x5F  Panic / recovery (Pick #35 Session 14 WAL recovery) -----
 
 /// `0x50 RECOVERY_TRUNCATED` — emitted by `wal::recovery::scan_tail` at
@@ -1365,6 +1376,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("os_file_write", EVENT_TYPE_OS_FILE_WRITE),
     ("os_file_write_denied", EVENT_TYPE_OS_FILE_WRITE_DENIED),
     ("operator_feedback", EVENT_TYPE_OPERATOR_FEEDBACK),
+    (
+        "eval_critical_divergence",
+        EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
+    ),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
 ];
 
@@ -1536,6 +1551,8 @@ const _: () = {
         || EVENT_TYPE_CHANNEL_GATE_REJECTED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED < 0x30
         || EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED > 0x3F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE < 0x30
+        || EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FIRED < 0x40 || EVENT_TYPE_JOB_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_SUCCESS < 0x40 || EVENT_TYPE_JOB_SUCCESS > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
@@ -1762,6 +1779,10 @@ mod tests {
             (
                 "CHANNEL_PRIVILEGE_BLOCKED",
                 EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED,
+            ),
+            (
+                "EVAL_CRITICAL_DIVERGENCE",
+                EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
             ),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
             ("INGRESS_QUARANTINED", EVENT_TYPE_INGRESS_QUARANTINED),

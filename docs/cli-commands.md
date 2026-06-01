@@ -1332,6 +1332,14 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--similar-kind <KIND>` — Optional kind filter for `--similar-to{,-text}`. Defaults to `image`. Use `any` to search across every stored kind
 - `--citation-check <TEXT>` — QM-18 citation-check: run the offline citation-extraction + contamination heuristics against the supplied text and report findings. Bypasses recall search entirely; no DB / no WAL / no network. Use `--citation-check -` to read from stdin
 
+## `neoth recall-score`
+
+ARCH-05/SPEC-08 — score the Jarvis→NEOTH recall-parity gate over grader sheets: inter-rater kappa + kappa-adjusted weighted-harmonic parity + per-query CRITICAL divergences (emits `0x3E`). Exits non-zero on FAIL. `recall-score --grades a.jsonl --grades b.jsonl [--goldset g.jsonl]`
+
+- `--grades <GRADES>` — Grader-sheet JSONL file(s) (each line a GraderGrade: query_id, grader_id, system, 5×Likert). Pass one per grader; all are merged. Need ≥ 2 graders
+- `--goldset <GOLDSET>` — Optional goldset JSONL — validated + its query count reported (the scoring runs off the grades, not the goldset)
+- `--no-audit <NO_AUDIT>` — Don't emit `0x3E` WAL frames (dry scoring; the report still prints)
+
 ## `neoth refusal`
 
 Test the Schicht-0 mirror-refusal detector against arbitrary text. `classify <text>` runs the deterministic classifier; `patterns` dumps the pattern dictionaries the classifier uses
