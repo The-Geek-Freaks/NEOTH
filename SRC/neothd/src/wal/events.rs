@@ -29,7 +29,8 @@
 //! | `0x80..=0x8F`  | (reserved Phase 29) Hooks lifecycle                    |
 //! | `0x90..=0x9F`  | Memory tiers (R-22..R-24) — consolidation, decay, GT   |
 //! | `0xA0..=0xAF`  | Permissions / autonomy (R-23)                          |
-//! | `0xB0..=0xEF`  | (reserved)                                             |
+//! | `0xB0..=0xDF`  | (reserved)                                             |
+//! | `0xE0..=0xEF`  | Cluster lifecycle (R-7) — 0xE0..=0xEA assigned         |
 //! | `0xF0..=0xFF`  | Operator / system (QUOTA_BREACHED, …)                  |
 
 // ---- 0x01..=0x0F  Memory + recall -----------------------------------------
@@ -1078,7 +1079,7 @@ pub const EVENT_TYPE_MODEL_DOWNLOAD_START: u8 = 0xD7;
 /// `{ model_id, cached_path, duration_ms, ts_unix }`.
 pub const EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE: u8 = 0xD8;
 
-// ---- 0xE0..=0xE7  Cluster lifecycle (R-7, Session 19) ---------------------
+// ---- 0xE0..=0xEF  Cluster lifecycle (R-7, Session 19; 0xE0..=0xEA assigned) ----
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
 // this band trace cluster mode events — peer discovery, heart-
@@ -1186,9 +1187,21 @@ pub const EVENT_TYPE_CLUSTER_ROLE_CHANGED: u8 = 0xE8;
 /// C-5 Phase 5 (Session 21).
 pub const EVENT_TYPE_CLUSTER_REQUEST_FORWARDED: u8 = 0xE9;
 
-// Cluster band 0xE0..=0xE9 currently assigned. 0xEA..=0xEF reserved
-// for further cluster lifecycle events (split-brain detection,
-// cluster-wide config sync, leader stand-down, ...).
+/// `0xEA CLUSTER_HEARTBEAT_SENT` — emitted when the local node sends its FIRST
+/// outbound heartbeat to a peer on a connection (SL-00(1c) outbound sender).
+/// Anchors the bidirectional transport in the audit chain: `0xE3
+/// CLUSTER_HEARTBEAT_FIRST` records the first heartbeat RECEIVED from a peer;
+/// this is its send-side mirror. Emitted once per peer connection (not every
+/// tick) to keep the WAL from filling with periodic noise.
+///
+/// Payload (JSON): `{peer_id, tokens_per_sec, inflight_requests, healthy,
+/// ts_unix}` — the local load snapshot the heartbeat carried.
+/// SL-00(1c) (Session 33).
+pub const EVENT_TYPE_CLUSTER_HEARTBEAT_SENT: u8 = 0xEA;
+
+// Cluster band 0xE0..=0xEA currently assigned. 0xEB..=0xEF reserved
+// for further cluster lifecycle events (task accept/reject, gossip,
+// split-brain detection, leader stand-down, ...).
 
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
@@ -1594,27 +1607,33 @@ const _: () = {
         || EVENT_TYPE_MODEL_DOWNLOAD_START > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE < 0xD0
         || EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE > 0xDF) as usize];
-    // R-7 cluster lifecycle band (0xE0..=0xE7).
+    // R-7 cluster lifecycle band (0xE0..=0xEF).
+    // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
+    // (0xEB..=0xEF) share one declared band. Every assertion uses the full
+    // 0xEF upper bound so a future reassignment of any code within the band
+    // is caught at compile time regardless of which slot it lands on.
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_CONNECTED < 0xE0
-        || EVENT_TYPE_CLUSTER_PEER_CONNECTED > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_PEER_CONNECTED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_DISCONNECTED < 0xE0
-        || EVENT_TYPE_CLUSTER_PEER_DISCONNECTED > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_PEER_DISCONNECTED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_REJECTED < 0xE0
-        || EVENT_TYPE_CLUSTER_PEER_REJECTED > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_PEER_REJECTED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST < 0xE0
-        || EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED < 0xE0
-        || EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_PEER_HEALTH_CHANGED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED < 0xE0
-        || EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_CAPABILITIES_CHANGED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_CONFIRMED < 0xE0
-        || EVENT_TYPE_CLUSTER_PEER_CONFIRMED > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_PEER_CONFIRMED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_PEER_REVOKED < 0xE0
-        || EVENT_TYPE_CLUSTER_PEER_REVOKED > 0xE7) as usize];
+        || EVENT_TYPE_CLUSTER_PEER_REVOKED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_ROLE_CHANGED < 0xE0
         || EVENT_TYPE_CLUSTER_ROLE_CHANGED > 0xEF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CLUSTER_REQUEST_FORWARDED < 0xE0
         || EVENT_TYPE_CLUSTER_REQUEST_FORWARDED > 0xEF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT < 0xE0
+        || EVENT_TYPE_CLUSTER_HEARTBEAT_SENT > 0xEF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
@@ -1805,6 +1824,10 @@ mod tests {
             (
                 "CLUSTER_REQUEST_FORWARDED",
                 EVENT_TYPE_CLUSTER_REQUEST_FORWARDED,
+            ),
+            (
+                "CLUSTER_HEARTBEAT_SENT",
+                EVENT_TYPE_CLUSTER_HEARTBEAT_SENT,
             ),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),
@@ -1997,6 +2020,25 @@ mod tests {
                 "0x{code:02X} MUST have immediate_sync=true — coding audit"
             );
         }
+    }
+
+    /// SL-00(1c) — pin the literal so operator runbooks (`neoth wal show
+    /// --type 0xEA`) and the send-side audit anchor stay stable. Also
+    /// confirms the code sits in the full cluster band (0xE0..=0xEF) and
+    /// is durable (the first outbound heartbeat per connection is an audit
+    /// anchor — it must survive a crash).
+    #[test]
+    fn cluster_heartbeat_sent_is_0xea_in_cluster_band_and_durable() {
+        assert_eq!(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT, 0xEA);
+        assert!(
+            (0xE0..=0xEF).contains(&EVENT_TYPE_CLUSTER_HEARTBEAT_SENT),
+            "CLUSTER_HEARTBEAT_SENT = 0x{:02X} escaped cluster band 0xE0..=0xEF",
+            EVENT_TYPE_CLUSTER_HEARTBEAT_SENT,
+        );
+        assert!(
+            needs_immediate_sync(EVENT_TYPE_CLUSTER_HEARTBEAT_SENT),
+            "CLUSTER_HEARTBEAT_SENT MUST be immediate-sync (outbound heartbeat audit anchor)"
+        );
     }
 
     #[test]

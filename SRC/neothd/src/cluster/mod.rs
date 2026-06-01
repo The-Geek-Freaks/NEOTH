@@ -36,6 +36,14 @@ pub mod discovery;
 pub mod identity;
 pub mod peer_auth;
 
+/// SL-00(1c) process-wide local-load gauge — feeds the outbound heartbeat real
+/// `inflight`/`tokens_per_sec` numbers (no faked metrics).
+pub mod local_load;
+
+/// SL-00(1c) outbound peer-stream registry — directed `WireFrame` sends to a
+/// connected peer (consumed by SL-01 task replies + SL-01b gossip).
+pub mod peer_streams;
+
 /// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
 /// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
 /// Phase 6 gossip refreshes `last_seen_unix` on each authenticated

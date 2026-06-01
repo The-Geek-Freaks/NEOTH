@@ -76,7 +76,9 @@ use super::heartbeat::{
     self, FrameBody, FrameKind, HeartbeatBody, HelloBody, PROTOCOL_NAME, PROTOCOL_VERSION,
     WireFrame,
 };
+use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
+use super::peer_streams::PeerStreamRegistry;
 use super::{PeerId, PeerLoad, PeerLoadRegistry};
 use crate::wal::writer::WalWriterHandle;
 
@@ -186,7 +188,16 @@ pub(crate) async fn spawn_discovery(
     cluster_name: &str,
     registry: Arc<Mutex<PeerLoadRegistry>>,
 ) -> Result<SwarmHandle> {
-    spawn_discovery_with_wal(cluster_name, None, registry, None).await
+    // No-auth/no-wal path (CLI one-shots / tests): a throwaway peer-stream
+    // registry — nothing external sends directed frames on this path.
+    spawn_discovery_with_wal(
+        cluster_name,
+        None,
+        registry,
+        None,
+        Arc::new(PeerStreamRegistry::new()),
+    )
+    .await
 }
 
 /// Same as [`spawn_discovery`] but threads a live
@@ -202,6 +213,9 @@ pub async fn spawn_discovery_with_wal(
     cluster_key: Option<Arc<ClusterKey>>,
     registry: Arc<Mutex<PeerLoadRegistry>>,
     wal_writer: ClusterWalWriter,
+    // SL-00(1c): shared registry of per-peer outbound channels. The daemon
+    // holds a clone so SL-01/SL-01b can send directed frames to a peer.
+    peer_streams: Arc<PeerStreamRegistry>,
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     let config = peeroxide::SwarmConfig::with_public_bootstrap();
@@ -248,6 +262,7 @@ pub async fn spawn_discovery_with_wal(
             let reg = Arc::clone(&registry);
             let wal = wal_writer.clone();
             let ckey = cluster_key.clone();
+            let streams = Arc::clone(&peer_streams);
             tokio::spawn(async move {
                 // Hold the permit until this session ends.
                 let _permit = permit;
@@ -260,6 +275,7 @@ pub async fn spawn_discovery_with_wal(
                     wal.clone(),
                     ckey,
                     own_noise_pk,
+                    streams,
                 )
                 .await
                 {
@@ -337,6 +353,9 @@ async fn handle_peeroxide_connection(
     // prove + verify cluster membership in the Hello exchange.
     cluster_key: Option<Arc<ClusterKey>>,
     own_noise_pk: [u8; 32],
+    // SL-00(1c): registry of outbound channels so other subsystems can send
+    // directed frames to this peer; the session loop drains its receiver.
+    peer_streams: Arc<PeerStreamRegistry>,
 ) -> Result<()> {
     let remote_pk_hex = hex_encode(conn.remote_public_key());
     // Peer's Noise static key from the authenticated channel — the identity
@@ -513,12 +532,130 @@ async fn handle_peeroxide_connection(
         &cluster_name,
     );
 
-    // ── Step 3: inbound loop ──
+    // ── Step 3: bidirectional session loop (SL-00(1c)) ──
+    //
+    // CANCEL-SAFETY (critical): peeroxide's `SecretStream::read()` uses
+    // `read_exact` into local buffers, so it is NOT cancel-safe — cancelling a
+    // partially-completed read (the trap with `select!`/`timeout` on the read
+    // arm) would consume bytes off the wire and desync the Noise frame stream,
+    // corrupting the connection. So we NEVER cancel a read.
+    //
+    // Instead the loop is read-to-completion: we drain pending OUTBOUND frames
+    // and send our heartbeat (when due) BETWEEN reads, then block on exactly
+    // one inbound read. The protocol has BOTH peers heartbeating every ~5s, so
+    // a read returns at least that often, giving us a regular window to write;
+    // a genuinely dead peer makes `read()` return `Err` via the udx RTO-timeout
+    // failure, so we still detect death without a cancellable timeout.
     let mut seen_first_heartbeat = false;
     let mut last_healthy: Option<bool> = None;
     let mut last_capabilities_hash: Option<[u8; 32]> = None;
 
+    // SL-00(1c): register this peer's outbound channel; the Drop guard removes
+    // it on EVERY exit path (clean disconnect, error, supersede).
+    let mut outbound_rx = peer_streams.register(&remote_pk_hex);
+    struct UnregisterGuard {
+        reg: Arc<PeerStreamRegistry>,
+        key: String,
+    }
+    impl Drop for UnregisterGuard {
+        fn drop(&mut self) {
+            self.reg.unregister(&self.key);
+        }
+    }
+    let _unreg = UnregisterGuard {
+        reg: Arc::clone(&peer_streams),
+        key: remote_pk_hex.clone(),
+    };
+
+    // Outbound heartbeat: our advertised capabilities mirror the Hello (empty
+    // for now — capability discovery from bound providers is a follow-up).
+    let local_capabilities: Vec<String> = Vec::new();
+    let mut out_seq: u64 = 1; // Hello was sequence 0
+    let mut sent_first_heartbeat = false;
+    let mut outbound_alive = true;
+    // StdRng (not ThreadRng) — this future is `tokio::spawn`ed, so the RNG held
+    // across awaits must be `Send`.
+    let mut hb_rng = {
+        use rand::SeedableRng;
+        rand::rngs::StdRng::from_os_rng()
+    };
+    let mut hb_interval = heartbeat::next_jittered_interval(&mut hb_rng);
+    let mut last_heartbeat = tokio::time::Instant::now();
+
     loop {
+        // ── (a) Send our heartbeat — once immediately, then every interval.
+        // Driven here (between reads) rather than from a cancellable timer so a
+        // read is never interrupted. Pacing is bounded by the peer's own
+        // heartbeat cadence, which is the same ~5s.
+        if !sent_first_heartbeat || last_heartbeat.elapsed() >= hb_interval {
+            let hb = WireFrame {
+                kind: FrameKind::Heartbeat,
+                sequence: out_seq,
+                sent_unix_ms: now_unix_ms(),
+                peer_id: own_peer_id.clone(),
+                body: FrameBody::Heartbeat(local_load::local_load_snapshot(&local_capabilities)),
+            };
+            out_seq = out_seq.wrapping_add(1);
+            match heartbeat::encode_frame(&hb) {
+                Ok(b) => {
+                    if let Err(e) = stream.write(&b).await {
+                        emit_peer_disconnected_wal(
+                            wal_writer.as_deref(),
+                            &peer_id,
+                            "error",
+                            Some(&e.to_string()),
+                        );
+                        return Err(anyhow::anyhow!("write heartbeat: {e}"));
+                    }
+                    if !sent_first_heartbeat {
+                        sent_first_heartbeat = true;
+                        if let FrameBody::Heartbeat(ref body) = hb.body {
+                            emit_heartbeat_sent_wal(wal_writer.as_deref(), &peer_id, body);
+                        }
+                    }
+                }
+                // Encode failure is a local bug, not a peer fault — skip this
+                // tick rather than tearing down the connection.
+                Err(e) => {
+                    warn!(peer_id = %peer_id, error = %e, "encode heartbeat failed; skipping tick")
+                }
+            }
+            last_heartbeat = tokio::time::Instant::now();
+            hb_interval = heartbeat::next_jittered_interval(&mut hb_rng);
+        }
+
+        // ── (b) Drain any queued OUTBOUND frames (non-blocking). Directed
+        // task/gossip frames (SL-01/SL-01b) ride this path; they are delivered
+        // on the next loop turn, bounded by the read cadence above.
+        while outbound_alive {
+            match outbound_rx.try_recv() {
+                Ok(frame) => match heartbeat::encode_frame(&frame) {
+                    Ok(b) => {
+                        if let Err(e) = stream.write(&b).await {
+                            emit_peer_disconnected_wal(
+                                wal_writer.as_deref(),
+                                &peer_id,
+                                "error",
+                                Some(&e.to_string()),
+                            );
+                            return Err(anyhow::anyhow!("write outbound frame: {e}"));
+                        }
+                    }
+                    Err(e) => {
+                        warn!(peer_id = %peer_id, error = %e, "encode outbound frame failed; dropping")
+                    }
+                },
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => break,
+                // Sender dropped (peer reconnected → this session superseded).
+                // Stop draining; keep serving inbound until the read closes.
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                    outbound_alive = false;
+                    break;
+                }
+            }
+        }
+
+        // ── (c) Read exactly ONE inbound frame to completion (never cancelled).
         let bytes = match stream.read().await {
             Ok(Some(b)) => b,
             Ok(None) => {
@@ -584,13 +721,8 @@ async fn handle_peeroxide_connection(
                         last_capabilities_hash = Some(b.capabilities_hash);
                     }
                 } else if kind == FrameKind::CapabilityUpdate {
-                    emit_capabilities_changed_wal(
-                        wal_writer.as_deref(),
-                        &peer_id,
-                        &peer_capabilities,
-                    );
+                    emit_capabilities_changed_wal(wal_writer.as_deref(), &peer_id, &peer_capabilities);
                 }
-                continue;
             }
             Ok(false) => {
                 // Goodbye path — kind is Goodbye by elimination
@@ -688,6 +820,23 @@ fn emit_heartbeat_first_wal(writer: Option<&WalWriterHandle>, peer_id: &str, bod
         crate::wal::events::EVENT_TYPE_CLUSTER_HEARTBEAT_FIRST,
         payload,
     );
+}
+
+/// SL-00(1c): emitted once per connection when we send our FIRST outbound
+/// heartbeat — the send-side mirror of `emit_heartbeat_first_wal`. Anchors the
+/// bidirectional transport in the audit chain without per-tick WAL noise.
+fn emit_heartbeat_sent_wal(writer: Option<&WalWriterHandle>, peer_id: &str, body: &HeartbeatBody) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "peer_id": peer_id,
+        "tokens_per_sec": body.tokens_per_sec,
+        "inflight_requests": body.inflight_requests,
+        "healthy": body.healthy,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_HEARTBEAT_SENT, payload);
 }
 
 fn emit_peer_health_changed_wal(
