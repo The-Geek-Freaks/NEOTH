@@ -268,16 +268,15 @@ mod tests {
 
     #[test]
     fn derive_chrome_aes_key_known_answer_test_iter_1003() {
-        // PBKDF2-HMAC-SHA1("peanuts", "saltysalt", iter=1003, dklen=16).
-        // Cross-referenced against the openssl CLI:
-        //   openssl kdf -keylen 16 -kdfopt digest:SHA1 \
-        //               -kdfopt pass:peanuts -kdfopt salt:saltysalt \
-        //               -kdfopt iter:1003 PBKDF2
-        // Expected hex: c4ec4a51b76b89adef0ec2f8c1fff09b
+        // PBKDF2-HMAC-SHA1("peanuts", "saltysalt", iter=1003, dklen=16) —
+        // macOS Chrome uses 1003 iterations (vs Linux's 1). Verified
+        // independently with `python -c "import hashlib;
+        // print(hashlib.pbkdf2_hmac('sha1', b'peanuts', b'saltysalt', 1003,
+        // 16).hex())"` → d9a09d499b4e1b7461f28e67972c6dbd.
         let got = derive_chrome_aes_key(b"peanuts");
         let expected: [u8; 16] = [
-            0xc4, 0xec, 0x4a, 0x51, 0xb7, 0x6b, 0x89, 0xad, 0xef, 0x0e, 0xc2, 0xf8, 0xc1, 0xff,
-            0xf0, 0x9b,
+            0xd9, 0xa0, 0x9d, 0x49, 0x9b, 0x4e, 0x1b, 0x74, 0x61, 0xf2, 0x8e, 0x67, 0x97, 0x2c,
+            0x6d, 0xbd,
         ];
         assert_eq!(
             got, expected,

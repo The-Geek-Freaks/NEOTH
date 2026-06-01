@@ -312,15 +312,14 @@ mod tests {
     #[test]
     fn derive_chrome_aes_key_known_answer_test_peanuts() {
         // PBKDF2-HMAC-SHA1("peanuts", "saltysalt", iter=1, dklen=16).
-        // Cross-referenced against the openssl CLI:
-        //   openssl kdf -keylen 16 -kdfopt digest:SHA1 \
-        //               -kdfopt pass:peanuts -kdfopt salt:saltysalt \
-        //               -kdfopt iter:1 PBKDF2
-        // Expected hex: fbe065ba49ad509cae5d80a73f8fdf36
+        // This is the well-documented Chromium Linux v10 fixed key; verified
+        // independently with `python -c "import hashlib;
+        // print(hashlib.pbkdf2_hmac('sha1', b'peanuts', b'saltysalt', 1,
+        // 16).hex())"` → fd621fe5a2b402539dfa147ca9272778.
         let got = derive_chrome_aes_key(CHROME_FALLBACK_PASSWORD);
         let expected: [u8; 16] = [
-            0xfb, 0xe0, 0x65, 0xba, 0x49, 0xad, 0x50, 0x9c, 0xae, 0x5d, 0x80, 0xa7, 0x3f, 0x8f,
-            0xdf, 0x36,
+            0xfd, 0x62, 0x1f, 0xe5, 0xa2, 0xb4, 0x02, 0x53, 0x9d, 0xfa, 0x14, 0x7c, 0xa9, 0x27,
+            0x27, 0x78,
         ];
         assert_eq!(got, expected, "Chrome PBKDF2('peanuts') KAT must match");
     }

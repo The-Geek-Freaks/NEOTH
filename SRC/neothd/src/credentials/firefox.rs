@@ -11,12 +11,14 @@
 //! switch (NSS 3.40+). Each encrypted field in `logins.json` is a
 //! base64-encoded ASN.1 SECITEM:
 //!
-//!     SEQUENCE                            -- PKCS#7 EncryptedData
-//!       OCTET STRING (key_id)             -- ref to key4.db row
-//!       SEQUENCE                          -- AlgorithmIdentifier
-//!         OID 2.16.840.1.101.3.4.1.42     -- AES-256-CBC
-//!         OCTET STRING (16-byte IV)
-//!       OCTET STRING (ciphertext)         -- PKCS#7-padded
+//! ```text
+//! SEQUENCE                            -- PKCS#7 EncryptedData
+//!   OCTET STRING (key_id)             -- ref to key4.db row
+//!   SEQUENCE                          -- AlgorithmIdentifier
+//!     OID 2.16.840.1.101.3.4.1.42     -- AES-256-CBC
+//!     OCTET STRING (16-byte IV)
+//!   OCTET STRING (ciphertext)         -- PKCS#7-padded
+//! ```
 //!
 //! Session 27 ships the building blocks: per-OS profile root
 //! discovery + `profiles.ini` parse + `logins.json` JSON read +
