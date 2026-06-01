@@ -90,6 +90,17 @@ export component MainWindow inherits Window {
     in-out property <string> operator-id: "";
     in-out property <string> provider-choice: "claude_cli";
     in-out property <string> autonomy-choice: "standard";
+
+    // GU-03 — persona-adaptive settings-panel visibility. Rust sets these on
+    // startup from `panel_logic::panels_for(read_complexity_level())`; they
+    // flow into the SettingsView instance below. chat/privacy/config never gated.
+    in property <bool> settings-show-hemispheres: true;
+    in property <bool> settings-show-channels: true;
+    in property <bool> settings-show-skills: true;
+    in property <bool> settings-show-plugins: true;
+    in property <bool> settings-show-memory: true;
+    in property <bool> settings-show-cluster: true;
+    in property <bool> settings-show-code-sessions: true;
     in-out property <bool> enable-telegram: false;
     /// SPEC `cluster_auto_discovery` Q4: operator's choice on the
     /// cluster step. True = disable mDNS announce on this device.
@@ -1266,6 +1277,14 @@ export component MainWindow inherits Window {
         if root.step == WizardStep.settings: SettingsView {
             autonomy-current: root.autonomy-choice;
             provider-current: root.provider-choice;
+            // GU-03 panel-visibility flows MainWindow → SettingsView.
+            show-hemispheres: root.settings-show-hemispheres;
+            show-channels: root.settings-show-channels;
+            show-skills: root.settings-show-skills;
+            show-plugins: root.settings-show-plugins;
+            show-memory: root.settings-show-memory;
+            show-cluster: root.settings-show-cluster;
+            show-code-sessions: root.settings-show-code-sessions;
             kanban-backlog: root.kanban-backlog;
             kanban-todo: root.kanban-todo;
             kanban-in-progress: root.kanban-in-progress;

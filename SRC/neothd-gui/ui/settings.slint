@@ -355,6 +355,18 @@ export component SettingsView inherits Rectangle {
     in-out property <string> autonomy-current: "standard";
     in-out property <string> provider-current: "claude_cli";
 
+    // GU-03 — persona-adaptive panel visibility. Rust (`panel_logic::panels_for`)
+    // sets these from the operator's complexity level on startup; each gated
+    // sidebar tab is conditionally created (`if`), so a hidden tab is removed
+    // from the layout entirely. `chat`/`privacy`/`config` are never gated.
+    in property <bool> show-hemispheres: true;
+    in property <bool> show-channels: true;
+    in property <bool> show-skills: true;
+    in property <bool> show-plugins: true;
+    in property <bool> show-memory: true;
+    in property <bool> show-cluster: true;
+    in property <bool> show-code-sessions: true;
+
     // Bite #5 — Cluster settings (post-onboarding mirror of the
     // wizard step). Rust side loads cluster.mdns.enabled from
     // freedom.yaml on settings-open + sets `cluster-mdns-enabled`;
@@ -475,27 +487,27 @@ export component SettingsView inherits Rectangle {
                     active: root.active == SettingsTab.chat;
                     clicked => { root.active = SettingsTab.chat; }
                 }
-                TabButton {
+                if root.show-hemispheres : TabButton {
                     label: "Hemispheres";
                     active: root.active == SettingsTab.hemispheres;
                     clicked => { root.active = SettingsTab.hemispheres; }
                 }
-                TabButton {
+                if root.show-channels : TabButton {
                     label: "Channels";
                     active: root.active == SettingsTab.channels;
                     clicked => { root.active = SettingsTab.channels; }
                 }
-                TabButton {
+                if root.show-skills : TabButton {
                     label: "Skills";
                     active: root.active == SettingsTab.skills;
                     clicked => { root.active = SettingsTab.skills; }
                 }
-                TabButton {
+                if root.show-plugins : TabButton {
                     label: "Plugins";
                     active: root.active == SettingsTab.plugins;
                     clicked => { root.active = SettingsTab.plugins; }
                 }
-                TabButton {
+                if root.show-memory : TabButton {
                     label: "Memory";
                     active: root.active == SettingsTab.memory;
                     clicked => { root.active = SettingsTab.memory; }
@@ -505,7 +517,7 @@ export component SettingsView inherits Rectangle {
                     active: root.active == SettingsTab.privacy;
                     clicked => { root.active = SettingsTab.privacy; }
                 }
-                TabButton {
+                if root.show-cluster : TabButton {
                     label: "Cluster";
                     active: root.active == SettingsTab.cluster;
                     clicked => { root.active = SettingsTab.cluster; }
@@ -515,7 +527,7 @@ export component SettingsView inherits Rectangle {
                     active: root.active == SettingsTab.config;
                     clicked => { root.active = SettingsTab.config; }
                 }
-                TabButton {
+                if root.show-code-sessions : TabButton {
                     label: "Code Sessions";
                     active: root.active == SettingsTab.code-sessions;
                     clicked => { root.active = SettingsTab.code-sessions; }

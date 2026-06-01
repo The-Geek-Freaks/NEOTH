@@ -18,6 +18,12 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
+/// GU-03 — persona-adaptive settings-panel visibility rule engine (pure Rust,
+/// unit-tested without Slint). The `.slint` binds its `show_*` properties to
+/// [`panel_logic::PanelVisibility`], populated on startup from the operator's
+/// complexity level.
+mod panel_logic;
+
 slint::include_modules!();
 
 // ── Code Sessions tab — subprocess JSON envelopes ─────────────────────
@@ -186,6 +192,24 @@ fn main() -> Result<()> {
     // their config by clicking Finish on the welcome screen. They can
     // still re-run by clicking Finish at the bottom of the wizard.
     let neoth_dir = default_neoth_home();
+
+    // GU-03 — persona-adaptive settings panels. Read the operator's complexity
+    // level (the v2 wizard's W-03a decision) + apply the panel-visibility rules.
+    // A pre-v2 / fresh operator falls back to Standard. Computed once at startup
+    // (the wizard re-run path re-launches the GUI, picking up the new level).
+    {
+        let level = panel_logic::read_complexity_level(&neoth_dir);
+        let pv = panel_logic::panels_for(level);
+        info!(complexity = level.as_str(), "GU-03: applied persona-adaptive panel visibility");
+        window.set_settings_show_hemispheres(pv.show_hemispheres);
+        window.set_settings_show_channels(pv.show_channels);
+        window.set_settings_show_skills(pv.show_skills);
+        window.set_settings_show_plugins(pv.show_plugins);
+        window.set_settings_show_memory(pv.show_memory);
+        window.set_settings_show_cluster(pv.show_cluster);
+        window.set_settings_show_code_sessions(pv.show_code_sessions);
+    }
+
     let already_initialized = neoth_dir.join("freedom.yaml").exists();
     if already_initialized {
         info!(
