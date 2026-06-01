@@ -753,6 +753,28 @@ Archive the current key and generate a new one. Old key kept at `<path>.<unix-ts
 
 Show path, byte length, mode. Does NOT print the key bytes
 
+## `neoth lease`
+
+SL-01a — capability leases. Grant a paired peer or a plugin a TTL-bounded scoped capability (`grant <to> <scope> --ttl 1h`), `list` active grants, or `revoke <id>`. Each mutation is audited (`neoth wal show --type lease_granted`). Foundation for cluster task delegation (SL-01) + proactive bounded writes (G-01)
+
+### `neoth lease grant`
+
+Grant a subject a TTL-bounded scoped capability. `neoth lease grant <peer-or-plugin> <scope> --ttl 1h`
+
+- `<GRANTED_TO>` — Subject: a paired peer pub-key-hex or a plugin id
+- `<SCOPE>` — Capability scope: `read` / `write_neoth_home` / `channel_send` / `cluster_task_accept` / `mcp_tool:<id>`
+- `--ttl <TTL>` — Lease lifetime, e.g. `1h`, `30m`, `7d`, `3600` (bare = seconds)
+
+### `neoth lease list`
+
+List active leases (expired ones are pruned + audited first)
+
+### `neoth lease revoke`
+
+Revoke a lease by id (full id or a unique prefix)
+
+- `<ID>` — Lease id (or unique prefix) from `neoth lease list`
+
 ## `neoth mcp`
 
 Model Context Protocol (MCP) client operations. `list` shows configured servers from `~/.neoth/mcp_servers.yaml`; `tools <server>` spawns the server + dumps its tool catalogue; `call <server> <tool> [--args JSON]` invokes one tool

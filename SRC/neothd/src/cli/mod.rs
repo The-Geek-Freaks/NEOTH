@@ -47,6 +47,7 @@ pub mod installer;
 pub mod jobs;
 pub mod kanban;
 pub mod keys;
+pub mod lease;
 pub mod mcp;
 pub mod memory;
 pub mod migrate;
@@ -470,6 +471,13 @@ pub enum Commands {
     /// `credentials.yaml::todoist_token`, or `NEOTH_TODOIST_TOKEN`.
     Todo(todo::TodoArgs),
 
+    /// SL-01a — capability leases. Grant a paired peer or a plugin a
+    /// TTL-bounded scoped capability (`grant <to> <scope> --ttl 1h`),
+    /// `list` active grants, or `revoke <id>`. Each mutation is audited
+    /// (`neoth wal show --type lease_granted`). Foundation for cluster
+    /// task delegation (SL-01) + proactive bounded writes (G-01).
+    Lease(lease::LeaseArgs),
+
     /// Text-to-speech synthesis (A-45). `speak` writes audio bytes to
     /// a file via ElevenLabs (cloud) or piper-rs (Phase 2 local).
     Tts(tts::TtsArgs),
@@ -877,6 +885,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Todo(mut args) => {
             args.output = global_output;
             todo::run_todo(args).await?;
+        }
+        Commands::Lease(mut args) => {
+            args.output = global_output;
+            lease::run_lease(args).await?;
         }
         Commands::Tts(mut args) => {
             args.output = global_output;

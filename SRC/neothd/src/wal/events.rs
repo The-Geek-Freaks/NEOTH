@@ -702,6 +702,25 @@ pub const EVENT_TYPE_LEVEL_DEROGATED: u8 = 0xA3;
 /// "operator-confirmed", or "operator-rejected".
 pub const EVENT_TYPE_COST_ESTIMATE_SHOWN: u8 = 0xA4;
 
+/// `0xA5 LEASE_GRANTED` — SL-01a. The operator (or a cluster master)
+/// granted a subject (a paired peer pub-key or a plugin id) a
+/// TTL-bounded scoped capability. A lease is how a delegated task (SL-01)
+/// or a proactive bounded write (G-01) gets authorised without a fresh
+/// per-action prompt — and the lease lives in the audit chain, so
+/// `neoth wal show --type lease_granted` shows exactly who may do what,
+/// until when. Payload: `{lease_id, granted_to, scope, expires_unix}`.
+pub const EVENT_TYPE_LEASE_GRANTED: u8 = 0xA5;
+/// `0xA6 LEASE_EXPIRED` — SL-01a. A lease lapsed (TTL elapsed) and was
+/// pruned. The capability is GONE — the gate falls back to its
+/// fail-closed default. Emitted at prune time so the audit trail shows
+/// the exact moment a delegation ended. Payload:
+/// `{lease_id, granted_to, scope}`.
+pub const EVENT_TYPE_LEASE_EXPIRED: u8 = 0xA6;
+/// `0xA7 LEASE_REVOKED` — SL-01a. The operator explicitly revoked a lease
+/// before its TTL (`neoth lease revoke <id>`). The kill switch for a
+/// delegated capability. Payload: `{lease_id, granted_to, scope}`.
+pub const EVENT_TYPE_LEASE_REVOKED: u8 = 0xA7;
+
 // ---- 0xB0..=0xBF  Hypothalamus / user-profile -----------------------------
 //
 // Profile-pipeline band (SPEC_proactive_learning.md §1.3,
@@ -1253,6 +1272,11 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("plugin_fuel_exhausted", EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED),
     ("plugin_cap_used", EVENT_TYPE_PLUGIN_CAP_USED),
     ("plugin_cap_denied", EVENT_TYPE_PLUGIN_CAP_DENIED),
+    ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
+    ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
+    ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
+    ("lease_expired", EVENT_TYPE_LEASE_EXPIRED),
+    ("lease_revoked", EVENT_TYPE_LEASE_REVOKED),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
 ];
 
@@ -1481,6 +1505,9 @@ const _: () = {
         [(); 1][(EVENT_TYPE_LEVEL_DEROGATED < 0xA0 || EVENT_TYPE_LEVEL_DEROGATED > 0xAF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_COST_ESTIMATE_SHOWN < 0xA0 || EVENT_TYPE_COST_ESTIMATE_SHOWN > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_LEASE_GRANTED < 0xA0 || EVENT_TYPE_LEASE_GRANTED > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_LEASE_EXPIRED < 0xA0 || EVENT_TYPE_LEASE_EXPIRED > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_LEASE_REVOKED < 0xA0 || EVENT_TYPE_LEASE_REVOKED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_DELTA < 0xB0 || EVENT_TYPE_PROFILE_DELTA > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PROFILE_REINFORCED < 0xB0 || EVENT_TYPE_PROFILE_REINFORCED > 0xBF) as usize];
@@ -1678,6 +1705,9 @@ mod tests {
             ("PERMISSION_DENIED", EVENT_TYPE_PERMISSION_DENIED),
             ("LEVEL_ELEVATED", EVENT_TYPE_LEVEL_ELEVATED),
             ("LEVEL_DEROGATED", EVENT_TYPE_LEVEL_DEROGATED),
+            ("LEASE_GRANTED", EVENT_TYPE_LEASE_GRANTED),
+            ("LEASE_EXPIRED", EVENT_TYPE_LEASE_EXPIRED),
+            ("LEASE_REVOKED", EVENT_TYPE_LEASE_REVOKED),
             ("COST_ESTIMATE_SHOWN", EVENT_TYPE_COST_ESTIMATE_SHOWN),
             ("PROFILE_DELTA", EVENT_TYPE_PROFILE_DELTA),
             ("PROFILE_REINFORCED", EVENT_TYPE_PROFILE_REINFORCED),
