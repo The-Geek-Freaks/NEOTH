@@ -751,6 +751,21 @@ fn run_status(output: &OutputFormat) -> Result<()> {
         .and_then(|c| c.operator_id.clone())
         .unwrap_or_else(|| "(unset)".to_string());
 
+    // SL-00(1a): cluster identity status (public name + whether a shared
+    // passphrase is set). Reads freedom.yaml::cluster.name + credentials
+    // cluster_passphrase via the fail-closed resolver; never exposes the key.
+    let identity = match &cfg {
+        Some(c) => {
+            let creds = crate::config::credentials::Credentials::load().unwrap_or_default();
+            crate::cluster::identity::cluster_identity_status(c, &creds)
+        }
+        None => crate::cluster::identity::ClusterIdentityStatus {
+            name: None,
+            has_passphrase: false,
+            configured: false,
+        },
+    };
+
     // v0.1.x always reports single-node; once Hyperswarm transport
     // lands, this reads the peer registry instead.
     let mode = "single-node";
@@ -764,7 +779,10 @@ fn run_status(output: &OutputFormat) -> Result<()> {
                 "policy": policy_name,
                 "peer_count": peer_count,
                 "operator_id": operator,
-                "transport": "deferred (R-A1 — Hyperswarm research)",
+                "cluster_name": identity.name,
+                "cluster_passphrase_set": identity.has_passphrase,
+                "cluster_identity_configured": identity.configured,
+                "transport": "dormant until SL-00 activation (cluster identity + serve.rs wiring)",
             });
             println!("{}", serde_json::to_string_pretty(&body)?);
         }
@@ -774,13 +792,35 @@ fn run_status(output: &OutputFormat) -> Result<()> {
             println!("  policy           : {policy_name}");
             println!("  peer count       : {peer_count}");
             println!("  operator id      : {operator}");
-            println!("  transport        : deferred (R-A1)");
-            println!();
             println!(
-                "  Single-node operation is the only supported mode in v0.1.x. \
-                 Multi-host federation lands when the Hyperswarm transport ships \
-                 (see QUELLEN/research/R-A1_hyperswarm.md)."
+                "  cluster name     : {}",
+                identity.name.as_deref().unwrap_or("(unset)")
             );
+            println!(
+                "  shared passphrase: {}",
+                if identity.has_passphrase {
+                    "set"
+                } else {
+                    "(unset)"
+                }
+            );
+            println!(
+                "  identity         : {}",
+                if identity.configured {
+                    "configured"
+                } else {
+                    "INCOMPLETE — set cluster.name + cluster_passphrase to enable the cluster"
+                }
+            );
+            println!("  transport        : dormant (SL-00 activation pending)");
+            println!();
+            if !identity.configured {
+                println!(
+                    "  No cluster identity yet. A cluster needs a public `cluster.name` \
+                     (freedom.yaml) AND a shared `cluster_passphrase` (credentials.yaml) on \
+                     every node — the passphrase derives the HMAC key that authenticates peers."
+                );
+            }
         }
     }
     Ok(())

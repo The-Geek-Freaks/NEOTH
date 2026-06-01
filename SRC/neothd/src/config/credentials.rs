@@ -94,6 +94,13 @@ pub struct Credentials {
     /// Google secret; access tokens are never persisted. Override:
     /// `NEOTH_GOOGLE_REFRESH_TOKEN`.
     pub google_oauth_refresh_token: Option<SecretString>,
+    /// SL-00 (Session 32) — the cluster shared-secret passphrase. ALL nodes
+    /// in one cluster share this phrase; it derives the `cluster_key` that
+    /// HMAC-authenticates every announce + (future) gossip/task frame, so a
+    /// peer without the phrase can never join or impersonate. A secret →
+    /// lives here in `SecretString` (mlock+zeroize), NOT in freedom.yaml.
+    /// The PUBLIC cluster rendezvous name lives in `freedom.yaml::cluster.name`.
+    pub cluster_passphrase: Option<SecretString>,
 }
 
 impl Credentials {
@@ -169,6 +176,7 @@ impl Credentials {
             google_oauth_client_id,
             google_oauth_client_secret,
             google_oauth_refresh_token,
+            cluster_passphrase,
         } = self;
         provider_key.is_none()
             && telegram_token.is_none()
@@ -184,6 +192,7 @@ impl Credentials {
             && google_oauth_client_id.is_none()
             && google_oauth_client_secret.is_none()
             && google_oauth_refresh_token.is_none()
+            && cluster_passphrase.is_none()
     }
 
     /// True if either field is set. Mirror of `!is_empty()` for call-site

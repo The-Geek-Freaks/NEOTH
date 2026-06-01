@@ -360,6 +360,24 @@ pub struct FreedomConfig {
     /// (`0xA8`/`0xA9`).
     #[serde(default)]
     pub tools: ToolsConfig,
+    /// SL-00 — cluster identity. `name` is the PUBLIC rendezvous label that
+    /// derives the Hyperswarm DHT topic + the mDNS service name (it is NOT a
+    /// secret — the DHT topic is public; the shared `cluster_passphrase` in
+    /// credentials.yaml is what authenticates). Empty `name` = no cluster
+    /// identity = the transport stays inert (fail-closed). The existing
+    /// untyped `cluster.mdns.enabled` / `cluster.listen_port` are read
+    /// separately by `cluster::policy`; serde ignores them here.
+    #[serde(default)]
+    pub cluster: ClusterConfig,
+}
+
+/// SL-00 cluster-identity config. Default: no name (no cluster).
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ClusterConfig {
+    /// Public cluster rendezvous name — derives the DHT topic + mDNS service.
+    /// `None`/empty = this node has no cluster identity (transport inert).
+    pub name: Option<String>,
 }
 
 /// PC-01 OS-tool surface config. Default-safe: every sub-surface is
