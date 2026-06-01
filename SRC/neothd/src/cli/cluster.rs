@@ -45,6 +45,13 @@ pub enum ClusterAction {
     /// SPEC `cluster_auto_discovery` Phase 4: list confirmed peers
     /// from `~/.neoth/cluster.yaml`.
     List,
+    /// SL-02: cluster topology view — confirmed peers + per-peer
+    /// last-seen age + a recent/stale/uncontacted status, table or
+    /// `--output json`. Read-only over `~/.neoth/cluster.yaml`. Live
+    /// health/TPS/RTT/stability are daemon-in-memory only and surface
+    /// in a follow-on (SL-02b) — this view renders the persisted
+    /// registry data the operator can see from any one-shot.
+    Topology,
     /// SPEC Phase 2 mDNS scan — spawn the `mdns-sd` daemon for
     /// `--timeout` seconds, print every authenticated announce
     /// the listener sees. Does NOT write to cluster.yaml — use
@@ -133,6 +140,7 @@ pub async fn run_cluster(args: ClusterArgs) -> Result<()> {
         ClusterAction::Status => run_status(&args.output),
         ClusterAction::Plan { peers, policy } => run_plan(&peers, policy.as_deref(), &args.output),
         ClusterAction::List => run_list(),
+        ClusterAction::Topology => run_topology(&args.output),
         ClusterAction::Discover { timeout, force } => run_discover(timeout, force).await,
         ClusterAction::Confirm {
             pub_key,
@@ -449,6 +457,161 @@ fn run_list() -> Result<()> {
             p.addr,
             p.discovered_via.as_str(),
         );
+    }
+    Ok(())
+}
+
+// ── SL-02 cluster topology view ──────────────────────────────────────────
+
+/// A peer is "stale" once it hasn't announced for this long (~20 missed
+/// heartbeat intervals at the typical cadence). Hardcoded for the v1.0 slice;
+/// a future config knob can override.
+const TOPOLOGY_STALE_AFTER_SECS: i64 = 300;
+
+/// One rendered topology row. Pure data, no IO — unit-testable.
+pub struct TopologyRow {
+    pub pub_key_short: String,
+    pub label: String,
+    pub addr: String,
+    pub via: String,
+    /// `None` when the peer was confirmed but never since seen announce.
+    pub last_seen_age_secs: Option<i64>,
+    pub status: &'static str,
+}
+
+/// `recent` / `stale` / `uncontacted` from a peer's last-seen timestamp.
+fn topology_status(last_seen_unix: i64, now_unix: i64) -> &'static str {
+    if last_seen_unix == 0 {
+        "uncontacted"
+    } else if now_unix.saturating_sub(last_seen_unix) > TOPOLOGY_STALE_AFTER_SECS {
+        "stale"
+    } else {
+        "recent"
+    }
+}
+
+/// Build topology rows from the persisted peer list. Pure — no fs, no clock
+/// of its own (caller passes `now_unix`), so it is fully deterministic.
+pub fn build_topology_rows(
+    peers: &[crate::cluster::registry::PairedPeer],
+    now_unix: i64,
+) -> Vec<TopologyRow> {
+    peers
+        .iter()
+        .map(|p| {
+            let last_seen_age_secs = if p.last_seen_unix == 0 {
+                None
+            } else {
+                Some(now_unix.saturating_sub(p.last_seen_unix).max(0))
+            };
+            TopologyRow {
+                pub_key_short: p.pub_key_hex[..16.min(p.pub_key_hex.len())].to_string(),
+                label: p.instance_label.clone(),
+                addr: p.addr.clone(),
+                via: p.discovered_via.as_str().to_string(),
+                last_seen_age_secs,
+                status: topology_status(p.last_seen_unix, now_unix),
+            }
+        })
+        .collect()
+}
+
+/// Human-readable last-seen age.
+fn fmt_last_seen(age: Option<i64>) -> String {
+    match age {
+        None => "never".to_string(),
+        Some(s) if s < 5 => "just now".to_string(),
+        Some(s) if s < 60 => format!("{s}s ago"),
+        Some(s) if s < 3600 => format!("{}m ago", s / 60),
+        Some(s) => format!("{}h ago", s / 3600),
+    }
+}
+
+/// Render the topology table. Pure — returns the string so it is testable.
+pub fn render_topology_table(rows: &[TopologyRow]) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# Cluster topology ({} peer{})\n",
+        rows.len(),
+        if rows.len() == 1 { "" } else { "s" }
+    ));
+    out.push_str(&format!(
+        "{:<16} {:<24} {:<22} {:<12} {:<12} {}\n",
+        "pub_key", "label", "addr", "via", "last_seen", "status"
+    ));
+    for r in rows {
+        out.push_str(&format!(
+            "{:<16} {:<24} {:<22} {:<12} {:<12} {}\n",
+            r.pub_key_short,
+            r.label,
+            r.addr,
+            r.via,
+            fmt_last_seen(r.last_seen_age_secs),
+            r.status,
+        ));
+    }
+    out
+}
+
+fn topology_now_unix() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn run_topology(output: &OutputFormat) -> Result<()> {
+    let home = FreedomConfig::default_neoth_home();
+    let reg = crate::cluster::registry::load(&home)?;
+    let now = topology_now_unix();
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let peers: Vec<_> = reg
+                .peers
+                .iter()
+                .map(|p| {
+                    let age = if p.last_seen_unix == 0 {
+                        None
+                    } else {
+                        Some(now.saturating_sub(p.last_seen_unix).max(0))
+                    };
+                    serde_json::json!({
+                        "pub_key_short": &p.pub_key_hex[..16.min(p.pub_key_hex.len())],
+                        "pub_key_hex": p.pub_key_hex,
+                        "label": p.instance_label,
+                        "addr": p.addr,
+                        "via": p.discovered_via.as_str(),
+                        "paired_at_unix": p.paired_at_unix,
+                        "last_seen_unix": p.last_seen_unix,
+                        "last_seen_age_secs": age,
+                        "status": topology_status(p.last_seen_unix, now),
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "peers": peers,
+                    "local_mode": "single-node",
+                    "note": "health/rtt/stability are daemon-in-memory only — surface in SL-02b",
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            if reg.peers.is_empty() {
+                println!(
+                    "(no confirmed cluster peers — run `neoth cluster discover` for an mDNS scan, \
+                     then `neoth cluster confirm <pub_key>` to add a peer)"
+                );
+                return Ok(());
+            }
+            let rows = build_topology_rows(&reg.peers, now);
+            print!("{}", render_topology_table(&rows));
+            println!(
+                "note: health / RTT / stability are daemon-in-memory only and not \
+                 shown in this one-shot view (SL-02b follow-on)."
+            );
+        }
     }
     Ok(())
 }
@@ -968,5 +1131,81 @@ mod tests {
         };
         let err = run_cluster(args).await.unwrap_err();
         assert!(err.to_string().contains("pub_key"));
+    }
+
+    // ── SL-02 topology view ───────────────────────────────────────────────
+
+    fn peer(label: &str, last_seen_unix: i64) -> crate::cluster::registry::PairedPeer {
+        crate::cluster::registry::PairedPeer {
+            pub_key_hex: "ab".repeat(32),
+            instance_label: label.into(),
+            addr: "192.168.1.5:49737".into(),
+            discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+            paired_at_unix: 1_700_000_000,
+            last_seen_unix,
+        }
+    }
+
+    const TNOW: i64 = 1_700_010_000;
+
+    #[test]
+    fn build_topology_rows_marks_recent_when_recently_seen() {
+        let rows = build_topology_rows(&[peer("laptop", TNOW - 42)], TNOW);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, "recent");
+        assert_eq!(rows[0].last_seen_age_secs, Some(42));
+        assert_eq!(rows[0].label, "laptop");
+    }
+
+    #[test]
+    fn build_topology_rows_marks_stale_when_old() {
+        let rows = build_topology_rows(&[peer("server", TNOW - 9000)], TNOW);
+        assert_eq!(rows[0].status, "stale");
+        assert_eq!(rows[0].last_seen_age_secs, Some(9000));
+    }
+
+    #[test]
+    fn build_topology_rows_marks_uncontacted_when_never_seen() {
+        let rows = build_topology_rows(&[peer("vps", 0)], TNOW);
+        assert_eq!(rows[0].status, "uncontacted");
+        assert_eq!(rows[0].last_seen_age_secs, None);
+    }
+
+    #[test]
+    fn topology_status_boundary_is_exclusive_at_stale_threshold() {
+        // Exactly at the threshold is still recent; one past it is stale.
+        assert_eq!(
+            topology_status(TNOW - TOPOLOGY_STALE_AFTER_SECS, TNOW),
+            "recent"
+        );
+        assert_eq!(
+            topology_status(TNOW - TOPOLOGY_STALE_AFTER_SECS - 1, TNOW),
+            "stale"
+        );
+    }
+
+    #[test]
+    fn render_topology_table_has_headers_and_a_row_per_peer() {
+        let rows = build_topology_rows(&[peer("a", TNOW - 1), peer("b", 0)], TNOW);
+        let out = render_topology_table(&rows);
+        assert!(out.contains("pub_key") && out.contains("last_seen") && out.contains("status"));
+        assert!(out.contains("# Cluster topology (2 peers)"));
+        assert!(out.contains("just now")); // a, seen 1s ago
+        assert!(out.contains("never")); // b, uncontacted
+    }
+
+    #[test]
+    fn render_topology_table_handles_empty_peer_list() {
+        let out = render_topology_table(&[]);
+        assert!(out.contains("# Cluster topology (0 peers)"));
+    }
+
+    #[test]
+    fn fmt_last_seen_buckets() {
+        assert_eq!(fmt_last_seen(None), "never");
+        assert_eq!(fmt_last_seen(Some(2)), "just now");
+        assert_eq!(fmt_last_seen(Some(42)), "42s ago");
+        assert_eq!(fmt_last_seen(Some(180)), "3m ago");
+        assert_eq!(fmt_last_seen(Some(7200)), "2h ago");
     }
 }

@@ -199,6 +199,10 @@ Remove a confirmed peer by pub_key OR unique prefix
 
 Print the active policy + known peer state
 
+### `neoth cluster topology`
+
+SL-02: cluster topology view — confirmed peers + per-peer last-seen age + a recent/stale/uncontacted status, table or `--output json`. Read-only over `~/.neoth/cluster.yaml`. Live health/TPS/RTT/stability are daemon-in-memory only and surface in a follow-on (SL-02b) — this view renders the persisted registry data the operator can see from any one-shot
+
 ## `neoth code`
 
 V11 coding workflow — autonomous software-engineering entry point
