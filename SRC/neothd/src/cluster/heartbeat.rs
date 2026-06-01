@@ -53,7 +53,11 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 /// Wire-protocol version. Bumped when the frame schema
 /// changes incompatibly. Peers with mismatched versions
 /// drop the connection per Chorus Q4.
-pub const PROTOCOL_VERSION: u16 = 1;
+///
+/// v2 (SL-00 1b): the Hello now carries a mandatory `cluster_key_proof`.
+/// This is a breaking change — all nodes in a cluster must run >= v2
+/// together (a v1 peer's Hello omits the proof and is rejected fail-closed).
+pub const PROTOCOL_VERSION: u16 = 2;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
@@ -166,6 +170,14 @@ pub struct HelloBody {
     /// against this so duplicate Hellos with the same
     /// `capabilities_schema_version` skip re-validation.
     pub capabilities_schema_version: u32,
+    /// SL-00(1b) — per-session cluster authorization proof: HMAC-SHA256 over
+    /// the two Noise static pubkeys (signer first) keyed by the shared
+    /// `cluster_key` (see `cluster::peer_auth`). Proves the peer holds the
+    /// cluster passphrase WITHOUT the public-name-only weakness. `Option` for
+    /// CBOR forward-compat, but the verifier treats `None` as a hard
+    /// rejection (fail-closed): a peer that omits it is unauthorized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cluster_key_proof: Option<[u8; 32]>,
 }
 
 /// Heartbeat body — volatile load metrics only.
@@ -375,6 +387,7 @@ mod tests {
                 cluster_name_hash: [0xAB; 32],
                 capabilities: vec!["claude_cli".into(), "openai_compat".into()],
                 capabilities_schema_version: 1,
+                cluster_key_proof: None,
             }),
         }
     }
@@ -541,6 +554,7 @@ mod tests {
             cluster_name_hash: [0; 32],
             capabilities: vec![],
             capabilities_schema_version: 1,
+            cluster_key_proof: None,
         };
         assert!(validate_hello(&bad).is_err());
     }
@@ -553,6 +567,7 @@ mod tests {
             cluster_name_hash: [0; 32],
             capabilities: vec![],
             capabilities_schema_version: 1,
+            cluster_key_proof: None,
         };
         assert!(validate_hello(&bad).is_err());
     }
@@ -565,8 +580,34 @@ mod tests {
             cluster_name_hash: [0xFF; 32],
             capabilities: vec!["claude_cli".into()],
             capabilities_schema_version: 1,
+            cluster_key_proof: None,
         };
         assert!(validate_hello(&good).is_ok());
+    }
+
+    #[test]
+    fn hello_cluster_key_proof_round_trips_on_the_wire() {
+        // SL-00(1b): the proof must survive encode→decode so the verifier sees it.
+        let frame = WireFrame {
+            kind: FrameKind::Hello,
+            sequence: 0,
+            sent_unix_ms: 1,
+            peer_id: "p".into(),
+            body: FrameBody::Hello(HelloBody {
+                protocol: PROTOCOL_NAME.to_string(),
+                version: PROTOCOL_VERSION,
+                cluster_name_hash: [7; 32],
+                capabilities: vec![],
+                capabilities_schema_version: 1,
+                cluster_key_proof: Some([0xAB; 32]),
+            }),
+        };
+        let bytes = encode_frame(&frame).unwrap();
+        let back = decode_frame(&bytes).unwrap();
+        match back.body {
+            FrameBody::Hello(b) => assert_eq!(b.cluster_key_proof, Some([0xAB; 32])),
+            other => panic!("expected Hello, got {other:?}"),
+        }
     }
 
     #[test]
@@ -620,7 +661,8 @@ mod tests {
         // Belt-and-braces pin: any future drift on these
         // values is intentional + needs a Chorus re-review.
         assert_eq!(PROTOCOL_NAME, "neoth-r7-heartbeat");
-        assert_eq!(PROTOCOL_VERSION, 1);
+        // v2: SL-00(1b) added the mandatory cluster_key_proof to the Hello.
+        assert_eq!(PROTOCOL_VERSION, 2);
         assert_eq!(MAX_FRAME_BYTES, 64 * 1024);
         assert_eq!(HEARTBEAT_INTERVAL_MS, 5_000);
         assert_eq!(HEARTBEAT_JITTER_PCT, 20);

@@ -61,10 +61,12 @@ use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, info, warn};
 
+use super::discovery::ClusterKey;
 use super::heartbeat::{
     self, FrameBody, FrameKind, HeartbeatBody, HelloBody, PROTOCOL_NAME, PROTOCOL_VERSION,
     WireFrame,
 };
+use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::{PeerId, PeerLoad, PeerLoadRegistry};
 use crate::wal::writer::WalWriterHandle;
 
@@ -129,7 +131,7 @@ pub async fn spawn_discovery(
     cluster_name: &str,
     registry: Arc<Mutex<PeerLoadRegistry>>,
 ) -> Result<SwarmHandle> {
-    spawn_discovery_with_wal(cluster_name, registry, None).await
+    spawn_discovery_with_wal(cluster_name, None, registry, None).await
 }
 
 /// Same as [`spawn_discovery`] but threads a live
@@ -139,6 +141,10 @@ pub async fn spawn_discovery(
 /// [`spawn_discovery`] (no writer).
 pub async fn spawn_discovery_with_wal(
     cluster_name: &str,
+    // SL-00(1b): the shared cluster_key. `Some` enforces the cluster_key
+    // proof in every peer handshake (the activated transport path always
+    // passes it); `None` is the legacy/no-auth path (CLI one-shots / tests).
+    cluster_key: Option<Arc<ClusterKey>>,
     registry: Arc<Mutex<PeerLoadRegistry>>,
     wal_writer: ClusterWalWriter,
 ) -> Result<SwarmHandle> {
@@ -147,6 +153,9 @@ pub async fn spawn_discovery_with_wal(
     let (_swarm_task, handle, mut conn_rx) = peeroxide::spawn(config)
         .await
         .context("peeroxide::spawn — bring up Hyperswarm")?;
+    // Our own Noise static pubkey — the same for every peer session. Bound
+    // into the cluster_key proof so a captured proof can't be replayed.
+    let own_noise_pk: [u8; 32] = handle.key_pair().public_key;
 
     handle
         .join(topic, peeroxide::JoinOpts::default())
@@ -169,10 +178,19 @@ pub async fn spawn_discovery_with_wal(
             let own_id = own_peer_id.clone();
             let reg = Arc::clone(&registry);
             let wal = wal_writer.clone();
+            let ckey = cluster_key.clone();
             tokio::spawn(async move {
                 let peer_hex_for_wal = peer_hex.clone();
-                if let Err(e) =
-                    handle_peeroxide_connection(conn, cluster, own_id, reg, wal.clone()).await
+                if let Err(e) = handle_peeroxide_connection(
+                    conn,
+                    cluster,
+                    own_id,
+                    reg,
+                    wal.clone(),
+                    ckey,
+                    own_noise_pk,
+                )
+                .await
                 {
                     warn!(
                         peer = %peer_hex,
@@ -223,8 +241,16 @@ async fn handle_peeroxide_connection(
     own_peer_id: String,
     registry: Arc<Mutex<PeerLoadRegistry>>,
     wal_writer: ClusterWalWriter,
+    // SL-00(1b): the shared cluster_key (Some on the activated transport path,
+    // None on the legacy/no-auth path) + our own Noise static pubkey, used to
+    // prove + verify cluster membership in the Hello exchange.
+    cluster_key: Option<Arc<ClusterKey>>,
+    own_noise_pk: [u8; 32],
 ) -> Result<()> {
     let remote_pk_hex = hex_encode(conn.remote_public_key());
+    // Peer's Noise static key from the authenticated channel — the identity
+    // the cluster_key proof binds to (NOT anything from the frame payload).
+    let peer_noise_pk: [u8; 32] = *conn.remote_public_key();
     let stream = &mut conn.peer.stream;
 
     // ── Step 1: send our Hello ──
@@ -245,6 +271,11 @@ async fn handle_peeroxide_connection(
             // PeerLoad rows.
             capabilities: Vec::new(),
             capabilities_schema_version: 1,
+            // SL-00(1b): prove we hold the shared cluster_key. signer = us,
+            // verifier = the peer (the peer recomputes proof(us, them)).
+            cluster_key_proof: cluster_key
+                .as_ref()
+                .map(|k| compute_cluster_key_proof(k, &own_noise_pk, &peer_noise_pk)),
         }),
     };
     let our_hello_bytes = heartbeat::encode_frame(&our_hello).context("encode our Hello")?;
@@ -313,6 +344,36 @@ async fn handle_peeroxide_connection(
                 anyhow::bail!(
                     "peer cluster_name_hash does not match local cluster `{cluster_name}`"
                 );
+            }
+            // SL-00(1b): the cluster_name_hash is PUBLIC — it only proves the
+            // peer knows the cluster's name. The cluster_key proof below is
+            // what proves shared-secret possession. Fail-closed: when we hold
+            // a cluster_key (the activated path always does), a missing OR
+            // mismatched proof is a hard rejection. `peer_pk` is the peer's
+            // Noise static key from the authenticated channel (never the
+            // payload); we recompute proof(peer_pk, own_pk) and constant-time
+            // compare.
+            if let Some(ref ckey) = cluster_key {
+                match body.cluster_key_proof {
+                    Some(ref claimed) => {
+                        if !verify_peer_proof(ckey, claimed, &peer_noise_pk, &own_noise_pk) {
+                            emit_peer_rejected_wal(
+                                wal_writer.as_deref(),
+                                &peer_id,
+                                "cluster_key_proof mismatch — peer not a cluster member",
+                            );
+                            anyhow::bail!("peer cluster_key_proof invalid — unauthorized");
+                        }
+                    }
+                    None => {
+                        emit_peer_rejected_wal(
+                            wal_writer.as_deref(),
+                            &peer_id,
+                            "missing cluster_key_proof — peer unauthorized",
+                        );
+                        anyhow::bail!("peer Hello missing cluster_key_proof — unauthorized");
+                    }
+                }
             }
             body.capabilities.clone()
         }
@@ -606,6 +667,9 @@ pub async fn send_hello<W: AsyncWrite + Unpin>(
             cluster_name_hash: derive_topic(cluster_name),
             capabilities,
             capabilities_schema_version: 1,
+            // send_hello is a test/helper path (not the authenticated main
+            // handshake); it carries no cluster_key proof.
+            cluster_key_proof: None,
         }),
     };
     heartbeat::write_framed(sink, &frame)
@@ -837,6 +901,7 @@ mod tests {
                 cluster_name_hash: derive_topic(cluster),
                 capabilities: vec!["claude_cli".into()],
                 capabilities_schema_version: 1,
+                cluster_key_proof: None,
             }),
         }
     }
