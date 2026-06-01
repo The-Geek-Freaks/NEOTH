@@ -763,7 +763,18 @@ fn run_status(output: &OutputFormat) -> Result<()> {
             name: None,
             has_passphrase: false,
             configured: false,
+            enabled: false,
+            transport_active: false,
         },
+    };
+
+    // SL-00(1b): honest transport state derived from the activation gate.
+    let transport_state = if identity.transport_active {
+        "active (Hyperswarm DHT — joined while the daemon runs)"
+    } else if identity.configured && !identity.enabled {
+        "disabled (identity ready; set cluster.enabled: true to activate)"
+    } else {
+        "inactive (no cluster identity)"
     };
 
     // v0.1.x always reports single-node; once Hyperswarm transport
@@ -782,7 +793,9 @@ fn run_status(output: &OutputFormat) -> Result<()> {
                 "cluster_name": identity.name,
                 "cluster_passphrase_set": identity.has_passphrase,
                 "cluster_identity_configured": identity.configured,
-                "transport": "dormant until SL-00 activation (cluster identity + serve.rs wiring)",
+                "cluster_enabled": identity.enabled,
+                "transport_active": identity.transport_active,
+                "transport": transport_state,
             });
             println!("{}", serde_json::to_string_pretty(&body)?);
         }
@@ -812,13 +825,27 @@ fn run_status(output: &OutputFormat) -> Result<()> {
                     "INCOMPLETE — set cluster.name + cluster_passphrase to enable the cluster"
                 }
             );
-            println!("  transport        : dormant (SL-00 activation pending)");
+            println!(
+                "  transport switch : {}",
+                if identity.enabled {
+                    "enabled (cluster.enabled: true)"
+                } else {
+                    "disabled (cluster.enabled: false)"
+                }
+            );
+            println!("  transport        : {transport_state}");
             println!();
             if !identity.configured {
                 println!(
                     "  No cluster identity yet. A cluster needs a public `cluster.name` \
                      (freedom.yaml) AND a shared `cluster_passphrase` (credentials.yaml) on \
                      every node — the passphrase derives the HMAC key that authenticates peers."
+                );
+            } else if !identity.enabled {
+                println!(
+                    "  Identity is ready but the transport master-switch is OFF. Set \
+                     `cluster.enabled: true` in freedom.yaml to let the daemon join the \
+                     Hyperswarm DHT on next start. (Default OFF — no DHT announce until you opt in.)"
                 );
             }
         }

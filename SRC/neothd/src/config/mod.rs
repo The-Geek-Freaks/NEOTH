@@ -378,6 +378,12 @@ pub struct ClusterConfig {
     /// Public cluster rendezvous name — derives the DHT topic + mDNS service.
     /// `None`/empty = this node has no cluster identity (transport inert).
     pub name: Option<String>,
+    /// SL-00(1b) transport master-switch. **Default `false`.** Even with a
+    /// full identity configured, the Hyperswarm DHT transport stays inert
+    /// until the operator explicitly flips this on. The daemon NEVER
+    /// announces on the public DHT while this is `false` — the safety gate
+    /// against an accidental cluster join on a fresh install.
+    pub enabled: bool,
 }
 
 /// PC-01 OS-tool surface config. Default-safe: every sub-surface is

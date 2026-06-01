@@ -56,8 +56,11 @@ impl Drop for ClusterKey {
 
 impl std::fmt::Debug for ClusterKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let prefix: String = self.0[..8].iter().map(|b| format!("{b:02x}")).collect();
-        write!(f, "ClusterKey({prefix}…)")
+        // FULLY redacted — emit NO key bytes. A prefix (even 8 bytes) is still
+        // secret material that must never reach a log line, panic formatter, or
+        // crash report. The cluster_key is an HMAC secret; leaking any of it
+        // weakens the membership proof. (SL-00(1b) review finding.)
+        f.write_str("ClusterKey(<redacted>)")
     }
 }
 
@@ -361,10 +364,18 @@ mod tests {
     fn debug_redacts_full_cluster_key() {
         let key = cluster_key(PHRASE).unwrap();
         let dbg = format!("{:?}", key);
-        assert!(dbg.contains("ClusterKey"));
-        assert!(dbg.contains("…"), "should truncate with ellipsis");
-        // The whole 32-byte hex should NOT appear in debug.
+        assert_eq!(
+            dbg, "ClusterKey(<redacted>)",
+            "Debug must emit a fixed redaction marker with NO key bytes"
+        );
+        // No part of the key — not even the first byte — may appear as hex.
         let full_hex: String = key.0.iter().map(|b| format!("{b:02x}")).collect();
-        assert!(!dbg.contains(&full_hex));
+        assert!(!dbg.contains(&full_hex), "full hex must not leak");
+        // The 8-byte prefix that the old impl leaked must also be absent.
+        let prefix_hex: String = key.0[..8].iter().map(|b| format!("{b:02x}")).collect();
+        assert!(
+            !dbg.contains(&prefix_hex),
+            "even the 8-byte prefix must not leak (SL-00(1b) finding)"
+        );
     }
 }

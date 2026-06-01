@@ -13,8 +13,17 @@
 //! use std::sync::{Arc, Mutex};
 //! use crate::cluster::{hyperswarm, PeerLoadRegistry};
 //!
+//! // Production path: always supply the cluster_key so inbound-peer
+//! // proof enforcement is armed. `spawn_discovery` (no key) is
+//! // crate-internal only.
 //! let registry = Arc::new(Mutex::new(PeerLoadRegistry::new()));
-//! let handle = hyperswarm::spawn_discovery("my-cluster", Arc::clone(&registry)).await?;
+//! let cluster_key = Arc::new(identity.key);
+//! let handle = hyperswarm::spawn_discovery_with_wal(
+//!     "my-cluster",
+//!     Some(cluster_key),
+//!     registry,
+//!     Some(Arc::new(wal_writer)),
+//! ).await?;
 //! // ... daemon runs ...
 //! handle.shutdown().await?;
 //! ```
@@ -35,9 +44,10 @@
 //!   32-byte topic via peeroxide's `discovery_key`.
 //! - [`SwarmHandle`] — RAII wrapper around the spawned
 //!   peeroxide swarm + the JoinHandle. Drop aborts the task.
-//! - [`spawn_discovery`] — bring up the swarm, join the
+//! - [`spawn_discovery_with_wal`] — bring up the swarm, join the
 //!   topic, spawn the peer-acceptor loop. Returns the
-//!   handle.
+//!   handle. (`spawn_discovery` is a crate-internal convenience
+//!   wrapper; external callers should always supply a cluster_key.)
 //!
 //! ## What this module does NOT do (yet)
 //!
@@ -77,6 +87,17 @@ use crate::wal::writer::WalWriterHandle;
 /// threads its handle through.
 pub type ClusterWalWriter = Option<Arc<WalWriterHandle>>;
 
+/// SL-00(1b) DoS hardening: maximum number of concurrent peer sessions on the
+/// public DHT transport. Reached only under a connection flood (a healthy home
+/// cluster is single-digit peers); excess inbound connections are dropped.
+const MAX_CONCURRENT_PEER_SESSIONS: usize = 64;
+
+/// SL-00(1b) DoS hardening: wall-clock budget for the Hello handshake
+/// (write-our-Hello + read-peer-Hello). A peer that connects but stalls
+/// without completing the handshake is dropped instead of pinning a task /
+/// session slot indefinitely. Generous enough for real WAN round-trips.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Derive a 32-byte Hyperswarm topic from an operator-supplied
 /// cluster name. Pure function — operator-facing wire form is
 /// the cluster name string; peeroxide hashes it via
@@ -86,35 +107,69 @@ pub fn derive_topic(cluster_name: &str) -> [u8; 32] {
     peeroxide::discovery_key(cluster_name.as_bytes())
 }
 
-/// RAII handle to a running Hyperswarm discovery task. Drop
-/// aborts the background task (best-effort — peeroxide's
-/// internal connections shut down lazily on the next tick).
+/// RAII handle to a running Hyperswarm discovery transport.
+///
+/// **Lifecycle (SL-00(1b) review fix):** peeroxide's swarm actor breaks its
+/// command loop as soon as the LAST `cmd_tx` (its `SwarmHandle`) drops, which
+/// destroys the DHT + unannounces. We therefore RETAIN peeroxide's handle for
+/// the whole transport lifetime — dropping it earlier would tear the swarm
+/// down on the next tick (announce-then-die). Holding it also keeps the
+/// connection receiver alive so the accept loop actually sees peers.
+///
+/// Teardown order on [`shutdown`](Self::shutdown): `leave(topic)` (unannounce)
+/// → drop the peeroxide handle (actor breaks its loop) → abort our accept loop
+/// → await the actor task so DHT sockets close before the process exits.
 pub struct SwarmHandle {
-    join: Option<tokio::task::JoinHandle<()>>,
+    /// peeroxide command handle. `Some` while live; dropping it stops the DHT.
+    peer_handle: Option<peeroxide::SwarmHandle>,
+    /// The joined topic — used to `leave()` (unannounce) on graceful shutdown.
+    topic: [u8; 32],
+    /// peeroxide's DHT actor task — awaited on shutdown for clean socket close.
+    swarm_task: Option<tokio::task::JoinHandle<()>>,
+    /// Our per-peer connection-accept loop.
+    accept_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl SwarmHandle {
-    /// Explicit shutdown — aborts the discovery task and
-    /// awaits its termination. Use over Drop when the caller
-    /// wants synchronous teardown (test cleanup, daemon SIGTERM
-    /// path).
+    /// Explicit graceful shutdown — unannounces, stops the DHT actor, and
+    /// awaits termination. Use over `Drop` when the caller wants synchronous
+    /// teardown (daemon SIGTERM path) with no lingering DHT announce.
     pub async fn shutdown(mut self) -> Result<()> {
-        let Some(handle) = self.join.take() else {
-            return Ok(());
-        };
-        handle.abort();
-        match handle.await {
-            Ok(()) => Ok(()),
-            Err(e) if e.is_cancelled() => Ok(()),
-            Err(e) => anyhow::bail!("hyperswarm task panic: {e}"),
+        // 1. Unannounce + stop discovery for our topic (best-effort — the
+        //    handle-drop below also tears the swarm down, this just makes the
+        //    unannounce prompt rather than waiting for the actor to wind down).
+        if let Some(h) = self.peer_handle.as_ref() {
+            if let Err(e) = h.leave(self.topic).await {
+                debug!(error = %e, "hyperswarm: leave on shutdown failed (continuing teardown)");
+            }
         }
+        // 2. Drop the command handle → last cmd_tx gone → actor breaks its loop
+        //    → DHT destroyed + unannounced.
+        self.peer_handle = None;
+        // 3. Abort our accept loop (it would otherwise observe a closed conn_rx).
+        if let Some(t) = self.accept_task.take() {
+            t.abort();
+            let _ = t.await;
+        }
+        // 4. Await the actor task so the DHT finishes closing its IO sockets
+        //    before we return (cancelled/panicked still means it's gone).
+        if let Some(t) = self.swarm_task.take() {
+            let _ = t.await;
+        }
+        Ok(())
     }
 }
 
 impl Drop for SwarmHandle {
     fn drop(&mut self) {
-        if let Some(h) = self.join.take() {
-            h.abort();
+        // RAII fallback (test cleanup / panics): dropping the peeroxide handle
+        // stops the actor; abort our task handles so they don't leak.
+        self.peer_handle = None;
+        if let Some(t) = self.accept_task.take() {
+            t.abort();
+        }
+        if let Some(t) = self.swarm_task.take() {
+            t.abort();
         }
     }
 }
@@ -127,7 +182,7 @@ impl Drop for SwarmHandle {
 /// `registry` is held by `Arc<Mutex>` so the loop can write
 /// peer-load snapshots into it once the heartbeat protocol
 /// ships (follow-up). Today the loop only logs.
-pub async fn spawn_discovery(
+pub(crate) async fn spawn_discovery(
     cluster_name: &str,
     registry: Arc<Mutex<PeerLoadRegistry>>,
 ) -> Result<SwarmHandle> {
@@ -150,29 +205,43 @@ pub async fn spawn_discovery_with_wal(
 ) -> Result<SwarmHandle> {
     let topic = derive_topic(cluster_name);
     let config = peeroxide::SwarmConfig::with_public_bootstrap();
-    let (_swarm_task, handle, mut conn_rx) = peeroxide::spawn(config)
+    let (swarm_task, handle, mut conn_rx) = peeroxide::spawn(config)
         .await
         .context("peeroxide::spawn — bring up Hyperswarm")?;
     // Our own Noise static pubkey — the same for every peer session. Bound
     // into the cluster_key proof so a captured proof can't be replayed.
     let own_noise_pk: [u8; 32] = handle.key_pair().public_key;
 
-    handle
-        .join(topic, peeroxide::JoinOpts::default())
-        .await
-        .with_context(|| format!("peeroxide join topic for cluster `{cluster_name}`"))?;
-
-    info!(
-        cluster = cluster_name,
-        topic_hex = %hex_encode(&topic),
-        "hyperswarm: announced + listening on topic"
-    );
+    // SL-00(1b) DoS hardening: bound concurrent peer sessions. The swarm sits
+    // on the PUBLIC DHT, so an attacker who knows the cluster name (public) can
+    // open connections; each previously span an unbounded task. The semaphore
+    // caps live sessions — excess inbound connections are dropped (closed) with
+    // a warn rather than spawning unbounded tasks / exhausting memory. The
+    // per-peer handshake itself is time-bounded inside handle_peeroxide_connection.
+    let session_limiter = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_PEER_SESSIONS));
 
     let cluster_name_owned = cluster_name.to_string();
     let own_peer_id = local_peer_id();
-    let join = tokio::spawn(async move {
+    let accept_task = tokio::spawn(async move {
         while let Some(conn) = conn_rx.recv().await {
             let peer_hex = hex_encode(conn.remote_public_key());
+            // Acquire a session slot BEFORE spawning. `try_acquire_owned` is
+            // non-blocking: at capacity we drop the connection immediately so a
+            // flood can't queue unbounded work. The permit is held for the
+            // peer task's lifetime and released on drop.
+            let permit = match Arc::clone(&session_limiter).try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    warn!(
+                        peer = %peer_hex,
+                        max = MAX_CONCURRENT_PEER_SESSIONS,
+                        "hyperswarm: peer-session limit reached — dropping inbound connection"
+                    );
+                    // Dropping `conn` closes the SecretStream.
+                    drop(conn);
+                    continue;
+                }
+            };
             debug!(peer = %peer_hex, "hyperswarm: peer connected — driving handshake");
             let cluster = cluster_name_owned.clone();
             let own_id = own_peer_id.clone();
@@ -180,6 +249,8 @@ pub async fn spawn_discovery_with_wal(
             let wal = wal_writer.clone();
             let ckey = cluster_key.clone();
             tokio::spawn(async move {
+                // Hold the permit until this session ends.
+                let _permit = permit;
                 let peer_hex_for_wal = peer_hex.clone();
                 if let Err(e) = handle_peeroxide_connection(
                     conn,
@@ -214,7 +285,27 @@ pub async fn spawn_discovery_with_wal(
         warn!("hyperswarm: connection receiver closed — discovery loop exiting");
     });
 
-    Ok(SwarmHandle { join: Some(join) })
+    // SL-00(1b) review fix: announce on the DHT ONLY AFTER the accept loop is
+    // live. The loop blocks on an empty `conn_rx` until peers actually connect,
+    // so spawning it first costs nothing and closes the window where the node
+    // was visible on the public DHT before the auth guardian was polling.
+    handle
+        .join(topic, peeroxide::JoinOpts::default())
+        .await
+        .with_context(|| format!("peeroxide join topic for cluster `{cluster_name}`"))?;
+
+    info!(
+        cluster = cluster_name,
+        topic_hex = %hex_encode(&topic),
+        "hyperswarm: announced + listening on topic"
+    );
+
+    Ok(SwarmHandle {
+        peer_handle: Some(handle),
+        topic,
+        swarm_task: Some(swarm_task),
+        accept_task: Some(accept_task),
+    })
 }
 
 /// Derive a stable per-process peer id. UUID v7 (when
@@ -279,13 +370,36 @@ async fn handle_peeroxide_connection(
         }),
     };
     let our_hello_bytes = heartbeat::encode_frame(&our_hello).context("encode our Hello")?;
-    stream
-        .write(&our_hello_bytes)
-        .await
-        .context("write Hello to peer")?;
+    // SL-00(1b): bound the Hello write — a peer that accepts the connection but
+    // stalls the read side must not pin this task indefinitely.
+    match tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.write(&our_hello_bytes)).await {
+        Ok(r) => r.context("write Hello to peer")?,
+        Err(_) => {
+            emit_peer_rejected_wal(
+                wal_writer.as_deref(),
+                "(unknown)",
+                "timed out writing Hello",
+            );
+            anyhow::bail!("timed out writing Hello to peer after {HANDSHAKE_TIMEOUT:?}");
+        }
+    };
 
     // ── Step 2: read peer's Hello ──
-    let peer_bytes = match stream.read().await {
+    // SL-00(1b): bound the Hello read — the primary DoS guard. A peer that
+    // connects but never sends a Hello is dropped after HANDSHAKE_TIMEOUT
+    // instead of holding a session slot forever.
+    let peer_read = match tokio::time::timeout(HANDSHAKE_TIMEOUT, stream.read()).await {
+        Ok(r) => r,
+        Err(_) => {
+            emit_peer_rejected_wal(
+                wal_writer.as_deref(),
+                "(unknown)",
+                "timed out waiting for peer Hello",
+            );
+            anyhow::bail!("timed out waiting for peer Hello after {HANDSHAKE_TIMEOUT:?}");
+        }
+    };
+    let peer_bytes = match peer_read {
         Ok(Some(b)) => b,
         Ok(None) => {
             emit_peer_rejected_wal(
@@ -650,7 +764,7 @@ fn now_unix_secs() -> u64 {
 
 /// Send our Hello over a fresh peer connection. Pure send +
 /// flush; caller pairs with [`receive_hello`].
-pub async fn send_hello<W: AsyncWrite + Unpin>(
+pub(crate) async fn send_hello<W: AsyncWrite + Unpin>(
     sink: &mut W,
     peer_id: &str,
     cluster_name: &str,
@@ -684,7 +798,13 @@ pub async fn send_hello<W: AsyncWrite + Unpin>(
 /// Bails when the frame's first message isn't Hello, when
 /// protocol/version mismatch, or when the cluster hash
 /// doesn't match ours.
-pub async fn receive_hello<R: AsyncRead + Unpin>(
+///
+/// `pub(crate)` ON PURPOSE (SL-00(1b) review): this is a `tokio::io::duplex`
+/// test primitive that does NOT verify the `cluster_key_proof`. The production
+/// handshake runs through `handle_peeroxide_connection`, which is fail-closed
+/// on the proof. Keeping this crate-private prevents a future caller from
+/// standing up an unauthenticated Hello exchange.
+pub(crate) async fn receive_hello<R: AsyncRead + Unpin>(
     source: &mut R,
     expected_cluster_name: &str,
 ) -> Result<(String, HelloBody)> {

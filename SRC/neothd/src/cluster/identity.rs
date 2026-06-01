@@ -53,6 +53,25 @@ pub fn resolve_cluster_identity(
     })
 }
 
+/// SL-00(1b) transport activation gate. Returns `Some(identity)` ONLY when
+/// BOTH the master-switch is on (`cluster.enabled == true`) AND a full
+/// identity resolves. This is the single source of truth the daemon consults
+/// before bringing the Hyperswarm transport up — keeping it a pure function
+/// (instead of inline in `serve`) makes the safety gate unit-testable.
+///
+/// Default-install behaviour: `enabled` defaults `false`, so a fresh node
+/// returns `None` here even if a stray name/passphrase were present ⇒ no
+/// DHT announce. Fail-closed on every axis.
+pub fn cluster_transport_activation(
+    freedom: &FreedomConfig,
+    creds: &Credentials,
+) -> Option<ClusterIdentity> {
+    if !freedom.cluster.enabled {
+        return None;
+    }
+    resolve_cluster_identity(freedom, creds)
+}
+
 /// Operator-facing identity status (for `neoth cluster status` / doctor).
 /// Reports whether a cluster identity is configured + the PUBLIC name; never
 /// exposes the key or the passphrase.
@@ -62,6 +81,14 @@ pub struct ClusterIdentityStatus {
     pub has_passphrase: bool,
     /// True only when BOTH a name and a passphrase are present.
     pub configured: bool,
+    /// The transport master-switch (`cluster.enabled`). Reported separately
+    /// from `configured` so the operator can tell a complete-but-disabled
+    /// identity apart from a live transport.
+    pub enabled: bool,
+    /// True only when the identity is complete AND the master-switch is on —
+    /// i.e. the daemon will actually bring the Hyperswarm transport up. Mirrors
+    /// [`cluster_transport_activation`] returning `Some`.
+    pub transport_active: bool,
 }
 
 pub fn cluster_identity_status(
@@ -81,10 +108,13 @@ pub fn cluster_identity_status(
         .map(|s| !s.expose().trim().is_empty())
         .unwrap_or(false);
     let configured = name.is_some() && has_passphrase;
+    let enabled = freedom.cluster.enabled;
     ClusterIdentityStatus {
         name,
         has_passphrase,
         configured,
+        enabled,
+        transport_active: configured && enabled,
     }
 }
 
@@ -98,6 +128,7 @@ mod tests {
         let mut f = FreedomConfig::default();
         f.cluster = ClusterConfig {
             name: name.map(str::to_string),
+            ..Default::default()
         };
         f
     }
@@ -154,6 +185,82 @@ mod tests {
                 &creds_with_phrase(Some("   "))
             )
             .is_none()
+        );
+    }
+
+    /// Build a freedom config with name + the transport master-switch state.
+    fn freedom_with(name: Option<&str>, enabled: bool) -> FreedomConfig {
+        let mut f = FreedomConfig::default();
+        f.cluster = ClusterConfig {
+            name: name.map(str::to_string),
+            enabled,
+        };
+        f
+    }
+
+    #[test]
+    fn activation_gate_truth_table() {
+        let full_phrase = creds_with_phrase(Some("alpha bravo charlie delta"));
+
+        // 1. Master-switch OFF + full identity ⇒ None (the default-install
+        //    safety gate: even a stray name+passphrase never auto-announces).
+        assert!(
+            cluster_transport_activation(&freedom_with(Some("home-lab"), false), &full_phrase)
+                .is_none(),
+            "enabled=false MUST gate the transport off even with a full identity"
+        );
+
+        // 2. Master-switch ON but no name ⇒ None.
+        assert!(
+            cluster_transport_activation(&freedom_with(None, true), &full_phrase).is_none(),
+            "enabled=true without a name ⇒ no transport"
+        );
+
+        // 3. Master-switch ON, name present, but no passphrase ⇒ None.
+        assert!(
+            cluster_transport_activation(
+                &freedom_with(Some("home-lab"), true),
+                &creds_with_phrase(None)
+            )
+            .is_none(),
+            "enabled=true without a passphrase ⇒ no transport"
+        );
+
+        // 4. Master-switch ON + full identity ⇒ Some (the only activation path).
+        let active = cluster_transport_activation(&freedom_with(Some("home-lab"), true), &full_phrase)
+            .expect("enabled=true + full identity ⇒ transport activates");
+        assert_eq!(active.name, "home-lab");
+    }
+
+    #[test]
+    fn status_reports_enabled_and_transport_active() {
+        let phrase = creds_with_phrase(Some("alpha bravo charlie delta"));
+        // Complete identity, switch OFF ⇒ configured but NOT active.
+        let off = cluster_identity_status(&freedom_with(Some("home-lab"), false), &phrase);
+        assert!(off.configured);
+        assert!(!off.enabled);
+        assert!(!off.transport_active, "switch off ⇒ transport not active");
+        // Complete identity, switch ON ⇒ active.
+        let on = cluster_identity_status(&freedom_with(Some("home-lab"), true), &phrase);
+        assert!(on.configured && on.enabled && on.transport_active);
+        // Switch ON but identity incomplete ⇒ enabled true, but not active.
+        let incomplete = cluster_identity_status(&freedom_with(None, true), &phrase);
+        assert!(incomplete.enabled);
+        assert!(!incomplete.configured);
+        assert!(
+            !incomplete.transport_active,
+            "enabled without identity ⇒ not active"
+        );
+    }
+
+    #[test]
+    fn default_install_never_activates() {
+        // A pristine FreedomConfig + empty Credentials must never bring the
+        // transport up — the single most important invariant of this slice.
+        assert!(
+            cluster_transport_activation(&FreedomConfig::default(), &Credentials::default())
+                .is_none(),
+            "fresh install MUST NOT join any cluster / announce on the DHT"
         );
     }
 

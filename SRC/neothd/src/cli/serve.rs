@@ -1600,6 +1600,62 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     };
     info!("cluster audit sidecar ingester spawned (5s tick)");
 
+    // ── SL-00(1b) Cluster transport activation (Hyperswarm DHT) ────────────
+    // The live-network flip. Brought up ONLY when BOTH gates are open:
+    //   1. operator flipped `cluster.enabled: true`  (transport master-switch)
+    //   2. a full identity resolves — public `cluster.name` AND secret
+    //      `cluster_passphrase` (fail-closed `resolve_cluster_identity`).
+    // Either missing ⇒ no spawn ⇒ the daemon NEVER announces on the public
+    // DHT. A fresh install (enabled=false, no name, no passphrase) is
+    // triple-gated OFF. When it does come up, every peer handshake enforces
+    // the cluster_key proof (SL-00(1b)-handshake) so the transport is
+    // authenticated from the first byte.
+    let cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle> =
+        match crate::cluster::identity::cluster_transport_activation(&config, &creds) {
+            Some(identity) => {
+                let registry = std::sync::Arc::new(std::sync::Mutex::new(
+                    crate::cluster::PeerLoadRegistry::new(),
+                ));
+                let cluster_key = std::sync::Arc::new(identity.key);
+                let cluster_wal = Some(std::sync::Arc::new(writer.clone()));
+                match crate::cluster::hyperswarm::spawn_discovery_with_wal(
+                    &identity.name,
+                    Some(cluster_key),
+                    registry,
+                    cluster_wal,
+                )
+                .await
+                {
+                    Ok(handle) => {
+                        info!(
+                            cluster = %identity.name,
+                            "SL-00(1b): cluster transport ACTIVE — authenticated Hyperswarm discovery joined"
+                        );
+                        Some(handle)
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "cluster transport failed to start; continuing without clustering"
+                        );
+                        None
+                    }
+                }
+            }
+            None => {
+                // Default path: gate closed (enabled=false OR identity
+                // incomplete). Emit a one-line diagnostic only when the
+                // operator flipped the switch but left identity incomplete,
+                // so a misconfig is visible without noise on every boot.
+                if config.cluster.enabled {
+                    warn!(
+                        "cluster.enabled=true but no identity resolved (need both cluster.name and cluster_passphrase); transport stays OFF"
+                    );
+                }
+                None
+            }
+        };
+
     // ── W-05d installer_ran sidecar ingester (Session 26) ─────────────────
     // `neoth installer apply --yes` drops `~/.neoth/installer_ran_<ts>.json`
     // after a successful install. This task polls every 5s, reads
@@ -2118,6 +2174,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // audit frame, the WAL writer dedupes by frame hash).
     cluster_audit_task.abort();
     let _ = cluster_audit_task.await;
+
+    // SL-00(1b): tear down the cluster transport. `shutdown()` aborts the
+    // discovery task + awaits it so we leave the DHT cleanly (no lingering
+    // announce). `None` when the transport never came up — no-op.
+    if let Some(swarm) = cluster_swarm {
+        if let Err(e) = swarm.shutdown().await {
+            warn!(error = %e, "cluster transport shutdown error (non-fatal)");
+        } else {
+            info!("cluster transport shut down");
+        }
+    }
 
     // Abort the installer_ran + credentials_import sidecar ingesters.
     // Same at-least-once contract — any sidecars still on disk get
