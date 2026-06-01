@@ -398,7 +398,7 @@ Before Day 1 starts:
 1. **Confirm name:** is **MUNIN** the final name, or pivot to alternative? (Operator override accepted.)
 2. **Confirm directory rename:** `AGENTER/` → `MUNIN/` is operator-destructive op (renames the workspace dir). Do it now or later?
 3. **Confirm Day-30 MVP scope:** Telegram-only, Left-Claude-only, recall=Keyword+Top-K-cosine. Profile-learning Phase 2. OK?
-4. **GitHub-PAT revocation reminder:** Still standing from v0.5. `ghp_OVViPfYc6Y...` in `~/.openclaw-git-mirror/.git/config`. Revoke + rotate before Day 1.
+4. **GitHub-PAT revocation reminder:** Still standing from v0.5. `ghp_REDACTED-REVOKE-THIS-TOKEN` in `~/.openclaw-git-mirror/.git/config`. Revoke + rotate before Day 1.
 
 ---
 

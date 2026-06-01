@@ -9,7 +9,7 @@
 
 ## The Token
 
-**`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`** (full token, currently in)
+**`ghp_REDACTED-REVOKE-THIS-TOKEN`** (full token, currently in)
 
 Location:
 ```
@@ -32,7 +32,7 @@ Discovered during initial Jarvis recon (RECON/01_QUELLEN_ANALYSE.md). Token is e
 
 ```
 https://github.com/settings/tokens
-→ Find the token starting with "ghp_OVViPfY..."
+→ Find the token starting with "ghp_REDACTED-REVOKE-THIS-TOKEN"
 → Click "Delete"
 → Confirm
 ```
@@ -68,7 +68,7 @@ git remote set-url origin git@github.com:TheGeekFreaks/openclaw-backup.git
 Check if the token was misused:
 ```
 https://github.com/settings/security-log
-→ Filter by token (search for the ghp_OVVi... prefix)
+→ Filter by token (search for the ghp_REDACTED-REVOKE-THIS-TOKEN prefix)
 → Review IP addresses and actions
 ```
 
@@ -82,12 +82,12 @@ Grep for the token prefix in any other location:
 
 ```bash
 # On Jarvis VM
-grep -r "ghp_OVViPfY" ~/ 2>/dev/null
-grep -r "ghp_OVViPfY" /tmp /var/log 2>/dev/null
+grep -r "ghp_REDACTED-REVOKE-THIS-TOKEN" ~/ 2>/dev/null
+grep -r "ghp_REDACTED-REVOKE-THIS-TOKEN" /tmp /var/log 2>/dev/null
 
 # On local Windows
 # (in cmd or PowerShell)
-findstr /S /C:"ghp_OVViPfY" "%USERPROFILE%\*"
+findstr /S /C:"ghp_REDACTED-REVOKE-THIS-TOKEN" "%USERPROFILE%\*"
 ```
 
 ### 5. Prevent recurrence
@@ -114,7 +114,7 @@ Daemon startup scans these patterns and refuses to start (or alerts loudly) if f
 ## Status After Action
 
 Once revoked + rotated:
-1. Add entry to `~/.neoth/audit.log`: `[2026-05-14 HH:MM] PAT ghp_OVViPfY... REVOKED — rotated to <SSH key fingerprint OR new PAT prefix>`
+1. Add entry to `~/.neoth/audit.log`: `[2026-05-14 HH:MM] PAT ghp_REDACTED-REVOKE-THIS-TOKEN REVOKED — rotated to <SSH key fingerprint OR new PAT prefix>`
 2. Delete this file or move to `archive/`.
 
 ## Day-1 Gate

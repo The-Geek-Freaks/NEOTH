@@ -144,15 +144,15 @@ This allows replacing profile_learn.yaml with a version that skips profile_valid
 
 ### A10 � GitHub PAT Prefix in Design Doc (Live Credential Exposure)
 **Severity:** Medium  **Exploitability:** 5/5
-**Spec ref:** 00_DESIGN_v1.0_FINAL.md section 5 � 'ghp_OVViPfYc6Y... in ~/.openclaw-git-mirror/.git/config on Jarvis VM. Revoke + rotate before any push from Neoth.'
+**Spec ref:** 00_DESIGN_v1.0_FINAL.md section 5 � 'ghp_REDACTED-REVOKE-THIS-TOKEN in ~/.openclaw-git-mirror/.git/config on Jarvis VM. Revoke + rotate before any push from Neoth.'
 
 **Preconditions:** Anyone who has read the design doc. The spec acknowledges the token has been present since v0.5 (multiple spec versions).
 
-**Attack:** The PAT prefix ghp_OVViPfYc6Y... is a real GitHub Personal Access Token prefix embedded in the spec. The spec itself notes it 'standing since v0.5' � the token has existed through multiple design iterations and has not been revoked as of the spec writing. If the PLAN/ directory has been committed to git or synced to any other system, the token is exposed. GitHub PATs grant access to repos and orgs depending on scope.
+**Attack:** The PAT prefix ghp_REDACTED-REVOKE-THIS-TOKEN is a real GitHub Personal Access Token prefix embedded in the spec. The spec itself notes it 'standing since v0.5' � the token has existed through multiple design iterations and has not been revoked as of the spec writing. If the PLAN/ directory has been committed to git or synced to any other system, the token is exposed. GitHub PATs grant access to repos and orgs depending on scope.
 
 **Effect:** Unauthorized access to GitHub repos. Depending on PAT scope: read private repos, write access, webhook creation for persistent access, CI/CD pipeline manipulation.
 
-**Fix:** Revoke ghp_OVViPfYc6Y... on GitHub immediately. Remove from all spec docs. Add PLAN/ to .gitignore. Add git-secrets or trufflehog to pre-commit hooks.
+**Fix:** Revoke ghp_REDACTED-REVOKE-THIS-TOKEN on GitHub immediately. Remove from all spec docs. Add PLAN/ to .gitignore. Add git-secrets or trufflehog to pre-commit hooks.
 
 ---
 
@@ -340,7 +340,7 @@ The CloakBrowser subprocess runs from a Python venv managed outside the Cargo su
 | SPEC_skill_plugin_system.md | A09, S06, S10, O03 | WAL events on skill load/reload; external signed hash manifest; validate recall_read out_cap against WASM linear memory; cache-timing mitigation |
 | SPEC_channels.md | A07, S09, O04 | Document from.id vs forward_from.id mapping explicitly; define Telegram channel privilege ceiling; domain allowlist fail-closed |
 | archive/00_DESIGN_v0.7_FINAL.md | A07, A08 | Pin react-doctor version+hash; remove HOME from subprocess env; domain allowlist required-not-optional |
-| 00_DESIGN_v1.0_FINAL.md | A10 | Remove ghp_OVViPfYc6Y... from spec; verify PAT revoked immediately |
+| 00_DESIGN_v1.0_FINAL.md | A10 | Remove ghp_REDACTED-REVOKE-THIS-TOKEN from spec; verify PAT revoked immediately |
 | archive/00_DESIGN_v0.3.md | A05, S05 | Document TOCTOU mitigation; pin GCP project ID at startup |
 | RUNBOOK_phase3_cutover.md | O04, O08 | Auth required for profile export; define Telegram command privilege ceiling |
 | New: SPEC_supply_chain.md | O01, O08, O10 | Cargo.lock commit policy; cargo audit CI gate; Python venv hash-pinning; npm version pinning |

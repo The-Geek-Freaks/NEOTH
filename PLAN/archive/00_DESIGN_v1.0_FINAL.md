@@ -153,7 +153,7 @@ WAL writer Day 2 emits magic `b"NEOT"` + 96-byte header + CRC32c + HLC + LE wire
 1. **Confirm NEOTH** as final name — done if you're reading this and didn't object.
 2. **Directory rename** `<your-workspace>\AGENTER\` → `<your-workspace>\NEOTH\` — operator-destructive (renames workspace). Confirm to execute.
 3. **Day-30 MVP scope confirmation:** Telegram-only + Left-Claude + recall=Keyword+Top-K-cosine. Profile-learning lands Phase 2 Day 38-42. OK?
-4. **GitHub-PAT revocation** (standing since v0.5): `ghp_OVViPfYc6Y...` in `~/.openclaw-git-mirror/.git/config` on Jarvis VM. Revoke + rotate before any push from Neoth.
+4. **GitHub-PAT revocation** (standing since v0.5): `ghp_REDACTED-REVOKE-THIS-TOKEN` in `~/.openclaw-git-mirror/.git/config` on Jarvis VM. Revoke + rotate before any push from Neoth.
 
 ---
 

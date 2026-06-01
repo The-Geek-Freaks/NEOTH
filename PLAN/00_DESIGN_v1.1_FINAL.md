@@ -25,7 +25,7 @@
 | **S7** | `MmapMut::flush()` calls `msync(MS_SYNC)` not `fsync(2)` | Same as S6 — `WalWriterTask` uses `tokio::fs::File::sync_data()` (= `fdatasync(2)`). Drive cache flush barrier forced even on `nobarrier` mounts. |
 | **S8** | `#[repr(C, packed)]` causes multi-byte UB on aarch64 (SIGBUS) | `SPEC_wire_header_v2_slim.md` §11 — explicit `from_le_bytes(&[u8; 96])` + `to_le_bytes() -> [u8; 96]` byte parser. No `repr(C, packed)`. |
 | **S9** | HLC `.expect()` panic on peer `logical = u32::MAX` (remote DoS) | `SPEC_multinode_clock.md` §3.1-3.3 — `Result<(), HlcError>` propagation. Caller emits `0x2F CLOCK_LOGICAL_OVERFLOW` event, no panic. |
-| **S10** | GitHub PAT `ghp_OVViPfYc6Y...` still active since v0.5 | `S10_PAT_REVOCATION.md` — operator action required: revoke + rotate to SSH key. Day-1 gate. |
+| **S10** | GitHub PAT `ghp_REDACTED-REVOKE-THIS-TOKEN` still active since v0.5 | `S10_PAT_REVOCATION.md` — operator action required: revoke + rotate to SSH key. Day-1 gate. |
 
 ### H-class High Severity (Phase 1 must address)
 

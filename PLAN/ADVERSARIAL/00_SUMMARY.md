@@ -19,7 +19,7 @@
 | S7 | **MmapMut ≠ fsync** — `MmapMut::flush()` calls `msync(MS_SYNC)`. On XFS nobarrier (NVMe default), no drive cache flush barrier. Power loss between flush+platter write drops WAL frames silently — no CRC detection (frames absent, not corrupt). | 09 hot-paths | SPEC_wal_lifecycle.md |
 | S8 | **`repr(C, packed)` UB on every multi-byte field access** — invisible on x86, SIGBUS on aarch64, blocks `cargo miri test`. `bytemuck` incompatible. | 09 hot-paths | SPEC_wire_header_v2_slim.md |
 | S9 | **HLC `.expect()` in async task** — peer gossip with `logical = u32::MAX` panics the tokio task. Single-packet remote DoS. | 01 security + 09 hot-paths | SPEC_multinode_clock.md |
-| S10 | **GitHub PAT `ghp_OVViPfYc6Y...` still in `~/.openclaw-git-mirror/.git/config` on Jarvis VM** — acknowledged since v0.5, not revoked. Exploitability: 5. | 01 security | operator action |
+| S10 | **GitHub PAT `ghp_REDACTED-REVOKE-THIS-TOKEN` still in `~/.openclaw-git-mirror/.git/config` on Jarvis VM** — acknowledged since v0.5, not revoked. Exploitability: 5. | 01 security | operator action |
 
 ## High-Severity (fix before Phase 1 demo)
 
