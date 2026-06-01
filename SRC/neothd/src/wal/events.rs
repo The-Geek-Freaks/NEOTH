@@ -1218,9 +1218,24 @@ pub const EVENT_TYPE_CLUSTER_TASK_ACCEPTED: u8 = 0xEB;
 /// SL-01 (Session 33).
 pub const EVENT_TYPE_CLUSTER_TASK_REJECTED: u8 = 0xEC;
 
-// Cluster band 0xE0..=0xEC currently assigned. 0xED..=0xEF reserved
-// for further cluster lifecycle events (gossip, split-brain detection,
-// leader stand-down, ...).
+/// `0xED CLUSTER_GOSSIP_SENT` — the gossip-tick broadcast a batch of replicable
+/// WAL frames to paired peers (SL-01b). High-cadence diagnostic (batchable, NOT
+/// immediate-sync). Payload (JSON): `{frame_count, peer_count, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_GOSSIP_SENT: u8 = 0xED;
+
+/// `0xEE CLUSTER_GOSSIP_RECEIVED` — an inbound gossip frame was ACCEPTED
+/// (tag/budget/dedup/band all passed). The primary "what this node learned from
+/// peers" signal. Batchable. Payload: `{origin_peer, event_seq, payload_event_type,
+/// vc_changed, ts_unix}`. (Payload application into local memory is deferred.)
+pub const EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED: u8 = 0xEE;
+
+/// `0xEF CLUSTER_GOSSIP_DROPPED` — an inbound gossip frame was rejected, with
+/// the reason (`do_not_gossip` / `outside_replay_budget` / `duplicate`). Batchable.
+/// Operator-actionable (a flood of `outside_replay_budget` ⇒ a peer needs repair).
+/// Payload: `{origin_peer, event_seq, reason, ts_unix}`.
+pub const EVENT_TYPE_CLUSTER_GOSSIP_DROPPED: u8 = 0xEF;
+
+// Cluster band 0xE0..=0xEF now FULLY assigned (0xED..0xEF = SL-01b gossip).
 
 /// Pick #40 (Session 14, Agent #1 phase 2 fsync-batching design):
 /// classify each `event_type` into "sync immediately" vs "batchable".
@@ -1263,6 +1278,11 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             | EVENT_TYPE_HOOK_ERROR
             | EVENT_TYPE_LOCAL_INFERENCE_START
             | EVENT_TYPE_LOCAL_INFERENCE_END
+            // SL-01b gossip diagnostics are high-cadence + re-derivable; batch
+            // them behind the next sync-on-write frame rather than fsyncing each.
+            | EVENT_TYPE_CLUSTER_GOSSIP_SENT
+            | EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED
+            | EVENT_TYPE_CLUSTER_GOSSIP_DROPPED
     )
 }
 
@@ -1658,6 +1678,12 @@ const _: () = {
     let _ = [(); 1]
         [(EVENT_TYPE_CLUSTER_TASK_REJECTED < 0xE0 || EVENT_TYPE_CLUSTER_TASK_REJECTED > 0xEF) as usize];
     let _ = [(); 1]
+        [(EVENT_TYPE_CLUSTER_GOSSIP_SENT < 0xE0 || EVENT_TYPE_CLUSTER_GOSSIP_SENT > 0xEF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED < 0xE0
+        || EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED > 0xEF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_CLUSTER_GOSSIP_DROPPED < 0xE0 || EVENT_TYPE_CLUSTER_GOSSIP_DROPPED > 0xEF) as usize];
+    let _ = [(); 1]
         [(EVENT_TYPE_MCP_TOOL_REJECTED < 0xC0 || EVENT_TYPE_MCP_TOOL_REJECTED > 0xCF) as usize];
     // 0xF0-0xFF band: u8 max == 0xFF so upper-bound check is trivially
     // true (clippy::absurd_extreme_comparisons). Only lower-bound check
@@ -1860,6 +1886,12 @@ mod tests {
                 "CLUSTER_TASK_REJECTED",
                 EVENT_TYPE_CLUSTER_TASK_REJECTED,
             ),
+            ("CLUSTER_GOSSIP_SENT", EVENT_TYPE_CLUSTER_GOSSIP_SENT),
+            (
+                "CLUSTER_GOSSIP_RECEIVED",
+                EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED,
+            ),
+            ("CLUSTER_GOSSIP_DROPPED", EVENT_TYPE_CLUSTER_GOSSIP_DROPPED),
             ("QUOTA_BREACHED", EVENT_TYPE_QUOTA_BREACHED),
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),
             ("PRE_MUTATION_SNAPSHOT", EVENT_TYPE_PRE_MUTATION_SNAPSHOT),
@@ -2093,6 +2125,25 @@ mod tests {
             EVENT_TYPE_CLUSTER_TASK_ACCEPTED, EVENT_TYPE_CLUSTER_TASK_REJECTED,
             "accept and reject must be distinct codes"
         );
+    }
+
+    #[test]
+    fn cluster_gossip_codes_are_0xed_0xee_0xef_batchable() {
+        assert_eq!(EVENT_TYPE_CLUSTER_GOSSIP_SENT, 0xED);
+        assert_eq!(EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED, 0xEE);
+        assert_eq!(EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, 0xEF);
+        for code in [
+            EVENT_TYPE_CLUSTER_GOSSIP_SENT,
+            EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED,
+            EVENT_TYPE_CLUSTER_GOSSIP_DROPPED,
+        ] {
+            assert!((0xE0..=0xEF).contains(&code), "gossip 0x{code:02X} in cluster band");
+            // High-cadence + re-derivable ⇒ batchable, NOT immediate-sync.
+            assert!(
+                !needs_immediate_sync(code),
+                "gossip diagnostic 0x{code:02X} must be batchable"
+            );
+        }
     }
 
     #[test]

@@ -1610,6 +1610,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // triple-gated OFF. When it does come up, every peer handshake enforces
     // the cluster_key proof (SL-00(1b)-handshake) so the transport is
     // authenticated from the first byte.
+    // SL-01b: gossip anti-entropy send-tick handle (spawned only when the
+    // transport actually comes up), aborted on shutdown alongside the swarm.
+    let mut cluster_gossip_task: Option<tokio::task::JoinHandle<()>> = None;
     let cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle> =
         match crate::cluster::identity::cluster_transport_activation(&config, &creds) {
             Some(identity) => {
@@ -1619,8 +1622,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 let cluster_key = std::sync::Arc::new(identity.key);
                 let cluster_wal = Some(std::sync::Arc::new(writer.clone()));
                 // SL-00(1c): the outbound peer-stream registry, shared between
-                // the transport (drains it to write) and the SL-01 executor
-                // (queues TaskResult replies onto it).
+                // the transport (drains it to write), the SL-01 executor
+                // (queues TaskResult replies), and the SL-01b gossip tick.
                 let peer_streams =
                     std::sync::Arc::new(crate::cluster::peer_streams::PeerStreamRegistry::new());
                 // SL-01: spawn the single task executor (holds the provider +
@@ -1630,6 +1633,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     shared_provider.clone(),
                     std::sync::Arc::clone(&peer_streams),
                 );
+                // SL-01b: the gossip send-tick reads the active WAL segment tail
+                // + broadcasts replicable frames to paired peers.
+                let gossip_streams = std::sync::Arc::clone(&peer_streams);
+                let gossip_segment = segment_path.clone();
+                let gossip_writer = std::sync::Arc::new(writer.clone());
                 match crate::cluster::hyperswarm::spawn_discovery_with_wal(
                     &identity.name,
                     Some(cluster_key),
@@ -1647,6 +1655,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                             cluster = %identity.name,
                             "SL-00(1b): cluster transport ACTIVE — authenticated Hyperswarm discovery joined"
                         );
+                        cluster_gossip_task = Some(crate::cluster::wal_sync::spawn_gossip_tick(
+                            gossip_streams,
+                            gossip_segment,
+                            gossip_writer,
+                        ));
                         Some(handle)
                     }
                     Err(e) => {
@@ -2190,6 +2203,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // audit frame, the WAL writer dedupes by frame hash).
     cluster_audit_task.abort();
     let _ = cluster_audit_task.await;
+
+    // SL-01b: stop the gossip send-tick before tearing the transport down.
+    if let Some(task) = cluster_gossip_task {
+        task.abort();
+        let _ = task.await;
+    }
 
     // SL-00(1b): tear down the cluster transport. `shutdown()` aborts the
     // discovery task + awaits it so we leave the DHT cleanly (no lingering

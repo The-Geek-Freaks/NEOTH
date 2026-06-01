@@ -77,9 +77,12 @@ use super::heartbeat::{
     self, FrameBody, FrameKind, HeartbeatBody, HelloBody, PROTOCOL_NAME, PROTOCOL_VERSION,
     TaskDelegateBody, TaskResultBody, TaskResultStatus, WireFrame,
 };
+use super::gossip::GossipPolicy;
+use super::gossip_wire::GossipAcceptance;
 use super::local_load;
 use super::peer_auth::{compute_cluster_key_proof, verify_peer_proof};
 use super::peer_streams::PeerStreamRegistry;
+use super::wal_sync::GossipState;
 use super::{PeerId, PeerLoad, PeerLoadRegistry};
 use crate::permissions::{self, Action, AutonomyLevel, Decision};
 use crate::wal::writer::WalWriterHandle;
@@ -575,6 +578,14 @@ async fn handle_peeroxide_connection(
     let mut last_healthy: Option<bool> = None;
     let mut last_capabilities_hash: Option<[u8; 32]> = None;
 
+    // SL-01b: per-connection gossip anti-entropy state (dedup keyed by origin +
+    // VC convergence for THIS peer). Node-global merge across peers is a
+    // follow-on with persistence; per-connection is correct for dedup since a
+    // connection is to one peer. Policy default = privacy-safe (raw-ingress off,
+    // 30d budget); a `freedom.yaml::cluster.gossip` override is a follow-on.
+    let mut gossip_state = GossipState::new();
+    let gossip_policy = GossipPolicy::default();
+
     // SL-00(1c): register this peer's outbound channel; the Drop guard removes
     // it on EVERY exit path (clean disconnect, error, supersede).
     let mut outbound_rx = peer_streams.register(&remote_pk_hex);
@@ -741,6 +752,26 @@ async fn handle_peeroxide_connection(
                     task_id = %r.task_id,
                     "cluster: received TaskResult from peer"
                 );
+            }
+            continue;
+        }
+        // SL-01b: inbound WAL gossip. Run the receive ACL (tag/budget/dedup +
+        // a band re-check on the payload's OWN event_type, byte 2 of the inner
+        // WAL header — extracted WITHOUT HMAC validation since it is a foreign
+        // node's frame), audit accept/drop, then DROP the payload (applying it
+        // into local memory is the deferred foreign-event-store slice).
+        if frame.kind == FrameKind::Gossip {
+            if let FrameBody::Gossip(gframe) = frame.body {
+                let payload_et = gframe.payload.get(2).copied();
+                let now = now_unix_secs() as i64;
+                match gossip_state.accept_inbound(&gframe, payload_et, &gossip_policy, now) {
+                    GossipAcceptance::Accept => {
+                        emit_gossip_received_wal(wal_writer.as_deref(), &gframe, payload_et);
+                    }
+                    dropped => {
+                        emit_gossip_dropped_wal(wal_writer.as_deref(), &gframe, &dropped);
+                    }
+                }
             }
             continue;
         }
@@ -1207,6 +1238,50 @@ fn emit_task_rejected_wal(
     fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_TASK_REJECTED, payload);
 }
 
+/// SL-01b: an inbound gossip frame was ACCEPTED (the receive ACL passed). The
+/// payload is NOT applied to local memory (deferred) — this records that the
+/// node learned of the peer's event + converged its VC.
+fn emit_gossip_received_wal(
+    writer: Option<&WalWriterHandle>,
+    frame: &super::gossip_wire::GossipFrame,
+    payload_event_type: Option<u8>,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::json!({
+        "origin_peer": frame.origin.as_str(),
+        "event_seq": frame.event_seq,
+        "payload_event_type": payload_event_type,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED, payload);
+}
+
+/// SL-01b: an inbound gossip frame was DROPPED, with the reason discriminant.
+fn emit_gossip_dropped_wal(
+    writer: Option<&WalWriterHandle>,
+    frame: &super::gossip_wire::GossipFrame,
+    verdict: &GossipAcceptance,
+) {
+    let Some(w) = writer else { return };
+    let reason = match verdict {
+        GossipAcceptance::Accept => "accepted", // not reached on this path
+        GossipAcceptance::DroppedDoNotGossipTag => "do_not_gossip",
+        GossipAcceptance::DroppedOutsideReplayBudget => "outside_replay_budget",
+        GossipAcceptance::DroppedDuplicate { .. } => "duplicate",
+    };
+    let payload = serde_json::json!({
+        "origin_peer": frame.origin.as_str(),
+        "event_seq": frame.event_seq,
+        "reason": reason,
+        "ts_unix": now_unix_secs(),
+    })
+    .to_string()
+    .into_bytes();
+    fire_wal(w, crate::wal::events::EVENT_TYPE_CLUSTER_GOSSIP_DROPPED, payload);
+}
+
 // ── Connection-loop primitives (testable against tokio::io::duplex) ────────
 //
 // Per-connection lifecycle:
@@ -1331,9 +1406,9 @@ pub fn handle_inbound_frame(
         // this sync handler (they need provider/lease/autonomy access this fn
         // doesn't have). Reaching here means the intercept has a bug — fail
         // loudly rather than silently no-op.
-        FrameBody::TaskDelegate(_) | FrameBody::TaskResult(_) => {
+        FrameBody::TaskDelegate(_) | FrameBody::TaskResult(_) | FrameBody::Gossip(_) => {
             anyhow::bail!(
-                "task frame reached sync handle_inbound_frame — must be intercepted in the session loop"
+                "task/gossip frame reached sync handle_inbound_frame — must be intercepted in the session loop"
             );
         }
     }

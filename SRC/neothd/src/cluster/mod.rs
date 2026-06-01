@@ -48,6 +48,11 @@ pub mod peer_streams;
 /// provider off the per-peer read loop + replies via the peer-stream registry.
 pub mod executor;
 
+/// SL-01b cluster WAL gossip — band-filter ACL (the security boundary) +
+/// anti-entropy state (VectorClock + dedup) that make the gossip primitives
+/// live on the transport. Foreign-event ingestion into memory is deferred.
+pub mod wal_sync;
+
 /// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
 /// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
 /// Phase 6 gossip refreshes `last_seen_unix` on each authenticated

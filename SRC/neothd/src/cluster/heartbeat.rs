@@ -63,7 +63,11 @@ pub const PROTOCOL_NAME: &str = "neoth-r7-heartbeat";
 /// unknown enum variant), so this is a breaking change — the handshake
 /// version check keeps v2 and v3 nodes from pairing, so a v3 task frame never
 /// reaches a v2 decoder. All cluster nodes upgrade to >= v3 together.
-pub const PROTOCOL_VERSION: u16 = 3;
+///
+/// v4 (SL-01b): adds `FrameKind::Gossip` (WAL anti-entropy). Same breaking-tag
+/// rationale — the `!=`-check in `validate_hello` keeps v3 and v4 nodes from
+/// pairing, so a v4 Gossip frame never reaches a v3 decoder.
+pub const PROTOCOL_VERSION: u16 = 4;
 
 /// Frame-size hard cap. Per Codex Q2 verdict: a malformed
 /// length-prefix can lead to a denial-of-memory before any
@@ -126,6 +130,9 @@ pub enum FrameKind {
     /// SL-01: the slave's reply to a `TaskDelegate` — the
     /// completion, a rejection reason, or an execution error.
     TaskResult,
+    /// SL-01b: a WAL-gossip frame (anti-entropy). Carries a replicable WAL
+    /// frame + the sender's VectorClock. Subject to the band-filter ACL.
+    Gossip,
 }
 
 /// Wire envelope every frame carries. Body varies per kind;
@@ -162,6 +169,7 @@ pub enum FrameBody {
     Goodbye(GoodbyeBody),
     TaskDelegate(TaskDelegateBody),
     TaskResult(TaskResultBody),
+    Gossip(super::gossip_wire::GossipFrame),
 }
 
 /// Hello body — sent first on each connection.
@@ -595,6 +603,37 @@ mod tests {
     }
 
     #[test]
+    fn gossip_frame_round_trips_on_the_wire() {
+        use super::super::gossip::GossipTag;
+        use super::super::gossip_wire::{GossipFrame, PeerId, VectorClock};
+        let mut vc = VectorClock::new();
+        vc.tick(&PeerId::new("node-a"));
+        let frame = WireFrame {
+            kind: FrameKind::Gossip,
+            sequence: 11,
+            sent_unix_ms: 1_700_000_000_002,
+            peer_id: "node-a".into(),
+            body: FrameBody::Gossip(GossipFrame {
+                vector_clock: vc,
+                origin: PeerId::new("node-a"),
+                event_seq: 3,
+                timestamp_unix: 1_700_000_000,
+                tag: GossipTag::Replicate,
+                payload: vec![0xE0, 0x00, 0xE0],
+            }),
+        };
+        let bytes = encode_frame(&frame).unwrap();
+        match decode_frame(&bytes).unwrap().body {
+            FrameBody::Gossip(g) => {
+                assert_eq!(g.event_seq, 3);
+                assert_eq!(g.origin, PeerId::new("node-a"));
+                assert_eq!(g.tag, GossipTag::Replicate);
+            }
+            other => panic!("expected Gossip, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn validate_task_delegate_enforces_bounds() {
         let ok = TaskDelegateBody {
             task_id: "t".into(),
@@ -873,7 +912,7 @@ mod tests {
         // values is intentional + needs a Chorus re-review.
         assert_eq!(PROTOCOL_NAME, "neoth-r7-heartbeat");
         // v2: SL-00(1b) added the mandatory cluster_key_proof to the Hello.
-        assert_eq!(PROTOCOL_VERSION, 3);
+        assert_eq!(PROTOCOL_VERSION, 4);
         assert_eq!(MAX_FRAME_BYTES, 64 * 1024);
         assert_eq!(HEARTBEAT_INTERVAL_MS, 5_000);
         assert_eq!(HEARTBEAT_JITTER_PCT, 20);
