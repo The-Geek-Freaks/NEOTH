@@ -929,3 +929,38 @@ For each new constant: add to events.rs constant block, EVENT_NAME_TABLE, band a
 - SL-01b gossip transport shares a Hyperswarm stream with heartbeats unless a second topic or multiplexing is added. Writing large WAL segments into the heartbeat stream would violate MAX_FRAME_BYTES=65536. Gossip frames must either be split across multiple heartbeat-band frames (complex) or use a separate peeroxide topic join. This is the largest unknown in Commit 3 and the main reason it is multi-day.
 
 ---
+
+---
+
+# SL-00(1b) Handshake Auth — LOCKED design (gremium wwdr5yc1g, Session 32)
+
+Decisive consensus (crypto + attack + impl lenses): **single HMAC-in-Hello, zero extra RTT**
+(Noise already authenticates the channel + exchanges static keys; the gap is pure
+authorization). **Asymmetric (signer-pk-first) construction** — the attack lens proved the
+*sorted/symmetric* variant is vulnerable to a REFLECTION attack (a non-member echoes back the
+token you sent; symmetric ⇒ it verifies). Signer-first defeats it: A's proof only verifies on B's
+side.
+
+Construction:
+  DOMAIN = b"neoth-cluster-peer-auth/v1\0"
+  compute_cluster_key_proof(key, signer_noise_pk, verifier_noise_pk) =
+      HMAC-SHA256(cluster_key.0, DOMAIN || signer_pk[32] || verifier_pk[32]) -> [u8;32]
+  (32-byte fixed fields ⇒ no length-prefix needed. Reuse keet_crypto::hmac_sha256.)
+
+Send: HelloBody.cluster_key_proof = Some(compute_cluster_key_proof(key, own_pk, peer_pk)).
+Verify (after the cluster_name_hash check, fail-closed): None ⇒ REJECT; else
+  expected = compute_cluster_key_proof(key, peer_pk, own_pk)  // swapped
+  constant-time compare (XOR-accumulate, mirroring discovery.rs verify_announce). mismatch ⇒ REJECT.
+Mutual: both send + verify (each computes against its own role; the swap makes them match).
+No per-session nonce (Noise ephemerals make each session unique; sorted-pk… no, signer-first
+binds direction; cross-session replay fails as pubkeys differ).
+
+API verified: `handle.key_pair().public_key` (peeroxide-1.3.1 swarm.rs:217 + KeyPair.public_key
+[u8;32]) IS the local Noise static pubkey. `conn.remote_public_key()` is the peer's.
+
+Wiring: HelloBody gains `cluster_key_proof: Option<[u8;32]>` (#[serde(default, skip_serializing_if
+= "Option::is_none")]; missing ⇒ reject = fail-closed). BUMP PROTOCOL_VERSION (breaking; all nodes
+upgrade together). Thread `cluster_key: Arc<ClusterKey>` + `own_noise_pk: [u8;32]` into
+spawn_discovery_with_wal → per-peer task → handle_peeroxide_connection. Tests: matching-keys accept
+/ mismatched-keys reject / missing-proof reject / reflection (echo own token) reject / pinned byte
+layout.
