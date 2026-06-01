@@ -34,6 +34,7 @@ pub mod hyperswarm;
 /// SPEC: `PLAN/SPEC_cluster_auto_discovery_2026-05-22.md`.
 pub mod discovery;
 pub mod identity;
+pub mod peer_auth;
 
 /// Phase 4 persisted peer registry — `~/.neoth/cluster.yaml`.
 /// `neoth cluster confirm <pub_key>` writes here; `revoke` removes;
