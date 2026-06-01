@@ -100,6 +100,7 @@ pub mod daemon;
 pub mod domain_events;
 pub mod email;
 pub mod event_ledger;
+pub mod feedback;
 pub mod hooks;
 pub mod installers;
 pub mod mcp;

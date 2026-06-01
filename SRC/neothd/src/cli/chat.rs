@@ -163,6 +163,20 @@ pub async fn run_chat_with(
 
     let prompt = resolve_prompt(&args).await?;
 
+    // G-03 self-correction signal. If this turn reads as a CORRECTION of the
+    // preceding reply (rule-based follow-up-tone scorer crosses the negative
+    // threshold), record an `OPERATOR_FEEDBACK` (0xBB) WAL frame so the
+    // operator can audit where NEOTH underperformed
+    // (`neoth wal show --type operator_feedback`). Fire-and-forget +
+    // best-effort: it never blocks or fails the chat turn, and stores only a
+    // prompt_hash (no message-content leak). The adaptation consumer (profile
+    // cron biasing self-dev proposals on this signal) is a follow-on slice.
+    let _ = crate::feedback::record_operator_correction(
+        &crate::config::FreedomConfig::default_neoth_home(),
+        &prompt,
+    )
+    .await;
+
     // Round-3 v0.4 — coding-intent auto-dispatch. When the prompt
     // looks like a coding request (bilingual EN/DE heuristic: verb
     // at front + programming-noun anchor; see

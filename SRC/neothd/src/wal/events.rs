@@ -880,6 +880,17 @@ pub const EVENT_TYPE_PROFILE_EXTRACT_SKIPPED: u8 = 0xB9;
 /// or `"anchor/<snapshot_id>"`. Claim hashes are NOT included — the
 /// frame is a drift SIGNAL, not a claim dump (operator inspects via CLI).
 pub const EVENT_TYPE_PROFILE_DRIFT_ALERT: u8 = 0xBA;
+/// `0xBB OPERATOR_FEEDBACK` — G-03 self-correction loop. Emitted when an
+/// operator's chat turn reads as a CORRECTION of the preceding reply (the
+/// rule-based follow-up-tone scorer crosses the negative threshold). The
+/// durable signal that "the operator pushed back here" — queryable via
+/// `neoth wal show --type operator_feedback` so an operator can see where
+/// NEOTH underperformed, and (follow-on slice) the profile-adapt cron can
+/// consume it to bias self-dev proposals. Profile band because feedback
+/// drives profile adaptation. Payload (JSON):
+/// `{ sentiment_score, matched_patterns, prompt_hash, ts_unix }` — the
+/// prompt itself is NOT stored (hash only; no message-content leak).
+pub const EVENT_TYPE_OPERATOR_FEEDBACK: u8 = 0xBB;
 
 // ---- 0xF0..=0xFF  Operator / system ---------------------------------------
 
@@ -1289,6 +1300,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("lease_revoked", EVENT_TYPE_LEASE_REVOKED),
     ("os_file_read", EVENT_TYPE_OS_FILE_READ),
     ("os_file_denied", EVENT_TYPE_OS_FILE_DENIED),
+    ("operator_feedback", EVENT_TYPE_OPERATOR_FEEDBACK),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
 ];
 
@@ -1538,6 +1550,8 @@ const _: () = {
         || EVENT_TYPE_PROFILE_EXTRACT_SKIPPED > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PROFILE_DRIFT_ALERT < 0xB0 || EVENT_TYPE_PROFILE_DRIFT_ALERT > 0xBF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_OPERATOR_FEEDBACK < 0xB0 || EVENT_TYPE_OPERATOR_FEEDBACK > 0xBF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -1740,6 +1754,7 @@ mod tests {
                 EVENT_TYPE_PROFILE_EXTRACT_SKIPPED,
             ),
             ("PROFILE_DRIFT_ALERT", EVENT_TYPE_PROFILE_DRIFT_ALERT),
+            ("OPERATOR_FEEDBACK", EVENT_TYPE_OPERATOR_FEEDBACK),
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
