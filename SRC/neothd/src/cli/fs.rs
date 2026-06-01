@@ -36,6 +36,18 @@ pub enum FsAction {
         /// File to read.
         path: PathBuf,
     },
+    /// Write a file through the gated OS-tool surface (PC-01 write slice).
+    /// Permitted only when the target's canonical PARENT is under
+    /// `freedom.yaml::tools.os.allowed_write_paths` (SEPARATE from the read
+    /// allowlist; default deny-all) AND the autonomy level allows it (Strict
+    /// denies, Standard confirms ⇒ blocked here without a TTY, Elevated/Full
+    /// allow). WAL-audited (`0xAA`/`0xAB`). Best-effort atomic (temp + rename).
+    Write {
+        /// File to write (its parent dir must exist + be write-allowlisted).
+        path: PathBuf,
+        /// Content to write.
+        content: String,
+    },
 }
 
 pub async fn run_fs(args: FsArgs) -> Result<()> {
@@ -43,6 +55,93 @@ pub async fn run_fs(args: FsArgs) -> Result<()> {
         .context("load freedom.yaml — run `neoth init` first if absent")?;
     match &args.action {
         FsAction::Read { path } => run_read(path, &cfg, args.output).await,
+        FsAction::Write { path, content } => run_write(path, content, &cfg, args.output).await,
+    }
+}
+
+async fn run_write(
+    path: &Path,
+    content: &str,
+    cfg: &FreedomConfig,
+    output: OutputFormat,
+) -> Result<()> {
+    let now = now_unix();
+    let contents = content.as_bytes();
+    // Same one-shot-WAL pattern as run_read: skip opening a 2nd writer when the
+    // daemon owns the WAL (the write is gated either way).
+    let result = {
+        let pidfile = crate::daemon::pidfile::default_pidfile();
+        let daemon_live = matches!(
+            crate::daemon::pidfile::live_daemon_pid(&pidfile),
+            Ok(Some(_))
+        );
+        if daemon_live {
+            crate::os_tools::write_os_file(path, contents, &cfg.tools.os, cfg.autonomy, None, now)
+                .await
+        } else {
+            let segment = FreedomConfig::default_neoth_home()
+                .join("wal")
+                .join("000001.wal");
+            if let Some(parent) = segment.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            match crate::wal::spawn(segment) {
+                Ok((writer, join)) => {
+                    let r = crate::os_tools::write_os_file(
+                        path,
+                        contents,
+                        &cfg.tools.os,
+                        cfg.autonomy,
+                        Some(&writer),
+                        now,
+                    )
+                    .await;
+                    drop(writer);
+                    let _ = join.await;
+                    r
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "fs write proceeding WITHOUT WAL audit — could not open a one-shot WAL writer"
+                    );
+                    crate::os_tools::write_os_file(
+                        path,
+                        contents,
+                        &cfg.tools.os,
+                        cfg.autonomy,
+                        None,
+                        now,
+                    )
+                    .await
+                }
+            }
+        }
+    };
+
+    match result {
+        Ok(resolved) => {
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "path": resolved.display().to_string(),
+                            "bytes": contents.len(),
+                            "written": true,
+                        })
+                    );
+                }
+                OutputFormat::Table => {
+                    println!("✓ wrote {} bytes to {}", contents.len(), resolved.display());
+                }
+            }
+            Ok(())
+        }
+        Err(e) => {
+            // Gated denial / failure — surface it (non-zero exit via anyhow).
+            anyhow::bail!("fs write denied: {e}");
+        }
     }
 }
 

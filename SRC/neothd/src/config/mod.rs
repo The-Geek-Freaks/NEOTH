@@ -407,6 +407,15 @@ pub struct OsToolsConfig {
     /// Max bytes a single `OsFileRead` may return. Default 1 MiB — a guard
     /// against pulling a multi-GB file into memory / a provider prompt.
     pub max_read_bytes: usize,
+    /// PC-01 (write slice): allowlisted absolute path prefixes the daemon may
+    /// WRITE under. SEPARATE from `allowed_paths` ON PURPOSE — a readable path
+    /// is NOT automatically writable. Empty = deny-all (the default). A write is
+    /// permitted only when the target's canonical PARENT dir is under one of
+    /// these (canonical) prefixes — see `os_tools::allowlist::resolve_write_target`.
+    pub allowed_write_paths: Vec<std::path::PathBuf>,
+    /// Max bytes a single `OsFileWrite` may write. Default 1 MiB — bounds how
+    /// much a gated write (or a delegated one) can put on the operator's disk.
+    pub max_write_bytes: usize,
 }
 
 impl Default for OsToolsConfig {
@@ -414,6 +423,8 @@ impl Default for OsToolsConfig {
         Self {
             allowed_paths: Vec::new(),
             max_read_bytes: 1024 * 1024,
+            allowed_write_paths: Vec::new(),
+            max_write_bytes: 1024 * 1024,
         }
     }
 }

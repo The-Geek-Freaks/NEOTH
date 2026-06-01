@@ -430,6 +430,13 @@ Read a file through the gated OS-tool surface. Permitted only when the path is u
 
 - `<PATH>` — File to read
 
+### `neoth fs write`
+
+Write a file through the gated OS-tool surface (PC-01 write slice). Permitted only when the target's canonical PARENT is under `freedom.yaml::tools.os.allowed_write_paths` (SEPARATE from the read allowlist; default deny-all) AND the autonomy level allows it (Strict denies, Standard confirms ⇒ blocked here without a TTY, Elevated/Full allow). WAL-audited (`0xAA`/`0xAB`). Best-effort atomic (temp + rename)
+
+- `<PATH>` — File to write (its parent dir must exist + be write-allowlisted)
+- `<CONTENT>` — Content to write
+
 ## `neoth github`
 
 GitHub workflow shim — wraps the operator's `gh` CLI (A-3 + A-4)

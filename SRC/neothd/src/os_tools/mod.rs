@@ -19,5 +19,6 @@
 pub mod allowlist;
 pub mod gate;
 pub mod read;
+pub mod write;
 
-pub use gate::{OsGateError, read_os_file};
+pub use gate::{OsGateError, read_os_file, write_os_file};

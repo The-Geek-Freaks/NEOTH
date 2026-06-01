@@ -731,6 +731,16 @@ pub const EVENT_TYPE_OS_FILE_READ: u8 = 0xA8;
 /// the autonomy gate (Deny / Confirm-with-no-TTY). The audit trail records
 /// every blocked filesystem reach. Payload: `{path, reason, ts_unix}`.
 pub const EVENT_TYPE_OS_FILE_DENIED: u8 = 0xA9;
+/// `0xAA OS_FILE_WRITE` — PC-01 (write slice). Emitted when the daemon WROTE a
+/// file through the gated OS-tool surface, AFTER it passed the write-allowlist
+/// (canonical parent under `allowed_write_paths`) + the autonomy gate. Payload:
+/// `{path, bytes, existed, ts_unix}` (`existed` = whether it overwrote).
+pub const EVENT_TYPE_OS_FILE_WRITE: u8 = 0xAA;
+/// `0xAB OS_FILE_WRITE_DENIED` — PC-01. An OS file write was refused — by the
+/// write-allowlist (deny-all / parent-not-in-allowlist / traversal / symlink
+/// escape) or the autonomy gate (Deny / Confirm-with-no-TTY). Payload:
+/// `{path, reason, ts_unix}`.
+pub const EVENT_TYPE_OS_FILE_WRITE_DENIED: u8 = 0xAB;
 
 // ---- 0xB0..=0xBF  Hypothalamus / user-profile -----------------------------
 //
@@ -1352,6 +1362,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("lease_revoked", EVENT_TYPE_LEASE_REVOKED),
     ("os_file_read", EVENT_TYPE_OS_FILE_READ),
     ("os_file_denied", EVENT_TYPE_OS_FILE_DENIED),
+    ("os_file_write", EVENT_TYPE_OS_FILE_WRITE),
+    ("os_file_write_denied", EVENT_TYPE_OS_FILE_WRITE_DENIED),
     ("operator_feedback", EVENT_TYPE_OPERATOR_FEEDBACK),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
 ];
@@ -1585,6 +1597,9 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_LEASE_EXPIRED < 0xA0 || EVENT_TYPE_LEASE_EXPIRED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_LEASE_REVOKED < 0xA0 || EVENT_TYPE_LEASE_REVOKED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_OS_FILE_READ < 0xA0 || EVENT_TYPE_OS_FILE_READ > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OS_FILE_WRITE < 0xA0 || EVENT_TYPE_OS_FILE_WRITE > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OS_FILE_WRITE_DENIED < 0xA0
+        || EVENT_TYPE_OS_FILE_WRITE_DENIED > 0xAF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_OS_FILE_DENIED < 0xA0 || EVENT_TYPE_OS_FILE_DENIED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_DELTA < 0xB0 || EVENT_TYPE_PROFILE_DELTA > 0xBF) as usize];
@@ -1807,6 +1822,11 @@ mod tests {
             ("LEASE_REVOKED", EVENT_TYPE_LEASE_REVOKED),
             ("OS_FILE_READ", EVENT_TYPE_OS_FILE_READ),
             ("OS_FILE_DENIED", EVENT_TYPE_OS_FILE_DENIED),
+            ("OS_FILE_WRITE", EVENT_TYPE_OS_FILE_WRITE),
+            (
+                "OS_FILE_WRITE_DENIED",
+                EVENT_TYPE_OS_FILE_WRITE_DENIED,
+            ),
             ("COST_ESTIMATE_SHOWN", EVENT_TYPE_COST_ESTIMATE_SHOWN),
             ("PROFILE_DELTA", EVENT_TYPE_PROFILE_DELTA),
             ("PROFILE_REINFORCED", EVENT_TYPE_PROFILE_REINFORCED),

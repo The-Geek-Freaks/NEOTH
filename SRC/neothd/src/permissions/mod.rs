@@ -149,6 +149,19 @@ pub enum Action {
         /// Canonical, allowlist-validated path being read.
         path: std::path::PathBuf,
     },
+    /// PC-01 (write slice): write a file on the operator's OS through the gated
+    /// OS-tool surface. The `path` is the POST-resolution target — the
+    /// write-allowlist gate (`os_tools`, canonical PARENT under
+    /// `freedom.yaml::tools.os.allowed_write_paths`, default empty = deny-all)
+    /// has already passed BEFORE this autonomy gate. A WRITE mutates the
+    /// operator's filesystem (higher blast radius than a read), so this gate is
+    /// one notch STRICTER than `OsFileRead`: Strict denies, Standard confirms
+    /// (no TTY ⇒ effectively suppressed until Elevated), Elevated/Full allow —
+    /// the write-allowlist is the operator's explicit opt-in.
+    OsFileWrite {
+        /// Canonical, write-allowlist-validated target path.
+        path: std::path::PathBuf,
+    },
     /// SL-01: accept a task DELEGATED by a cluster master and run it through
     /// this node's local provider. The peer has already authenticated (Noise +
     /// cluster_key proof) and been operator-paired; this gate is the autonomy
@@ -288,12 +301,15 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         | Action::SelfBinaryReplace { .. }
         | Action::PatchApplyToRepo { .. }
         | Action::ProactiveChannelSend { .. } => None,
-        // Unleasable for now — no scope variant models these yet.
+        // Unleasable for now — no scope variant models these yet. `OsFileWrite`
+        // is an arbitrary-OS-write (like `WriteOutsideHome`): no coarse scope
+        // models it, and it's high-blast-radius, so it stays gate-only.
         Action::WriteOutsideHome
         | Action::ExecScripts
         | Action::ExecArbitrary
         | Action::PaidProviderCall { .. }
-        | Action::ClusterPeerPairing { .. } => None,
+        | Action::ClusterPeerPairing { .. }
+        | Action::OsFileWrite { .. } => None,
     }
 }
 
@@ -346,6 +362,10 @@ fn evaluate_strict(action: &Action) -> Decision {
         Action::ClusterTaskAccept => Decision::Deny(
             "strict: no unattended cluster-delegated task execution".into(),
         ),
+        Action::OsFileWrite { path } => Decision::Deny(format!(
+            "strict: OS file write of {} denied (writes mutate the operator FS)",
+            path.display()
+        )),
     }
 }
 
@@ -395,6 +415,12 @@ fn evaluate_standard(action: &Action) -> Decision {
              (a ClusterTaskAccept lease for the peer upgrades this to allow)"
                 .into(),
         ),
+        // One notch stricter than OsFileRead (Standard=Allow): a WRITE mutates
+        // the FS, so Standard confirms (no TTY ⇒ blocked until Elevated).
+        Action::OsFileWrite { path } => Decision::Confirm(format!(
+            "standard: OS file write of {} requires confirm",
+            path.display()
+        )),
     }
 }
 
@@ -450,6 +476,10 @@ fn evaluate_elevated(action: &Action) -> Decision {
         // paired+leased peer's delegated task runs. (is_paired + lease are
         // separate checkpoints in the cluster gate; this is the autonomy floor.)
         Action::ClusterTaskAccept => Decision::Allow,
+        // Elevated+ : the write-allowlist (default deny-all) is the explicit
+        // opt-in; once a path is allowlisted + the operator is at Elevated,
+        // gated writes proceed.
+        Action::OsFileWrite { .. } => Decision::Allow,
     }
 }
 
@@ -1076,6 +1106,24 @@ mod tests {
         // Elevated + Full allow.
         assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Allow));
         assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
+    }
+
+    #[test]
+    fn os_file_write_is_stricter_than_read_and_unleasable() {
+        let w = Action::OsFileWrite {
+            path: std::path::PathBuf::from("/tmp/x"),
+        };
+        // One notch stricter than OsFileRead (Strict confirm / Standard allow):
+        // a WRITE mutates the FS.
+        assert!(matches!(evaluate(&w, AutonomyLevel::Strict), Decision::Deny(_)));
+        assert!(matches!(
+            evaluate(&w, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        assert!(matches!(evaluate(&w, AutonomyLevel::Elevated), Decision::Allow));
+        assert!(matches!(evaluate(&w, AutonomyLevel::Full), Decision::Allow));
+        // A raw-OS write must NEVER be unlockable by a lease.
+        assert_eq!(lease_scope_for(&w), None);
     }
 
     #[test]
