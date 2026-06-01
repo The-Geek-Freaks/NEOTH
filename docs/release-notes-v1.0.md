@@ -14,13 +14,22 @@ operator-readable proof.
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |
 | Local models | Qwen profile path, optional local thinking model path, model cache diagnostics. |
 | Providers | Configured cloud providers, provider status, usage caps, circuit breakers, flapping detection. |
-| Channels | GUI, CLI, Telegram, WhatsApp Business, Slack Socket Mode, Discord, Keet/private path. |
+| Channels | CLI + onboarding GUI: Telegram, WhatsApp Business, Slack Socket Mode, Discord, Keet/private path. Post-onboarding the GUI surfaces status; connect/disconnect runs via the CLI until the in-GUI Channels panel (GU-01) lands. |
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Automation | Local cron and localhost n8n API under the same policy/audit surface. |
 | Plugins | Skills and WASM plugins with capabilities, signatures, revocation, hostcall WAL events. |
 | Private mesh | LAN/mDNS discovery, Tailscale path, Hysteria transport, consent-gated cluster behavior. |
 | Doctor | Setup diagnostics for config, secrets, models, channels, plugins, providers, disk, WAL, and cluster discovery. |
 | Docs | Quickstart, privacy proof, install, CLI, providers, local models, channels, plugins, compare pages, security policy. |
+
+> **GUI settings coverage (honest status):** the post-onboarding settings
+> window has 10 tabs; 4 are live (Privacy, Cluster, Code Sessions, Config)
+> and 6 (Chat, Hemispheres, Channels, Skills, Plugins, Memory) currently
+> mirror to the CLI — they show a "use the CLI for now" panel until GU-01
+> lands their in-GUI controls. Everything those tabs will manage is fully
+> operable today via the CLI + the onboarding wizard; GU-01 is closing the
+> in-GUI parity gap, tab by tab. This note exists so the GUI claim is never
+> read as more than it is.
 
 ## What is not yet done
 
