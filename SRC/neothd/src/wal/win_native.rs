@@ -24,7 +24,7 @@ use std::path::Path;
 use tracing::warn;
 
 // ── E-11 imports ───────────────────────────────────────────────────────────
-use windows_sys::Win32::Foundation::{ERROR_SUCCESS, HANDLE};
+use windows_sys::Win32::Foundation::{ERROR_SUCCESS, HANDLE, HLOCAL, LocalFree};
 use windows_sys::Win32::Security::Authorization::{
     EXPLICIT_ACCESS_W, GRANT_ACCESS, NO_MULTIPLE_TRUSTEE, SE_FILE_OBJECT, SetEntriesInAclW,
     SetNamedSecurityInfoW, TRUSTEE_IS_NAME, TRUSTEE_IS_UNKNOWN, TRUSTEE_W,
@@ -134,17 +134,12 @@ pub fn set_owner_dacl(path: &Path, account: &str) -> io::Result<()> {
     //    lifetime covers this call.
     //  - `oldacl` is null — we are constructing a fresh ACL, not merging.
     //  - `&mut new_acl` is a valid out-pointer; Win32 fills it with a
-    //    heap-allocated ACL (owned by the process heap, freed by
-    //    `LocalFree`). We pass it to `SetNamedSecurityInfoW` immediately;
-    //    the Win32 documentation states the caller must call `LocalFree` on
-    //    it — however, when we pass the ACL directly to
-    //    `SetNamedSecurityInfoW`, Windows copies the ACL into the security
-    //    descriptor's storage, so leaking `new_acl` here is intentional and
-    //    documented: the ACL lives for the duration of the function call then
-    //    is effectively owned by the security descriptor written to disk.
-    //    TODO: call LocalFree(new_acl) after SetNamedSecurityInfoW to be
-    //    strictly correct per MSDN; for now the process-heap leak is bounded
-    //    to one ~64-byte ACL per restricted file (WAL rotations are rare).
+    //    heap-allocated ACL (`LocalAlloc`'d, released by `LocalFree`). We pass
+    //    it to `SetNamedSecurityInfoW`, which deep-copies the ACL into the
+    //    file's security descriptor, then free `new_acl` with `LocalFree`
+    //    after that call returns (SC-08a — see the free site below). On a
+    //    `SetEntriesInAclW` failure `new_acl` stays null and the `?` below
+    //    returns early, so the error path allocates nothing to leak.
     let rc = unsafe { SetEntriesInAclW(1, &ea, std::ptr::null(), &mut new_acl) };
 
     map_win32(rc, "SetEntriesInAclW")?;
@@ -176,6 +171,27 @@ pub fn set_owner_dacl(path: &Path, account: &str) -> io::Result<()> {
             std::ptr::null_mut(), // psacl — unchanged
         )
     };
+
+    // SC-08a: release the ACL buffer that `SetEntriesInAclW` allocated on the
+    // process heap. `SetNamedSecurityInfoW` has already deep-copied the ACL
+    // into the file's security descriptor by this point, so the buffer is no
+    // longer referenced and MUST be freed per MSDN ("free the returned buffer
+    // by calling the LocalFree function"). We free regardless of the
+    // `SetNamedSecurityInfoW` result code — the buffer was allocated by the
+    // already-succeeded `SetEntriesInAclW`, so it must be released on both the
+    // success and the apply-failure path.
+    //
+    // SAFETY:
+    //  - Reaching here means `SetEntriesInAclW` succeeded (its `map_win32`
+    //    returned `Ok` above), so `new_acl` is a valid, non-null,
+    //    `LocalAlloc`-owned `*mut ACL`.
+    //  - It is freed exactly once: no other path frees it and the function
+    //    returns immediately after.
+    //  - `SetNamedSecurityInfoW` does not retain the pointer (it deep-copies
+    //    the ACL), so this is not a use-after-free.
+    if !new_acl.is_null() {
+        unsafe { LocalFree(new_acl as HLOCAL) };
+    }
 
     map_win32(rc, "SetNamedSecurityInfoW")
 }
