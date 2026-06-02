@@ -1,8 +1,29 @@
 # NEOTH 1.0 Release Notes
 
+> **Release stage: `1.0.0-beta.1`.** The v1.0 surface is substantially
+> shipped and usable for real personal use, but this is a BETA, not the final
+> 1.0 — see **Known v1.0 gaps** below for the honest list of what is not yet
+> complete. Pre-release version on purpose; nothing here claims more than it
+> delivers.
+
 NEOTH 1.0 is the first public release intended for real personal use: one
 operator, one private memory, many approved surfaces, local-first defaults, and
 operator-readable proof.
+
+## Known v1.0 gaps (beta)
+
+These are the deltas between this beta and a final 1.0 — tracked, not hidden:
+
+- **GUI settings parity (GU-01):** 6 of 10 post-onboarding settings tabs are
+  still "use the CLI for now" stubs (see the GUI honest-status note below).
+  Everything those tabs will manage is fully operable via the CLI today.
+- **Migration shadow-run (ARCH-05):** the deterministic recall-parity GATE +
+  runbook ship; the 14-day shadow-run, grading, and cutover are
+  operator-operational steps you perform, not code that runs itself.
+- **Signed release artifacts:** `neoth wal export --sign` / `verify-proof` /
+  `wal proof-key` (the OPERATOR proof key) work today. RELEASE-artifact signing
+  (the minisign release keypair behind MAR-02 / signed downloads) is pending the
+  operator generating + wiring the CI keypair — the verify code is already built.
 
 ## What works
 
