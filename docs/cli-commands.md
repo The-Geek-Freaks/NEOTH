@@ -377,6 +377,20 @@ Inspect the memory-routing weights. Each row records a `(topic_hash, hemisphere_
 - `--top-n <N>` — Operator-readable cap on rows printed. Defaults to 20
 - `--role <ROLE>` — Filter to one hemisphere role: `left`, `right`, `cerebellum`. Default: all three
 
+## `neoth credential`
+
+Manage `credentials.yaml`: `list` shows which credential keys are set (NAMES only, never values); `import --file <path>` merges a credentials.yaml-shaped file in (set fields overwrite; absent fields untouched). Never prints secret values
+
+### `neoth credential import`
+
+Merge a credentials.yaml-shaped file into `~/.neoth/credentials.yaml`. Set fields in the imported file overwrite existing ones; absent/empty fields are left untouched. Never prints secret values
+
+- `--file <FILE>` — Path to a YAML file with the same shape as `credentials.yaml`
+
+### `neoth credential list`
+
+List which credential keys are currently set. Prints KEY NAMES ONLY — never the secret values
+
 ## `neoth cron`
 
 Fire a scheduled job NOW, out of band of the daemon scheduler: `cron run <id>` loads jobs.yaml, runs the job through the configured provider (real call + delivery), writing the same WAL frames the scheduler does. Refused while `neoth serve` owns the WAL
@@ -962,6 +976,18 @@ HO-07 alert sidecar summary. `status` reads the WAL + crash.log and prints a 3-r
 - `--home <DIR>` — Override `~/.neoth/` for tests
 - `--hours <HOURS>` — Look-back window in hours (default 24)
 - `--json <JSON>` — Print JSON instead of the table
+
+## `neoth n8n`
+
+Inspect the n8n integration (READ-ONLY): `status` reports the webhook base URL n8n POSTs to + whether the `n8n` binary is on PATH; `workflows` lists the NEOTH starter workflows bundled in the binary
+
+### `neoth n8n status`
+
+Report n8n integration status: the webhook base URL n8n POSTs to, whether the `n8n` binary is on PATH, and the bundled-workflow count
+
+### `neoth n8n workflows`
+
+List the NEOTH workflows bundled in the binary (slug / name / description) that an operator can import into n8n
 
 ## `neoth obsidian`
 

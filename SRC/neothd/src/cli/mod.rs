@@ -38,8 +38,10 @@ pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
 pub mod autonomy;
+pub mod credential;
 pub mod cron;
 pub mod gui;
+pub mod n8n;
 pub mod gui_stream;
 pub mod hardware;
 pub mod hemispheres;
@@ -235,6 +237,17 @@ pub enum Commands {
     /// | full | custom`) in freedom.yaml. `show` prints the current level;
     /// `set <level>` persists a new one without re-running the wizard.
     Autonomy(autonomy::AutonomyArgs),
+
+    /// Manage `credentials.yaml`: `list` shows which credential keys are set
+    /// (NAMES only, never values); `import --file <path>` merges a
+    /// credentials.yaml-shaped file in (set fields overwrite; absent fields
+    /// untouched). Never prints secret values.
+    Credential(credential::CredentialArgs),
+
+    /// Inspect the n8n integration (READ-ONLY): `status` reports the webhook
+    /// base URL n8n POSTs to + whether the `n8n` binary is on PATH;
+    /// `workflows` lists the NEOTH starter workflows bundled in the binary.
+    N8n(n8n::N8nArgs),
 
     /// Fire a scheduled job NOW, out of band of the daemon scheduler:
     /// `cron run <id>` loads jobs.yaml, runs the job through the configured
@@ -828,6 +841,12 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Cron(args) => {
             cron::run_cron(args, global_output).await?;
+        }
+        Commands::N8n(args) => {
+            n8n::run_n8n(args, global_output)?;
+        }
+        Commands::Credential(args) => {
+            credential::run_credential(args, global_output)?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;
