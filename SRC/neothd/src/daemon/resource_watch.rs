@@ -13,11 +13,12 @@
 //! [`spawn_resource_watch_loop`] that returns `None` when disabled
 //! (default OFF — no idle tokio task for opt-out operators).
 //!
-//! The live reading is best-effort: [`read_nvidia_vram`] shells
-//! `nvidia-smi`; on a non-NVIDIA / no-GPU / nvidia-smi-absent host it
-//! returns `None` and the tick is a clean no-op (the watcher is useful
-//! on GPU boxes, invisible elsewhere). The PARSER + the threshold
-//! evaluator are pure + tested; the subprocess itself is not.
+//! The live reading is best-effort + vendor-agnostic: [`read_gpu_vram`]
+//! tries `nvidia-smi` (NVIDIA) then `rocm-smi` (AMD); on a host with
+//! neither tool (no-GPU / Intel-integrated / CPU-only) it returns `None`
+//! and the tick is a clean no-op (the watcher is useful on GPU boxes,
+//! invisible elsewhere). Both vendor PARSERS + the threshold evaluator
+//! are pure + tested; the subprocesses themselves are not.
 
 use crate::config::ResourceWatchConfig;
 use crate::wal::writer::WalWriterHandle;
@@ -82,6 +83,40 @@ pub fn parse_vram_used_total(line: &str) -> Option<VramReading> {
     })
 }
 
+/// Parse `rocm-smi --showmeminfo vram --csv` output for the FIRST GPU.
+/// AMD's `rocm-smi` reports VRAM in BYTES (unlike `nvidia-smi`'s MiB), so
+/// the byte columns are converted to MiB (÷ 1024²) to match
+/// [`VramReading`]. Accepts the CSV form whose header carries
+/// `vram total memory (b)` + `vram used memory (b)` columns, e.g.:
+/// ```text
+/// device,VRAM Total Memory (B),VRAM Total Used Memory (B)
+/// card0,17163091968,1080033280
+/// ```
+/// Returns `None` on a missing column / unparseable / empty body, or a
+/// zero total (degenerate). Column order is resolved from the header so a
+/// future `rocm-smi` column-reorder doesn't silently misread.
+pub fn parse_amd_vram_csv(text: &str) -> Option<VramReading> {
+    let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+    let header = lines.next()?.to_ascii_lowercase();
+    let cols: Vec<&str> = header.split(',').map(str::trim).collect();
+    let total_idx = cols.iter().position(|c| c.contains("vram total memory"))?;
+    let used_idx = cols
+        .iter()
+        .position(|c| c.contains("vram total used memory") || c.contains("vram used memory"))?;
+    let row = lines.next()?;
+    let fields: Vec<&str> = row.split(',').map(str::trim).collect();
+    let total_bytes = fields.get(total_idx)?.parse::<u64>().ok()?;
+    let used_bytes = fields.get(used_idx)?.parse::<u64>().ok()?;
+    if total_bytes == 0 {
+        return None;
+    }
+    const MIB: u64 = 1024 * 1024;
+    Some(VramReading {
+        used_mib: (used_bytes / MIB) as u32,
+        total_mib: (total_bytes / MIB) as u32,
+    })
+}
+
 /// Best-effort live read of the FIRST GPU's VRAM via `nvidia-smi`.
 /// `None` on any failure (binary absent, non-zero exit, non-NVIDIA host,
 /// parse miss) — the cron treats that as "no GPU pressure to report".
@@ -102,8 +137,33 @@ fn read_nvidia_vram() -> Option<VramReading> {
     text.lines().next().and_then(parse_vram_used_total)
 }
 
+/// Best-effort live read of the FIRST GPU's VRAM via AMD's `rocm-smi`.
+/// `None` on any failure (binary absent, non-zero exit, non-AMD host,
+/// parse miss) — same advisory-only contract as [`read_nvidia_vram`].
+fn read_amd_vram() -> Option<VramReading> {
+    let out = std::process::Command::new("rocm-smi")
+        .args(["--showmeminfo", "vram", "--csv"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    parse_amd_vram_csv(&text)
+}
+
+/// Vendor-agnostic VRAM probe: try NVIDIA (`nvidia-smi`) first, then AMD
+/// (`rocm-smi`). The first vendor whose tool is present + parses wins;
+/// `None` on a host with neither (CPU-only / Intel-integrated / no GPU
+/// tooling) — the watcher is then a clean no-op. Intel discrete (Arc)
+/// has no `nvidia-smi`/`rocm-smi` equivalent (its `intel_gpu_top` JSON is
+/// a separate, messier slice) so it is intentionally not probed here.
+fn read_gpu_vram() -> Option<VramReading> {
+    read_nvidia_vram().or_else(read_amd_vram)
+}
+
 /// One watcher tick. `reading` is INJECTED so the tick is unit-testable
-/// (the live loop passes [`read_nvidia_vram`]). On a breach it emits a
+/// (the live loop passes [`read_gpu_vram`]). On a breach it emits a
 /// `0x47 RESOURCE_PRESSURE_ALERT` frame + returns `Ok(Some(alert))`;
 /// otherwise (no reading / under threshold) `Ok(None)` with no frame.
 pub async fn run_resource_watch_tick(
@@ -172,7 +232,7 @@ pub fn spawn_resource_watch_loop(
         );
         loop {
             ticker.tick().await;
-            let reading = read_nvidia_vram();
+            let reading = read_gpu_vram();
             match run_resource_watch_tick(&config, &writer, reading).await {
                 Ok(Some(a)) => {
                     tracing::info!(pct = a.pct, "resource-watch: 0x47 emitted")
@@ -262,6 +322,52 @@ mod tests {
         assert!(parse_vram_used_total("").is_none());
         assert!(parse_vram_used_total("1234").is_none()); // single field
         assert!(parse_vram_used_total("a, b").is_none()); // non-numeric
+    }
+
+    #[test]
+    fn parse_amd_vram_csv_converts_bytes_to_mib() {
+        // rocm-smi reports BYTES. 17163091968 B = 16368 MiB, 1080033280 B = 1030 MiB.
+        let csv = "device,VRAM Total Memory (B),VRAM Total Used Memory (B)\n\
+                   card0,17163091968,1080033280\n";
+        let r = parse_amd_vram_csv(csv).expect("real rocm-smi csv parses");
+        assert_eq!(r.total_mib, 16368);
+        assert_eq!(r.used_mib, 1030);
+    }
+
+    #[test]
+    fn parse_amd_vram_csv_resolves_column_order_from_header() {
+        // Columns reordered (used before total) — header lookup must still
+        // map each value correctly, not assume positional order.
+        let csv = "VRAM Total Used Memory (B),device,VRAM Total Memory (B)\n\
+                   524288000,card0,1048576000\n";
+        let r = parse_amd_vram_csv(csv).expect("reordered csv parses");
+        assert_eq!(r.total_mib, 1000); // 1048576000 / 1048576
+        assert_eq!(r.used_mib, 500); // 524288000 / 1048576
+    }
+
+    #[test]
+    fn parse_amd_vram_csv_rejects_malformed() {
+        assert!(parse_amd_vram_csv("").is_none()); // empty
+        assert!(parse_amd_vram_csv("device,foo,bar\ncard0,1,2\n").is_none()); // no vram cols
+        // header present but no data row.
+        assert!(
+            parse_amd_vram_csv("device,VRAM Total Memory (B),VRAM Total Used Memory (B)\n")
+                .is_none()
+        );
+        // non-numeric byte value.
+        assert!(
+            parse_amd_vram_csv(
+                "device,VRAM Total Memory (B),VRAM Total Used Memory (B)\ncard0,xx,1080033280\n"
+            )
+            .is_none()
+        );
+        // zero total → degenerate, never a div-by-zero downstream.
+        assert!(
+            parse_amd_vram_csv(
+                "device,VRAM Total Memory (B),VRAM Total Used Memory (B)\ncard0,0,0\n"
+            )
+            .is_none()
+        );
     }
 
     #[tokio::test]
