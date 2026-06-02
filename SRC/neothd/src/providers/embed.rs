@@ -9,14 +9,18 @@
 //!   - `daemon::dreaming::compose_dreams_with_embeddings` — R-02
 //!     episodic clustering via cosine grouping (spawned by `cli::serve`)
 //!
-//! Phase 1a (this commit) ships the trait + canonical types + the
-//! `EmbedProvider` impl skeleton on `LocalQwenAdapter`. The hidden-
-//! state extraction itself is Phase 1b — candle 0.8's
-//! `Qwen2::ModelForCausalLM::forward` returns logits, not hidden
-//! states, so a thin `providers::qwen2_embed` fork that exposes
-//! the pre-`lm_head` activations is required. The trait shape
-//! lets consumers wire up against the stable surface today + drop
-//! in the real impl without rewriting call sites.
+//! **Status: COMPLETE (Phase 1a trait + Phase 1b real inference both shipped).**
+//! Phase 1a shipped the trait + canonical types + the `EmbedProvider` impl on
+//! `LocalQwenAdapter`. Phase 1b shipped the real hidden-state extraction: rather
+//! than fork `ModelForCausalLM` (whose `forward` returns logits, not hidden
+//! states), the embed path loads a SEPARATE bare `qwen2::Model` (no `lm_head`)
+//! as `LoadedEmbedModel` (see `local_qwen.rs`), whose `forward` returns the
+//! post-norm hidden states; `run_embed` mean-pools across the sequence dim and
+//! L2-normalises. `embed_provider_from_config` builds a real `Arc<dyn
+//! EmbedProvider>` for the `LocalQwen` / `LocalOuro` `inference.embedding_provider`
+//! kinds. So consumers get genuine embeddings today — no skeleton, no stub.
+//! (The embed model must be cached locally; consumers degrade gracefully when
+//! it isn't — dissent falls back to Jaccard, the router to keyword Stage-1.)
 //!
 //! **L2 normalisation invariant**: every implementation MUST return
 //! unit-length vectors so consumers can use dot-product as cosine
