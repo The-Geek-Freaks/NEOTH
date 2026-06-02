@@ -5019,7 +5019,7 @@ dependencies = [
 
 [[package]]
 name = "neothd"
-version = "0.2.1"
+version = "1.0.0-beta.1"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -5119,7 +5119,7 @@ dependencies = [
 
 [[package]]
 name = "neothd-gui"
-version = "0.2.1"
+version = "1.0.0-beta.1"
 dependencies = [
  "anyhow",
  "serde",
