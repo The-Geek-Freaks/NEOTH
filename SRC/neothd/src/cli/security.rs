@@ -85,6 +85,24 @@ pub enum SecurityCommand {
     /// existing compaction-marker audit chain verifies again. Stop the
     /// daemon before running. See `PLAN/RUNBOOK_dpapi_hmac_recovery.md`.
     RewrapHmacKey(RewrapHmacKeyArgs),
+    /// GR-10 — single-glance view of the active safety RAILS: which
+    /// protective defaults are ENGAGED vs which the operator has RELAXED
+    /// (autonomy, private inference, proactive/cluster transport, OS-tool
+    /// allowlists, plugin signatures, model downloads). Read-only — the
+    /// single source of truth for "what is protecting me right now"
+    /// without spelunking `freedom.yaml`. Always exits 0 (it is a status
+    /// view, not a pass/fail gate).
+    SafeMode(SafeModeArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct SafeModeArgs {
+    /// Override the `~/.neoth` home dir (mostly for tests).
+    #[arg(long, value_name = "DIR")]
+    pub home: Option<PathBuf>,
+    /// Emit JSON instead of the human-readable table.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -220,7 +238,163 @@ pub async fn run_security(args: SecurityArgs) -> Result<()> {
         }
         SecurityCommand::BackupHmacKey(a) => run_backup_hmac_key(&a),
         SecurityCommand::RewrapHmacKey(a) => run_rewrap_hmac_key(&a),
+        SecurityCommand::SafeMode(a) => run_safe_mode(&a),
     }
+}
+
+// ── GR-10: unified safe-mode / rails status surface ──────────────────
+
+/// One safety rail's current posture. `engaged == true` means the
+/// protective default is ON (locked down); `false` means the operator
+/// has RELAXED it (opened the surface). `detail` is the one-line reason.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rail {
+    pub name: &'static str,
+    pub engaged: bool,
+    pub detail: String,
+}
+
+/// GR-10 — derive the active safety rails from the live config. Pure
+/// over `cfg`: every rail is a config read, so this is the single
+/// source of truth for the operator's protection posture. Never fails
+/// (a status view), so callers can always render it.
+pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
+    use crate::permissions::AutonomyLevel;
+    let mut rails: Vec<Rail> = Vec::new();
+
+    // Autonomy gate — Strict/Standard gate sensitive actions; Elevated/
+    // Full auto-allow; Custom is operator-defined per action.
+    let (engaged, detail) = match cfg.autonomy {
+        AutonomyLevel::Strict => (true, "strict — sensitive actions denied".to_string()),
+        AutonomyLevel::Standard => (
+            true,
+            "standard — sensitive actions need confirmation".to_string(),
+        ),
+        AutonomyLevel::Elevated => (false, "elevated — most actions auto-allowed".to_string()),
+        AutonomyLevel::Full => (
+            false,
+            "full — actions auto-allowed (highest trust)".to_string(),
+        ),
+        AutonomyLevel::Custom => (false, "custom — per-action operator policy".to_string()),
+    };
+    rails.push(Rail {
+        name: "autonomy_gate",
+        engaged,
+        detail,
+    });
+
+    // Private inference — profile extraction stays on-device unless the
+    // operator opted into a cloud fallback.
+    rails.push(Rail {
+        name: "private_inference",
+        engaged: !cfg.profile.allow_cloud_fallback,
+        detail: if cfg.profile.allow_cloud_fallback {
+            "cloud fallback ALLOWED — profile extraction may reach a cloud provider".to_string()
+        } else {
+            "cloud fallback denied — profile extraction stays on-device".to_string()
+        },
+    });
+
+    // Proactive messaging — the daemon never messages unprompted unless
+    // enabled.
+    rails.push(Rail {
+        name: "proactive_messaging",
+        engaged: !cfg.proactive.enabled,
+        detail: if cfg.proactive.enabled {
+            "enabled — the daemon may message you unprompted".to_string()
+        } else {
+            "disabled — no unprompted outbound messages".to_string()
+        },
+    });
+
+    // Cluster transport — no peer transport / DHT announce unless enabled.
+    rails.push(Rail {
+        name: "cluster_transport",
+        engaged: !cfg.cluster.enabled,
+        detail: if cfg.cluster.enabled {
+            "enabled — peer transport active (DHT / mDNS)".to_string()
+        } else {
+            "disabled — no peer transport, no public DHT announce".to_string()
+        },
+    });
+
+    // OS file tools — empty allowlists = deny-all.
+    let reads = cfg.tools.os.allowed_paths.len();
+    let writes = cfg.tools.os.allowed_write_paths.len();
+    rails.push(Rail {
+        name: "os_file_tools",
+        engaged: reads == 0 && writes == 0,
+        detail: format!("{reads} read path(s), {writes} write path(s) allowlisted (empty = deny-all)"),
+    });
+
+    // Plugin signatures — engaged only when an author key is set AND
+    // signatures are required.
+    let has_key = cfg.plugins.wasm.author_pubkey.is_some();
+    let require_sig = cfg.plugins.wasm.require_signature;
+    rails.push(Rail {
+        name: "plugin_signatures",
+        engaged: has_key && require_sig,
+        detail: if !has_key {
+            "no author key configured — plugin signature checking off".to_string()
+        } else if require_sig {
+            "author key set + signatures required".to_string()
+        } else {
+            "author key set but signatures NOT required".to_string()
+        },
+    });
+
+    // Model downloads — air-gapped unless HF downloads allowed.
+    rails.push(Rail {
+        name: "model_downloads",
+        engaged: !cfg.updater.allow_huggingface_downloads,
+        detail: if cfg.updater.allow_huggingface_downloads {
+            "Hugging Face downloads allowed".to_string()
+        } else {
+            "Hugging Face downloads blocked (air-gapped)".to_string()
+        },
+    });
+
+    rails
+}
+
+/// Render the rails as an operator-readable table. `[ENGAGED]` =
+/// protective default on; `[RELAXED]` = operator opened the surface.
+pub fn render_rails(rails: &[Rail]) -> String {
+    let engaged = rails.iter().filter(|r| r.engaged).count();
+    let mut out = String::new();
+    out.push_str("# NEOTH safety rails (GR-10)\n");
+    out.push_str(&format!(
+        "  {engaged} of {} rails engaged (relaxed rails are operator-opened surfaces)\n\n",
+        rails.len()
+    ));
+    for r in rails {
+        let marker = if r.engaged { "[ENGAGED]" } else { "[RELAXED]" };
+        out.push_str(&format!("  {marker}  {:<20} {}\n", r.name, r.detail));
+    }
+    out
+}
+
+fn run_safe_mode(args: &SafeModeArgs) -> Result<()> {
+    let cfg = match &args.home {
+        Some(dir) => FreedomConfig::load_from_path(&dir.join("freedom.yaml")).unwrap_or_default(),
+        None => FreedomConfig::load_from_default_path().unwrap_or_default(),
+    };
+    let rails = collect_rails(&cfg);
+    if args.json {
+        let body = serde_json::json!({
+            "rails": rails.iter().map(|r| serde_json::json!({
+                "name": r.name,
+                "engaged": r.engaged,
+                "detail": r.detail,
+            })).collect::<Vec<_>>(),
+            "engaged_count": rails.iter().filter(|r| r.engaged).count(),
+            "total": rails.len(),
+        });
+        println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
+    } else {
+        print!("{}", render_rails(&rails));
+    }
+    Ok(())
 }
 
 /// SC-09 Tier-1 recovery: re-wrap a plaintext HMAC key backup for this
@@ -713,6 +887,85 @@ fn print_report(report: &AuditReport) {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    // ── GR-10 safe-mode rails ─────────────────────────────────────────
+
+    fn rail<'a>(rails: &'a [Rail], name: &str) -> &'a Rail {
+        rails
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("rail `{name}` missing"))
+    }
+
+    #[test]
+    fn safe_mode_default_config_engages_protective_rails() {
+        // A fresh install's protective defaults must read as ENGAGED.
+        let cfg = FreedomConfig::default();
+        let rails = collect_rails(&cfg);
+        assert_eq!(rails.len(), 7, "all rails surfaced");
+        for name in [
+            "autonomy_gate",       // default Standard = gated
+            "private_inference",   // default no cloud fallback
+            "proactive_messaging", // default off
+            "cluster_transport",   // default off
+            "os_file_tools",       // default empty allowlists = deny-all
+        ] {
+            assert!(
+                rail(&rails, name).engaged,
+                "{name} must be engaged on a default install"
+            );
+        }
+    }
+
+    #[test]
+    fn safe_mode_full_autonomy_relaxes_the_gate() {
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = crate::permissions::AutonomyLevel::Full;
+        let rails = collect_rails(&cfg);
+        assert!(
+            !rail(&rails, "autonomy_gate").engaged,
+            "full autonomy relaxes the gate"
+        );
+        assert!(rail(&rails, "autonomy_gate").detail.contains("full"));
+    }
+
+    #[test]
+    fn safe_mode_cloud_fallback_relaxes_private_inference() {
+        let mut cfg = FreedomConfig::default();
+        cfg.profile.allow_cloud_fallback = true;
+        let rails = collect_rails(&cfg);
+        assert!(!rail(&rails, "private_inference").engaged);
+        assert!(
+            rail(&rails, "private_inference")
+                .detail
+                .contains("cloud fallback ALLOWED")
+        );
+    }
+
+    #[test]
+    fn safe_mode_os_tools_relax_when_paths_allowlisted() {
+        let mut cfg = FreedomConfig::default();
+        cfg.tools
+            .os
+            .allowed_paths
+            .push(std::path::PathBuf::from("/tmp/ok"));
+        let rails = collect_rails(&cfg);
+        assert!(
+            !rail(&rails, "os_file_tools").engaged,
+            "a non-empty allowlist relaxes the deny-all rail"
+        );
+    }
+
+    #[test]
+    fn safe_mode_render_marks_engaged_and_relaxed() {
+        let mut cfg = FreedomConfig::default();
+        cfg.autonomy = crate::permissions::AutonomyLevel::Full; // one relaxed
+        let out = render_rails(&collect_rails(&cfg));
+        assert!(out.contains("[ENGAGED]"), "engaged rails rendered");
+        assert!(out.contains("[RELAXED]"), "relaxed rails rendered");
+        assert!(out.contains("rails engaged"), "summary line present");
+        assert!(out.contains("autonomy_gate"));
+    }
 
     fn write_file(path: &Path, contents: &[u8]) {
         if let Some(parent) = path.parent() {

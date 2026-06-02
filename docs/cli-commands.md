@@ -1466,6 +1466,13 @@ SC-09 Tier-1 recovery — re-wrap a plaintext HMAC key backup for THIS machine/u
 - `--source <PATH>` — Path to the plaintext HMAC key backup (produced by `neoth security backup-hmac-key`). Its bytes are re-wrapped for the current machine/user and installed over the live key
 - `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests). Defaults to the operator's actual `~/.neoth`
 
+### `neoth security safe-mode`
+
+GR-10 — single-glance view of the active safety RAILS: which protective defaults are ENGAGED vs which the operator has RELAXED (autonomy, private inference, proactive/cluster transport, OS-tool allowlists, plugin signatures, model downloads). Read-only — the single source of truth for "what is protecting me right now" without spelunking `freedom.yaml`. Always exits 0 (it is a status view, not a pass/fail gate)
+
+- `--home <DIR>` — Override the `~/.neoth` home dir (mostly for tests)
+- `--json <JSON>` — Emit JSON instead of the human-readable table
+
 ## `neoth self-dev`
 
 P-04 proactive self-development workflow. `review` lists pending proposals; `accept <id>` applies + emits 0x1D SELF_DEV_ACCEPTED; `decline <id>` records refusal + emits 0x1E SELF_DEV_DECLINED; `propose --from-profile <p>` generates proposals from a recorded BehaviouralProfile + emits 0x1C SELF_DEV_PROPOSED per proposal. Local store at `~/.neoth/self_dev/proposals.json`
