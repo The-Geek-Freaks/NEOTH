@@ -54,15 +54,23 @@ pub async fn run_os(args: OsArgs) -> Result<()> {
 async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
     let now = now_unix();
     let home = FreedomConfig::default_neoth_home();
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+        Ok(Some(_))
+    );
+    // AUDIT-RPC-01 #1: under a required-audit posture, refuse the launch if the
+    // daemon owns the WAL but its audit-RPC listener is unreachable — a launch
+    // must never happen un-audited.
+    crate::daemon::audit_rpc::enforce_required_audit(
+        cfg.audit_rpc.required_for_oneshot_permission_events,
+        daemon_live,
+        &home,
+    )?;
     // Same one-shot-WAL pattern as `neoth fs`: when the daemon owns the WAL,
     // FORWARD the audit frame to it via the loopback audit-RPC channel
     // (AUDIT-RPC-01) rather than open a 2nd writer; the launch is gated either way.
     let result = {
-        let pidfile = crate::daemon::pidfile::default_pidfile();
-        let daemon_live = matches!(
-            crate::daemon::pidfile::live_daemon_pid(&pidfile),
-            Ok(Some(_))
-        );
         if daemon_live {
             launch_os_app(program, &cfg.tools.os, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
         } else {

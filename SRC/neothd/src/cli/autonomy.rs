@@ -83,7 +83,12 @@ fn change_event(previous: AutonomyLevel, next: AutonomyLevel) -> Option<u8> {
 /// must be forensically visible. Best-effort: when the daemon owns the writer
 /// the frame is FORWARDED over audit-RPC (AUDIT-RPC-01); otherwise a one-shot
 /// writer appends it. Payload `{previous, next, source:"cli"}`.
-async fn emit_autonomy_change(previous: AutonomyLevel, next: AutonomyLevel) {
+async fn emit_autonomy_change(
+    previous: AutonomyLevel,
+    next: AutonomyLevel,
+    daemon_live: bool,
+    home: &std::path::Path,
+) {
     let Some(event_type) = change_event(previous, next) else {
         return;
     };
@@ -94,16 +99,11 @@ async fn emit_autonomy_change(previous: AutonomyLevel, next: AutonomyLevel) {
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
 
-    let home = FreedomConfig::default_neoth_home();
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    ) {
+    if daemon_live {
         // Daemon owns the single WAL writer → forward over the loopback
         // audit-RPC channel (0xA2/0xA3 are allowlisted there).
         if let Err(e) =
-            crate::daemon::audit_rpc::try_post_audit_frame(&home, event_type, &payload).await
+            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
         {
             tracing::debug!(error = %e, "autonomy-change audit forward failed (best-effort)");
         }
@@ -147,13 +147,25 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path().context(
         "load freedom.yaml (run `neoth init` first if this is a fresh install)",
     )?;
+    let required = cfg.audit_rpc.required_for_oneshot_permission_events;
+    let home = FreedomConfig::default_neoth_home();
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+        Ok(Some(_))
+    );
+    // AUDIT-RPC-01 #1: under a required-audit posture, refuse to change autonomy
+    // if the daemon owns the WAL but its audit-RPC listener is unreachable — a
+    // security-relevant change must never land without an audit record. Checked
+    // BEFORE the persist so a refused change leaves freedom.yaml untouched.
+    crate::daemon::audit_rpc::enforce_required_audit(required, daemon_live, &home)?;
     let (next, previous) = apply_level(cfg, level)?;
     let applied = next.autonomy;
     next.save_public_to_default_path()
         .context("persist the new autonomy level to freedom.yaml")?;
     // Forensic audit of the security-relevant change (best-effort, after the
     // persist so a recorded frame always reflects what's on disk).
-    emit_autonomy_change(previous, applied).await;
+    emit_autonomy_change(previous, applied, daemon_live, &home).await;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",

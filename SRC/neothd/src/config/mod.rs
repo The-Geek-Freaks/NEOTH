@@ -402,6 +402,15 @@ pub struct AuditRpcConfig {
     /// binds `127.0.0.1:0` (OS-assigned) and advertises the chosen port in the
     /// `~/.neoth/audit_rpc.port` sidecar so one-shot CLIs can find it.
     pub enabled: bool,
+
+    /// Compliance fail-closed switch. When `true` AND a daemon owns the WAL, a
+    /// one-shot permission action (OS file read/write, app launch, autonomy
+    /// change) is REFUSED if the daemon's audit-RPC listener is unreachable —
+    /// so the action never happens without an audit record. Default `false`
+    /// (best-effort: the action proceeds and the frame is dropped if the
+    /// listener is down). Pairs with `enabled`: turning this on without the
+    /// listener enabled would refuse every one-shot while a daemon is live.
+    pub required_for_oneshot_permission_events: bool,
 }
 
 /// SL-00 cluster-identity config. Default: no name (no cluster).

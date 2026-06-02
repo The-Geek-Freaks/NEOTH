@@ -498,6 +498,36 @@ pub enum AuditRpcClientError {
 /// sidecar / no token / connect refused) returns `Unavailable` so the caller can
 /// fall back to its existing un-audited path — the action itself is already
 /// gated; this only governs whether the audit frame lands.
+/// Cheap reachability proxy for the daemon's audit-RPC listener: the sidecar
+/// is present AND the daemon that wrote it is still alive. The daemon writes
+/// the sidecar only AFTER binding the listener and removes it on shutdown, so
+/// sidecar-present + pid-alive ≈ listener-up. Used by the fail-closed
+/// pre-flight; a real connect would be more thorough but heavier.
+pub fn is_reachable(home: &Path) -> bool {
+    matches!(read_sidecar(home), Ok((_, pid)) if crate::daemon::pidfile::pid_is_alive(pid))
+}
+
+/// AUDIT-RPC-01 #1 — fail-closed pre-flight for one-shot PERMISSION actions.
+///
+/// When `required` (`audit_rpc.required_for_oneshot_permission_events`) is set
+/// AND a daemon is live (it owns the WAL writer, so the one-shot can't audit
+/// locally) AND the daemon's audit-RPC listener is NOT reachable, returns an
+/// error so the caller REFUSES the action — a permission action must never run
+/// without an audit record under a compliance/proof posture. No-op when the
+/// flag is off, no daemon is live (the one-shot writes its own frame), or the
+/// listener is reachable.
+pub fn enforce_required_audit(required: bool, daemon_live: bool, home: &Path) -> Result<()> {
+    if required && daemon_live && !is_reachable(home) {
+        anyhow::bail!(
+            "audit_rpc.required_for_oneshot_permission_events is set, a daemon owns the WAL, but \
+             its audit-RPC listener is unreachable — refusing this permission action so it isn't \
+             performed un-audited. Enable `audit_rpc` + restart the daemon, stop the daemon, or \
+             clear the required flag."
+        );
+    }
+    Ok(())
+}
+
 pub async fn try_post_audit_frame(
     home: &Path,
     event_type: u8,
@@ -593,6 +623,23 @@ mod tests {
         for c in [0x10u8, 0x15, 0xA0, 0xA1, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
             assert!(!is_allowed_client_event(c), "{c:#x} must be refused");
         }
+    }
+
+    #[test]
+    fn is_reachable_is_false_without_a_sidecar() {
+        let dir = tempdir().unwrap();
+        assert!(!is_reachable(dir.path()), "no sidecar ⇒ not reachable");
+    }
+
+    #[test]
+    fn enforce_required_audit_only_bails_when_required_live_and_unreachable() {
+        let dir = tempdir().unwrap(); // no sidecar ⇒ unreachable
+        // Flag off ⇒ always Ok (best-effort posture).
+        assert!(enforce_required_audit(false, true, dir.path()).is_ok());
+        // No daemon ⇒ Ok (the one-shot writes its own frame locally).
+        assert!(enforce_required_audit(true, false, dir.path()).is_ok());
+        // Required + daemon live + listener unreachable ⇒ fail-closed.
+        assert!(enforce_required_audit(true, true, dir.path()).is_err());
     }
 
     #[test]
