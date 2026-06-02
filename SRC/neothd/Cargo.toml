@@ -255,6 +255,10 @@ minisign-verify = "0.2"
 # password; not CI-testable) per the Session-34 3-lens DAU-safety gremium.
 ed25519-dalek = "2"
 
+# TD-02 CalDAV — WebDAV `multistatus` XML parsing (REPORT calendar-query for
+# VTODO). Already resolved transitively in Cargo.lock; pure-Rust, no C deps.
+quick-xml = "0.38"
+
 # N-3 Workstream D (Session 23) — base64url-NOPAD encoding for the
 # localhost API bearer token. 32 random bytes → 43-char URL-safe
 # token stored at ~/.neoth/n8n_api_token.

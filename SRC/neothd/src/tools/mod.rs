@@ -14,6 +14,7 @@
 //! the same trait.
 
 pub mod arxiv;
+pub mod caldav;
 pub mod github;
 pub mod google_tasks;
 pub mod todoist;

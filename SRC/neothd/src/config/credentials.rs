@@ -94,6 +94,15 @@ pub struct Credentials {
     /// Google secret; access tokens are never persisted. Override:
     /// `NEOTH_GOOGLE_REFRESH_TOKEN`.
     pub google_oauth_refresh_token: Option<SecretString>,
+    /// TD-02 CalDAV — base URL of the operator's task calendar collection
+    /// (e.g. `https://cloud.example.com/remote.php/dav/calendars/<user>/tasks/`).
+    /// `neoth todo --provider caldav list`. Override: `NEOTH_CALDAV_URL`.
+    pub caldav_url: Option<String>,
+    /// TD-02 CalDAV — Basic-auth username. Override: `NEOTH_CALDAV_USERNAME`.
+    pub caldav_username: Option<String>,
+    /// TD-02 CalDAV — Basic-auth password / app-password (SecretString for the
+    /// same mlock+zeroize handling). Override: `NEOTH_CALDAV_PASSWORD`.
+    pub caldav_password: Option<SecretString>,
     /// SL-00 (Session 32) — the cluster shared-secret passphrase. ALL nodes
     /// in one cluster share this phrase; it derives the `cluster_key` that
     /// HMAC-authenticates every announce + (future) gossip/task frame, so a
@@ -176,6 +185,9 @@ impl Credentials {
             google_oauth_client_id,
             google_oauth_client_secret,
             google_oauth_refresh_token,
+            caldav_url,
+            caldav_username,
+            caldav_password,
             cluster_passphrase,
         } = self;
         provider_key.is_none()
@@ -192,6 +204,9 @@ impl Credentials {
             && google_oauth_client_id.is_none()
             && google_oauth_client_secret.is_none()
             && google_oauth_refresh_token.is_none()
+            && caldav_url.is_none()
+            && caldav_username.is_none()
+            && caldav_password.is_none()
             && cluster_passphrase.is_none()
     }
 

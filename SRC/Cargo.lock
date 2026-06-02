@@ -5076,6 +5076,7 @@ dependencies = [
  "portable-pty",
  "predicates",
  "proptest",
+ "quick-xml 0.38.4",
  "rand 0.9.4",
  "regex",
  "reqwest 0.12.28",

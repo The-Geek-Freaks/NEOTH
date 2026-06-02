@@ -17,7 +17,7 @@ use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::secret::SecretString;
-use crate::tools::{google_tasks, todoist};
+use crate::tools::{caldav, google_tasks, todoist};
 
 #[derive(Args, Debug, Clone)]
 pub struct TodoArgs {
@@ -42,6 +42,10 @@ pub struct TodoArgs {
 pub enum TaskProvider {
     Todoist,
     Google,
+    /// TD-02 — CalDAV (Nextcloud Tasks, Radicale, Apple Reminders via iCloud
+    /// CalDAV, …). Read-only `list` today; needs `caldav_{url,username,
+    /// password}` in credentials.yaml (or `NEOTH_CALDAV_*`).
+    Caldav,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -64,6 +68,7 @@ pub async fn run_todo(args: TodoArgs) -> Result<()> {
     match args.provider {
         TaskProvider::Todoist => run_todoist(&args).await,
         TaskProvider::Google => run_google(&args).await,
+        TaskProvider::Caldav => run_caldav(&args).await,
     }
 }
 
@@ -176,6 +181,97 @@ async fn run_google(args: &TodoArgs) -> Result<()> {
         }
     }
     Ok(())
+}
+
+// ── CalDAV (TD-02) ─────────────────────────────────────────────────────
+
+async fn run_caldav(args: &TodoArgs) -> Result<()> {
+    let creds = caldav_creds()?;
+    match &args.action {
+        TodoAction::List => {
+            let tasks =
+                caldav::list_tasks(&creds.url, &creds.username, creds.password.expose()).await?;
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string_pretty(&tasks)?);
+                }
+                OutputFormat::Table => {
+                    if tasks.is_empty() {
+                        println!("(no open tasks)");
+                        return Ok(());
+                    }
+                    for t in &tasks {
+                        let due = t
+                            .due
+                            .as_deref()
+                            .map(|s| format!("  (due {s})"))
+                            .unwrap_or_default();
+                        let id = if t.uid.is_empty() { "?" } else { t.uid.as_str() };
+                        println!("{id}  {}{due}", t.summary);
+                    }
+                }
+            }
+            Ok(())
+        }
+        TodoAction::Add { .. } | TodoAction::Close { .. } => anyhow::bail!(
+            "CalDAV add/close is not yet implemented (TD-02 ships read-only `list`); \
+             creating/completing a VTODO (PUT / PROPPATCH) is a follow-on. Use \
+             `--provider todoist` or `google` to add/close, or `list` to read CalDAV."
+        ),
+    }
+}
+
+/// CalDAV connection settings.
+struct CaldavCreds {
+    url: String,
+    username: String,
+    password: SecretString,
+}
+
+/// Resolve CalDAV creds: `credentials.yaml::caldav_{url,username,password}`
+/// first, then `NEOTH_CALDAV_{URL,USERNAME,PASSWORD}`. Bails with the exact
+/// missing field + how to set it.
+fn caldav_creds() -> Result<CaldavCreds> {
+    let creds = crate::config::credentials::Credentials::load_or_default(
+        &crate::config::credentials::default_path(),
+    )
+    .context("load credentials.yaml")?;
+    let url = creds
+        .caldav_url
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("NEOTH_CALDAV_URL")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+        .ok_or_else(|| missing_caldav("url", "NEOTH_CALDAV_URL"))?;
+    let username = creds
+        .caldav_username
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("NEOTH_CALDAV_USERNAME")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+        .ok_or_else(|| missing_caldav("username", "NEOTH_CALDAV_USERNAME"))?;
+    let password = creds
+        .caldav_password
+        .or_else(|| env_secret("NEOTH_CALDAV_PASSWORD"))
+        .ok_or_else(|| missing_caldav("password", "NEOTH_CALDAV_PASSWORD"))?;
+    Ok(CaldavCreds {
+        url,
+        username,
+        password,
+    })
+}
+
+fn missing_caldav(field: &str, env: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "no CalDAV {field} — add `caldav_{field}` to ~/.neoth/credentials.yaml or set {env}. \
+         The url is your task-calendar collection (e.g. Nextcloud: \
+         https://<host>/remote.php/dav/calendars/<user>/<tasklist>/); username + password are \
+         your CalDAV / app-password Basic-auth credentials."
+    )
 }
 
 /// Resolve the Todoist token: `--token` → `credentials.yaml::todoist_token`
