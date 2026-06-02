@@ -1748,6 +1748,18 @@ KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in
 - `--wal-dir <DIR>` — WAL directory override (tests / inspecting a backup)
 - `--sign <SIGN>` — KF-03 — ed25519-sign the bundle with the operator's auto-managed signing key (`~/.neoth/wal/signing.key`, generated on first use, no prompt). Embeds the signature + public key so a third party can run `neoth wal verify-proof`. Off by default (an unsigned metadata bundle still carries the SHA-256 self-integrity digest)
 
+### `neoth wal proof-key`
+
+PROOF-KEY-01 — inspect the operator's proof signing key (the ed25519 key `wal export --sign` uses, `~/.neoth/wal/signing.key`). READ-ONLY — never generates the key (use `wal export --sign` to create it on first use). `rotate` is a follow-on
+
+#### `neoth wal proof-key export-pub`
+
+Print ONLY the base64 public key (pipe it to an auditor so they can `wal verify-proof --pubkey <key>`). Exits non-zero if no key exists yet
+
+#### `neoth wal proof-key show`
+
+Print the proof signing key's public key + on-disk path (or report that no key exists yet)
+
 ### `neoth wal show`
 
 Pretty-print frames, newest first. With no `<segment>`, scans EVERY `~/.neoth/wal/*.wal` segment so an operator can audit the whole chain without naming a file. `--type` filters to one event type — this is how an operator proves a guarantee, e.g. `neoth wal show --type plugin_cap_denied` (every denied plugin hostcall) or `--type provider_fallback_attempted` (every 429 failover)

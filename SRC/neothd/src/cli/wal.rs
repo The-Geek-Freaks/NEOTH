@@ -110,6 +110,25 @@ pub enum WalAction {
         #[arg(long, value_name = "BASE64")]
         pubkey: Option<String>,
     },
+    /// PROOF-KEY-01 — inspect the operator's proof signing key (the ed25519
+    /// key `wal export --sign` uses, `~/.neoth/wal/signing.key`). READ-ONLY —
+    /// never generates the key (use `wal export --sign` to create it on first
+    /// use). `rotate` is a follow-on.
+    ProofKey {
+        #[command(subcommand)]
+        action: ProofKeyAction,
+    },
+}
+
+/// PROOF-KEY-01 sub-actions.
+#[derive(Subcommand, Debug, Clone)]
+pub enum ProofKeyAction {
+    /// Print the proof signing key's public key + on-disk path (or report that
+    /// no key exists yet).
+    Show,
+    /// Print ONLY the base64 public key (pipe it to an auditor so they can
+    /// `wal verify-proof --pubkey <key>`). Exits non-zero if no key exists yet.
+    ExportPub,
 }
 
 pub async fn run_wal(args: WalArgs) -> Result<()> {
@@ -151,7 +170,67 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
         WalAction::VerifyProof { proof, pubkey } => {
             run_verify_proof(&proof, pubkey.as_deref(), args.output)
         }
+        WalAction::ProofKey { action } => run_proof_key(action, args.output),
     }
+}
+
+/// PROOF-KEY-01 — the proof signing key's public key (base64), or `None` when
+/// no key has been created yet. READ-ONLY: does not generate the key (unlike
+/// `wal export --sign`), so `proof-key show` on a fresh install reports "not
+/// created" instead of silently minting one.
+fn proof_key_pubkey(key_path: &Path) -> Result<Option<String>> {
+    if !key_path.exists() {
+        return Ok(None);
+    }
+    // The key file exists, so `load_or_init_signing_key` reads it (no
+    // generation path is taken).
+    let key = crate::wal::signing::load_or_init_signing_key(key_path)
+        .context("read the proof signing key")?;
+    Ok(Some(crate::wal::signing::pubkey_b64(&key)))
+}
+
+fn run_proof_key(action: ProofKeyAction, output: OutputFormat) -> Result<()> {
+    let path = crate::wal::signing::default_signing_key_path();
+    let pubkey = proof_key_pubkey(&path)?;
+    match action {
+        ProofKeyAction::Show => match (&pubkey, output) {
+            (_, OutputFormat::Json | OutputFormat::Jsonl) => println!(
+                "{}",
+                serde_json::json!({
+                    "path": path.display().to_string(),
+                    "exists": pubkey.is_some(),
+                    "algorithm": crate::wal::signing::SIG_ALGORITHM,
+                    "public_key": pubkey,
+                })
+            ),
+            (Some(pk), OutputFormat::Table) => {
+                println!("proof signing key ({})", crate::wal::signing::SIG_ALGORITHM);
+                println!("  path:       {}", path.display());
+                println!("  public_key: {pk}");
+                println!(
+                    "  share the public key with auditors; they verify with \
+                     `neoth wal verify-proof --proof <file> --pubkey <key>`"
+                );
+            }
+            (None, OutputFormat::Table) => {
+                println!(
+                    "no proof signing key yet at {} — run `neoth wal export --sign` once to \
+                     create it (auto-generated, no prompt).",
+                    path.display(),
+                );
+            }
+        },
+        ProofKeyAction::ExportPub => match pubkey {
+            Some(pk) => println!("{pk}"),
+            None => {
+                eprintln!(
+                    "no proof signing key yet — run `neoth wal export --sign` once to create it."
+                );
+                std::process::exit(1);
+            }
+        },
+    }
+    Ok(())
 }
 
 /// Full result of a stats walk over one segment.
@@ -965,6 +1044,23 @@ mod tests {
             .expect("pinned-key verify of a valid signed proof must succeed");
         run_verify_proof(&out, None, OutputFormat::Json)
             .expect("self-consistent verify of a valid signed proof must succeed");
+    }
+
+    #[test]
+    fn proof_key_pubkey_reports_absent_then_present() {
+        // PROOF-KEY-01: `show`/`export-pub` are READ-ONLY — absent key → None
+        // (never generates), present key → its pubkey.
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("signing.key");
+        assert!(
+            proof_key_pubkey(&key_path).unwrap().is_none(),
+            "no key yet → None (must not generate)"
+        );
+        let key = crate::wal::signing::load_or_init_signing_key(&key_path).unwrap();
+        let reported = proof_key_pubkey(&key_path)
+            .unwrap()
+            .expect("key now exists → Some");
+        assert_eq!(reported, crate::wal::signing::pubkey_b64(&key));
     }
 
     #[test]
