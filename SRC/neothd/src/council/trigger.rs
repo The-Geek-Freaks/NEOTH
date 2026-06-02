@@ -103,6 +103,13 @@ pub struct TriggerPolicy {
     /// triggered. Operators who want the strict opt-in-only behaviour
     /// can flip this to `false`.
     pub convene_on_high_complexity: bool,
+    /// Operator-supplied EXTRA dissent markers (SPEC-03b trigger config
+    /// surface), appended to — never replacing — the built-in
+    /// `dissent_markers`. Owned `String`s (the config is operator-typed at
+    /// runtime, not `&'static`); matched lowercased exactly like the
+    /// built-ins. Empty by default. Populated from
+    /// `freedom.yaml::council.trigger.extra_dissent_markers`.
+    pub extra_markers: Vec<String>,
 }
 
 impl Default for TriggerPolicy {
@@ -153,6 +160,7 @@ impl Default for TriggerPolicy {
                 "diagnose",
             ],
             convene_on_high_complexity: true,
+            extra_markers: Vec::new(),
         }
     }
 }
@@ -207,6 +215,15 @@ pub fn should_convene(
             };
         }
     }
+    // Gate 4b — operator-supplied extra markers (SPEC-03b). Same scan,
+    // appended to the built-ins; an empty operator list is a no-op.
+    for marker in &policy.extra_markers {
+        if !marker.is_empty() && lowered.contains(marker.as_str()) {
+            return TriggerDecision::Convene {
+                reason: format!("dissent_marker: {marker}"),
+            };
+        }
+    }
 
     // Gate 5 — high-complexity convene (2026-05-17 B-Konsens, Code-Explorer
     // wedge). Code-fence + question mark + length ≥ 2× the min threshold
@@ -254,6 +271,36 @@ mod tests {
             seconds_since_last_council: u64::MAX,
             remaining_budget_eur: None,
             estimated_single_call_eur: 0.10,
+        }
+    }
+
+    // SPEC-03b: operator-supplied extra dissent markers convene the council
+    // even when no BUILT-IN marker fires — without changing default behaviour.
+    #[test]
+    fn extra_markers_convene_and_default_skips() {
+        // Long + question ⇒ passes the complexity gate; contains NO built-in
+        // marker and no code fence ⇒ defaults take it to Skip.
+        let prompt =
+            "Please carefully evaluate the threat model for this subsystem boundary, yes or no?";
+
+        let default_policy = TriggerPolicy::default();
+        let r = should_convene(prompt, &ctx_default(), &default_policy);
+        assert!(
+            !r.should_convene(),
+            "default policy must NOT convene on this prompt (no built-in marker), got {r:?}"
+        );
+
+        let mut p = TriggerPolicy::default();
+        p.extra_markers = vec!["threat model".to_string()];
+        let r2 = should_convene(prompt, &ctx_default(), &p);
+        match r2 {
+            TriggerDecision::Convene { reason } => {
+                assert!(
+                    reason.contains("threat model"),
+                    "extra marker must attribute the convene, got: {reason}"
+                );
+            }
+            other => panic!("extra marker must convene, got {other:?}"),
         }
     }
 

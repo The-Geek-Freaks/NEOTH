@@ -1202,7 +1202,10 @@ pub async fn run_chat_with(
                 remaining_budget_eur: None,
                 estimated_single_call_eur: predicted_cost.total_eur.max(0.01) as f32,
             };
-            crate::council::should_convene(&prompt, &ctx, &crate::council::TriggerPolicy::default())
+            // SPEC-03b: operator-tunable thresholds from
+            // `freedom.yaml::council.trigger` (defaults reproduce the prior
+            // hardcoded policy exactly).
+            crate::council::should_convene(&prompt, &ctx, &config.council.trigger.to_policy())
         };
         let council_enable = trigger_decision.should_convene();
         if !council_force && !council_disable {
@@ -3393,6 +3396,7 @@ pub(crate) fn evaluate_council_trigger(
     prompt: &str,
     estimated_single_call_eur: f32,
     disabled: bool,
+    policy: &crate::council::TriggerPolicy,
 ) -> crate::council::TriggerDecision {
     let council_force = std::env::var("NEOTH_COUNCIL_ENABLE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -3426,7 +3430,7 @@ pub(crate) fn evaluate_council_trigger(
         remaining_budget_eur: None,
         estimated_single_call_eur,
     };
-    crate::council::should_convene(prompt, &ctx, &crate::council::TriggerPolicy::default())
+    crate::council::should_convene(prompt, &ctx, policy)
 }
 
 /// K-Wire-3 v2 2026-05-17: drive a full council debate including A5
@@ -3997,7 +4001,12 @@ mod tests {
             std::env::remove_var("NEOTH_COUNCIL_DISABLE");
             std::env::remove_var("NEOTH_COUNCIL_ENABLE");
         }
-        let decision = evaluate_council_trigger("should I use Rust or Go here?", 0.01, true);
+        let decision = evaluate_council_trigger(
+            "should I use Rust or Go here?",
+            0.01,
+            true,
+            &crate::council::TriggerPolicy::default(),
+        );
         match decision {
             crate::council::TriggerDecision::Skip { reason } => {
                 assert!(
@@ -4016,7 +4025,12 @@ mod tests {
             std::env::remove_var("NEOTH_COUNCIL_DISABLE");
             std::env::set_var("NEOTH_COUNCIL_ENABLE", "1");
         }
-        let decision = evaluate_council_trigger("anything at all", 0.01, true);
+        let decision = evaluate_council_trigger(
+            "anything at all",
+            0.01,
+            true,
+            &crate::council::TriggerPolicy::default(),
+        );
         unsafe { std::env::remove_var("NEOTH_COUNCIL_ENABLE") };
         assert!(
             matches!(decision, crate::council::TriggerDecision::Skip { .. }),
@@ -4031,7 +4045,12 @@ mod tests {
             std::env::remove_var("NEOTH_COUNCIL_DISABLE");
             std::env::set_var("NEOTH_COUNCIL_ENABLE", "1");
         }
-        let decision = evaluate_council_trigger("anything at all", 0.01, false);
+        let decision = evaluate_council_trigger(
+            "anything at all",
+            0.01,
+            false,
+            &crate::council::TriggerPolicy::default(),
+        );
         unsafe { std::env::remove_var("NEOTH_COUNCIL_ENABLE") };
         // disabled=false + force-enable → the normal force path (Convene).
         assert!(

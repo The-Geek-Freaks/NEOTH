@@ -3332,11 +3332,23 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             // `neoth council suppress` gates the channel path too, without a
             // daemon restart. Mirrors how the trigger already re-reads
             // council_last.json per message.
-            let council_disabled = crate::config::FreedomConfig::load_from_default_path()
-                .map(|c| c.council.disabled.unwrap_or(false))
-                .unwrap_or(false);
-            let council_decision =
-                crate::cli::chat::evaluate_council_trigger(&req.prompt, 0.01, council_disabled);
+            // One fresh load yields both the suppress flag AND the SPEC-03b
+            // operator trigger thresholds (`council.trigger`); load failure ⇒
+            // not-disabled + default policy (prior behaviour).
+            let council_cfg = crate::config::FreedomConfig::load_from_default_path()
+                .map(|c| c.council)
+                .ok();
+            let council_disabled = council_cfg.as_ref().and_then(|c| c.disabled).unwrap_or(false);
+            let council_policy = council_cfg
+                .as_ref()
+                .map(|c| c.trigger.to_policy())
+                .unwrap_or_default();
+            let council_decision = crate::cli::chat::evaluate_council_trigger(
+                &req.prompt,
+                0.01,
+                council_disabled,
+                &council_policy,
+            );
             let council_enable = council_decision.should_convene();
             // B-1 (Session 13) — channel-side COUNCIL_SKIP audit. Same
             // contract as the CLI path: every Skip decision lands in

@@ -568,6 +568,82 @@ pub struct CouncilConfig {
     /// audit chain and are visible to anyone who can read the WAL.
     #[serde(default)]
     pub persist_transcripts: bool,
+
+    /// SPEC-03b — smart-trigger THRESHOLD config surface. Operator overrides
+    /// for the four `council::TriggerPolicy` gate knobs (+ extra dissent
+    /// markers). Every field is optional and defaults to the built-in
+    /// `TriggerPolicy::default()`, so an absent / empty `trigger` block
+    /// reproduces the prior hardcoded behaviour EXACTLY. Surfaced under
+    /// `freedom.yaml::council.trigger`.
+    #[serde(default)]
+    pub trigger: CouncilTriggerConfig,
+}
+
+/// SPEC-03b operator override surface for the council smart-trigger gates.
+/// Maps 1:1 onto the tunable `council::TriggerPolicy` fields; `None` / empty
+/// means "keep the default". Lives in config (not `council/`) so it can be
+/// `Deserialize`d from `freedom.yaml` without the config layer depending on
+/// the trigger internals beyond the one [`Self::to_policy`] bridge.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct CouncilTriggerConfig {
+    /// Override `TriggerPolicy::min_complex_prompt_chars` (default 80). The
+    /// minimum prompt length before the complexity gate even considers
+    /// convening — raise it to suppress council on shorter prompts.
+    #[serde(default)]
+    pub min_complex_prompt_chars: Option<usize>,
+
+    /// Override the rate-cooldown between consecutive convenes, in SECONDS
+    /// (default 60). Raise it to space debates further apart.
+    #[serde(default)]
+    pub min_interval_secs: Option<u64>,
+
+    /// Override `TriggerPolicy::budget_multiplier` (default 3.0) — council
+    /// needs `single_call_cost × this` of remaining budget to fire. Raise it
+    /// to make the council more budget-conservative.
+    #[serde(default)]
+    pub budget_multiplier: Option<f32>,
+
+    /// Override `TriggerPolicy::convene_on_high_complexity` (default true).
+    /// Set `false` for strict opt-in-only behaviour (only explicit dissent
+    /// markers convene; a bare code-fence+question prompt does not).
+    #[serde(default)]
+    pub convene_on_high_complexity: Option<bool>,
+
+    /// EXTRA dissent markers appended to the built-in list (lowercased on
+    /// match). Empty by default. Lets an operator add domain phrases
+    /// ("threat model", "migration plan", …) that should always convene.
+    #[serde(default)]
+    pub extra_dissent_markers: Vec<String>,
+}
+
+impl CouncilTriggerConfig {
+    /// Build the effective [`crate::council::TriggerPolicy`] by overlaying
+    /// these operator overrides on top of `TriggerPolicy::default()`. An
+    /// all-`None` / empty config yields exactly the default policy — pinned by
+    /// `council_trigger_config_default_matches_policy_default`.
+    pub fn to_policy(&self) -> crate::council::TriggerPolicy {
+        let mut policy = crate::council::TriggerPolicy::default();
+        if let Some(chars) = self.min_complex_prompt_chars {
+            policy.min_complex_prompt_chars = chars;
+        }
+        if let Some(secs) = self.min_interval_secs {
+            policy.min_interval = std::time::Duration::from_secs(secs);
+        }
+        if let Some(mult) = self.budget_multiplier {
+            policy.budget_multiplier = mult;
+        }
+        if let Some(flag) = self.convene_on_high_complexity {
+            policy.convene_on_high_complexity = flag;
+        }
+        // Non-empty entries only — a stray "" would match every prompt.
+        policy.extra_markers = self
+            .extra_dissent_markers
+            .iter()
+            .map(|m| m.trim().to_ascii_lowercase())
+            .filter(|m| !m.is_empty())
+            .collect();
+        policy
+    }
 }
 
 /// SP-2 minimum-viable default: 15 calls per user message. Covers
@@ -1418,5 +1494,74 @@ model: claude-opus-4-7
         let yaml = serde_yaml::to_string(&topo).unwrap();
         let back: InferenceTopology = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(back.embedding_provider, Some(InferenceProvider::LocalOuro));
+    }
+
+    // ── SPEC-03b: council.trigger threshold config surface ──
+
+    #[test]
+    fn council_trigger_config_default_matches_policy_default() {
+        // An absent / empty `trigger` block must reproduce the prior
+        // hardcoded `TriggerPolicy::default()` EXACTLY — no behaviour change.
+        assert_eq!(
+            CouncilTriggerConfig::default().to_policy(),
+            crate::council::TriggerPolicy::default()
+        );
+        // And it falls out of an empty CouncilConfig the same way.
+        assert_eq!(
+            CouncilConfig::default().trigger.to_policy(),
+            crate::council::TriggerPolicy::default()
+        );
+    }
+
+    #[test]
+    fn council_trigger_config_overrides_apply() {
+        let cfg = CouncilTriggerConfig {
+            min_complex_prompt_chars: Some(200),
+            min_interval_secs: Some(900),
+            budget_multiplier: Some(5.0),
+            convene_on_high_complexity: Some(false),
+            extra_dissent_markers: vec!["Threat Model".into(), "  ".into(), "migration plan".into()],
+        };
+        let p = cfg.to_policy();
+        assert_eq!(p.min_complex_prompt_chars, 200);
+        assert_eq!(p.min_interval, std::time::Duration::from_secs(900));
+        assert_eq!(p.budget_multiplier, 5.0);
+        assert!(!p.convene_on_high_complexity);
+        // Markers are lowercased + trimmed; blank-only entries dropped.
+        assert_eq!(p.extra_markers, vec!["threat model", "migration plan"]);
+        // Untouched fields stay at the built-in defaults.
+        assert_eq!(p.dissent_markers, crate::council::TriggerPolicy::default().dissent_markers);
+    }
+
+    #[test]
+    fn council_trigger_partial_override_keeps_other_defaults() {
+        // Only one knob set ⇒ every other field stays default.
+        let cfg = CouncilTriggerConfig {
+            min_interval_secs: Some(30),
+            ..CouncilTriggerConfig::default()
+        };
+        let p = cfg.to_policy();
+        let d = crate::council::TriggerPolicy::default();
+        assert_eq!(p.min_interval, std::time::Duration::from_secs(30));
+        assert_eq!(p.min_complex_prompt_chars, d.min_complex_prompt_chars);
+        assert_eq!(p.budget_multiplier, d.budget_multiplier);
+        assert_eq!(p.convene_on_high_complexity, d.convene_on_high_complexity);
+        assert!(p.extra_markers.is_empty());
+    }
+
+    #[test]
+    fn council_trigger_deserializes_from_yaml() {
+        let yaml = "\
+trigger:
+  min_complex_prompt_chars: 150
+  extra_dissent_markers:
+    - rollback plan
+";
+        let cfg: CouncilConfig = serde_yaml::from_str(yaml).unwrap();
+        let p = cfg.trigger.to_policy();
+        assert_eq!(p.min_complex_prompt_chars, 150);
+        assert_eq!(p.extra_markers, vec!["rollback plan"]);
+        // Absent knobs keep defaults.
+        assert_eq!(p.budget_multiplier, crate::council::TriggerPolicy::default().budget_multiplier);
     }
 }
