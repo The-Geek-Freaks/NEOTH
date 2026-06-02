@@ -223,15 +223,16 @@ pub struct InitArgs {
     #[arg(long = "install-n8n")]
     pub install_n8n: bool,
 
-    /// E-16 (Workstream B) — legacy-AI seed migration. Path to the operator's
-    /// `HIPPOCAMPUS_CORE.md` (or the directory holding the legacy memory stores).
-    /// When set, the wizard records the import intent + surfaces the
-    /// `neoth-migrate dry-run` / `apply --confirm` runbook against the path.
-    /// Heavyweight migrations stay operator-triggered — the wizard never
+    /// E-16 (Workstream B) — prior-AI memory import. Path to an
+    /// `import-manifest.yaml` declaring your prior-AI memory stores (see
+    /// the `neoth-migrate` examples). When set, the wizard records the
+    /// import intent + surfaces the `neoth-migrate dry-run` /
+    /// `apply --confirm` runbook against the manifest. Heavyweight
+    /// migrations stay operator-triggered — the wizard never
     /// auto-applies. Non-interactive only honours the flag; interactive
     /// prompts for the path independently.
-    #[arg(long = "import-jarvis", value_name = "PATH")]
-    pub import_jarvis: Option<std::path::PathBuf>,
+    #[arg(long = "import-memory", value_name = "PATH")]
+    pub import_memory: Option<std::path::PathBuf>,
 
     /// Re-run full wizard even if already initialized.
     #[arg(long)]
@@ -343,12 +344,12 @@ pub struct WizardState {
     /// operator-run.
     #[serde(default)]
     pub install_n8n: bool,
-    /// E-16 (Workstream B, Session 22) — legacy-AI seed migration
-    /// source path. When `Some`, the wizard recorded the operator's
-    /// intent to run `neoth-migrate` against this path. `None` for
+    /// E-16 (Workstream B, Session 22) — prior-AI memory import
+    /// manifest path. When `Some`, the wizard recorded the operator's
+    /// intent to run `neoth-migrate` against this manifest. `None` for
     /// fresh-host operators with no prior AI memory history.
     #[serde(default)]
-    pub import_jarvis: Option<std::path::PathBuf>,
+    pub import_memory: Option<std::path::PathBuf>,
     pub steps_completed: Vec<u8>,
 }
 
@@ -427,7 +428,7 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step6e_n8n_install(&args, interactive, &mut state).await?;
     save_checkpoint_best_effort(&neoth_dir, &state);
-    step6f_import_jarvis(&args, interactive, &mut state)?;
+    step6f_import_memory(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step6g_credential_import(&args, interactive, &neoth_dir).await;
     step6h_install_recommended(&args, interactive, &neoth_dir);
@@ -3081,23 +3082,23 @@ async fn step6e_n8n_install(
     Ok(())
 }
 
-/// Step 6f — E-16 (Workstream B): legacy-AI seed migration record.
+/// Step 6f — E-16 (Workstream B): prior-AI memory import record.
 ///
 /// The actual migration is the separate `neoth-migrate` binary; the
 /// wizard records the operator's intent + surfaces the runbook so a
 /// later `neoth-migrate apply --confirm` knows where to look. Never
-/// auto-applies — migrating 12 stores is heavyweight + irreversible
+/// auto-applies — importing prior memory is heavyweight + irreversible
 /// once the WAL frames land.
-fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
-    debug!("wizard step 6f: legacy-ai import intent");
+fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
+    debug!("wizard step 6f: prior-ai memory import intent");
 
     let path = if !interactive {
-        args.import_jarvis.clone()
+        args.import_memory.clone()
     } else {
         #[cfg(feature = "wizard")]
         {
             let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("[6f/9] Migrate an existing HIPPOCAMPUS_CORE.md into NEOTH?")
+                .with_prompt("[6f/9] Import memory from a previous AI assistant?")
                 .default(false)
                 .interact()
                 .context("legacy-ai import confirm")?;
@@ -3108,7 +3109,7 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
             let raw: String =
                 dialoguer::Input::with_theme(&dialoguer::theme::ColorfulTheme::default())
                     .with_prompt(
-                        "  Path to HIPPOCAMPUS_CORE.md (or directory with legacy memory stores)",
+                        "  Path to your import-manifest.yaml (see the neoth-migrate examples)",
                     )
                     .allow_empty(true)
                     .interact_text()
@@ -3134,12 +3135,12 @@ fn step6f_import_jarvis(args: &InitArgs, interactive: bool, state: &mut WizardSt
     if !path.exists() {
         warn!(
             path = %path.display(),
-            "legacy-ai import path does not exist; recording intent but operator must \
-             repoint with `neoth-migrate dry-run --source <path>` before applying"
+            "prior-ai import manifest does not exist; recording intent but operator must \
+             repoint with `neoth-migrate dry-run --manifest <path>` before applying"
         );
     }
 
-    state.import_jarvis = Some(path.clone());
+    state.import_memory = Some(path.clone());
 
     if interactive {
         #[cfg(feature = "wizard")]
@@ -5112,7 +5113,7 @@ mod tests {
             bootstrap_vault: false,
             vault_path: None,
             install_n8n: false,
-            import_jarvis: None,
+            import_memory: None,
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
@@ -5987,8 +5988,8 @@ mod tests {
     fn step6f_non_interactive_no_op_when_flag_absent() {
         let mut state = fixture_state();
         let args = args_with_flag(|_| {});
-        step6f_import_jarvis(&args, false, &mut state).unwrap();
-        assert!(state.import_jarvis.is_none());
+        step6f_import_memory(&args, false, &mut state).unwrap();
+        assert!(state.import_memory.is_none());
         assert!(state.steps_completed.contains(&64));
     }
 
@@ -5999,9 +6000,9 @@ mod tests {
         std::fs::write(&memory_path, "synthetic legacy-ai seed").unwrap();
 
         let mut state = fixture_state();
-        let args = args_with_flag(|a| a.import_jarvis = Some(memory_path.clone()));
-        step6f_import_jarvis(&args, false, &mut state).unwrap();
-        assert_eq!(state.import_jarvis.as_ref(), Some(&memory_path));
+        let args = args_with_flag(|a| a.import_memory = Some(memory_path.clone()));
+        step6f_import_memory(&args, false, &mut state).unwrap();
+        assert_eq!(state.import_memory.as_ref(), Some(&memory_path));
         assert!(state.steps_completed.contains(&64));
     }
 

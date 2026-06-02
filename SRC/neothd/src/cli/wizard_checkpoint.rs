@@ -75,7 +75,7 @@ pub struct WizardCheckpoint {
     pub bootstrap_vault: bool,
     pub vault_path: Option<PathBuf>,
     pub install_n8n: bool,
-    pub import_jarvis: Option<PathBuf>,
+    pub import_memory: Option<PathBuf>,
     pub steps_completed: Vec<u8>,
     /// Unix-seconds wall clock at the most recent `save_checkpoint`.
     /// Surfaced in the resume prompt so the operator sees "your previous
@@ -107,7 +107,7 @@ impl WizardCheckpoint {
             bootstrap_vault: state.bootstrap_vault,
             vault_path: state.vault_path.clone(),
             install_n8n: state.install_n8n,
-            import_jarvis: state.import_jarvis.clone(),
+            import_memory: state.import_memory.clone(),
             steps_completed: state.steps_completed.clone(),
             checkpoint_written_at_unix: now_unix(),
         }
@@ -135,7 +135,7 @@ impl WizardCheckpoint {
         state.bootstrap_vault = self.bootstrap_vault;
         state.vault_path = self.vault_path;
         state.install_n8n = self.install_n8n;
-        state.import_jarvis = self.import_jarvis;
+        state.import_memory = self.import_memory;
         state.steps_completed = self.steps_completed;
     }
 }
