@@ -5,22 +5,23 @@ edition.workspace      = true
 rust-version.workspace = true
 license.workspace      = true
 repository.workspace   = true
-description = "Phase-3 cutover binary — migrates 12 prior-agent memory stores into the NEOTH WAL + tier views."
+description = "Prior-AI memory import tool — migrates operator-declared memory stores into the NEOTH WAL + tier views."
 
 # V10-06 GA blocker. Ships as a SEPARATE binary from `neothd` so a
 # release of the daemon doesn't carry the migration-only deps
 # (pulldown-cmark, walkdir, future lance + git2) — operators run it
 # once at Day-65 cutover then never again.
 #
-# Build/run:
+# Build/run (the operator declares their stores in import-manifest.yaml):
 #   cargo build -p neoth-migrate --release
-#   ./neoth-migrate dry-run                 # scan-only, no WAL writes
-#   ./neoth-migrate apply --confirm         # actually migrate
+#   ./neoth-migrate dry-run --manifest import.yaml   # scan-only
+#   ./neoth-migrate apply --manifest import.yaml --confirm
 #
-# Store registry shared with the daemon lives at
-# `neothd/src/migrate/mod.rs::JARVIS_STORES` so the dry-run reader +
-# the daemon's `neoth doctor --explain migrate` consult one source of
-# truth.
+# The source list is operator-supplied (see
+# `examples/import-manifest.example.yaml`); nothing is hardcoded to a
+# specific machine. The manifest serde shape mirrors the schema in
+# `neothd/src/migrate/mod.rs` (loose coupling via the YAML format, not a
+# crate dependency — neoth-migrate stays independent of neothd).
 
 [[bin]]
 name = "neoth-migrate"
@@ -31,6 +32,7 @@ anyhow             = "1"
 clap               = { version = "4.5", features = ["derive"] }
 serde              = { workspace = true }
 serde_json         = { workspace = true }
+serde_yaml         = "0.9"
 tracing            = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

@@ -1,0 +1,54 @@
+# NEOTH import manifest — EXAMPLE.
+#
+# Declare the prior-AI memory stores you want to migrate into NEOTH.
+# Copy this file, edit the paths to match YOUR system, then run:
+#
+#   neoth-migrate dry-run --manifest <your-file>.yaml     # preview
+#   neoth-migrate apply   --manifest <your-file>.yaml --confirm
+#
+# A leading `~/` expands to your home directory; absolute paths pass
+# through unchanged. `kind` selects the reader; valid kinds are:
+#   markdown       — a directory of .md files (e.g. an Obsidian vault)
+#   markdown_file  — a single .md file
+#   json_dir       — a directory of .json / .ajson files
+#   json_file      — a single .json file
+#   sqlite         — a .db file (or a directory containing one)
+#   lance_arrow    — a LanceDB directory (counts datasets)
+#   git_tree       — a directory of git repos (counts repos)
+#   faiss_flat     — a directory of .bin flat-vector files
+#
+# `hint` is optional and only shown in the dry-run report.
+
+sources:
+  - name: notes_vault
+    path: ~/Documents/MyVault           # your Obsidian / markdown notes
+    kind: markdown
+    hint: "markdown notes directory"
+
+  - name: core_memory
+    path: ~/my-assistant/memory/CORE.md  # a single long-form memory file
+    kind: markdown_file
+
+  - name: chat_exports
+    path: ~/Downloads/ai-chat-exports     # exported conversation JSON
+    kind: json_dir
+
+  - name: memory_index
+    path: ~/my-assistant/memory/index.json
+    kind: json_file
+
+  - name: vector_store
+    path: ~/my-assistant/memory/lancedb
+    kind: lance_arrow
+
+  - name: fts_db
+    path: ~/my-assistant/memory.db        # SQLite full-text store
+    kind: sqlite
+
+  - name: code_backup
+    path: ~/git-backup                    # directory of git repos
+    kind: git_tree
+
+  - name: flat_vectors
+    path: ~/my-assistant/vectors          # directory of .bin vector files
+    kind: faiss_flat

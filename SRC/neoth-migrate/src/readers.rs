@@ -1,27 +1,72 @@
-//! Per-store readers — V10-06 Phase-3 dry-run path.
+//! Per-source readers — V10-06 Phase-3 dry-run path.
 //!
-//! Each legacy-agent store kind (Markdown / Json / LanceArrow / Sqlite /
+//! Each import-source kind (Markdown / Json / LanceArrow / Sqlite /
 //! GitTree / FaissFlat per `RUNBOOK_phase3_cutover.md` Day-62) gets
 //! its own reader. Phase 1 (this binary) implements the scan-only
 //! variants — count rows, surface sample entries, validate the shape.
 //! Phase 2 (V10-06 follow-up) will wire each reader to an
 //! `OperatorWalEmitter` that appends WAL frames during `apply`.
 //!
-//! Two readers ship in this initial cut: Markdown + Json. Together
-//! they cover 5 of the 12 stores in the registry — the rest stub-out
-//! to a `Skipped { reason }` row so the dry-run report stays useful
-//! even before every reader exists.
+//! The list of sources is NOT hardcoded — the operator declares their
+//! own prior-AI memory stores in an `import-manifest.yaml` (passed via
+//! `--manifest <PATH>`). See `examples/import-manifest.example.yaml`
+//! for the schema. The scanners below are generic by [`ImportKind`];
+//! only the source LIST is operator-supplied.
 
 use std::path::{Path, PathBuf};
 
+use anyhow::Context;
 use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 
+/// One operator-declared import source — a single row of the
+/// `import-manifest.yaml`. The operator points NEOTH at THEIR prior-AI
+/// memory; nothing is hardcoded to any one person's machine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImportSource {
+    /// Operator-chosen label (appears in the dry-run report).
+    pub name: String,
+    /// Path to the store. A leading `~/` expands to the operator's
+    /// home at runtime; absolute paths pass through.
+    pub path: String,
+    /// Which reader to dispatch.
+    pub kind: ImportKind,
+    /// Optional operator hint shown in the dry-run report (e.g.
+    /// "~500 files"). Purely informational.
+    #[serde(default)]
+    pub hint: Option<String>,
+}
+
+/// Top-level shape of an `import-manifest.yaml`:
+///
+/// ```yaml
+/// sources:
+///   - name: my_vault
+///     path: ~/Documents/MyVault
+///     kind: markdown
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImportManifest {
+    pub sources: Vec<ImportSource>,
+}
+
+/// Load + parse an operator import manifest. A missing/unreadable file
+/// or malformed YAML is a hard error — the operator asked to import
+/// from a manifest, so silently scanning nothing would be a surprise.
+pub fn load_manifest(path: &Path) -> anyhow::Result<ImportManifest> {
+    let body = std::fs::read_to_string(path)
+        .with_context(|| format!("read import manifest at {}", path.display()))?;
+    let manifest: ImportManifest = serde_yaml::from_str(&body)
+        .with_context(|| format!("parse import manifest YAML at {}", path.display()))?;
+    Ok(manifest)
+}
+
 /// One row in the dry-run report — what the migrator found at the
-/// store's path-template after `~`-expansion.
+/// source's path after `~`-expansion.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct StoreScan {
-    pub name: &'static str,
+    pub name: String,
     pub path: String,
     pub kind: String,
     pub status: ScanStatus,
@@ -47,57 +92,13 @@ pub enum ScanStatus {
     Error { detail: String },
 }
 
-/// Hard-coded registry of the 12 prior-agent stores per
-/// `PLAN/RUNBOOK_phase3_cutover.md`. Duplicated from
-/// `neothd/src/migrate/mod.rs::JARVIS_STORES` because this binary
-/// doesn't depend on `neothd` — keeping it independent is the whole
-/// point of the separate crate. Drift between the two registries is
-/// caught by a workspace-level test that compares them.
-pub const STORES: &[(&str, &str, StoreKind)] = &[
-    (
-        "obsidian_vault",
-        "/mnt/obsidian/Jarvis",
-        StoreKind::Markdown,
-    ),
-    ("smart_connections", ".smart-env/multi", StoreKind::JsonDir),
-    (
-        "hippocampus_core_md",
-        "~/.openclaw/workspace/HIPPOCAMPUS_CORE.md",
-        StoreKind::MarkdownFile,
-    ),
-    (
-        "hippocampus_index_json",
-        "~/.openclaw/workspace/memory/index.json",
-        StoreKind::JsonFile,
-    ),
-    (
-        "hippo_turbo_vectors",
-        "~/.openclaw/workspace/memory/hippo-turbo-vectors.json",
-        StoreKind::JsonFile,
-    ),
-    (
-        "lancedb_pro",
-        "~/.openclaw/memory/lancedb-pro",
-        StoreKind::LanceArrow,
-    ),
-    (
-        "lancedb_pro_plugin",
-        "~/.openclaw/plugins/memory-lancedb-pro",
-        StoreKind::LanceArrow,
-    ),
-    ("qmd", "~/.config/qmd", StoreKind::FaissFlat),
-    (
-        "openclaw_session_md",
-        "~/.openclaw/workspace/memory",
-        StoreKind::Markdown,
-    ),
-    ("context_mode_fts5", "~/.context-mode", StoreKind::Sqlite),
-    ("cq_commons", "~/.cq/local.db", StoreKind::Sqlite),
-    ("github_backup", "~/github-backup", StoreKind::GitTree),
-];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum StoreKind {
+/// Backing format for an import source. Drives which reader the
+/// migrator dispatches. The `as_str()` snake_case values ARE the
+/// `kind:` field values in the operator's manifest — `#[serde(rename_all
+/// = "snake_case")]` keeps the wire form stable across binary upgrades.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportKind {
     Markdown,
     MarkdownFile,
     JsonDir,
@@ -108,7 +109,7 @@ pub enum StoreKind {
     FaissFlat,
 }
 
-impl StoreKind {
+impl ImportKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Markdown => "markdown",
@@ -123,22 +124,22 @@ impl StoreKind {
     }
 }
 
-/// Top-level dry-run pass. Walks every store, returns a per-store
-/// `StoreScan`. Never errors at the aggregate level — the
-/// `ScanStatus::Error` variant carries the per-store failure detail.
-pub fn scan_all(home: &Path) -> Vec<StoreScan> {
-    STORES
-        .iter()
-        .map(|(name, path_tpl, kind)| scan_one(name, path_tpl, *kind, home))
-        .collect()
+/// Top-level dry-run pass. Walks every operator-declared source,
+/// returns a per-source `StoreScan`. Never errors at the aggregate
+/// level — the `ScanStatus::Error` variant carries the per-source
+/// failure detail.
+pub fn scan_all(sources: &[ImportSource], home: &Path) -> Vec<StoreScan> {
+    sources.iter().map(|s| scan_one(s, home)).collect()
 }
 
-fn scan_one(name: &'static str, path_tpl: &str, kind: StoreKind, home: &Path) -> StoreScan {
-    let resolved = resolve_path(path_tpl, home);
+fn scan_one(source: &ImportSource, home: &Path) -> StoreScan {
+    let name = source.name.as_str();
+    let kind = source.kind;
+    let resolved = resolve_path(&source.path, home);
     let path_str = resolved.display().to_string();
     if !resolved.exists() {
         return StoreScan {
-            name,
+            name: name.to_string(),
             path: path_str,
             kind: kind.as_str().to_string(),
             status: ScanStatus::PathMissing,
@@ -147,14 +148,14 @@ fn scan_one(name: &'static str, path_tpl: &str, kind: StoreKind, home: &Path) ->
         };
     }
     match kind {
-        StoreKind::Markdown => scan_markdown_dir(name, &resolved, kind),
-        StoreKind::MarkdownFile => scan_markdown_file(name, &resolved, kind),
-        StoreKind::JsonDir => scan_json_dir(name, &resolved, kind),
-        StoreKind::JsonFile => scan_json_file(name, &resolved, kind),
-        StoreKind::Sqlite => scan_sqlite(name, &resolved, kind),
-        StoreKind::FaissFlat => scan_faiss_flat(name, &resolved, kind),
-        StoreKind::LanceArrow => scan_lance_inventory(name, &resolved, kind),
-        StoreKind::GitTree => scan_git_inventory(name, &resolved, kind),
+        ImportKind::Markdown => scan_markdown_dir(name, &resolved, kind),
+        ImportKind::MarkdownFile => scan_markdown_file(name, &resolved, kind),
+        ImportKind::JsonDir => scan_json_dir(name, &resolved, kind),
+        ImportKind::JsonFile => scan_json_file(name, &resolved, kind),
+        ImportKind::Sqlite => scan_sqlite(name, &resolved, kind),
+        ImportKind::FaissFlat => scan_faiss_flat(name, &resolved, kind),
+        ImportKind::LanceArrow => scan_lance_inventory(name, &resolved, kind),
+        ImportKind::GitTree => scan_git_inventory(name, &resolved, kind),
     }
 }
 
@@ -168,7 +169,7 @@ fn scan_one(name: &'static str, path_tpl: &str, kind: StoreKind, home: &Path) ->
 // count) + sample = dataset names. Real row-reads land when the
 // Phase-3 dep block lets us pull `lance`.
 
-fn scan_lance_inventory(name: &'static str, path: &std::path::Path, kind: StoreKind) -> StoreScan {
+fn scan_lance_inventory(name: &str, path: &std::path::Path, kind: ImportKind) -> StoreScan {
     let kind_str = kind.as_str().to_string();
     let path_str = path.display().to_string();
     let mut datasets: Vec<String> = Vec::new();
@@ -176,7 +177,7 @@ fn scan_lance_inventory(name: &'static str, path: &std::path::Path, kind: StoreK
         Ok(w) => w,
         Err(e) => {
             return StoreScan {
-                name,
+                name: name.to_string(),
                 path: path_str,
                 kind: kind_str,
                 status: ScanStatus::Error {
@@ -204,7 +205,7 @@ fn scan_lance_inventory(name: &'static str, path: &std::path::Path, kind: StoreK
     datasets.sort();
     let sample: Vec<String> = datasets.iter().take(5).cloned().collect();
     StoreScan {
-        name,
+        name: name.to_string(),
         path: path_str,
         kind: kind_str,
         status: ScanStatus::Ok,
@@ -216,12 +217,10 @@ fn scan_lance_inventory(name: &'static str, path: &std::path::Path, kind: StoreK
 // ── GitTree pure-Rust inventory reader (Pick #35 follow-up) ─────────
 //
 // Same approach as LanceArrow: pure-Rust inventory. A "git tree"
-// here is any subdirectory that contains a `.git/HEAD` file (or
-// `.git` itself as a file pointing at a worktree, but the simple
-// dir check is enough for the github-backup case `STORES` points
-// at). Real commit/blob walking lands with the `git2` Phase-3 dep.
+// here is any subdirectory that contains a `.git/HEAD` file. Real
+// commit/blob walking lands with the `git2` Phase-3 dep.
 
-fn scan_git_inventory(name: &'static str, path: &std::path::Path, kind: StoreKind) -> StoreScan {
+fn scan_git_inventory(name: &str, path: &std::path::Path, kind: ImportKind) -> StoreScan {
     let kind_str = kind.as_str().to_string();
     let path_str = path.display().to_string();
     let mut repos: Vec<String> = Vec::new();
@@ -229,7 +228,7 @@ fn scan_git_inventory(name: &'static str, path: &std::path::Path, kind: StoreKin
         Ok(w) => w,
         Err(e) => {
             return StoreScan {
-                name,
+                name: name.to_string(),
                 path: path_str,
                 kind: kind_str,
                 status: ScanStatus::Error {
@@ -254,7 +253,7 @@ fn scan_git_inventory(name: &'static str, path: &std::path::Path, kind: StoreKin
     repos.sort();
     let sample: Vec<String> = repos.iter().take(5).cloned().collect();
     StoreScan {
-        name,
+        name: name.to_string(),
         path: path_str,
         kind: kind_str,
         status: ScanStatus::Ok,
@@ -265,11 +264,10 @@ fn scan_git_inventory(name: &'static str, path: &std::path::Path, kind: StoreKin
 
 // ── Sqlite reader (Pick #35) ─────────────────────────────────────────
 
-fn scan_sqlite(name: &'static str, path: &std::path::Path, kind: StoreKind) -> StoreScan {
+fn scan_sqlite(name: &str, path: &std::path::Path, kind: ImportKind) -> StoreScan {
     let kind_str = kind.as_str().to_string();
-    // If the operator pointed us at a directory (context_mode_fts5),
-    // pick the first `.db` file under it. cq_commons points at the
-    // file directly.
+    // If the operator pointed us at a directory, pick the first `.db`
+    // file under it. A direct file path is used as-is.
     let actual_db = if path.is_dir() {
         let candidate = std::fs::read_dir(path)
             .ok()
@@ -282,7 +280,7 @@ fn scan_sqlite(name: &'static str, path: &std::path::Path, kind: StoreKind) -> S
             Some(c) => c,
             None => {
                 return StoreScan {
-                    name,
+                    name: name.to_string(),
                     path: path.display().to_string(),
                     kind: kind_str,
                     status: ScanStatus::Error {
@@ -304,7 +302,7 @@ fn scan_sqlite(name: &'static str, path: &std::path::Path, kind: StoreKind) -> S
         Ok(c) => c,
         Err(e) => {
             return StoreScan {
-                name,
+                name: name.to_string(),
                 path: actual_db.display().to_string(),
                 kind: kind_str,
                 status: ScanStatus::Error {
@@ -323,7 +321,7 @@ fn scan_sqlite(name: &'static str, path: &std::path::Path, kind: StoreKind) -> S
             Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
             Err(e) => {
                 return StoreScan {
-                    name,
+                    name: name.to_string(),
                     path: actual_db.display().to_string(),
                     kind: kind_str,
                     status: ScanStatus::Error {
@@ -336,7 +334,7 @@ fn scan_sqlite(name: &'static str, path: &std::path::Path, kind: StoreKind) -> S
         },
         Err(e) => {
             return StoreScan {
-                name,
+                name: name.to_string(),
                 path: actual_db.display().to_string(),
                 kind: kind_str,
                 status: ScanStatus::Error {
@@ -357,7 +355,7 @@ fn scan_sqlite(name: &'static str, path: &std::path::Path, kind: StoreKind) -> S
     }
 
     StoreScan {
-        name,
+        name: name.to_string(),
         path: actual_db.display().to_string(),
         kind: kind_str,
         status: ScanStatus::Ok,
@@ -371,12 +369,12 @@ fn scan_sqlite(name: &'static str, path: &std::path::Path, kind: StoreKind) -> S
 /// Standard sentence-transformer output dim × 4 bytes per f32.
 const QMD_VECTOR_BYTES_ESTIMATE: u64 = 768 * 4;
 
-fn scan_faiss_flat(name: &'static str, dir: &std::path::Path, kind: StoreKind) -> StoreScan {
+fn scan_faiss_flat(name: &str, dir: &std::path::Path, kind: ImportKind) -> StoreScan {
     let entries = match std::fs::read_dir(dir) {
         Ok(e) => e,
         Err(e) => {
             return StoreScan {
-                name,
+                name: name.to_string(),
                 path: dir.display().to_string(),
                 kind: kind.as_str().to_string(),
                 status: ScanStatus::Error {
@@ -402,7 +400,7 @@ fn scan_faiss_flat(name: &'static str, dir: &std::path::Path, kind: StoreKind) -
     }
     let estimated_vectors = (total_bytes / QMD_VECTOR_BYTES_ESTIMATE) as usize;
     StoreScan {
-        name,
+        name: name.to_string(),
         path: dir.display().to_string(),
         kind: kind.as_str().to_string(),
         status: ScanStatus::Ok,
@@ -421,7 +419,7 @@ fn resolve_path(template: &str, home: &Path) -> PathBuf {
     }
 }
 
-fn scan_markdown_dir(name: &'static str, dir: &Path, kind: StoreKind) -> StoreScan {
+fn scan_markdown_dir(name: &str, dir: &Path, kind: ImportKind) -> StoreScan {
     let mut count = 0;
     let mut sample = Vec::new();
     for entry in WalkBuilder::new(dir)
@@ -438,7 +436,7 @@ fn scan_markdown_dir(name: &'static str, dir: &Path, kind: StoreKind) -> StoreSc
         }
     }
     StoreScan {
-        name,
+        name: name.to_string(),
         path: dir.display().to_string(),
         kind: kind.as_str().to_string(),
         status: ScanStatus::Ok,
@@ -447,7 +445,7 @@ fn scan_markdown_dir(name: &'static str, dir: &Path, kind: StoreKind) -> StoreSc
     }
 }
 
-fn scan_markdown_file(name: &'static str, file: &Path, kind: StoreKind) -> StoreScan {
+fn scan_markdown_file(name: &str, file: &Path, kind: ImportKind) -> StoreScan {
     match std::fs::read_to_string(file) {
         Ok(text) => {
             // Count the H1/H2 anchors as a rough row proxy. Operators
@@ -458,7 +456,7 @@ fn scan_markdown_file(name: &'static str, file: &Path, kind: StoreKind) -> Store
                 .filter(|l| l.starts_with("# ") || l.starts_with("## "))
                 .count();
             StoreScan {
-                name,
+                name: name.to_string(),
                 path: file.display().to_string(),
                 kind: kind.as_str().to_string(),
                 status: ScanStatus::Ok,
@@ -472,7 +470,7 @@ fn scan_markdown_file(name: &'static str, file: &Path, kind: StoreKind) -> Store
             }
         }
         Err(e) => StoreScan {
-            name,
+            name: name.to_string(),
             path: file.display().to_string(),
             kind: kind.as_str().to_string(),
             status: ScanStatus::Error {
@@ -484,7 +482,7 @@ fn scan_markdown_file(name: &'static str, file: &Path, kind: StoreKind) -> Store
     }
 }
 
-fn scan_json_dir(name: &'static str, dir: &Path, kind: StoreKind) -> StoreScan {
+fn scan_json_dir(name: &str, dir: &Path, kind: ImportKind) -> StoreScan {
     let mut count = 0;
     let mut sample = Vec::new();
     for entry in WalkBuilder::new(dir)
@@ -504,7 +502,7 @@ fn scan_json_dir(name: &'static str, dir: &Path, kind: StoreKind) -> StoreScan {
         }
     }
     StoreScan {
-        name,
+        name: name.to_string(),
         path: dir.display().to_string(),
         kind: kind.as_str().to_string(),
         status: ScanStatus::Ok,
@@ -513,7 +511,7 @@ fn scan_json_dir(name: &'static str, dir: &Path, kind: StoreKind) -> StoreScan {
     }
 }
 
-fn scan_json_file(name: &'static str, file: &Path, kind: StoreKind) -> StoreScan {
+fn scan_json_file(name: &str, file: &Path, kind: ImportKind) -> StoreScan {
     match std::fs::read_to_string(file) {
         Ok(text) => {
             let row_count = match serde_json::from_str::<serde_json::Value>(&text) {
@@ -523,7 +521,7 @@ fn scan_json_file(name: &'static str, file: &Path, kind: StoreKind) -> StoreScan
                 Err(_) => 0,
             };
             StoreScan {
-                name,
+                name: name.to_string(),
                 path: file.display().to_string(),
                 kind: kind.as_str().to_string(),
                 status: if row_count > 0 {
@@ -538,7 +536,7 @@ fn scan_json_file(name: &'static str, file: &Path, kind: StoreKind) -> StoreScan
             }
         }
         Err(e) => StoreScan {
-            name,
+            name: name.to_string(),
             path: file.display().to_string(),
             kind: kind.as_str().to_string(),
             status: ScanStatus::Error {
@@ -555,53 +553,133 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    #[test]
-    fn registry_has_twelve_stores() {
-        assert_eq!(STORES.len(), 12);
+    fn src(name: &str, path: &str, kind: ImportKind) -> ImportSource {
+        ImportSource {
+            name: name.to_string(),
+            path: path.to_string(),
+            kind,
+            hint: None,
+        }
     }
 
     #[test]
-    fn store_kind_as_str_is_stable_snake_case() {
+    fn manifest_parses_sources_with_kind_and_optional_hint() {
+        let yaml = "\
+sources:
+  - name: my_vault
+    path: ~/Documents/MyVault
+    kind: markdown
+    hint: \"~500 files\"
+  - name: chat_exports
+    path: ~/Downloads/exports
+    kind: json_dir
+";
+        let m: ImportManifest = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(m.sources.len(), 2);
+        assert_eq!(m.sources[0].name, "my_vault");
+        assert_eq!(m.sources[0].kind, ImportKind::Markdown);
+        assert_eq!(m.sources[0].hint.as_deref(), Some("~500 files"));
+        assert_eq!(m.sources[1].kind, ImportKind::JsonDir);
+        assert!(m.sources[1].hint.is_none());
+    }
+
+    #[test]
+    fn manifest_empty_or_missing_sources_is_empty() {
+        let m: ImportManifest = serde_yaml::from_str("sources: []").unwrap();
+        assert!(m.sources.is_empty());
+        let m2: ImportManifest = serde_yaml::from_str("{}").unwrap();
+        assert!(m2.sources.is_empty());
+    }
+
+    #[test]
+    fn load_manifest_round_trips_from_disk() {
+        let tmp = tempdir().unwrap();
+        let p = tmp.path().join("import.yaml");
+        std::fs::write(
+            &p,
+            "sources:\n  - name: notes\n    path: ~/notes\n    kind: markdown\n",
+        )
+        .unwrap();
+        let m = load_manifest(&p).unwrap();
+        assert_eq!(m.sources.len(), 1);
+        assert_eq!(m.sources[0].name, "notes");
+    }
+
+    #[test]
+    fn load_manifest_errors_on_missing_file() {
+        let tmp = tempdir().unwrap();
+        assert!(load_manifest(&tmp.path().join("absent.yaml")).is_err());
+    }
+
+    #[test]
+    fn import_kind_as_str_is_stable_snake_case() {
         // Pin every variant so wire-format compat across binary
-        // versions survives. Operator scripts grep these.
-        assert_eq!(StoreKind::Markdown.as_str(), "markdown");
-        assert_eq!(StoreKind::JsonDir.as_str(), "json_dir");
-        assert_eq!(StoreKind::LanceArrow.as_str(), "lance_arrow");
-        assert_eq!(StoreKind::FaissFlat.as_str(), "faiss_flat");
+        // versions survives. Operator manifests use these `kind:`
+        // values verbatim.
+        assert_eq!(ImportKind::Markdown.as_str(), "markdown");
+        assert_eq!(ImportKind::MarkdownFile.as_str(), "markdown_file");
+        assert_eq!(ImportKind::JsonDir.as_str(), "json_dir");
+        assert_eq!(ImportKind::JsonFile.as_str(), "json_file");
+        assert_eq!(ImportKind::LanceArrow.as_str(), "lance_arrow");
+        assert_eq!(ImportKind::Sqlite.as_str(), "sqlite");
+        assert_eq!(ImportKind::GitTree.as_str(), "git_tree");
+        assert_eq!(ImportKind::FaissFlat.as_str(), "faiss_flat");
+    }
+
+    #[test]
+    fn import_kind_serde_uses_snake_case_wire_form() {
+        // The `kind:` field in the manifest is the snake_case string,
+        // not the PascalCase Rust variant — an operator writes
+        // `kind: lance_arrow`, never `kind: LanceArrow`.
+        assert_eq!(
+            serde_yaml::to_string(&ImportKind::LanceArrow)
+                .unwrap()
+                .trim(),
+            "lance_arrow"
+        );
+        let k: ImportKind = serde_yaml::from_str("json_dir").unwrap();
+        assert_eq!(k, ImportKind::JsonDir);
     }
 
     #[test]
     fn resolve_path_expands_tilde_prefix() {
         let home = std::path::PathBuf::from("/home/op");
         assert_eq!(resolve_path("~/foo", &home), home.join("foo"));
-        assert_eq!(
-            resolve_path("~/.openclaw/x", &home),
-            home.join(".openclaw/x")
-        );
+        assert_eq!(resolve_path("~/notes/x", &home), home.join("notes/x"));
     }
 
     #[test]
     fn resolve_path_passes_absolute_through() {
         let home = std::path::PathBuf::from("/home/op");
-        let abs = "/mnt/obsidian/Jarvis";
+        let abs = "/mnt/data/vault";
         assert_eq!(resolve_path(abs, &home), std::path::PathBuf::from(abs));
     }
 
     #[test]
-    fn scan_all_returns_one_entry_per_store_even_when_paths_missing() {
+    fn scan_all_returns_one_entry_per_source_even_when_paths_missing() {
+        // Operator-declared sources pointing at non-existent paths →
+        // one PathMissing entry each (never silently dropped).
         let tmp = tempdir().unwrap();
-        let report = scan_all(tmp.path());
-        // 12 entries regardless of operator's actual filesystem.
-        assert_eq!(report.len(), 12);
-        // Empty home → every relative store reports PathMissing.
-        let missing_count = report
+        let sources = vec![
+            src("a", "~/does-not-exist-a", ImportKind::Markdown),
+            src("b", "~/does-not-exist-b", ImportKind::Sqlite),
+            src("c", "~/does-not-exist-c", ImportKind::JsonDir),
+        ];
+        let report = scan_all(&sources, tmp.path());
+        assert_eq!(report.len(), 3);
+        let missing = report
             .iter()
             .filter(|s| matches!(s.status, ScanStatus::PathMissing))
             .count();
-        assert!(
-            missing_count >= 8,
-            "expected most stores missing on empty home, got {missing_count}"
-        );
+        assert_eq!(missing, 3, "all missing paths report PathMissing");
+        // Names carry through from the manifest.
+        assert_eq!(report[0].name, "a");
+    }
+
+    #[test]
+    fn scan_all_empty_sources_is_empty_report() {
+        let tmp = tempdir().unwrap();
+        assert!(scan_all(&[], tmp.path()).is_empty());
     }
 
     #[test]
@@ -612,9 +690,10 @@ mod tests {
         std::fs::write(dir.join("a.md"), "# heading\nbody").unwrap();
         std::fs::write(dir.join("b.md"), "# other").unwrap();
         std::fs::write(dir.join("ignored.txt"), "skip me").unwrap();
-        let scan = scan_markdown_dir("test", &dir, StoreKind::Markdown);
+        let scan = scan_markdown_dir("test", &dir, ImportKind::Markdown);
         assert_eq!(scan.row_count, 2);
         assert!(matches!(scan.status, ScanStatus::Ok));
+        assert_eq!(scan.name, "test");
     }
 
     #[test]
@@ -622,7 +701,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let p = tmp.path().join("c.md");
         std::fs::write(&p, "# one\n## two\n## three\nbody").unwrap();
-        let scan = scan_markdown_file("test", &p, StoreKind::MarkdownFile);
+        let scan = scan_markdown_file("test", &p, ImportKind::MarkdownFile);
         assert_eq!(scan.row_count, 3);
         assert_eq!(scan.sample.len(), 3);
     }
@@ -632,7 +711,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let p = tmp.path().join("arr.json");
         std::fs::write(&p, "[1, 2, 3, 4, 5]").unwrap();
-        let scan = scan_json_file("test", &p, StoreKind::JsonFile);
+        let scan = scan_json_file("test", &p, ImportKind::JsonFile);
         assert_eq!(scan.row_count, 5);
     }
 
@@ -641,7 +720,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let p = tmp.path().join("obj.json");
         std::fs::write(&p, r#"{"a":1,"b":2,"c":3}"#).unwrap();
-        let scan = scan_json_file("test", &p, StoreKind::JsonFile);
+        let scan = scan_json_file("test", &p, ImportKind::JsonFile);
         assert_eq!(scan.row_count, 3);
     }
 
@@ -650,29 +729,23 @@ mod tests {
         let tmp = tempdir().unwrap();
         let p = tmp.path().join("bad.json");
         std::fs::write(&p, "not valid json").unwrap();
-        let scan = scan_json_file("test", &p, StoreKind::JsonFile);
+        let scan = scan_json_file("test", &p, ImportKind::JsonFile);
         assert!(matches!(scan.status, ScanStatus::Error { .. }));
     }
 
     #[test]
-    fn lance_and_git_readers_run_inventory_pass_after_pick35_followup() {
-        // Pick #35 follow-up (2026-05-20): LanceArrow + GitTree now run
-        // pure-Rust inventory scans instead of returning
-        // ReaderNotImplemented. Empty target dirs surface as
-        // ScanStatus::Ok + row_count=0, NOT as deferred. Real C-dep
-        // row reads still wait for the Phase-3 dep block; until then
-        // operators get dataset/repo counts.
+    fn lance_and_git_readers_run_inventory_pass() {
         let tmp = tempdir().unwrap();
         for (sub, kind) in [
-            ("lance", StoreKind::LanceArrow),
-            ("git", StoreKind::GitTree),
+            ("lance", ImportKind::LanceArrow),
+            ("git", ImportKind::GitTree),
         ] {
             let p = tmp.path().join(sub);
             std::fs::create_dir_all(&p).unwrap();
-            let scan = scan_one("test", &p.to_string_lossy(), kind, tmp.path());
+            let scan = scan_one(&src("test", &p.to_string_lossy(), kind), tmp.path());
             assert!(
                 matches!(scan.status, ScanStatus::Ok),
-                "{kind:?} reader must run an inventory pass post Pick #35 follow-up"
+                "{kind:?} reader must run an inventory pass"
             );
             assert_eq!(scan.row_count, 0, "empty {kind:?} dir → zero count");
         }
@@ -703,7 +776,7 @@ mod tests {
         conn.execute("INSERT INTO skills (name) VALUES ('a'), ('b')", [])
             .unwrap();
 
-        let scan = scan_sqlite("test", &db_path, StoreKind::Sqlite);
+        let scan = scan_sqlite("test", &db_path, ImportKind::Sqlite);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 5, "3 memories + 2 skills");
         assert!(
@@ -726,7 +799,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let scan = scan_sqlite("test", &db_dir, StoreKind::Sqlite);
+        let scan = scan_sqlite("test", &db_dir, ImportKind::Sqlite);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert!(scan.path.contains("session.db"));
     }
@@ -736,7 +809,7 @@ mod tests {
         let tmp = tempdir().unwrap();
         let db_path = tmp.path().join("garbage.db");
         std::fs::write(&db_path, b"not a sqlite file").unwrap();
-        let scan = scan_sqlite("test", &db_path, StoreKind::Sqlite);
+        let scan = scan_sqlite("test", &db_path, ImportKind::Sqlite);
         assert!(matches!(scan.status, ScanStatus::Error { .. }));
     }
 
@@ -748,7 +821,7 @@ mod tests {
         conn.execute("CREATE TABLE just_one (x INT)", []).unwrap();
         conn.execute("INSERT INTO just_one VALUES (1), (2)", [])
             .unwrap();
-        let scan = scan_sqlite("test", &db_path, StoreKind::Sqlite);
+        let scan = scan_sqlite("test", &db_path, ImportKind::Sqlite);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 2);
         for s in &scan.sample {
@@ -769,7 +842,7 @@ mod tests {
         std::fs::write(tmp.path().join("a.bin"), vec![0u8; four_vec_bytes]).unwrap();
         std::fs::write(tmp.path().join("b.bin"), vec![0u8; eight_vec_bytes]).unwrap();
         std::fs::write(tmp.path().join("ignored.txt"), b"skip me").unwrap();
-        let scan = scan_faiss_flat("test", tmp.path(), StoreKind::FaissFlat);
+        let scan = scan_faiss_flat("test", tmp.path(), ImportKind::FaissFlat);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 12, "4 + 8 estimated vectors");
         assert_eq!(scan.sample.len(), 2, "two .bin files sampled");
@@ -778,7 +851,7 @@ mod tests {
     #[test]
     fn faiss_flat_reader_returns_zero_on_empty_dir() {
         let tmp = tempdir().unwrap();
-        let scan = scan_faiss_flat("test", tmp.path(), StoreKind::FaissFlat);
+        let scan = scan_faiss_flat("test", tmp.path(), ImportKind::FaissFlat);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 0);
     }
@@ -787,15 +860,12 @@ mod tests {
 
     #[test]
     fn lance_inventory_counts_datasets_with_versions_subdir() {
-        // A Lance dataset is `<name>.lance/_versions/`. Two valid
-        // datasets + one bare `.lance/` without _versions + one
-        // unrelated subdir → row_count=2.
         let tmp = tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("episodes.lance/_versions")).unwrap();
         std::fs::create_dir_all(tmp.path().join("embeddings.lance/_versions")).unwrap();
         std::fs::create_dir(tmp.path().join("bare.lance")).unwrap(); // no _versions
         std::fs::create_dir(tmp.path().join("misc")).unwrap();
-        let scan = scan_lance_inventory("test", tmp.path(), StoreKind::LanceArrow);
+        let scan = scan_lance_inventory("test", tmp.path(), ImportKind::LanceArrow);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 2, "two valid datasets");
         assert_eq!(scan.sample.len(), 2);
@@ -806,7 +876,7 @@ mod tests {
     #[test]
     fn lance_inventory_returns_zero_on_empty_dir() {
         let tmp = tempdir().unwrap();
-        let scan = scan_lance_inventory("test", tmp.path(), StoreKind::LanceArrow);
+        let scan = scan_lance_inventory("test", tmp.path(), ImportKind::LanceArrow);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 0);
         assert!(scan.sample.is_empty());
@@ -814,14 +884,12 @@ mod tests {
 
     #[test]
     fn lance_inventory_sample_caps_at_five() {
-        // 7 datasets → sample carries first 5 (sorted) so the JSON
-        // report stays bounded.
         let tmp = tempdir().unwrap();
         for i in 0..7 {
             std::fs::create_dir_all(tmp.path().join(format!("dataset-{i}.lance/_versions")))
                 .unwrap();
         }
-        let scan = scan_lance_inventory("test", tmp.path(), StoreKind::LanceArrow);
+        let scan = scan_lance_inventory("test", tmp.path(), ImportKind::LanceArrow);
         assert_eq!(scan.row_count, 7);
         assert_eq!(scan.sample.len(), 5, "sample bounded at 5");
     }
@@ -830,21 +898,16 @@ mod tests {
 
     #[test]
     fn git_inventory_counts_subdirs_with_dot_git_head() {
-        // Each subdir containing `.git/HEAD` (file) counts as one
-        // repo. Plain subdirs + subdirs with `.git` but no HEAD file
-        // do NOT count (defense against false positives from
-        // unrelated dirs).
         let tmp = tempdir().unwrap();
         for repo in &["alpha", "bravo"] {
             let head = tmp.path().join(repo).join(".git");
             std::fs::create_dir_all(&head).unwrap();
             std::fs::write(head.join("HEAD"), b"ref: refs/heads/main\n").unwrap();
         }
-        // Missing-HEAD repo + plain subdir → not counted.
         std::fs::create_dir_all(tmp.path().join("incomplete/.git")).unwrap();
         std::fs::create_dir_all(tmp.path().join("not-a-repo")).unwrap();
 
-        let scan = scan_git_inventory("test", tmp.path(), StoreKind::GitTree);
+        let scan = scan_git_inventory("test", tmp.path(), ImportKind::GitTree);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 2, "alpha + bravo only");
         assert!(scan.sample.contains(&"alpha".to_string()));
@@ -854,7 +917,7 @@ mod tests {
     #[test]
     fn git_inventory_returns_zero_on_empty_dir() {
         let tmp = tempdir().unwrap();
-        let scan = scan_git_inventory("test", tmp.path(), StoreKind::GitTree);
+        let scan = scan_git_inventory("test", tmp.path(), ImportKind::GitTree);
         assert!(matches!(scan.status, ScanStatus::Ok));
         assert_eq!(scan.row_count, 0);
     }
