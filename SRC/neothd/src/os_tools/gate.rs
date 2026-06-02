@@ -40,6 +40,48 @@ pub enum OsGateError {
     LaunchFailed(String),
 }
 
+/// Where a gated OS-tool action sends its WAL audit frame. Replaces the old
+/// `Option<&WalWriterHandle>` so a one-shot CLI running while `neoth serve`
+/// owns the single writer can still get its frame audited — by FORWARDING it
+/// to the daemon over the loopback audit-RPC channel (AUDIT-RPC-01) instead of
+/// silently dropping it.
+#[derive(Clone, Copy)]
+pub enum AuditSink<'a> {
+    /// No audit (the action is still gated; the frame is simply not recorded).
+    None,
+    /// Append directly to a WAL writer this process owns (the daemon itself, or
+    /// a one-shot CLI when no daemon is live).
+    Writer(&'a WalWriterHandle),
+    /// Forward the frame to the live daemon's audit-RPC listener. `home` is the
+    /// neoth home dir (used to find the sidecar + token). Best-effort: if the
+    /// daemon/sidecar is unavailable the frame is dropped (same availability
+    /// tradeoff as `None`), but the action already ran gated.
+    DaemonRpc(&'a Path),
+}
+
+/// Send one audit frame to the chosen sink. Single source of truth for the
+/// local-append vs daemon-forward dispatch — the per-event `emit_*` helpers
+/// build the payload, this routes it.
+async fn dispatch_frame(sink: AuditSink<'_>, event_type: u8, payload: Vec<u8>) {
+    match sink {
+        AuditSink::None => {}
+        AuditSink::Writer(w) => {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            let _ = w.append(header, payload).await;
+        }
+        AuditSink::DaemonRpc(home) => {
+            // Loopback IPC to the WAL-owning daemon. Best-effort: a disabled /
+            // unreachable listener just means the frame isn't recorded (the
+            // action itself already happened, gated).
+            if let Err(e) =
+                crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
+            {
+                tracing::debug!(error = %e, event_type, "audit-RPC forward failed; frame not recorded");
+            }
+        }
+    }
+}
+
 /// The complete gated read: allowlist-validate `target`, run the autonomy
 /// gate, read the (size-capped, UTF-8) file, and emit the WAL audit frame.
 /// Returns the file text on success.
@@ -53,7 +95,7 @@ pub async fn read_os_file(
     target: &Path,
     cfg: &OsToolsConfig,
     autonomy: AutonomyLevel,
-    writer: Option<&WalWriterHandle>,
+    sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<String, OsGateError> {
     // Layer 1 — allowlist + traversal (fail-closed).
@@ -61,7 +103,7 @@ pub async fn read_os_file(
         Ok(c) => c,
         Err(e) => {
             emit_denied(
-                writer,
+                sink,
                 &target.display().to_string(),
                 &e.to_string(),
                 now_unix,
@@ -78,14 +120,14 @@ pub async fn read_os_file(
     match evaluate(&action, autonomy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
-            emit_denied(writer, &canonical.display().to_string(), &reason, now_unix).await;
+            emit_denied(sink, &canonical.display().to_string(), &reason, now_unix).await;
             return Err(OsGateError::Denied(reason));
         }
         Decision::Confirm(reason) => {
             // The OS-tool path has no TTY/operator prompt — a Confirm
             // verdict (Strict) fails closed, audited, with the reason.
             emit_denied(
-                writer,
+                sink,
                 &canonical.display().to_string(),
                 &format!("confirm-required: {reason}"),
                 now_unix,
@@ -99,7 +141,7 @@ pub async fn read_os_file(
     match read_file_text(&canonical, cfg.max_read_bytes) {
         Ok(text) => {
             emit_read(
-                writer,
+                sink,
                 &canonical.display().to_string(),
                 text.len(),
                 now_unix,
@@ -109,7 +151,7 @@ pub async fn read_os_file(
         }
         Err(e) => {
             emit_denied(
-                writer,
+                sink,
                 &canonical.display().to_string(),
                 &format!("read-failed: {e}"),
                 now_unix,
@@ -130,7 +172,7 @@ pub async fn write_os_file(
     contents: &[u8],
     cfg: &OsToolsConfig,
     autonomy: AutonomyLevel,
-    writer: Option<&WalWriterHandle>,
+    sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<PathBuf, OsGateError> {
     // Layer 0 — size cap BEFORE any path work (cheap reject of an oversize write).
@@ -140,7 +182,7 @@ pub async fn write_os_file(
             contents.len(),
             cfg.max_write_bytes
         );
-        emit_write_denied(writer, &target.display().to_string(), &reason, now_unix).await;
+        emit_write_denied(sink, &target.display().to_string(), &reason, now_unix).await;
         return Err(OsGateError::WriteTooLarge(reason));
     }
 
@@ -149,7 +191,7 @@ pub async fn write_os_file(
     let resolved = match resolve_write_target(target, &cfg.allowed_write_paths) {
         Ok(p) => p,
         Err(e) => {
-            emit_write_denied(writer, &target.display().to_string(), &e.to_string(), now_unix).await;
+            emit_write_denied(sink, &target.display().to_string(), &e.to_string(), now_unix).await;
             return Err(e.into());
         }
     };
@@ -161,12 +203,12 @@ pub async fn write_os_file(
     match evaluate(&action, autonomy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
-            emit_write_denied(writer, &resolved.display().to_string(), &reason, now_unix).await;
+            emit_write_denied(sink, &resolved.display().to_string(), &reason, now_unix).await;
             return Err(OsGateError::Denied(reason));
         }
         Decision::Confirm(reason) => {
             emit_write_denied(
-                writer,
+                sink,
                 &resolved.display().to_string(),
                 &format!("confirm-required: {reason}"),
                 now_unix,
@@ -181,7 +223,7 @@ pub async fn write_os_file(
     match write_file_atomic(&resolved, contents) {
         Ok(()) => {
             emit_write(
-                writer,
+                sink,
                 &resolved.display().to_string(),
                 contents.len(),
                 existed,
@@ -192,7 +234,7 @@ pub async fn write_os_file(
         }
         Err(e) => {
             emit_write_denied(
-                writer,
+                sink,
                 &resolved.display().to_string(),
                 &format!("write-failed: {e}"),
                 now_unix,
@@ -213,14 +255,14 @@ pub async fn launch_os_app(
     program: &Path,
     cfg: &OsToolsConfig,
     autonomy: AutonomyLevel,
-    writer: Option<&WalWriterHandle>,
+    sink: AuditSink<'_>,
     now_unix: i64,
 ) -> Result<(PathBuf, u32), OsGateError> {
     // Layer 1 — exec-allowlist (exact canonical match; regular-file-only; fail-closed).
     let resolved = match resolve_exec_program(program, &cfg.allowed_exec_paths) {
         Ok(p) => p,
         Err(e) => {
-            emit_launch_denied(writer, &program.display().to_string(), &e.to_string(), now_unix)
+            emit_launch_denied(sink, &program.display().to_string(), &e.to_string(), now_unix)
                 .await;
             return Err(e.into());
         }
@@ -233,12 +275,12 @@ pub async fn launch_os_app(
     match evaluate(&action, autonomy) {
         Decision::Allow => {}
         Decision::Deny(reason) => {
-            emit_launch_denied(writer, &resolved.display().to_string(), &reason, now_unix).await;
+            emit_launch_denied(sink, &resolved.display().to_string(), &reason, now_unix).await;
             return Err(OsGateError::Denied(reason));
         }
         Decision::Confirm(reason) => {
             emit_launch_denied(
-                writer,
+                sink,
                 &resolved.display().to_string(),
                 &format!("confirm-required: {reason}"),
                 now_unix,
@@ -251,12 +293,12 @@ pub async fn launch_os_app(
     // Layer 3 — spawn + audit.
     match launch_program(&resolved) {
         Ok(pid) => {
-            emit_launch(writer, &resolved.display().to_string(), pid, now_unix).await;
+            emit_launch(sink, &resolved.display().to_string(), pid, now_unix).await;
             Ok((resolved, pid))
         }
         Err(e) => {
             emit_launch_denied(
-                writer,
+                sink,
                 &resolved.display().to_string(),
                 &format!("launch-failed: {e}"),
                 now_unix,
@@ -267,43 +309,38 @@ pub async fn launch_os_app(
     }
 }
 
-async fn emit_launch(writer: Option<&WalWriterHandle>, program: &str, pid: u32, ts_unix: i64) {
-    let Some(w) = writer else { return };
+async fn emit_launch(sink: AuditSink<'_>, program: &str, pid: u32, ts_unix: i64) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "program": program,
         "pid": pid,
         "ts_unix": ts_unix,
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OS_APP_LAUNCH, &payload).build();
-    let _ = w.append(header, payload).await;
+    dispatch_frame(sink, EVENT_TYPE_OS_APP_LAUNCH, payload).await;
 }
 
 async fn emit_launch_denied(
-    writer: Option<&WalWriterHandle>,
+    sink: AuditSink<'_>,
     program: &str,
     reason: &str,
     ts_unix: i64,
 ) {
-    let Some(w) = writer else { return };
     let payload = serde_json::to_vec(&serde_json::json!({
         "program": program,
         "reason": reason,
         "ts_unix": ts_unix,
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OS_APP_LAUNCH_DENIED, &payload).build();
-    let _ = w.append(header, payload).await;
+    dispatch_frame(sink, EVENT_TYPE_OS_APP_LAUNCH_DENIED, payload).await;
 }
 
 async fn emit_write(
-    writer: Option<&WalWriterHandle>,
+    sink: AuditSink<'_>,
     path: &str,
     bytes: usize,
     existed: bool,
     ts_unix: i64,
 ) {
-    let Some(w) = writer else { return };
     let payload = serde_json::to_vec(&serde_json::json!({
         "path": path,
         "bytes": bytes,
@@ -311,49 +348,42 @@ async fn emit_write(
         "ts_unix": ts_unix,
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OS_FILE_WRITE, &payload).build();
-    let _ = w.append(header, payload).await;
+    dispatch_frame(sink, EVENT_TYPE_OS_FILE_WRITE, payload).await;
 }
 
 async fn emit_write_denied(
-    writer: Option<&WalWriterHandle>,
+    sink: AuditSink<'_>,
     path: &str,
     reason: &str,
     ts_unix: i64,
 ) {
-    let Some(w) = writer else { return };
     let payload = serde_json::to_vec(&serde_json::json!({
         "path": path,
         "reason": reason,
         "ts_unix": ts_unix,
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OS_FILE_WRITE_DENIED, &payload).build();
-    let _ = w.append(header, payload).await;
+    dispatch_frame(sink, EVENT_TYPE_OS_FILE_WRITE_DENIED, payload).await;
 }
 
-async fn emit_read(writer: Option<&WalWriterHandle>, path: &str, bytes: usize, ts_unix: i64) {
-    let Some(w) = writer else { return };
+async fn emit_read(sink: AuditSink<'_>, path: &str, bytes: usize, ts_unix: i64) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "path": path,
         "bytes": bytes,
         "ts_unix": ts_unix,
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OS_FILE_READ, &payload).build();
-    let _ = w.append(header, payload).await;
+    dispatch_frame(sink, EVENT_TYPE_OS_FILE_READ, payload).await;
 }
 
-async fn emit_denied(writer: Option<&WalWriterHandle>, path: &str, reason: &str, ts_unix: i64) {
-    let Some(w) = writer else { return };
+async fn emit_denied(sink: AuditSink<'_>, path: &str, reason: &str, ts_unix: i64) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "path": path,
         "reason": reason,
         "ts_unix": ts_unix,
     }))
     .unwrap_or_else(|_| b"{}".to_vec());
-    let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_OS_FILE_DENIED, &payload).build();
-    let _ = w.append(header, payload).await;
+    dispatch_frame(sink, EVENT_TYPE_OS_FILE_DENIED, payload).await;
 }
 
 #[cfg(test)]
@@ -378,7 +408,7 @@ mod tests {
         let f = dir.path().join("out.txt");
         let cfg = cfg_for(dir.path());
         // Elevated ⇒ OsFileWrite is Allow.
-        let resolved = write_os_file(&f, b"written", &cfg, AutonomyLevel::Elevated, None, 0)
+        let resolved = write_os_file(&f, b"written", &cfg, AutonomyLevel::Elevated, AuditSink::None, 0)
             .await
             .expect("elevated write under allowlist must succeed");
         assert!(resolved.ends_with("out.txt"));
@@ -395,7 +425,7 @@ mod tests {
             b"y",
             &cfg,
             AutonomyLevel::Standard,
-            None,
+            AuditSink::None,
             0,
         )
         .await;
@@ -411,7 +441,7 @@ mod tests {
             b"y",
             &cfg,
             AutonomyLevel::Strict,
-            None,
+            AuditSink::None,
             0,
         )
         .await;
@@ -428,7 +458,7 @@ mod tests {
             max_write_bytes: 1024,
             allowed_exec_paths: Vec::new(),
         };
-        let r = write_os_file(&dir.path().join("x.txt"), b"y", &cfg, AutonomyLevel::Full, None, 0)
+        let r = write_os_file(&dir.path().join("x.txt"), b"y", &cfg, AutonomyLevel::Full, AuditSink::None, 0)
             .await;
         assert!(matches!(
             r,
@@ -451,7 +481,7 @@ mod tests {
             b"way too long",
             &cfg,
             AutonomyLevel::Full,
-            None,
+            AuditSink::None,
             0,
         )
         .await;
@@ -464,7 +494,7 @@ mod tests {
         let f = dir.path().join("note.txt");
         fs::write(&f, b"hello-os").unwrap();
         let cfg = cfg_for(dir.path());
-        let text = read_os_file(&f, &cfg, AutonomyLevel::Standard, None, 0)
+        let text = read_os_file(&f, &cfg, AutonomyLevel::Standard, AuditSink::None, 0)
             .await
             .unwrap();
         assert_eq!(text, "hello-os");
@@ -482,7 +512,7 @@ mod tests {
             max_write_bytes: 1024,
             allowed_exec_paths: Vec::new(),
         };
-        let r = read_os_file(&f, &cfg, AutonomyLevel::Full, None, 0).await;
+        let r = read_os_file(&f, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await;
         assert!(matches!(
             r,
             Err(OsGateError::Allowlist(AllowlistError::DenyAll))
@@ -490,11 +520,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn daemon_rpc_sink_without_listener_is_graceful_noop() {
+        // AUDIT-RPC-01 Commit-2: when the sink is DaemonRpc but no daemon /
+        // sidecar is reachable, the audit frame is silently dropped (best-effort)
+        // — the gated read STILL succeeds. The action must never fail just
+        // because audit forwarding is unavailable.
+        let dir = tempdir().unwrap();
+        let f = dir.path().join("note.txt");
+        fs::write(&f, b"forwarded-or-not").unwrap();
+        let cfg = cfg_for(dir.path());
+        let home = tempdir().unwrap(); // no sidecar here ⇒ forward is Unavailable
+        let text = read_os_file(&f, &cfg, AutonomyLevel::Standard, AuditSink::DaemonRpc(home.path()), 0)
+            .await
+            .expect("read must succeed even when audit-RPC forwarding is unavailable");
+        assert_eq!(text, "forwarded-or-not");
+    }
+
+    #[tokio::test]
     async fn traversal_is_denied_even_at_full() {
         let dir = tempdir().unwrap();
         let cfg = cfg_for(dir.path());
         let evil = dir.path().join("..").join("etc").join("passwd");
-        let r = read_os_file(&evil, &cfg, AutonomyLevel::Full, None, 0).await;
+        let r = read_os_file(&evil, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await;
         assert!(matches!(
             r,
             Err(OsGateError::Allowlist(AllowlistError::TraversalDetected))
@@ -508,7 +555,7 @@ mod tests {
         fs::write(&f, b"x").unwrap();
         let cfg = cfg_for(dir.path());
         // Strict ⇒ OsFileRead is Confirm ⇒ no TTY here ⇒ ConfirmRequired.
-        let r = read_os_file(&f, &cfg, AutonomyLevel::Strict, None, 0).await;
+        let r = read_os_file(&f, &cfg, AutonomyLevel::Strict, AuditSink::None, 0).await;
         assert!(matches!(r, Err(OsGateError::ConfirmRequired(_))));
     }
 
@@ -531,7 +578,7 @@ mod tests {
             &f,
             &cfg,
             AutonomyLevel::Standard,
-            Some(&writer),
+            AuditSink::Writer(&writer),
             1_700_000_000,
         )
         .await
@@ -566,7 +613,7 @@ mod tests {
         let segdir = tempdir().unwrap();
         let seg = segdir.path().join("000001.wal");
         let (writer, join) = wal_spawn(seg.clone()).unwrap();
-        let _ = read_os_file(&f, &cfg, AutonomyLevel::Full, Some(&writer), 0).await;
+        let _ = read_os_file(&f, &cfg, AutonomyLevel::Full, AuditSink::Writer(&writer), 0).await;
         drop(writer);
         join.await.unwrap();
 
@@ -613,7 +660,7 @@ mod tests {
         let Some(exe) = real_arg_free_exe() else { return };
         let dir = tempdir().unwrap();
         let cfg = cfg_for(dir.path()); // exec allowlist is empty here
-        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Full, None, 0).await;
+        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await;
         assert!(matches!(
             r,
             Err(OsGateError::Allowlist(AllowlistError::DenyAll))
@@ -624,7 +671,7 @@ mod tests {
     async fn launch_denied_at_strict() {
         let Some(exe) = real_arg_free_exe() else { return };
         let cfg = exec_cfg(&exe);
-        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Strict, None, 0).await;
+        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Strict, AuditSink::None, 0).await;
         assert!(matches!(r, Err(OsGateError::Denied(_))));
     }
 
@@ -632,7 +679,7 @@ mod tests {
     async fn launch_confirms_at_standard_no_tty() {
         let Some(exe) = real_arg_free_exe() else { return };
         let cfg = exec_cfg(&exe);
-        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Standard, None, 0).await;
+        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Standard, AuditSink::None, 0).await;
         assert!(matches!(r, Err(OsGateError::ConfirmRequired(_))));
     }
 
@@ -642,7 +689,7 @@ mod tests {
         // Elevated ALLOWS): program execution still confirms at Elevated.
         let Some(exe) = real_arg_free_exe() else { return };
         let cfg = exec_cfg(&exe);
-        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Elevated, None, 0).await;
+        let r = launch_os_app(&exe, &cfg, AutonomyLevel::Elevated, AuditSink::None, 0).await;
         assert!(matches!(r, Err(OsGateError::ConfirmRequired(_))));
     }
 
@@ -650,7 +697,7 @@ mod tests {
     async fn launch_succeeds_at_full_and_returns_pid() {
         let Some(exe) = real_arg_free_exe() else { return };
         let cfg = exec_cfg(&exe);
-        let (resolved, pid) = launch_os_app(&exe, &cfg, AutonomyLevel::Full, None, 0)
+        let (resolved, pid) = launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::None, 0)
             .await
             .expect("full + allowlisted ⇒ launch");
         assert!(pid > 0);
@@ -665,7 +712,7 @@ mod tests {
         let other = dir.path().join("decoy");
         std::fs::write(&other, b"x").unwrap();
         let cfg = exec_cfg(&exe); // allowlists `exe`, not `other`
-        let r = launch_os_app(&other, &cfg, AutonomyLevel::Full, None, 0).await;
+        let r = launch_os_app(&other, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await;
         assert!(matches!(
             r,
             Err(OsGateError::Allowlist(AllowlistError::NotInAllowlist(_)))
@@ -684,7 +731,7 @@ mod tests {
         let segdir = tempdir().unwrap();
         let seg = segdir.path().join("000001.wal");
         let (writer, join) = wal_spawn(seg.clone()).unwrap();
-        let _ = launch_os_app(&exe, &cfg, AutonomyLevel::Full, Some(&writer), 0).await;
+        let _ = launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::Writer(&writer), 0).await;
         drop(writer);
         join.await.unwrap();
 
@@ -704,7 +751,7 @@ mod tests {
         let segdir = tempdir().unwrap();
         let seg = segdir.path().join("000001.wal");
         let (writer, join) = wal_spawn(seg.clone()).unwrap();
-        launch_os_app(&exe, &cfg, AutonomyLevel::Full, Some(&writer), 1_700_000_000)
+        launch_os_app(&exe, &cfg, AutonomyLevel::Full, AuditSink::Writer(&writer), 1_700_000_000)
             .await
             .expect("full launch");
         drop(writer);

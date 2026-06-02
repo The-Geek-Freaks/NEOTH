@@ -24,4 +24,4 @@ pub mod launch;
 pub mod read;
 pub mod write;
 
-pub use gate::{OsGateError, launch_os_app, read_os_file, write_os_file};
+pub use gate::{AuditSink, OsGateError, launch_os_app, read_os_file, write_os_file};

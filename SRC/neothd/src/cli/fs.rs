@@ -15,7 +15,7 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::os_tools::{OsGateError, read_os_file};
+use crate::os_tools::{AuditSink, OsGateError, read_os_file};
 
 #[derive(Args, Debug, Clone)]
 pub struct FsArgs {
@@ -67,8 +67,11 @@ async fn run_write(
 ) -> Result<()> {
     let now = now_unix();
     let contents = content.as_bytes();
-    // Same one-shot-WAL pattern as run_read: skip opening a 2nd writer when the
-    // daemon owns the WAL (the write is gated either way).
+    let home = FreedomConfig::default_neoth_home();
+    // Same one-shot-WAL pattern as run_read: when the daemon owns the WAL,
+    // FORWARD the audit frame to it via the loopback audit-RPC channel
+    // (AUDIT-RPC-01) instead of opening a racing 2nd writer; the write is gated
+    // either way.
     let result = {
         let pidfile = crate::daemon::pidfile::default_pidfile();
         let daemon_live = matches!(
@@ -76,8 +79,15 @@ async fn run_write(
             Ok(Some(_))
         );
         if daemon_live {
-            crate::os_tools::write_os_file(path, contents, &cfg.tools.os, cfg.autonomy, None, now)
-                .await
+            crate::os_tools::write_os_file(
+                path,
+                contents,
+                &cfg.tools.os,
+                cfg.autonomy,
+                AuditSink::DaemonRpc(&home),
+                now,
+            )
+            .await
         } else {
             let segment = FreedomConfig::default_neoth_home()
                 .join("wal")
@@ -92,7 +102,7 @@ async fn run_write(
                         contents,
                         &cfg.tools.os,
                         cfg.autonomy,
-                        Some(&writer),
+                        AuditSink::Writer(&writer),
                         now,
                     )
                     .await;
@@ -110,7 +120,7 @@ async fn run_write(
                         contents,
                         &cfg.tools.os,
                         cfg.autonomy,
-                        None,
+                        AuditSink::None,
                         now,
                     )
                     .await
@@ -147,10 +157,12 @@ async fn run_write(
 
 async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
     let now = now_unix();
-    // Best-effort one-shot WAL audit (HF-01 pattern): if `neothd serve` owns
-    // the writer, pass None (the read is still gated; we just don't open a 2nd
-    // writer racing the segment). Inlined rather than a generic higher-order
-    // helper to avoid an unnameable borrow lifetime across the awaited future.
+    let home = FreedomConfig::default_neoth_home();
+    // Best-effort one-shot WAL audit (HF-01 pattern): if `neothd serve` owns the
+    // writer, FORWARD the audit frame to it via the loopback audit-RPC channel
+    // (AUDIT-RPC-01) rather than open a 2nd writer racing the segment. The read
+    // is gated either way. Inlined rather than a generic higher-order helper to
+    // avoid an unnameable borrow lifetime across the awaited future.
     let result = {
         let pidfile = crate::daemon::pidfile::default_pidfile();
         let daemon_live = matches!(
@@ -158,7 +170,7 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
             Ok(Some(_))
         );
         if daemon_live {
-            read_os_file(path, &cfg.tools.os, cfg.autonomy, None, now).await
+            read_os_file(path, &cfg.tools.os, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
         } else {
             let segment = FreedomConfig::default_neoth_home()
                 .join("wal")
@@ -169,7 +181,8 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
             match crate::wal::spawn(segment) {
                 Ok((writer, join)) => {
                     let r =
-                        read_os_file(path, &cfg.tools.os, cfg.autonomy, Some(&writer), now).await;
+                        read_os_file(path, &cfg.tools.os, cfg.autonomy, AuditSink::Writer(&writer), now)
+                            .await;
                     drop(writer);
                     let _ = join.await;
                     r
@@ -183,7 +196,7 @@ async fn run_read(path: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Res
                         error = %e,
                         "fs read proceeding WITHOUT WAL audit — could not open a one-shot WAL writer"
                     );
-                    read_os_file(path, &cfg.tools.os, cfg.autonomy, None, now).await
+                    read_os_file(path, &cfg.tools.os, cfg.autonomy, AuditSink::None, now).await
                 }
             }
         }

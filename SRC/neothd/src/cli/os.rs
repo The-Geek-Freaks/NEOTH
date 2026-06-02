@@ -17,7 +17,7 @@ use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::os_tools::{OsGateError, launch_os_app};
+use crate::os_tools::{AuditSink, OsGateError, launch_os_app};
 
 #[derive(Args, Debug, Clone)]
 pub struct OsArgs {
@@ -53,8 +53,10 @@ pub async fn run_os(args: OsArgs) -> Result<()> {
 
 async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
     let now = now_unix();
-    // Same one-shot-WAL pattern as `neoth fs`: skip opening a 2nd writer when
-    // the daemon owns the WAL (the launch is gated either way).
+    let home = FreedomConfig::default_neoth_home();
+    // Same one-shot-WAL pattern as `neoth fs`: when the daemon owns the WAL,
+    // FORWARD the audit frame to it via the loopback audit-RPC channel
+    // (AUDIT-RPC-01) rather than open a 2nd writer; the launch is gated either way.
     let result = {
         let pidfile = crate::daemon::pidfile::default_pidfile();
         let daemon_live = matches!(
@@ -62,7 +64,7 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
             Ok(Some(_))
         );
         if daemon_live {
-            launch_os_app(program, &cfg.tools.os, cfg.autonomy, None, now).await
+            launch_os_app(program, &cfg.tools.os, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
         } else {
             let segment = FreedomConfig::default_neoth_home()
                 .join("wal")
@@ -73,7 +75,7 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
             match crate::wal::spawn(segment) {
                 Ok((writer, join)) => {
                     let r =
-                        launch_os_app(program, &cfg.tools.os, cfg.autonomy, Some(&writer), now)
+                        launch_os_app(program, &cfg.tools.os, cfg.autonomy, AuditSink::Writer(&writer), now)
                             .await;
                     drop(writer);
                     let _ = join.await;
@@ -84,7 +86,7 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
                         error = %e,
                         "os launch proceeding WITHOUT WAL audit — could not open a one-shot WAL writer"
                     );
-                    launch_os_app(program, &cfg.tools.os, cfg.autonomy, None, now).await
+                    launch_os_app(program, &cfg.tools.os, cfg.autonomy, AuditSink::None, now).await
                 }
             }
         }
