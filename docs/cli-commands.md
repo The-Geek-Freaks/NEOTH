@@ -547,6 +547,12 @@ Revoke an existing row by id. Row stays in the table for audit but stops appeari
 
 - `<ID>` — Row id (`neoth groundtruth list` shows ids)
 
+## `neoth gui`
+
+Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves the separate GUI binary (next to `neoth`, else via PATH) and spawns it. `--locate` resolves + prints the path without launching. Prints the install command if the GUI binary isn't present
+
+- `--locate <LOCATE>` — Resolve + print the `neothd-gui` binary path (and whether it was found beside `neoth`) WITHOUT launching it. Diagnostic / scriptable / headless-safe — the launch path needs a display the CI box lacks
+
 ## `neoth gui-stream` _(hidden)_
 
 Persistent NDJSON request/response channel for `neothd-gui` (B — persistent-stdio-stream, Session 30). The GUI holds this process open and sends `{"id":N,"method":"board"}` lines on stdin, reading one JSON board snapshot per line on stdout — collapsing the previous 4-subprocess-per-2s-tick board refresh into one warm in-process query. READ-ONLY (board queries only); mutations stay on their gated subprocess paths. Not intended for direct operator use. See `cli/gui_stream.rs`

@@ -37,6 +37,7 @@ pub mod github;
 pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
+pub mod gui;
 pub mod gui_stream;
 pub mod hardware;
 pub mod hemispheres;
@@ -227,6 +228,12 @@ pub enum Commands {
     /// / IN_PROGRESS / REVIEW / DONE) onto NEOTH's `idx_kanban_*`
     /// tables. Pick #5a per `PLAN/SPEC_coding_workflow.md` build order.
     Kanban(kanban::KanbanArgs),
+
+    /// Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves
+    /// the separate GUI binary (next to `neoth`, else via PATH) and spawns it.
+    /// `--locate` resolves + prints the path without launching. Prints the
+    /// install command if the GUI binary isn't present.
+    Gui(gui::GuiArgs),
 
     /// Persistent NDJSON request/response channel for `neothd-gui`
     /// (B — persistent-stdio-stream, Session 30). The GUI holds this
@@ -802,6 +809,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Kanban(mut args) => {
             args.output = global_output;
             kanban::run_kanban(args).await?;
+        }
+        Commands::Gui(args) => {
+            gui::run_gui(args, global_output)?;
         }
         Commands::GuiStream(args) => {
             gui_stream::run_gui_stream(args).await?;
