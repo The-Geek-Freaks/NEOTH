@@ -176,17 +176,15 @@ neoth plugin ledger my-plugin
 ## Automation
 
 ```bash
-neoth cron list
-neoth cron run morning-brief
-neoth n8n status
-neoth n8n workflows
+neoth jobs --list             # list scheduled jobs + next-fire times
+neoth cron run morning-brief  # fire one job now (offline; daemon owns the WAL when serving)
 ```
 
 | Command | Purpose |
 | :-- | :-- |
-| `cron list/run` | Built-in recurring jobs. |
-| `n8n status` | Loopback API/workflow status. |
-| `n8n workflows` | Installed starter workflows. |
+| `jobs --list` | List scheduled recurring jobs + next-fire times. |
+| `cron run <id>` | Fire one scheduled job now, out of band of the daemon scheduler. |
+| `webhook serve` | Loopback HTTP server that n8n + MCP plugins POST to (the n8n integration surface). |
 
 ## Mesh and cluster
 

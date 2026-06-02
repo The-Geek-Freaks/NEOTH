@@ -38,6 +38,7 @@ pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
 pub mod autonomy;
+pub mod cron;
 pub mod gui;
 pub mod gui_stream;
 pub mod hardware;
@@ -234,6 +235,12 @@ pub enum Commands {
     /// | full | custom`) in freedom.yaml. `show` prints the current level;
     /// `set <level>` persists a new one without re-running the wizard.
     Autonomy(autonomy::AutonomyArgs),
+
+    /// Fire a scheduled job NOW, out of band of the daemon scheduler:
+    /// `cron run <id>` loads jobs.yaml, runs the job through the configured
+    /// provider (real call + delivery), writing the same WAL frames the
+    /// scheduler does. Refused while `neoth serve` owns the WAL.
+    Cron(cron::CronArgs),
 
     /// Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves
     /// the separate GUI binary (next to `neoth`, else via PATH) and spawns it.
@@ -818,6 +825,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Autonomy(args) => {
             autonomy::run_autonomy(args, global_output)?;
+        }
+        Commands::Cron(args) => {
+            cron::run_cron(args, global_output).await?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;

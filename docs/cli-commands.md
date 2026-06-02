@@ -377,6 +377,17 @@ Inspect the memory-routing weights. Each row records a `(topic_hash, hemisphere_
 - `--top-n <N>` — Operator-readable cap on rows printed. Defaults to 20
 - `--role <ROLE>` — Filter to one hemisphere role: `left`, `right`, `cerebellum`. Default: all three
 
+## `neoth cron`
+
+Fire a scheduled job NOW, out of band of the daemon scheduler: `cron run <id>` loads jobs.yaml, runs the job through the configured provider (real call + delivery), writing the same WAL frames the scheduler does. Refused while `neoth serve` owns the WAL
+
+### `neoth cron run`
+
+Fire one job by id immediately, out of band of the scheduler. Makes a real provider call and (if the job has a delivery channel) delivers the result. Refused while `neoth serve` is running
+
+- `<ID>` — The job `id` from jobs.yaml
+- `--file <FILE>` — Override the jobs.yaml path. Defaults to `~/.neoth/jobs.yaml`
+
 ## `neoth ctx`
 
 Ctx-mode parity — persistent indexed knowledge with hybrid FTS5 search
