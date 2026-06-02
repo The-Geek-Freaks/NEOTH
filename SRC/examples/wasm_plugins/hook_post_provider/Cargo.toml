@@ -1,0 +1,28 @@
+# UX-08 — example hook-stage WASM plugin (PostProvider observer).
+#
+# The original "slash_demo" idea was redefined: slash commands are NOT a
+# wasm-plugin concern (PluginManifest has no `slash_commands` field), so this
+# example instead demonstrates the HOOK-STAGE lifecycle — the part of the
+# manifest that genuinely drives a wasm plugin's invocation.
+#
+# Standalone crate (NOT a workspace member): the empty `[workspace]` table
+# below opts it out of the parent NEOTH workspace so it builds in-place for the
+# wasm target without a membership error.
+[package]
+name    = "neoth-plugin-hook-post-provider"
+version = "0.1.0"
+edition = "2021"
+description = "Example NEOTH plugin: observe the PostProvider pipeline stage; log + fuel-budget pattern."
+publish = false
+
+[workspace]
+
+# Plugin crates MUST target wasm32-unknown-unknown.
+# Build with: cargo build --target wasm32-unknown-unknown --release
+# Output: target/wasm32-unknown-unknown/release/neoth_plugin_hook_post_provider.wasm
+# The host (neothd) compiles the produced .wasm via wasmtime/cranelift.
+
+[lib]
+crate-type = ["cdylib"]
+
+# no_std — wasm plugins are no_std + no allocator by default.

@@ -1,0 +1,27 @@
+# UX-08 — sample manifest for the post-provider hook example.
+#
+# This is the value-add over the echo / recall_summariser examples: it shows
+# the HOOK-STAGE manifest fields a plugin author declares so the daemon's hook
+# dispatcher invokes the plugin at the right pipeline stage. Copy this next to
+# the built `plugin.wasm` under ~/.neoth/plugins/hook_post_provider/.
+#
+# Parses against `wasm_plugin::manifest::PluginManifest`.
+
+# Stable id: lowercase, starts with a letter, snake_case (validated by the host).
+id = "hook_post_provider"
+name = "Post-Provider Hook Demo"
+version = "0.1.0"
+description = "Observe the PostProvider pipeline stage; demonstrates log + the fuel-budget pattern."
+
+# Least-privilege: this observer only logs, so it needs no write capability.
+# One of: "none" | "read" | "write".
+requested_permissions = "read"
+
+# The pipeline stages this plugin observes. Valid stages (snake_case):
+#   pre_provider | post_provider | pre_channel_send | post_channel_receive
+#   | on_recall_query | on_consolidation_pass
+hook_stages = ["post_provider"]
+
+# Optional caps (omit to use the host defaults):
+# fuel_budget_override = 2000000
+# memory_limit_bytes   = 33554432
