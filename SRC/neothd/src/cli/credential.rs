@@ -40,6 +40,10 @@ pub enum CredentialAction {
         /// Path to a YAML file with the same shape as `credentials.yaml`.
         #[arg(long)]
         file: PathBuf,
+        /// Preview only: report which keys WOULD be added vs overwritten
+        /// (names only, never values) and write nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -89,10 +93,26 @@ fn merge_credentials(
     Ok((merged, imported))
 }
 
+/// Split `imported` keys into (added, overwritten) relative to the keys
+/// already set in `existing`. Names only — values never touched. `added` =
+/// keys not previously set; `overwritten` = keys that already had a value.
+fn classify_import(existing: &[String], imported: &[String]) -> (Vec<String>, Vec<String>) {
+    let mut added = Vec::new();
+    let mut overwritten = Vec::new();
+    for k in imported {
+        if existing.iter().any(|e| e == k) {
+            overwritten.push(k.clone());
+        } else {
+            added.push(k.clone());
+        }
+    }
+    (added, overwritten)
+}
+
 pub fn run_credential(args: CredentialArgs, output: OutputFormat) -> Result<()> {
     match args.action {
         CredentialAction::List => run_list(output),
-        CredentialAction::Import { file } => run_import(&file, output),
+        CredentialAction::Import { file, dry_run } => run_import(&file, dry_run, output),
     }
 }
 
@@ -119,13 +139,14 @@ fn run_list(output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_import(file: &Path, output: OutputFormat) -> Result<()> {
+fn run_import(file: &Path, dry_run: bool, output: OutputFormat) -> Result<()> {
     if !file.is_file() {
         anyhow::bail!("import file not found: {}", file.display());
     }
     let incoming = Credentials::load_or_default(file)
         .with_context(|| format!("parse import file {}", file.display()))?;
     let existing = Credentials::load().context("load existing credentials.yaml")?;
+    let existing_keys = set_key_names(&existing)?;
     let (merged, imported) = merge_credentials(&existing, &incoming)?;
 
     if imported.is_empty() {
@@ -135,22 +156,40 @@ fn run_import(file: &Path, output: OutputFormat) -> Result<()> {
         );
     }
 
+    let (added, overwritten) = classify_import(&existing_keys, &imported);
     let dest = default_path();
-    merged
-        .write(&dest)
-        .with_context(|| format!("write merged credentials to {}", dest.display()))?;
+
+    if !dry_run {
+        merged
+            .write(&dest)
+            .with_context(|| format!("write merged credentials to {}", dest.display()))?;
+    }
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
-            serde_json::json!({ "imported_keys": imported, "count": imported.len() })
+            serde_json::json!({
+                "dry_run": dry_run,
+                "imported_keys": imported,
+                "added": added,
+                "overwritten": overwritten,
+                "count": imported.len(),
+            })
         ),
         OutputFormat::Table => {
-            println!("Imported {} credential key(s):", imported.len());
-            for n in &imported {
-                println!("  • {n}");
+            let verb = if dry_run { "Would import" } else { "Imported" };
+            println!("{verb} {} credential key(s):", imported.len());
+            for n in &added {
+                println!("  + {n}  (new)");
             }
-            println!("(merged into {} — values hidden)", dest.display());
+            for n in &overwritten {
+                println!("  ~ {n}  (overwrites existing)");
+            }
+            if dry_run {
+                println!("(dry-run — nothing written; values hidden)");
+            } else {
+                println!("(merged into {} — values hidden)", dest.display());
+            }
         }
     }
     Ok(())
@@ -192,6 +231,15 @@ mod tests {
         assert_eq!(m.get("provider_key").unwrap().as_str(), Some("NEW")); // overwritten
         assert_eq!(m.get("telegram_token").unwrap().as_str(), Some("TOK")); // added
         assert_eq!(m.get("slack_bot_token").unwrap().as_str(), Some("KEEP")); // untouched
+    }
+
+    #[test]
+    fn classify_import_splits_added_vs_overwritten() {
+        let existing = vec!["provider_key".to_string(), "slack_bot_token".to_string()];
+        let imported = vec!["provider_key".to_string(), "telegram_token".to_string()];
+        let (added, overwritten) = classify_import(&existing, &imported);
+        assert_eq!(added, vec!["telegram_token"], "telegram is new");
+        assert_eq!(overwritten, vec!["provider_key"], "provider_key already set");
     }
 
     #[test]

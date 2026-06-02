@@ -386,6 +386,7 @@ Manage `credentials.yaml`: `list` shows which credential keys are set (NAMES onl
 Merge a credentials.yaml-shaped file into `~/.neoth/credentials.yaml`. Set fields in the imported file overwrite existing ones; absent/empty fields are left untouched. Never prints secret values
 
 - `--file <FILE>` — Path to a YAML file with the same shape as `credentials.yaml`
+- `--dry-run <DRY_RUN>` — Preview only: report which keys WOULD be added vs overwritten (names only, never values) and write nothing
 
 ### `neoth credential list`
 
