@@ -98,3 +98,14 @@ nul
 
 # Operator-personal Claude Code hook config (machine-specific paths) — never publish
 .github/hooks/
+
+# --- Serena MCP tooling state (cache, memories, project.yml) ---
+# Machine-local inference cache — never belongs in the public repo.
+.serena/
+
+# --- Local MSVC / build helper scripts (operator-path + username leak) ---
+# check_msvc.bat contains a hardcoded local path and OS username.
+# Any *.bat at crate root is local-operator tooling, not public code.
+SRC/neothd/check_msvc.bat
+# Belt-and-suspenders: catch any future operator batch scripts in crate roots
+SRC/**/*.bat
