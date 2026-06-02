@@ -106,7 +106,6 @@ pub mod installers;
 pub mod mcp;
 pub mod media;
 pub mod memory;
-pub mod migrate;
 pub mod models;
 pub mod n8n_api;
 pub mod os_tools;
