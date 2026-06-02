@@ -54,6 +54,20 @@ Search ArXiv. Query syntax: `all:keyword`, `ti:title`, `au:author`, `cat:cs.CL`,
 - `<QUERY>` — The query string
 - `--limit <LIMIT>` — Max results (1-50)
 
+## `neoth autonomy`
+
+View or set the operator autonomy level (`strict | standard | elevated | full | custom`) in freedom.yaml. `show` prints the current level; `set <level>` persists a new one without re-running the wizard
+
+### `neoth autonomy set`
+
+Set the autonomy level in freedom.yaml. Persists immediately; takes effect on the next command / daemon config reload
+
+- `<LEVEL>` — One of: `strict` | `standard` | `elevated` | `full` | `custom`
+
+### `neoth autonomy show`
+
+Print the current autonomy level (read from freedom.yaml)
+
 ## `neoth backup`
 
 Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2

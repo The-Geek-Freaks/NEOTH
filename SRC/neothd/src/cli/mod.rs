@@ -37,6 +37,7 @@ pub mod github;
 pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
+pub mod autonomy;
 pub mod gui;
 pub mod gui_stream;
 pub mod hardware;
@@ -228,6 +229,11 @@ pub enum Commands {
     /// / IN_PROGRESS / REVIEW / DONE) onto NEOTH's `idx_kanban_*`
     /// tables. Pick #5a per `PLAN/SPEC_coding_workflow.md` build order.
     Kanban(kanban::KanbanArgs),
+
+    /// View or set the operator autonomy level (`strict | standard | elevated
+    /// | full | custom`) in freedom.yaml. `show` prints the current level;
+    /// `set <level>` persists a new one without re-running the wizard.
+    Autonomy(autonomy::AutonomyArgs),
 
     /// Launch the NEOTH desktop GUI (`neothd-gui`). Thin launcher: resolves
     /// the separate GUI binary (next to `neoth`, else via PATH) and spawns it.
@@ -809,6 +815,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Kanban(mut args) => {
             args.output = global_output;
             kanban::run_kanban(args).await?;
+        }
+        Commands::Autonomy(args) => {
+            autonomy::run_autonomy(args, global_output)?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;
