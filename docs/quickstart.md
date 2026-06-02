@@ -58,8 +58,8 @@ Expected result:
 Start with one channel. Do not connect every app on day one.
 
 ```bash
-neoth channels list
-neoth channels add telegram
+neoth connect            # list channels + how to wire each one
+neoth connect telegram   # show Telegram's connect steps
 neoth doctor
 ```
 

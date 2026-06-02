@@ -49,8 +49,8 @@ Only configured destinations:
 
 | Destination | When it is used | How to inspect |
 | :-- | :-- | :-- |
-| LLM provider | You configure a cloud model for chat/reasoning. | `neoth providers status`, `neoth privacy audit --destinations` |
-| Chat platform | You connect Telegram, WhatsApp, Slack, Discord, or another channel. | `neoth channels list`, `neoth privacy audit --last 30d` |
+| LLM provider | You configure a cloud model for chat/reasoning. | `neoth provider show`, `neoth privacy audit --destinations` |
+| Chat platform | You connect Telegram, WhatsApp, Slack, Discord, or another channel. | `neoth connect`, `neoth privacy audit --last 30d` |
 | n8n | You enable localhost workflow calls. | `neoth n8n status`, WAL audit events |
 | Cloud archive | You configure a sync folder or remote backend. | `neoth doctor --explain "cloud archive"` |
 | Private mesh peer | You pair a node and approve discovery/transport. | `neoth cluster status`, `neoth doctor --explain "cluster mDNS announcer"` |

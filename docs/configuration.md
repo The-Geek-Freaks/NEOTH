@@ -138,9 +138,9 @@ plugins:
 Credential setup should normally happen through:
 
 ```bash
-neoth credential import
-neoth channel setup telegram
-neoth provider setup openai
+neoth credential import --file creds.yaml   # merge a credentials.yaml-shaped file
+neoth connect telegram                       # show how to wire a channel
+neoth provider add openai                    # register a provider
 ```
 
 Secrets should not be pasted into docs, tickets, logs, or profile memory.
