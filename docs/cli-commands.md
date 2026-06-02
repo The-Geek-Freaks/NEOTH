@@ -1740,7 +1740,7 @@ Read-only WAL segment inspector. `stats <file>` counts frames per event-type; `s
 
 ### `neoth wal export`
 
-KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in a time window, plus the HMAC compaction marker(s) sealing those bytes. A third party re-checks integrity offline. The bundle is sign-ready; `--sign` lands once the operator's minisign keypair is provisioned
+KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in a time window, plus the HMAC compaction marker(s) sealing those bytes. A third party re-checks integrity offline (`neoth wal verify-proof`). `--sign` uses the operator's auto-managed ed25519 proof key (generated on first use; no minisign tool / keygen / password)
 
 - `--window <WINDOW>` — Window: a duration back from now (`24h`, `7d`, `30m`, `3600`) or a UTC RFC3339 range (`2026-05-01T00:00:00Z..2026-05-02T00:00:00Z`)
 - `--out <PATH>` — Output path. Default: `~/.neoth/exports/neoth-<unix>.neoth-proof`
