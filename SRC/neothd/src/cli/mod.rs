@@ -320,9 +320,12 @@ pub enum Commands {
 
     /// Proactive proposal management (OB-03). Subcommands: `list`,
     /// `accept`, `reject`, `show`, `sync-vault`. NEOTH NEVER edits
-    /// operator config behind their back — `accept` only flips status;
-    /// the operator copy-pastes the draft YAML from the vault note
-    /// into the live config + runs `neoth config reload`.
+    /// operator CONFIG behind their back — for config/cron proposals
+    /// `accept` only flips status + the operator copy-pastes the draft
+    /// YAML into the live config + runs `neoth reload`. A `kind=Skill`
+    /// proposal (KF-04 idle forge) is the exception: `accept` ADOPTS it,
+    /// writing the manifest live to `~/.neoth/skills/<id>/` (additive +
+    /// the skill system still gates loading).
     Proactive(proactive::ProactiveArgs),
 
     /// Webhook HTTP server. Subcommand: `serve`. Starts the

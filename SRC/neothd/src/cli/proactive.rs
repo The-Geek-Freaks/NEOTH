@@ -23,8 +23,8 @@ use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::proactive::action_staging::{
-    ProposalStatus, ProposedAction, list_proposals, load_proposal, set_proposal_status,
-    sync_proposals_to_obsidian,
+    ProposalKind, ProposalStatus, ProposedAction, list_proposals, load_proposal,
+    set_proposal_status, sync_proposals_to_obsidian,
 };
 
 #[derive(Args, Debug, Clone)]
@@ -45,9 +45,13 @@ pub enum ProactiveAction {
         #[arg(long, default_value = "pending")]
         status: String,
     },
-    /// Mark a proposal Approved. Operator copy-pastes the draft
-    /// YAML from the vault note into the live config + runs
-    /// `neoth config reload`; NEOTH never edits operator config.
+    /// Mark a proposal Approved. For a **Skill** proposal (KF-04 idle
+    /// forge) this ADOPTS it — the draft manifest is written live to
+    /// `~/.neoth/skills/<id>/skill.yaml` (the operator's accept is the
+    /// per-command GO; the skill system still gates loading). For
+    /// config/cron proposals NEOTH never edits operator config: the
+    /// operator copy-pastes the draft YAML into the live config + runs
+    /// `neoth reload`.
     Accept {
         id: String,
         #[arg(long, default_value = "")]
@@ -98,6 +102,24 @@ pub fn run_proactive(args: ProactiveArgs) -> Result<()> {
             let updated = set_proposal_status(&home, &id, ProposalStatus::Approved, &note)
                 .with_context(|| format!("approve proposal {id}"))?;
             print_status_change(&updated);
+            // KF-04: accepting a Skill proposal ADOPTS it — write the draft
+            // manifest live so the forge -> propose -> accept loop produces a
+            // usable skill, not just a flag flip. The acceptance is already
+            // recorded above; a write failure is surfaced as a warning rather
+            // than failing the command (re-running `accept` retries the write,
+            // which is idempotent).
+            if updated.kind == ProposalKind::Skill {
+                match write_accepted_skill(&home, &updated) {
+                    Ok(path) => println!(
+                        "  skill written → {} (live on next `neoth reload` or hot-watch)",
+                        path.display(),
+                    ),
+                    Err(e) => eprintln!(
+                        "  warning: proposal accepted but skill write failed: {e:#}\n  \
+                         (fix the cause + re-run `neoth proactive accept {id}` to retry)",
+                    ),
+                }
+            }
             Ok(())
         }
         ProactiveAction::Reject { id, note } => {
@@ -141,6 +163,32 @@ fn print_status_change(p: &ProposedAction) {
     if !p.operator_note.is_empty() {
         println!("  note: {}", p.operator_note);
     }
+}
+
+/// KF-04 — write an accepted Skill proposal's manifest live into the
+/// operator's skills dir (`<home>/skills/<skill-id>/skill.yaml`), closing
+/// the idle-forge -> propose -> accept loop. The proposal's `draft_yaml`
+/// IS a loader-compatible [`SkillManifest`] (the forge builds it via
+/// `skills::creator::build_manifest`); parse it to recover the skill id
+/// (the on-disk directory name), validate the id (which is ALSO the
+/// path-traversal guard — `validate_skill_id` rejects anything outside
+/// `[a-zA-Z0-9_-]`, so a crafted `../` id can't escape the skills dir),
+/// then write atomically via the shared `write_skill_yaml` path the
+/// `neoth skills --create` command already uses. Returns the written path.
+fn write_accepted_skill(home: &std::path::Path, proposal: &ProposedAction) -> Result<PathBuf> {
+    use crate::skills::creator::{validate_skill_id, write_skill_yaml};
+    use crate::skills::schema::SkillManifest;
+
+    let manifest: SkillManifest = serde_yaml::from_str(&proposal.draft_yaml).with_context(|| {
+        format!(
+            "accepted skill proposal {} carries a draft_yaml that is not a valid SkillManifest",
+            proposal.id,
+        )
+    })?;
+    validate_skill_id(&manifest.id)
+        .with_context(|| format!("skill id {:?} is invalid (cannot be a dir name)", manifest.id))?;
+    let skills_dir = home.join("skills");
+    write_skill_yaml(&skills_dir, &manifest.id, &proposal.draft_yaml)
 }
 
 fn print_full_proposal(p: &ProposedAction) {
@@ -358,5 +406,101 @@ mod tests {
             .join("Proposals")
             .join(format!("{id}.md"));
         assert!(expected.exists(), "expected vault file: {expected:?}");
+    }
+
+    // ── KF-04: accepting a Skill proposal adopts it (writes the manifest) ─
+
+    /// Build a Skill `ProposedAction` whose `draft_yaml` is a real,
+    /// loader-compatible manifest (same path the forge uses).
+    fn skill_proposal(id: &str) -> ProposedAction {
+        use crate::skills::creator::{CreateParams, build_manifest};
+        let (_, yaml) = build_manifest(&CreateParams {
+            id: "dream_kf04_test".into(),
+            description: "forged from a test dream".into(),
+            keywords: vec!["test".into()],
+            system_prompt: "You help with the test theme.".into(),
+        })
+        .expect("build_manifest");
+        ProposedAction {
+            id: id.to_string(),
+            kind: ProposalKind::Skill,
+            title: "Skill: test".into(),
+            rationale: "r".into(),
+            draft_yaml: yaml,
+            generated_ts_unix: 100,
+            status: ProposalStatus::Pending,
+            operator_note: String::new(),
+        }
+    }
+
+    #[test]
+    fn accept_skill_proposal_writes_live_loader_compatible_skill() {
+        let home = tempfile::tempdir().unwrap();
+        let id = make_proposal_id(ProposalKind::Skill, "skill", "y", 100);
+        save_proposal(home.path(), &skill_proposal(&id)).unwrap();
+
+        let args = ProactiveArgs {
+            action: ProactiveAction::Accept {
+                id: id.clone(),
+                note: String::new(),
+            },
+            home: Some(home.path().to_path_buf()),
+        };
+        run_proactive(args).expect("accept skill");
+
+        // Status flipped...
+        assert_eq!(
+            load_proposal(home.path(), &id).unwrap().status,
+            ProposalStatus::Approved,
+        );
+        // ...AND the manifest landed live at <home>/skills/<id>/skill.yaml,
+        // re-parseable by the loader (closes the forge->accept loop).
+        let skill_path = home
+            .path()
+            .join("skills")
+            .join("dream_kf04_test")
+            .join("skill.yaml");
+        assert!(skill_path.exists(), "expected live skill at {skill_path:?}");
+        let body = std::fs::read_to_string(&skill_path).unwrap();
+        let m: crate::skills::schema::SkillManifest =
+            serde_yaml::from_str(&body).expect("written skill must be loader-parseable");
+        assert_eq!(m.id, "dream_kf04_test");
+    }
+
+    #[test]
+    fn accept_non_skill_proposal_writes_no_skill_dir() {
+        let home = tempfile::tempdir().unwrap();
+        let id = make_proposal_id(ProposalKind::CronJob, "x", "y", 100);
+        save_proposal(home.path(), &sample(&id, "cron one")).unwrap();
+
+        let args = ProactiveArgs {
+            action: ProactiveAction::Accept {
+                id: id.clone(),
+                note: String::new(),
+            },
+            home: Some(home.path().to_path_buf()),
+        };
+        run_proactive(args).expect("accept cron");
+
+        // Only Skill proposals adopt-on-accept; a CronJob accept never
+        // writes a skill (config/cron stays operator-copies-manually).
+        assert!(
+            !home.path().join("skills").exists(),
+            "non-skill accept must not create a skills dir",
+        );
+    }
+
+    #[test]
+    fn write_accepted_skill_rejects_malformed_draft_and_writes_nothing() {
+        let home = tempfile::tempdir().unwrap();
+        let mut p = skill_proposal("p-id");
+        // A YAML sequence can't deserialize into the SkillManifest struct.
+        p.draft_yaml = "- not\n- a\n- manifest\n".into();
+        let err = write_accepted_skill(home.path(), &p).unwrap_err();
+        assert!(format!("{err:#}").contains("SkillManifest"));
+        assert!(
+            !home.path().join("skills").exists(),
+            "a malformed draft must not leave a partial skill dir",
+        );
     }
 }

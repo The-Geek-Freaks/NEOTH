@@ -1102,13 +1102,13 @@ L-08 privacy audit. `neoth privacy audit` reports — before you send a prompt �
 
 ## `neoth proactive`
 
-Proactive proposal management (OB-03). Subcommands: `list`, `accept`, `reject`, `show`, `sync-vault`. NEOTH NEVER edits operator config behind their back — `accept` only flips status; the operator copy-pastes the draft YAML from the vault note into the live config + runs `neoth config reload`
+Proactive proposal management (OB-03). Subcommands: `list`, `accept`, `reject`, `show`, `sync-vault`. NEOTH NEVER edits operator CONFIG behind their back — for config/cron proposals `accept` only flips status + the operator copy-pastes the draft YAML into the live config + runs `neoth reload`. A `kind=Skill` proposal (KF-04 idle forge) is the exception: `accept` ADOPTS it, writing the manifest live to `~/.neoth/skills/<id>/` (additive + the skill system still gates loading)
 
 - `--home <DIR>` — Override the NEOTH home dir (mostly for tests). Defaults to `~/.neoth`
 
 ### `neoth proactive accept`
 
-Mark a proposal Approved. Operator copy-pastes the draft YAML from the vault note into the live config + runs `neoth config reload`; NEOTH never edits operator config
+Mark a proposal Approved. For a **Skill** proposal (KF-04 idle forge) this ADOPTS it — the draft manifest is written live to `~/.neoth/skills/<id>/skill.yaml` (the operator's accept is the per-command GO; the skill system still gates loading). For config/cron proposals NEOTH never edits operator config: the operator copy-pastes the draft YAML into the live config + runs `neoth reload`
 
 - `<ID>`
 - `--note <NOTE>`
