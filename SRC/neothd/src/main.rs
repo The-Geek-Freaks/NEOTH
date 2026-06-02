@@ -13,9 +13,33 @@
 // `cargo bench -p neothd` had no entry point for the p99 / latency
 // benches the V03-06 GA requirement names. Now they do.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    neothd::run().await
+/// Stack for the worker thread that drives `neothd::run()`. Clap renders help
+/// for a very large command tree (100+ subcommands); in DEBUG builds that
+/// recursion can exceed the default 8 MiB main-thread stack — observed as
+/// `neothd --help` aborting with a stack overflow (0xC00000FD) under the
+/// `cli_*_binary` integration tests. A roomy worker stack gives clap's
+/// help/parse recursion + the async runtime headroom. Release builds (smaller
+/// frames) never hit this, but the headroom is harmless there.
+const MAIN_STACK_BYTES: usize = 32 * 1024 * 1024;
+
+fn main() -> Result<()> {
+    // Run everything on a child thread with a large stack rather than the
+    // default `#[tokio::main]` main thread, so the clap help/parse pass that
+    // happens at the top of `run()` (before the first await) can't overflow.
+    let worker = std::thread::Builder::new()
+        .name("neothd-main".to_string())
+        .stack_size(MAIN_STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("build the tokio runtime")?
+                .block_on(neothd::run())
+        })
+        .context("spawn the neothd main worker thread")?;
+    worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("neothd main worker thread panicked"))?
 }
