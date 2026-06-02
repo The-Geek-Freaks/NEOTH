@@ -7,8 +7,9 @@
 //!
 //! **What this adapter does (V1, this iteration):**
 //!   - Spawns `claude --print --output-format json --model <M>` per request.
-//!   - Scrubs harness env vars (`OPENCLAW_*`, `JARVIS_*`, `NEOTH_*` except
-//!     `NEOTH_LOG`) before exec so they do not contaminate Claude's view.
+//!   - Scrubs harness env vars (`NEOTH_*` except `NEOTH_LOG`, plus any
+//!     operator-declared prefixes) before exec so they do not contaminate
+//!     Claude's view.
 //!   - Parses the JSON envelope, extracts `result` plus token usage.
 //!   - Raises a clean error when `result` is empty (signals operator's
 //!     Memory/tool-stack swallowed the response — pointer to bare-mode docs).
@@ -325,10 +326,10 @@ impl ClaudeCliAdapter {
 /// "%1 ist keine zulässige Win32-Anwendung"). Bouncing through cmd.exe
 /// resolves the extension automatically.
 ///
-/// Env scrubbing: harness identifier vars (`OPENCLAW_*`, `JARVIS_*`,
-/// `NEOTH_*` except `NEOTH_LOG`) are dropped before exec so they do not
-/// contaminate Claude's view. Ported from the operator's `_sanitize_outbound_env`
-/// in `claude_openai_bridge.py`.
+/// Env scrubbing: harness identifier vars (`NEOTH_*` except `NEOTH_LOG`,
+/// plus any operator-declared `claude_cli.scrub_env_prefixes`) are dropped
+/// before exec so they do not contaminate Claude's view. Ported from the
+/// `_sanitize_outbound_env` bridge pattern.
 ///
 /// B-6 / Agent 5 perf wedge 2026-05-16: the scrub result is cached
 /// behind a `OnceLock` so each subprocess spawn reuses the same env
@@ -390,13 +391,14 @@ fn cached_scrubbed_env() -> &'static [(String, String)] {
     CACHE.get_or_init(scrub_outbound_env).as_slice()
 }
 
-/// Return the current process env with NEOTH/JARVIS/OPENCLAW harness vars
-/// stripped + mandatory bridge.py-derived env knobs injected. Whitelist-style
+/// Return the current process env with NEOTH + operator-declared harness
+/// vars stripped + mandatory bridge.py-derived env knobs injected. Whitelist-style
 /// for clarity: keep PATH, HOME, USERPROFILE, APPDATA, anything Claude
 /// legitimately needs to find its OAuth token, `NEOTH_LOG` so subprocesses
 /// inherit tracing config, and the standard terminal vars. Drops:
-///   - Harness prefixes (OPENCLAW_/JARVIS_/VERONICA_) so the model can't
-///     see we're an orchestration layer.
+///   - Operator-declared harness prefixes
+///     (`freedom.yaml::claude_cli.scrub_env_prefixes`, default empty) so
+///     the model can't see another agent stack the operator runs.
 ///   - NEOTH_* except NEOTH_LOG (same reason).
 ///   - CI markers (CI/GITHUB_ACTIONS/GITLAB_CI/CIRCLECI/TRAVIS) so claude
 ///     doesn't enable CI-mode formatting (would leak hidden text in the
@@ -424,7 +426,22 @@ fn cached_scrubbed_env() -> &'static [(String, String)] {
 ///     pathological prompt doesn't burn 31k thinking tokens before
 ///     emitting any visible output.
 fn scrub_outbound_env() -> Vec<(String, String)> {
-    const HARNESS_PREFIXES: &[&str] = &["OPENCLAW_", "JARVIS_", "VERONICA_"];
+    // Operator-declared harness prefixes to strip
+    // (`freedom.yaml::claude_cli.scrub_env_prefixes`); default empty.
+    // Loaded once — this fn is cached behind `cached_scrubbed_env()`.
+    let harness_prefixes = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.claude_cli.scrub_env_prefixes)
+        .unwrap_or_default();
+    scrub_outbound_env_with(&harness_prefixes)
+}
+
+/// Core scrub (testable). `harness_prefixes` are the operator-declared
+/// env-var prefixes to strip so the operator's OTHER agent-stack secrets
+/// never reach the model — empty by default; nothing operator-specific
+/// is hardcoded here. The generic scrubs below (`NEOTH_*` except
+/// `NEOTH_LOG`, CI markers, `CLAUDECODE_*`, TMUX) run for every operator
+/// regardless of the prefix list.
+fn scrub_outbound_env_with(harness_prefixes: &[String]) -> Vec<(String, String)> {
     const CI_MARKERS: &[&str] = &[
         "CI",
         "GITHUB_ACTIONS",
@@ -439,7 +456,7 @@ fn scrub_outbound_env() -> Vec<(String, String)> {
 
     let mut env: Vec<(String, String)> = std::env::vars()
         .filter(|(k, _)| {
-            if HARNESS_PREFIXES.iter().any(|p| k.starts_with(p)) {
+            if harness_prefixes.iter().any(|p| k.starts_with(p.as_str())) {
                 return false;
             }
             if k.starts_with("NEOTH_") && k != "NEOTH_LOG" {
@@ -1120,35 +1137,57 @@ mod tests {
     use super::*;
 
     #[test]
-    fn scrub_drops_harness_prefixes() {
-        // Serialize against other env-mutating tests — scrub_outbound_env
-        // reads the WHOLE process env, so a concurrent set_var elsewhere
-        // would race. See crate::test_env.
+    fn scrub_drops_operator_declared_prefixes_and_neoth_vars() {
+        // Serialize against other env-mutating tests — the scrub reads the
+        // WHOLE process env, so a concurrent set_var elsewhere would race.
+        // See crate::test_env.
         let _env = crate::test_env::lock();
-        // Set a few harness vars + a control var, ensure only harness ones
-        // disappear from the scrubbed list.
+        // A generic, operator-declared harness prefix (no personal names) +
+        // NEOTH control vars. Only the declared prefix + NEOTH_* (except
+        // NEOTH_LOG) should disappear.
         unsafe {
-            std::env::set_var("OPENCLAW_TEST_KEY", "leak");
-            std::env::set_var("JARVIS_TEST_KEY", "leak2");
+            std::env::set_var("MYGW_TEST_KEY", "leak");
             std::env::set_var("NEOTH_TEST_KEY", "leak3");
             std::env::set_var("NEOTH_LOG", "info"); // must SURVIVE scrubbing
             std::env::set_var("NEOTH_KEEPME_NOT", "leak4"); // dropped
         }
-        let scrubbed = scrub_outbound_env();
+        let scrubbed = scrub_outbound_env_with(&["MYGW_".to_string()]);
         let keys: Vec<&str> = scrubbed.iter().map(|(k, _)| k.as_str()).collect();
 
-        assert!(!keys.contains(&"OPENCLAW_TEST_KEY"));
-        assert!(!keys.contains(&"JARVIS_TEST_KEY"));
+        assert!(
+            !keys.contains(&"MYGW_TEST_KEY"),
+            "operator-declared prefix must be dropped"
+        );
         assert!(!keys.contains(&"NEOTH_TEST_KEY"));
         assert!(!keys.contains(&"NEOTH_KEEPME_NOT"));
         assert!(keys.contains(&"NEOTH_LOG"), "NEOTH_LOG must survive");
 
         unsafe {
-            std::env::remove_var("OPENCLAW_TEST_KEY");
-            std::env::remove_var("JARVIS_TEST_KEY");
+            std::env::remove_var("MYGW_TEST_KEY");
             std::env::remove_var("NEOTH_TEST_KEY");
             std::env::remove_var("NEOTH_LOG");
             std::env::remove_var("NEOTH_KEEPME_NOT");
+        }
+    }
+
+    #[test]
+    fn scrub_with_no_declared_prefixes_keeps_arbitrary_vars() {
+        // Public-default posture: with NO operator-declared prefixes, the
+        // scrub must NOT drop arbitrary third-party vars — only the generic
+        // NEOTH_*/CI/CLAUDECODE/TMUX scrubs apply. Nothing operator-specific
+        // is hardcoded.
+        let _env = crate::test_env::lock();
+        unsafe {
+            std::env::set_var("SOMEGATEWAY_KEY", "keep");
+        }
+        let scrubbed = scrub_outbound_env_with(&[]);
+        let keys: Vec<&str> = scrubbed.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(
+            keys.contains(&"SOMEGATEWAY_KEY"),
+            "no declared prefixes => arbitrary var must survive"
+        );
+        unsafe {
+            std::env::remove_var("SOMEGATEWAY_KEY");
         }
     }
 
@@ -1170,14 +1209,8 @@ mod tests {
         // misconfigurations).
         assert!(!first.is_empty(), "scrubbed env must include base vars");
         for (k, _) in first.iter() {
-            assert!(
-                !k.starts_with("OPENCLAW_"),
-                "cached env leaked OPENCLAW_* key: {k}"
-            );
-            assert!(
-                !k.starts_with("JARVIS_"),
-                "cached env leaked JARVIS_* key: {k}"
-            );
+            // NEOTH's own vars are always scrubbed (except NEOTH_LOG),
+            // independent of operator-declared prefixes.
             assert!(
                 !(k.starts_with("NEOTH_") && k != "NEOTH_LOG"),
                 "cached env leaked NEOTH_* key (only NEOTH_LOG should survive): {k}"

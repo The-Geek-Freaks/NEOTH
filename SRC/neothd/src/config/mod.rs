@@ -1539,6 +1539,15 @@ pub struct ClaudeCliConfig {
     /// Tmux backend tuning. Ignored when `backend == subprocess`.
     #[serde(default)]
     pub tmux: ClaudeCliTmuxConfig,
+    /// Env-var prefixes to strip from the spawned `claude` subprocess's
+    /// environment, so the operator's OTHER agent-stack secrets never
+    /// reach the model. Default empty — declare your own if you run NEOTH
+    /// alongside another agent framework that exports prefixed env vars
+    /// (e.g. `["MYGATEWAY_", "MYAGENT_"]`). NEOTH always strips its own
+    /// `NEOTH_*` (except `NEOTH_LOG`), CI markers, `CLAUDECODE_*` and TMUX
+    /// vars regardless of this list.
+    #[serde(default)]
+    pub scrub_env_prefixes: Vec<String>,
 }
 
 /// Serde-facing backend tag. Separate from
@@ -2427,6 +2436,7 @@ mod tests {
         let cfg = ClaudeCliConfig {
             backend: ClaudeCliBackendCfg::Tmux,
             tmux: ClaudeCliTmuxConfig::default(),
+            scrub_env_prefixes: Vec::new(),
         };
         let yaml = serde_yaml::to_string(&cfg).unwrap();
         assert!(
