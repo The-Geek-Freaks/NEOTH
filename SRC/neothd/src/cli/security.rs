@@ -327,6 +327,17 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
         detail: format!("{reads} read path(s), {writes} write path(s) allowlisted (empty = deny-all)"),
     });
 
+    // OS app-launch (PC-01 app-launch slice) — its OWN rail, separate from
+    // os_file_tools: a readable/writable path is not runnable, so the exec
+    // surface can be open while file tools are still locked (and vice-versa).
+    // Empty allowed_exec_paths = deny-all = engaged.
+    let execs = cfg.tools.os.allowed_exec_paths.len();
+    rails.push(Rail {
+        name: "os_app_launch",
+        engaged: execs == 0,
+        detail: format!("{execs} executable(s) allowlisted (empty = deny-all program launch)"),
+    });
+
     // Plugin signatures — engaged only when an author key is set AND
     // signatures are required.
     let has_key = cfg.plugins.wasm.author_pubkey.is_some();
@@ -902,13 +913,14 @@ mod tests {
         // A fresh install's protective defaults must read as ENGAGED.
         let cfg = FreedomConfig::default();
         let rails = collect_rails(&cfg);
-        assert_eq!(rails.len(), 7, "all rails surfaced");
+        assert_eq!(rails.len(), 8, "all rails surfaced");
         for name in [
             "autonomy_gate",       // default Standard = gated
             "private_inference",   // default no cloud fallback
             "proactive_messaging", // default off
             "cluster_transport",   // default off
             "os_file_tools",       // default empty allowlists = deny-all
+            "os_app_launch",       // default empty exec allowlist = deny-all
         ] {
             assert!(
                 rail(&rails, name).engaged,
@@ -953,6 +965,26 @@ mod tests {
         assert!(
             !rail(&rails, "os_file_tools").engaged,
             "a non-empty allowlist relaxes the deny-all rail"
+        );
+    }
+
+    #[test]
+    fn safe_mode_exec_rail_relaxes_when_binary_allowlisted() {
+        // The exec rail is independent of the file rails: allowlisting an
+        // executable relaxes os_app_launch while os_file_tools stays engaged.
+        let mut cfg = FreedomConfig::default();
+        cfg.tools
+            .os
+            .allowed_exec_paths
+            .push(std::path::PathBuf::from("/usr/bin/firefox"));
+        let rails = collect_rails(&cfg);
+        assert!(
+            !rail(&rails, "os_app_launch").engaged,
+            "a non-empty exec allowlist relaxes the launch rail"
+        );
+        assert!(
+            rail(&rails, "os_file_tools").engaged,
+            "file tools stay deny-all — exec allowlist must not relax them"
         );
     }
 
