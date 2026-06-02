@@ -51,10 +51,81 @@ fn apply_level(cfg: FreedomConfig, level: &str) -> Result<(FreedomConfig, Autono
     Ok((next, previous))
 }
 
-pub fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()> {
+/// Monotonic rank for the autonomy levels so a `set` can tell whether the
+/// change RAISED or LOWERED autonomy (→ `0xA2 LEVEL_ELEVATED` vs
+/// `0xA3 LEVEL_DEROGATED`). `custom` is operator-defined and can grant broad
+/// powers, so it ranks highest — a move to/from `custom` therefore reads as an
+/// elevation/derogation, the conservative forensic bias for a security event.
+fn autonomy_rank(level: AutonomyLevel) -> u8 {
+    match level {
+        AutonomyLevel::Strict => 0,
+        AutonomyLevel::Standard => 1,
+        AutonomyLevel::Elevated => 2,
+        AutonomyLevel::Full => 3,
+        AutonomyLevel::Custom => 4,
+    }
+}
+
+/// The audit event a `previous → next` change should record. `None` when the
+/// level is unchanged (no frame).
+fn change_event(previous: AutonomyLevel, next: AutonomyLevel) -> Option<u8> {
+    use crate::wal::events::{EVENT_TYPE_LEVEL_DEROGATED, EVENT_TYPE_LEVEL_ELEVATED};
+    if previous == next {
+        None
+    } else if autonomy_rank(next) >= autonomy_rank(previous) {
+        Some(EVENT_TYPE_LEVEL_ELEVATED)
+    } else {
+        Some(EVENT_TYPE_LEVEL_DEROGATED)
+    }
+}
+
+/// Record the autonomy change in the WAL — a security-relevant config mutation
+/// must be forensically visible. Best-effort: when the daemon owns the writer
+/// the frame is FORWARDED over audit-RPC (AUDIT-RPC-01); otherwise a one-shot
+/// writer appends it. Payload `{previous, next, source:"cli"}`.
+async fn emit_autonomy_change(previous: AutonomyLevel, next: AutonomyLevel) {
+    let Some(event_type) = change_event(previous, next) else {
+        return;
+    };
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "previous": previous.as_str(),
+        "next": next.as_str(),
+        "source": "cli",
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+
+    let home = FreedomConfig::default_neoth_home();
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    if matches!(
+        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+        Ok(Some(_))
+    ) {
+        // Daemon owns the single WAL writer → forward over the loopback
+        // audit-RPC channel (0xA2/0xA3 are allowlisted there).
+        if let Err(e) =
+            crate::daemon::audit_rpc::try_post_audit_frame(&home, event_type, &payload).await
+        {
+            tracing::debug!(error = %e, "autonomy-change audit forward failed (best-effort)");
+        }
+    } else {
+        // No daemon → open a one-shot writer and append directly.
+        let segment = home.join("wal").join("000001.wal");
+        if let Some(parent) = segment.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok((writer, join)) = crate::wal::spawn(segment) {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            let _ = writer.append(header, payload).await;
+            drop(writer);
+            let _ = join.await;
+        }
+    }
+}
+
+pub async fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()> {
     match args.action {
         AutonomyAction::Show => run_show(output),
-        AutonomyAction::Set { level } => run_set(&level, output),
+        AutonomyAction::Set { level } => run_set(&level, output).await,
     }
 }
 
@@ -72,7 +143,7 @@ fn run_show(output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
-fn run_set(level: &str, output: OutputFormat) -> Result<()> {
+async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path().context(
         "load freedom.yaml (run `neoth init` first if this is a fresh install)",
     )?;
@@ -80,6 +151,9 @@ fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     let applied = next.autonomy;
     next.save_public_to_default_path()
         .context("persist the new autonomy level to freedom.yaml")?;
+    // Forensic audit of the security-relevant change (best-effort, after the
+    // persist so a recorded frame always reflects what's on disk).
+    emit_autonomy_change(previous, applied).await;
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -136,6 +210,28 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("invalid autonomy level"), "got: {msg}");
         assert!(msg.contains("strict") && msg.contains("full"), "lists valid levels: {msg}");
+    }
+
+    #[test]
+    fn change_event_picks_elevated_derogated_or_none() {
+        use crate::wal::events::{EVENT_TYPE_LEVEL_DEROGATED, EVENT_TYPE_LEVEL_ELEVATED};
+        // Upward → elevated.
+        assert_eq!(
+            change_event(AutonomyLevel::Standard, AutonomyLevel::Full),
+            Some(EVENT_TYPE_LEVEL_ELEVATED)
+        );
+        // Downward → derogated.
+        assert_eq!(
+            change_event(AutonomyLevel::Full, AutonomyLevel::Strict),
+            Some(EVENT_TYPE_LEVEL_DEROGATED)
+        );
+        // To custom (ranks highest) → elevated.
+        assert_eq!(
+            change_event(AutonomyLevel::Standard, AutonomyLevel::Custom),
+            Some(EVENT_TYPE_LEVEL_ELEVATED)
+        );
+        // Unchanged → no frame.
+        assert_eq!(change_event(AutonomyLevel::Elevated, AutonomyLevel::Elevated), None);
     }
 
     #[test]

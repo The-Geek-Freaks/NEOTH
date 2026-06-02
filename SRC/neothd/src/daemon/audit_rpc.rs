@@ -54,11 +54,14 @@ use crate::wal::writer::WalWriterHandle;
 
 /// The ONLY event types a one-shot CLI may forward over the audit-RPC channel —
 /// the permission-band codes that are lost today when the daemon owns the
-/// writer (lease grant/expire/revoke + OS file read/write + app-launch, with
-/// their denial variants). A compile-time `const`, deliberately NOT a config
-/// toggle: widening it is a code change that goes through review, never a
-/// runtime flag an attacker (or a careless operator) could flip.
+/// writer: autonomy-level changes (`neoth autonomy set`), lease
+/// grant/expire/revoke, and OS file read/write + app-launch (with their denial
+/// variants). A compile-time `const`, deliberately NOT a config toggle:
+/// widening it is a code change that goes through review, never a runtime flag
+/// an attacker (or a careless operator) could flip.
 pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
+    0xA2, // LEVEL_ELEVATED   — `neoth autonomy set` raised the level
+    0xA3, // LEVEL_DEROGATED  — `neoth autonomy set` lowered the level
     0xA5, // LEASE_GRANTED
     0xA6, // LEASE_EXPIRED
     0xA7, // LEASE_REVOKED
@@ -577,12 +580,17 @@ mod tests {
 
     #[test]
     fn allowlist_contains_exactly_the_oneshot_codes() {
-        assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 9);
+        assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 11);
+        // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
+        for c in [0xA2u8, 0xA3] {
+            assert!(is_allowed_client_event(c), "{c:#x} (autonomy) must be allowed");
+        }
         for c in 0xA5u8..=0xADu8 {
             assert!(is_allowed_client_event(c), "{c:#x} must be allowed");
         }
-        // Daemon-lifecycle / cluster / quota codes are NOT forwardable.
-        for c in [0x10u8, 0x15, 0xAE, 0xAF, 0xE0, 0xF0] {
+        // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
+        // autonomy codes must NOT bleed into the neighbouring 0xA0/0xA1/0xA4.
+        for c in [0x10u8, 0x15, 0xA0, 0xA1, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
             assert!(!is_allowed_client_event(c), "{c:#x} must be refused");
         }
     }

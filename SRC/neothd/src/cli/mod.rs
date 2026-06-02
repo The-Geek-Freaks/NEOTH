@@ -837,7 +837,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             kanban::run_kanban(args).await?;
         }
         Commands::Autonomy(args) => {
-            autonomy::run_autonomy(args, global_output)?;
+            autonomy::run_autonomy(args, global_output).await?;
         }
         Commands::Cron(args) => {
             cron::run_cron(args, global_output).await?;
