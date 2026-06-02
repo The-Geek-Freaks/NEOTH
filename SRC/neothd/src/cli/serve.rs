@@ -1179,6 +1179,58 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         },
     };
 
+    // ── 5c-ter. Spawn the audit-RPC listener — AUDIT-RPC-01 ────────────────
+    //
+    // Off by default. When `freedom.yaml::audit_rpc.enabled = true`, a loopback
+    // listener lets one-shot CLIs forward their audit frames to this (the
+    // WAL-owning) daemon so a `neoth os launch` / `fs` / `lease` run while the
+    // daemon is up still lands its `0xA5..=0xAD` audit frames. Bearer-token +
+    // loopback-only + a compile-time event-type allowlist (anti-poisoning).
+    let mut _audit_rpc_guard: Option<crate::daemon::audit_rpc::SidecarGuard> = None;
+    let audit_rpc_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
+        if config.audit_rpc.enabled {
+            let home = FreedomConfig::default_neoth_home();
+            // Clear any sidecar+token a PRIOR daemon left behind on a crash
+            // (no clean SidecarGuard drop) BEFORE minting fresh ones — closes
+            // the stale-token-disclosure window (recycled port).
+            crate::daemon::audit_rpc::remove_sidecar(&home);
+            match crate::daemon::audit_rpc::init_rpc_token(&home) {
+                Ok(token) => {
+                    let state = crate::daemon::audit_rpc::AuditRpcState {
+                        token: token.clone(),
+                        writer: writer.clone(),
+                        cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+                    };
+                    match crate::daemon::audit_rpc::bind_and_serve(state).await {
+                        Ok((addr, task)) => {
+                            if let Err(e) = crate::daemon::audit_rpc::write_sidecar(
+                                &home,
+                                addr.port(),
+                                std::process::id(),
+                                &token,
+                            ) {
+                                warn!(error = %e, "audit-RPC sidecar write failed; one-shots can't find the port");
+                            }
+                            _audit_rpc_guard =
+                                Some(crate::daemon::audit_rpc::SidecarGuard::new(home.clone()));
+                            info!(port = addr.port(), "audit-RPC listener up (127.0.0.1)");
+                            Some(task)
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "audit-RPC listener failed to bind; one-shot audit forwarding disabled");
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "audit-RPC token mint failed; listener not started");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
     // ── 5d. Cron scheduler — Phase 33a AU-B5 ───────────────────────────────
     //
     // Loads `~/.neoth/jobs.yaml` if present and spawns the tick loop.
@@ -2318,6 +2370,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // Abort the /healthz listener — it never writes WAL so it can be cancelled
     // freely. In-flight connections finish on their own.
+    if let Some(task) = audit_rpc_task {
+        task.abort();
+    }
+    // _audit_rpc_guard drops here at fn end → removes the sidecar + token.
     if let Some(task) = healthz_task {
         task.abort();
         let _ = task.await;

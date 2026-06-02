@@ -123,7 +123,11 @@ fn read_pid(path: &Path) -> Result<u32> {
 /// `windows`: OpenProcess + GetExitCodeProcess — but to avoid a `windows` crate
 /// dependency we shell out to `tasklist /FI "PID eq <pid>"` and grep for the PID.
 /// The subprocess approach is the same shape as `win_acl::icacls` (see D-008).
-fn pid_is_alive(pid: u32) -> bool {
+///
+/// `pub(crate)` so the AUDIT-RPC-01 client can reject a stale sidecar (a
+/// crashed daemon's port may have been recycled by another local process —
+/// sending the bearer token there would disclose it).
+pub(crate) fn pid_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         // libc::kill with signal 0 = existence check. Returns 0 on success.

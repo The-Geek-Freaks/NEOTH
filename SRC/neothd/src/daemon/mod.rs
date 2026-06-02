@@ -6,6 +6,10 @@
 //! command surfaces.
 
 pub mod accelerator;
+/// AUDIT-RPC-01 — loopback audit-RPC listener + client so one-shot CLIs can
+/// forward audit frames to the WAL-owning daemon (bearer-auth, loopback-only,
+/// event-type allowlist). Gated `freedom.yaml::audit_rpc.enabled` (default off).
+pub mod audit_rpc;
 /// MV-01b (Session 28c) — daemon CLI auto-apply loop. At
 /// `AutonomyLevel::Elevated`/`Full` it periodically applies updates for
 /// the NEOTH-managed CLIs (claude-cli / antigravity-cli / codex) and

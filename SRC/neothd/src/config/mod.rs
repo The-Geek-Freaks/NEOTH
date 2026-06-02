@@ -381,6 +381,27 @@ pub struct FreedomConfig {
     /// separately by `cluster::policy`; serde ignores them here.
     #[serde(default)]
     pub cluster: ClusterConfig,
+    /// AUDIT-RPC-01 — loopback audit-RPC listener. When the daemon owns the
+    /// single WAL writer, one-shot CLIs (`neoth os launch`, `fs`, `lease`, …)
+    /// can't write their own audit frames; with this enabled they forward an
+    /// authenticated audit intent to the running daemon over `127.0.0.1:<auto>`
+    /// (bearer-token + loopback-only + a compile-time event-type allowlist), so
+    /// every gated action stays audited even while `neoth serve` is up.
+    /// Default OFF at the struct level (source builds stay opt-in); the wizard
+    /// turns it on so noob operators get audited one-shots automatically.
+    #[serde(default)]
+    pub audit_rpc: AuditRpcConfig,
+}
+
+/// AUDIT-RPC-01 — audit-RPC listener config. Default: disabled (the daemon
+/// binds no audit-RPC port unless this is flipped on).
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct AuditRpcConfig {
+    /// Bind the loopback audit-RPC listener. No port field — the daemon always
+    /// binds `127.0.0.1:0` (OS-assigned) and advertises the chosen port in the
+    /// `~/.neoth/audit_rpc.port` sidecar so one-shot CLIs can find it.
+    pub enabled: bool,
 }
 
 /// SL-00 cluster-identity config. Default: no name (no cluster).

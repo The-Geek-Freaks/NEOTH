@@ -103,6 +103,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/installers/",
     "src/memory/infra_scan.rs",
     "src/daemon/healthz.rs",
+    "src/daemon/audit_rpc.rs",
     "src/channels/webhook_listener.rs",
     "src/channels/slack_socket.rs",
     "src/channels/discord.rs",

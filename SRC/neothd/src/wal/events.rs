@@ -823,6 +823,21 @@ pub const EVENT_TYPE_OS_APP_LAUNCH: u8 = 0xAC;
 /// itself failed. The audit trail records every blocked process launch.
 /// Payload: `{program, reason, ts_unix}`.
 pub const EVENT_TYPE_OS_APP_LAUNCH_DENIED: u8 = 0xAD;
+/// `0xAE AUDIT_RPC_ACCEPT` — AUDIT-RPC-01. The daemon's loopback audit-RPC
+/// listener accepted an authenticated audit intent from a one-shot CLI (which
+/// could not write the WAL itself because the daemon owns the single writer)
+/// and appended the forwarded frame. Emitted by the DAEMON, not the client —
+/// an observability record that the IPC channel was used. Payload:
+/// `{forwarded_event_type, bytes, ts_unix}`.
+pub const EVENT_TYPE_AUDIT_RPC_ACCEPT: u8 = 0xAE;
+/// `0xAF AUDIT_RPC_REJECT` — AUDIT-RPC-01. The audit-RPC listener REFUSED an
+/// inbound request — bad/missing bearer token, non-loopback peer, oversized
+/// body, malformed frame, or a `forwarded_event_type` outside the compile-time
+/// client allowlist (the anti-audit-poisoning gate). Emitted by the DAEMON.
+/// Auth failures are NOT recorded here (avoids a forged-frame paradox + WAL
+/// spam); only post-auth rejects (allowlist / decode) are. Payload:
+/// `{reason, ts_unix}`.
+pub const EVENT_TYPE_AUDIT_RPC_REJECT: u8 = 0xAF;
 
 // ---- 0xB0..=0xBF  Hypothalamus / user-profile -----------------------------
 //
@@ -1452,6 +1467,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("os_file_write_denied", EVENT_TYPE_OS_FILE_WRITE_DENIED),
     ("os_app_launch", EVENT_TYPE_OS_APP_LAUNCH),
     ("os_app_launch_denied", EVENT_TYPE_OS_APP_LAUNCH_DENIED),
+    ("audit_rpc_accept", EVENT_TYPE_AUDIT_RPC_ACCEPT),
+    ("audit_rpc_reject", EVENT_TYPE_AUDIT_RPC_REJECT),
     ("operator_feedback", EVENT_TYPE_OPERATOR_FEEDBACK),
     (
         "eval_critical_divergence",
@@ -1710,6 +1727,10 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_OS_APP_LAUNCH < 0xA0 || EVENT_TYPE_OS_APP_LAUNCH > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_OS_APP_LAUNCH_DENIED < 0xA0
         || EVENT_TYPE_OS_APP_LAUNCH_DENIED > 0xAF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_AUDIT_RPC_ACCEPT < 0xA0 || EVENT_TYPE_AUDIT_RPC_ACCEPT > 0xAF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_AUDIT_RPC_REJECT < 0xA0 || EVENT_TYPE_AUDIT_RPC_REJECT > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_DELTA < 0xB0 || EVENT_TYPE_PROFILE_DELTA > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PROFILE_REINFORCED < 0xB0 || EVENT_TYPE_PROFILE_REINFORCED > 0xBF) as usize];
@@ -1951,6 +1972,8 @@ mod tests {
                 "OS_APP_LAUNCH_DENIED",
                 EVENT_TYPE_OS_APP_LAUNCH_DENIED,
             ),
+            ("AUDIT_RPC_ACCEPT", EVENT_TYPE_AUDIT_RPC_ACCEPT),
+            ("AUDIT_RPC_REJECT", EVENT_TYPE_AUDIT_RPC_REJECT),
             ("COST_ESTIMATE_SHOWN", EVENT_TYPE_COST_ESTIMATE_SHOWN),
             ("PROFILE_DELTA", EVENT_TYPE_PROFILE_DELTA),
             ("PROFILE_REINFORCED", EVENT_TYPE_PROFILE_REINFORCED),
