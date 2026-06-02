@@ -58,6 +58,11 @@ pub mod profile_adapt_cron;
 /// tick frequency.
 pub mod reflection_cron;
 pub mod resource_watch;
+/// HO-07 — neoth-monitor alerting cron. Scans WAL integrity + crash.log +
+/// channel activity every `monitor.interval_secs` and emits
+/// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
+/// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
+pub mod monitor_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

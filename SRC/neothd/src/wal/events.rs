@@ -452,6 +452,56 @@ pub const EVENT_TYPE_DOCTOR_TICK: u8 = 0x46;
 /// ran hot at T" signal, not idle noise. No-op on non-GPU hosts.
 pub const EVENT_TYPE_RESOURCE_PRESSURE_ALERT: u8 = 0x47;
 
+/// `0x48 WAL_CRC_ALERT` — HO-07 monitor cron detected one or more WAL
+/// integrity anomalies (`0x50 RECOVERY_TRUNCATED` or `0x51
+/// COMPACTION_AUTH_FAILED` frames) in the configured look-back window.
+/// Operators see this as "the WAL had corruption events in the last N
+/// seconds; inspect with `neoth wal show --type recovery_truncated`".
+/// Emitted ONLY when the count is non-zero so every frame is
+/// actionable. Immediate-sync (durability-critical — a corruption alert
+/// that is itself lost on crash is an audit hole).
+///
+/// Payload (JSON):
+///   - `recovery_truncated_count`: u32 — frames of type 0x50 in the window
+///   - `compaction_auth_failed_count`: u32 — frames of type 0x51
+///   - `window_secs`: u64 — look-back window in seconds
+///   - `ts_unix`: i64
+pub const EVENT_TYPE_WAL_CRC_ALERT: u8 = 0x48;
+
+/// `0x49 CRASH_LOG_ALERT` — HO-07 monitor cron detected new content in
+/// `~/.neoth/crash.log` since the previous tick (the panic handler writes
+/// there; the WAL writer channel is unreliable during a panic so crash
+/// signals reach the WAL only via this monitor). Emitted ONLY when new
+/// content appears. Immediate-sync (a crash-alert frame that is itself
+/// lost on crash is an audit hole).
+///
+/// Payload (JSON):
+///   - `crash_log_path`: String — absolute path of the crash log
+///   - `new_crashes_since_last_check`: u32 — count of new `[neoth panic]`
+///     lines since the last tick
+///   - `last_crash_ts_unix`: i64 — unix timestamp of the most recent panic
+///     line parsed, 0 when unparseable
+///   - `ts_unix`: i64
+pub const EVENT_TYPE_CRASH_LOG_ALERT: u8 = 0x49;
+
+/// `0x4A CHANNEL_SILENCE_ALERT` — HO-07 monitor cron detected that no
+/// `0x32 CHANNEL_INGRESS` or `0x33 CHANNEL_EGRESS` frames have appeared
+/// in the WAL for `monitor.channel_silence_secs` (default 1800s / 30 min)
+/// while the current UTC hour falls inside the operator's configured
+/// active window (`monitor.channel_silence_active_utc_start` ..
+/// `monitor.channel_silence_active_utc_end`; default 07..21 UTC ≈
+/// 08..22 CET). Advisory — batchable (silence is not durability-critical;
+/// loss in a crash window is acceptable).
+///
+/// Payload (JSON):
+///   - `last_activity_ts_unix`: i64 — unix timestamp of the last
+///     CHANNEL_INGRESS/EGRESS frame seen, 0 when none found in look-back
+///   - `silence_duration_secs`: u64 — seconds since last activity
+///   - `active_window_utc_start`: u8 — hour (0-23) the active window opens
+///   - `active_window_utc_end`: u8 — hour (0-23) the active window closes
+///   - `ts_unix`: i64
+pub const EVENT_TYPE_CHANNEL_SILENCE_ALERT: u8 = 0x4A;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit
@@ -1312,6 +1362,10 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             | EVENT_TYPE_CLUSTER_GOSSIP_SENT
             | EVENT_TYPE_CLUSTER_GOSSIP_RECEIVED
             | EVENT_TYPE_CLUSTER_GOSSIP_DROPPED
+            // HO-07: channel silence is advisory; loss in a crash window is
+            // acceptable. WAL-CRC and crash-log alerts are immediate-sync by
+            // the default-true rule (not listed here).
+            | EVENT_TYPE_CHANNEL_SILENCE_ALERT
     )
 }
 
@@ -1389,6 +1443,9 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
     ),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
+    ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
+    ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
+    ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -1569,6 +1626,12 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_DOCTOR_TICK < 0x40 || EVENT_TYPE_DOCTOR_TICK > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_RESOURCE_PRESSURE_ALERT < 0x40
         || EVENT_TYPE_RESOURCE_PRESSURE_ALERT > 0x4F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_WAL_CRC_ALERT < 0x40 || EVENT_TYPE_WAL_CRC_ALERT > 0x4F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_CRASH_LOG_ALERT < 0x40 || EVENT_TYPE_CRASH_LOG_ALERT > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CHANNEL_SILENCE_ALERT < 0x40
+        || EVENT_TYPE_CHANNEL_SILENCE_ALERT > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
@@ -1807,6 +1870,9 @@ mod tests {
                 "RESOURCE_PRESSURE_ALERT",
                 EVENT_TYPE_RESOURCE_PRESSURE_ALERT,
             ),
+            ("WAL_CRC_ALERT", EVENT_TYPE_WAL_CRC_ALERT),
+            ("CRASH_LOG_ALERT", EVENT_TYPE_CRASH_LOG_ALERT),
+            ("CHANNEL_SILENCE_ALERT", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
             ("RECOVERY_TRUNCATED", EVENT_TYPE_RECOVERY_TRUNCATED),
             (
                 "COUNCIL_SYNTHESIS_ATTEMPTED",

@@ -1497,6 +1497,29 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── HO-07 monitor alerting cron ──────────────────────────────────────────
+    // Polls WAL integrity + crash.log + channel activity; emits
+    // `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` / `0x4A CHANNEL_SILENCE_ALERT`.
+    // Default OFF → no idle task; opt-in via `monitor.enabled = true`.
+    let monitor_cron_handle: Option<tokio::task::JoinHandle<()>> = {
+        let home = FreedomConfig::default_neoth_home();
+        let wal_dir_for_monitor = wal_dir.clone();
+        let writer_for_monitor = writer.clone();
+        let handle = crate::daemon::monitor_cron::spawn_monitor_cron_loop(
+            config.monitor.clone(),
+            home,
+            wal_dir_for_monitor,
+            writer_for_monitor,
+        );
+        if handle.is_some() {
+            info!(
+                interval_secs = config.monitor.interval_secs,
+                "monitor cron loop spawned (HO-07)"
+            );
+        }
+        handle
+    };
+
     // ── Passive user-adaptation cron (SPEC-05) ────────────────────────────
     // Re-aggregates the behavioural snapshot from the WAL every
     // `profile_adapt.interval_secs` (daily default) + queues new self-dev
@@ -2185,6 +2208,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // Abort the SL-03 resource-watch cron loop (drain before writer close).
     if let Some(task) = resource_watch_handle {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // Abort the HO-07 monitor alerting cron loop (drain before writer close).
+    if let Some(task) = monitor_cron_handle {
         task.abort();
         let _ = task.await;
     }

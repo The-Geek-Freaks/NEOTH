@@ -54,6 +54,7 @@ pub mod mcp;
 pub mod memory;
 pub mod migrate;
 pub mod mode;
+pub mod monitor;
 pub mod models;
 pub mod obsidian;
 pub mod obsidian_sync_task;
@@ -508,6 +509,11 @@ pub enum Commands {
     /// Exit code non-zero on any FAIL. CI-friendly: `neoth doctor --quiet`.
     Doctor(doctor::DoctorArgs),
 
+    /// HO-07 alert sidecar summary. `status` reads the WAL + crash.log and
+    /// prints a 3-row table of WAL-CRC / crash / channel-silence alert counts.
+    /// Exit code 1 when any alert fired in the look-back window.
+    Monitor(monitor::MonitorArgs),
+
     /// Apply schema migrations to `~/.neoth/views.db`. `neoth serve` runs
     /// migrations automatically on startup; this command exposes them
     /// offline + supports `--dry-run` and `--to <version>`.
@@ -931,6 +937,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Doctor(mut args) => {
             args.output = global_output;
             doctor::run_doctor(args).await?;
+        }
+        Commands::Monitor(args) => {
+            monitor::run(args).await?;
         }
         Commands::Migrate(mut args) => {
             args.output = global_output;

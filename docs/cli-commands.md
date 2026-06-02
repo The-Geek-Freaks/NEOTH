@@ -924,6 +924,14 @@ _Aliases:_ `neoth models fetch`
 - `<NAME>` — Model id. Known: `clip`, `whisper`
 - `--repo <REPO>` — Override the HF repo (otherwise the default for the chosen name is used)
 
+## `neoth monitor`
+
+HO-07 alert sidecar summary. `status` reads the WAL + crash.log and prints a 3-row table of WAL-CRC / crash / channel-silence alert counts. Exit code 1 when any alert fired in the look-back window
+
+- `--home <DIR>` — Override `~/.neoth/` for tests
+- `--hours <HOURS>` — Look-back window in hours (default 24)
+- `--json <JSON>` — Print JSON instead of the table
+
 ## `neoth obsidian`
 
 One-way sync of the session archive into an Obsidian vault. Phase 13 R-5. Idempotent — re-runs skip unchanged files

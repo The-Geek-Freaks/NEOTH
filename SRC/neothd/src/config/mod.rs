@@ -321,6 +321,12 @@ pub struct FreedomConfig {
     /// non-NVIDIA hosts.
     #[serde(default)]
     pub resource_watch: ResourceWatchConfig,
+    /// HO-07 — neoth-monitor alerting sidecar cron. When `enabled`, the
+    /// daemon polls WAL integrity, crash.log, and channel activity and
+    /// emits `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
+    /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Default OFF (opt-in).
+    #[serde(default)]
+    pub monitor: MonitorConfig,
     /// SPEC-05 — passive user-adaptation engine. When `enabled = true`,
     /// a daemon cron (`daemon::profile_adapt_cron`) re-aggregates the
     /// behavioural snapshot from the WAL every `interval_secs`, runs the
@@ -684,6 +690,58 @@ impl ResourceWatchConfig {
     /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(10))
+    }
+}
+
+/// HO-07 — neoth-monitor alerting cron config. When `enabled`, the daemon
+/// scans the WAL + crash log every `interval_secs` and emits advisory
+/// frames when anomalies are detected:
+///   - `0x48 WAL_CRC_ALERT` when RECOVERY_TRUNCATED / COMPACTION_AUTH_FAILED
+///     frames appear in the `wal_crc_window_secs` look-back
+///   - `0x49 CRASH_LOG_ALERT` when new content arrives in `crash.log`
+///   - `0x4A CHANNEL_SILENCE_ALERT` when no CHANNEL_INGRESS/EGRESS frames
+///     appear for `channel_silence_secs` during the active UTC window
+///
+/// Default OFF. No-op when the WAL dir is empty / crash.log absent.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MonitorConfig {
+    /// Master switch. `false` (default) = the cron never spawns.
+    pub enabled: bool,
+    /// Poll interval in seconds. Default 300 (5 min). Clamped to 30s floor.
+    pub interval_secs: u64,
+    /// Look-back window for WAL CRC anomaly counting, seconds. Default 3600 (1h).
+    pub wal_crc_window_secs: u64,
+    /// Channel silence threshold in seconds. Default 1800 (30 min).
+    pub channel_silence_secs: u64,
+    /// UTC hour (0-23) when the active channel-watch window OPENS.
+    /// Default 7 (07:00 UTC ≈ 08:00 CET / 09:00 CEST).
+    pub channel_silence_active_utc_start: u8,
+    /// UTC hour (0-23) when the active channel-watch window CLOSES.
+    /// Default 21 (21:00 UTC ≈ 22:00 CET / 23:00 CEST).
+    pub channel_silence_active_utc_end: u8,
+}
+
+/// 5 minutes — the monitor cron default cadence.
+pub const DEFAULT_MONITOR_INTERVAL_SECS: u64 = 300;
+
+impl Default for MonitorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_MONITOR_INTERVAL_SECS,
+            wal_crc_window_secs: 3600,
+            channel_silence_secs: 1800,
+            channel_silence_active_utc_start: 7,
+            channel_silence_active_utc_end: 21,
+        }
+    }
+}
+
+impl MonitorConfig {
+    /// Poll interval as a `Duration`, clamped to a 30s floor.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(30))
     }
 }
 
