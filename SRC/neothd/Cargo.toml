@@ -245,6 +245,16 @@ hex    = "0.4"
 # (`NEOTH_RELEASE_MINISIGN_PUBKEY` env, via `option_env!`).
 minisign-verify = "0.2"
 
+# KF-03 proof-bundle SIGNING (the operator's per-proof key — a SEPARATE
+# trust root from the project release key that minisign-verify checks).
+# ed25519-dalek is already resolved transitively (via minisign-verify's
+# dep graph, pinned 2.2.0 in Cargo.lock) so promoting it to a direct dep
+# is near-zero build cost + adds NO new crate. Pure-Rust, no C/openssl/ring.
+# Signing is fully headless-testable (sign->verify round-trip) — chosen over
+# shelling out to the `minisign` binary (DAU-hostile: install + keygen +
+# password; not CI-testable) per the Session-34 3-lens DAU-safety gremium.
+ed25519-dalek = "2"
+
 # N-3 Workstream D (Session 23) — base64url-NOPAD encoding for the
 # localhost API bearer token. 32 random bytes → 43-char URL-safe
 # token stored at ~/.neoth/n8n_api_token.

@@ -5044,6 +5044,7 @@ dependencies = [
  "crc32c",
  "cron",
  "dialoguer",
+ "ed25519-dalek",
  "filetime",
  "flate2",
  "futures-util",

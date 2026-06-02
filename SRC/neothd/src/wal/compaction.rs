@@ -214,7 +214,7 @@ pub fn rewrap_key(path: &Path, raw_key: &[u8]) -> Result<()> {
 /// the bytes unchanged (legacy plaintext path). Linux: always return
 /// unchanged.
 #[cfg(windows)]
-fn maybe_unwrap_dpapi(body: &[u8], path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn maybe_unwrap_dpapi(body: &[u8], path: &Path) -> Result<Vec<u8>> {
     if crate::wal::dpapi::is_wrapped(body) {
         crate::wal::dpapi::unprotect(body)
             .with_context(|| format!("DPAPI-unwrap HMAC key at {}", path.display()))
@@ -224,12 +224,12 @@ fn maybe_unwrap_dpapi(body: &[u8], path: &Path) -> Result<Vec<u8>> {
 }
 
 #[cfg(not(windows))]
-fn maybe_unwrap_dpapi(body: &[u8], _path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn maybe_unwrap_dpapi(body: &[u8], _path: &Path) -> Result<Vec<u8>> {
     Ok(body.to_vec())
 }
 
 #[cfg(unix)]
-fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
+pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = std::fs::OpenOptions::new()
         .create_new(true)
@@ -246,7 +246,7 @@ fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
+pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
     // K-Sec-4: DPAPI-wrap before writing so a copy of the file is
     // useless outside the current Windows user account. If DPAPI is
     // unavailable (no user session, SYSTEM context, …) log a warning

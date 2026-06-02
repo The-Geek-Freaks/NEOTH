@@ -1746,6 +1746,7 @@ KF-03 — export a tamper-evidence `.neoth-proof` bundle covering every frame in
 - `--out <PATH>` — Output path. Default: `~/.neoth/exports/neoth-<unix>.neoth-proof`
 - `--verify-chain <VERIFY_CHAIN>` — Re-verify each included compaction marker's HMAC against the local key at export time (sets `chain_verified`). Off by default so an operator without the key can still export the metadata bundle
 - `--wal-dir <DIR>` — WAL directory override (tests / inspecting a backup)
+- `--sign <SIGN>` — KF-03 — ed25519-sign the bundle with the operator's auto-managed signing key (`~/.neoth/wal/signing.key`, generated on first use, no prompt). Embeds the signature + public key so a third party can run `neoth wal verify-proof`. Off by default (an unsigned metadata bundle still carries the SHA-256 self-integrity digest)
 
 ### `neoth wal show`
 
@@ -1761,6 +1762,13 @@ Pretty-print frames, newest first. With no `<segment>`, scans EVERY `~/.neoth/wa
 Count frames per event type + report header validity + total bytes
 
 - `<SEGMENT>` — Path to the segment file (`~/.neoth/wal/NNNNNN.wal`)
+
+### `neoth wal verify-proof`
+
+KF-03 — verify a `.neoth-proof` bundle: re-check the SHA-256 self-integrity digest, then (if signed) the ed25519 signature. Prints a plain-language verdict + exits non-zero on tamper / bad signature. Pass `--pubkey <base64>` (the operator's out-of-band-shared key) for TRUE attribution; without it the signature is only self-consistency- checked against the key embedded in the file
+
+- `--proof <PATH>` — Path to the `.neoth-proof` file
+- `--pubkey <BASE64>` — Operator's expected signing public key (base64), pinned out-of-band
 
 ## `neoth webhook`
 

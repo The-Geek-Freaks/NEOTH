@@ -17,7 +17,11 @@
 use serde::{Deserialize, Serialize};
 
 /// Bumped only on a breaking format change. Verifiers reject unknown majors.
-pub const PROOF_SCHEMA_VERSION: u8 = 1;
+/// v2 (KF-03 signed slice): the envelope gained `signer_pubkey` +
+/// `sig_algorithm` alongside the now-populated `signature`. Unsigned v2
+/// bundles leave all three `None` (back-compatible with the v1 shape via
+/// `#[serde(default)]`), so the bump is conservative.
+pub const PROOF_SCHEMA_VERSION: u8 = 2;
 
 /// One WAL frame captured into the proof, metadata + the frame's own
 /// `payload_hash` (the per-frame integrity anchor). Payload BYTES are
@@ -99,9 +103,43 @@ pub struct ProofEnvelope {
     pub bundle: ProofBundle,
     /// SHA-256 hex over `bundle.canonical_bytes()`.
     pub digest_sha256: String,
-    /// minisign signature (base64) over `bundle.canonical_bytes()`. `None`
-    /// until the `--sign` slice + operator keypair land.
+    /// KF-03: base64 (standard) of the raw 64-byte ed25519 signature over
+    /// `bundle.canonical_bytes()`, produced by `neoth wal export --sign` with
+    /// the operator's auto-managed signing key. `None` for an unsigned export.
     pub signature: Option<String>,
+    /// KF-03: base64 (standard) of the 32-byte ed25519 PUBLIC key that signed
+    /// this bundle, embedded so `neoth wal verify-proof` is self-contained.
+    /// **Self-consistency only** — on an untrusted channel an attacker could
+    /// replace both the bundle AND this key + re-sign; true operator
+    /// attribution requires pinning the key out-of-band (`--pubkey`). `None`
+    /// when unsigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_pubkey: Option<String>,
+    /// KF-03: signature scheme tag (`"ed25519-raw"`); lets a future scheme
+    /// change be unambiguous to a verifier. `None` when unsigned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sig_algorithm: Option<String>,
+}
+
+/// Outcome of [`ProofEnvelope::check_signature`]. Deliberately distinguishes
+/// "self-consistent" (signed by the embedded key — proves no post-sign
+/// tamper, but NOT who) from "verified against the operator's expected key"
+/// (true attribution) so a verifier never mistakes one for the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SignatureCheck {
+    /// No signature present (unsigned bundle).
+    Unsigned,
+    /// Signature valid against the EMBEDDED pubkey only. Proves the bundle was
+    /// not altered after signing; does NOT prove the signer's identity (the
+    /// embedded key is attacker-replaceable on an untrusted channel). The
+    /// operator should pin `signer_pubkey` out-of-band + re-verify with it.
+    SelfConsistent { signer_pubkey: String },
+    /// Signature valid AND the embedded key matches the operator's pinned
+    /// (out-of-band) `--pubkey` — true attribution.
+    VerifiedAgainstExpected,
+    /// Signature present but does not verify (tampered bundle / wrong key /
+    /// malformed signature / embedded key ≠ expected key).
+    Invalid { reason: String },
 }
 
 impl ProofEnvelope {
@@ -112,6 +150,8 @@ impl ProofEnvelope {
             bundle,
             digest_sha256,
             signature: None,
+            signer_pubkey: None,
+            sig_algorithm: None,
         }
     }
 
@@ -119,6 +159,63 @@ impl ProofEnvelope {
     /// mismatch means the bundle's frame list was altered after export.
     pub fn digest_matches(&self) -> bool {
         self.bundle.digest_hex() == self.digest_sha256
+    }
+
+    /// KF-03: sign the sealed bundle with the operator's ed25519 key,
+    /// populating `signature` (over `bundle.canonical_bytes()`),
+    /// `signer_pubkey`, and `sig_algorithm`. Idempotent — re-signing
+    /// overwrites all three. The digest covers `canonical_bytes()` and the
+    /// signature covers the SAME bytes, so a verifier's digest + signature
+    /// checks are consistent.
+    pub fn sign(&mut self, key: &ed25519_dalek::SigningKey) {
+        let msg = self.bundle.canonical_bytes();
+        self.signature = Some(crate::wal::signing::sign_b64(key, &msg));
+        self.signer_pubkey = Some(crate::wal::signing::pubkey_b64(key));
+        self.sig_algorithm = Some(crate::wal::signing::SIG_ALGORITHM.to_string());
+    }
+
+    /// KF-03: check the signature. `expected_pubkey` is the operator's pinned
+    /// (out-of-band) public key; pass `Some` for TRUE attribution, `None` for
+    /// a self-consistency-only check against the embedded key. See
+    /// [`SignatureCheck`] for the verdict semantics. Always verifies over
+    /// `bundle.canonical_bytes()` — call [`Self::digest_matches`] FIRST so a
+    /// digest mismatch is reported as tamper before reaching here.
+    pub fn check_signature(&self, expected_pubkey: Option<&str>) -> SignatureCheck {
+        let Some(sig) = self.signature.as_ref() else {
+            return SignatureCheck::Unsigned;
+        };
+        let Some(embedded_pk) = self.signer_pubkey.as_ref() else {
+            return SignatureCheck::Invalid {
+                reason: "signature present but signer_pubkey missing — not verifiable".to_string(),
+            };
+        };
+        let msg = self.bundle.canonical_bytes();
+        match expected_pubkey {
+            // Operator pinned a key out-of-band: it is the trust anchor. The
+            // embedded key must EQUAL it (else the file claims a different
+            // signer) AND the signature must verify under it.
+            Some(expected) => {
+                if expected.trim() != embedded_pk.trim() {
+                    return SignatureCheck::Invalid {
+                        reason: "embedded signer_pubkey does not match the expected --pubkey \
+                                 (the proof was signed by a different key)"
+                            .to_string(),
+                    };
+                }
+                match crate::wal::signing::verify_b64(expected.trim(), sig, &msg) {
+                    Ok(()) => SignatureCheck::VerifiedAgainstExpected,
+                    Err(e) => SignatureCheck::Invalid { reason: e.to_string() },
+                }
+            }
+            // No pinned key: self-consistency only (proves no post-sign tamper,
+            // not identity).
+            None => match crate::wal::signing::verify_b64(embedded_pk, sig, &msg) {
+                Ok(()) => SignatureCheck::SelfConsistent {
+                    signer_pubkey: embedded_pk.clone(),
+                },
+                Err(e) => SignatureCheck::Invalid { reason: e.to_string() },
+            },
+        }
     }
 }
 
@@ -188,5 +285,84 @@ mod tests {
             env.signature.is_none(),
             "unsigned slice leaves signature None"
         );
+        assert_eq!(env.check_signature(None), SignatureCheck::Unsigned);
+    }
+
+    // ── KF-03 signing ─────────────────────────────────────────────────────
+
+    fn test_key(seed: u8) -> ed25519_dalek::SigningKey {
+        ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+    }
+
+    #[test]
+    fn sign_populates_all_three_fields() {
+        let mut env = ProofEnvelope::seal(sample_bundle());
+        env.sign(&test_key(11));
+        assert!(env.signature.is_some());
+        assert!(env.signer_pubkey.is_some());
+        assert_eq!(env.sig_algorithm.as_deref(), Some("ed25519-raw"));
+    }
+
+    #[test]
+    fn signed_envelope_is_self_consistent() {
+        let mut env = ProofEnvelope::seal(sample_bundle());
+        env.sign(&test_key(11));
+        match env.check_signature(None) {
+            SignatureCheck::SelfConsistent { signer_pubkey } => {
+                assert_eq!(Some(signer_pubkey), env.signer_pubkey);
+            }
+            other => panic!("expected SelfConsistent, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn signed_envelope_verifies_against_matching_expected_key() {
+        let key = test_key(11);
+        let mut env = ProofEnvelope::seal(sample_bundle());
+        env.sign(&key);
+        let expected = crate::wal::signing::pubkey_b64(&key);
+        assert_eq!(
+            env.check_signature(Some(&expected)),
+            SignatureCheck::VerifiedAgainstExpected,
+            "the operator's pinned key gives TRUE attribution",
+        );
+    }
+
+    #[test]
+    fn signed_envelope_rejects_wrong_expected_key() {
+        let mut env = ProofEnvelope::seal(sample_bundle());
+        env.sign(&test_key(11));
+        // An attacker can't make the proof verify against the operator's REAL
+        // pinned key (which differs from the embedded one).
+        let other = crate::wal::signing::pubkey_b64(&test_key(99));
+        assert!(matches!(
+            env.check_signature(Some(&other)),
+            SignatureCheck::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn tampering_a_frame_after_signing_breaks_the_signature() {
+        let mut env = ProofEnvelope::seal(sample_bundle());
+        env.sign(&test_key(11));
+        // Alter a frame AFTER signing → canonical_bytes change → the sig (over
+        // the original bytes) no longer verifies. (digest_matches() also
+        // catches this; the signature is the second, key-bound layer.)
+        env.bundle.frames[0].payload_hash = 0x0000_0000;
+        assert!(matches!(
+            env.check_signature(None),
+            SignatureCheck::Invalid { .. }
+        ));
+    }
+
+    #[test]
+    fn unsigned_v2_envelope_round_trips_through_json() {
+        // Back-compat: an unsigned envelope omits the new fields (skip_if None)
+        // and re-parses cleanly.
+        let env = ProofEnvelope::seal(sample_bundle());
+        let json = serde_json::to_string(&env).unwrap();
+        assert!(!json.contains("signer_pubkey"), "unsigned omits the field");
+        let back: ProofEnvelope = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, env);
     }
 }

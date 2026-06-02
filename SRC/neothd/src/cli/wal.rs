@@ -88,6 +88,27 @@ pub enum WalAction {
         /// WAL directory override (tests / inspecting a backup).
         #[arg(long, value_name = "DIR")]
         wal_dir: Option<PathBuf>,
+        /// KF-03 — ed25519-sign the bundle with the operator's auto-managed
+        /// signing key (`~/.neoth/wal/signing.key`, generated on first use, no
+        /// prompt). Embeds the signature + public key so a third party can run
+        /// `neoth wal verify-proof`. Off by default (an unsigned metadata
+        /// bundle still carries the SHA-256 self-integrity digest).
+        #[arg(long, default_value_t = false)]
+        sign: bool,
+    },
+    /// KF-03 — verify a `.neoth-proof` bundle: re-check the SHA-256
+    /// self-integrity digest, then (if signed) the ed25519 signature. Prints a
+    /// plain-language verdict + exits non-zero on tamper / bad signature.
+    /// Pass `--pubkey <base64>` (the operator's out-of-band-shared key) for
+    /// TRUE attribution; without it the signature is only self-consistency-
+    /// checked against the key embedded in the file.
+    VerifyProof {
+        /// Path to the `.neoth-proof` file.
+        #[arg(long, value_name = "PATH")]
+        proof: PathBuf,
+        /// Operator's expected signing public key (base64), pinned out-of-band.
+        #[arg(long, value_name = "BASE64")]
+        pubkey: Option<String>,
     },
 }
 
@@ -115,9 +136,20 @@ pub async fn run_wal(args: WalArgs) -> Result<()> {
             out,
             verify_chain,
             wal_dir,
+            sign,
         } => {
             let wal_dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
-            run_wal_export(&window, out.as_deref(), &wal_dir, verify_chain, args.output)
+            run_wal_export(
+                &window,
+                out.as_deref(),
+                &wal_dir,
+                verify_chain,
+                sign,
+                args.output,
+            )
+        }
+        WalAction::VerifyProof { proof, pubkey } => {
+            run_verify_proof(&proof, pubkey.as_deref(), args.output)
         }
     }
 }
@@ -532,6 +564,7 @@ fn run_wal_export(
     out: Option<&Path>,
     wal_dir: &Path,
     verify_chain: bool,
+    sign: bool,
     output: OutputFormat,
 ) -> Result<()> {
     let now_ns = std::time::SystemTime::now()
@@ -588,7 +621,21 @@ fn run_wal_export(
         markers,
         chain_verified: all_verified,
     };
-    let envelope = ProofEnvelope::seal(bundle);
+    let mut envelope = ProofEnvelope::seal(bundle);
+
+    // KF-03: optionally ed25519-sign the bundle with the operator's
+    // auto-managed signing key (generated on first use — DAU-safe, no prompt,
+    // no install). Embeds the signature + public key into the envelope.
+    let signed_pubkey: Option<String> = if sign {
+        let key = crate::wal::signing::load_or_init_signing_key(
+            &crate::wal::signing::default_signing_key_path(),
+        )
+        .context("load or generate the operator signing key")?;
+        envelope.sign(&key);
+        Some(crate::wal::signing::pubkey_b64(&key))
+    } else {
+        None
+    };
 
     // Default output: ~/.neoth/exports/neoth-<unix>.neoth-proof (predictable
     // dir so the doctor freshness check can find it).
@@ -624,6 +671,8 @@ fn run_wal_export(
                     "digest_sha256": envelope.digest_sha256,
                     "window_start_ts_ns": start_ns,
                     "window_end_ts_ns": end_ns,
+                    "signed": signed_pubkey.is_some(),
+                    "signer_pubkey": signed_pubkey,
                 })
             );
         }
@@ -636,6 +685,19 @@ fn run_wal_export(
                 envelope.bundle.chain_verified
             );
             println!("  digest_sha256:  {}", envelope.digest_sha256);
+            match &signed_pubkey {
+                Some(pk) => {
+                    println!("  signed:         yes (ed25519)");
+                    println!("  signer_pubkey:  {pk}");
+                    println!(
+                        "  share that public key with auditors; they verify with \
+                         `neoth wal verify-proof --proof <file> --pubkey <key>`"
+                    );
+                }
+                None => println!(
+                    "  signed:         no (--sign to ed25519-sign with your operator key)"
+                ),
+            }
             if marker_count == 0 {
                 println!(
                     "  note: window is not yet sealed by a compaction marker — \
@@ -650,6 +712,91 @@ fn run_wal_export(
                 );
             }
         }
+    }
+    Ok(())
+}
+
+/// First 16 chars of a base64 public key + an ellipsis, for human-readable
+/// output (the full key is in the JSON / the file).
+fn short_pubkey(pk: &str) -> String {
+    let t = pk.trim();
+    if t.len() > 16 {
+        format!("{}…", &t[..16])
+    } else {
+        t.to_string()
+    }
+}
+
+/// KF-03 — verify a `.neoth-proof` bundle. Checks the SHA-256 self-integrity
+/// digest FIRST (catches frame-list tampering), then the ed25519 signature if
+/// present. Prints ONE plain-language verdict line a non-technical operator
+/// can act on, and exits non-zero on tamper / bad signature so it gates a
+/// script. `--pubkey` (the operator's out-of-band-pinned key) upgrades a
+/// self-consistency check into true attribution.
+fn run_verify_proof(
+    proof: &Path,
+    expected_pubkey: Option<&str>,
+    output: OutputFormat,
+) -> Result<()> {
+    use crate::wal::proof_bundle::{ProofEnvelope, SignatureCheck};
+
+    let body = std::fs::read_to_string(proof)
+        .with_context(|| format!("read proof bundle {}", proof.display()))?;
+    let envelope: ProofEnvelope = serde_json::from_str(&body)
+        .with_context(|| format!("parse proof bundle {}", proof.display()))?;
+
+    let digest_ok = envelope.digest_matches();
+    let (ok, verdict): (bool, String) = if !digest_ok {
+        (
+            false,
+            "TAMPERED — SHA-256 digest mismatch: the bundle's frame list was altered after export."
+                .to_string(),
+        )
+    } else {
+        match envelope.check_signature(expected_pubkey) {
+            SignatureCheck::Unsigned => (
+                true,
+                "OK (UNSIGNED) — digest intact; the bundle was not signed, so its origin is not attested."
+                    .to_string(),
+            ),
+            SignatureCheck::SelfConsistent { signer_pubkey } => (
+                true,
+                format!(
+                    "OK (SELF-CONSISTENT) — digest intact + signature valid against the embedded key \
+                     {}. NOTE: this proves the bundle was not altered after signing, NOT who signed it \
+                     — for true attribution re-run with --pubkey <the operator's out-of-band key>.",
+                    short_pubkey(&signer_pubkey),
+                ),
+            ),
+            SignatureCheck::VerifiedAgainstExpected => (
+                true,
+                "VERIFIED — digest intact + signature valid against the operator's pinned public key. Authentic."
+                    .to_string(),
+            ),
+            SignatureCheck::Invalid { reason } => (false, format!("BAD SIGNATURE — {reason}")),
+        }
+    };
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "proof": proof.display().to_string(),
+                    "ok": ok,
+                    "digest_ok": digest_ok,
+                    "verdict": verdict,
+                    "signed": envelope.signature.is_some(),
+                    "signer_pubkey": envelope.signer_pubkey,
+                    "sig_algorithm": envelope.sig_algorithm,
+                })
+            );
+        }
+        OutputFormat::Table => println!("{verdict}"),
+    }
+
+    if !ok {
+        std::process::exit(1);
     }
     Ok(())
 }
@@ -764,7 +911,7 @@ mod tests {
         write_segment_with_marker(waldir.path(), 1, 5);
         let outdir = tempdir().unwrap();
         let out = outdir.path().join("proof.neoth-proof");
-        run_wal_export("100d", Some(&out), waldir.path(), false, OutputFormat::Json).unwrap();
+        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json).unwrap();
 
         let body = std::fs::read_to_string(&out).unwrap();
         let env: ProofEnvelope = serde_json::from_str(&body).unwrap();
@@ -783,7 +930,7 @@ mod tests {
         write_segment_with_marker(waldir.path(), 1, 3);
         let outdir = tempdir().unwrap();
         let out = outdir.path().join("p.neoth-proof");
-        run_wal_export("100d", Some(&out), waldir.path(), false, OutputFormat::Json).unwrap();
+        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json).unwrap();
         let mut env: ProofEnvelope =
             serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
         // Flip a frame's hash after export: the envelope digest must reject it.
@@ -792,6 +939,32 @@ mod tests {
             !env.digest_matches(),
             "post-export frame tampering must break the digest"
         );
+    }
+
+    #[test]
+    fn verify_proof_accepts_a_signed_bundle() {
+        // Export unsigned, then sign in-test with an EPHEMERAL key (so the test
+        // never touches the operator's real ~/.neoth signing key), rewrite the
+        // file, and confirm `verify-proof` accepts it on both the pinned-key
+        // (VerifiedAgainstExpected) and embedded-key (SelfConsistent) paths.
+        let waldir = tempdir().unwrap();
+        write_segment_with_marker(waldir.path(), 1, 3);
+        let outdir = tempdir().unwrap();
+        let out = outdir.path().join("p.neoth-proof");
+        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json)
+            .unwrap();
+        let mut env: ProofEnvelope =
+            serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        let key = ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]);
+        env.sign(&key);
+        std::fs::write(&out, serde_json::to_string_pretty(&env).unwrap()).unwrap();
+        let pubkey = crate::wal::signing::pubkey_b64(&key);
+        // Both OK paths return Ok(()) (no process::exit); the tamper/bad paths
+        // are covered hermetically by proof_bundle::check_signature tests.
+        run_verify_proof(&out, Some(&pubkey), OutputFormat::Json)
+            .expect("pinned-key verify of a valid signed proof must succeed");
+        run_verify_proof(&out, None, OutputFormat::Json)
+            .expect("self-consistent verify of a valid signed proof must succeed");
     }
 
     #[test]
