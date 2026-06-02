@@ -369,6 +369,17 @@ pub const EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED: u8 = 0x3C;
 /// Payload (JSON): `{query_id, reason, factual_parity_kappa, usefulness_parity_kappa, ts_unix}`.
 pub const EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE: u8 = 0x3E;
 
+/// `0x3F REGRESSION_ALERT` — ADV-14 longitudinal recall-regression anchor. The
+/// daemon's weekly regression cron re-asked an anchor query, embedded the fresh
+/// answer, and found its cosine to the cutover anchor vector BELOW
+/// `regression_anchor.threshold` — durable evidence the model's answer to a
+/// known query drifted after a model/config change. Last slot of the `0x3X`
+/// band (channels + adjacent recall/eval observability), next to
+/// `0x3E EVAL_CRITICAL_DIVERGENCE`.
+///
+/// Payload (JSON): `{query, cosine, threshold, ts_unix}`.
+pub const EVENT_TYPE_REGRESSION_ALERT: u8 = 0x3F;
+
 // ---- 0x50..=0x5F  Panic / recovery (Pick #35 Session 14 WAL recovery) -----
 
 /// `0x50 RECOVERY_TRUNCATED` — emitted by `wal::recovery::scan_tail` at
@@ -1474,6 +1485,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "eval_critical_divergence",
         EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
     ),
+    ("regression_alert", EVENT_TYPE_REGRESSION_ALERT),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
@@ -1650,6 +1662,8 @@ const _: () = {
         || EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE < 0x30
         || EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE > 0x3F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_REGRESSION_ALERT < 0x30 || EVENT_TYPE_REGRESSION_ALERT > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FIRED < 0x40 || EVENT_TYPE_JOB_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_SUCCESS < 0x40 || EVENT_TYPE_JOB_SUCCESS > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_JOB_FAILED < 0x40 || EVENT_TYPE_JOB_FAILED > 0x4F) as usize];
@@ -1896,6 +1910,7 @@ mod tests {
                 "EVAL_CRITICAL_DIVERGENCE",
                 EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
             ),
+            ("REGRESSION_ALERT", EVENT_TYPE_REGRESSION_ALERT),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
             ("INGRESS_QUARANTINED", EVENT_TYPE_INGRESS_QUARANTINED),
             ("INGRESS_SANITIZED", EVENT_TYPE_INGRESS_SANITIZED),

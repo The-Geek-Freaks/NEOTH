@@ -315,6 +315,12 @@ pub struct FreedomConfig {
     /// Default OFF.
     #[serde(default)]
     pub drift_alert: DriftAlertConfig,
+    /// ADV-14 — longitudinal recall-regression anchor cron. When `enabled`,
+    /// the daemon weekly re-asks the anchor queries, re-embeds the answers,
+    /// and emits `0x3F REGRESSION_ALERT` for any whose cosine to the cutover
+    /// anchor vector drops below `threshold`. Default OFF.
+    #[serde(default)]
+    pub regression_anchor: RegressionAnchorConfig,
     /// SL-03 — ResourcePressureWatcher cron. When `enabled`, the daemon
     /// polls live GPU VRAM + emits `0x47 RESOURCE_PRESSURE_ALERT` on a
     /// breach of `vram_threshold_pct`. Default OFF; a no-op on non-GPU /
@@ -693,6 +699,49 @@ impl DriftAlertConfig {
     /// Tick interval as a `Duration`, clamped to a 60s minimum so an
     /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
     /// Mirrors `DoctorCronConfig::interval_duration`.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// ADV-14 default tick interval: weekly (recall regressions are detected
+/// against a cutover anchor; a weekly re-check is plenty + keeps the provider
+/// + embed cost negligible).
+pub const DEFAULT_REGRESSION_INTERVAL_SECS: u64 = 7 * 24 * 3600;
+
+/// ADV-14 — longitudinal recall-regression anchor cron config. When `enabled`,
+/// the daemon weekly re-asks each anchor query, embeds the fresh answer, and
+/// emits `0x3F REGRESSION_ALERT` when `cosine(current, anchor) < threshold` —
+/// durable evidence that the model's answer to a known query has drifted after
+/// a model/config change. Default OFF (opt-in; needs a configured embed
+/// provider + a captured anchor file under `~/.neoth/eval/`).
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct RegressionAnchorConfig {
+    /// Master switch. Default `false`.
+    pub enabled: bool,
+    /// Cosine floor. An anchor whose fresh answer scores STRICTLY BELOW this
+    /// against its cutover vector is flagged. Range `0.0..=1.0`. Default `0.70`.
+    pub threshold: f32,
+    /// Tick interval, seconds. Default weekly. Clamped to a 60s floor by
+    /// [`Self::interval_duration`] so a misconfigured `0` can't tight-loop.
+    pub interval_secs: u64,
+}
+
+impl Default for RegressionAnchorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: 0.70,
+            interval_secs: DEFAULT_REGRESSION_INTERVAL_SECS,
+        }
+    }
+}
+
+impl RegressionAnchorConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum (mirrors
+    /// `DriftAlertConfig::interval_duration`) so `interval_secs: 0` can't
+    /// tight-loop the cron.
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }

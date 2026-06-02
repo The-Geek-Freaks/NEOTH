@@ -1529,6 +1529,48 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── 5d-sextus. Regression-anchor cron — ADV-14. Weekly re-asks the
+    // anchor queries, re-embeds the fresh answers, and emits `0x3F
+    // REGRESSION_ALERT` when cosine to the cutover anchor drops below
+    // `freedom.yaml::regression_anchor.threshold`. Off by default; needs BOTH a
+    // chat provider AND a configured embed provider — only then is it built.
+    let regression_cron_handle: Option<tokio::task::JoinHandle<()>> = if config
+        .regression_anchor
+        .enabled
+    {
+        match (
+            shared_provider.as_ref(),
+            crate::providers::embed_provider_from_config(&config).await,
+        ) {
+            (Some(provider), Some(embed)) => {
+                let handle = crate::daemon::regression_cron::spawn_regression_cron_loop(
+                    config.regression_anchor,
+                    FreedomConfig::default_neoth_home(),
+                    Arc::clone(provider),
+                    embed,
+                    writer.clone(),
+                );
+                if handle.is_some() {
+                    info!(
+                        interval_secs = config.regression_anchor.interval_secs,
+                        threshold = config.regression_anchor.threshold,
+                        "regression-anchor cron loop spawned (ADV-14)"
+                    );
+                }
+                handle
+            }
+            _ => {
+                tracing::warn!(
+                    "regression_anchor.enabled but no chat/embed provider configured — \
+                     cron not started (set inference.embedding_provider + a provider)"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     // ── SL-03 ResourcePressureWatcher cron ────────────────────────────────
     // Polls live GPU VRAM; emits `0x47 RESOURCE_PRESSURE_ALERT` on a breach
     // of `resource_watch.vram_threshold_pct`. Default OFF → no idle task; a
@@ -2421,6 +2463,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // discipline as the doctor cron: abort + await BEFORE the WAL writer
     // is dropped so an in-flight 0xBA frame isn't lost.
     if let Some(task) = drift_alert_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
+    // Abort the ADV-14 regression-anchor cron (same drain-before-close order
+    // so an in-flight 0x3F frame isn't lost).
+    if let Some(task) = regression_cron_handle {
         task.abort();
         let _ = task.await;
     }

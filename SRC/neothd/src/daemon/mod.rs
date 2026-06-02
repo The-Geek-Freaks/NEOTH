@@ -67,6 +67,10 @@ pub mod resource_watch;
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
+/// ADV-14 — longitudinal recall-regression anchor cron. Weekly re-embeds the
+/// anchor queries' fresh answers + emits `0x3F REGRESSION_ALERT` on cosine
+/// drift below threshold. Off by default.
+pub mod regression_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks
