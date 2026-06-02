@@ -444,6 +444,14 @@ pub const EVENT_TYPE_UPDATER_TASK_RESULT: u8 = 0x45;
 /// proves the cron actually ran.
 pub const EVENT_TYPE_DOCTOR_TICK: u8 = 0x46;
 
+/// SL-03 (A2 #3): the ResourcePressureWatcher cron observed live GPU
+/// VRAM usage at-or-above `resource_watch.vram_threshold_pct`. Payload:
+/// `{used_mib, total_mib, pct, threshold_pct, ts_unix}`. Advisory —
+/// emitted ONLY on a breach (not every tick), so
+/// `neoth wal show --type resource_pressure_alert` is a clean "the box
+/// ran hot at T" signal, not idle noise. No-op on non-GPU hosts.
+pub const EVENT_TYPE_RESOURCE_PRESSURE_ALERT: u8 = 0x47;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit
@@ -1559,6 +1567,8 @@ const _: () = {
     let _ = [(); 1]
         [(EVENT_TYPE_JOB_SKIPPED_BY_GATE < 0x40 || EVENT_TYPE_JOB_SKIPPED_BY_GATE > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_DOCTOR_TICK < 0x40 || EVENT_TYPE_DOCTOR_TICK > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_RESOURCE_PRESSURE_ALERT < 0x40
+        || EVENT_TYPE_RESOURCE_PRESSURE_ALERT > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
@@ -1793,6 +1803,10 @@ mod tests {
             ("JOB_FIRED", EVENT_TYPE_JOB_FIRED),
             ("JOB_SUCCESS", EVENT_TYPE_JOB_SUCCESS),
             ("JOB_FAILED", EVENT_TYPE_JOB_FAILED),
+            (
+                "RESOURCE_PRESSURE_ALERT",
+                EVENT_TYPE_RESOURCE_PRESSURE_ALERT,
+            ),
             ("RECOVERY_TRUNCATED", EVENT_TYPE_RECOVERY_TRUNCATED),
             (
                 "COUNCIL_SYNTHESIS_ATTEMPTED",

@@ -1477,6 +1477,26 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── SL-03 ResourcePressureWatcher cron ────────────────────────────────
+    // Polls live GPU VRAM; emits `0x47 RESOURCE_PRESSURE_ALERT` on a breach
+    // of `resource_watch.vram_threshold_pct`. Default OFF → no idle task; a
+    // no-op on non-GPU / non-NVIDIA hosts even when enabled.
+    let resource_watch_handle: Option<tokio::task::JoinHandle<()>> = {
+        let writer_for_rw = writer.clone();
+        let handle = crate::daemon::resource_watch::spawn_resource_watch_loop(
+            config.resource_watch.clone(),
+            writer_for_rw,
+        );
+        if handle.is_some() {
+            info!(
+                interval_secs = config.resource_watch.interval_secs,
+                vram_threshold_pct = config.resource_watch.vram_threshold_pct,
+                "resource-watch cron loop spawned (SL-03)"
+            );
+        }
+        handle
+    };
+
     // ── Passive user-adaptation cron (SPEC-05) ────────────────────────────
     // Re-aggregates the behavioural snapshot from the WAL every
     // `profile_adapt.interval_secs` (daily default) + queues new self-dev
@@ -2159,6 +2179,12 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Abort the EL-01 doctor cron loop. Same drain-before-writer-close
     // discipline as the regular cron scheduler.
     if let Some(task) = doctor_cron_task {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // Abort the SL-03 resource-watch cron loop (drain before writer close).
+    if let Some(task) = resource_watch_handle {
         task.abort();
         let _ = task.await;
     }

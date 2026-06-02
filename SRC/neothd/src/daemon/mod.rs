@@ -57,6 +57,7 @@ pub mod profile_adapt_cron;
 /// item itself keeps emissions to one per ISO week regardless of
 /// tick frequency.
 pub mod reflection_cron;
+pub mod resource_watch;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

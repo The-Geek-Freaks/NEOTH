@@ -315,6 +315,12 @@ pub struct FreedomConfig {
     /// Default OFF.
     #[serde(default)]
     pub drift_alert: DriftAlertConfig,
+    /// SL-03 — ResourcePressureWatcher cron. When `enabled`, the daemon
+    /// polls live GPU VRAM + emits `0x47 RESOURCE_PRESSURE_ALERT` on a
+    /// breach of `vram_threshold_pct`. Default OFF; a no-op on non-GPU /
+    /// non-NVIDIA hosts.
+    #[serde(default)]
+    pub resource_watch: ResourceWatchConfig,
     /// SPEC-05 — passive user-adaptation engine. When `enabled = true`,
     /// a daemon cron (`daemon::profile_adapt_cron`) re-aggregates the
     /// behavioural snapshot from the WAL every `interval_secs`, runs the
@@ -639,6 +645,45 @@ impl DriftAlertConfig {
     /// Mirrors `DoctorCronConfig::interval_duration`.
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// SL-03 — ResourcePressureWatcher cron config. When `enabled`, the
+/// daemon polls live GPU VRAM every `interval_secs` and emits a
+/// `0x47 RESOURCE_PRESSURE_ALERT` when usage `>= vram_threshold_pct`.
+/// Default OFF (opt-in). No-op on non-GPU / non-NVIDIA hosts.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct ResourceWatchConfig {
+    /// Master switch. `false` (default) = the cron never spawns.
+    pub enabled: bool,
+    /// Poll interval in seconds. Default 30. Clamped to a 10s floor by
+    /// [`Self::interval_duration`] so a misconfigured `0` can't tight-loop.
+    pub interval_secs: u64,
+    /// VRAM-usage percent at-or-above which an advisory frame is emitted.
+    /// Default 90.
+    pub vram_threshold_pct: u8,
+}
+
+/// 30 seconds — the resource-watch cron default cadence.
+pub const DEFAULT_RESOURCE_WATCH_INTERVAL_SECS: u64 = 30;
+
+impl Default for ResourceWatchConfig {
+    fn default() -> Self {
+        // Off by default — opt-in gate per the noob-wizard rule.
+        Self {
+            enabled: false,
+            interval_secs: DEFAULT_RESOURCE_WATCH_INTERVAL_SECS,
+            vram_threshold_pct: 90,
+        }
+    }
+}
+
+impl ResourceWatchConfig {
+    /// Poll interval as a `Duration`, clamped to a 10s floor so an
+    /// operator-supplied `interval_secs: 0` can't tight-loop the cron.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(10))
     }
 }
 
