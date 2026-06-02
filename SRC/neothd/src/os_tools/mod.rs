@@ -12,13 +12,16 @@
 //!   3. **Audit** ([`gate`]): `0xA8 OS_FILE_READ` on success (with byte count),
 //!      `0xA9 OS_FILE_DENIED` on any allowlist / autonomy / read failure.
 //!
-//! Scope is deliberately READ-only here. Write / app-launch / clipboard /
-//! audio land in later PC-01 slices, each with its own gate + WAL code. NO
-//! registry / system-paths / process-kill is representable in this surface.
+//! Shipped slices: file READ (`0xA8`/`0xA9`), file WRITE (`0xAA`/`0xAB`), and
+//! app LAUNCH (`0xAC`/`0xAD` — exec-allowlisted, no-args, no-shell, detached
+//! stdio). Clipboard / window-mgmt / audio land in later PC-01 slices, each
+//! with its own gate + WAL code. NO registry / system-paths / process-kill is
+//! representable in this surface.
 
 pub mod allowlist;
 pub mod gate;
+pub mod launch;
 pub mod read;
 pub mod write;
 
-pub use gate::{OsGateError, read_os_file, write_os_file};
+pub use gate::{OsGateError, launch_os_app, read_os_file, write_os_file};

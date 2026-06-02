@@ -24,6 +24,19 @@ pub enum AllowlistError {
     /// Writes to these targets are silently discarded or hidden by the OS.
     #[error("filename `{0}` is a reserved Windows device name or ADS path")]
     WindowsReservedName(String),
+    /// App-launch slice: the canonical target is not a regular file (a
+    /// directory, device, FIFO, …) — nothing launchable. Fail-closed: only a
+    /// regular file may be spawned.
+    #[error("`{0}` is not a regular executable file")]
+    NotAnExecutableFile(String),
+    /// App-launch slice (Unix): the allowlisted binary lives in a
+    /// WORLD-WRITABLE directory. Another local user could atomically
+    /// `rename()` a malicious binary over the allowlisted path between
+    /// resolution and `execve` (a TOCTOU that path-based exec can't otherwise
+    /// prevent). Refuse to launch from such a directory — allowlist binaries in
+    /// non-world-writable locations instead.
+    #[error("`{0}` is in a world-writable directory — unsafe to launch (TOCTOU)")]
+    UnsafeExecDir(String),
 }
 
 /// Resolve `target` and confirm it falls under one of `allowed_paths`.
@@ -217,6 +230,106 @@ pub fn resolve_write_target(
         Err(AllowlistError::NotInAllowlist(
             resolved.display().to_string(),
         ))
+    }
+}
+
+/// PC-01 (app-launch slice): resolve an EXECUTABLE `target` against
+/// `allowed_exec_paths`.
+///
+/// Unlike the file resolvers (which match a directory PREFIX), program launch
+/// matches by **exact canonical path**: the canonicalized target must EQUAL one
+/// of the canonicalized allowlist entries. An entry `/usr/bin/firefox`
+/// therefore authorises launching exactly that binary — never any other
+/// executable under `/usr/bin`. This is the conservative posture for code
+/// execution: a prefix allowlist would effectively grant "run any binary in
+/// this directory", i.e. a shell. Defenses, all fail-closed:
+///   - reject any `..` segment up-front;
+///   - deny-all on an empty exec-allowlist;
+///   - the canonical target must be a REGULAR FILE (not a dir / device / FIFO);
+///     this is also why Windows device names (`NUL`, `CON`, …) need no explicit
+///     reject here as they do on write — `canonicalize` errors on them (no FS
+///     path) and `is_file()` would refuse them, so they fail closed anyway;
+///   - a RELATIVE allowlist entry is ignored (it would resolve against the
+///     daemon CWD — a footgun);
+///   - the canonical target must EXACTLY equal a canonical allowlist entry.
+///     BOTH the target and each entry pass through the SAME
+///     [`std::fs::canonicalize`] — on Windows that is `GetFinalPathNameByHandle`,
+///     which resolves 8.3 short names (`PROGRA~1`) to their long form on both
+///     sides, so an entry and target differing only in 8.3-vs-long form still
+///     match, and two distinct real binaries can never canonicalize to the same
+///     path (so the exact match can't be spoofed across files);
+///   - (Unix) the resolved binary must NOT sit in a world-writable directory —
+///     otherwise another local user could rename a malicious binary over the
+///     allowlisted path between this resolution and the eventual `execve`.
+pub fn resolve_exec_program(
+    target: &Path,
+    allowed_exec_paths: &[PathBuf],
+) -> Result<PathBuf, AllowlistError> {
+    if target
+        .components()
+        .any(|c| matches!(c, Component::ParentDir))
+    {
+        return Err(AllowlistError::TraversalDetected);
+    }
+    if allowed_exec_paths.is_empty() {
+        return Err(AllowlistError::DenyAll);
+    }
+    let canonical =
+        std::fs::canonicalize(target).map_err(|e| AllowlistError::CanonicalizeFailed {
+            path: target.display().to_string(),
+            detail: e.to_string(),
+        })?;
+    // Only a regular file is launchable. A directory canonicalizes fine but
+    // can't be spawned; a device / FIFO would block or misbehave. Fail-closed.
+    if !canonical.is_file() {
+        return Err(AllowlistError::NotAnExecutableFile(
+            canonical.display().to_string(),
+        ));
+    }
+    let allowed = allowed_exec_paths.iter().any(|entry| {
+        if !entry.is_absolute() {
+            tracing::warn!(
+                entry = %entry.display(),
+                "ignoring relative tools.os.allowed_exec_paths entry — entries must be absolute"
+            );
+            return false;
+        }
+        match std::fs::canonicalize(entry) {
+            // EXACT match (not starts_with): the allowlist names binaries, not
+            // directories. A symlinked entry + a symlinked target that resolve
+            // to the same real binary still match (both canonicalized).
+            Ok(canon_entry) => canonical == canon_entry,
+            Err(_) => false, // unresolvable entry can't match — fail-closed
+        }
+    });
+    if !allowed {
+        return Err(AllowlistError::NotInAllowlist(
+            canonical.display().to_string(),
+        ));
+    }
+    // TOCTOU hardening (Unix): even an allowlisted binary is unsafe to launch
+    // from a world-writable directory, where any local user can atomically
+    // `rename()` a hostile binary over it between here and `execve`.
+    #[cfg(unix)]
+    if parent_is_world_writable(&canonical) {
+        return Err(AllowlistError::UnsafeExecDir(
+            canonical.display().to_string(),
+        ));
+    }
+    Ok(canonical)
+}
+
+/// Unix TOCTOU guard: is `file`'s parent directory world-writable (`o+w`)?
+/// Fail-closed — an un-stattable parent is treated as unsafe.
+#[cfg(unix)]
+fn parent_is_world_writable(file: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(parent) = file.parent() else {
+        return true; // no parent ⇒ can't vouch for it ⇒ unsafe
+    };
+    match std::fs::metadata(parent) {
+        Ok(m) => m.permissions().mode() & 0o002 != 0,
+        Err(_) => true, // can't stat ⇒ fail-closed
     }
 }
 
@@ -487,5 +600,128 @@ mod tests {
             result.is_ok(),
             "normal filename must not be rejected by Windows checks: {result:?}"
         );
+    }
+
+    // ── exec-program resolution (app-launch slice) ───────────────────────────
+
+    #[test]
+    fn exec_empty_allowlist_is_deny_all() {
+        let dir = tempdir().unwrap();
+        let bin = dir.path().join("tool");
+        fs::write(&bin, b"#!/bin/true").unwrap();
+        assert_eq!(
+            resolve_exec_program(&bin, &[]),
+            Err(AllowlistError::DenyAll)
+        );
+    }
+
+    #[test]
+    fn exec_exact_match_allows() {
+        let dir = tempdir().unwrap();
+        let bin = dir.path().join("tool");
+        fs::write(&bin, b"x").unwrap();
+        let allowed = vec![bin.clone()];
+        let got = resolve_exec_program(&bin, &allowed).unwrap();
+        assert!(got.ends_with("tool"));
+    }
+
+    #[test]
+    fn exec_sibling_binary_is_denied_exact_match_not_prefix() {
+        // The KEY exec property: allowlisting one binary does NOT expose its
+        // sibling in the same directory (a prefix allowlist would — we don't).
+        let dir = tempdir().unwrap();
+        let allowed_bin = dir.path().join("allowed");
+        let other_bin = dir.path().join("evil");
+        fs::write(&allowed_bin, b"x").unwrap();
+        fs::write(&other_bin, b"x").unwrap();
+        let allowed = vec![allowed_bin];
+        assert!(matches!(
+            resolve_exec_program(&other_bin, &allowed),
+            Err(AllowlistError::NotInAllowlist(_))
+        ));
+    }
+
+    #[test]
+    fn exec_directory_is_not_executable() {
+        let dir = tempdir().unwrap();
+        // Allowlist is non-empty (so we get past deny-all) but the target is a
+        // directory ⇒ not a regular file ⇒ fail-closed.
+        let allowed = vec![dir.path().to_path_buf()];
+        assert!(matches!(
+            resolve_exec_program(dir.path(), &allowed),
+            Err(AllowlistError::NotAnExecutableFile(_))
+        ));
+    }
+
+    #[test]
+    fn exec_dotdot_segment_rejected() {
+        let dir = tempdir().unwrap();
+        let bin = dir.path().join("tool");
+        fs::write(&bin, b"x").unwrap();
+        let allowed = vec![bin];
+        let traversal = dir.path().join("..").join("tool");
+        assert_eq!(
+            resolve_exec_program(&traversal, &allowed),
+            Err(AllowlistError::TraversalDetected)
+        );
+    }
+
+    #[test]
+    fn exec_nonexistent_fails_closed() {
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::write(&real, b"x").unwrap();
+        let allowed = vec![real];
+        let ghost = dir.path().join("ghost");
+        assert!(matches!(
+            resolve_exec_program(&ghost, &allowed),
+            Err(AllowlistError::CanonicalizeFailed { .. })
+        ));
+    }
+
+    #[test]
+    fn exec_relative_entry_ignored_fail_closed() {
+        let dir = tempdir().unwrap();
+        let bin = dir.path().join("tool");
+        fs::write(&bin, b"x").unwrap();
+        // Only a relative entry ⇒ never authorises (resolves against CWD).
+        let allowed = vec![PathBuf::from("some/rel/tool")];
+        assert!(matches!(
+            resolve_exec_program(&bin, &allowed),
+            Err(AllowlistError::NotInAllowlist(_))
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exec_world_writable_dir_is_rejected_toctou() {
+        use std::os::unix::fs::PermissionsExt;
+        // An allowlisted binary in a world-writable dir must be refused: a
+        // local attacker could rename a hostile binary over it pre-execve.
+        let dir = tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o777)).unwrap();
+        let bin = dir.path().join("tool");
+        fs::write(&bin, b"x").unwrap();
+        let allowed = vec![bin.clone()];
+        assert!(
+            matches!(
+                resolve_exec_program(&bin, &allowed),
+                Err(AllowlistError::UnsafeExecDir(_))
+            ),
+            "an allowlisted binary in a world-writable dir must be rejected"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn exec_non_world_writable_dir_allows() {
+        use std::os::unix::fs::PermissionsExt;
+        // The safe counterpart: a private (0700) dir passes the TOCTOU guard.
+        let dir = tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let bin = dir.path().join("tool");
+        fs::write(&bin, b"x").unwrap();
+        let allowed = vec![bin.clone()];
+        assert!(resolve_exec_program(&bin, &allowed).is_ok());
     }
 }

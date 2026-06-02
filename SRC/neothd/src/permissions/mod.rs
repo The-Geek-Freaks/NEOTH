@@ -162,6 +162,23 @@ pub enum Action {
         /// Canonical, write-allowlist-validated target path.
         path: std::path::PathBuf,
     },
+    /// PC-01 (app-launch slice): launch an operator-allowlisted program on the
+    /// OS through the gated OS-tool surface. The `program` is the
+    /// POST-resolution canonical path — the exec-allowlist gate (`os_tools`,
+    /// the target must canonicalize to EXACTLY one
+    /// `freedom.yaml::tools.os.allowed_exec_paths` entry — an exact match, NOT
+    /// a directory prefix, so allowlisting `/usr/bin/firefox` does not expose
+    /// the rest of `/usr/bin`) has already passed BEFORE this autonomy gate.
+    /// Launching a program is arbitrary code execution (the highest blast
+    /// radius of the OS-tool surface), so this gate is STRICTER than
+    /// `OsFileWrite`: Strict denies, Standard AND Elevated confirm (no TTY ⇒
+    /// effectively suppressed until Full), only Full allows. The launch carries
+    /// NO arguments and uses NO shell (direct `argv[0]`), so an allowlisted
+    /// binary can't be turned into a different command via injected args.
+    OsAppLaunch {
+        /// Canonical, exec-allowlist-validated program path.
+        program: std::path::PathBuf,
+    },
     /// SL-01: accept a task DELEGATED by a cluster master and run it through
     /// this node's local provider. The peer has already authenticated (Noise +
     /// cluster_key proof) and been operator-paired; this gate is the autonomy
@@ -309,7 +326,11 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         | Action::ExecArbitrary
         | Action::PaidProviderCall { .. }
         | Action::ClusterPeerPairing { .. }
-        | Action::OsFileWrite { .. } => None,
+        | Action::OsFileWrite { .. }
+        // An app launch is arbitrary code execution (like `ExecArbitrary`): no
+        // coarse scope models it and the blast radius is the whole machine, so
+        // it stays gate-only and is never lease-unlockable.
+        | Action::OsAppLaunch { .. } => None,
     }
 }
 
@@ -366,6 +387,10 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: OS file write of {} denied (writes mutate the operator FS)",
             path.display()
         )),
+        Action::OsAppLaunch { program } => Decision::Deny(format!(
+            "strict: launching {} denied (arbitrary program execution)",
+            program.display()
+        )),
     }
 }
 
@@ -420,6 +445,13 @@ fn evaluate_standard(action: &Action) -> Decision {
         Action::OsFileWrite { path } => Decision::Confirm(format!(
             "standard: OS file write of {} requires confirm",
             path.display()
+        )),
+        // Stricter than OsFileWrite (which Elevated allows): launching a
+        // program is arbitrary code execution, so it confirms at Standard AND
+        // Elevated (no TTY ⇒ suppressed) and only auto-allows at Full.
+        Action::OsAppLaunch { program } => Decision::Confirm(format!(
+            "standard: launching {} requires confirm (program execution)",
+            program.display()
         )),
     }
 }
@@ -480,6 +512,14 @@ fn evaluate_elevated(action: &Action) -> Decision {
         // opt-in; once a path is allowlisted + the operator is at Elevated,
         // gated writes proceed.
         Action::OsFileWrite { .. } => Decision::Allow,
+        // Program execution is the highest-blast-radius OS-tool action — even
+        // at Elevated it confirms (no TTY ⇒ suppressed); only Full auto-allows
+        // (handled by the evaluate_full catch-all). Mirrors ExecArbitrary's
+        // Confirm-at-Elevated precedent.
+        Action::OsAppLaunch { program } => Decision::Confirm(format!(
+            "elevated: launching {} requires confirm (program execution)",
+            program.display()
+        )),
     }
 }
 
@@ -548,7 +588,14 @@ fn evaluate_full(action: &Action) -> Decision {
              highest blast radius (RCE surface), never auto-allowed"
         )),
         // Full = trust the operator's other gates (policy.yaml allowlist,
-        // hardware-2FA at level-set time). Everything else allowed.
+        // hardware-2FA at level-set time). Everything else allowed —
+        // INCLUDING the exec-capable actions that confirm at every lower level
+        // (`OsAppLaunch`, `ExecArbitrary`): at Full the operator has opted into
+        // unattended autonomy and the exec-allowlist (default deny-all) is the
+        // explicit per-binary opt-in. NOTE: this wildcard means a NEW
+        // high-blast-radius `Action` added to the enum is auto-allowed at Full
+        // unless it gets an explicit arm above (as `SelfBinaryReplace`,
+        // `PatchApplyToRepo`, `DangerousTarget` do) — add one when in doubt.
         _ => Decision::Allow,
     }
 }

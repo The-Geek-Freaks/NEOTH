@@ -58,6 +58,7 @@ pub mod monitor;
 pub mod models;
 pub mod obsidian;
 pub mod obsidian_sync_task;
+pub mod os;
 pub mod ouro;
 pub mod paperless;
 pub mod permissions;
@@ -504,6 +505,13 @@ pub enum Commands {
     /// ungated filesystem read.
     Fs(fs::FsArgs),
 
+    /// `os launch <program>` — launch a program through the PC-01 OS-tool gate:
+    /// exec-allowlist (`freedom.yaml::tools.os.allowed_exec_paths`, exact
+    /// canonical match, default deny-all) + autonomy gate (Full-only auto-allow)
+    /// + WAL audit (`0xAC`/`0xAD`). No arguments, no shell. The gated
+    /// alternative to an ungated process spawn.
+    Os(os::OsArgs),
+
     /// Text-to-speech synthesis (A-45). `speak` writes audio bytes to
     /// a file via ElevenLabs (cloud) or piper-rs (Phase 2 local).
     Tts(tts::TtsArgs),
@@ -932,6 +940,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Fs(mut args) => {
             args.output = global_output;
             fs::run_fs(args).await?;
+        }
+        Commands::Os(mut args) => {
+            args.output = global_output;
+            os::run_os(args).await?;
         }
         Commands::Tts(mut args) => {
             args.output = global_output;

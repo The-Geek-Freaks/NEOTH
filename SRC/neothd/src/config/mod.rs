@@ -428,6 +428,19 @@ pub struct OsToolsConfig {
     /// Max bytes a single `OsFileWrite` may write. Default 1 MiB — bounds how
     /// much a gated write (or a delegated one) can put on the operator's disk.
     pub max_write_bytes: usize,
+    /// PC-01 (app-launch slice): allowlisted absolute EXECUTABLE paths the
+    /// daemon may launch. SEPARATE from the file allowlists ON PURPOSE — a
+    /// readable/writable path is NOT runnable. Empty = deny-all (the default).
+    /// Matched by EXACT canonical path (not a directory prefix): an entry
+    /// `/usr/bin/firefox` authorises launching exactly that binary, never the
+    /// rest of `/usr/bin`. See `os_tools::allowlist::resolve_exec_program`.
+    ///
+    /// TOCTOU note: prefer binaries in non-world-writable directories
+    /// (`/usr/bin`, `~/bin`). On Unix the resolver REFUSES to launch from a
+    /// world-writable dir (e.g. `/tmp`), where another local user could swap
+    /// the binary between resolution and exec; entries in user-private dirs are
+    /// safe, system dirs are safest.
+    pub allowed_exec_paths: Vec<std::path::PathBuf>,
 }
 
 impl Default for OsToolsConfig {
@@ -437,6 +450,7 @@ impl Default for OsToolsConfig {
             max_read_bytes: 1024 * 1024,
             allowed_write_paths: Vec::new(),
             max_write_bytes: 1024 * 1024,
+            allowed_exec_paths: Vec::new(),
         }
     }
 }

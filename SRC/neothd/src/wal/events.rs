@@ -810,6 +810,19 @@ pub const EVENT_TYPE_OS_FILE_WRITE: u8 = 0xAA;
 /// escape) or the autonomy gate (Deny / Confirm-with-no-TTY). Payload:
 /// `{path, reason, ts_unix}`.
 pub const EVENT_TYPE_OS_FILE_WRITE_DENIED: u8 = 0xAB;
+/// `0xAC OS_APP_LAUNCH` — PC-01 (app-launch slice). NEOTH launched an
+/// operator-allowlisted program through the gated OS-tool surface, AFTER it
+/// passed the exec-allowlist (the target canonicalizes to EXACTLY one
+/// `freedom.yaml::tools.os.allowed_exec_paths` entry — exact match, never a
+/// directory prefix) + the autonomy gate. Launched with NO arguments and NO
+/// shell (direct `argv[0]`, stdio detached). Payload: `{program, pid, ts_unix}`.
+pub const EVENT_TYPE_OS_APP_LAUNCH: u8 = 0xAC;
+/// `0xAD OS_APP_LAUNCH_DENIED` — PC-01. A program launch was refused — by the
+/// exec-allowlist (deny-all / not-an-allowlisted-binary / not-a-regular-file /
+/// traversal) or the autonomy gate (Deny / Confirm-with-no-TTY), or the spawn
+/// itself failed. The audit trail records every blocked process launch.
+/// Payload: `{program, reason, ts_unix}`.
+pub const EVENT_TYPE_OS_APP_LAUNCH_DENIED: u8 = 0xAD;
 
 // ---- 0xB0..=0xBF  Hypothalamus / user-profile -----------------------------
 //
@@ -1437,6 +1450,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("os_file_denied", EVENT_TYPE_OS_FILE_DENIED),
     ("os_file_write", EVENT_TYPE_OS_FILE_WRITE),
     ("os_file_write_denied", EVENT_TYPE_OS_FILE_WRITE_DENIED),
+    ("os_app_launch", EVENT_TYPE_OS_APP_LAUNCH),
+    ("os_app_launch_denied", EVENT_TYPE_OS_APP_LAUNCH_DENIED),
     ("operator_feedback", EVENT_TYPE_OPERATOR_FEEDBACK),
     (
         "eval_critical_divergence",
@@ -1692,6 +1707,9 @@ const _: () = {
         || EVENT_TYPE_OS_FILE_WRITE_DENIED > 0xAF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_OS_FILE_DENIED < 0xA0 || EVENT_TYPE_OS_FILE_DENIED > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OS_APP_LAUNCH < 0xA0 || EVENT_TYPE_OS_APP_LAUNCH > 0xAF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OS_APP_LAUNCH_DENIED < 0xA0
+        || EVENT_TYPE_OS_APP_LAUNCH_DENIED > 0xAF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PROFILE_DELTA < 0xB0 || EVENT_TYPE_PROFILE_DELTA > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PROFILE_REINFORCED < 0xB0 || EVENT_TYPE_PROFILE_REINFORCED > 0xBF) as usize];
@@ -1927,6 +1945,11 @@ mod tests {
             (
                 "OS_FILE_WRITE_DENIED",
                 EVENT_TYPE_OS_FILE_WRITE_DENIED,
+            ),
+            ("OS_APP_LAUNCH", EVENT_TYPE_OS_APP_LAUNCH),
+            (
+                "OS_APP_LAUNCH_DENIED",
+                EVENT_TYPE_OS_APP_LAUNCH_DENIED,
             ),
             ("COST_ESTIMATE_SHOWN", EVENT_TYPE_COST_ESTIMATE_SHOWN),
             ("PROFILE_DELTA", EVENT_TYPE_PROFILE_DELTA),

@@ -956,6 +956,16 @@ One-way copy: NEOTH archive → vault. Idempotent
 - `--subdir <SUBDIR>` — Subdirectory inside the vault for NEOTH sessions. Defaults to `NEOTH-sessions/`. Created on demand
 - `--dry-run <DRY_RUN>` — Print which files would be copied without writing anything
 
+## `neoth os`
+
+`os launch <program>` — launch a program through the PC-01 OS-tool gate: exec-allowlist (`freedom.yaml::tools.os.allowed_exec_paths`, exact canonical match, default deny-all) + autonomy gate (Full-only auto-allow) + WAL audit (`0xAC`/`0xAD`). No arguments, no shell. The gated alternative to an ungated process spawn
+
+### `neoth os launch`
+
+Launch a program through the gated OS-tool surface. Permitted only when the program canonicalizes to EXACTLY one `freedom.yaml::tools.os.allowed_exec_paths` entry (default deny-all) AND the autonomy level allows it (Strict denies; Standard + Elevated confirm ⇒ blocked here without a TTY; only Full auto-allows). Launched with NO arguments and NO shell. WAL-audited (`0xAC`/`0xAD`)
+
+- `<PROGRAM>` — Absolute path to the executable to launch (must be an exact entry in `tools.os.allowed_exec_paths`)
+
 ## `neoth ouro`
 
 Inspect the Ouro thinking-models provider (O-3)
