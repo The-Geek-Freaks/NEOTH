@@ -1,0 +1,240 @@
+//! AUDIT-RPC-01 tests — exercise the public surface across all submodules
+//! (token / sidecar / server / client) via the `mod.rs` re-exports.
+
+use super::*;
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+
+use base64::Engine;
+use tempfile::tempdir;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
+
+use crate::n8n_api::auth::AuthCooldown;
+
+async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
+    let mut s = TcpStream::connect(addr).await.unwrap();
+    let auth = token
+        .map(|t| format!("Authorization: Bearer {t}\r\n"))
+        .unwrap_or_default();
+    let req = format!(
+        "POST /audit HTTP/1.1\r\nHost: x\r\n{auth}Content-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+        len = body.len()
+    );
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut resp = String::new();
+    s.read_to_string(&mut resp).await.unwrap();
+    resp.split_whitespace()
+        .nth(1)
+        .and_then(|x| x.parse().ok())
+        .unwrap_or(0)
+}
+
+#[test]
+fn allowlist_contains_exactly_the_oneshot_codes() {
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 11);
+    // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
+    for c in [0xA2u8, 0xA3] {
+        assert!(is_allowed_client_event(c), "{c:#x} (autonomy) must be allowed");
+    }
+    for c in 0xA5u8..=0xADu8 {
+        assert!(is_allowed_client_event(c), "{c:#x} must be allowed");
+    }
+    // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
+    // autonomy codes must NOT bleed into the neighbouring 0xA0/0xA1/0xA4.
+    for c in [0x10u8, 0x15, 0xA0, 0xA1, 0xA4, 0xAE, 0xAF, 0xE0, 0xF0] {
+        assert!(!is_allowed_client_event(c), "{c:#x} must be refused");
+    }
+}
+
+#[test]
+fn is_reachable_is_false_without_a_sidecar() {
+    let dir = tempdir().unwrap();
+    assert!(!is_reachable(dir.path()), "no sidecar ⇒ not reachable");
+}
+
+#[test]
+fn enforce_required_audit_only_bails_when_required_live_and_unreachable() {
+    let dir = tempdir().unwrap(); // no sidecar ⇒ unreachable
+    // Flag off ⇒ always Ok (best-effort posture).
+    assert!(enforce_required_audit(false, true, dir.path()).is_ok());
+    // No daemon ⇒ Ok (the one-shot writes its own frame locally).
+    assert!(enforce_required_audit(true, false, dir.path()).is_ok());
+    // Required + daemon live + listener unreachable ⇒ fail-closed.
+    assert!(enforce_required_audit(true, true, dir.path()).is_err());
+}
+
+#[test]
+fn token_round_trips_through_secure_write() {
+    let dir = tempdir().unwrap();
+    let t = init_rpc_token(dir.path()).unwrap();
+    assert_eq!(t.len(), 43);
+    assert_eq!(read_rpc_token(dir.path()).unwrap(), t);
+}
+
+#[test]
+fn sidecar_round_trips_port_without_full_token() {
+    let dir = tempdir().unwrap();
+    write_sidecar(dir.path(), 54321, std::process::id(), "supersecrettoken").unwrap();
+    assert_eq!(read_sidecar(dir.path()).unwrap().0, 54321);
+    // The full token must NEVER be in the sidecar — only an 8-char hint.
+    let raw = std::fs::read(sidecar_path(dir.path())).unwrap();
+    let body = crate::wal::compaction::maybe_unwrap_dpapi(&raw, &sidecar_path(dir.path())).unwrap();
+    let s = String::from_utf8_lossy(&body);
+    assert!(s.contains("supersec"));
+    assert!(!s.contains("supersecrettoken"));
+}
+
+#[test]
+fn sidecar_guard_removes_on_drop() {
+    let dir = tempdir().unwrap();
+    let t = init_rpc_token(dir.path()).unwrap();
+    write_sidecar(dir.path(), 1, std::process::id(), &t).unwrap();
+    {
+        let _g = SidecarGuard::new(dir.path().to_path_buf());
+        assert!(sidecar_path(dir.path()).exists());
+    }
+    assert!(!sidecar_path(dir.path()).exists());
+    assert!(!rpc_token_path(dir.path()).exists());
+}
+
+#[tokio::test]
+async fn valid_token_appends_allowed_frame_and_emits_accept() {
+    use crate::wal::events::EVENT_TYPE_OS_APP_LAUNCH;
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("000001.wal");
+    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let state = AuditRpcState {
+        token: "tok-valid".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+
+    let payload_b64 = base64::engine::general_purpose::STANDARD.encode(br#"{"program":"/bin/x"}"#);
+    let body = format!("{{\"event_type\":{},\"payload_b64\":{:?}}}", EVENT_TYPE_OS_APP_LAUNCH, payload_b64);
+    let status = raw_post(addr, Some("tok-valid"), &body).await;
+    assert_eq!(status, 200);
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+
+    // The forwarded 0xAC frame AND the 0xAE accept frame both landed.
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let mut types = Vec::new();
+    let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+    while cur < bytes.len() {
+        let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else {
+            break;
+        };
+        types.push(f.header.event_type);
+        cur = cur.saturating_add(f.header.total_len as usize);
+    }
+    assert!(types.contains(&EVENT_TYPE_OS_APP_LAUNCH), "forwarded frame landed");
+    assert!(types.contains(&crate::wal::events::EVENT_TYPE_AUDIT_RPC_ACCEPT), "accept marker landed");
+}
+
+#[tokio::test]
+async fn wrong_token_is_401_and_writes_no_frame() {
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("000001.wal");
+    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let state = AuditRpcState {
+        token: "tok-valid".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    let body = r#"{"event_type":168,"payload_b64":"e30="}"#;
+    let status = raw_post(addr, Some("tok-WRONG"), body).await;
+    assert_eq!(status, 401);
+    // missing token too
+    assert_eq!(raw_post(addr, None, body).await, 401);
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+    // No frame written (auth failures are not audited).
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    assert!(crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..]).is_err());
+}
+
+#[tokio::test]
+async fn blocked_event_type_is_422_and_emits_reject() {
+    use crate::wal::events::EVENT_TYPE_AUDIT_RPC_REJECT;
+    let segdir = tempdir().unwrap();
+    let seg = segdir.path().join("000001.wal");
+    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let state = AuditRpcState {
+        token: "tok".into(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    // 0x10 (daemon lifecycle) is NOT forwardable.
+    let body = r#"{"event_type":16,"payload_b64":"e30="}"#;
+    let status = raw_post(addr, Some("tok"), body).await;
+    assert_eq!(status, 422);
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let f = crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..]).unwrap();
+    assert_eq!(f.header.event_type, EVENT_TYPE_AUDIT_RPC_REJECT);
+}
+
+#[tokio::test]
+async fn client_round_trips_against_a_live_listener() {
+    use crate::wal::events::EVENT_TYPE_OS_FILE_READ;
+    let home = tempdir().unwrap();
+    let seg_dir = tempdir().unwrap();
+    let seg = seg_dir.path().join("000001.wal");
+    let token = init_rpc_token(home.path()).unwrap();
+    let (writer, wal_join) = crate::wal::spawn(seg.clone()).unwrap();
+    let state = AuditRpcState {
+        token: token.clone(),
+        writer: writer.clone(),
+        cooldown: Arc::new(AuthCooldown::new()),
+    };
+    let (addr, task) = bind_and_serve(state).await.unwrap();
+    // The test process is alive, so the client's pid-liveness check passes.
+    write_sidecar(home.path(), addr.port(), std::process::id(), &token).unwrap();
+
+    // The CLIENT path: read sidecar+token, connect, POST.
+    try_post_audit_frame(home.path(), EVENT_TYPE_OS_FILE_READ, br#"{"path":"/etc/hosts","bytes":42}"#)
+        .await
+        .expect("client round-trip must succeed end-to-end");
+
+    task.abort();
+    drop(writer);
+    wal_join.await.ok();
+    let bytes = tokio::fs::read(&seg).await.unwrap();
+    let f = crate::wal::frame::decode_frame(&bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..]).unwrap();
+    assert_eq!(f.header.event_type, EVENT_TYPE_OS_FILE_READ);
+}
+
+#[tokio::test]
+async fn client_unavailable_when_no_sidecar() {
+    let home = tempdir().unwrap();
+    let r = try_post_audit_frame(home.path(), 0xA8, b"{}").await;
+    assert!(matches!(r, Err(AuditRpcClientError::Unavailable(_))));
+}
+
+#[tokio::test]
+async fn client_rejects_stale_sidecar_with_dead_pid() {
+    // A sidecar left by a crashed daemon (dead pid) must NOT be trusted —
+    // the recycled port could belong to an unrelated process, and sending
+    // the bearer token there would disclose it.
+    let home = tempdir().unwrap();
+    init_rpc_token(home.path()).unwrap();
+    // 999_999_999 is above any OS pid_max (and stays positive as an i32
+    // pid_t, so the unix `kill(pid,0)` check can't alias to the -1
+    // "whole process group" sentinel) — reliably a dead pid on all OSes.
+    write_sidecar(home.path(), 5000, 999_999_999, "tok").unwrap();
+    let r = try_post_audit_frame(home.path(), 0xA8, b"{}").await;
+    assert!(
+        matches!(r, Err(AuditRpcClientError::Unavailable(ref m)) if m.contains("stale")),
+        "a dead-pid sidecar must be refused as stale, got {r:?}"
+    );
+}
