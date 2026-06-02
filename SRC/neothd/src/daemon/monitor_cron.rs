@@ -305,20 +305,40 @@ pub fn evaluate_channel_silence(
         config.channel_silence_active_utc_start,
         config.channel_silence_active_utc_end,
     );
-    let (last_ts, silence_secs) = match last_activity {
+    let (last_ts, silence_secs, should_alert) = match last_activity {
         Some(t) => {
             let silence = (now_unix - t).max(0) as u64;
-            (t, silence)
+            (t, silence, in_window && silence >= config.channel_silence_secs)
         }
-        None => (0i64, config.channel_silence_secs + 1), // no activity = already past threshold
+        // MONITOR-05: never saw a CHANNEL_INGRESS/EGRESS frame → we cannot claim
+        // "silence" (silence = was-active-now-quiet). A host with NO channels
+        // configured (or a channel that has never been live) produces no frames
+        // and must NOT trip a false-positive silence alert.
+        None => (0i64, 0u64, false),
     };
-    let should_alert = in_window && silence_secs >= config.channel_silence_secs;
     ChannelSilenceResult {
         last_activity_ts_unix: last_ts,
         silence_duration_secs: silence_secs,
         in_active_window: in_window,
         should_alert,
     }
+}
+
+/// MONITOR-04 — cross-tick dedup memory: the last wall-clock second each alert
+/// KIND was emitted, so the live loop suppresses re-emitting the same kind
+/// within `monitor.min_repeat_alert_secs`. Lives in the spawn loop (like the
+/// crash-log offset). Crash alerts are already edge-triggered (crash.log
+/// byte-offset delta) so they need no entry here.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MonitorEmitState {
+    pub last_wal_crc_emit: i64,
+    pub last_silence_emit: i64,
+}
+
+/// True when `now` is at least `window_secs` past `last_emit` (or there was no
+/// prior emit — `last_emit == 0`). `window_secs == 0` disables dedup.
+pub fn alert_due(last_emit: i64, now: i64, window_secs: u64) -> bool {
+    last_emit == 0 || now.saturating_sub(last_emit) >= window_secs as i64
 }
 
 // ---------------------------------------------------------------------------
@@ -434,6 +454,7 @@ pub async fn run_monitor_tick_live(
     home: &Path,
     wal_dir: &Path,
     crash_log_offset: &mut u64,
+    emit_state: &mut MonitorEmitState,
 ) -> Result<(bool, bool, bool), String> {
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -441,10 +462,19 @@ pub async fn run_monitor_tick_live(
         .unwrap_or(0);
 
     // WAL CRC scan
-    let wal_scan =
+    let mut wal_scan =
         scan_wal_dir_for_crc_anomalies(wal_dir, now_unix, config.wal_crc_window_secs);
+    // MONITOR-04 dedup: the same corruption frames linger in the look-back
+    // window for many ticks — suppress re-emit within `min_repeat_alert_secs`
+    // by zeroing the counts (so `run_monitor_tick` sees no anomaly this tick).
+    if wal_scan.has_anomalies()
+        && !alert_due(emit_state.last_wal_crc_emit, now_unix, config.min_repeat_alert_secs)
+    {
+        wal_scan.recovery_truncated_count = 0;
+        wal_scan.compaction_auth_failed_count = 0;
+    }
 
-    // Crash log check
+    // Crash log check (already edge-triggered via the byte offset → no dedup).
     let crash_log_path = home.join("crash.log");
     let (crash_result, new_offset) = check_crash_log(&crash_log_path, *crash_log_offset);
     *crash_log_offset = new_offset;
@@ -456,9 +486,25 @@ pub async fn run_monitor_tick_live(
 
     // Channel silence check
     let last_activity = scan_wal_dir_for_channel_activity(wal_dir);
-    let channel = evaluate_channel_silence(last_activity, now_unix, config);
+    let mut channel = evaluate_channel_silence(last_activity, now_unix, config);
+    // MONITOR-04 dedup: silence is level-triggered (stays true while quiet) —
+    // suppress re-emit within the window.
+    if channel.should_alert
+        && !alert_due(emit_state.last_silence_emit, now_unix, config.min_repeat_alert_secs)
+    {
+        channel.should_alert = false;
+    }
 
-    run_monitor_tick(config, writer, wal_scan, crash, channel).await
+    let (wal, crash_alerted, silence) =
+        run_monitor_tick(config, writer, wal_scan, crash, channel).await?;
+    // Record the emits so the next tick can dedup against them.
+    if wal {
+        emit_state.last_wal_crc_emit = now_unix;
+    }
+    if silence {
+        emit_state.last_silence_emit = now_unix;
+    }
+    Ok((wal, crash_alerted, silence))
 }
 
 // ---------------------------------------------------------------------------
@@ -481,8 +527,10 @@ pub fn spawn_monitor_cron_loop(
         let mut ticker = tokio::time::interval(interval);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut crash_log_offset = 0u64;
+        let mut emit_state = MonitorEmitState::default();
         tracing::info!(
             interval_secs = interval.as_secs(),
+            min_repeat_alert_secs = config.min_repeat_alert_secs,
             "monitor cron loop online (HO-07)",
         );
         loop {
@@ -493,6 +541,7 @@ pub fn spawn_monitor_cron_loop(
                 &home,
                 &wal_dir,
                 &mut crash_log_offset,
+                &mut emit_state,
             )
             .await
             {
@@ -527,7 +576,33 @@ mod tests {
             channel_silence_secs: 1800,
             channel_silence_active_utc_start: 7,
             channel_silence_active_utc_end: 21,
+            min_repeat_alert_secs: 3600,
         }
+    }
+
+    #[test]
+    fn monitor_05_no_silence_alert_when_never_any_channel_activity() {
+        // MONITOR-05: last_activity = None (no channel frame ever) during the
+        // ACTIVE window must NOT alert — a no-channel host can't be "silent".
+        let cfg = default_config();
+        let now_at_10am = 36000i64; // 10:00 UTC, inside 07..21
+        let r = evaluate_channel_silence(None, now_at_10am, &cfg);
+        assert!(r.in_active_window, "10:00 is inside the active window");
+        assert!(
+            !r.should_alert,
+            "no channel activity ever seen → no silence false-positive",
+        );
+    }
+
+    #[test]
+    fn monitor_04_alert_due_window() {
+        // First emit (last==0) always due; within window not due; past window due;
+        // window 0 disables dedup (always due).
+        let now = 1_700_000_000i64;
+        assert!(alert_due(0, now, 3600), "first emit (no prior) is always due");
+        assert!(!alert_due(now - 100, now, 3600), "100s < 3600s window → suppressed");
+        assert!(alert_due(now - 4000, now, 3600), "4000s >= 3600s → due again");
+        assert!(alert_due(now - 1, now, 0), "window 0 disables dedup");
     }
 
     /// Count frames of a given event_type in an uncompressed WAL segment.

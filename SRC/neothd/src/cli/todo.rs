@@ -1,5 +1,7 @@
-//! `neoth todo` — TD-01 (Todoist) + TD-02 (Google Tasks). Operator CLI
-//! over the task adapters: `list` / `add <content>` / `close <id>`.
+//! `neoth todo` — TD-01 (Todoist) + TD-02 (Google Tasks + CalDAV). Operator
+//! CLI over the task adapters: `list` / `add <content>` / `close <id>`.
+//! (CalDAV is **read-only `list`** so far; `add`/`close` bail with a clear
+//! not-yet message — see the `caldav` bullet.)
 //!
 //! Backend chosen by `--provider` (default `todoist`):
 //!
@@ -11,6 +13,11 @@
 //!   `credentials.yaml` (or the `NEOTH_GOOGLE_{CLIENT_ID,CLIENT_SECRET,
 //!   REFRESH_TOKEN}` env overrides). The refresh token is exchanged for a
 //!   short-lived access token on each run; access tokens are never stored.
+//! - **`caldav`** — CalDAV VTODO (`tools::caldav`), **read-only `list`** today.
+//!   WebDAV `REPORT` calendar-query over Basic auth; needs `caldav_{url,
+//!   username,password}` in `credentials.yaml` (or `NEOTH_CALDAV_*` env).
+//!   `add`/`close` are a follow-on (PUT/PROPPATCH) and currently bail with a
+//!   clear not-yet message.
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand, ValueEnum};

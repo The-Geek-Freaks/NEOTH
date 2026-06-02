@@ -720,6 +720,14 @@ pub struct MonitorConfig {
     /// UTC hour (0-23) when the active channel-watch window CLOSES.
     /// Default 21 (21:00 UTC ≈ 22:00 CET / 23:00 CEST).
     pub channel_silence_active_utc_end: u8,
+    /// MONITOR-04 — minimum seconds between repeated alerts of the SAME kind.
+    /// The monitor re-checks state every tick; without this it re-emits
+    /// `0x48`/`0x4A` on every tick the bad state persists (CRC frames linger in
+    /// the look-back window; channel silence is level- not edge-triggered).
+    /// Default 3600 (1h): emit-once-per-hour-per-kind. `0` disables dedup.
+    /// (Crash alerts are already edge-triggered via the crash.log byte offset,
+    /// so dedup is moot for them.)
+    pub min_repeat_alert_secs: u64,
 }
 
 /// 5 minutes — the monitor cron default cadence.
@@ -734,6 +742,7 @@ impl Default for MonitorConfig {
             channel_silence_secs: 1800,
             channel_silence_active_utc_start: 7,
             channel_silence_active_utc_end: 21,
+            min_repeat_alert_secs: 3600,
         }
     }
 }
