@@ -58,6 +58,7 @@ pub mod profile_adapt_cron;
 /// tick frequency.
 pub mod reflection_cron;
 pub mod sidecar;
+pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks
 /// operator-listed paths at daemon boot for `ghp_` / `sk-` / `AKIA`
 /// shapes (re-uses `security::redact::PATTERNS`). Optional git

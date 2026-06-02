@@ -1,0 +1,194 @@
+//! KF-04 — Idle-Time Skill Forge.
+//!
+//! When the dreaming pipeline composes a recurring-theme dream, the forge
+//! synthesises a CANDIDATE skill YAML from it and stages it as an OB-03
+//! [`ProposedAction`] (`kind = Skill`) for operator review. NEOTH never
+//! writes the skill itself — the proposal lands in the proactive review
+//! queue (`neoth proactive review` / `accept` / `reject`); only an
+//! explicit operator accept adopts it. This is the "idle time turns
+//! patterns into reusable skills" loop, gated behind a config flag.
+//!
+//! The forge is a pure adapter `Dream -> Option<ProposedAction>`: it
+//! reuses the shipped skill builder ([`crate::skills::creator::build_manifest`])
+//! so the `draft_yaml` is guaranteed loader-compatible, and the OB-03
+//! queue ([`crate::proactive::action_staging`]) so the review/accept path
+//! already exists (NOT primitive-ahead — the dreaming task is the live
+//! producer, `neoth proactive` the live consumer). Unsuitable dreams
+//! (no theme / no summary / un-slugifiable theme) yield `None`.
+
+use crate::daemon::dreaming::Dream;
+use crate::proactive::action_staging::{
+    ProposalKind, ProposalStatus, ProposedAction, make_proposal_id,
+};
+use crate::skills::creator::{CreateParams, build_manifest};
+
+/// Slugify a dream theme label into a candidate skill id:
+/// lowercase, non-alphanumeric runs collapse to a single `_`, trimmed,
+/// `dream_`-prefixed, capped at 64 chars (the loader's id ceiling).
+/// Returns `None` when the theme has no usable alphanumeric content.
+fn slugify_theme(theme: &str) -> Option<String> {
+    let mut slug = String::new();
+    let mut prev_underscore = false;
+    for ch in theme.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch.to_ascii_lowercase());
+            prev_underscore = false;
+        } else if !prev_underscore {
+            slug.push('_');
+            prev_underscore = true;
+        }
+    }
+    let core = slug.trim_matches('_');
+    if core.is_empty() {
+        return None;
+    }
+    let id = format!("dream_{core}");
+    // Cap at the loader's 64-char id limit (validate_skill_id enforces it
+    // too, but truncate cleanly so we never hand build_manifest a value
+    // it will reject for length alone).
+    let id: String = id.chars().take(64).collect();
+    Some(id.trim_matches('_').to_string()).filter(|s| !s.is_empty())
+}
+
+/// Extract trigger keywords from a theme label: lowercase alphanumeric
+/// tokens of length >= 3, de-duplicated, order-preserving, capped at 8.
+fn theme_keywords(theme: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tok in theme
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| t.len() >= 3)
+    {
+        let lower = tok.to_ascii_lowercase();
+        if !out.contains(&lower) {
+            out.push(lower);
+        }
+        if out.len() >= 8 {
+            break;
+        }
+    }
+    out
+}
+
+/// KF-04 — forge a candidate skill proposal from one dream. Pure;
+/// `None` when the dream can't yield a sensible skill (empty theme,
+/// empty summary, un-slugifiable theme, or the builder rejects the id).
+pub fn forge_skill_from_dream(dream: &Dream) -> Option<ProposedAction> {
+    let theme = dream.theme_label.trim();
+    let summary = dream.summary.trim();
+    if theme.is_empty() || summary.is_empty() {
+        return None;
+    }
+    let id = slugify_theme(theme)?;
+    let keywords = theme_keywords(theme);
+    let system_prompt = format!(
+        "When the operator's request touches the recurring theme \"{theme}\", bring this \
+         context to bear:\n{summary}\n\nBe concrete and stay grounded in what NEOTH has \
+         actually observed about this theme."
+    );
+    let params = CreateParams {
+        id,
+        description: format!("Auto-forged from the \"{theme}\" dream ({})", dream.day),
+        keywords,
+        system_prompt,
+    };
+    // build_manifest validates the id (charset/length) + round-trips the
+    // YAML through serde so the draft is loader-compatible. A rejected id
+    // (or any builder error) means this dream can't forge a skill -> None.
+    let (_, yaml) = build_manifest(&params).ok()?;
+
+    let title = format!("Skill: {theme}");
+    let rationale = format!(
+        "NEOTH noticed a recurring theme \"{theme}\" on {} (across {} source event(s)) and \
+         drafted a reusable skill from it. Review the YAML below; `accept` adopts it into \
+         `~/.neoth/skills/`, `reject` discards it. NEOTH never adds the skill on its own.\n\n\
+         Dream summary:\n{summary}",
+        dream.day,
+        dream.event_ids.len(),
+    );
+    let ts = dream.composed_ts_unix;
+    let proposal_id = make_proposal_id(ProposalKind::Skill, &title, &yaml, ts);
+
+    Some(ProposedAction {
+        id: proposal_id,
+        kind: ProposalKind::Skill,
+        title,
+        rationale,
+        draft_yaml: yaml,
+        generated_ts_unix: ts,
+        status: ProposalStatus::Pending,
+        operator_note: String::new(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::dreaming::compose_dream;
+
+    fn dream_with(theme: &str, summary: &str) -> Dream {
+        // compose_dream builds a deterministic Dream; override the two
+        // fields the forge reads so the test is explicit.
+        let mut d = compose_dream("2026-06-02", theme, &[]);
+        d.theme_label = theme.to_string();
+        d.summary = summary.to_string();
+        d.composed_ts_unix = 1_700_000_000;
+        d
+    }
+
+    #[test]
+    fn forges_a_skill_from_a_normal_dream() {
+        let d = dream_with("WiFi troubleshooting", "Operator repeatedly debugs router drops.");
+        let p = forge_skill_from_dream(&d).expect("normal dream forges a skill");
+        assert_eq!(p.kind, ProposalKind::Skill);
+        assert!(p.title.contains("WiFi troubleshooting"));
+        // The draft YAML is a real, loader-shaped skill manifest.
+        assert!(p.draft_yaml.contains("id:"));
+        assert!(p.draft_yaml.contains("dream_wifi_troubleshooting"));
+        assert!(p.draft_yaml.contains("system_prompt:"));
+        // Rationale carries the operator-facing why + the summary.
+        assert!(p.rationale.contains("recurring theme"));
+        assert!(p.rationale.contains("router drops"));
+        assert!(matches!(p.status, ProposalStatus::Pending));
+    }
+
+    #[test]
+    fn empty_theme_or_summary_forges_nothing() {
+        assert!(forge_skill_from_dream(&dream_with("", "has summary")).is_none());
+        assert!(forge_skill_from_dream(&dream_with("has theme", "")).is_none());
+        assert!(forge_skill_from_dream(&dream_with("   ", "  ")).is_none());
+    }
+
+    #[test]
+    fn un_slugifiable_theme_forges_nothing() {
+        // A theme with no alphanumerics can't become a valid skill id.
+        assert!(forge_skill_from_dream(&dream_with("!!! ??? ...", "summary")).is_none());
+    }
+
+    #[test]
+    fn slugify_collapses_and_prefixes() {
+        assert_eq!(slugify_theme("WiFi  drops!!").as_deref(), Some("dream_wifi_drops"));
+        assert_eq!(slugify_theme("café-notes").as_deref(), Some("dream_caf_notes"));
+        assert_eq!(slugify_theme("   "), None);
+        assert_eq!(slugify_theme("###"), None);
+    }
+
+    #[test]
+    fn keywords_dedupe_drop_short_and_cap() {
+        let kw = theme_keywords("the WiFi wifi router AND the AP setup x y z");
+        assert!(kw.contains(&"wifi".to_string()));
+        assert!(kw.contains(&"router".to_string()));
+        assert!(kw.contains(&"the".to_string())); // len 3 kept
+        assert!(!kw.contains(&"x".to_string())); // len 1 dropped
+        // "wifi" appears twice in input -> once in output.
+        assert_eq!(kw.iter().filter(|k| *k == "wifi").count(), 1);
+        assert!(kw.len() <= 8);
+    }
+
+    #[test]
+    fn proposal_id_is_deterministic_for_same_dream() {
+        let d = dream_with("topic", "summary text");
+        let a = forge_skill_from_dream(&d).unwrap();
+        let b = forge_skill_from_dream(&d).unwrap();
+        assert_eq!(a.id, b.id, "same dream -> same proposal id (idempotent staging)");
+    }
+}

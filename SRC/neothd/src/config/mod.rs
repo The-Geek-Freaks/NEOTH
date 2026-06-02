@@ -842,6 +842,12 @@ pub struct DreamingConfig {
     /// operator-LLM cost on high-traffic days (~50ms/embed × 500 =
     /// ~25s compute per pass).
     pub max_events: Option<usize>,
+    /// KF-04 — when `true`, each composed dream is run through the
+    /// skill-forge: a candidate skill YAML is synthesised + staged as an
+    /// OB-03 proposal for operator review (`neoth proactive review`).
+    /// Off by default — opt-in (NEOTH never adds a skill unprompted; the
+    /// operator adopts it via `neoth proactive accept`).
+    pub forge_skills: bool,
 }
 
 impl Default for DreamingConfig {
@@ -852,6 +858,7 @@ impl Default for DreamingConfig {
             interval_secs: None,
             window_secs: None,
             max_events: None,
+            forge_skills: false,
         }
     }
 }

@@ -184,12 +184,54 @@ pub async fn run_one_pass(
             }
         }
     }
+    // KF-04 — idle-time skill forge: gated, best-effort. Synthesise a
+    // candidate skill from each composed dream + stage it for operator
+    // review (OB-03 queue). NEOTH never writes the skill; the operator
+    // adopts it via `neoth proactive accept`. A forge/queue miss never
+    // fails the pass — the dreams are already persisted above.
+    let forge_enabled = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.dreaming.forge_skills)
+        .unwrap_or(false);
+    if forge_enabled {
+        forge_and_stage_dreams(home, &dreams);
+    }
+
     Ok(PassReport {
         events_considered: events.len(),
         dreams_written: written,
         path,
         path_taken,
     })
+}
+
+/// KF-04 — forge a candidate skill from each dream + stage it as an
+/// OB-03 proposal for operator review. Best-effort: a queue-IO error or
+/// an un-forgeable dream is logged + skipped, never fails the dreaming
+/// pass. Dedup is handled by `stage_and_enqueue` (same dream → same
+/// proposal id → enqueued at most once).
+fn forge_and_stage_dreams(home: &Path, dreams: &[crate::daemon::dreaming::Dream]) {
+    use crate::proactive::ProactiveQueue;
+    use crate::proactive::action_staging::stage_and_enqueue;
+    let queue_path = home.join("proactive_queue.json");
+    let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
+    let mut staged = 0usize;
+    for dream in dreams {
+        if let Some(proposal) = crate::daemon::skill_forge::forge_skill_from_dream(dream) {
+            match stage_and_enqueue(home, proposal, &mut queue) {
+                Ok((_, true)) => staged += 1,
+                Ok((_, false)) => {} // already queued (dedup)
+                Err(e) => warn!(error = %e, "skill-forge: stage failed"),
+            }
+        }
+    }
+    if staged > 0 {
+        match queue.save_to(&queue_path) {
+            Ok(()) => {
+                tracing::info!(staged, "skill-forge: staged candidate skill(s) for review")
+            }
+            Err(e) => warn!(error = %e, "skill-forge: queue save failed"),
+        }
+    }
 }
 
 /// Load `idx_episode` rows whose `ts_ns` is within `window` of
