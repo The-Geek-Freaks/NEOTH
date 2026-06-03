@@ -439,6 +439,20 @@ Compose dreams over the recent window right now (default: last 24h)
 - `--window-secs <WINDOW_SECS>` — Look-back window in seconds. Default 86400 (24h)
 - `--max-events <MAX_EVENTS>` — Max events to embed + cluster this pass. Default 500
 
+## `neoth email`
+
+EM-01b — inbound email. `fetch` pulls newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and triages each through the sanitizer→threat pipeline. Live socket needs the `imap_fetch` build feature; `--dry-run` works on every build
+
+### `neoth email fetch`
+
+Fetch newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and triage each through the sanitizer→threat pipeline
+
+- `--limit <LIMIT>` — Max number of newest UNSEEN messages to pull (clamped to 200)
+- `--username <USERNAME>` — IMAP username (the email address for Gmail). Falls back to `NEOTH_IMAP_USERNAME`
+- `--host <HOST>` — IMAP host (default Gmail)
+- `--port <PORT>` — IMAP TLS port (default 993)
+- `--dry-run <DRY_RUN>` — Show the resolved connection (host/port/user/auth-kind) WITHOUT connecting, authenticating, or fetching. Never prints the secret
+
 ## `neoth events`
 
 Browse the WAL event-type registry. Self-documenting audit trail — `neoth events` lists every code NEOTH writes, `--code 0xNN` looks up a single byte, `--band 0x90` filters to memory-tier events

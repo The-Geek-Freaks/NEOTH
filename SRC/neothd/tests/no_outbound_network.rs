@@ -90,6 +90,17 @@
 //!                                    category as channels/ — operator
 //!                                    opts into network access via
 //!                                    explicit CLI / wizard step.
+//!   - `src/email/imap_fetch.rs`    — EM-01b operator-configured inbound
+//!                                    IMAP fetch (`neoth email fetch`),
+//!                                    gated behind the `imap_fetch` build
+//!                                    feature AND the operator's own IMAP
+//!                                    credentials. Dials the configured IMAP
+//!                                    host (default `imap.gmail.com:993`)
+//!                                    over rustls TLS with `BODY.PEEK[]`
+//!                                    (non-destructive). Same operator-
+//!                                    opt-in category as the channel adapters
+//!                                    above — an explicit, configured upstream,
+//!                                    never an unsolicited phone-home.
 //!
 //! Adding a new allowed path means editing both the codebase AND this
 //! file, which makes the audit trail loud.
@@ -113,6 +124,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/telemetry/",
     "src/cluster/",
     "src/transport/",
+    "src/email/imap_fetch.rs",
 ];
 
 const FORBIDDEN_PATTERNS: &[&str] = &[

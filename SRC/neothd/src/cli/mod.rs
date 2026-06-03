@@ -41,6 +41,7 @@ pub mod autonomy;
 pub mod credential;
 pub mod cron;
 pub mod dream;
+pub mod email;
 pub mod identity;
 pub mod transfer;
 pub mod gui;
@@ -435,6 +436,12 @@ pub enum Commands {
     /// levers are armed right now. Ties together `verify`/`wal`/`autonomy`/
     /// `recover` without mutating anything.
     Trust(trust::TrustArgs),
+
+    /// EM-01b — inbound email. `fetch` pulls newest UNSEEN inbox messages
+    /// over IMAP (non-destructive `BODY.PEEK[]`) and triages each through
+    /// the sanitizer→threat pipeline. Live socket needs the `imap_fetch`
+    /// build feature; `--dry-run` works on every build.
+    Email(email::EmailArgs),
 
     /// Round-3 v0.4 SC-04 — operator-facing security posture
     /// aggregator. `neoth security audit` runs every available
@@ -1085,6 +1092,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Trust(mut args) => {
             args.output = global_output;
             trust::run_trust(args).await?;
+        }
+        Commands::Email(mut args) => {
+            args.output = global_output;
+            email::run_email(args).await?;
         }
         Commands::Security(args) => {
             // SC-04: security audit aggregator has its own output

@@ -32,6 +32,12 @@ wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
 # WAL band reservation stay compiled in both feature configurations.
 wasm-plugin-host = ["dep:wasmtime"]
 
+# EM-01b -- live Gmail/IMAP inbound fetch (imap.gmail.com:993, XOAUTH2 or
+# app-password). Default OFF so contributor `cargo build` stays slim;
+# release binaries flip ON via cargo-dist. Runtime still gated by the
+# operator's email config. rustls-only via tokio-rustls (no native-tls).
+imap_fetch = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mailparse", "dep:futures"]
+
 # D14b Phase 2c — GPU acceleration for local_qwen. Pin per-platform
 # so contributors building on a non-GPU laptop don't fight CUDA
 # toolkit setup. Default OFF; release binaries flip ON via cargo-dist
@@ -99,6 +105,15 @@ chrono      = { version = "0.4", features = ["serde"] }
 dialoguer   = { version = "0.11", optional = true }
 indicatif   = { version = "0.17", optional = true }
 console     = { version = "0.15", optional = true }
+# EM-01b -- live Gmail/IMAP fetch. Gated behind `imap_fetch` so default
+# builds stay slim + dep-free. rustls-only (NEOTH bans native-tls/openssl):
+# async-imap brings its own BYO-TLS stream, tokio-rustls supplies it,
+# mailparse is pure-Rust RFC822 parsing.
+async-imap   = { version = "0.10", default-features = false, features = ["runtime-tokio"], optional = true }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring"], optional = true }
+webpki-roots = { version = "1", optional = true }
+mailparse    = { version = "0.16", optional = true }
+futures      = { version = "0.3", optional = true }
 
 # Day-2 (WAL writer) -- SPEC_wire_header_v2_slim.md + SPEC_wal_lifecycle.md + SPEC_multinode_clock.md
 bitflags    = "2.6"
