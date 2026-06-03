@@ -147,27 +147,84 @@ fn row_index(weights: &ChannelWeights, channel: &str, topic_hash: u64) -> Option
         .position(|r| r.channel == channel && r.topic_hash == topic_hash)
 }
 
-/// Record one acceptance for `(channel, topic_hash)` — load, lazily decay,
-/// saturating-increment (capped at [`MAX_CHANNEL_SUCCESS_COUNT`]), save.
-/// Best-effort: the caller treats a write error as non-fatal.
+/// KF-05 operator-scope (P1): the fraction of the full Hebbian delta a
+/// non-operator, non-allowlisted sender contributes under the `all_tiny` scope.
+/// Small enough that a flood of foreign replies can't dominate the operator's
+/// own signal, but non-zero so an open channel still adapts.
+pub const NON_OPERATOR_TINY_FACTOR: f32 = 0.1;
+
+/// KF-05 operator-scope decision (P1) — PURE. Returns the weight factor a
+/// sender's accepted reply contributes (`1.0` = full), or `None` to NOT learn
+/// from this sender at all. Bounds WHOSE replies move the recall ranking so a
+/// non-operator on a shared/open channel can't poison it.
+///
+/// `sender_uuid` is the inbound's resolved cross-channel `human_uuid`;
+/// `operator_uuid` is the operator's pinned uuid (`None` = unconfigured → every
+/// sender is treated as the operator; see [`crate::config::ChannelWeightsConfig`]).
+pub fn learn_factor(
+    scope: crate::config::ChannelLearnScope,
+    sender_uuid: Option<&str>,
+    operator_uuid: Option<&str>,
+    allowlisted: &[String],
+) -> Option<f32> {
+    use crate::config::ChannelLearnScope as S;
+    let is_operator = match (sender_uuid, operator_uuid) {
+        (Some(s), Some(o)) => s == o,
+        // Operator uuid not pinned → can't distinguish; a solo install has only
+        // the operator, so treat as operator (keeps KF-05 alive until pinned).
+        (_, None) => true,
+        // Operator IS pinned but this sender carries no uuid → not the operator.
+        (None, Some(_)) => false,
+    };
+    let is_allowlisted = sender_uuid.is_some_and(|s| allowlisted.iter().any(|a| a == s));
+    match scope {
+        S::OperatorOnly => is_operator.then_some(1.0),
+        S::Allowlisted => (is_operator || is_allowlisted).then_some(1.0),
+        S::AllTiny => Some(if is_operator || is_allowlisted {
+            1.0
+        } else {
+            NON_OPERATOR_TINY_FACTOR
+        }),
+    }
+}
+
+/// Record one acceptance for `(channel, topic_hash)` at full strength. Thin
+/// wrapper over [`record_channel_acceptance_scoped`] (factor `1.0`) — kept for
+/// callers that don't gate on sender scope.
 pub fn record_channel_acceptance(
     home: &Path,
     channel: &str,
     topic_hash: u64,
     now_unix: u64,
 ) -> Result<()> {
+    record_channel_acceptance_scoped(home, channel, topic_hash, now_unix, 1.0)
+}
+
+/// Record one acceptance for `(channel, topic_hash)`, scaling the Hebbian delta
+/// by `factor` (KF-05 operator-scope: `1.0` for the operator/allowlisted, a
+/// tiny fraction for a non-operator under `all_tiny`). Load, lazily decay,
+/// saturating-increment (capped at [`MAX_CHANNEL_SUCCESS_COUNT`]), save.
+/// Best-effort: the caller treats a write error as non-fatal.
+pub fn record_channel_acceptance_scoped(
+    home: &Path,
+    channel: &str,
+    topic_hash: u64,
+    now_unix: u64,
+    factor: f32,
+) -> Result<()> {
+    let delta = MAX_CHANNEL_WEIGHT_DELTA * factor.clamp(0.0, 1.0);
     let mut weights = load_channel_weights(home);
     match row_index(&weights, channel, topic_hash) {
         Some(idx) => {
             let row = &mut weights.rows[idx];
             row.success_count = apply_channel_decay(row.success_count, row.decay_anchor_unix, now_unix);
-            row.success_count = (row.success_count + MAX_CHANNEL_WEIGHT_DELTA).min(MAX_CHANNEL_SUCCESS_COUNT);
+            row.success_count = (row.success_count + delta).min(MAX_CHANNEL_SUCCESS_COUNT);
             row.decay_anchor_unix = now_unix;
         }
         None => weights.rows.push(ChannelWeight {
             channel: channel.to_string(),
             topic_hash,
-            success_count: MAX_CHANNEL_WEIGHT_DELTA,
+            success_count: delta,
             decay_anchor_unix: now_unix,
         }),
     }
@@ -201,8 +258,80 @@ pub fn channel_weight_of(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ChannelLearnScope as S;
 
     const DAY: u64 = 86_400;
+
+    // ── KF-05 operator-scope (P1) ───────────────────────────────────────────
+
+    #[test]
+    fn learn_factor_operator_only_filters_non_operator_when_pinned() {
+        let allow: Vec<String> = vec![];
+        // Operator pinned: their reply learns at full; a stranger's does not.
+        assert_eq!(
+            learn_factor(S::OperatorOnly, Some("op"), Some("op"), &allow),
+            Some(1.0)
+        );
+        assert_eq!(
+            learn_factor(S::OperatorOnly, Some("stranger"), Some("op"), &allow),
+            None,
+            "a non-operator must NOT move the ranking under operator_only"
+        );
+        // No uuid on the inbound + operator pinned → not the operator → skip.
+        assert_eq!(learn_factor(S::OperatorOnly, None, Some("op"), &allow), None);
+    }
+
+    #[test]
+    fn learn_factor_unpinned_operator_treats_everyone_as_operator() {
+        // Default fresh install (operator_uuid None) keeps KF-05 alive.
+        let allow: Vec<String> = vec![];
+        assert_eq!(
+            learn_factor(S::OperatorOnly, Some("whoever"), None, &allow),
+            Some(1.0)
+        );
+        assert_eq!(learn_factor(S::OperatorOnly, None, None, &allow), Some(1.0));
+    }
+
+    #[test]
+    fn learn_factor_allowlisted_admits_listed_uuids() {
+        let allow = vec!["friend".to_string()];
+        assert_eq!(
+            learn_factor(S::Allowlisted, Some("friend"), Some("op"), &allow),
+            Some(1.0)
+        );
+        assert_eq!(
+            learn_factor(S::Allowlisted, Some("stranger"), Some("op"), &allow),
+            None
+        );
+    }
+
+    #[test]
+    fn learn_factor_all_tiny_gives_strangers_a_tiny_weight() {
+        let allow: Vec<String> = vec![];
+        assert_eq!(
+            learn_factor(S::AllTiny, Some("op"), Some("op"), &allow),
+            Some(1.0)
+        );
+        assert_eq!(
+            learn_factor(S::AllTiny, Some("stranger"), Some("op"), &allow),
+            Some(NON_OPERATOR_TINY_FACTOR),
+            "a stranger still adapts, but only at the tiny factor"
+        );
+    }
+
+    #[test]
+    fn scoped_record_applies_the_factor() {
+        let dir = tempfile::tempdir().unwrap();
+        // Full vs tiny on two distinct topics → the tiny one accrues less.
+        record_channel_acceptance_scoped(dir.path(), "telegram", 1, 1000, 1.0).unwrap();
+        record_channel_acceptance_scoped(dir.path(), "telegram", 2, 1000, NON_OPERATOR_TINY_FACTOR)
+            .unwrap();
+        let w = load_channel_weights(dir.path());
+        let full = w.rows.iter().find(|r| r.topic_hash == 1).unwrap().success_count;
+        let tiny = w.rows.iter().find(|r| r.topic_hash == 2).unwrap().success_count;
+        assert!(full > tiny, "full-factor delta must exceed the tiny-factor delta");
+        assert!((tiny - MAX_CHANNEL_WEIGHT_DELTA * NON_OPERATOR_TINY_FACTOR).abs() < 1e-6);
+    }
 
     #[test]
     fn new_row_starts_at_neutral() {

@@ -1481,6 +1481,15 @@ pub enum ChannelLearnScope {
 pub struct ChannelWeightsConfig {
     /// Whose successful replies move the Hebbian weights.
     pub learn_scope: ChannelLearnScope,
+    /// The operator's own cross-channel `human_uuid` (C-13). When set, the scope
+    /// gate can strictly distinguish the operator from everyone else. When
+    /// `None` (default fresh install) the gate treats every sender as the
+    /// operator — a solo install has only the operator, and refusing to learn
+    /// would make KF-05 inert — so pin this to lock down a shared/open channel.
+    pub operator_human_uuid: Option<String>,
+    /// Additional `human_uuid`s trusted to move the weights under the
+    /// `allowlisted` / `all_tiny` scopes (the operator is always trusted).
+    pub allowlisted_human_uuids: Vec<String>,
 }
 
 /// EL-02 — arXiv topic-feed ingest task knobs.

@@ -3904,21 +3904,42 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             // write error never blocks the reply. Read back via
             // `neoth ecology channel-weights`.
             {
-                let topic_hash = xxhash_rust::xxh3::xxh3_64(
-                    inbound.text.as_deref().unwrap_or("").as_bytes(),
+                // KF-05 operator-scope (P1): only learn from a sender the
+                // configured scope trusts, so a non-operator on a shared/open
+                // channel can't poison the recall ranking. `learn_factor`
+                // returns None (skip) or the weight factor (1.0 / tiny).
+                let cw_cfg = crate::config::FreedomConfig::load_from_default_path()
+                    .unwrap_or_default()
+                    .channel_weights;
+                let factor = crate::memory::channel_weights::learn_factor(
+                    cw_cfg.learn_scope,
+                    inbound.human_uuid.as_deref(),
+                    cw_cfg.operator_human_uuid.as_deref(),
+                    &cw_cfg.allowlisted_human_uuids,
                 );
-                let now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let home = crate::config::FreedomConfig::default_neoth_home();
-                if let Err(e) = crate::memory::channel_weights::record_channel_acceptance(
-                    &home,
-                    channel_str,
-                    topic_hash,
-                    now,
-                ) {
-                    tracing::debug!(error = %e, "channel_weights: acceptance record failed (non-fatal)");
+                if let Some(factor) = factor {
+                    let topic_hash = xxhash_rust::xxh3::xxh3_64(
+                        inbound.text.as_deref().unwrap_or("").as_bytes(),
+                    );
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    if let Err(e) = crate::memory::channel_weights::record_channel_acceptance_scoped(
+                        &home,
+                        channel_str,
+                        topic_hash,
+                        now,
+                        factor,
+                    ) {
+                        tracing::debug!(error = %e, "channel_weights: acceptance record failed (non-fatal)");
+                    }
+                } else {
+                    tracing::debug!(
+                        channel = channel_str,
+                        "channel_weights: sender out of learn scope — not recorded"
+                    );
                 }
             }
 
