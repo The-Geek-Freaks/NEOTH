@@ -30,6 +30,9 @@ use crate::wal::writer::WalWriterHandle;
 pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0x2C, // INGEST_EXTRACTED       — `neoth ingest` extracted an asset
     0x2D, // EMBED_PERSISTED        — `neoth ingest` persisted an embedding
+    0x30, // EMAIL_INGRESS_QUARANTINED — `neoth email fetch` withheld a mail body
+    0x31, // EMAIL_TIEBREAK_APPLIED — `neoth email fetch` LLM-tie-broke a mail
+    0x3D, // EMAIL_INGRESS_TRIAGED  — `neoth email fetch` triaged an inbound mail
     0x3E, // EVAL_CRITICAL_DIVERGENCE — `neoth recall-score` flagged a CRITICAL query
     0x9B, // IDENTITY_MERGED        — `neoth identity merge` folded two identities
     0xC8, // TODO_WRITE             — `neoth todo add/close` mutated an external task list

@@ -207,6 +207,10 @@ async fn fetch_and_triage(
         }
     }
 
+    // EM-01b/PL-05b — record each inbound-mail security decision in the audit
+    // ledger (metadata only). Best-effort: an audit gap never blocks the fetch.
+    emit_email_audit_batch(&triaged).await;
+
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             println!("{}", serde_json::to_string_pretty(&triaged)?);
@@ -234,6 +238,115 @@ async fn fetch_and_triage(
         }
     }
     Ok(())
+}
+
+/// Inbound-email audit — emits up to three frame KINDS per triaged message
+/// (metadata ONLY: sender DOMAIN, never the full From / body / subject):
+///   - `0x3D EMAIL_INGRESS_TRIAGED`     — every message (the base record).
+///   - `0x30 EMAIL_INGRESS_QUARANTINED` — additionally when the body was
+///     withheld (quarantine / dropped-at-sanitizer).
+///   - `0x31 EMAIL_TIEBREAK_APPLIED`    — additionally when the LLM tie-breaker
+///     was consulted (a security-relevant override record).
+/// When a daemon owns the WAL, FORWARD each over audit-RPC; otherwise open ONE
+/// one-shot writer for the whole batch. Best-effort — an audit gap never blocks
+/// the fetch.
+#[cfg(feature = "imap_fetch")]
+async fn emit_email_audit_batch(triaged: &[crate::email::inbound::InboundTriage]) {
+    use crate::email::inbound::{InboundAction, extract_from_domain};
+    use crate::wal::events::{
+        EVENT_TYPE_EMAIL_INGRESS_QUARANTINED, EVENT_TYPE_EMAIL_INGRESS_TRIAGED,
+        EVENT_TYPE_EMAIL_TIEBREAK_APPLIED,
+    };
+    if triaged.is_empty() {
+        return;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    // (event_type, payload) frames for the whole batch.
+    let mut frames: Vec<(u8, Vec<u8>)> = Vec::new();
+    for t in triaged {
+        let from_domain = extract_from_domain(&t.from);
+        let score = t.threat.as_ref().map(|a| a.score);
+        frames.push((
+            EVENT_TYPE_EMAIL_INGRESS_TRIAGED,
+            serde_json::to_vec(&serde_json::json!({
+                "uid": t.uid,
+                "from_domain": from_domain,
+                "score": score,
+                "action": t.action.as_str(),
+                "tiebreak": t.tiebreak.map(|v| v.as_str()),
+                "ts_unix": now,
+            }))
+            .unwrap_or_default(),
+        ));
+        if matches!(
+            t.action,
+            InboundAction::Quarantine | InboundAction::DroppedAtSanitizer
+        ) {
+            frames.push((
+                EVENT_TYPE_EMAIL_INGRESS_QUARANTINED,
+                serde_json::to_vec(&serde_json::json!({
+                    "uid": t.uid,
+                    "from_domain": from_domain,
+                    "score": score,
+                    "action": t.action.as_str(),
+                    "ts_unix": now,
+                }))
+                .unwrap_or_default(),
+            ));
+        }
+        if let Some(v) = t.tiebreak {
+            frames.push((
+                EVENT_TYPE_EMAIL_TIEBREAK_APPLIED,
+                serde_json::to_vec(&serde_json::json!({
+                    "uid": t.uid,
+                    "from_domain": from_domain,
+                    "verdict": v.as_str(),
+                    // Input band is always review-queue; a quarantine/deliver
+                    // result means the LLM overrode the deterministic rules.
+                    "resulting_action": t.action.as_str(),
+                    "ts_unix": now,
+                }))
+                .unwrap_or_default(),
+            ));
+        }
+    }
+
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+        Ok(Some(_))
+    );
+    if daemon_live {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        for (event_type, payload) in &frames {
+            if let Err(e) =
+                crate::daemon::audit_rpc::try_post_audit_frame(&home, *event_type, payload).await
+            {
+                tracing::debug!(error = %e, "email: audit frame forward skipped (listener unreachable)");
+            }
+        }
+        return;
+    }
+    let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
+    if let Some(p) = segment.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "email: WAL writer spawn failed; inbound audit not recorded");
+            return;
+        }
+    };
+    for (event_type, payload) in frames {
+        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+        if let Err(e) = writer.try_append_sync(header, payload) {
+            tracing::warn!(error = %e, "email: inbound audit frame append failed (audit gap)");
+        }
+    }
 }
 
 #[cfg(not(feature = "imap_fetch"))]

@@ -287,6 +287,27 @@ pub const EVENT_TYPE_BUDGET_EXCEEDED: u8 = 0x2F;
 
 // ---- 0x30..=0x3F  Channels ------------------------------------------------
 
+/// `0x30 EMAIL_INGRESS_QUARANTINED` — EM-01b/PL-05b. High-signal subset of
+/// `0x3D EMAIL_INGRESS_TRIAGED`: emitted ADDITIONALLY when an inbound email's
+/// body was WITHHELD from the agent — either dropped at the ingress sanitizer
+/// (prompt-injection / MIME poisoning) or scored into Quarantine. Lets an
+/// operator `wal show --type email_ingress_quarantined` to see exactly the
+/// dangerous mail. Metadata only (sender domain + score + which body-withheld
+/// action), never the body.
+///
+/// Payload (JSON): `{uid, from_domain, score, action, ts_unix}`.
+pub const EVENT_TYPE_EMAIL_INGRESS_QUARANTINED: u8 = 0x30;
+
+/// `0x31 EMAIL_TIEBREAK_APPLIED` — PL-05b. Emitted when the LLM second-opinion
+/// tie-breaker was CONSULTED on a borderline (ReviewQueue) email — the
+/// security-relevant record of an LLM influencing an inbound-mail decision.
+/// Carries the verdict + the resulting band (the input band is always
+/// review-queue, so a `quarantine`/`deliver` result means the LLM OVERRODE the
+/// deterministic rules). Metadata only.
+///
+/// Payload (JSON): `{uid, from_domain, verdict, resulting_action, ts_unix}`.
+pub const EVENT_TYPE_EMAIL_TIEBREAK_APPLIED: u8 = 0x31;
+
 /// Inbound message arrived on a channel (Telegram / WhatsApp / Slack / ...).
 /// Payload: channel name + sender id + text hash + bytes + ts.
 pub const EVENT_TYPE_CHANNEL_INGRESS: u8 = 0x32;
@@ -357,6 +378,20 @@ pub const EVENT_TYPE_CHANNEL_GATE_REJECTED: u8 = 0x3B;
 /// Payload: `{channel, sender_id, action, ts_unix}` — `action` is the
 /// `SlashAction::as_str()` wire name; no message text. ADV-09 (Session 30).
 pub const EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED: u8 = 0x3C;
+
+/// `0x3D EMAIL_INGRESS_TRIAGED` — EM-01b/PL-05b. The BASE inbound-email audit
+/// record: one frame per message `neoth email fetch` triaged, capturing the
+/// band NEOTH assigned (dropped-at-sanitizer / quarantine / review-queue /
+/// deliver). Email is an inbound channel, so this lives in the `0x3X` channels
+/// band. Metadata ONLY — the body/subject are NEVER recorded, only the sender
+/// DOMAIN (no display name / local-part) + score + action + optional tie-break
+/// verdict. Emitted best-effort via the one-shot writer, or forwarded over
+/// audit-RPC when a daemon owns the WAL (allowlisted). The two sibling events
+/// `0x30 EMAIL_INGRESS_QUARANTINED` + `0x31 EMAIL_TIEBREAK_APPLIED` give
+/// high-signal `wal show --type` filters over the dangerous subset.
+///
+/// Payload (JSON): `{uid, from_domain, score, action, tiebreak, ts_unix}`.
+pub const EVENT_TYPE_EMAIL_INGRESS_TRIAGED: u8 = 0x3D;
 
 /// `0x3E EVAL_CRITICAL_DIVERGENCE` — ARCH-05/SPEC-08 recall-parity gate. A
 /// goldset query where NEOTH's recall diverged CRITICALLY from the reference
@@ -1521,6 +1556,12 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
     ),
     ("regression_alert", EVENT_TYPE_REGRESSION_ALERT),
+    ("email_ingress_triaged", EVENT_TYPE_EMAIL_INGRESS_TRIAGED),
+    (
+        "email_ingress_quarantined",
+        EVENT_TYPE_EMAIL_INGRESS_QUARANTINED,
+    ),
+    ("email_tiebreak_applied", EVENT_TYPE_EMAIL_TIEBREAK_APPLIED),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
     ("dream_composed", EVENT_TYPE_DREAM_COMPOSED),
     ("memory_transfer_exported", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
@@ -1720,6 +1761,13 @@ const _: () = {
         || EVENT_TYPE_CHANNEL_GATE_REJECTED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED < 0x30
         || EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED > 0x3F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_EMAIL_INGRESS_TRIAGED < 0x30 || EVENT_TYPE_EMAIL_INGRESS_TRIAGED > 0x3F)
+            as usize];
+    let _ = [(); 1][(EVENT_TYPE_EMAIL_INGRESS_QUARANTINED < 0x30
+        || EVENT_TYPE_EMAIL_INGRESS_QUARANTINED > 0x3F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_EMAIL_TIEBREAK_APPLIED < 0x30
+        || EVENT_TYPE_EMAIL_TIEBREAK_APPLIED > 0x3F) as usize];
     let _ = [(); 1][(EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE < 0x30
         || EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE > 0x3F) as usize];
     let _ = [(); 1]
@@ -1978,6 +2026,12 @@ mod tests {
                 EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
             ),
             ("REGRESSION_ALERT", EVENT_TYPE_REGRESSION_ALERT),
+            ("EMAIL_INGRESS_TRIAGED", EVENT_TYPE_EMAIL_INGRESS_TRIAGED),
+            (
+                "EMAIL_INGRESS_QUARANTINED",
+                EVENT_TYPE_EMAIL_INGRESS_QUARANTINED,
+            ),
+            ("EMAIL_TIEBREAK_APPLIED", EVENT_TYPE_EMAIL_TIEBREAK_APPLIED),
             ("CHANNEL_ERROR", EVENT_TYPE_CHANNEL_ERROR),
             ("INGRESS_QUARANTINED", EVENT_TYPE_INGRESS_QUARANTINED),
             ("INGRESS_SANITIZED", EVENT_TYPE_INGRESS_SANITIZED),

@@ -143,6 +143,10 @@ pub async fn run_trust(args: TrustArgs) -> Result<()> {
     let stats = collect_ledger_stats(&wal_dir);
     let ledger = summarize_ledger(&stats);
     let recovery = recovery_readiness(&wal_dir);
+    let switches = PrivacySwitches {
+        email_llm_tiebreak: cfg.email.llm_tiebreak,
+        email_tiebreak_allow_downgrade: cfg.email.llm_tiebreak_allow_downgrade,
+    };
 
     // Optional inline chain check — honest: only claim VERIFIED when run.
     let chain_status: Option<bool> = if args.verify_chain {
@@ -153,11 +157,24 @@ pub async fn run_trust(args: TrustArgs) -> Result<()> {
 
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            render_json(&posture, &ledger, &recovery, chain_status)
+            render_json(&posture, &ledger, &recovery, &switches, chain_status)
         }
-        OutputFormat::Table => render_table(&posture, &ledger, &recovery, chain_status),
+        OutputFormat::Table => render_table(&posture, &ledger, &recovery, &switches, chain_status),
     }
     Ok(())
+}
+
+/// Cost/privacy-sensitive switches that should never be buried in a YAML file —
+/// surfaced here so an operator can see at a glance whether NEOTH may spend an
+/// LLM call on their inbound mail, and whether an LLM verdict may auto-deliver
+/// a flagged email.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PrivacySwitches {
+    /// PL-05b — is the email threat tie-breaker on (an LLM call per borderline
+    /// email; a cost + privacy decision)?
+    pub email_llm_tiebreak: bool,
+    /// PL-05b — may a benign LLM verdict DEMOTE a flagged email to auto-deliver?
+    pub email_tiebreak_allow_downgrade: bool,
 }
 
 /// Glob the WAL dir for `*.wal` segments and `collect_stats` each. Missing
@@ -195,6 +212,7 @@ fn render_json(
     posture: &AutonomyPosture,
     ledger: &LedgerSummary,
     recovery: &RecoveryReadiness,
+    switches: &PrivacySwitches,
     chain_status: Option<bool>,
 ) {
     let value = serde_json::json!({
@@ -215,6 +233,10 @@ fn render_json(
             "proof_key_present": recovery.proof_key_present,
             "transfer_key_present": recovery.transfer_key_present,
         },
+        "privacy_switches": {
+            "email_llm_tiebreak": switches.email_llm_tiebreak,
+            "email_tiebreak_allow_downgrade": switches.email_tiebreak_allow_downgrade,
+        },
     });
     println!("{value}");
 }
@@ -223,6 +245,7 @@ fn render_table(
     posture: &AutonomyPosture,
     ledger: &LedgerSummary,
     recovery: &RecoveryReadiness,
+    switches: &PrivacySwitches,
     chain_status: Option<bool>,
 ) {
     println!("AUTONOMY      {}", posture.level);
@@ -275,6 +298,32 @@ fn render_table(
             " absent (generated on first transfer use)"
         )
     );
+    println!();
+
+    // Cost/privacy switches that must not stay buried in freedom.yaml.
+    println!("PRIVACY/RISK");
+    println!(
+        "  email LLM tie-break:  {}  ({})",
+        on_off(switches.email_llm_tiebreak),
+        if switches.email_llm_tiebreak {
+            "an LLM call per borderline email"
+        } else {
+            "no LLM sees your mail (deterministic rules only)"
+        }
+    );
+    println!(
+        "  └ downgrade allowed:  {}  ({})",
+        on_off(switches.email_tiebreak_allow_downgrade),
+        if switches.email_tiebreak_allow_downgrade {
+            "a benign LLM verdict may auto-DELIVER a flagged email"
+        } else {
+            "the LLM may only hold/quarantine, never auto-deliver"
+        }
+    );
+}
+
+fn on_off(b: bool) -> &'static str {
+    if b { "ON" } else { "off" }
 }
 
 fn readiness_line(present: bool, yes: &str, no: &str) -> String {
