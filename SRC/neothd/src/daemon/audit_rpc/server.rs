@@ -50,6 +50,7 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xD2, // SELF_UPDATE_APPLIED    — `neoth update --apply` replaced the binary
     0xD7, // MODEL_DOWNLOAD_START   — `neoth model pull` began a fetch
     0xD8, // MODEL_DOWNLOAD_COMPLETE — `neoth model pull` finished a fetch
+    0xD9, // HMAC_KEY_ROTATED       — `neoth security rewrap-hmac-key` replaced the key
     0xF5, // MEMORY_TRANSFER_EXPORTED — `neoth transfer export` sealed a bundle
 ];
 

@@ -237,7 +237,7 @@ pub async fn run_security(args: SecurityArgs) -> Result<()> {
             Ok(())
         }
         SecurityCommand::BackupHmacKey(a) => run_backup_hmac_key(&a),
-        SecurityCommand::RewrapHmacKey(a) => run_rewrap_hmac_key(&a),
+        SecurityCommand::RewrapHmacKey(a) => run_rewrap_hmac_key(&a).await,
         SecurityCommand::SafeMode(a) => run_safe_mode(&a),
     }
 }
@@ -412,7 +412,7 @@ fn run_safe_mode(args: &SafeModeArgs) -> Result<()> {
 /// machine + install it over the live key. Overwrites by design — the
 /// existing key is the broken/unreadable one the operator is replacing.
 /// Loud stderr so the operator sees exactly what happened.
-pub fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
+pub async fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
     let home = args
         .home
         .clone()
@@ -434,6 +434,11 @@ pub fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
     // compaction::rewrap_key validates the 16-byte floor + DPAPI-wraps
     // (Windows) / writes mode-0600 (Unix), overwriting any existing key.
     crate::wal::compaction::rewrap_key(&key_path, &raw)?;
+
+    // SC-09: record the rotation BOUNDARY so `neoth wal verify --since-rotation`
+    // can skip compaction markers signed with the old key. Best-effort, audit
+    // metadata only (SHA-256 of the new key — never the raw bytes).
+    emit_hmac_key_rotated(&home, &raw, replaced, "rewrap").await;
 
     eprintln!();
     eprintln!("[neoth security] HMAC KEY RE-WRAPPED FOR THIS MACHINE");
@@ -458,6 +463,68 @@ pub fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
 
     println!("hmac key re-wrapped: {}", key_path.display());
     Ok(())
+}
+
+/// `0xD9 HMAC_KEY_ROTATED` audit — the rotation boundary for
+/// `wal verify --since-rotation`. When a daemon owns the WAL, FORWARD over
+/// audit-RPC; otherwise open a one-shot writer. Metadata only — the SHA-256 of
+/// the NEW key (never the raw bytes). Best-effort: an audit gap never fails the
+/// rewrap (the operator's recovery already succeeded).
+async fn emit_hmac_key_rotated(home: &std::path::Path, new_key: &[u8], replaced: bool, reason: &str) {
+    use sha2::{Digest, Sha256};
+    let new_key_sha256: String = Sha256::digest(new_key)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "new_key_sha256": new_key_sha256,
+        "replaced": replaced,
+        "reason": reason,
+        "ts_unix": now,
+    }))
+    .unwrap_or_default();
+
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+        Ok(Some(_))
+    );
+    if daemon_live {
+        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+            home,
+            crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED,
+            &payload,
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "security: 0xD9 forward skipped (daemon listener unreachable)");
+        }
+        return;
+    }
+    let segment = home.join("wal").join("000001.wal");
+    if let Some(p) = segment.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let (writer, join) = match crate::wal::writer::spawn(segment) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "security: WAL writer spawn failed; 0xD9 not recorded");
+            return;
+        }
+    };
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED, &payload)
+            .build();
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(error = %e, "security: 0xD9 frame append failed (audit gap)");
+    }
+    // Drop the handle so the writer task drains + flushes, then await it — the
+    // rotation boundary must be durable before the command reports success.
+    drop(writer);
+    let _ = join.await;
 }
 
 /// SC-09 (Session 28) — write the operator's WAL HMAC compaction key
@@ -1392,23 +1459,23 @@ mod tests {
 
     // ── SC-09: rewrap-hmac-key (Tier-1 recovery) ──────────────────────
 
-    #[test]
-    fn rewrap_refuses_missing_source() {
+    #[tokio::test]
+    async fn rewrap_refuses_missing_source() {
         let home = TempDir::new().unwrap();
         let out = TempDir::new().unwrap();
         let args = RewrapHmacKeyArgs {
             source: out.path().join("absent.key"),
             home: Some(home.path().to_path_buf()),
         };
-        let err = run_rewrap_hmac_key(&args).unwrap_err();
+        let err = run_rewrap_hmac_key(&args).await.unwrap_err();
         assert!(
             err.to_string().contains("no plaintext key backup"),
             "got: {err}"
         );
     }
 
-    #[test]
-    fn rewrap_refuses_weak_source_key() {
+    #[tokio::test]
+    async fn rewrap_refuses_weak_source_key() {
         let home = TempDir::new().unwrap();
         let out = TempDir::new().unwrap();
         let src = out.path().join("weak.key");
@@ -1417,15 +1484,15 @@ mod tests {
             source: src,
             home: Some(home.path().to_path_buf()),
         };
-        let err = run_rewrap_hmac_key(&args).unwrap_err();
+        let err = run_rewrap_hmac_key(&args).await.unwrap_err();
         assert!(
             err.to_string().contains("shorter than 16 bytes"),
             "got: {err}"
         );
     }
 
-    #[test]
-    fn rewrap_installs_and_roundtrips_via_load() {
+    #[tokio::test]
+    async fn rewrap_installs_and_roundtrips_via_load() {
         let home = TempDir::new().unwrap();
         let out = TempDir::new().unwrap();
         let src = out.path().join("backup.key");
@@ -1435,7 +1502,7 @@ mod tests {
             source: src,
             home: Some(home.path().to_path_buf()),
         };
-        run_rewrap_hmac_key(&args).unwrap();
+        run_rewrap_hmac_key(&args).await.unwrap();
         let key_path = home.path().join("wal").join("hmac.key");
         let loaded = crate::wal::compaction::load_or_init_key(&key_path).unwrap();
         assert_eq!(
@@ -1444,8 +1511,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rewrap_overwrites_existing_live_key() {
+    #[tokio::test]
+    async fn rewrap_overwrites_existing_live_key() {
         let home = TempDir::new().unwrap();
         seed_hmac_key(home.path()); // existing (different) key on disk
         let out = TempDir::new().unwrap();
@@ -1456,9 +1523,50 @@ mod tests {
             source: src,
             home: Some(home.path().to_path_buf()),
         };
-        run_rewrap_hmac_key(&args).unwrap();
+        run_rewrap_hmac_key(&args).await.unwrap();
         let key_path = home.path().join("wal").join("hmac.key");
         let loaded = crate::wal::compaction::load_or_init_key(&key_path).unwrap();
         assert_eq!(loaded, raw, "rewrap must overwrite the prior live key");
+    }
+
+    #[tokio::test]
+    async fn rewrap_emits_hmac_key_rotated_frame() {
+        // SC-09-A: a successful rewrap (no daemon) records a 0xD9 boundary frame
+        // carrying the SHA-256 of the installed key — never the raw bytes.
+        use sha2::{Digest, Sha256};
+        let home = TempDir::new().unwrap();
+        let out = TempDir::new().unwrap();
+        let src = out.path().join("backup.key");
+        let raw = vec![7u8; 32];
+        write_file(&src, &raw);
+        let args = RewrapHmacKeyArgs {
+            source: src,
+            home: Some(home.path().to_path_buf()),
+        };
+        run_rewrap_hmac_key(&args).await.unwrap();
+
+        let seg = home.path().join("wal").join("000001.wal");
+        let bytes = std::fs::read(&seg).expect("0xD9 segment written");
+        let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut found = None;
+        while cur < bytes.len() {
+            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else {
+                break;
+            };
+            if f.header.event_type == crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED {
+                found = Some(serde_json::from_slice::<serde_json::Value>(f.payload).unwrap());
+            }
+            let total = f.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cur = cur.saturating_add(total);
+        }
+        let p = found.expect("a 0xD9 HMAC_KEY_ROTATED frame must be present");
+        let expected: String = Sha256::digest(&raw).iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(p["new_key_sha256"].as_str().unwrap(), expected);
+        assert_eq!(p["reason"].as_str().unwrap(), "rewrap");
+        // The raw key must NOT appear anywhere in the payload.
+        assert!(!p.to_string().contains(&"07".repeat(8)));
     }
 }

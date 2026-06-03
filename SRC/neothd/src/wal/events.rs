@@ -1266,6 +1266,17 @@ pub const EVENT_TYPE_MODEL_DOWNLOAD_START: u8 = 0xD7;
 /// `{ model_id, cached_path, duration_ms, ts_unix }`.
 pub const EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE: u8 = 0xD8;
 
+/// `0xD9 HMAC_KEY_ROTATED` — SC-09. Emitted when the WAL HMAC integrity key is
+/// REPLACED on disk — today by `neoth security rewrap-hmac-key` (Tier-1
+/// recovery: a plaintext backup re-wrapped for a new machine/user), and by any
+/// future `rotate-hmac-key`. This frame is the ROTATION BOUNDARY that
+/// `neoth wal verify --since-rotation` uses: compaction markers BEFORE it were
+/// signed with the old key and are skipped; markers after verify under the new
+/// key. Audit metadata ONLY — never the raw key bytes; just the SHA-256 of the
+/// installed key for correlation. Payload:
+/// `{ new_key_sha256, replaced, reason, ts_unix }`.
+pub const EVENT_TYPE_HMAC_KEY_ROTATED: u8 = 0xD9;
+
 // ---- 0xE0..=0xEF  Cluster lifecycle (R-7, Session 19; 0xE0..=0xEA assigned) ----
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
@@ -1917,6 +1928,8 @@ const _: () = {
         || EVENT_TYPE_MODEL_DOWNLOAD_START > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE < 0xD0
         || EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE > 0xDF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_HMAC_KEY_ROTATED < 0xD0 || EVENT_TYPE_HMAC_KEY_ROTATED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xEF).
     // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
     // (0xEB..=0xEF) share one declared band. Every assertion uses the full
@@ -2155,6 +2168,7 @@ mod tests {
                 "MODEL_DOWNLOAD_COMPLETE",
                 EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE,
             ),
+            ("HMAC_KEY_ROTATED", EVENT_TYPE_HMAC_KEY_ROTATED),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",
