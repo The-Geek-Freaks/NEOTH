@@ -1255,6 +1255,7 @@ Show only the discovered-but-not-yet-decided plugins. Operator review queue
 UX-07 — pre-deployment plugin verification. Reads `<path>/plugin.toml` + `<path>/plugin.wasm`, validates the manifest, and (when the daemon was built with the `wasm-plugin-host` feature) runs a sandboxed `neoth_run` invocation in a fresh wasmtime Store with the manifest's fuel + memory budgets applied. Reports the `InvocationOutcome` so the operator sees pass/fail without touching `~/.neoth/plugins/`
 
 - `<PATH>` — Directory containing `plugin.toml` + `plugin.wasm`
+- `--capture-wal <CAPTURE_WAL>` — UX-07b — capture the WAL frames (`0xC4`/`0xC6`/`0xC7`) the invocation emits into a throwaway tempdir WAL and surface them in the report. Requires the `wasm-plugin-host` feature; without it the flag is inert (the slim build can't live-invoke). The live WAL is never touched
 
 ### `neoth plugin verify`
 

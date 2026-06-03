@@ -178,6 +178,25 @@ pub fn invoke_plugin(
     if let Some(db) = recall_db {
         state = state.with_recall_db(db);
     }
+    invoke_plugin_with_state(engine, module, linker, state)
+}
+
+/// UX-07b — invoke a plugin with a CALLER-BUILT [`PluginStoreState`] instead of
+/// constructing it from `(granted, wal_writer, recall_db)` internally. Lets the
+/// test/dev harness (`neoth plugin test --capture-wal`) inject a real WAL
+/// writer + grant and then observe the `0xC4 PLUGIN_HOSTCALL` /
+/// `0xC6 PLUGIN_CAP_USED` / `0xC7 PLUGIN_CAP_DENIED` frames the invocation
+/// emits. [`invoke_plugin`] is the thin wrapper that builds the state from its
+/// params and delegates here — the body below is the identical instantiation +
+/// `neoth_run` call, minus the state construction. The outcome's `plugin_id`
+/// comes from `state.plugin_id`.
+pub fn invoke_plugin_with_state(
+    engine: &NeothEngine,
+    module: &wasmtime::Module,
+    linker: &wasmtime::Linker<crate::wasm_plugin::engine::PluginStoreState>,
+    state: crate::wasm_plugin::engine::PluginStoreState,
+) -> InvocationOutcome {
+    let plugin_id = state.plugin_id.clone();
 
     let mut store = match engine.new_store(state) {
         Ok(s) => s,
@@ -822,6 +841,69 @@ mod tests {
             denied >= 1,
             "production invoke path MUST emit a 0xC7 PLUGIN_CAP_DENIED frame on a denied hostcall; found {denied}"
         );
+    }
+
+    /// UX-07b: `invoke_plugin_with_state` honours a CALLER-BUILT state. Inject a
+    /// Write grant + a real writer, run a hostcall-emitting plugin, and prove
+    /// the injected writer captured the `0xC4 PLUGIN_HOSTCALL` frame + that the
+    /// outcome id comes from `state.plugin_id`. This is the seam the
+    /// `neoth plugin test --capture-wal` harness rides on.
+    #[tokio::test]
+    async fn invoke_plugin_with_state_uses_injected_writer() {
+        use crate::wal::events::EVENT_TYPE_PLUGIN_HOSTCALL;
+        use crate::wal::writer::spawn;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = spawn(seg.clone()).expect("spawn writer");
+
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine
+            .compile_from_bytes(&calling_emit_wasm())
+            .expect("compile calling-emit plugin");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker");
+
+        // Caller builds the state — the whole point of the new entry point.
+        let state = PluginStoreState::new("injected")
+            .with_granted(HostcallPermission::Write)
+            .with_wal_writer(writer);
+        let outcome = invoke_plugin_with_state(&engine, &module, &linker, state);
+        assert_eq!(outcome.stage, InvocationStage::Run);
+        assert_eq!(
+            outcome.plugin_id, "injected",
+            "outcome id must come from state.plugin_id"
+        );
+
+        // The writer was moved into the state → into the store → dropped when
+        // invoke returned. No clone is held here, so join drains cleanly.
+        join.await.expect("writer task join");
+        let used = count_event_frames(&seg, EVENT_TYPE_PLUGIN_HOSTCALL);
+        assert!(
+            used >= 1,
+            "Write-granted emit via the injected writer MUST leave a 0xC4 frame; found {used}"
+        );
+    }
+
+    /// UX-07b regression: the refactored `invoke_plugin` wrapper still runs a
+    /// plain plugin end-to-end with no writer/db (the pre-refactor behaviour).
+    #[test]
+    fn invoke_plugin_wrapper_still_runs_without_handles() {
+        let engine = NeothEngine::new().expect("engine");
+        let module = engine.compile_from_bytes(&echo_wasm()).expect("compile echo");
+        let linker = crate::wasm_plugin::hostcalls::build_linker(engine.raw()).expect("linker");
+        let outcome = invoke_plugin(
+            &engine,
+            &module,
+            &linker,
+            "echo",
+            HostcallPermission::None,
+            None,
+            None,
+        );
+        assert_eq!(outcome.stage, InvocationStage::Run);
+        assert!(outcome.error.is_none());
+        assert_eq!(outcome.plugin_id, "echo");
     }
 
     fn sample_manifest(id: &str) -> PluginManifest {

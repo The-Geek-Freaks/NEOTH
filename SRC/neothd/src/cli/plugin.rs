@@ -71,6 +71,13 @@ pub enum PluginAction {
     Test {
         /// Directory containing `plugin.toml` + `plugin.wasm`.
         path: std::path::PathBuf,
+        /// UX-07b — capture the WAL frames (`0xC4`/`0xC6`/`0xC7`) the
+        /// invocation emits into a throwaway tempdir WAL and surface them in
+        /// the report. Requires the `wasm-plugin-host` feature; without it the
+        /// flag is inert (the slim build can't live-invoke). The live WAL is
+        /// never touched.
+        #[arg(long)]
+        capture_wal: bool,
     },
     /// SC-03 — verify a plugin directory against the operator's integrity
     /// policy (revocation list + pinned hash + author signature) WITHOUT
@@ -107,7 +114,9 @@ pub async fn run_plugin(args: PluginArgs) -> Result<()> {
         PluginAction::Disable { id } => {
             set_activation(&home, &id, PluginActivation::Disabled, args.output)
         }
-        PluginAction::Test { path } => run_test(&path, args.output),
+        PluginAction::Test { path, capture_wal } => {
+            run_test(&path, args.output, capture_wal).await
+        }
         PluginAction::Verify { path } => run_verify(&path, args.output),
         PluginAction::Ledger { id } => run_ledger(id.as_deref(), args.output),
     }
@@ -135,12 +144,23 @@ struct TestInvocationSummary {
     invoked_ok: bool,
 }
 
+/// UX-07b — a live invocation PLUS the WAL frames it emitted, captured into a
+/// throwaway tempdir WAL. `captured_frames` carries one entry per frame
+/// (`{event_type, payload}`) in emission order — the `0xC4 PLUGIN_HOSTCALL` /
+/// `0xC6 PLUGIN_CAP_USED` / `0xC7 PLUGIN_CAP_DENIED` audit trail the plugin
+/// produced. Always-compiled (the slim build just never produces one).
+#[derive(Clone, Debug, serde::Serialize)]
+struct TestInvocationWithWal {
+    outcome: TestInvocationSummary,
+    captured_frames: Vec<serde_json::Value>,
+}
+
 /// UX-07 — read + validate a candidate plugin and (under the host
 /// feature) live-invoke it. Returns Ok even when the invocation reports
 /// a plugin-side error so the operator can see the structured outcome;
 /// returns Err only when the inputs themselves are unusable
 /// (missing files, malformed manifest).
-fn run_test(path: &std::path::Path, output: OutputFormat) -> Result<()> {
+async fn run_test(path: &std::path::Path, output: OutputFormat, capture_wal: bool) -> Result<()> {
     if !path.exists() {
         anyhow::bail!(
             "plugin path `{}` does not exist — pass a directory containing \
@@ -177,9 +197,21 @@ fn run_test(path: &std::path::Path, output: OutputFormat) -> Result<()> {
     // Operators on a slim daemon (no `wasm-plugin-host`) still get the
     // manifest-shape check, which catches the most common authoring
     // mistakes (wrong id casing, missing permissions, bad budgets).
-    let invocation_outcome: Option<TestInvocationSummary> = run_test_invoke(&manifest, &wasm_bytes);
-
-    render_test_report(&manifest, wasm_bytes.len(), invocation_outcome, output)
+    if capture_wal {
+        // UX-07b: live-invoke with an injected throwaway WAL writer + surface
+        // the captured 0xC4/0xC6/0xC7 frames. The slim build returns None
+        // (the renderer prints the rebuild hint, same as the dry-run path).
+        let captured = run_test_invoke_with_wal(&manifest, &wasm_bytes).await;
+        let (outcome, frames) = match captured {
+            Some(c) => (Some(c.outcome), Some(c.captured_frames)),
+            None => (None, None),
+        };
+        render_test_report(&manifest, wasm_bytes.len(), outcome, frames, output)
+    } else {
+        let invocation_outcome: Option<TestInvocationSummary> =
+            run_test_invoke(&manifest, &wasm_bytes);
+        render_test_report(&manifest, wasm_bytes.len(), invocation_outcome, None, output)
+    }
 }
 
 /// SC-03 — `neoth plugin verify <path>`: run the operator's integrity
@@ -598,16 +630,173 @@ fn run_test_invoke(
     None
 }
 
+/// UX-07b — live-invoke a candidate plugin with a THROWAWAY tempdir WAL writer
+/// injected via [`crate::wasm_plugin::dispatch::invoke_plugin_with_state`], then
+/// read back every frame the invocation emitted. The plugin runs with EXACTLY
+/// its manifest grant (same gate the daemon enforces), so the captured
+/// `0xC4`/`0xC6`/`0xC7` frames are the real audit trail the operator would see
+/// in production — proven before the plugin ever touches `~/.neoth/plugins/`.
+/// The live WAL is never written.
+#[cfg(feature = "wasm-plugin-host")]
+async fn run_test_invoke_with_wal(
+    manifest: &crate::wasm_plugin::manifest::PluginManifest,
+    wasm_bytes: &[u8],
+) -> Option<TestInvocationWithWal> {
+    use crate::wasm_plugin::dispatch::{
+        invocation_outcome_from_compile_failure, invoke_plugin_with_state, CompileOutcome,
+        InvocationStage,
+    };
+    use crate::wasm_plugin::engine::{NeothEngine, PluginStoreState};
+    use crate::wasm_plugin::hostcalls;
+
+    // Helper: an early-exit result carrying just the failure summary + no frames.
+    let fail = |stage: &str, error: String| {
+        Some(TestInvocationWithWal {
+            outcome: TestInvocationSummary {
+                stage: stage.to_string(),
+                error: Some(error),
+                invoked_ok: false,
+            },
+            captured_frames: Vec::new(),
+        })
+    };
+
+    let engine = match NeothEngine::new() {
+        Ok(e) => e,
+        Err(e) => return fail("compile", format!("engine init failed: {e}")),
+    };
+    let compile_outcome = match engine.compile_from_bytes(wasm_bytes) {
+        Ok(module) => CompileOutcome::Compiled {
+            plugin_id: manifest.id.clone(),
+            module: std::sync::Arc::new(module),
+        },
+        Err(e) => CompileOutcome::Failed {
+            plugin_id: manifest.id.clone(),
+            error: format!("{e}"),
+        },
+    };
+    if let Some(skip) = invocation_outcome_from_compile_failure(&compile_outcome) {
+        return Some(TestInvocationWithWal {
+            outcome: TestInvocationSummary {
+                stage: invocation_stage_name(skip.stage).to_string(),
+                error: skip.error,
+                invoked_ok: false,
+            },
+            captured_frames: Vec::new(),
+        });
+    }
+    let module = match &compile_outcome {
+        CompileOutcome::Compiled { module, .. } => module,
+        CompileOutcome::Failed { .. } => unreachable!("guarded by invocation_outcome_from_compile_failure"),
+    };
+    let linker = match hostcalls::build_linker(engine.raw()) {
+        Ok(l) => l,
+        Err(e) => return fail("compile", format!("linker build failed: {e}")),
+    };
+    let granted = hostcalls::HostcallPermission::from(manifest.requested_permissions);
+
+    // THROWAWAY WAL: a tempdir segment the invocation writes into, never the
+    // live `~/.neoth` WAL. `tmp` is held to fn-end so the file survives the
+    // read-back below.
+    let tmp = match tempfile::tempdir() {
+        Ok(t) => t,
+        Err(e) => return fail("compile", format!("tempdir: {e}")),
+    };
+    let seg = tmp.path().join("000001.wal");
+    let (writer, join) = match crate::wal::writer::spawn(seg.clone()) {
+        Ok(p) => p,
+        Err(e) => return fail("compile", format!("wal writer spawn: {e}")),
+    };
+
+    // Caller-built state: manifest grant + the throwaway writer.
+    let state = PluginStoreState::new(manifest.id.clone())
+        .with_granted(granted)
+        .with_wal_writer(writer);
+    let outcome = invoke_plugin_with_state(&engine, module, &linker, state);
+    let invoked_ok = matches!(outcome.stage, InvocationStage::Run) && outcome.error.is_none();
+
+    // Flush: the writer was moved into the state → store → dropped when invoke
+    // returned, so no clone is held here; join drains the writer task.
+    join.await.ok();
+    let captured_frames = decode_wal_frames(&seg);
+
+    Some(TestInvocationWithWal {
+        outcome: TestInvocationSummary {
+            stage: invocation_stage_name(outcome.stage).to_string(),
+            error: outcome.error,
+            invoked_ok,
+        },
+        captured_frames,
+    })
+}
+
+#[cfg(not(feature = "wasm-plugin-host"))]
+async fn run_test_invoke_with_wal(
+    _manifest: &crate::wasm_plugin::manifest::PluginManifest,
+    _wasm_bytes: &[u8],
+) -> Option<TestInvocationWithWal> {
+    // Slim daemon — no live invocation, so no frames to capture. The renderer
+    // prints the same "rebuild with --features wasm-plugin-host" hint.
+    None
+}
+
+/// UX-07b — decode every frame in a (small, single-segment) WAL file into
+/// `{event_type, payload}` JSON, in emission order. Tolerant: a missing /
+/// torn / truncated segment yields the frames recovered so far. Always
+/// compiled (the `wal` read primitives are feature-independent), so the
+/// capture/read-back logic is unit-testable without the wasm host.
+fn decode_wal_frames(segment: &std::path::Path) -> Vec<serde_json::Value> {
+    use crate::wal::compress::decompress_frames;
+    use crate::wal::frame::decode_frame;
+    use crate::wal::segment_header::parse_segment_header;
+
+    let Ok(bytes) = std::fs::read(segment) else {
+        return Vec::new();
+    };
+    let Ok(hdr) = parse_segment_header(&bytes) else {
+        return Vec::new();
+    };
+    let body = &bytes[hdr.header_len()..];
+    let frames = if hdr.is_compressed() {
+        match decompress_frames(body) {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        }
+    } else {
+        body.to_vec()
+    };
+    let mut out = Vec::new();
+    let mut cursor = 0usize;
+    while cursor < frames.len() {
+        let dec = match decode_frame(&frames[cursor..]) {
+            Ok(d) => d,
+            Err(_) => break,
+        };
+        let payload = serde_json::from_slice::<serde_json::Value>(dec.payload).ok();
+        out.push(serde_json::json!({
+            "event_type": format!("0x{:02X}", dec.header.event_type),
+            "payload": payload,
+        }));
+        let total = dec.header.total_len as usize;
+        if total == 0 {
+            break;
+        }
+        cursor = cursor.saturating_add(total);
+    }
+    out
+}
+
 fn render_test_report(
     manifest: &crate::wasm_plugin::manifest::PluginManifest,
     wasm_size: usize,
     outcome: Option<TestInvocationSummary>,
+    captured_frames: Option<Vec<serde_json::Value>>,
     output: OutputFormat,
 ) -> Result<()> {
     let host_built = cfg!(feature = "wasm-plugin-host");
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let payload = json!({
+            let mut payload = json!({
                 "manifest": {
                     "id": manifest.id,
                     "name": manifest.name,
@@ -618,6 +807,11 @@ fn render_test_report(
                 "host_feature_built": host_built,
                 "invocation": outcome,
             });
+            // UX-07b: surface the captured frames only on the --capture-wal path
+            // (None on the dry-run path keeps the JSON shape unchanged there).
+            if let Some(frames) = &captured_frames {
+                payload["captured_frames"] = json!(frames);
+            }
             println!("{}", serde_json::to_string_pretty(&payload)?);
         }
         OutputFormat::Table => {
@@ -643,6 +837,18 @@ fn render_test_report(
                     println!(
                         "               rebuild with `cargo build --features wasm-plugin-host` \
                          to live-invoke `neoth_run`"
+                    );
+                }
+            }
+            if let Some(frames) = &captured_frames {
+                println!("  captured WAL frames: {}", frames.len());
+                for f in frames {
+                    println!(
+                        "    {} {}",
+                        f.get("event_type").and_then(|v| v.as_str()).unwrap_or("?"),
+                        f.get("payload")
+                            .map(|p| p.to_string())
+                            .unwrap_or_else(|| "null".into()),
                     );
                 }
             }
@@ -954,11 +1160,11 @@ name = \"Demo Plugin\"\n\
 version = \"0.1.0\"\n\
 ";
 
-    #[test]
-    fn ux07_test_bails_when_path_does_not_exist() {
+    #[tokio::test]
+    async fn ux07_test_bails_when_path_does_not_exist() {
         let dir = TempDir::new().unwrap();
         let missing = dir.path().join("not_there");
-        let err = run_test(&missing, OutputFormat::Table).unwrap_err();
+        let err = run_test(&missing, OutputFormat::Table, false).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("does not exist"),
@@ -966,12 +1172,12 @@ version = \"0.1.0\"\n\
         );
     }
 
-    #[test]
-    fn ux07_test_bails_when_path_is_a_file_not_a_directory() {
+    #[tokio::test]
+    async fn ux07_test_bails_when_path_is_a_file_not_a_directory() {
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("oops.txt");
         std::fs::write(&file, b"not a plugin dir").unwrap();
-        let err = run_test(&file, OutputFormat::Table).unwrap_err();
+        let err = run_test(&file, OutputFormat::Table, false).await.unwrap_err();
         assert!(format!("{err:#}").contains("not a directory"));
     }
 
@@ -992,13 +1198,13 @@ version = \"0.1.0\"\n\
         assert!(format!("{err:#}").contains("not a directory"));
     }
 
-    #[test]
-    fn ux07_test_bails_with_specific_diagnostic_for_missing_manifest() {
+    #[tokio::test]
+    async fn ux07_test_bails_with_specific_diagnostic_for_missing_manifest() {
         let dir = TempDir::new().unwrap();
         let plugin_dir = dir.path().join("plug");
         std::fs::create_dir(&plugin_dir).unwrap();
         write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]); // wasm magic only
-        let err = run_test(&plugin_dir, OutputFormat::Table).unwrap_err();
+        let err = run_test(&plugin_dir, OutputFormat::Table, false).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("missing `plugin.toml`"),
@@ -1006,13 +1212,13 @@ version = \"0.1.0\"\n\
         );
     }
 
-    #[test]
-    fn ux07_test_bails_with_specific_diagnostic_for_missing_wasm() {
+    #[tokio::test]
+    async fn ux07_test_bails_with_specific_diagnostic_for_missing_wasm() {
         let dir = TempDir::new().unwrap();
         let plugin_dir = dir.path().join("plug");
         std::fs::create_dir(&plugin_dir).unwrap();
         write_manifest(&plugin_dir, VALID_MANIFEST);
-        let err = run_test(&plugin_dir, OutputFormat::Table).unwrap_err();
+        let err = run_test(&plugin_dir, OutputFormat::Table, false).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("missing `plugin.wasm`"),
@@ -1020,8 +1226,8 @@ version = \"0.1.0\"\n\
         );
     }
 
-    #[test]
-    fn ux07_test_surfaces_manifest_parse_errors_with_clear_message() {
+    #[tokio::test]
+    async fn ux07_test_surfaces_manifest_parse_errors_with_clear_message() {
         let dir = TempDir::new().unwrap();
         let plugin_dir = dir.path().join("plug");
         std::fs::create_dir(&plugin_dir).unwrap();
@@ -1030,7 +1236,7 @@ version = \"0.1.0\"\n\
             "id = \"BadCase\"\nname = \"\"\nversion = \"0.1.0\"\n",
         );
         write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]);
-        let err = run_test(&plugin_dir, OutputFormat::Table).unwrap_err();
+        let err = run_test(&plugin_dir, OutputFormat::Table, false).await.unwrap_err();
         let msg = format!("{err:#}");
         assert!(
             msg.contains("manifest invalid"),
@@ -1038,8 +1244,8 @@ version = \"0.1.0\"\n\
         );
     }
 
-    #[test]
-    fn ux07_test_accepts_valid_inputs_in_slim_build() {
+    #[tokio::test]
+    async fn ux07_test_accepts_valid_inputs_in_slim_build() {
         // Default cargo test --lib: wasm-plugin-host feature is OFF, so
         // run_test must NOT bail when the inputs are well-formed — it
         // just skips the live invocation and the renderer says so.
@@ -1052,7 +1258,7 @@ version = \"0.1.0\"\n\
         write_wasm(&plugin_dir, &[0x00, 0x61, 0x73, 0x6d]);
         // Use the JSON output so the test doesn't depend on Table-format
         // string drift; either renderer is acceptable.
-        run_test(&plugin_dir, OutputFormat::Json).unwrap();
+        run_test(&plugin_dir, OutputFormat::Json, false).await.unwrap();
     }
 
     #[cfg(not(feature = "wasm-plugin-host"))]
@@ -1217,5 +1423,92 @@ version = \"0.1.0\"\n\
         let emit = rows.iter().find(|r| r.capability == "emit_event").unwrap();
         assert_eq!(emit.calls, 1);
         assert_eq!(emit.total_payload_bytes, 64);
+    }
+
+    // ── UX-07b: --capture-wal ───────────────────────────────────────────────
+
+    /// The capture read-back decodes an appended plugin frame into
+    /// `{event_type, payload}` — the core of `run_test_invoke_with_wal`.
+    #[tokio::test]
+    async fn decode_wal_frames_reads_appended_plugin_frame() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let payload = hostcall_payload("snoop", 64);
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_PLUGIN_HOSTCALL, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        let _ = join.await;
+
+        let frames = decode_wal_frames(&seg);
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["event_type"], "0xC4");
+        assert_eq!(frames[0]["payload"]["plugin"], "snoop");
+        assert_eq!(frames[0]["payload"]["payload_bytes"], 64);
+    }
+
+    #[test]
+    fn decode_wal_frames_missing_segment_is_empty() {
+        let frames = decode_wal_frames(std::path::Path::new(
+            "/nonexistent-uxo7b/does-not-exist.wal",
+        ));
+        assert!(frames.is_empty(), "a missing segment yields no frames, no panic");
+    }
+
+    /// UX-07b end-to-end plumbing (feature build): the capture path spawns a
+    /// throwaway WAL, invokes via `invoke_plugin_with_state`, drains, and
+    /// decodes — returning `Some` without panic. A minimal module (no
+    /// `neoth_run` export, no hostcall) reaches ExportLookup with an empty
+    /// frame list; the REAL hostcall→0xC4 capture is proven in dispatch's
+    /// `invoke_plugin_with_state_uses_injected_writer` + the frame round-trip
+    /// above.
+    #[cfg(feature = "wasm-plugin-host")]
+    #[tokio::test]
+    async fn run_test_invoke_with_wal_runs_end_to_end() {
+        let manifest = crate::wasm_plugin::manifest::PluginManifest {
+            id: "captest".into(),
+            name: "captest".into(),
+            version: "0.1.0".into(),
+            description: None,
+            requested_permissions: Default::default(),
+            hook_stages: vec![],
+            fuel_budget_override: None,
+            memory_limit_bytes: None,
+            source: None,
+        };
+        // Smallest valid module: magic + version, no `neoth_run` export.
+        let minimal = vec![0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00];
+        let cap = run_test_invoke_with_wal(&manifest, &minimal)
+            .await
+            .expect("capture path returns Some under the feature");
+        assert_eq!(
+            cap.outcome.stage, "export_lookup",
+            "minimal module has no neoth_run export"
+        );
+        assert!(
+            cap.captured_frames.is_empty(),
+            "no hostcall was made → no captured frames"
+        );
+    }
+
+    /// UX-07b slim build: the capture fn is inert (returns None) without the
+    /// host feature, exactly like the dry-run `run_test_invoke` stub.
+    #[cfg(not(feature = "wasm-plugin-host"))]
+    #[tokio::test]
+    async fn run_test_invoke_with_wal_is_none_without_feature() {
+        let manifest = crate::wasm_plugin::manifest::PluginManifest {
+            id: "captest".into(),
+            name: "captest".into(),
+            version: "0.1.0".into(),
+            description: None,
+            requested_permissions: Default::default(),
+            hook_stages: vec![],
+            fuel_budget_override: None,
+            memory_limit_bytes: None,
+            source: None,
+        };
+        let cap = run_test_invoke_with_wal(&manifest, &[]).await;
+        assert!(cap.is_none(), "slim build cannot live-invoke → None");
     }
 }
