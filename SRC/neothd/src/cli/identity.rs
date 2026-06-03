@@ -43,7 +43,7 @@ pub enum IdentityAction {
     Pubkey,
 }
 
-pub fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()> {
+pub async fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()> {
     // `pubkey` needs no db — it derives the operator's X25519 transfer pubkey.
     if let IdentityAction::Pubkey = args.action {
         let secret = crate::memory::transfer_bundle::load_or_init_transfer_key(
@@ -71,11 +71,26 @@ pub fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()> {
             Ok(())
         }
         IdentityAction::Merge { canonical, victim } => {
+            // P0: a merge changes attribution semantics — under required-audit it
+            // must NOT proceed un-audited when a daemon owns the WAL but its
+            // audit-RPC listener is unreachable.
+            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            let daemon_live = matches!(
+                crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+                Ok(Some(_))
+            );
+            crate::daemon::audit_rpc::enforce_required_audit(
+                cfg.audit_rpc.required_for_oneshot_permission_events,
+                daemon_live,
+                &home,
+            )
+            .context("identity merge refused: required audit cannot be written")?;
             let aliases = identity_store::merge_human_uuids(&conn, &canonical, &victim)?;
             let n = aliases.len();
             // SPEC-11 (#4): audit the merge with the full before-state so it's
-            // reversible — a future `identity split` reads the 0x9B frame.
-            emit_identity_merged(&canonical, &victim, &aliases);
+            // reversible — a future `identity split` reads the 0x9B frame. P0:
+            // FORWARD over audit-RPC when a daemon owns the WAL (no silent skip).
+            emit_identity_merged(&home, daemon_live, &canonical, &victim, &aliases).await;
             match output {
                 OutputFormat::Json | OutputFormat::Jsonl => println!(
                     "{}",
@@ -98,29 +113,17 @@ pub fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()> {
     }
 }
 
-/// Best-effort `0x9B IDENTITY_MERGED` audit — one-shot writer, daemon-live-skip
-/// (mirrors `neoth transfer`/`dream now`). Carries the before-state (the
-/// reassigned aliases) so the merge is auditable + a future `split` reversible.
-fn emit_identity_merged(canonical: &str, victim: &str, aliases: &[identity_store::Alias]) {
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    ) {
-        tracing::info!("identity: daemon live — skipping one-shot 0x9B audit to avoid a writer race");
-        return;
-    }
-    let segment = FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "identity: WAL writer spawn failed; 0x9B not recorded");
-            return;
-        }
-    };
+/// `0x9B IDENTITY_MERGED` audit. P0: when a daemon owns the WAL, FORWARD over
+/// the loopback audit-RPC channel (`0x9B` allowlisted) instead of skipping;
+/// otherwise open a one-shot writer. Carries the before-state (the reassigned
+/// aliases) so the merge is auditable + a future `split` reversible.
+async fn emit_identity_merged(
+    home: &std::path::Path,
+    daemon_live: bool,
+    canonical: &str,
+    victim: &str,
+    aliases: &[identity_store::Alias],
+) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -143,6 +146,29 @@ fn emit_identity_merged(canonical: &str, victim: &str, aliases: &[identity_store
         "ts_unix": now,
     }))
     .unwrap_or_default();
+    if daemon_live {
+        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+            home,
+            crate::wal::events::EVENT_TYPE_IDENTITY_MERGED,
+            &payload,
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "identity: 0x9B forward skipped (daemon listener unreachable)");
+        }
+        return;
+    }
+    let segment = FreedomConfig::default_wal_dir().join("000001.wal");
+    if let Some(p) = segment.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "identity: WAL writer spawn failed; 0x9B not recorded");
+            return;
+        }
+    };
     let header = crate::wal::HeaderBuilder::new(
         crate::wal::events::EVENT_TYPE_IDENTITY_MERGED,
         &payload,

@@ -877,7 +877,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             transfer::run_transfer(args, global_output).await?;
         }
         Commands::Identity(args) => {
-            identity::run_identity(args, global_output)?;
+            identity::run_identity(args, global_output).await?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;

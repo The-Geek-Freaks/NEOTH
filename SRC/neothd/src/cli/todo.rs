@@ -87,11 +87,54 @@ pub enum TodoAction {
 }
 
 pub async fn run_todo(args: TodoArgs) -> Result<()> {
+    // P0: every external task WRITE (add/close on ANY backend — todoist, google,
+    // caldav, microsoft) routes through the SAME ExternalTaskWrite gate +
+    // `--dry-run` + fail-closed audit path. Previously only CalDAV was gated.
+    let provider = provider_name(args.provider);
+    let action = match &args.action {
+        TodoAction::List => None,
+        TodoAction::Add { .. } => Some("add"),
+        TodoAction::Close { .. } => Some("close"),
+    };
+    if let Some(action) = action {
+        gate_external_task_write(&args, provider, action)?;
+        if args.dry_run {
+            let target = match &args.action {
+                TodoAction::Add { content } => content.as_str(),
+                TodoAction::Close { id } => id.as_str(),
+                TodoAction::List => "",
+            };
+            // CalDAV mints a deterministic uid from the content (idempotent
+            // create), so a dry-run can show the exact uid that WOULD be used;
+            // the OAuth/REST backends generate ids server-side, so the target
+            // stands in as the uid placeholder.
+            let uid = if matches!(args.provider, TaskProvider::Caldav) {
+                if let TodoAction::Add { content } = &args.action {
+                    caldav::task_uid(content)
+                } else {
+                    target.to_string()
+                }
+            } else {
+                target.to_string()
+            };
+            print_dry_run(&args, provider, action, target, &uid);
+            return Ok(());
+        }
+    }
     match args.provider {
         TaskProvider::Todoist => run_todoist(&args).await,
         TaskProvider::Google => run_google(&args).await,
         TaskProvider::Caldav => run_caldav(&args).await,
         TaskProvider::Microsoft => run_microsoft(&args).await,
+    }
+}
+
+fn provider_name(p: TaskProvider) -> &'static str {
+    match p {
+        TaskProvider::Todoist => "todoist",
+        TaskProvider::Google => "google",
+        TaskProvider::Caldav => "caldav",
+        TaskProvider::Microsoft => "microsoft",
     }
 }
 
@@ -125,6 +168,7 @@ async fn run_todoist(args: &TodoArgs) -> Result<()> {
         }
         TodoAction::Add { content } => {
             let task = todoist::create_task(&token, content).await?;
+            emit_todo_write("todoist", "add", &task.id, Some(content)).await;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::to_string_pretty(&task)?);
@@ -136,6 +180,7 @@ async fn run_todoist(args: &TodoArgs) -> Result<()> {
         }
         TodoAction::Close { id } => {
             todoist::close_task(&token, id).await?;
+            emit_todo_write("todoist", "close", id, None).await;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::json!({ "closed": id, "ok": true }));
@@ -184,6 +229,7 @@ async fn run_google(args: &TodoArgs) -> Result<()> {
         }
         TodoAction::Add { content } => {
             let task = google_tasks::create_task(&access, content).await?;
+            emit_todo_write("google", "add", &task.id, Some(content)).await;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::to_string_pretty(&task)?);
@@ -195,6 +241,7 @@ async fn run_google(args: &TodoArgs) -> Result<()> {
         }
         TodoAction::Close { id } => {
             google_tasks::close_task(&access, id).await?;
+            emit_todo_write("google", "close", id, None).await;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::json!({ "closed": id, "ok": true }));
@@ -237,18 +284,15 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
             Ok(())
         }
         TodoAction::Add { content } => {
-            gate_external_task_write(args, "caldav", "add")?;
-            if args.dry_run {
-                print_dry_run(args, "caldav", "add", content, &caldav::task_uid(content));
-                return Ok(());
-            }
+            // The ExternalTaskWrite gate + `--dry-run` already ran centrally in
+            // `run_todo`; here we just do the idempotent network write + audit.
             let (uid, outcome) =
                 caldav::create_task(&creds.url, &creds.username, creds.password.expose(), content, None)
                     .await?;
             // Audit only an ACTUAL write (a no-dup AlreadyExists still happened
             // server-side as a no-op, but nothing changed — record both as the
             // write attempt's terminal state for the operator trail).
-            emit_todo_write("caldav", "add", &uid, Some(content));
+            emit_todo_write("caldav", "add", &uid, Some(content)).await;
             match outcome {
                 caldav::CreateOutcome::Created => render_write(args, &format!("✓ created \"{content}\" (uid {uid})")),
                 caldav::CreateOutcome::AlreadyExists => {
@@ -258,17 +302,14 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
             Ok(())
         }
         TodoAction::Close { id } => {
+            // Validate the uid shape before any network call; the central gate +
+            // `--dry-run` already ran in `run_todo`.
             caldav::validate_uid(id)?;
-            gate_external_task_write(args, "caldav", "close")?;
-            if args.dry_run {
-                print_dry_run(args, "caldav", "close", id, id);
-                return Ok(());
-            }
             let outcome =
                 caldav::close_task(&creds.url, &creds.username, creds.password.expose(), id).await?;
             match outcome {
                 caldav::CloseOutcome::Completed => {
-                    emit_todo_write("caldav", "close", id, None);
+                    emit_todo_write("caldav", "close", id, None).await;
                     render_write(args, &format!("✓ completed {id}"));
                 }
                 caldav::CloseOutcome::NotFound => {
@@ -285,12 +326,26 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
     }
 }
 
-/// TD-02 — gate a CalDAV (external task) write through the autonomy/consent
-/// layer. `Deny` bails; `Confirm` is satisfied by `--yes`, an interactive TTY
-/// y/n prompt, or otherwise bails (no silent network write). `Allow` proceeds.
+/// P0 — gate an external task write (ANY backend) through the autonomy/consent
+/// layer + a fail-closed audit pre-flight. `Deny` bails; `Confirm` is satisfied
+/// by `--yes`, an interactive TTY y/n prompt, or otherwise bails (no silent
+/// network write). `Allow` proceeds. Under `required_for_oneshot_permission_
+/// events`, a live daemon with an unreachable audit-RPC listener REFUSES the
+/// write (the `0xC8 TODO_WRITE` frame couldn't land).
 fn gate_external_task_write(args: &TodoArgs, provider: &str, action: &str) -> Result<()> {
     use crate::permissions::{Action, Decision, evaluate};
     let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+        Ok(Some(_))
+    );
+    crate::daemon::audit_rpc::enforce_required_audit(
+        cfg.audit_rpc.required_for_oneshot_permission_events,
+        daemon_live,
+        &home,
+    )
+    .context("task write refused: required audit cannot be written")?;
     let act = Action::ExternalTaskWrite {
         provider: provider.into(),
         action: action.into(),
@@ -319,16 +374,38 @@ fn gate_external_task_write(args: &TodoArgs, provider: &str, action: &str) -> Re
     }
 }
 
-/// Best-effort `0xC8 TODO_WRITE` audit. One-shot writer; skipped when a daemon
-/// owns the WAL (avoids a segment race — mirrors `neoth dream now`). Metadata
-/// only (provider + action + uid + summary), never credentials.
-fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str>) {
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+/// `0xC8 TODO_WRITE` audit. P0: when a daemon owns the WAL, FORWARD over the
+/// loopback audit-RPC channel (`0xC8` allowlisted) instead of skipping;
+/// otherwise open a one-shot writer. Metadata only (provider + action + uid +
+/// summary), never credentials.
+async fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str>) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "provider": provider,
+        "action": action,
+        "uid": uid,
+        "summary": summary,
+        "ts_unix": now,
+    }))
+    .unwrap_or_default();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
         Ok(Some(_))
-    ) {
-        tracing::info!("todo: daemon live — skipping one-shot TODO_WRITE audit to avoid a writer race");
+    );
+    if daemon_live {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+            &home,
+            crate::wal::events::EVENT_TYPE_TODO_WRITE,
+            &payload,
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "todo: TODO_WRITE forward skipped (daemon listener unreachable)");
+        }
         return;
     }
     let segment = crate::config::FreedomConfig::default_wal_dir().join("000001.wal");
@@ -342,18 +419,6 @@ fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str
             return;
         }
     };
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "provider": provider,
-        "action": action,
-        "uid": uid,
-        "summary": summary,
-        "ts_unix": now,
-    }))
-    .unwrap_or_default();
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_TODO_WRITE, &payload).build();
     if let Err(e) = writer.try_append_sync(header, payload) {
@@ -555,6 +620,7 @@ async fn run_microsoft(args: &TodoArgs) -> Result<()> {
         }
         TodoAction::Add { content } => {
             let task = microsoft_todo::create_task(&access, content).await?;
+            emit_todo_write("microsoft", "add", &task.id, Some(content)).await;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::to_string_pretty(&task)?);
@@ -564,6 +630,7 @@ async fn run_microsoft(args: &TodoArgs) -> Result<()> {
         }
         TodoAction::Close { id } => {
             microsoft_todo::close_task(&access, id).await?;
+            emit_todo_write("microsoft", "close", id, None).await;
             match args.output {
                 OutputFormat::Json | OutputFormat::Jsonl => {
                     println!("{}", serde_json::json!({ "closed": id, "ok": true }))

@@ -31,6 +31,8 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0x2C, // INGEST_EXTRACTED       — `neoth ingest` extracted an asset
     0x2D, // EMBED_PERSISTED        — `neoth ingest` persisted an embedding
     0x3E, // EVAL_CRITICAL_DIVERGENCE — `neoth recall-score` flagged a CRITICAL query
+    0x9B, // IDENTITY_MERGED        — `neoth identity merge` folded two identities
+    0xC8, // TODO_WRITE             — `neoth todo add/close` mutated an external task list
     0xA2, // LEVEL_ELEVATED   — `neoth autonomy set` raised the level
     0xA3, // LEVEL_DEROGATED  — `neoth autonomy set` lowered the level
     0xA5, // LEASE_GRANTED
