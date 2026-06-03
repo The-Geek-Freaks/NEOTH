@@ -126,6 +126,44 @@ impl Channel for TelegramChannel {
         })
     }
 
+    /// SPEC-11: edit a previously-sent message via Telegram `editMessageText`.
+    /// `message_id` is the numeric id returned by [`TelegramChannel::send_text`]
+    /// (Telegram message ids are stable across edits). Drives the
+    /// [`LiveDelivery`](crate::channels::LiveDelivery) streaming-preview path.
+    /// A bad chat_id / message_id or a Telegram-side failure surfaces as
+    /// `Transport` so the `LiveDelivery` degrade path stays reserved for true
+    /// `NotSupported` adapters.
+    async fn edit_message(
+        &self,
+        chat_id: &str,
+        message_id: &MessageId,
+        new_text: &str,
+    ) -> std::result::Result<(), ChannelError> {
+        use teloxide::types::{ChatId, MessageId as TgMessageId};
+
+        let id: i64 = chat_id.parse().map_err(|e: std::num::ParseIntError| {
+            ChannelError::Transport(format!("chat_id parse: {e}"))
+        })?;
+        let mid: i32 = message_id.0.parse().map_err(|e: std::num::ParseIntError| {
+            ChannelError::Transport(format!("message_id parse: {e}"))
+        })?;
+        let bot = Bot::new(self.token.expose());
+        // Try MarkdownV2 first (matches send_text), fall back to plain text on a
+        // parse rejection so a strict-markdown body still lands the edit.
+        let edit = bot
+            .edit_message_text(ChatId(id), TgMessageId(mid), new_text)
+            .parse_mode(ParseMode::MarkdownV2)
+            .await;
+        if edit.is_err() {
+            bot.edit_message_text(ChatId(id), TgMessageId(mid), new_text)
+                .await
+                .map_err(|e| {
+                    ChannelError::Transport(format!("telegram editMessageText: {e}"))
+                })?;
+        }
+        Ok(())
+    }
+
     async fn run(&self, handler: PipelineHandler) -> Result<()> {
         let bot = Bot::new(self.token.expose());
         // Verify the bot token before starting the long-poll loop. Helpful
@@ -743,6 +781,40 @@ mod tests {
         // the trait default `NotSupported { feature: "send_proactive" }`.
         let msg = format!("{err}");
         assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
+    }
+
+    /// SPEC-11 pin: edit_message surfaces a Transport error on a bad chat_id
+    /// (forces the parse-failure branch so no real Telegram HTTP request is
+    /// made) — proving the override landed (the trait default would return
+    /// NotSupported) without needing network access.
+    #[tokio::test]
+    async fn edit_message_returns_transport_error_on_bad_chat_id() {
+        let t = TelegramChannel::new(SecretString::from("dummy-token"), None);
+        let err = t
+            .edit_message("not-a-number", &MessageId("42".into()), "edited")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ChannelError::Transport(_)),
+            "expected Transport (parse-failure branch); got {err:?}"
+        );
+        let msg = format!("{err}");
+        assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
+    }
+
+    /// SPEC-11 pin: a bad message_id (non-numeric) also surfaces Transport
+    /// via the message_id parse branch.
+    #[tokio::test]
+    async fn edit_message_returns_transport_error_on_bad_message_id() {
+        let t = TelegramChannel::new(SecretString::from("dummy-token"), None);
+        let err = t
+            .edit_message("123", &MessageId("not-numeric".into()), "edited")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, ChannelError::Transport(_)),
+            "expected Transport (message_id parse branch); got {err:?}"
+        );
     }
 
     // ── SD-03 EditDedup ────────────────────────────────────────────────────

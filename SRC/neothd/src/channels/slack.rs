@@ -103,6 +103,33 @@ impl Channel for SlackChannel {
     ) -> std::result::Result<MessageId, ChannelError> {
         self.send_text(chat_id, text).await
     }
+
+    /// SPEC-11: edit a previously-sent message via `chat.update`. `message_id`
+    /// is the `ts` returned by [`send_text`]. Used by the [`LiveDelivery`]
+    /// streaming-preview path. A Slack `ok=false` (e.g. `message_not_found`)
+    /// surfaces as `Transport` so the `LiveDelivery` degrade path is reserved
+    /// for genuine `NotSupported` adapters, not transient API errors.
+    ///
+    /// [`LiveDelivery`]: crate::channels::LiveDelivery
+    /// [`send_text`]: SlackChannel::send_text
+    async fn edit_message(
+        &self,
+        chat_id: &str,
+        message_id: &MessageId,
+        new_text: &str,
+    ) -> std::result::Result<(), ChannelError> {
+        let result =
+            super::slack_api::update_message(&self.bot_token, chat_id, &message_id.0, new_text)
+                .await
+                .map_err(|e| ChannelError::Transport(e.to_string()))?;
+        if !result.ok {
+            return Err(ChannelError::Transport(format!(
+                "slack chat.update: {}",
+                result.error.as_deref().unwrap_or("unknown error")
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -166,6 +193,28 @@ mod tests {
         let h = SlackChannel::SETUP_HINT;
         assert!(h.contains("xoxb"));
         assert!(h.contains("xapp"));
+    }
+
+    /// SPEC-11 pin: edit_message routes through chat.update. A bogus token
+    /// yields a Transport error (not NotSupported) — proving the override
+    /// landed + that LiveDelivery's degrade path is reserved for genuine
+    /// no-edit-API adapters, not transient Slack failures.
+    #[tokio::test]
+    async fn edit_message_surfaces_transport_error_on_invalid_token() {
+        let c = SlackChannel::new(
+            SecretString::from("xoxb-definitely-invalid"),
+            SecretString::from("xapp-also-invalid"),
+        );
+        let err = c
+            .edit_message("C12345", &MessageId("1700000000.000100".into()), "edited")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::channels::ChannelError::Transport(_)),
+            "expected Transport (chat.update path); got {err:?}"
+        );
+        let msg = format!("{err}");
+        assert!(!msg.contains("not supported"), "leaked default impl: {msg}");
     }
 
     /// C-11 wire-up pin: send_proactive routes through the same Slack

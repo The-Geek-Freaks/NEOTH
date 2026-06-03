@@ -169,6 +169,51 @@ struct PostMessageBody {
     error: Option<String>,
 }
 
+/// Result of a `chat.update` call (SPEC-11 edit path). Slack echoes the same
+/// `ts` (a message's id never changes across edits) + the channel.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct UpdateMessageResult {
+    pub ok: bool,
+    pub ts: Option<String>,
+    pub channel: Option<String>,
+    pub error: Option<String>,
+}
+
+/// POST `chat.update` — edit an existing message in place. `ts` is the message
+/// id returned by [`post_message`] (Slack uses the post timestamp as the id).
+/// Returns the parsed envelope so the caller can branch on `ok=false`
+/// (`message_not_found`, `cant_update_message`, …).
+pub async fn update_message(
+    bot_token: &SecretString,
+    channel: &str,
+    ts: &str,
+    text: &str,
+) -> Result<UpdateMessageResult> {
+    let client = http_client::build_client()?;
+    let resp = client
+        .post("https://slack.com/api/chat.update")
+        .bearer_auth(bot_token.expose())
+        .header("Content-Type", "application/json; charset=utf-8")
+        .body(
+            serde_json::to_vec(&serde_json::json!({
+                "channel": channel,
+                "ts": ts,
+                "text": text,
+            }))
+            .context("serialize chat.update payload")?,
+        )
+        .send()
+        .await
+        .context("slack chat.update request")?;
+    let body: PostMessageBody = resp.json().await.context("slack chat.update decode")?;
+    Ok(UpdateMessageResult {
+        ok: body.ok,
+        ts: body.ts,
+        channel: body.channel,
+        error: body.error,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +291,32 @@ mod tests {
         assert!(!parsed.ok);
         assert_eq!(parsed.error.as_deref(), Some("not_in_channel"));
         assert!(parsed.ts.is_none());
+    }
+
+    #[test]
+    fn update_message_result_serializes_success_shape() {
+        // SPEC-11: chat.update echoes the same ts (id stable across edits).
+        let r = UpdateMessageResult {
+            ok: true,
+            ts: Some("1700000000.000100".into()),
+            channel: Some("C12345".into()),
+            error: None,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"ok\":true"));
+        assert!(s.contains("\"ts\":\"1700000000.000100\""));
+    }
+
+    #[test]
+    fn update_message_result_serializes_failure_shape() {
+        let r = UpdateMessageResult {
+            ok: false,
+            ts: None,
+            channel: None,
+            error: Some("message_not_found".into()),
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(s.contains("\"ok\":false"));
+        assert!(s.contains("\"error\":\"message_not_found\""));
     }
 }

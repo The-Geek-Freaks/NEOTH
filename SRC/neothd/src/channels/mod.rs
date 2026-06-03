@@ -25,6 +25,9 @@ pub mod keet_dht;
 pub mod keet_pairing;
 pub mod keet_udp;
 pub mod keet_wal;
+/// SPEC-11 — stateful send-then-edit wrapper for streaming previews + post-reply
+/// corrections. First call sends, later calls edit-in-place + emit `0x38`.
+pub mod live_delivery;
 pub mod pears_bridge;
 pub mod rate_limit;
 pub mod slack;
@@ -41,6 +44,8 @@ pub mod whatsapp_webhook;
 
 use anyhow::Result;
 use async_trait::async_trait;
+
+pub use live_delivery::LiveDelivery;
 
 /// The daemon's single shared inbound rate limiter (F4-02). Every channel
 /// adapter throttles against ONE instance — the per-`(channel, sender)` token
