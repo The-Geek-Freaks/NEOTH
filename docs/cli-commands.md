@@ -695,6 +695,10 @@ Merge two identities: every alias of <victim> is reassigned to <canonical>, then
 - `<CANONICAL>` — The identity to KEEP (a UUID from `neoth identity list`)
 - `<VICTIM>` — The identity to FOLD IN + delete (a UUID)
 
+### `neoth identity pubkey`
+
+Show THIS operator's X25519 transfer public key (base64) — share it so another NEOTH can `neoth transfer export --dest <this>` an encrypted memory bundle to you. The key is auto-managed at `~/.neoth/wal/transfer.key`
+
 ## `neoth ingest`
 
 Multimodal asset ingest pipeline
@@ -1749,12 +1753,37 @@ NOOB-UX-5 first-launch tour. `neoth tour` walks the operator through chat / memo
 
 ## `neoth transfer`
 
-Export a recipient-encrypted, operator-signed memory bundle (A3-01): `transfer --dest <x25519_pubkey_b64>` seals the last N days of hot-tier memory with ephemeral X25519 ECDH → AES-256-GCM, signs it with the operator's ed25519 key, and writes it to `~/.neoth/exports/`. Only the recipient's secret can decrypt. Emits `0xF5 MEMORY_TRANSFER_EXPORTED`
+Recipient-encrypted, operator-signed memory bundles (A3-01): `transfer export --dest <x25519_pubkey_b64>` seals the last N days of hot-tier memory (ephemeral X25519 ECDH → AES-256-GCM, ed25519-signed, size-capped, `0xF5`-audited); `verify` / `inspect` / `import` handle a received bundle. Share your receiving key via `neoth identity pubkey`
 
-- `--dest <DEST>` — Recipient's X25519 public key (base64). The bundle is encrypted so only the holder of the matching secret can read it
-- `--out <OUT>` — Output path for the bundle JSON. Default: `~/.neoth/exports/transfer-<unix>.json`
-- `--days <DAYS>` — Look-back window in days for the hot-tier memory to export. Default 7
-- `--dry-run <DRY_RUN>` — Show what WOULD be exported (recipient, event count, bundle size) without writing the file or emitting the audit frame
+### `neoth transfer export`
+
+Export a recipient-encrypted, signed memory bundle
+
+- `--dest <DEST>` — Recipient's X25519 public key (base64) — from their `neoth identity pubkey`
+- `--out <OUT>` — Output path. Default `~/.neoth/exports/transfer-<unix>.json`
+- `--days <DAYS>` — Look-back window in days. Default 7
+- `--dry-run <DRY_RUN>` — Show what WOULD be exported without writing or auditing
+
+### `neoth transfer import`
+
+Decrypt a received bundle with the managed transfer key + recover the memory dump (written to `--out` or `~/.neoth/imports/`)
+
+- `<FILE>` — Path to the `.json` bundle
+- `--out <OUT>` — Where to write the recovered plaintext JSON. Default `~/.neoth/imports/import-<unix>.json`
+- `--pubkey <PUBKEY>` — Expected sender's ed25519 public key (base64) — import refuses a bundle that doesn't verify against it when given
+
+### `neoth transfer inspect`
+
+Print a bundle's metadata (schema, recipient, signer, sizes) — no decrypt
+
+- `<FILE>` — Path to the `.json` bundle
+
+### `neoth transfer verify`
+
+Verify a received bundle (schema + recipient + signature) WITHOUT decrypting. `--pubkey` pins the expected sender's ed25519 key for true attribution
+
+- `<FILE>` — Path to the `.json` bundle
+- `--pubkey <PUBKEY>` — Expected sender's ed25519 public key (base64) to verify against
 
 ## `neoth tts`
 

@@ -293,6 +293,12 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub dreaming: DreamingConfig,
 
+    /// A3-01 — `neoth transfer export` hard size caps. A memory export can grow
+    /// large; these bound an accidental runaway (event count + plaintext bytes
+    /// before encryption + final bundle bytes). Defaults: 1000 / 8 MiB / 16 MiB.
+    #[serde(default)]
+    pub transfer: TransferConfig,
+
     /// EL-02 — arXiv topic-feed periodic ingest. Off by default; opt in
     /// via `arxiv.enabled: true` + a non-empty `arxiv.topics` list. When
     /// active, the daemon runs each topic query on a cadence (default 6h),
@@ -1079,6 +1085,30 @@ pub struct FallbackConfig {
 
 fn default_fallback_max_hops() -> u8 {
     2
+}
+
+/// A3-01 — `neoth transfer` size caps (default-applied; an absent block uses
+/// the documented defaults).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct TransferConfig {
+    /// Max `idx_episode` rows an export may bundle. Default 1000.
+    pub max_events: usize,
+    /// Max plaintext JSON bytes BEFORE encryption. Default 8 MiB.
+    pub max_plaintext_bytes: usize,
+    /// Max sealed-bundle JSON bytes on disk. Default 16 MiB. Also the cap a
+    /// received bundle may be before `verify`/`import` reads it.
+    pub max_bundle_bytes: usize,
+}
+
+impl Default for TransferConfig {
+    fn default() -> Self {
+        Self {
+            max_events: 1000,
+            max_plaintext_bytes: 8 * 1024 * 1024,
+            max_bundle_bytes: 16 * 1024 * 1024,
+        }
+    }
 }
 
 /// R-02 Phase 4c — nightly dreaming task gates.

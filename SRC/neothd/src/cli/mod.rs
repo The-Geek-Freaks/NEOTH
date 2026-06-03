@@ -247,11 +247,11 @@ pub enum Commands {
     /// waiting for the nightly cron. Emits `0xF4 DREAM_COMPOSED`.
     Dream(dream::DreamArgs),
 
-    /// Export a recipient-encrypted, operator-signed memory bundle (A3-01):
-    /// `transfer --dest <x25519_pubkey_b64>` seals the last N days of hot-tier
-    /// memory with ephemeral X25519 ECDH → AES-256-GCM, signs it with the
-    /// operator's ed25519 key, and writes it to `~/.neoth/exports/`. Only the
-    /// recipient's secret can decrypt. Emits `0xF5 MEMORY_TRANSFER_EXPORTED`.
+    /// Recipient-encrypted, operator-signed memory bundles (A3-01):
+    /// `transfer export --dest <x25519_pubkey_b64>` seals the last N days of
+    /// hot-tier memory (ephemeral X25519 ECDH → AES-256-GCM, ed25519-signed,
+    /// size-capped, `0xF5`-audited); `verify` / `inspect` / `import` handle a
+    /// received bundle. Share your receiving key via `neoth identity pubkey`.
     Transfer(transfer::TransferArgs),
 
     /// Cross-channel identity (SPEC-11): `identity list` shows each resolved

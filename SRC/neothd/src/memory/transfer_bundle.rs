@@ -205,6 +205,103 @@ pub fn decrypt_with(bundle: &TransferBundle, recipient_secret: &[u8; 32]) -> Res
         .map_err(|e| anyhow::anyhow!("AES-256-GCM decrypt (wrong key or tampered): {e}"))
 }
 
+// ── A3-01 hardening: managed recipient keypair + full verify verdict ──────────
+
+use std::path::{Path, PathBuf};
+
+/// Default path for the operator's persistent X25519 transfer secret:
+/// `~/.neoth/wal/transfer.key`. Sits next to the ed25519 signing key under the
+/// same protected dir (0600 / DPAPI-wrapped on Windows).
+pub fn default_transfer_key_path() -> PathBuf {
+    crate::config::FreedomConfig::default_wal_dir().join("transfer.key")
+}
+
+/// Load the operator's X25519 transfer SECRET, generating + persisting a fresh
+/// one on first use. DAU-safe: zero interaction — the same auto-managed pattern
+/// as `wal::signing::load_or_init_signing_key`. Fail-closed if the OS RNG is
+/// unavailable. The public half (what senders use as `--dest`) is derived via
+/// [`transfer_pubkey_b64`].
+pub fn load_or_init_transfer_key(path: &Path) -> Result<[u8; 32]> {
+    if path.exists() {
+        let body =
+            std::fs::read(path).with_context(|| format!("read transfer key {}", path.display()))?;
+        let seed = crate::wal::compaction::maybe_unwrap_dpapi(&body, path)?;
+        let seed: [u8; 32] = seed.as_slice().try_into().map_err(|_| {
+            anyhow::anyhow!(
+                "transfer key at {} is not 32 bytes ({} given) — refusing a malformed key",
+                path.display(),
+                seed.len(),
+            )
+        })?;
+        return Ok(seed);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create transfer key parent {}", parent.display()))?;
+    }
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed)
+        .context("OS RNG unavailable — refusing to generate a weak transfer key")?;
+    crate::wal::compaction::write_key_securely(path, &seed)?;
+    Ok(seed)
+}
+
+/// Base64 (standard) of the X25519 PUBLIC key derived from a transfer secret —
+/// what the operator shares so others can `neoth transfer export --dest <this>`.
+pub fn transfer_pubkey_b64(secret: &[u8; 32]) -> String {
+    let pk = PublicKey::from(&StaticSecret::from(*secret));
+    B64.encode(pk.to_bytes())
+}
+
+/// The full verification verdict for a received bundle — the five operator-
+/// distinguishable outcomes A3-01-hardening requires. NEVER collapse
+/// `WrongRecipient` / `UnsupportedSchema` into a generic error: the operator
+/// must know WHY a bundle won't open.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VerifyVerdict {
+    /// Schema is supported, the recipient matches (when checked), and the
+    /// signature verifies against the EMBEDDED key only — proves no post-sign
+    /// tamper, NOT sender identity.
+    SelfConsistent,
+    /// As above, and the signature also verifies against the operator-pinned
+    /// expected sender pubkey — true attribution.
+    VerifiedAgainstExpected,
+    /// The signature does not verify (tampered, or signed by a different key
+    /// than the embedded one claims).
+    SignatureMismatch,
+    /// The bundle is addressed to a different X25519 public key than the
+    /// recipient's — they cannot decrypt it (and shouldn't try).
+    WrongRecipient,
+    /// `schema_version` is not one this build understands.
+    UnsupportedSchema(u32),
+}
+
+/// Verify a received bundle, returning the precise [`VerifyVerdict`]. Checks (in
+/// order): schema support → recipient match (when `my_pubkey` is given) →
+/// signature (against `expected_sender` when pinned, else the embedded key).
+/// This NEVER decrypts — it's safe to run on an untrusted bundle.
+pub fn verify_bundle(
+    bundle: &TransferBundle,
+    my_pubkey: Option<&[u8; 32]>,
+    expected_sender: Option<&[u8; 32]>,
+) -> VerifyVerdict {
+    if bundle.schema_version != TRANSFER_SCHEMA_VERSION {
+        return VerifyVerdict::UnsupportedSchema(bundle.schema_version);
+    }
+    if let Some(mine) = my_pubkey {
+        match parse_b64_32(&bundle.dest_pubkey_b64, "dest_pubkey") {
+            Ok(dest) if &dest != mine => return VerifyVerdict::WrongRecipient,
+            Ok(_) => {}
+            Err(_) => return VerifyVerdict::SignatureMismatch, // malformed dest
+        }
+    }
+    match verify_signature(bundle, expected_sender) {
+        Ok(SignatureCheck::SelfConsistent) => VerifyVerdict::SelfConsistent,
+        Ok(SignatureCheck::VerifiedAgainstExpected) => VerifyVerdict::VerifiedAgainstExpected,
+        Err(_) => VerifyVerdict::SignatureMismatch,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +417,74 @@ mod tests {
         let json = serde_json::to_string(&bundle).unwrap();
         let back: TransferBundle = serde_json::from_str(&json).unwrap();
         assert_eq!(bundle, back);
+    }
+
+    // ── A3-01 hardening ──────────────────────────────────────────────────
+
+    #[test]
+    fn verify_verdict_self_consistent_then_verified() {
+        let (_rx_secret, rx_pub) = recipient(7);
+        let sk = signer(5);
+        let signer_pub = sk.verifying_key().to_bytes();
+        let bundle = encrypt_for(b"hi", &rx_pub, &sk, 1).unwrap();
+        // No recipient check, no pin → self-consistent.
+        assert_eq!(
+            verify_bundle(&bundle, None, None),
+            VerifyVerdict::SelfConsistent
+        );
+        // Recipient matches + pinned sender → verified.
+        assert_eq!(
+            verify_bundle(&bundle, Some(&rx_pub), Some(&signer_pub)),
+            VerifyVerdict::VerifiedAgainstExpected
+        );
+    }
+
+    #[test]
+    fn verify_verdict_wrong_recipient() {
+        let (_rx_secret, rx_pub) = recipient(7);
+        let (_other_s, other_pub) = recipient(9);
+        let bundle = encrypt_for(b"hi", &rx_pub, &signer(1), 1).unwrap();
+        assert_eq!(
+            verify_bundle(&bundle, Some(&other_pub), None),
+            VerifyVerdict::WrongRecipient
+        );
+    }
+
+    #[test]
+    fn verify_verdict_unsupported_schema() {
+        let (_s, rx_pub) = recipient(7);
+        let mut bundle = encrypt_for(b"hi", &rx_pub, &signer(1), 1).unwrap();
+        bundle.schema_version = 99;
+        assert_eq!(
+            verify_bundle(&bundle, None, None),
+            VerifyVerdict::UnsupportedSchema(99)
+        );
+    }
+
+    #[test]
+    fn verify_verdict_signature_mismatch_on_tamper() {
+        let (_s, rx_pub) = recipient(7);
+        let mut bundle = encrypt_for(b"hi", &rx_pub, &signer(1), 1).unwrap();
+        bundle.ts_unix += 1; // signed field changed, signature not refreshed
+        assert_eq!(
+            verify_bundle(&bundle, None, None),
+            VerifyVerdict::SignatureMismatch
+        );
+    }
+
+    #[test]
+    fn transfer_keypair_generates_persists_and_derives_pubkey() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("wal").join("transfer.key");
+        let s1 = load_or_init_transfer_key(&path).expect("first gen");
+        assert!(path.exists());
+        let s2 = load_or_init_transfer_key(&path).expect("second read");
+        assert_eq!(s1, s2, "the persisted key is stable across loads");
+        // The derived pubkey is what a sender would use as --dest; round-trips.
+        let pub_b64 = transfer_pubkey_b64(&s1);
+        let parsed = parse_b64_32(&pub_b64, "transfer pubkey").unwrap();
+        // A bundle sealed to this pubkey decrypts with the secret.
+        let bundle = encrypt_for(b"to me", &parsed, &signer(1), 1).unwrap();
+        assert_eq!(decrypt_with(&bundle, &s1).unwrap(), b"to me");
     }
 }

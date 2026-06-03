@@ -45,6 +45,7 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xD2, // SELF_UPDATE_APPLIED    — `neoth update --apply` replaced the binary
     0xD7, // MODEL_DOWNLOAD_START   — `neoth model pull` began a fetch
     0xD8, // MODEL_DOWNLOAD_COMPLETE — `neoth model pull` finished a fetch
+    0xF5, // MEMORY_TRANSFER_EXPORTED — `neoth transfer export` sealed a bundle
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.

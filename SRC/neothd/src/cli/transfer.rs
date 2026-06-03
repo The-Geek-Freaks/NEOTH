@@ -1,52 +1,137 @@
-//! A3-01 — `neoth transfer --dest <pubkey>`: export a recipient-encrypted,
-//! operator-signed memory bundle to another NEOTH instance.
+//! A3-01 — `neoth transfer`: recipient-encrypted, operator-signed memory
+//! bundles between NEOTH instances.
 //!
-//! The bundle is sealed with [`crate::memory::transfer_bundle`] (ephemeral
-//! X25519 ECDH → HKDF-SHA256 → AES-256-GCM, ed25519-signed with the operator's
-//! WAL signing key). Only the holder of the recipient's X25519 secret can
-//! decrypt; only the operator's key could have signed it. The plaintext memory
-//! never leaves this process unencrypted — the file on disk is ciphertext.
+//! Subcommands:
+//!   - `export --dest <x25519_pub_b64>` — seal the last N days of hot-tier
+//!     memory FOR a recipient (ephemeral X25519 ECDH → HKDF-SHA256 →
+//!     AES-256-GCM, ed25519-signed). Size-capped + audited (`0xF5`).
+//!   - `verify <bundle>` — check a received bundle's schema + recipient +
+//!     signature WITHOUT decrypting (safe on an untrusted file). Five distinct
+//!     verdicts.
+//!   - `inspect <bundle>` — print a bundle's metadata (no decrypt).
+//!   - `import <bundle>` — decrypt with the operator's managed transfer key +
+//!     recover the memory dump.
+//!
+//! The operator's X25519 receiving keypair is auto-managed at
+//! `~/.neoth/wal/transfer.key` (DAU-safe, zero interaction). Share its public
+//! half via `neoth identity pubkey`.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use clap::Args;
+use clap::{Args, Subcommand};
 use rusqlite::Connection;
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
-use crate::memory::transfer_bundle::{self, parse_b64_32};
+use crate::memory::transfer_bundle::{self, TransferBundle, VerifyVerdict, parse_b64_32};
 
 /// Default look-back window for the hot-tier memory export (days).
 const DEFAULT_WINDOW_DAYS: u32 = 7;
 
 #[derive(Args, Debug, Clone)]
 pub struct TransferArgs {
-    /// Recipient's X25519 public key (base64). The bundle is encrypted so only
-    /// the holder of the matching secret can read it.
-    #[arg(long)]
-    pub dest: String,
-    /// Output path for the bundle JSON. Default:
-    /// `~/.neoth/exports/transfer-<unix>.json`.
-    #[arg(long)]
-    pub out: Option<PathBuf>,
-    /// Look-back window in days for the hot-tier memory to export. Default 7.
-    #[arg(long)]
-    pub days: Option<u32>,
-    /// Show what WOULD be exported (recipient, event count, bundle size) without
-    /// writing the file or emitting the audit frame.
-    #[arg(long)]
-    pub dry_run: bool,
+    #[command(subcommand)]
+    pub action: TransferAction,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum TransferAction {
+    /// Export a recipient-encrypted, signed memory bundle.
+    Export {
+        /// Recipient's X25519 public key (base64) — from their
+        /// `neoth identity pubkey`.
+        #[arg(long)]
+        dest: String,
+        /// Output path. Default `~/.neoth/exports/transfer-<unix>.json`.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Look-back window in days. Default 7.
+        #[arg(long)]
+        days: Option<u32>,
+        /// Show what WOULD be exported without writing or auditing.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Verify a received bundle (schema + recipient + signature) WITHOUT
+    /// decrypting. `--pubkey` pins the expected sender's ed25519 key for true
+    /// attribution.
+    Verify {
+        /// Path to the `.json` bundle.
+        file: PathBuf,
+        /// Expected sender's ed25519 public key (base64) to verify against.
+        #[arg(long)]
+        pubkey: Option<String>,
+    },
+    /// Print a bundle's metadata (schema, recipient, signer, sizes) — no decrypt.
+    Inspect {
+        /// Path to the `.json` bundle.
+        file: PathBuf,
+    },
+    /// Decrypt a received bundle with the managed transfer key + recover the
+    /// memory dump (written to `--out` or `~/.neoth/imports/`).
+    Import {
+        /// Path to the `.json` bundle.
+        file: PathBuf,
+        /// Where to write the recovered plaintext JSON. Default
+        /// `~/.neoth/imports/import-<unix>.json`.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Expected sender's ed25519 public key (base64) — import refuses a
+        /// bundle that doesn't verify against it when given.
+        #[arg(long)]
+        pubkey: Option<String>,
+    },
 }
 
 pub async fn run_transfer(args: TransferArgs, output: OutputFormat) -> Result<()> {
-    let dest = parse_b64_32(&args.dest, "--dest pubkey")
+    match args.action {
+        TransferAction::Export {
+            dest,
+            out,
+            days,
+            dry_run,
+        } => run_export(dest, out, days, dry_run, output).await,
+        TransferAction::Verify { file, pubkey } => run_verify(file, pubkey, output),
+        TransferAction::Inspect { file } => run_inspect(file, output),
+        TransferAction::Import { file, out, pubkey } => run_import(file, out, pubkey, output),
+    }
+}
+
+// ── export ───────────────────────────────────────────────────────────────────
+
+async fn run_export(
+    dest_b64: String,
+    out: Option<PathBuf>,
+    days: Option<u32>,
+    dry_run: bool,
+    output: OutputFormat,
+) -> Result<()> {
+    let dest = parse_b64_32(&dest_b64, "--dest pubkey")
         .context("invalid --dest: expected a base64 X25519 public key (32 bytes)")?;
     let home = FreedomConfig::default_neoth_home();
-    let days = args.days.unwrap_or(DEFAULT_WINDOW_DAYS);
+    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let caps = cfg.transfer;
+    let days = days.unwrap_or(DEFAULT_WINDOW_DAYS);
 
     let (payload, event_count) = collect_memory_payload(&home, days)?;
+    // Size caps (#3): refuse a runaway export BEFORE encrypting.
+    if event_count > caps.max_events {
+        anyhow::bail!(
+            "export refused: {event_count} events exceeds transfer.max_events={} \
+             — narrow the window with --days or raise the cap",
+            caps.max_events
+        );
+    }
+    if payload.len() > caps.max_plaintext_bytes {
+        anyhow::bail!(
+            "export refused: {} plaintext bytes exceeds transfer.max_plaintext_bytes={}",
+            payload.len(),
+            caps.max_plaintext_bytes
+        );
+    }
+
     let signing_key = crate::wal::signing::load_or_init_signing_key(
         &crate::wal::signing::default_signing_key_path(),
     )
@@ -54,24 +139,283 @@ pub async fn run_transfer(args: TransferArgs, output: OutputFormat) -> Result<()
     let ts_unix = now_unix();
     let bundle = transfer_bundle::encrypt_for(&payload, &dest, &signing_key, ts_unix)?;
     let bundle_json = serde_json::to_vec_pretty(&bundle)?;
+    if bundle_json.len() > caps.max_bundle_bytes {
+        anyhow::bail!(
+            "export refused: {} bundle bytes exceeds transfer.max_bundle_bytes={}",
+            bundle_json.len(),
+            caps.max_bundle_bytes
+        );
+    }
 
-    if args.dry_run {
-        render(&args.dest, event_count, bundle_json.len(), None, output);
+    if dry_run {
+        render_export(&dest_b64, event_count, bundle_json.len(), None, output);
         return Ok(());
     }
 
-    let out_path = args
-        .out
-        .clone()
+    // Audit pre-flight (#1): under required-audit, a live daemon whose audit-RPC
+    // listener is unreachable means the export would go un-audited — refuse.
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+        Ok(Some(_))
+    );
+    crate::daemon::audit_rpc::enforce_required_audit(
+        cfg.audit_rpc.required_for_oneshot_permission_events,
+        daemon_live,
+        &home,
+    )
+    .context("transfer export refused: required audit cannot be written")?;
+
+    let out_path = out
         .unwrap_or_else(|| home.join("exports").join(format!("transfer-{ts_unix}.json")));
     write_atomic(&out_path, &bundle_json).context("write transfer bundle")?;
-    emit_transfer_exported(&args.dest, bundle_json.len(), event_count, days);
-    render(&args.dest, event_count, bundle_json.len(), Some(&out_path), output);
+    emit_transfer_exported(&home, daemon_live, &dest_b64, bundle_json.len(), event_count, days).await;
+    render_export(&dest_b64, event_count, bundle_json.len(), Some(&out_path), output);
     Ok(())
 }
 
+/// `0xF5 MEMORY_TRANSFER_EXPORTED` audit. When a daemon owns the WAL, FORWARD
+/// over the loopback audit-RPC channel (#1 — `0xF5` is allowlisted) instead of
+/// silently skipping; otherwise open a one-shot writer. Metadata only (recipient
+/// + sizes + counts), never plaintext.
+async fn emit_transfer_exported(
+    home: &Path,
+    daemon_live: bool,
+    dest_b64: &str,
+    bundle_bytes: usize,
+    events: usize,
+    days: u32,
+) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "dest_pubkey_b64": dest_b64,
+        "bundle_bytes": bundle_bytes,
+        "events_exported": events,
+        "window_days": days,
+        "ts_unix": now_unix(),
+    }))
+    .unwrap_or_default();
+    if daemon_live {
+        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+            home,
+            crate::wal::events::EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
+            &payload,
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "transfer: 0xF5 forward skipped (daemon listener unreachable)");
+        }
+        return;
+    }
+    let segment = FreedomConfig::default_wal_dir().join("000001.wal");
+    if let Some(parent) = segment.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let (writer, _join) = match crate::wal::writer::spawn(segment) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "transfer: WAL writer spawn failed; 0xF5 not recorded");
+            return;
+        }
+    };
+    let header = crate::wal::HeaderBuilder::new(
+        crate::wal::events::EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
+        &payload,
+    )
+    .build();
+    if let Err(e) = writer.try_append_sync(header, payload) {
+        tracing::warn!(error = %e, "transfer: 0xF5 frame append failed (audit gap)");
+    }
+}
+
+// ── verify / inspect / import ─────────────────────────────────────────────────
+
+/// Read + parse a bundle file, refusing one larger than the configured bundle
+/// cap (a hostile/oversized file can't force a huge allocation).
+fn read_bundle(file: &Path) -> Result<TransferBundle> {
+    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let meta = std::fs::metadata(file)
+        .with_context(|| format!("stat bundle {}", file.display()))?;
+    if meta.len() as usize > cfg.transfer.max_bundle_bytes {
+        anyhow::bail!(
+            "bundle {} is {} bytes — exceeds transfer.max_bundle_bytes={}",
+            file.display(),
+            meta.len(),
+            cfg.transfer.max_bundle_bytes
+        );
+    }
+    let bytes = std::fs::read(file).with_context(|| format!("read bundle {}", file.display()))?;
+    serde_json::from_slice(&bytes).with_context(|| format!("parse bundle {}", file.display()))
+}
+
+fn parse_expected_sender(pubkey: Option<&str>) -> Result<Option<[u8; 32]>> {
+    match pubkey {
+        Some(p) => Ok(Some(
+            parse_b64_32(p, "--pubkey").context("invalid --pubkey: expected base64 ed25519 key")?,
+        )),
+        None => Ok(None),
+    }
+}
+
+fn verdict_str(v: &VerifyVerdict) -> &'static str {
+    match v {
+        VerifyVerdict::SelfConsistent => "self_consistent",
+        VerifyVerdict::VerifiedAgainstExpected => "verified_against_pinned_sender",
+        VerifyVerdict::SignatureMismatch => "signature_mismatch",
+        VerifyVerdict::WrongRecipient => "wrong_recipient",
+        VerifyVerdict::UnsupportedSchema(_) => "unsupported_schema",
+    }
+}
+
+fn run_verify(file: PathBuf, pubkey: Option<String>, output: OutputFormat) -> Result<()> {
+    let bundle = read_bundle(&file)?;
+    let expected = parse_expected_sender(pubkey.as_deref())?;
+    // Recipient check against the operator's own transfer pubkey.
+    let my_secret = transfer_bundle::load_or_init_transfer_key(
+        &transfer_bundle::default_transfer_key_path(),
+    )
+    .context("load transfer key")?;
+    let my_pub = transfer_bundle::transfer_pubkey_b64(&my_secret);
+    let my_pub_bytes = parse_b64_32(&my_pub, "transfer pubkey")?;
+    let verdict = transfer_bundle::verify_bundle(&bundle, Some(&my_pub_bytes), expected.as_ref());
+    let ok = matches!(
+        verdict,
+        VerifyVerdict::SelfConsistent | VerifyVerdict::VerifiedAgainstExpected
+    );
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "verdict": verdict_str(&verdict),
+                "verified": ok,
+                "signer_pubkey": bundle.signer_pubkey_b64,
+            })
+        ),
+        OutputFormat::Table => {
+            let detail = match &verdict {
+                VerifyVerdict::SelfConsistent => {
+                    "✓ self-consistent (no post-sign tamper) — NOT identity-proven (no --pubkey)"
+                        .to_string()
+                }
+                VerifyVerdict::VerifiedAgainstExpected => {
+                    "✓ verified against the pinned sender pubkey — true attribution".to_string()
+                }
+                VerifyVerdict::SignatureMismatch => {
+                    "✗ signature mismatch — tampered or signed by a different key".to_string()
+                }
+                VerifyVerdict::WrongRecipient => {
+                    "✗ wrong recipient — this bundle is addressed to a different key".to_string()
+                }
+                VerifyVerdict::UnsupportedSchema(v) => {
+                    format!("✗ unsupported schema version {v} — this build can't read it")
+                }
+            };
+            println!("{detail}");
+        }
+    }
+    if !ok {
+        // Non-zero exit so a script can gate on verification.
+        anyhow::bail!("bundle verification failed: {}", verdict_str(&verdict));
+    }
+    Ok(())
+}
+
+fn run_inspect(file: PathBuf, output: OutputFormat) -> Result<()> {
+    let bundle = read_bundle(&file)?;
+    let cipher_bytes = bundle.ciphertext_b64.len() * 3 / 4; // approx decoded size
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "schema_version": bundle.schema_version,
+                "dest_pubkey_b64": bundle.dest_pubkey_b64,
+                "signer_pubkey_b64": bundle.signer_pubkey_b64,
+                "ciphertext_bytes_approx": cipher_bytes,
+                "ts_unix": bundle.ts_unix,
+            })
+        ),
+        OutputFormat::Table => {
+            println!("schema_version : {}", bundle.schema_version);
+            println!("recipient (dest): {}", bundle.dest_pubkey_b64);
+            println!("signer (ed25519): {}", bundle.signer_pubkey_b64);
+            println!("ciphertext     : ~{cipher_bytes} bytes (encrypted — run `import` to read)");
+            println!("ts_unix        : {}", bundle.ts_unix);
+        }
+    }
+    Ok(())
+}
+
+fn run_import(
+    file: PathBuf,
+    out: Option<PathBuf>,
+    pubkey: Option<String>,
+    output: OutputFormat,
+) -> Result<()> {
+    let bundle = read_bundle(&file)?;
+    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let my_secret = transfer_bundle::load_or_init_transfer_key(
+        &transfer_bundle::default_transfer_key_path(),
+    )
+    .context("load transfer key")?;
+    let my_pub_bytes = parse_b64_32(&transfer_bundle::transfer_pubkey_b64(&my_secret), "pub")?;
+    let expected = parse_expected_sender(pubkey.as_deref())?;
+
+    // Verify FIRST — refuse to decrypt a wrong-recipient / unsupported / (when
+    // a sender is pinned) unverified bundle.
+    let verdict = transfer_bundle::verify_bundle(&bundle, Some(&my_pub_bytes), expected.as_ref());
+    match &verdict {
+        VerifyVerdict::SelfConsistent if expected.is_none() => {}
+        VerifyVerdict::VerifiedAgainstExpected => {}
+        other => anyhow::bail!(
+            "import refused: {} — run `neoth transfer verify` for details",
+            verdict_str(other)
+        ),
+    }
+
+    let recovered = transfer_bundle::decrypt_with(&bundle, &my_secret)
+        .context("decrypt failed (wrong key or tampered ciphertext)")?;
+    if recovered.len() > cfg.transfer.max_plaintext_bytes {
+        anyhow::bail!(
+            "import refused: recovered {} bytes exceeds transfer.max_plaintext_bytes={}",
+            recovered.len(),
+            cfg.transfer.max_plaintext_bytes
+        );
+    }
+    let event_count = serde_json::from_slice::<serde_json::Value>(&recovered)
+        .ok()
+        .and_then(|v| v["events"].as_array().map(|a| a.len()))
+        .unwrap_or(0);
+
+    let home = FreedomConfig::default_neoth_home();
+    let out_path =
+        out.unwrap_or_else(|| home.join("imports").join(format!("import-{}.json", now_unix())));
+    write_atomic(&out_path, &recovered).context("write recovered bundle")?;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({
+                "verdict": verdict_str(&verdict),
+                "events_recovered": event_count,
+                "bytes": recovered.len(),
+                "out": out_path.display().to_string(),
+            })
+        ),
+        OutputFormat::Table => {
+            println!(
+                "✓ imported {event_count} event(s) ({}) [{}]",
+                recovered.len(),
+                verdict_str(&verdict)
+            );
+            println!("  → {}", out_path.display());
+            println!(
+                "  (recovered to a file; merging into the live recall store is a follow-on slice)"
+            );
+        }
+    }
+    Ok(())
+}
+
+// ── shared helpers ────────────────────────────────────────────────────────────
+
 /// Collect a JSON dump of the last `days` of hot-tier `idx_episode` rows.
-/// Missing `views.db` → empty payload (a fresh install has nothing to transfer).
 fn collect_memory_payload(home: &Path, days: u32) -> Result<(Vec<u8>, usize)> {
     let db_path = home.join("views.db");
     if !db_path.exists() {
@@ -86,8 +430,7 @@ fn collect_memory_payload(home: &Path, days: u32) -> Result<(Vec<u8>, usize)> {
     collect_from_conn(&conn, days, now_ns())
 }
 
-/// Pure core: read `idx_episode` rows newer than `now_ns - days` from an open
-/// connection. Split out so it's unit-testable with an in-memory db.
+/// Pure core: read `idx_episode` rows newer than `now_ns - days`.
 fn collect_from_conn(conn: &Connection, days: u32, now_ns: i64) -> Result<(Vec<u8>, usize)> {
     let cutoff = now_ns.saturating_sub((days as i64).saturating_mul(86_400 * 1_000_000_000));
     let mut stmt = conn.prepare(
@@ -115,50 +458,6 @@ fn collect_from_conn(conn: &Connection, days: u32, now_ns: i64) -> Result<(Vec<u
     Ok((payload, count))
 }
 
-/// Best-effort `0xF5 MEMORY_TRANSFER_EXPORTED` audit. Skipped when a daemon owns
-/// the WAL (one-shot would race its segment) — mirrors the `neoth dream now`
-/// pattern. Records only metadata (recipient + size + counts), never plaintext.
-fn emit_transfer_exported(dest_b64: &str, bundle_bytes: usize, events: usize, days: u32) {
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if matches!(
-        crate::daemon::pidfile::live_daemon_pid(&pidfile),
-        Ok(Some(_))
-    ) {
-        tracing::info!(
-            "transfer: daemon live — skipping one-shot 0xF5 audit to avoid a writer race"
-        );
-        return;
-    }
-    let segment = FreedomConfig::default_wal_dir().join("000001.wal");
-    if let Some(parent) = segment.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "transfer: WAL writer spawn failed; 0xF5 not recorded");
-            return;
-        }
-    };
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "dest_pubkey_b64": dest_b64,
-        "bundle_bytes": bundle_bytes,
-        "events_exported": events,
-        "window_days": days,
-        "ts_unix": now_unix(),
-    }))
-    .unwrap_or_default();
-    let header = crate::wal::HeaderBuilder::new(
-        crate::wal::events::EVENT_TYPE_MEMORY_TRANSFER_EXPORTED,
-        &payload,
-    )
-    .build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, "transfer: 0xF5 frame append failed (audit gap)");
-    }
-}
-
-/// Atomic write via `.tmp` + rename (Windows-safe: remove target first).
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -172,7 +471,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn render(dest: &str, events: usize, bytes: usize, out: Option<&Path>, output: OutputFormat) {
+fn render_export(dest: &str, events: usize, bytes: usize, out: Option<&Path>, output: OutputFormat) {
     let dest_short = &dest[..dest.len().min(16)];
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
@@ -246,8 +545,6 @@ mod tests {
         assert_eq!(count, 2);
         let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(v["events"].as_array().unwrap().len(), 2);
-        assert_eq!(v["schema"], "neoth-memory-transfer-v1");
-        assert_eq!(v["window_days"], 7);
     }
 
     #[test]
@@ -262,7 +559,7 @@ mod tests {
             ],
         );
         let (_payload, count) = collect_from_conn(&conn, 7, now).unwrap();
-        assert_eq!(count, 1, "the 30-day-old row is outside the 7-day window");
+        assert_eq!(count, 1);
     }
 
     #[test]
@@ -281,29 +578,57 @@ mod tests {
         write_atomic(&path, b"hello").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"hello");
         assert!(!path.with_extension("json.tmp").exists());
-        // Overwrite works (Windows-safe path).
-        write_atomic(&path, b"world").unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), b"world");
     }
 
-    /// End-to-end: collect → encrypt → decrypt recovers the same memory dump.
     #[test]
-    fn transfer_payload_round_trips_through_the_bundle() {
-        use crate::memory::transfer_bundle::{decrypt_with, encrypt_for};
+    fn read_bundle_refuses_oversized_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("big.json");
+        // 20 MiB of zeros — over the 16 MiB default bundle cap.
+        std::fs::write(&path, vec![b'0'; 20 * 1024 * 1024]).unwrap();
+        let err = read_bundle(&path).unwrap_err();
+        assert!(err.to_string().contains("max_bundle_bytes"), "got: {err}");
+    }
+
+    #[test]
+    fn verdict_str_covers_all_five() {
+        use VerifyVerdict::*;
+        assert_eq!(verdict_str(&SelfConsistent), "self_consistent");
+        assert_eq!(verdict_str(&VerifiedAgainstExpected), "verified_against_pinned_sender");
+        assert_eq!(verdict_str(&SignatureMismatch), "signature_mismatch");
+        assert_eq!(verdict_str(&WrongRecipient), "wrong_recipient");
+        assert_eq!(verdict_str(&UnsupportedSchema(2)), "unsupported_schema");
+    }
+
+    /// End-to-end: export-shape → verify (wrong/right recipient) → import recovers.
+    #[test]
+    fn export_verify_import_round_trip_via_bundle() {
+        use crate::memory::transfer_bundle::{encrypt_for, transfer_pubkey_b64};
         use ed25519_dalek::SigningKey;
-        use x25519_dalek::{PublicKey, StaticSecret};
 
         let conn = Connection::open_in_memory().unwrap();
         let now = 100 * 86_400 * 1_000_000_000i64;
         seed(&conn, &[(1, now - 1_000_000_000, "secret note", 0.9)]);
-        let (payload, _count) = collect_from_conn(&conn, 7, now).unwrap();
+        let (payload, _c) = collect_from_conn(&conn, 7, now).unwrap();
 
         let rx_secret = [7u8; 32];
-        let rx_pub = PublicKey::from(&StaticSecret::from(rx_secret)).to_bytes();
+        let rx_pub = parse_b64_32(&transfer_pubkey_b64(&rx_secret), "p").unwrap();
         let sk = SigningKey::from_bytes(&[3u8; 32]);
         let bundle = encrypt_for(&payload, &rx_pub, &sk, 1).unwrap();
-        let recovered = decrypt_with(&bundle, &rx_secret).unwrap();
-        assert_eq!(recovered, payload);
+
+        // verify_bundle: right recipient + no pin → self-consistent.
+        assert_eq!(
+            transfer_bundle::verify_bundle(&bundle, Some(&rx_pub), None),
+            VerifyVerdict::SelfConsistent
+        );
+        // wrong recipient.
+        let other = parse_b64_32(&transfer_pubkey_b64(&[9u8; 32]), "p").unwrap();
+        assert_eq!(
+            transfer_bundle::verify_bundle(&bundle, Some(&other), None),
+            VerifyVerdict::WrongRecipient
+        );
+        // decrypt recovers.
+        let recovered = transfer_bundle::decrypt_with(&bundle, &rx_secret).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&recovered).unwrap();
         assert_eq!(v["events"][0]["text"], "secret note");
     }

@@ -37,9 +37,28 @@ pub enum IdentityAction {
         /// The identity to FOLD IN + delete (a UUID).
         victim: String,
     },
+    /// Show THIS operator's X25519 transfer public key (base64) — share it so
+    /// another NEOTH can `neoth transfer export --dest <this>` an encrypted
+    /// memory bundle to you. The key is auto-managed at `~/.neoth/wal/transfer.key`.
+    Pubkey,
 }
 
 pub fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()> {
+    // `pubkey` needs no db — it derives the operator's X25519 transfer pubkey.
+    if let IdentityAction::Pubkey = args.action {
+        let secret = crate::memory::transfer_bundle::load_or_init_transfer_key(
+            &crate::memory::transfer_bundle::default_transfer_key_path(),
+        )
+        .context("load transfer key")?;
+        let pubkey = crate::memory::transfer_bundle::transfer_pubkey_b64(&secret);
+        match output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!("{}", serde_json::json!({ "transfer_pubkey_b64": pubkey }))
+            }
+            OutputFormat::Table => println!("{pubkey}"),
+        }
+        return Ok(());
+    }
     let home = FreedomConfig::default_neoth_home();
     let db_path = home.join("views.db");
     // `store::open` applies the schema, so the identity tables exist even on a
@@ -68,6 +87,7 @@ pub fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()> {
             }
             Ok(())
         }
+        IdentityAction::Pubkey => unreachable!("handled before the db open above"),
     }
 }
 
