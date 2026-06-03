@@ -479,6 +479,29 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_profile_redactions_revoked
             ON idx_profile_redactions (revoked_at);
 
+        -- ── SPEC-11: cross-channel human identity (C-12/C-13) ───────────────
+        --
+        -- `idx_human_identity` is one row per resolved person (a stable UUID v7
+        -- minted on first sight); `idx_human_identity_aliases` maps each
+        -- channel-native `(channel, sender_id, chat_id)` triple to that person.
+        -- The inbound handler resolves-or-creates on every message (filling
+        -- `InboundMessage.human_uuid`); `neoth identity list/merge` read + merge.
+        -- CREATE-IF-NOT-EXISTS → backward-safe (pre-SPEC-11 dbs gain the tables
+        -- on next open with no migration step).
+        CREATE TABLE IF NOT EXISTS idx_human_identity (
+            uuid             TEXT NOT NULL PRIMARY KEY,
+            created_at_unix  INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS idx_human_identity_aliases (
+            uuid       TEXT NOT NULL,
+            channel    TEXT NOT NULL,
+            sender_id  TEXT NOT NULL,
+            chat_id    TEXT NOT NULL,
+            UNIQUE(channel, sender_id, chat_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_human_identity_aliases_uuid
+            ON idx_human_identity_aliases (uuid);
+
         -- ── Schema v9: idx_profile_outbox (Pick #12, Session 14) ────────────
         --
         -- Codex-flagged consistency hole: profile/apply.rs commits idx_profile

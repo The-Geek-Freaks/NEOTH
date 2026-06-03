@@ -17,6 +17,7 @@ pub mod discord;
 pub mod discord_gateway;
 pub mod discord_gateway_loop;
 pub mod formatter;
+pub mod identity;
 pub mod keet;
 pub mod keet_bencode;
 pub mod keet_crypto;

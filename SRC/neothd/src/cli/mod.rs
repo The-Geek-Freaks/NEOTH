@@ -41,6 +41,7 @@ pub mod autonomy;
 pub mod credential;
 pub mod cron;
 pub mod dream;
+pub mod identity;
 pub mod transfer;
 pub mod gui;
 pub mod n8n;
@@ -252,6 +253,12 @@ pub enum Commands {
     /// operator's ed25519 key, and writes it to `~/.neoth/exports/`. Only the
     /// recipient's secret can decrypt. Emits `0xF5 MEMORY_TRANSFER_EXPORTED`.
     Transfer(transfer::TransferArgs),
+
+    /// Cross-channel identity (SPEC-11): `identity list` shows each resolved
+    /// person (UUID v7) + their channel aliases; `identity merge <keep> <fold>`
+    /// unifies two identities the resolver minted separately. Identities are
+    /// produced automatically as channel messages arrive.
+    Identity(identity::IdentityArgs),
 
     /// Manage `credentials.yaml`: `list` shows which credential keys are set
     /// (NAMES only, never values); `import --file <path>` merges a
@@ -868,6 +875,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Transfer(args) => {
             transfer::run_transfer(args, global_output).await?;
+        }
+        Commands::Identity(args) => {
+            identity::run_identity(args, global_output)?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;

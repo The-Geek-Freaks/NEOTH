@@ -2712,6 +2712,27 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
         let config_for_handler = reload_controller.latest();
         let views_conn = views_conn.clone();
         Box::pin(async move {
+            let mut inbound = inbound;
+            // ── SPEC-11: cross-channel identity resolve ────────────────────
+            // Stamp `human_uuid` from the `(channel, sender_id, chat_id)` triple
+            // so downstream + the WAL can attribute this message to a stable
+            // person, and `neoth identity list/merge` has rows to operate on.
+            // Best-effort: a DB/resolver error leaves `human_uuid = None`. The
+            // shared views_conn guard is dropped before any later await.
+            if let Some(vc) = &views_conn {
+                let conn = vc.lock().await;
+                match crate::channels::identity::resolve_or_create_human_uuid(
+                    &conn,
+                    inbound.channel.as_str(),
+                    &inbound.sender_id,
+                    &inbound.chat_id,
+                ) {
+                    Ok(uuid) => inbound.human_uuid = Some(uuid),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "identity: human_uuid resolve failed (best-effort)")
+                    }
+                }
+            }
             // ── SD-03: edited-message audit (WAL 0x38 CHANNEL_EDIT) ────────
             // An inbound edit is observed-only: record a hashed audit frame
             // and return WITHOUT re-running the provider pipeline (no reply,

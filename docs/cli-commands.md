@@ -678,6 +678,23 @@ Print the current config + binary location + a SOCKS5 probe result. Operator-fac
 
 TCP-probe the SOCKS5 port from freedom.yaml. Exits non-zero if the probe fails, so it composes in shell scripts: `neoth hysteria test && echo ok`
 
+## `neoth identity`
+
+Cross-channel identity (SPEC-11): `identity list` shows each resolved person (UUID v7) + their channel aliases; `identity merge <keep> <fold>` unifies two identities the resolver minted separately. Identities are produced automatically as channel messages arrive
+
+### `neoth identity list`
+
+List resolved cross-channel identities + their channel aliases
+
+- `--channel <CHANNEL>` — Only show identities with an alias on this channel
+
+### `neoth identity merge`
+
+Merge two identities: every alias of <victim> is reassigned to <canonical>, then <victim> is deleted. Use when the same person was minted twice (they messaged from two channels before being linked)
+
+- `<CANONICAL>` — The identity to KEEP (a UUID from `neoth identity list`)
+- `<VICTIM>` — The identity to FOLD IN + delete (a UUID)
+
 ## `neoth ingest`
 
 Multimodal asset ingest pipeline
