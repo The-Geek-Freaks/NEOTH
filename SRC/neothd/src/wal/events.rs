@@ -1192,6 +1192,16 @@ pub const EVENT_TYPE_CALENDAR_WRITE: u8 = 0xCA;
 /// refused fail-closed, so a disabled calendar surface is auditable rather than
 /// silent. Payload (JSON): `{provider, action, reason, ts_unix}`.
 pub const EVENT_TYPE_CALENDAR_WRITE_DENIED: u8 = 0xCB;
+
+/// `0xC9 VIDEO_FRAME_SYNTHESIZED` — MM-02b. A multimodal video-analysis call
+/// completed: NEOTH decoded N frames from a clip + sent them to a vision
+/// provider (Anthropic/OpenAI/Gemini) for a prompt-guided synthesis. An
+/// operator-initiated, credentialed cloud call — the audit records that frames
+/// left the device + to which provider, WITHOUT the prompt text or the frame
+/// pixels (only a prompt hash + counts). Per-clip single event (immediate-sync).
+/// Payload (JSON): `{provider, frame_count, prompt_hash, output_chars, ts_unix}`.
+pub const EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED: u8 = 0xC9;
+
 /// `0xC1 MCP_TOOL_REJECTED` — operator's MCP client refused to invoke
 /// a tool because either (a) the tool name is not in the server's
 /// `allow_tools` list, (b) the tool description failed the prompt-
@@ -1590,6 +1600,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("todo_write", EVENT_TYPE_TODO_WRITE),
     ("calendar_write", EVENT_TYPE_CALENDAR_WRITE),
     ("calendar_write_denied", EVENT_TYPE_CALENDAR_WRITE_DENIED),
+    (
+        "video_frame_synthesized",
+        EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
+    ),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -1954,6 +1968,8 @@ const _: () = {
         [(EVENT_TYPE_CALENDAR_WRITE < 0xC0 || EVENT_TYPE_CALENDAR_WRITE > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CALENDAR_WRITE_DENIED < 0xC0
         || EVENT_TYPE_CALENDAR_WRITE_DENIED > 0xCF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED < 0xC0
+        || EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED > 0xCF) as usize];
     // V11 Pick #38 (2026-05-19): coding-workflow band 0x70..=0x7F.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_OPENED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_OPENED > 0x7F) as usize];
@@ -2214,6 +2230,10 @@ mod tests {
             (
                 "CALENDAR_WRITE_DENIED",
                 EVENT_TYPE_CALENDAR_WRITE_DENIED,
+            ),
+            (
+                "VIDEO_FRAME_SYNTHESIZED",
+                EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
             ),
             ("KANBAN_SESSION_OPENED", EVENT_TYPE_KANBAN_SESSION_OPENED),
             ("KANBAN_TASK_CREATED", EVENT_TYPE_KANBAN_TASK_CREATED),

@@ -17,6 +17,10 @@
 
 pub mod audio;
 pub mod document;
+/// MM-02b — ffmpeg-backed video frame decoder (single still near a timestamp).
+pub mod frame_decoder;
+/// MM-02b — multimodal vision synthesizers (Anthropic / OpenAI / Gemini REST).
+pub mod multimodal_synth;
 pub mod pdf;
 pub mod pdf_forms;
 pub mod stt_dispatch;
@@ -30,6 +34,8 @@ pub mod tts_cloud;
 pub mod tts_dispatch;
 pub mod tts_provider;
 pub mod video;
+/// MM-02b — video analysis dispatch: decode → vision synth → 0xC9 audit.
+pub mod video_dispatch;
 pub mod video_frames;
 pub mod vision;
 
