@@ -46,6 +46,12 @@ pub struct InboundEmail {
     /// dedup key (survives IMAP `UIDVALIDITY` resets); the UID is the fallback.
     #[serde(default)]
     pub message_id: Option<String>,
+    /// EM-01b P1a — the raw `Authentication-Results` header, when the receiving
+    /// server added one (Gmail/most providers do). Parsed by
+    /// [`super::sender_policy::parse_authentication_results`] for SPF/DKIM/DMARC
+    /// visibility.
+    #[serde(default)]
+    pub auth_results: Option<String>,
 }
 
 impl InboundEmail {
@@ -121,6 +127,45 @@ impl TiebreakVerdict {
     }
 }
 
+/// P1a — the result of one email-authentication mechanism (SPF / DKIM / DMARC),
+/// as reported by the receiving server's `Authentication-Results` header. A
+/// VISIBILITY signal — NEOTH surfaces it, it does not (in this slice) change a
+/// band decision. Defined here (the data); the parser lives in
+/// [`super::sender_policy`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthVerdict {
+    Pass,
+    Fail,
+    SoftFail,
+    Neutral,
+    /// The mechanism reported a `none` result (not configured by the sender).
+    NoneResult,
+    /// The mechanism wasn't present in the header / couldn't be parsed.
+    Unknown,
+}
+
+impl AuthVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AuthVerdict::Pass => "pass",
+            AuthVerdict::Fail => "fail",
+            AuthVerdict::SoftFail => "softfail",
+            AuthVerdict::Neutral => "neutral",
+            AuthVerdict::NoneResult => "none",
+            AuthVerdict::Unknown => "unknown",
+        }
+    }
+}
+
+/// P1a — parsed SPF/DKIM/DMARC status from `Authentication-Results`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EmailAuthStatus {
+    pub spf: AuthVerdict,
+    pub dkim: AuthVerdict,
+    pub dmarc: AuthVerdict,
+}
+
 /// The triage verdict for one inbound email.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboundTriage {
@@ -140,6 +185,15 @@ pub struct InboundTriage {
     /// deterministic rules stood (no review, or not a borderline email).
     #[serde(default)]
     pub tiebreak: Option<TiebreakVerdict>,
+    /// P1a — the sender's envelope domain matched the operator's
+    /// `email.trusted_domains` allowlist. A VISIBILITY flag only: the mail was
+    /// STILL sanitized + scored (trust never bypasses the pipeline).
+    #[serde(default)]
+    pub sender_trusted: bool,
+    /// P1a — parsed SPF/DKIM/DMARC status, when the receiving server reported
+    /// it. `None` = no `Authentication-Results` header was present.
+    #[serde(default)]
+    pub auth: Option<EmailAuthStatus>,
 }
 
 /// Run an inbound email through the full triage pipeline. Pure.
@@ -169,6 +223,8 @@ pub fn triage_inbound(email: &InboundEmail) -> InboundTriage {
             threat: None,
             action: InboundAction::DroppedAtSanitizer,
             tiebreak: None,
+            sender_trusted: false,
+            auth: None,
         };
     }
 
@@ -197,6 +253,8 @@ pub fn triage_inbound(email: &InboundEmail) -> InboundTriage {
         threat: Some(threat),
         action,
         tiebreak: None,
+        sender_trusted: false,
+        auth: None,
     }
 }
 
@@ -235,6 +293,7 @@ mod tests {
             body: body.to_string(),
             attachment_filenames: attachments.iter().map(|s| s.to_string()).collect(),
             message_id: None,
+            auth_results: None,
         }
     }
 

@@ -1229,14 +1229,24 @@ pub struct EmailConfig {
     /// email to `Deliver` (the agent may auto-act) — opt-in because it lets an
     /// LLM false-negative override the deterministic rules.
     pub llm_tiebreak_allow_downgrade: bool,
+    /// P1a — operator-configured trusted sender domains (e.g. `acme.com`,
+    /// `bank.example`). A sender whose envelope-From domain matches (exactly or
+    /// as a subdomain) is FLAGGED trusted in the triage output + audit. This is
+    /// a VISIBILITY signal only — a trusted sender's mail is STILL fully
+    /// sanitized + threat-scored (trust never bypasses the security pipeline;
+    /// "trusted but still sanitized"). Default empty.
+    #[serde(default)]
+    pub trusted_domains: Vec<String>,
 }
 
 impl Default for EmailConfig {
     fn default() -> Self {
-        // Both off — opt-in per the cost-safe + security-conservative defaults.
+        // Both off + no trusted domains — opt-in per the cost-safe +
+        // security-conservative defaults.
         Self {
             llm_tiebreak: false,
             llm_tiebreak_allow_downgrade: false,
+            trusted_domains: Vec::new(),
         }
     }
 }

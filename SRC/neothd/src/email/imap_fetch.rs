@@ -155,6 +155,11 @@ pub fn parse_rfc822(uid: u32, raw: &[u8]) -> Option<InboundEmail> {
         .headers
         .get_first_value("Message-ID")
         .filter(|s| !s.trim().is_empty());
+    // P1a — the receiving server's SPF/DKIM/DMARC report (Gmail/most add it).
+    let auth_results = parsed
+        .headers
+        .get_first_value("Authentication-Results")
+        .filter(|s| !s.trim().is_empty());
 
     let mut body = String::new();
     let mut attachment_filenames = Vec::new();
@@ -175,6 +180,7 @@ pub fn parse_rfc822(uid: u32, raw: &[u8]) -> Option<InboundEmail> {
         body,
         attachment_filenames,
         message_id,
+        auth_results,
     })
 }
 

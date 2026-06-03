@@ -241,6 +241,18 @@ async fn fetch_and_triage(
         }
     }
 
+    // P1a — annotate each triage with the trusted-sender + SPF/DKIM/DMARC
+    // visibility signals. Runs AFTER triage + tie-break and NEVER changes the
+    // band ("trusted but still sanitized"). `triaged[i]` stays aligned with
+    // `emails[i]` (the tie-break loop preserves order).
+    triaged = triaged
+        .into_iter()
+        .zip(emails.iter())
+        .map(|(t, e)| {
+            crate::email::sender_policy::annotate_sender_policy(t, e, &fcfg.email.trusted_domains)
+        })
+        .collect();
+
     // EM-01b/PL-05b — record each inbound-mail security decision in the audit
     // ledger (metadata only). Best-effort: an audit gap never blocks the fetch.
     emit_email_audit_batch(&triaged).await;
@@ -278,13 +290,27 @@ async fn fetch_and_triage(
                     .tiebreak
                     .map(|v| format!("  (llm:{})", v.as_str()))
                     .unwrap_or_default();
+                let trust = if t.sender_trusted { "  [trusted]" } else { "" };
+                let auth = t
+                    .auth
+                    .map(|a| {
+                        format!(
+                            "  (spf:{} dkim:{} dmarc:{})",
+                            a.spf.as_str(),
+                            a.dkim.as_str(),
+                            a.dmarc.as_str()
+                        )
+                    })
+                    .unwrap_or_default();
                 println!(
-                    "[{}] score={:<3} {}  —  {}{}",
+                    "[{}] score={:<3} {}  —  {}{}{}{}",
                     t.action.as_str(),
                     score,
                     t.from,
                     t.subject,
-                    tb
+                    trust,
+                    tb,
+                    auth
                 );
             }
         }
@@ -330,6 +356,13 @@ async fn emit_email_audit_batch(triaged: &[crate::email::inbound::InboundTriage]
                 "score": score,
                 "action": t.action.as_str(),
                 "tiebreak": t.tiebreak.map(|v| v.as_str()),
+                // P1a — sender-trust + SPF/DKIM/DMARC visibility in the audit.
+                "sender_trusted": t.sender_trusted,
+                "auth": t.auth.map(|a| serde_json::json!({
+                    "spf": a.spf.as_str(),
+                    "dkim": a.dkim.as_str(),
+                    "dmarc": a.dmarc.as_str(),
+                })),
                 "ts_unix": now,
             }))
             .unwrap_or_default(),

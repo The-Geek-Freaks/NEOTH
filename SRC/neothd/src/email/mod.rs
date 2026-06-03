@@ -35,6 +35,7 @@ pub mod draft;
 pub mod gmail;
 pub mod inbound;
 pub mod seen_store;
+pub mod sender_policy;
 pub mod threat_tiebreak;
 #[cfg(feature = "imap_fetch")]
 pub mod imap_fetch;

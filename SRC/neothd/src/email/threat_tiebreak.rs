@@ -234,6 +234,7 @@ mod tests {
             body: "Please verify your account and confirm your identity by Monday.".to_string(),
             attachment_filenames: vec![],
             message_id: None,
+            auth_results: None,
         }
     }
 
@@ -393,6 +394,7 @@ mod tests {
                 .into(),
             attachment_filenames: vec![],
             message_id: None,
+            auth_results: None,
         });
         assert_eq!(quarantined.action, InboundAction::Quarantine);
         let after = apply_tiebreak(quarantined, TiebreakVerdict::Benign, true);
@@ -460,6 +462,7 @@ mod tests {
             body: "Lunch tomorrow?".into(),
             attachment_filenames: vec![],
             message_id: None,
+            auth_results: None,
         });
         assert_eq!(deliver.action, InboundAction::Deliver);
         let p = MockProvider {
