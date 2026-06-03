@@ -203,6 +203,7 @@ async fn run_chain_check(wal_dir: &Path) -> bool {
         wal_dir: Some(wal_dir.to_path_buf()),
         key: None,
         segment: None,
+        since_rotation: false,
         output: OutputFormat::Json,
     };
     crate::cli::verify::run_verify(args).await.is_ok()

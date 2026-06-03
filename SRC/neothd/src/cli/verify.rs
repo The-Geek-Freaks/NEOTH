@@ -26,6 +26,13 @@ pub struct VerifyArgs {
     /// Verify only this specific segment file.
     #[arg(long, value_name = "PATH")]
     pub segment: Option<PathBuf>,
+    /// SC-09 — verify only segments at/after the last HMAC-key rotation
+    /// (`0xD9 HMAC_KEY_ROTATED`, written by `neoth security rewrap-hmac-key`).
+    /// Markers in earlier segments were signed with a key that has since been
+    /// replaced; skipping them avoids spurious failures after a key recovery.
+    /// With no rotation recorded, verifies the full history (with a note).
+    #[arg(long)]
+    pub since_rotation: bool,
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -74,11 +81,15 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
         }
     };
 
-    let segments = if let Some(s) = args.segment.clone() {
+    let mut segments = if let Some(s) = args.segment.clone() {
         vec![s]
     } else {
         list_segments(&wal_dir)?
     };
+
+    if args.since_rotation {
+        segments = apply_since_rotation_filter(segments, args.output);
+    }
 
     let authorised = collect_authorised_ranges(&segments)?;
     let outcome = verify_segments(&segments, &key, &authorised)?;
@@ -198,6 +209,80 @@ fn render_verify_outcome(segments: &[PathBuf], outcome: &VerifyOutcome, output: 
             }
         }
     }
+}
+
+/// SC-09 — drop every segment BEFORE the last one carrying a
+/// `0xD9 HMAC_KEY_ROTATED` frame (those markers were signed with a since-
+/// replaced key). Returns the original list unchanged (with an operator note)
+/// when no rotation has been recorded. Boundary is segment-granular: a marker
+/// written before the rotation frame WITHIN the rotation segment is still
+/// verified — today's `rewrap-hmac-key` restores the SAME key bytes so every
+/// marker verifies regardless; a future `rotate-hmac-key` (new key value) would
+/// want frame-granular precision, tracked as a follow-on.
+fn apply_since_rotation_filter(segments: Vec<PathBuf>, output: OutputFormat) -> Vec<PathBuf> {
+    match find_last_rotation_segment(&segments) {
+        Some(idx) => {
+            let skipped = idx;
+            if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) && skipped > 0 {
+                println!(
+                    "# --since-rotation: skipping {skipped} pre-rotation segment(s); \
+                     verifying from {}",
+                    segments[idx].display()
+                );
+            }
+            segments.into_iter().skip(idx).collect()
+        }
+        None => {
+            if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) {
+                println!(
+                    "# --since-rotation: no HMAC_KEY_ROTATED (0xD9) frame found — \
+                     verifying the full history"
+                );
+            }
+            segments
+        }
+    }
+}
+
+/// Index (in the sorted `segments`) of the LAST segment containing a
+/// `0xD9 HMAC_KEY_ROTATED` frame, or `None` if no segment has one.
+fn find_last_rotation_segment(segments: &[PathBuf]) -> Option<usize> {
+    segments
+        .iter()
+        .enumerate()
+        .filter(|(_, seg)| segment_has_rotation(seg))
+        .map(|(i, _)| i)
+        .next_back()
+}
+
+/// Does this segment contain at least one `0xD9 HMAC_KEY_ROTATED` frame?
+/// Tolerant — a torn tail / unreadable file just yields `false`.
+fn segment_has_rotation(seg: &Path) -> bool {
+    use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
+    use crate::wal::frame::decode_frame;
+    use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+
+    let Ok(bytes) = std::fs::read(seg) else {
+        return false;
+    };
+    if bytes.len() < SEGMENT_HEADER_LEN {
+        return false;
+    }
+    let mut cursor = SEGMENT_HEADER_LEN;
+    while cursor < bytes.len() {
+        let Ok(dec) = decode_frame(&bytes[cursor..]) else {
+            break;
+        };
+        if dec.header.event_type == EVENT_TYPE_HMAC_KEY_ROTATED {
+            return true;
+        }
+        let total = dec.header.total_len as usize;
+        if total == 0 {
+            break;
+        }
+        cursor += total;
+    }
+    false
 }
 
 /// Enumerate `*.wal` segments under `dir`, sorted by sequence number.
@@ -394,6 +479,65 @@ mod tests {
         std::fs::write(&seg, b"too short").unwrap();
         let markers = extract_markers(&seg).unwrap();
         assert!(markers.is_empty());
+    }
+
+    // ── SC-09-B: --since-rotation boundary ──────────────────────────────────
+
+    async fn write_event_seg(seg: std::path::PathBuf, event_type: u8) {
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+        let payload = b"{}".to_vec();
+        let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.ok();
+    }
+
+    #[tokio::test]
+    async fn since_rotation_finds_last_rotation_segment_and_filters() {
+        use crate::wal::events::{EVENT_TYPE_HMAC_KEY_ROTATED, EVENT_TYPE_RAW_TEXT};
+        let dir = tempfile::tempdir().unwrap();
+        write_event_seg(dir.path().join("000001.wal"), EVENT_TYPE_RAW_TEXT).await;
+        write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
+        write_event_seg(dir.path().join("000003.wal"), EVENT_TYPE_RAW_TEXT).await;
+        let segs = list_segments(dir.path()).unwrap();
+        assert_eq!(find_last_rotation_segment(&segs), Some(1));
+        // The filter keeps the rotation segment + everything after it.
+        let filtered = apply_since_rotation_filter(segs, OutputFormat::Json);
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered[0].to_string_lossy().contains("000002"));
+    }
+
+    #[tokio::test]
+    async fn since_rotation_last_wins_with_two_rotations() {
+        use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
+        let dir = tempfile::tempdir().unwrap();
+        write_event_seg(dir.path().join("000001.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
+        write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
+        let segs = list_segments(dir.path()).unwrap();
+        // The MOST RECENT rotation is the boundary.
+        assert_eq!(find_last_rotation_segment(&segs), Some(1));
+    }
+
+    #[tokio::test]
+    async fn since_rotation_none_verifies_full_history() {
+        use crate::wal::events::EVENT_TYPE_RAW_TEXT;
+        let dir = tempfile::tempdir().unwrap();
+        write_event_seg(dir.path().join("000001.wal"), EVENT_TYPE_RAW_TEXT).await;
+        write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_RAW_TEXT).await;
+        let segs = list_segments(dir.path()).unwrap();
+        assert_eq!(find_last_rotation_segment(&segs), None);
+        // No rotation → the full list is returned unchanged.
+        let n = segs.len();
+        assert_eq!(apply_since_rotation_filter(segs, OutputFormat::Json).len(), n);
+    }
+
+    #[test]
+    fn segment_has_rotation_false_for_short_or_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        std::fs::write(&seg, b"short").unwrap();
+        assert!(!segment_has_rotation(&seg));
+        assert!(!segment_has_rotation(&dir.path().join("does-not-exist.wal")));
     }
 
     // V02-03 acceptance (note 2026-05-16): the end-to-end "tamper

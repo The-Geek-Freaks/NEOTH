@@ -1903,6 +1903,7 @@ Verify HMAC compaction markers across the WAL. Phase 33b SP-2. Reads every segme
 - `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
 - `--key <PATH>` — Override the HMAC key path
 - `--segment <PATH>` — Verify only this specific segment file
+- `--since-rotation <SINCE_ROTATION>` — SC-09 — verify only segments at/after the last HMAC-key rotation (`0xD9 HMAC_KEY_ROTATED`, written by `neoth security rewrap-hmac-key`). Markers in earlier segments were signed with a key that has since been replaced; skipping them avoids spurious failures after a key recovery. With no rotation recorded, verifies the full history (with a note)
 
 ## `neoth wal`
 
