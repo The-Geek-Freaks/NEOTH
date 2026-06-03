@@ -391,6 +391,90 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
         },
     });
 
+    // OM-01 OMI ingest — passive transcript ingest is the most sensitive power
+    // surface (it can mirror everyday conversation), so it gets its own rail.
+    // Engaged (off) = nothing is ingested. Even ON, the SC-14 startup gate
+    // refuses any non-local endpoint.
+    rails.push(Rail {
+        name: "omi_ingest",
+        engaged: !cfg.omi.enabled,
+        detail: if cfg.omi.enabled {
+            format!(
+                "ENABLED — polling {} (LOCAL-only; SC-14 refuses a cloud endpoint at startup)",
+                cfg.omi.endpoint
+            )
+        } else {
+            "off — no passive transcript ingest".to_string()
+        },
+    });
+
+    // EM-02b calendar writes — external network mutation surface. Engaged (off)
+    // = `neoth calendar add` refuses fail-closed.
+    rails.push(Rail {
+        name: "calendar_writes",
+        engaged: !cfg.calendar.writes_enabled,
+        detail: if cfg.calendar.writes_enabled {
+            "enabled — `neoth calendar add` may write to your CalDAV calendar \
+             (still autonomy-gated + audited 0xCA CALENDAR_WRITE)"
+                .to_string()
+        } else {
+            "off — calendar writes refuse fail-closed".to_string()
+        },
+    });
+
+    // SPEC-11 live-delivery edits — outbound message edit-in-place surface.
+    // Engaged (off) = send-only (never edits), the safest posture for a
+    // rate-limit-sensitive channel.
+    rails.push(Rail {
+        name: "live_delivery_edits",
+        engaged: !cfg.live_delivery.edits_enabled,
+        detail: if cfg.live_delivery.edits_enabled {
+            format!(
+                "enabled — in-place edits rate-limited to 1 per {}ms, max {} per message \
+                 (final edit always lands)",
+                cfg.live_delivery.min_edit_interval_ms, cfg.live_delivery.max_edits_per_message
+            )
+        } else {
+            "off — send-only, never edits a delivered message".to_string()
+        },
+    });
+
+    // F4-01 ecology scheduler — the self-adaptation auto-scheduler. Engaged
+    // (off) = it never fires (the read-only `neoth ecology` diagnostics still
+    // work). Even ON it only STAGES review-gated proposals, never auto-applies.
+    rails.push(Rail {
+        name: "ecology_scheduler",
+        engaged: !cfg.ecology.enabled,
+        detail: if cfg.ecology.enabled {
+            "ENABLED — experimental, review-gated: the scheduler STAGES self-dev \
+             proposals (never auto-applies) + emits 0x4C"
+                .to_string()
+        } else {
+            "off — no auto-scheduler (read-only ecology diagnostics still work)".to_string()
+        },
+    });
+
+    // KF-05 channel-weight learning scope — whose replies move the recall
+    // ranking. Engaged = the safe `operator_only` scope (no non-operator can
+    // poison the ranking).
+    let scope = cfg.channel_weights.learn_scope;
+    rails.push(Rail {
+        name: "channel_weight_learning",
+        engaged: matches!(scope, crate::config::ChannelLearnScope::OperatorOnly),
+        detail: match scope {
+            crate::config::ChannelLearnScope::OperatorOnly => {
+                "operator_only — only YOUR replies move the recall ranking".to_string()
+            }
+            crate::config::ChannelLearnScope::Allowlisted => {
+                "allowlisted — you + allowlisted senders move the ranking".to_string()
+            }
+            crate::config::ChannelLearnScope::AllTiny => {
+                "all_tiny — everyone moves the ranking; non-operators only a tiny fraction"
+                    .to_string()
+            }
+        },
+    });
+
     rails
 }
 
@@ -1006,7 +1090,7 @@ mod tests {
         // A fresh install's protective defaults must read as ENGAGED.
         let cfg = FreedomConfig::default();
         let rails = collect_rails(&cfg);
-        assert_eq!(rails.len(), 10, "all rails surfaced");
+        assert_eq!(rails.len(), 15, "all rails surfaced");
         for name in [
             "autonomy_gate",          // default Standard = gated
             "private_inference",      // default no cloud fallback
@@ -1016,10 +1100,22 @@ mod tests {
             "os_app_launch",          // default empty exec allowlist = deny-all
             "email_llm_tiebreak",     // default off = no LLM sees mail
             "email_downgrade_allowed", // default denied = no LLM auto-deliver
+            "omi_ingest",             // default off = no passive ingest
+            "ecology_scheduler",      // default off = no auto-scheduler
+            "channel_weight_learning", // default operator_only = poison-resistant
         ] {
             assert!(
                 rail(&rails, name).engaged,
                 "{name} must be engaged on a default install"
+            );
+        }
+        // These two power surfaces ship OPEN (usable) by default — the rail
+        // makes that VISIBLE rather than hiding it in freedom.yaml. They are
+        // still autonomy-gated + audited; the rail is the at-a-glance signal.
+        for name in ["calendar_writes", "live_delivery_edits"] {
+            assert!(
+                !rail(&rails, name).engaged,
+                "{name} ships open by default (visible, not hidden)"
             );
         }
     }

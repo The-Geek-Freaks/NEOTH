@@ -321,6 +321,26 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub omi: OmiConfig,
 
+    /// EM-02b — CalDAV calendar writes (`neoth calendar add`). A power surface
+    /// (external network mutation): a kill switch the operator can flip without
+    /// touching credentials. Default ON (the surface ships usable), but it is
+    /// ALSO gated by the autonomy/consent `ExternalTaskWrite` path + audited
+    /// (`0xCA CALENDAR_WRITE`). Surfaced as the `calendar_writes` safe-mode rail.
+    #[serde(default)]
+    pub calendar: CalendarConfig,
+
+    /// SPEC-11 — outbound live-delivery (send-then-edit) rate limiting. Bounds
+    /// how often NEOTH edits a streaming message so it can't trip Slack/Telegram/
+    /// Discord edit rate limits. Surfaced as the `live_delivery_edits` rail.
+    #[serde(default)]
+    pub live_delivery: LiveDeliveryConfig,
+
+    /// KF-05 — channel-acceptance Hebbian learning scope. Bounds WHOSE replies
+    /// move the recall-ranking weights so a non-operator can't poison them.
+    /// Default `operator_only`. Surfaced as the `channel_weight_learning` rail.
+    #[serde(default)]
+    pub channel_weights: ChannelWeightsConfig,
+
     /// EL-02 — arXiv topic-feed periodic ingest. Off by default; opt in
     /// via `arxiv.enabled: true` + a non-empty `arxiv.topics` list. When
     /// active, the daemon runs each topic query on a cadence (default 6h),
@@ -1381,6 +1401,86 @@ impl Default for OmiConfig {
             confidence_threshold: 0.75,
         }
     }
+}
+
+/// EM-02b — CalDAV calendar-write knobs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct CalendarConfig {
+    /// Master kill switch for `neoth calendar add`. Default `true` — the
+    /// surface ships usable (writes are still gated by the autonomy/consent
+    /// `ExternalTaskWrite` path + audited `0xCA CALENDAR_WRITE`). Flip to
+    /// `false` to make calendar writes refuse fail-closed regardless of grant.
+    pub writes_enabled: bool,
+}
+
+impl Default for CalendarConfig {
+    fn default() -> Self {
+        Self {
+            writes_enabled: true,
+        }
+    }
+}
+
+/// SPEC-11 — default minimum interval (ms) between in-place edits to one live
+/// message. 800ms is comfortably under Telegram's ~1 edit/sec soft limit.
+pub const DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS: u64 = 800;
+/// SPEC-11 — default cap on edits per live message before further intermediate
+/// edits are dropped (the final edit still lands — see `final_edit_always_allowed`).
+pub const DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE: u32 = 50;
+
+/// SPEC-11 — outbound live-delivery (send-then-edit) rate-limit knobs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct LiveDeliveryConfig {
+    /// Master switch for in-place edits. Default `true`. When `false`,
+    /// `LiveDelivery` only ever SENDS (never edits) — the safest posture for a
+    /// channel that rate-limits edits aggressively.
+    pub edits_enabled: bool,
+    /// Minimum ms between consecutive edits to the same message. An edit that
+    /// arrives sooner is COALESCED (dropped) unless it is the final edit.
+    pub min_edit_interval_ms: u64,
+    /// Hard cap on edits per message. Beyond it, intermediate edits are dropped.
+    pub max_edits_per_message: u32,
+    /// The final edit (the completed reply) ALWAYS lands, even past the
+    /// interval/count limits — so the operator never sees a truncated draft.
+    pub final_edit_always_allowed: bool,
+}
+
+impl Default for LiveDeliveryConfig {
+    fn default() -> Self {
+        Self {
+            edits_enabled: true,
+            min_edit_interval_ms: DEFAULT_LIVE_EDIT_MIN_INTERVAL_MS,
+            max_edits_per_message: DEFAULT_LIVE_MAX_EDITS_PER_MESSAGE,
+            final_edit_always_allowed: true,
+        }
+    }
+}
+
+/// KF-05 — whose replies are allowed to move the channel-acceptance weights.
+/// Default [`ChannelLearnScope::OperatorOnly`] so a non-operator on a shared
+/// channel can't poison the recall-ranking context.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChannelLearnScope {
+    /// Only the operator's own `human_uuid` (the C-13 cross-channel identity)
+    /// moves the weights. The safe default.
+    #[default]
+    OperatorOnly,
+    /// The operator + any allowlisted sender moves the weights at full strength.
+    Allowlisted,
+    /// Everyone moves the weights, but a non-operator/non-allowlisted sender
+    /// only at a tiny fraction (poisoning-resistant but still adaptive).
+    AllTiny,
+}
+
+/// KF-05 — channel-acceptance learning-scope knobs.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct ChannelWeightsConfig {
+    /// Whose successful replies move the Hebbian weights.
+    pub learn_scope: ChannelLearnScope,
 }
 
 /// EL-02 — arXiv topic-feed ingest task knobs.

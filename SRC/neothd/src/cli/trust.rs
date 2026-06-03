@@ -146,6 +146,11 @@ pub async fn run_trust(args: TrustArgs) -> Result<()> {
     let switches = PrivacySwitches {
         email_llm_tiebreak: cfg.email.llm_tiebreak,
         email_tiebreak_allow_downgrade: cfg.email.llm_tiebreak_allow_downgrade,
+        omi_ingest: cfg.omi.enabled,
+        calendar_writes: cfg.calendar.writes_enabled,
+        live_delivery_edits: cfg.live_delivery.edits_enabled,
+        ecology_scheduler: cfg.ecology.enabled,
+        channel_weight_scope: cfg.channel_weights.learn_scope,
     };
 
     // Optional inline chain check — honest: only claim VERIFIED when run.
@@ -175,6 +180,16 @@ pub struct PrivacySwitches {
     pub email_llm_tiebreak: bool,
     /// PL-05b — may a benign LLM verdict DEMOTE a flagged email to auto-deliver?
     pub email_tiebreak_allow_downgrade: bool,
+    /// OM-01 — is passive OMI transcript ingest on (the most sensitive surface)?
+    pub omi_ingest: bool,
+    /// EM-02b — may `neoth calendar add` write to the operator's CalDAV calendar?
+    pub calendar_writes: bool,
+    /// SPEC-11 — may live-delivery edit a message in place (vs send-only)?
+    pub live_delivery_edits: bool,
+    /// F4-01 — is the ecology auto-scheduler running (experimental, review-gated)?
+    pub ecology_scheduler: bool,
+    /// KF-05 — whose replies move the recall ranking (operator-scope guard).
+    pub channel_weight_scope: crate::config::ChannelLearnScope,
 }
 
 /// Glob the WAL dir for `*.wal` segments and `collect_stats` each. Missing
@@ -237,6 +252,15 @@ fn render_json(
         "privacy_switches": {
             "email_llm_tiebreak": switches.email_llm_tiebreak,
             "email_tiebreak_allow_downgrade": switches.email_tiebreak_allow_downgrade,
+            "omi_ingest": switches.omi_ingest,
+            "calendar_writes": switches.calendar_writes,
+            "live_delivery_edits": switches.live_delivery_edits,
+            "ecology_scheduler": switches.ecology_scheduler,
+            "channel_weight_scope": match switches.channel_weight_scope {
+                crate::config::ChannelLearnScope::OperatorOnly => "operator_only",
+                crate::config::ChannelLearnScope::Allowlisted => "allowlisted",
+                crate::config::ChannelLearnScope::AllTiny => "all_tiny",
+            },
         },
     });
     println!("{value}");
@@ -319,6 +343,53 @@ fn render_table(
             "a benign LLM verdict may auto-DELIVER a flagged email"
         } else {
             "the LLM may only hold/quarantine, never auto-deliver"
+        }
+    );
+    println!(
+        "  OMI ingest:           {}  ({})",
+        on_off(switches.omi_ingest),
+        if switches.omi_ingest {
+            "passive transcript ingest ON — LOCAL-only, sanitized, default-off surface"
+        } else {
+            "off — no passive transcript ingest"
+        }
+    );
+    println!(
+        "  calendar writes:      {}  ({})",
+        on_off(switches.calendar_writes),
+        if switches.calendar_writes {
+            "`neoth calendar add` may write your CalDAV calendar (autonomy-gated + 0xCA audit)"
+        } else {
+            "off — calendar writes refuse fail-closed"
+        }
+    );
+    println!(
+        "  live-delivery edits:  {}  ({})",
+        on_off(switches.live_delivery_edits),
+        if switches.live_delivery_edits {
+            "in-place message edits ON (rate-limited; final edit always lands)"
+        } else {
+            "off — send-only, never edits a delivered message"
+        }
+    );
+    println!(
+        "  ecology scheduler:    {}  ({})",
+        on_off(switches.ecology_scheduler),
+        if switches.ecology_scheduler {
+            "EXPERIMENTAL, review-gated — stages self-dev proposals, never auto-applies"
+        } else {
+            "off — no auto-scheduler (read-only ecology diagnostics still work)"
+        }
+    );
+    println!(
+        "  channel-weight learn: {}",
+        match switches.channel_weight_scope {
+            crate::config::ChannelLearnScope::OperatorOnly =>
+                "operator_only (only YOUR replies move the recall ranking)",
+            crate::config::ChannelLearnScope::Allowlisted =>
+                "allowlisted (you + allowlisted senders move the ranking)",
+            crate::config::ChannelLearnScope::AllTiny =>
+                "all_tiny (everyone; non-operators only a tiny fraction)",
         }
     );
 }
