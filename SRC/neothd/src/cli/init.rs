@@ -350,6 +350,10 @@ pub struct WizardState {
     /// fresh-host operators with no prior AI memory history.
     #[serde(default)]
     pub import_memory: Option<std::path::PathBuf>,
+    /// SC-09 (step 3b) — whether the wizard offered the operator the optional
+    /// plaintext HMAC-key backup (so an aborted/resumed wizard doesn't re-ask).
+    #[serde(default)]
+    pub hmac_backup_offered: bool,
     pub steps_completed: Vec<u8>,
 }
 
@@ -407,6 +411,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     step2_operator_id(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step3_language(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
+    step3b_hmac_backup(interactive, &neoth_dir, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step4_role(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
@@ -1228,6 +1234,53 @@ fn step3_language(args: &InitArgs, interactive: bool, state: &mut WizardState) -
     state.language_primary = Some(primary);
     state.language_code = Some(code);
     state.steps_completed.push(3);
+    Ok(())
+}
+
+/// SC-09 step 3b — optionally back up the WAL integrity (HMAC) key. The key is
+/// bound to this machine/user (DPAPI on Windows, mode-0600 on Unix); a plaintext
+/// backup is the ONLY way to recover the audit-chain history after a machine
+/// change or Windows reinstall (see `PLAN/RUNBOOK_dpapi_hmac_recovery.md`).
+/// Default NO — opt-in, since it writes a plaintext copy of a secret. Skipped
+/// entirely in non-interactive runs (the operator can run
+/// `neoth security backup-hmac-key` later).
+fn step3b_hmac_backup(
+    interactive: bool,
+    neoth_dir: &std::path::Path,
+    state: &mut WizardState,
+) -> Result<()> {
+    debug!("wizard step 3b: hmac key backup");
+    if !interactive {
+        return Ok(());
+    }
+    #[cfg(feature = "wizard")]
+    {
+        let do_backup = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(
+                "[3b/9] Back up your WAL integrity key now? (lets you recover your \
+                 tamper-evident audit history after a machine change — writes a plaintext copy)",
+            )
+            .default(false)
+            .interact()
+            .context("hmac backup prompt")?;
+        state.hmac_backup_offered = true;
+        if do_backup {
+            let output = neoth_dir.join("wal").join("hmac_backup.bin");
+            let bargs = crate::cli::security::BackupHmacKeyArgs {
+                output: output.clone(),
+                force: true,
+                home: Some(neoth_dir.to_path_buf()),
+            };
+            // Best-effort: a backup failure must NOT abort onboarding.
+            match crate::cli::security::run_backup_hmac_key(&bargs) {
+                Ok(()) => eprintln!("[neoth init] WAL integrity key backed up to {}", output.display()),
+                Err(e) => eprintln!("[neoth init] HMAC key backup failed (non-fatal): {e}"),
+            }
+        }
+    }
+    // `neoth_dir` + `state` are only consumed under the `wizard` feature.
+    #[cfg(not(feature = "wizard"))]
+    let _ = (neoth_dir, state);
     Ok(())
 }
 
@@ -4575,6 +4628,39 @@ fn which_binary(name: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    // ── SC-09 step 3b: HMAC key backup prompt ─────────────────────────
+
+    #[test]
+    fn step3b_non_interactive_is_a_noop() {
+        // Non-interactive runs must NOT prompt, NOT back up, and NOT create a
+        // key — the operator can run `neoth security backup-hmac-key` later.
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = WizardState::default();
+        step3b_hmac_backup(false, dir.path(), &mut state).expect("noop ok");
+        assert!(!state.hmac_backup_offered, "non-interactive must not offer");
+        assert!(
+            !dir.path().join("wal").join("hmac_backup.bin").exists(),
+            "non-interactive must write no backup"
+        );
+        assert!(
+            !dir.path().join("wal").join("hmac.key").exists(),
+            "non-interactive must not create a key"
+        );
+    }
+
+    #[test]
+    fn hmac_backup_offered_defaults_false_and_round_trips() {
+        let s = WizardState::default();
+        assert!(!s.hmac_backup_offered);
+        // Round-trips, and a checkpoint written BEFORE this field existed (the
+        // key absent from an otherwise-complete JSON) still loads — proving the
+        // `#[serde(default)]` on the new field keeps old checkpoints valid.
+        let mut v: serde_json::Value = serde_json::to_value(&s).unwrap();
+        v.as_object_mut().unwrap().remove("hmac_backup_offered");
+        let legacy: WizardState = serde_json::from_value(v).unwrap();
+        assert!(!legacy.hmac_backup_offered);
+    }
+
     // ── R-04 (Session 24) wizard resume gate ──────────────────────────
 
     #[test]
@@ -5114,6 +5200,7 @@ mod tests {
             vault_path: None,
             install_n8n: false,
             import_memory: None,
+            hmac_backup_offered: false,
             steps_completed: vec![1, 2, 3, 4, 5, 6, 7, 8],
         }
     }
