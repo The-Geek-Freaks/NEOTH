@@ -95,7 +95,24 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
                 attendees: Vec::new(),
             };
 
-            // P0: every external write goes through the unified gate + audit.
+            // EM-02b kill switch: when calendar writes are disabled the surface
+            // refuses FAIL-CLOSED + audits the refusal (0xCB) so a disabled
+            // surface is never silent. Checked before the autonomy gate.
+            let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+            if !cfg.calendar.writes_enabled {
+                emit_calendar_write_denied(
+                    "caldav_calendar",
+                    "add",
+                    "calendar.writes_enabled = false",
+                )
+                .await;
+                anyhow::bail!(
+                    "calendar writes are disabled — set `calendar.writes_enabled: true` in \
+                     freedom.yaml (or flip the `calendar_writes` safe-mode rail) to enable"
+                );
+            }
+
+            // P0: every external write goes through the unified gate.
             crate::cli::todo::gate_external_task_write(*yes, "caldav_calendar", "add")?;
             let uid = caldav_calendar::event_uid(&event);
             let outcome = caldav_calendar::create_event_against(
@@ -105,9 +122,12 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
                 &event,
             )
             .await?;
-            // Audit the write attempt (metadata only — never credentials). Mirror
-            // the todo path which audits regardless of Created/AlreadyExists.
-            crate::cli::todo::emit_todo_write("caldav_calendar", "add", &uid, Some(summary)).await;
+            // Audit the write (its OWN event 0xCA — calendar is a distinct
+            // domain from 0xC8 TODO_WRITE). Metadata only: provider/action/uid +
+            // a HASH of the title + start/end. Never the raw summary, never
+            // credentials. Mirrors the todo path (audits regardless of outcome).
+            emit_calendar_write("caldav_calendar", "add", &uid, summary, start, &event.end_rfc3339)
+                .await;
 
             match outcome {
                 CreateOutcome::Created => {
@@ -158,5 +178,117 @@ fn render_msg(output: OutputFormat, msg: &str) {
             println!("{}", serde_json::json!({ "message": msg }));
         }
         OutputFormat::Table => println!("{msg}"),
+    }
+}
+
+/// Current unix seconds (0 on a pre-epoch clock — only used as an audit ts).
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// `0xCA CALENDAR_WRITE` audit payload. Metadata only — the title is HASHED
+/// (xxh3-64 hex), never stored verbatim, so an external proof bundle never
+/// leaks the event text; no credentials. Pure so it is unit-testable.
+fn calendar_write_payload(
+    provider: &str,
+    action: &str,
+    uid: &str,
+    summary: &str,
+    start: &str,
+    end: &str,
+    now: u64,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "provider": provider,
+        "action": action,
+        "uid": uid,
+        "summary_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(summary.as_bytes())),
+        "start": start,
+        "end": end,
+        "ts_unix": now,
+    }))
+    .unwrap_or_default()
+}
+
+/// Emit `0xCA CALENDAR_WRITE` via the shared external-write audit path
+/// (daemon-forward-or-one-shot). Metadata only.
+async fn emit_calendar_write(
+    provider: &str,
+    action: &str,
+    uid: &str,
+    summary: &str,
+    start: &str,
+    end: &str,
+) {
+    let payload = calendar_write_payload(provider, action, uid, summary, start, end, now_unix());
+    crate::cli::todo::emit_oneshot_audit(
+        crate::wal::events::EVENT_TYPE_CALENDAR_WRITE,
+        payload,
+        "CALENDAR_WRITE",
+    )
+    .await;
+}
+
+/// Emit `0xCB CALENDAR_WRITE_DENIED` — the durable record that a calendar write
+/// was refused fail-closed (so a disabled surface is auditable, not silent).
+async fn emit_calendar_write_denied(provider: &str, action: &str, reason: &str) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "provider": provider,
+        "action": action,
+        "reason": reason,
+        "ts_unix": now_unix(),
+    }))
+    .unwrap_or_default();
+    crate::cli::todo::emit_oneshot_audit(
+        crate::wal::events::EVENT_TYPE_CALENDAR_WRITE_DENIED,
+        payload,
+        "CALENDAR_WRITE_DENIED",
+    )
+    .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calendar_write_payload_hashes_title_and_omits_raw_text() {
+        let p = calendar_write_payload(
+            "caldav_calendar",
+            "add",
+            "neoth-evt-001",
+            "Secret board meeting",
+            "2026-05-30T09:00:00Z",
+            "2026-05-30T10:00:00Z",
+            1_700_000_000,
+        );
+        let v: serde_json::Value = serde_json::from_slice(&p).unwrap();
+        assert_eq!(v["provider"], "caldav_calendar");
+        assert_eq!(v["action"], "add");
+        assert_eq!(v["uid"], "neoth-evt-001");
+        assert_eq!(v["start"], "2026-05-30T09:00:00Z");
+        assert_eq!(v["end"], "2026-05-30T10:00:00Z");
+        assert_eq!(v["ts_unix"], 1_700_000_000u64);
+        // The raw title must NEVER appear; only a stable hash.
+        assert!(
+            !p.windows(6).any(|w| w == b"Secret"),
+            "raw summary text must not be in the audit frame"
+        );
+        let expected = format!(
+            "{:016x}",
+            xxhash_rust::xxh3::xxh3_64(b"Secret board meeting")
+        );
+        assert_eq!(v["summary_hash"], expected);
+        assert!(v.get("credentials").is_none());
+    }
+
+    #[test]
+    fn calendar_write_payload_hash_is_deterministic() {
+        let a = calendar_write_payload("p", "add", "u", "Lunch", "s", "e", 1);
+        let b = calendar_write_payload("p", "add", "u", "Lunch", "s", "e", 1);
+        assert_eq!(a, b);
     }
 }

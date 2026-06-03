@@ -1173,6 +1173,25 @@ pub const EVENT_TYPE_PLUGIN_CAP_DENIED: u8 = 0xC7;
 /// device + to which provider. `--dry-run` does NOT emit (no write happened).
 /// Payload (JSON): `{provider, action, uid, summary?, ts_unix}`.
 pub const EVENT_TYPE_TODO_WRITE: u8 = 0xC8;
+
+/// `0xCA CALENDAR_WRITE` — EM-02b. The operator wrote an event to an EXTERNAL
+/// calendar (CalDAV today) through `neoth calendar add`. Semantically distinct
+/// from `0xC8 TODO_WRITE` — a calendar event is its own domain — so it carries
+/// its own event code + the event-specific fields. An outbound network
+/// mutation, gated by the autonomy/consent layer (`Action::ExternalTaskWrite`)
+/// + the `calendar.writes_enabled` kill switch + an interactive/`--yes` confirm.
+/// `--dry-run` would not emit (no write happened).
+/// Payload (JSON): `{provider, action, uid, summary_hash, start, end, ts_unix}`
+/// — `summary_hash` is xxh3-64 hex of the title (NO raw summary, NO credentials,
+/// so external proof bundles never leak the event text).
+pub const EVENT_TYPE_CALENDAR_WRITE: u8 = 0xCA;
+
+/// `0xCB CALENDAR_WRITE_DENIED` — EM-02b. A `neoth calendar add` was REFUSED
+/// before any network write — the `calendar.writes_enabled` kill switch was off
+/// (or a future policy gate denied it). The durable record that the surface
+/// refused fail-closed, so a disabled calendar surface is auditable rather than
+/// silent. Payload (JSON): `{provider, action, reason, ts_unix}`.
+pub const EVENT_TYPE_CALENDAR_WRITE_DENIED: u8 = 0xCB;
 /// `0xC1 MCP_TOOL_REJECTED` — operator's MCP client refused to invoke
 /// a tool because either (a) the tool name is not in the server's
 /// `allow_tools` list, (b) the tool description failed the prompt-
@@ -1569,6 +1588,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("plugin_cap_used", EVENT_TYPE_PLUGIN_CAP_USED),
     ("plugin_cap_denied", EVENT_TYPE_PLUGIN_CAP_DENIED),
     ("todo_write", EVENT_TYPE_TODO_WRITE),
+    ("calendar_write", EVENT_TYPE_CALENDAR_WRITE),
+    ("calendar_write_denied", EVENT_TYPE_CALENDAR_WRITE_DENIED),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -1929,6 +1950,10 @@ const _: () = {
     let _ = [(); 1]
         [(EVENT_TYPE_PLUGIN_CAP_DENIED < 0xC0 || EVENT_TYPE_PLUGIN_CAP_DENIED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_TODO_WRITE < 0xC0 || EVENT_TYPE_TODO_WRITE > 0xCF) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_CALENDAR_WRITE < 0xC0 || EVENT_TYPE_CALENDAR_WRITE > 0xCF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CALENDAR_WRITE_DENIED < 0xC0
+        || EVENT_TYPE_CALENDAR_WRITE_DENIED > 0xCF) as usize];
     // V11 Pick #38 (2026-05-19): coding-workflow band 0x70..=0x7F.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_OPENED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_OPENED > 0x7F) as usize];
@@ -2185,6 +2210,11 @@ mod tests {
             ("PLUGIN_CAP_USED", EVENT_TYPE_PLUGIN_CAP_USED),
             ("PLUGIN_CAP_DENIED", EVENT_TYPE_PLUGIN_CAP_DENIED),
             ("TODO_WRITE", EVENT_TYPE_TODO_WRITE),
+            ("CALENDAR_WRITE", EVENT_TYPE_CALENDAR_WRITE),
+            (
+                "CALENDAR_WRITE_DENIED",
+                EVENT_TYPE_CALENDAR_WRITE_DENIED,
+            ),
             ("KANBAN_SESSION_OPENED", EVENT_TYPE_KANBAN_SESSION_OPENED),
             ("KANBAN_TASK_CREATED", EVENT_TYPE_KANBAN_TASK_CREATED),
             ("KANBAN_TASK_ASSIGNED", EVENT_TYPE_KANBAN_TASK_ASSIGNED),

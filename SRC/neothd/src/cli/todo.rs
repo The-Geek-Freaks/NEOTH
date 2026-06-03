@@ -378,10 +378,9 @@ pub(crate) fn gate_external_task_write(
     }
 }
 
-/// `0xC8 TODO_WRITE` audit. P0: when a daemon owns the WAL, FORWARD over the
-/// loopback audit-RPC channel (`0xC8` allowlisted) instead of skipping;
-/// otherwise open a one-shot writer. Metadata only (provider + action + uid +
-/// summary), never credentials.
+/// `0xC8 TODO_WRITE` audit. Metadata only (provider + action + uid + summary),
+/// never credentials. Delegates the daemon-forward-or-one-shot delivery to the
+/// shared [`emit_oneshot_audit`].
 pub(crate) async fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str>) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -395,20 +394,27 @@ pub(crate) async fn emit_todo_write(provider: &str, action: &str, uid: &str, sum
         "ts_unix": now,
     }))
     .unwrap_or_default();
+    emit_oneshot_audit(crate::wal::events::EVENT_TYPE_TODO_WRITE, payload, "TODO_WRITE").await;
+}
+
+/// Shared one-shot external-write audit delivery. P0: when a daemon owns the WAL
+/// FORWARD over the loopback audit-RPC channel (the `event_type` must be in the
+/// audit-RPC allowlist) instead of skipping; otherwise open a one-shot writer.
+/// Used by `neoth todo` (`0xC8`) + `neoth calendar` (`0xCA`/`0xCB`) so every
+/// external-write audit takes the identical durable path. `label` only names the
+/// frame in the warn/debug logs. The caller builds the metadata-only payload
+/// (NEVER credentials).
+pub(crate) async fn emit_oneshot_audit(event_type: u8, payload: Vec<u8>, label: &'static str) {
     let daemon_live = matches!(
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
         Ok(Some(_))
     );
     if daemon_live {
         let home = crate::config::FreedomConfig::default_neoth_home();
-        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
-            &home,
-            crate::wal::events::EVENT_TYPE_TODO_WRITE,
-            &payload,
-        )
-        .await
+        if let Err(e) =
+            crate::daemon::audit_rpc::try_post_audit_frame(&home, event_type, &payload).await
         {
-            tracing::debug!(error = %e, "todo: TODO_WRITE forward skipped (daemon listener unreachable)");
+            tracing::debug!(error = %e, label, "audit forward skipped (daemon listener unreachable)");
         }
         return;
     }
@@ -419,14 +425,13 @@ pub(crate) async fn emit_todo_write(provider: &str, action: &str, uid: &str, sum
     let (writer, _join) = match crate::wal::writer::spawn(segment) {
         Ok(p) => p,
         Err(e) => {
-            tracing::warn!(error = %e, "todo: WAL writer spawn failed; TODO_WRITE not recorded");
+            tracing::warn!(error = %e, label, "WAL writer spawn failed; audit not recorded");
             return;
         }
     };
-    let header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_TODO_WRITE, &payload).build();
+    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
     if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, "todo: TODO_WRITE frame append failed (audit gap)");
+        tracing::warn!(error = %e, label, "audit frame append failed (audit gap)");
     }
 }
 

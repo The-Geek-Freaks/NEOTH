@@ -33,10 +33,14 @@ async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 24);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 26);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(is_allowed_client_event(c), "{c:#x} (autonomy) must be allowed");
+    }
+    // EM-02b calendar external-write audits.
+    for c in [0xCAu8, 0xCB] {
+        assert!(is_allowed_client_event(c), "{c:#x} (calendar) must be allowed");
     }
     for c in 0xA5u8..=0xADu8 {
         assert!(is_allowed_client_event(c), "{c:#x} must be allowed");
