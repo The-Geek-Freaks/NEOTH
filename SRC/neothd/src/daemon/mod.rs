@@ -71,6 +71,10 @@ pub mod monitor_cron;
 /// anchor queries' fresh answers + emits `0x3F REGRESSION_ALERT` on cosine
 /// drift below threshold. Off by default.
 pub mod regression_cron;
+/// MONITOR-03 / RECALL-METER-01 — recall-p95 latency alert cron. Reads the
+/// `idx_recall_latency` window + emits `0x4B RECALL_LATENCY_ALERT` when p95
+/// exceeds the threshold. Off by default.
+pub mod recall_latency_cron;
 pub mod sidecar;
 pub mod skill_forge;
 /// HO-06 (Session 28) — credential-pattern scanner that walks

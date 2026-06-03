@@ -321,6 +321,12 @@ pub struct FreedomConfig {
     /// anchor vector drops below `threshold`. Default OFF.
     #[serde(default)]
     pub regression_anchor: RegressionAnchorConfig,
+    /// MONITOR-03 / RECALL-METER-01 — recall-p95 latency alert cron. When
+    /// `enabled`, the daemon reads the recent `idx_recall_latency` window (one
+    /// sample per `neoth recall`) and emits `0x4B RECALL_LATENCY_ALERT` when
+    /// the p95 exceeds `p95_threshold_ms`. Default OFF.
+    #[serde(default)]
+    pub recall_latency: RecallLatencyConfig,
     /// SL-03 — ResourcePressureWatcher cron. When `enabled`, the daemon
     /// polls live GPU VRAM + emits `0x47 RESOURCE_PRESSURE_ALERT` on a
     /// breach of `vram_threshold_pct`. Default OFF; a no-op on non-GPU /
@@ -742,6 +748,53 @@ impl RegressionAnchorConfig {
     /// Tick interval as a `Duration`, clamped to a 60s minimum (mirrors
     /// `DriftAlertConfig::interval_duration`) so `interval_secs: 0` can't
     /// tight-loop the cron.
+    pub fn interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.interval_secs.max(60))
+    }
+}
+
+/// MONITOR-03 default tick interval: 6h (recall p95 changes slowly; the
+/// runbook checks it a few times a day).
+pub const DEFAULT_RECALL_LATENCY_INTERVAL_SECS: u64 = 6 * 3600;
+
+/// MONITOR-03 / RECALL-METER-01 — recall-p95 latency alert cron config. When
+/// `enabled`, the daemon reads the recent `idx_recall_latency` window and
+/// emits `0x4B RECALL_LATENCY_ALERT` when p95 exceeds `p95_threshold_ms`
+/// (and at least `min_samples` samples exist — a 2-query window isn't a
+/// meaningful p95). Default OFF.
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct RecallLatencyConfig {
+    /// Master switch. Default `false`.
+    pub enabled: bool,
+    /// p95 ceiling in milliseconds. A window whose p95 STRICTLY exceeds this is
+    /// flagged. Default `750.0` (local FTS5 recall is normally single-digit ms;
+    /// 750ms p95 signals a cold cache / disk pressure / index regression).
+    pub p95_threshold_ms: f64,
+    /// Don't alert until at least this many samples exist in the window — a
+    /// handful of queries don't make a trustworthy p95. Default `20`.
+    pub min_samples: usize,
+    /// How many of the most-recent samples to compute p95 over. Default `200`.
+    pub window: usize,
+    /// Tick interval, seconds. Default 6h. Clamped to a 60s floor.
+    pub interval_secs: u64,
+}
+
+impl Default for RecallLatencyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            p95_threshold_ms: 750.0,
+            min_samples: 20,
+            window: 200,
+            interval_secs: DEFAULT_RECALL_LATENCY_INTERVAL_SECS,
+        }
+    }
+}
+
+impl RecallLatencyConfig {
+    /// Tick interval as a `Duration`, clamped to a 60s minimum so
+    /// `interval_secs: 0` can't tight-loop the cron.
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs.max(60))
     }

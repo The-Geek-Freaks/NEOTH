@@ -513,6 +513,15 @@ pub const EVENT_TYPE_CRASH_LOG_ALERT: u8 = 0x49;
 ///   - `ts_unix`: i64
 pub const EVENT_TYPE_CHANNEL_SILENCE_ALERT: u8 = 0x4A;
 
+/// `0x4B RECALL_LATENCY_ALERT` — MONITOR-03 / RECALL-METER-01. The daemon's
+/// recall-latency cron read the recent `idx_recall_latency` window (samples
+/// recorded by each one-shot `neoth recall`) and found the p95 ABOVE
+/// `recall_latency.p95_threshold_ms` — durable evidence that recall is
+/// degrading (cold cache, disk pressure, an index regression). Cron band.
+///
+/// Payload (JSON): `{p95_ms, threshold_ms, sample_count, ts_unix}`.
+pub const EVENT_TYPE_RECALL_LATENCY_ALERT: u8 = 0x4B;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit
@@ -1490,6 +1499,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
     ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
+    ("recall_latency_alert", EVENT_TYPE_RECALL_LATENCY_ALERT),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -1678,6 +1688,8 @@ const _: () = {
         [(EVENT_TYPE_CRASH_LOG_ALERT < 0x40 || EVENT_TYPE_CRASH_LOG_ALERT > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_CHANNEL_SILENCE_ALERT < 0x40
         || EVENT_TYPE_CHANNEL_SILENCE_ALERT > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_RECALL_LATENCY_ALERT < 0x40
+        || EVENT_TYPE_RECALL_LATENCY_ALERT > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
@@ -1927,6 +1939,7 @@ mod tests {
             ("WAL_CRC_ALERT", EVENT_TYPE_WAL_CRC_ALERT),
             ("CRASH_LOG_ALERT", EVENT_TYPE_CRASH_LOG_ALERT),
             ("CHANNEL_SILENCE_ALERT", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
+            ("RECALL_LATENCY_ALERT", EVENT_TYPE_RECALL_LATENCY_ALERT),
             ("RECOVERY_TRUNCATED", EVENT_TYPE_RECOVERY_TRUNCATED),
             (
                 "COUNCIL_SYNTHESIS_ATTEMPTED",

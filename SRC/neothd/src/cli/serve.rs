@@ -1571,6 +1571,26 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         None
     };
 
+    // ── 5d-septimus. Recall-latency cron — MONITOR-03 / RECALL-METER-01.
+    // Reads the `idx_recall_latency` window (samples recorded by each one-shot
+    // `neoth recall`) + emits `0x4B RECALL_LATENCY_ALERT` when p95 exceeds
+    // `recall_latency.p95_threshold_ms`. Off by default → no idle task.
+    let recall_latency_cron_handle: Option<tokio::task::JoinHandle<()>> = {
+        let handle = crate::daemon::recall_latency_cron::spawn_recall_latency_cron_loop(
+            config.recall_latency,
+            FreedomConfig::default_neoth_home(),
+            writer.clone(),
+        );
+        if handle.is_some() {
+            info!(
+                interval_secs = config.recall_latency.interval_secs,
+                p95_threshold_ms = config.recall_latency.p95_threshold_ms,
+                "recall-latency cron loop spawned (MONITOR-03)"
+            );
+        }
+        handle
+    };
+
     // ── SL-03 ResourcePressureWatcher cron ────────────────────────────────
     // Polls live GPU VRAM; emits `0x47 RESOURCE_PRESSURE_ALERT` on a breach
     // of `resource_watch.vram_threshold_pct`. Default OFF → no idle task; a
@@ -2469,6 +2489,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Abort the ADV-14 regression-anchor cron (same drain-before-close order
     // so an in-flight 0x3F frame isn't lost).
     if let Some(task) = regression_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
+    // Abort the MONITOR-03 recall-latency cron (drain before writer close).
+    if let Some(task) = recall_latency_cron_handle {
         task.abort();
         let _ = task.await;
     }

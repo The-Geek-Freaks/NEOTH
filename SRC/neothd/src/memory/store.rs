@@ -147,6 +147,42 @@ pub fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// RECALL-METER-01 — record one recall-latency sample, pruning to the most
+/// recent ~5000 rows so the table stays bounded. Returns the rusqlite error so
+/// the (one-shot recall) caller can log-and-ignore: metering must NEVER fail
+/// the recall itself.
+pub fn record_recall_latency(
+    conn: &Connection,
+    ts_unix: i64,
+    latency_ms: f64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO idx_recall_latency (ts_unix, latency_ms) VALUES (?1, ?2)",
+        rusqlite::params![ts_unix, latency_ms],
+    )?;
+    // Prune: keep only the most recent ~5000 ids. When fewer than 5000 rows
+    // exist, `MAX(id) - 5000` is negative → the WHERE matches nothing.
+    conn.execute(
+        "DELETE FROM idx_recall_latency \
+         WHERE id <= (SELECT MAX(id) FROM idx_recall_latency) - 5000",
+        [],
+    )?;
+    Ok(())
+}
+
+/// RECALL-METER-01 — the most recent `limit` recall-latency samples (ms),
+/// newest first. The daemon recall-latency cron reads this window to compute
+/// p95. Empty when no recall has run yet.
+pub fn recent_recall_latencies_ms(
+    conn: &Connection,
+    limit: usize,
+) -> rusqlite::Result<Vec<f64>> {
+    let mut stmt =
+        conn.prepare("SELECT latency_ms FROM idx_recall_latency ORDER BY id DESC LIMIT ?1")?;
+    let rows = stmt.query_map(rusqlite::params![limit as i64], |r| r.get::<_, f64>(0))?;
+    rows.collect()
+}
+
 fn apply_schema(conn: &Connection) -> Result<()> {
     // `meta` first — used to track schema version + WAL cursor.
     conn.execute_batch(
@@ -207,6 +243,19 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_provider_ts ON idx_provider (ts_ns DESC);
+
+        -- RECALL-METER-01 — per-`neoth recall` latency samples. The one-shot
+        -- recall CLI records one row per query here; the daemon's recall-latency
+        -- cron (MONITOR-03) reads the recent window to compute p95. Cross-process
+        -- bridge: recall runs in a separate process from the daemon, so an
+        -- in-memory meter wouldn't be visible — this table is the durable seam.
+        -- Bounded by a prune-on-insert (keeps the most recent ~5000 samples).
+        CREATE TABLE IF NOT EXISTS idx_recall_latency (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_unix    INTEGER NOT NULL,
+            latency_ms REAL    NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_recall_latency_id ON idx_recall_latency (id DESC);
 
         -- FTS5 virtual table content-linked to idx_episode. Stores no rows
         -- of its own; SELECT through MATCH pulls the linked rows via

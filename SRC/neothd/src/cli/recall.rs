@@ -159,6 +159,8 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     let limit = args.limit;
     let (rows, conn) =
         tokio::task::spawn_blocking(move || -> Result<(Vec<EpisodeHit>, Connection)> {
+            // RECALL-METER-01: time the full multi-tier recall query.
+            let recall_t0 = std::time::Instant::now();
             let hot = match recall_fts(&conn, &query, limit) {
                 Ok(hits) if !hits.is_empty() => hits,
                 Ok(_) => recall_like(&conn, &query, limit)?,
@@ -182,6 +184,16 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             rows.extend(gt_rows);
             rows.extend(episodic);
             rows.truncate(limit);
+
+            // RECALL-METER-01: record a best-effort latency sample for the
+            // daemon recall-latency cron (MONITOR-03). A metering failure must
+            // NEVER fail the recall — log at debug and move on.
+            let latency_ms = recall_t0.elapsed().as_secs_f64() * 1000.0;
+            let ts_unix = (now_ns / 1_000_000_000) as i64;
+            if let Err(e) = store::record_recall_latency(&conn, ts_unix, latency_ms) {
+                tracing::debug!(error = %e, "recall: latency sample not recorded");
+            }
+
             Ok((rows, conn))
         })
         .await
