@@ -150,6 +150,11 @@ pub fn parse_rfc822(uid: u32, raw: &[u8]) -> Option<InboundEmail> {
         .get_first_value("Subject")
         .unwrap_or_default();
     let from_domain = extract_from_domain(&from);
+    // P1c dedup key — the stable RFC822 Message-ID (None when absent/empty).
+    let message_id = parsed
+        .headers
+        .get_first_value("Message-ID")
+        .filter(|s| !s.trim().is_empty());
 
     let mut body = String::new();
     let mut attachment_filenames = Vec::new();
@@ -169,6 +174,7 @@ pub fn parse_rfc822(uid: u32, raw: &[u8]) -> Option<InboundEmail> {
         subject,
         body,
         attachment_filenames,
+        message_id,
     })
 }
 

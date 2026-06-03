@@ -507,6 +507,19 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_human_identity_aliases_uuid
             ON idx_human_identity_aliases (uuid);
 
+        -- EM-01b P1c — inbound-email dedup / seen-state. `neoth email fetch`
+        -- uses IMAP `SEARCH UNSEEN` + `BODY.PEEK[]` (non-destructive — it never
+        -- sets \Seen), so an email the operator hasn't read on their own client
+        -- stays UNSEEN and would be re-pulled + re-triaged on every fetch. This
+        -- table records each message NEOTH already triaged (keyed by the stable
+        -- RFC822 Message-ID, with the IMAP UID as fallback) so a re-fetch skips
+        -- it. CREATE-IF-NOT-EXISTS → backward-safe.
+        CREATE TABLE IF NOT EXISTS idx_email_seen (
+            dedup_key        TEXT NOT NULL PRIMARY KEY,
+            imap_uid         TEXT,
+            first_seen_unix  INTEGER NOT NULL
+        );
+
         -- ── Schema v9: idx_profile_outbox (Pick #12, Session 14) ────────────
         --
         -- Codex-flagged consistency hole: profile/apply.rs commits idx_profile

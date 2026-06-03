@@ -452,6 +452,7 @@ Fetch newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and
 - `--host <HOST>` — IMAP host (default Gmail)
 - `--port <PORT>` — IMAP TLS port (default 993)
 - `--dry-run <DRY_RUN>` — Show the resolved connection (host/port/user/auth-kind) WITHOUT connecting, authenticating, or fetching. Never prints the secret
+- `--include-seen <INCLUDE_SEEN>` — Re-process messages already in the local seen-state table (P1c dedup). By default a re-fetch SKIPS mail NEOTH already triaged (UNSEEN + `BODY.PEEK[]` would otherwise re-pull it forever); pass this to triage them again (e.g. after enabling the tie-breaker)
 
 ## `neoth events`
 

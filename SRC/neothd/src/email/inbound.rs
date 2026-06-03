@@ -42,6 +42,21 @@ pub struct InboundEmail {
     pub body: String,
     /// Raw attachment filenames, pre-`safe_attachment_filename`.
     pub attachment_filenames: Vec<String>,
+    /// EM-01b P1c — the RFC822 `Message-ID` header, when present. The stable
+    /// dedup key (survives IMAP `UIDVALIDITY` resets); the UID is the fallback.
+    #[serde(default)]
+    pub message_id: Option<String>,
+}
+
+impl InboundEmail {
+    /// The dedup key for the seen-state table: the `Message-ID` when present +
+    /// non-empty, else the IMAP UID.
+    pub fn dedup_key(&self) -> &str {
+        match self.message_id.as_deref() {
+            Some(m) if !m.is_empty() => m,
+            _ => &self.uid,
+        }
+    }
 }
 
 /// What NEOTH may do with an inbound email after triage.
@@ -219,7 +234,18 @@ mod tests {
             subject: "Test".to_string(),
             body: body.to_string(),
             attachment_filenames: attachments.iter().map(|s| s.to_string()).collect(),
+            message_id: None,
         }
+    }
+
+    #[test]
+    fn dedup_key_prefers_message_id_else_uid() {
+        let mut e = email("b", "a@b.example.com", &[]);
+        assert_eq!(e.dedup_key(), "uid-1"); // no Message-ID → UID
+        e.message_id = Some("<m-7@example.com>".to_string());
+        assert_eq!(e.dedup_key(), "<m-7@example.com>");
+        e.message_id = Some(String::new()); // empty → fall back to UID
+        assert_eq!(e.dedup_key(), "uid-1");
     }
 
     #[test]

@@ -50,6 +50,12 @@ pub enum EmailAction {
         /// connecting, authenticating, or fetching. Never prints the secret.
         #[arg(long)]
         dry_run: bool,
+        /// Re-process messages already in the local seen-state table (P1c
+        /// dedup). By default a re-fetch SKIPS mail NEOTH already triaged
+        /// (UNSEEN + `BODY.PEEK[]` would otherwise re-pull it forever); pass
+        /// this to triage them again (e.g. after enabling the tie-breaker).
+        #[arg(long)]
+        include_seen: bool,
     },
 }
 
@@ -61,10 +67,12 @@ pub async fn run_email(args: EmailArgs) -> Result<()> {
             host,
             port,
             dry_run,
-        } => run_fetch(args.output, limit, username, host, port, dry_run).await,
+            include_seen,
+        } => run_fetch(args.output, limit, username, host, port, dry_run, include_seen).await,
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_fetch(
     output: OutputFormat,
     limit: usize,
@@ -72,6 +80,7 @@ async fn run_fetch(
     host: String,
     port: u16,
     dry_run: bool,
+    include_seen: bool,
 ) -> Result<()> {
     let username = username
         .filter(|s| !s.is_empty())
@@ -112,7 +121,7 @@ async fn run_fetch(
         return Ok(());
     }
 
-    fetch_and_triage(output, &cfg, limit).await
+    fetch_and_triage(output, &cfg, limit, include_seen).await
 }
 
 /// Resolve the IMAP auth method without ever surfacing the secret in an
@@ -161,12 +170,37 @@ async fn fetch_and_triage(
     output: OutputFormat,
     cfg: &ImapConnectionConfig,
     limit: usize,
+    include_seen: bool,
 ) -> Result<()> {
     use crate::email::inbound::{InboundAction, triage_inbound};
 
-    let emails = crate::email::imap_fetch::fetch_unseen(cfg, limit)
+    let fetched = crate::email::imap_fetch::fetch_unseen(cfg, limit)
         .await
         .context("IMAP fetch failed")?;
+
+    // P1c — dedup against the local seen-state so an UNSEEN message NEOTH
+    // already triaged isn't re-pulled forever (BODY.PEEK[] never sets \Seen).
+    // Best-effort: a views.db open failure degrades to "process everything".
+    let seen_conn = crate::memory::store::open(
+        &crate::config::FreedomConfig::default_neoth_home().join("views.db"),
+    )
+    .ok();
+    let (emails, skipped) = if include_seen {
+        (fetched, 0usize)
+    } else if let Some(conn) = &seen_conn {
+        let mut fresh = Vec::with_capacity(fetched.len());
+        let mut n_skipped = 0usize;
+        for e in fetched {
+            match crate::email::seen_store::is_seen(conn, e.dedup_key()) {
+                Ok(true) => n_skipped += 1,
+                _ => fresh.push(e), // unseen, or a query error → process it
+            }
+        }
+        (fresh, n_skipped)
+    } else {
+        (fetched, 0)
+    };
+
     let mut triaged: Vec<_> = emails.iter().map(triage_inbound).collect();
 
     // PL-05b — optional LLM second-opinion on the borderline ReviewQueue band.
@@ -211,13 +245,31 @@ async fn fetch_and_triage(
     // ledger (metadata only). Best-effort: an audit gap never blocks the fetch.
     emit_email_audit_batch(&triaged).await;
 
+    // P1c — record the processed messages as seen so the next fetch skips them.
+    // After triage + audit, so a crash mid-run doesn't mark un-triaged mail.
+    if let Some(conn) = &seen_conn {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        for e in &emails {
+            let _ = crate::email::seen_store::mark_seen(conn, e.dedup_key(), Some(&e.uid), now);
+        }
+    }
+
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            println!("{}", serde_json::to_string_pretty(&triaged)?);
+            println!(
+                "{}",
+                serde_json::json!({ "skipped_already_seen": skipped, "triaged": &triaged })
+            );
         }
         OutputFormat::Table => {
+            if skipped > 0 {
+                println!("({skipped} already-seen message(s) skipped — pass --include-seen to re-triage)");
+            }
             if triaged.is_empty() {
-                println!("(no unseen messages)");
+                println!("(no new unseen messages)");
                 return Ok(());
             }
             for t in &triaged {
@@ -354,6 +406,7 @@ async fn fetch_and_triage(
     _output: OutputFormat,
     _cfg: &ImapConnectionConfig,
     _limit: usize,
+    _include_seen: bool,
 ) -> Result<()> {
     anyhow::bail!(
         "this build was compiled without the `imap_fetch` feature — live IMAP fetch is \
