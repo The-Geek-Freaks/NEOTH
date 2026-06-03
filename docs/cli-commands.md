@@ -1785,6 +1785,14 @@ Verify a received bundle (schema + recipient + signature) WITHOUT decrypting. `-
 - `<FILE>` — Path to the `.json` bundle
 - `--pubkey <PUBKEY>` — Expected sender's ed25519 public key (base64) to verify against
 
+## `neoth trust`
+
+GR-03 — one read-only view of NEOTH's trust posture: the live autonomy level + what it gates, the HMAC-chained WAL ledger size (+ optional `--verify-chain` integrity check), and which recovery levers are armed right now. Ties together `verify`/`wal`/`autonomy`/ `recover` without mutating anything
+
+- `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
+- `--home <DIR>` — Override the NEOTH home (key-presence probes; mostly for tests)
+- `--verify-chain <VERIFY_CHAIN>` — Also run the full HMAC chain verification inline (heavier — walks every compaction marker, like `neoth verify`). Off by default; the surface otherwise reports ledger SIZE + a pointer to `neoth verify`
+
 ## `neoth tts`
 
 Text-to-speech synthesis (A-45). `speak` writes audio bytes to a file via ElevenLabs (cloud) or piper-rs (Phase 2 local)

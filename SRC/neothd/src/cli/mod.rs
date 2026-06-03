@@ -99,6 +99,7 @@ pub mod status;
 pub mod supervisor;
 pub mod telemetry;
 pub mod todo;
+pub mod trust;
 pub mod tour;
 pub mod tts;
 pub mod tweaks;
@@ -427,6 +428,13 @@ pub enum Commands {
     /// Reads every segment, recomputes the tag over each window, and
     /// reports any mismatches.
     Verify(verify::VerifyArgs),
+
+    /// GR-03 — one read-only view of NEOTH's trust posture: the live
+    /// autonomy level + what it gates, the HMAC-chained WAL ledger size
+    /// (+ optional `--verify-chain` integrity check), and which recovery
+    /// levers are armed right now. Ties together `verify`/`wal`/`autonomy`/
+    /// `recover` without mutating anything.
+    Trust(trust::TrustArgs),
 
     /// Round-3 v0.4 SC-04 — operator-facing security posture
     /// aggregator. `neoth security audit` runs every available
@@ -1073,6 +1081,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Verify(mut args) => {
             args.output = global_output;
             verify::run_verify(args).await?;
+        }
+        Commands::Trust(mut args) => {
+            args.output = global_output;
+            trust::run_trust(args).await?;
         }
         Commands::Security(args) => {
             // SC-04: security audit aggregator has its own output
