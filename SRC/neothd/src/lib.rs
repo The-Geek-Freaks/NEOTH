@@ -98,6 +98,7 @@ pub mod credentials;
 pub mod cron;
 pub mod daemon;
 pub mod domain_events;
+pub mod ecology;
 pub mod email;
 pub mod event_ledger;
 pub mod feedback;

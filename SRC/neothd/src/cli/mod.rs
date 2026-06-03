@@ -41,6 +41,7 @@ pub mod autonomy;
 pub mod credential;
 pub mod cron;
 pub mod dream;
+pub mod ecology;
 pub mod email;
 pub mod identity;
 pub mod transfer;
@@ -442,6 +443,11 @@ pub enum Commands {
     /// the sanitizer→threat pipeline. Live socket needs the `imap_fetch`
     /// build feature; `--dry-run` works on every build.
     Email(email::EmailArgs),
+
+    /// CH-13 / F4-01 — Ecology self-adaptation diagnostics. `correlation`
+    /// reports providers that won many consecutive outer-council debates (a
+    /// low-dissent fitness signal). Read-only + deterministic.
+    Ecology(ecology::EcologyArgs),
 
     /// Round-3 v0.4 SC-04 — operator-facing security posture
     /// aggregator. `neoth security audit` runs every available
@@ -1096,6 +1102,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Email(mut args) => {
             args.output = global_output;
             email::run_email(args).await?;
+        }
+        Commands::Ecology(mut args) => {
+            args.output = global_output;
+            ecology::run_ecology(args).await?;
         }
         Commands::Security(args) => {
             // SC-04: security audit aggregator has its own output

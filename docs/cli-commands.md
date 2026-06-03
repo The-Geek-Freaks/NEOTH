@@ -439,6 +439,17 @@ Compose dreams over the recent window right now (default: last 24h)
 - `--window-secs <WINDOW_SECS>` — Look-back window in seconds. Default 86400 (24h)
 - `--max-events <MAX_EVENTS>` — Max events to embed + cluster this pass. Default 500
 
+## `neoth ecology`
+
+CH-13 / F4-01 — Ecology self-adaptation diagnostics. `correlation` reports providers that won many consecutive outer-council debates (a low-dissent fitness signal). Read-only + deterministic
+
+### `neoth ecology correlation`
+
+Report council-winner correlation: providers that won many consecutive outer-council debates (a low-dissent fitness signal). Read-only
+
+- `--min-streak <MIN_STREAK>` — Minimum consecutive-win streak to report. Defaults to `freedom.yaml::ecology.correlation_min_streak` (5)
+- `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
+
 ## `neoth email`
 
 EM-01b — inbound email. `fetch` pulls newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and triages each through the sanitizer→threat pipeline. Live socket needs the `imap_fetch` build feature; `--dry-run` works on every build

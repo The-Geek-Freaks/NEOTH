@@ -305,6 +305,12 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub email: EmailConfig,
 
+    /// CH-13 / F4-01 — Ecology self-adaptation layer. The auto-scheduler is off
+    /// by default; the read-only `neoth ecology correlation` scan works
+    /// regardless (it's a diagnostic report).
+    #[serde(default)]
+    pub ecology: EcologyConfig,
+
     /// EL-02 — arXiv topic-feed periodic ingest. Off by default; opt in
     /// via `arxiv.enabled: true` + a non-empty `arxiv.topics` list. When
     /// active, the daemon runs each topic query on a cadence (default 6h),
@@ -1247,6 +1253,28 @@ impl Default for EmailConfig {
             llm_tiebreak: false,
             llm_tiebreak_allow_downgrade: false,
             trusted_domains: Vec::new(),
+        }
+    }
+}
+
+/// CH-13 / F4-01 — Ecology self-adaptation layer knobs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct EcologyConfig {
+    /// Master switch for the future 6h auto-scheduler (Phase 1). Off by default
+    /// per the AGENTER hard rule (matches `proactive.enabled` / `dreaming.enabled`).
+    /// Does NOT gate the read-only `neoth ecology correlation` scan.
+    pub enabled: bool,
+    /// F4-01 — minimum consecutive same-winner streak the correlation scan
+    /// reports as a low-dissent signal. Default 5.
+    pub correlation_min_streak: usize,
+}
+
+impl Default for EcologyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            correlation_min_streak: 5,
         }
     }
 }
