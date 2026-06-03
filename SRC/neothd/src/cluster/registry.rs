@@ -16,7 +16,8 @@ use super::discovery::DiscoveryVia;
 
 /// One paired peer — the operator confirmed this device + it's now
 /// part of the cluster.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+// `Eq` dropped in SL-02b — `stability_score: f64` only satisfies `PartialEq`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PairedPeer {
     /// 64-char lowercase-hex of the peer's ed25519 pub key.
@@ -41,6 +42,34 @@ pub struct PairedPeer {
     /// Unix seconds when discovery last saw this peer announce.
     /// Phase 2+ refreshes on each successful HMAC-verified announce.
     pub last_seen_unix: i64,
+    /// SL-02b: last measured round-trip time to this peer in ms (heartbeat
+    /// send→ack). `None` until the first round-trip. `#[serde(default)]`
+    /// (struct-level) keeps pre-SL-02b `cluster.yaml` files deserialising clean.
+    #[serde(default)]
+    pub rtt_ms: Option<u64>,
+    /// SL-02b: EWMA heartbeat-success ratio in `[0.0, 1.0]`, seeded NEUTRAL
+    /// (0.5) on a fresh peer and nudged by [`compute_stability`] on each
+    /// heartbeat hit/miss. Keeps answering → trends 1.0; goes quiet → 0.0.
+    #[serde(default = "default_stability")]
+    pub stability_score: f64,
+}
+
+/// Neutral stability prior — a freshly-confirmed peer (or a pre-SL-02b
+/// `cluster.yaml` row missing the field) starts here: no evidence either way.
+pub const NEUTRAL_STABILITY: f64 = 0.5;
+
+/// EWMA smoothing factor for [`compute_stability`]. 0.1 = ~10-heartbeat memory.
+pub const STABILITY_ALPHA: f64 = 0.1;
+
+fn default_stability() -> f64 {
+    NEUTRAL_STABILITY
+}
+
+/// Pure EWMA update of a stability score: `prev*(1-α) + hit*α`, clamped to
+/// `[0.0, 1.0]`. `success = true` nudges toward 1.0, `false` toward 0.0.
+pub fn compute_stability(prev: f64, success: bool) -> f64 {
+    let hit = if success { 1.0 } else { 0.0 };
+    (prev * (1.0 - STABILITY_ALPHA) + hit * STABILITY_ALPHA).clamp(0.0, 1.0)
 }
 
 impl Default for PairedPeer {
@@ -53,12 +82,15 @@ impl Default for PairedPeer {
             discovered_via: DiscoveryVia::Manual,
             paired_at_unix: 0,
             last_seen_unix: 0,
+            rtt_ms: None,
+            stability_score: NEUTRAL_STABILITY,
         }
     }
 }
 
 /// Top-level shape of `~/.neoth/cluster.yaml`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+// `Eq` dropped in SL-02b — contains `PairedPeer` which is no longer `Eq`.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClusterRegistry {
     /// All confirmed peers, sorted by `pub_key_hex` for stable
@@ -200,6 +232,43 @@ pub fn refresh_last_seen(home: &Path, pub_key_hex: &str, ts_unix: i64) -> Result
     Ok(changed)
 }
 
+/// SL-02b: record the last measured RTT (ms) for a paired peer. No-op + `false`
+/// when the peer isn't paired. Same load→mutate→save shape as
+/// [`refresh_last_seen`].
+pub fn refresh_rtt(home: &Path, pub_key_hex: &str, rtt_ms: u64) -> Result<bool> {
+    let mut reg = load(home)?;
+    let mut changed = false;
+    for p in reg.peers.iter_mut() {
+        if p.pub_key_hex == pub_key_hex {
+            p.rtt_ms = Some(rtt_ms);
+            changed = true;
+            break;
+        }
+    }
+    if changed {
+        save(home, &reg)?;
+    }
+    Ok(changed)
+}
+
+/// SL-02b: fold a heartbeat hit/miss into a paired peer's EWMA stability score
+/// via [`compute_stability`]. No-op + `false` when the peer isn't paired.
+pub fn refresh_stability(home: &Path, pub_key_hex: &str, success: bool) -> Result<bool> {
+    let mut reg = load(home)?;
+    let mut changed = false;
+    for p in reg.peers.iter_mut() {
+        if p.pub_key_hex == pub_key_hex {
+            p.stability_score = compute_stability(p.stability_score, success);
+            changed = true;
+            break;
+        }
+    }
+    if changed {
+        save(home, &reg)?;
+    }
+    Ok(changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -215,6 +284,7 @@ mod tests {
             discovered_via: DiscoveryVia::Mdns,
             paired_at_unix: 1_700_000_000,
             last_seen_unix: 1_700_000_000,
+            ..Default::default()
         }
     }
 
@@ -349,6 +419,7 @@ mod tests {
             discovered_via: DiscoveryVia::Tailscale,
             paired_at_unix: 1_234_567_890,
             last_seen_unix: 1_234_567_999,
+            ..Default::default()
         };
         let yaml = serde_yaml::to_string(&original).unwrap();
         let back: PairedPeer = serde_yaml::from_str(&yaml).unwrap();
@@ -408,5 +479,81 @@ peers:
         upsert(dir.path(), sample_peer("cd", "no-host")).unwrap(); // hostname == ""
         assert!(find_by_hostname(dir.path(), "").is_none());
         assert!(find_by_hostname(dir.path(), "   ").is_none());
+    }
+
+    // ── SL-02b: RTT + stability ──────────────────────────────────────────
+
+    #[test]
+    fn compute_stability_seeds_neutral_and_moves() {
+        // A fresh peer starts NEUTRAL; a hit nudges up, a miss nudges down.
+        let up = compute_stability(NEUTRAL_STABILITY, true);
+        let down = compute_stability(NEUTRAL_STABILITY, false);
+        assert!(up > NEUTRAL_STABILITY && up <= 1.0, "hit moves toward 1.0: {up}");
+        assert!(
+            (0.0..NEUTRAL_STABILITY).contains(&down),
+            "miss moves toward 0.0: {down}"
+        );
+        // Many consecutive hits converge near 1.0; misses near 0.0 (clamped).
+        let mut s = NEUTRAL_STABILITY;
+        for _ in 0..200 {
+            s = compute_stability(s, true);
+        }
+        assert!(s > 0.99, "sustained hits converge to ~1.0: {s}");
+        let mut s = NEUTRAL_STABILITY;
+        for _ in 0..200 {
+            s = compute_stability(s, false);
+        }
+        assert!(s < 0.01, "sustained misses converge to ~0.0: {s}");
+    }
+
+    #[test]
+    fn refresh_rtt_updates_paired_peer_only() {
+        let dir = tempdir().unwrap();
+        upsert(dir.path(), sample_peer("ab", "laptop")).unwrap();
+        let key = format!("ab{}", "0".repeat(62));
+        assert!(refresh_rtt(dir.path(), &key, 42).unwrap());
+        let reg = load(dir.path()).unwrap();
+        assert_eq!(reg.peers[0].rtt_ms, Some(42));
+        // Unknown peer → no-op false.
+        assert!(!refresh_rtt(dir.path(), "ff", 1).unwrap());
+    }
+
+    #[test]
+    fn refresh_stability_folds_ewma() {
+        let dir = tempdir().unwrap();
+        upsert(dir.path(), sample_peer("ab", "laptop")).unwrap();
+        let key = format!("ab{}", "0".repeat(62));
+        assert_eq!(load(dir.path()).unwrap().peers[0].stability_score, NEUTRAL_STABILITY);
+        assert!(refresh_stability(dir.path(), &key, true).unwrap());
+        let after_hit = load(dir.path()).unwrap().peers[0].stability_score;
+        assert!(after_hit > NEUTRAL_STABILITY);
+        assert!(refresh_stability(dir.path(), &key, false).unwrap());
+        let after_miss = load(dir.path()).unwrap().peers[0].stability_score;
+        assert!(after_miss < after_hit);
+        assert!(!refresh_stability(dir.path(), "ff", true).unwrap());
+    }
+
+    #[test]
+    fn pre_sl02b_yaml_without_rtt_stability_loads_defaults() {
+        // A cluster.yaml written before SL-02b carries no rtt_ms /
+        // stability_score keys — the struct-level #[serde(default)] +
+        // default_stability() must fill them rather than failing the load.
+        let legacy = "\
+peers:
+  - pub_key_hex: "
+            .to_string()
+            + &"ab".repeat(32)
+            + "
+    instance_label: laptop
+    hostname: ''
+    addr: 10.0.0.5:443
+    discovered_via: mdns
+    paired_at_unix: 1700000000
+    last_seen_unix: 1700000000
+";
+        let reg: ClusterRegistry = serde_yaml::from_str(&legacy).unwrap();
+        assert_eq!(reg.peers.len(), 1);
+        assert_eq!(reg.peers[0].rtt_ms, None);
+        assert_eq!(reg.peers[0].stability_score, NEUTRAL_STABILITY);
     }
 }

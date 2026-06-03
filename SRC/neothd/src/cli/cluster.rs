@@ -488,6 +488,10 @@ pub struct TopologyRow {
     /// `None` when the peer was confirmed but never since seen announce.
     pub last_seen_age_secs: Option<i64>,
     pub status: &'static str,
+    /// SL-02b: last measured heartbeat RTT (ms), `None` until first round-trip.
+    pub rtt_ms: Option<u64>,
+    /// SL-02b: EWMA heartbeat-success ratio in `[0.0, 1.0]`.
+    pub stability_score: f64,
 }
 
 /// `recent` / `stale` / `uncontacted` from a peer's last-seen timestamp.
@@ -522,6 +526,8 @@ pub fn build_topology_rows(
                 via: p.discovered_via.as_str().to_string(),
                 last_seen_age_secs,
                 status: topology_status(p.last_seen_unix, now_unix),
+                rtt_ms: p.rtt_ms,
+                stability_score: p.stability_score,
             }
         })
         .collect()
@@ -547,18 +553,21 @@ pub fn render_topology_table(rows: &[TopologyRow]) -> String {
         if rows.len() == 1 { "" } else { "s" }
     ));
     out.push_str(&format!(
-        "{:<16} {:<24} {:<22} {:<12} {:<12} {}\n",
-        "pub_key", "label", "addr", "via", "last_seen", "status"
+        "{:<16} {:<24} {:<22} {:<12} {:<12} {:<12} {:<8} {}\n",
+        "pub_key", "label", "addr", "via", "last_seen", "status", "rtt", "stability"
     ));
     for r in rows {
+        let rtt = r.rtt_ms.map(|ms| format!("{ms}ms")).unwrap_or_else(|| "---".to_string());
         out.push_str(&format!(
-            "{:<16} {:<24} {:<22} {:<12} {:<12} {}\n",
+            "{:<16} {:<24} {:<22} {:<12} {:<12} {:<12} {:<8} {:.0}%\n",
             r.pub_key_short,
             r.label,
             r.addr,
             r.via,
             fmt_last_seen(r.last_seen_age_secs),
             r.status,
+            rtt,
+            r.stability_score * 100.0,
         ));
     }
     out
@@ -597,6 +606,8 @@ fn run_topology(output: &OutputFormat) -> Result<()> {
                         "last_seen_unix": p.last_seen_unix,
                         "last_seen_age_secs": age,
                         "status": topology_status(p.last_seen_unix, now),
+                        "rtt_ms": p.rtt_ms,
+                        "stability_score": p.stability_score,
                     })
                 })
                 .collect();
@@ -605,7 +616,6 @@ fn run_topology(output: &OutputFormat) -> Result<()> {
                 serde_json::to_string_pretty(&serde_json::json!({
                     "peers": peers,
                     "local_mode": "single-node",
-                    "note": "health/rtt/stability are daemon-in-memory only — surface in SL-02b",
                 }))?
             );
         }
@@ -671,6 +681,9 @@ fn run_confirm(
         discovered_via: via_enum,
         paired_at_unix: now,
         last_seen_unix: now,
+        // SL-02b: a freshly-confirmed peer has no RTT yet + a neutral stability.
+        rtt_ms: None,
+        stability_score: crate::cluster::registry::NEUTRAL_STABILITY,
     };
     crate::cluster::registry::upsert(&home, peer)?;
     // Drop a sidecar so the running daemon emits WAL 0xE6
@@ -1293,6 +1306,7 @@ mod tests {
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: 1_700_000_000,
             last_seen_unix: 1_700_000_000,
+            ..Default::default()
         };
         crate::cluster::registry::upsert(dir.path(), peer.clone()).unwrap();
         // "workstation-7" is not hex → key path misses → hostname resolves.
@@ -1325,6 +1339,7 @@ mod tests {
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: 1,
             last_seen_unix: 1,
+            ..Default::default()
         };
         let b = crate::cluster::registry::PairedPeer {
             pub_key_hex: "cd".repeat(32),
@@ -1334,6 +1349,7 @@ mod tests {
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: 1,
             last_seen_unix: 1,
+            ..Default::default()
         };
         crate::cluster::registry::upsert(dir.path(), a.clone()).unwrap();
         crate::cluster::registry::upsert(dir.path(), b.clone()).unwrap();
@@ -1357,6 +1373,7 @@ mod tests {
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: 1_700_000_000,
             last_seen_unix,
+            ..Default::default()
         }
     }
 
@@ -1383,6 +1400,24 @@ mod tests {
         let rows = build_topology_rows(&[peer("vps", 0)], TNOW);
         assert_eq!(rows[0].status, "uncontacted");
         assert_eq!(rows[0].last_seen_age_secs, None);
+    }
+
+    #[test]
+    fn build_topology_rows_carries_rtt_and_stability() {
+        // SL-02b: rtt + stability flow from the peer into the row + render.
+        let mut p = peer("laptop", TNOW - 10);
+        p.rtt_ms = Some(37);
+        p.stability_score = 0.83;
+        let rows = build_topology_rows(&[p], TNOW);
+        assert_eq!(rows[0].rtt_ms, Some(37));
+        assert!((rows[0].stability_score - 0.83).abs() < 1e-9);
+        let out = render_topology_table(&rows);
+        assert!(out.contains("37ms"), "rtt rendered: {out}");
+        assert!(out.contains("83%"), "stability % rendered: {out}");
+        assert!(out.contains("rtt") && out.contains("stability"), "headers: {out}");
+        // A peer with no RTT renders the placeholder.
+        let none_rows = build_topology_rows(&[peer("vps", 0)], TNOW);
+        assert!(render_topology_table(&none_rows).contains("---"));
     }
 
     #[test]

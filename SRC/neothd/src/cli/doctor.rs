@@ -2585,6 +2585,7 @@ mod tests {
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: now - 3600,
             last_seen_unix: now - 60,
+            ..Default::default()
         };
         crate::cluster::registry::upsert(dir.path(), peer).unwrap();
         let outcome = check_cluster_registry(dir.path());
@@ -2607,6 +2608,7 @@ mod tests {
             discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
             paired_at_unix: now - 30 * 86_400,
             last_seen_unix: now - 30 * 86_400, // 30 days old > 14d threshold
+            ..Default::default()
         };
         crate::cluster::registry::upsert(dir.path(), peer).unwrap();
         let outcome = check_cluster_registry(dir.path());

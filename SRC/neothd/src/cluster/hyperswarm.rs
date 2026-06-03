@@ -391,6 +391,10 @@ async fn handle_peeroxide_connection(
     let peer_noise_pk: [u8; 32] = *conn.remote_public_key();
     let stream = &mut conn.peer.stream;
 
+    // SL-02b: start the handshake round-trip clock — the elapsed time from our
+    // Hello write to the peer's validated Hello is recorded as this peer's RTT.
+    let handshake_start = tokio::time::Instant::now();
+
     // ── Step 1: send our Hello ──
     let our_hello = WireFrame {
         kind: FrameKind::Hello,
@@ -559,6 +563,16 @@ async fn handle_peeroxide_connection(
         &remote_pk_hex,
         &cluster_name,
     );
+
+    // SL-02b: record the handshake RTT + bump this peer's stability (a
+    // successful connection is a stability hit). Best-effort, once per
+    // connection — NOT per heartbeat (a per-heartbeat cluster.yaml write would
+    // be heavy I/O). No-op for an unpaired peer; surfaces in
+    // `neoth cluster topology`. Per-heartbeat fidelity + a miss-on-disconnect
+    // signal are a throttled-write follow-on slice.
+    let handshake_rtt_ms = handshake_start.elapsed().as_millis() as u64;
+    let _ = crate::cluster::registry::refresh_rtt(&neoth_home, &remote_pk_hex, handshake_rtt_ms);
+    let _ = crate::cluster::registry::refresh_stability(&neoth_home, &remote_pk_hex, true);
 
     // ── Step 3: bidirectional session loop (SL-00(1c)) ──
     //
