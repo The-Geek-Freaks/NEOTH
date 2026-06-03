@@ -1705,6 +1705,8 @@ Todoist task management (TD-01). `list` / `add <content>` / `close <id>` via the
 
 - `--provider <PROVIDER>` — Task backend. `todoist` (static API token) or `google` (Google Tasks via OAuth refresh)
 - `--token <TOKEN>` — Todoist REST v2 API token (provider `todoist` only). Overrides `credentials.yaml::todoist_token` and `NEOTH_TODOIST_TOKEN`. Get it from Todoist → Settings → Integrations → Developer
+- `--dry-run <DRY_RUN>` — TD-02 (CalDAV write): show what WOULD be created/completed without sending the request or emitting the audit frame
+- `--yes <YES>` — TD-02 (CalDAV write): skip the interactive confirmation for the network mutation (needed for scripts at Strict/Standard autonomy). The write is still WAL-audited
 
 ### `neoth todo add`
 

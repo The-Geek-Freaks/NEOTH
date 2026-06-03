@@ -253,6 +253,208 @@ pub async fn list_tasks(base_url: &str, username: &str, password: &str) -> Resul
     Ok(parse_open_tasks(&text))
 }
 
+// ── TD-02 write surface (create / complete) ──────────────────────────────────
+
+/// Outcome of [`create_task`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateOutcome {
+    /// A new VTODO was PUT.
+    Created,
+    /// The deterministic UID already existed (idempotency: `If-None-Match: *`
+    /// returned 412) — no duplicate was written.
+    AlreadyExists,
+}
+
+/// Outcome of [`close_task`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseOutcome {
+    /// STATUS:COMPLETED was PUT back.
+    Completed,
+    /// No resource at the UID's href (nothing to close).
+    NotFound,
+    /// The server copy changed since the GET (`If-Match` ETag mismatch → 412)
+    /// — re-run after re-listing so a concurrent edit isn't clobbered.
+    Conflict,
+}
+
+/// Deterministic resource UID for a task summary. Same summary → same UID →
+/// `create_task` is idempotent (a re-run hits the existing resource, never
+/// duplicates). 16-hex of xxh3-64 keeps it path-safe.
+pub fn task_uid(summary: &str) -> String {
+    format!("neoth-{:016x}", xxhash_rust::xxh3::xxh3_64(summary.as_bytes()))
+}
+
+/// Reject a UID that could escape the collection path (`..`, `/`, control
+/// chars). Generated UIDs are always safe; an operator-supplied `close <uid>`
+/// is validated here before it's interpolated into the resource URL.
+pub fn validate_uid(uid: &str) -> Result<()> {
+    if uid.is_empty() || uid.len() > 256 {
+        anyhow::bail!("invalid task uid (empty or too long)");
+    }
+    if uid
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@'))
+        && !uid.contains("..")
+    {
+        Ok(())
+    } else {
+        anyhow::bail!("invalid task uid '{uid}' — only [A-Za-z0-9-_.@] allowed, no '..'")
+    }
+}
+
+/// The resource URL for a UID inside the collection. `base_url` is the
+/// calendar collection; the VTODO lives at `<base>/<uid>.ics` (the client-
+/// chosen-name convention every major CalDAV server accepts).
+pub fn resource_url(base_url: &str, uid: &str) -> String {
+    format!("{}/{}.ics", base_url.trim_end_matches('/'), uid)
+}
+
+/// Escape a text value for an iCalendar property (RFC 5545 §3.3.11): backslash,
+/// semicolon, comma get escaped; newlines become `\n`.
+fn escape_ics_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ';' => out.push_str("\\;"),
+            ',' => out.push_str("\\,"),
+            '\n' | '\r' => out.push_str("\\n"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Build a minimal VTODO iCalendar body (CRLF line endings per RFC 5545).
+/// Pure + unit-tested.
+pub fn build_vtodo_ics(uid: &str, summary: &str, due: Option<&str>) -> String {
+    let mut s = String::new();
+    s.push_str("BEGIN:VCALENDAR\r\n");
+    s.push_str("VERSION:2.0\r\n");
+    s.push_str("PRODID:-//NEOTH//todo//EN\r\n");
+    s.push_str("BEGIN:VTODO\r\n");
+    s.push_str(&format!("UID:{uid}\r\n"));
+    s.push_str(&format!("SUMMARY:{}\r\n", escape_ics_text(summary)));
+    s.push_str("STATUS:NEEDS-ACTION\r\n");
+    if let Some(d) = due {
+        s.push_str(&format!("DUE:{}\r\n", escape_ics_text(d)));
+    }
+    s.push_str("END:VTODO\r\n");
+    s.push_str("END:VCALENDAR\r\n");
+    s
+}
+
+/// Rewrite a VTODO's STATUS to COMPLETED, preserving every other line. If the
+/// VTODO has no STATUS line, one is inserted before `END:VTODO`. Pure +
+/// unit-tested — close fetches the live ICS then runs this so SUMMARY/DUE/etc.
+/// survive the completion.
+pub fn set_status_completed(ics: &str) -> String {
+    let mut out = String::with_capacity(ics.len() + 20);
+    let mut had_status = false;
+    let mut inserted = false;
+    for line in ics.split_inclusive(['\n']) {
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        let upper = trimmed.to_ascii_uppercase();
+        if upper.starts_with("STATUS:") {
+            had_status = true;
+            out.push_str("STATUS:COMPLETED\r\n");
+        } else if !had_status && !inserted && upper == "END:VTODO" {
+            out.push_str("STATUS:COMPLETED\r\n");
+            inserted = true;
+            out.push_str(line);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// Create a VTODO on the CalDAV collection — PUT with `If-None-Match: *` so a
+/// re-run on the same (deterministic) UID does NOT duplicate (server returns
+/// 412 → [`CreateOutcome::AlreadyExists`]). The network shell; the body build
+/// is the pure [`build_vtodo_ics`].
+pub async fn create_task(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    summary: &str,
+    due: Option<&str>,
+) -> Result<(String, CreateOutcome)> {
+    let uid = task_uid(summary);
+    let url = resource_url(base_url, &uid);
+    let body = build_vtodo_ics(&uid, summary, due);
+    let resp = http_client::build_client()?
+        .put(&url)
+        .basic_auth(username, Some(password))
+        .header(reqwest::header::IF_NONE_MATCH, "*")
+        .header(reqwest::header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .body(body)
+        .send()
+        .await
+        .with_context(|| format!("CalDAV PUT to {url}"))?;
+    let status = resp.status();
+    if status == reqwest::StatusCode::PRECONDITION_FAILED {
+        return Ok((uid, CreateOutcome::AlreadyExists));
+    }
+    if !status.is_success() {
+        let snippet: String = resp.text().await.unwrap_or_default().chars().take(200).collect();
+        anyhow::bail!("CalDAV PUT failed: HTTP {status} — {snippet}");
+    }
+    Ok((uid, CreateOutcome::Created))
+}
+
+/// Complete a VTODO by UID — GET the live resource (for its body + ETag), set
+/// STATUS:COMPLETED, and PUT it back with `If-Match: <etag>` (optimistic
+/// concurrency: a concurrent server-side edit yields 412 →
+/// [`CloseOutcome::Conflict`], never a silent clobber). A missing resource →
+/// [`CloseOutcome::NotFound`].
+pub async fn close_task(
+    base_url: &str,
+    username: &str,
+    password: &str,
+    uid: &str,
+) -> Result<CloseOutcome> {
+    validate_uid(uid)?;
+    let url = resource_url(base_url, uid);
+    let client = http_client::build_client()?;
+    let get = client
+        .get(&url)
+        .basic_auth(username, Some(password))
+        .send()
+        .await
+        .with_context(|| format!("CalDAV GET {url}"))?;
+    if get.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(CloseOutcome::NotFound);
+    }
+    if !get.status().is_success() {
+        anyhow::bail!("CalDAV GET failed: HTTP {}", get.status());
+    }
+    let etag = get
+        .headers()
+        .get(reqwest::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let ics = get.text().await.context("read CalDAV resource body")?;
+    let completed = set_status_completed(&ics);
+    let mut put = client
+        .put(&url)
+        .basic_auth(username, Some(password))
+        .header(reqwest::header::CONTENT_TYPE, "text/calendar; charset=utf-8")
+        .body(completed);
+    // Optimistic concurrency: only overwrite the exact version we read.
+    if let Some(tag) = &etag {
+        put = put.header(reqwest::header::IF_MATCH, tag.as_str());
+    }
+    let resp = put.send().await.with_context(|| format!("CalDAV PUT {url}"))?;
+    if resp.status() == reqwest::StatusCode::PRECONDITION_FAILED {
+        return Ok(CloseOutcome::Conflict);
+    }
+    if !resp.status().is_success() {
+        anyhow::bail!("CalDAV complete PUT failed: HTTP {}", resp.status());
+    }
+    Ok(CloseOutcome::Completed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +558,168 @@ END:VCALENDAR</cal:calendar-data>
     fn parse_multistatus_empty_on_garbage() {
         assert!(parse_multistatus("<not><valid").is_empty() || parse_multistatus("").is_empty());
         assert!(parse_multistatus("").is_empty());
+    }
+
+    // ── TD-02 write surface ──────────────────────────────────────────────
+
+    #[test]
+    fn build_vtodo_ics_has_required_lines() {
+        let ics = build_vtodo_ics("neoth-abc", "Buy milk", Some("20260110"));
+        assert!(ics.contains("BEGIN:VTODO\r\n"));
+        assert!(ics.contains("UID:neoth-abc\r\n"));
+        assert!(ics.contains("SUMMARY:Buy milk\r\n"));
+        assert!(ics.contains("STATUS:NEEDS-ACTION\r\n"));
+        assert!(ics.contains("DUE:20260110\r\n"));
+        assert!(ics.ends_with("END:VCALENDAR\r\n"));
+    }
+
+    #[test]
+    fn build_vtodo_ics_escapes_special_chars() {
+        let ics = build_vtodo_ics("u", "a,b; c\\d\ne", None);
+        assert!(ics.contains("SUMMARY:a\\,b\\; c\\\\d\\ne\r\n"), "got: {ics}");
+        assert!(!ics.contains("DUE:"));
+    }
+
+    #[test]
+    fn task_uid_is_deterministic_for_idempotency() {
+        assert_eq!(task_uid("Buy milk"), task_uid("Buy milk"));
+        assert_ne!(task_uid("Buy milk"), task_uid("Buy bread"));
+        assert!(task_uid("x").starts_with("neoth-"));
+    }
+
+    #[test]
+    fn validate_uid_rejects_traversal_and_bad_chars() {
+        assert!(validate_uid("neoth-abc123").is_ok());
+        assert!(validate_uid("task.ics_1@host").is_ok());
+        assert!(validate_uid("../../etc/passwd").is_err());
+        assert!(validate_uid("a/b").is_err());
+        assert!(validate_uid("a b").is_err());
+        assert!(validate_uid("").is_err());
+    }
+
+    #[test]
+    fn resource_url_handles_trailing_slash() {
+        assert_eq!(resource_url("https://h/dav/", "u"), "https://h/dav/u.ics");
+        assert_eq!(resource_url("https://h/dav", "u"), "https://h/dav/u.ics");
+    }
+
+    #[test]
+    fn set_status_completed_replaces_existing_and_preserves_rest() {
+        let ics = "BEGIN:VTODO\r\nUID:x\r\nSUMMARY:keep me\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\n";
+        let out = set_status_completed(ics);
+        assert!(out.contains("STATUS:COMPLETED\r\n"));
+        assert!(!out.contains("NEEDS-ACTION"));
+        assert!(out.contains("SUMMARY:keep me\r\n"), "other lines preserved");
+        assert!(out.contains("UID:x\r\n"));
+    }
+
+    #[test]
+    fn set_status_completed_inserts_when_absent() {
+        let ics = "BEGIN:VTODO\r\nUID:x\r\nSUMMARY:s\r\nEND:VTODO\r\n";
+        let out = set_status_completed(ics);
+        assert!(out.contains("STATUS:COMPLETED\r\n"));
+        // Inserted before END:VTODO, summary still there.
+        let status_pos = out.find("STATUS:COMPLETED").unwrap();
+        let end_pos = out.find("END:VTODO").unwrap();
+        assert!(status_pos < end_pos);
+        assert!(out.contains("SUMMARY:s\r\n"));
+    }
+
+    #[tokio::test]
+    async fn create_task_201_is_created() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&mock)
+            .await;
+        let (uid, outcome) = create_task(&mock.uri(), "u", "p", "Buy milk", None)
+            .await
+            .unwrap();
+        assert_eq!(outcome, CreateOutcome::Created);
+        assert_eq!(uid, task_uid("Buy milk"), "uid is the deterministic key");
+    }
+
+    #[tokio::test]
+    async fn create_task_412_is_already_exists_idempotent() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        // If-None-Match: * → server says the resource exists → 412.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(412))
+            .mount(&mock)
+            .await;
+        let (_uid, outcome) = create_task(&mock.uri(), "u", "p", "Buy milk", None)
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome,
+            CreateOutcome::AlreadyExists,
+            "a 412 must be the idempotent no-dup outcome, not an error"
+        );
+    }
+
+    #[tokio::test]
+    async fn close_task_404_is_not_found() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&mock)
+            .await;
+        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc").await.unwrap();
+        assert_eq!(outcome, CloseOutcome::NotFound);
+    }
+
+    #[tokio::test]
+    async fn close_task_completes_with_if_match_etag() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "\"v1\"")
+                    .set_body_string(
+                        "BEGIN:VTODO\r\nUID:neoth-abc\r\nSUMMARY:s\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\n",
+                    ),
+            )
+            .mount(&mock)
+            .await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&mock)
+            .await;
+        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc").await.unwrap();
+        assert_eq!(outcome, CloseOutcome::Completed);
+    }
+
+    #[tokio::test]
+    async fn close_task_412_is_conflict_not_clobber() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("ETag", "\"v1\"")
+                    .set_body_string("BEGIN:VTODO\r\nUID:neoth-abc\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\n"),
+            )
+            .mount(&mock)
+            .await;
+        // Server copy changed → If-Match fails → 412.
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(412))
+            .mount(&mock)
+            .await;
+        let outcome = close_task(&mock.uri(), "u", "p", "neoth-abc").await.unwrap();
+        assert_eq!(
+            outcome,
+            CloseOutcome::Conflict,
+            "a concurrent edit must surface as Conflict, never a silent clobber"
+        );
     }
 }

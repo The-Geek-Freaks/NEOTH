@@ -189,6 +189,21 @@ pub enum Action {
     /// Standard node with no lease stays fail-closed (no TTY); Elevated/Full
     /// allow. Maps to `LeaseScope::ClusterTaskAccept` in `lease_scope_for`.
     ClusterTaskAccept,
+    /// TD-02: write (create/complete) a task on an EXTERNAL task service
+    /// (CalDAV / Todoist / Google Tasks) through the operator's OWN
+    /// credentials. An outbound network MUTATION — lower blast radius than
+    /// exec/file-write (it touches the operator's own task list, not the local
+    /// machine), but it leaves the device + changes remote state, so it gates:
+    /// Strict + Standard **confirm** (the operator OKs each external write,
+    /// `--yes` or a TTY satisfies it), Elevated + Full **allow** (the operator
+    /// opted into autonomous behaviour; the creds are theirs). Unleasable for
+    /// now (no coarse scope models it).
+    ExternalTaskWrite {
+        /// Backend family — `"caldav"` / `"todoist"` / `"google"`.
+        provider: String,
+        /// `"add"` or `"close"`.
+        action: String,
+    },
 }
 
 /// Five autonomy levels per R-23 spec. Picked once at onboarding; stored on
@@ -330,7 +345,10 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         // An app launch is arbitrary code execution (like `ExecArbitrary`): no
         // coarse scope models it and the blast radius is the whole machine, so
         // it stays gate-only and is never lease-unlockable.
-        | Action::OsAppLaunch { .. } => None,
+        | Action::OsAppLaunch { .. }
+        // TD-02 external task write: no coarse lease scope models it yet; the
+        // operator confirms each (or runs at Elevated+) — gate-only for now.
+        | Action::ExternalTaskWrite { .. } => None,
     }
 }
 
@@ -390,6 +408,9 @@ fn evaluate_strict(action: &Action) -> Decision {
         Action::OsAppLaunch { program } => Decision::Deny(format!(
             "strict: launching {} denied (arbitrary program execution)",
             program.display()
+        )),
+        Action::ExternalTaskWrite { provider, action: act } => Decision::Confirm(format!(
+            "strict: external task {act} on {provider} requires confirm"
         )),
     }
 }
@@ -452,6 +473,12 @@ fn evaluate_standard(action: &Action) -> Decision {
         Action::OsAppLaunch { program } => Decision::Confirm(format!(
             "standard: launching {} requires confirm (program execution)",
             program.display()
+        )),
+        // The creds are the operator's own + they typed the command, but a
+        // network MUTATION still confirms at Standard (a TTY prompt or `--yes`
+        // satisfies it) so an accidental write to the wrong list is caught.
+        Action::ExternalTaskWrite { provider, action: act } => Decision::Confirm(format!(
+            "standard: external task {act} on {provider} requires confirm"
         )),
     }
 }
@@ -520,6 +547,9 @@ fn evaluate_elevated(action: &Action) -> Decision {
             "elevated: launching {} requires confirm (program execution)",
             program.display()
         )),
+        // Elevated = the operator opted into autonomous behaviour; writing to
+        // their own task service proceeds (the creds are the operator's).
+        Action::ExternalTaskWrite { .. } => Decision::Allow,
     }
 }
 
@@ -603,6 +633,27 @@ fn evaluate_full(action: &Action) -> Decision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_task_write_gates_by_autonomy() {
+        let a = Action::ExternalTaskWrite {
+            provider: "caldav".into(),
+            action: "add".into(),
+        };
+        // Strict + Standard confirm a network mutation; Elevated + Full allow.
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Strict),
+            Decision::Confirm(_)
+        ));
+        assert!(matches!(
+            evaluate(&a, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Allow));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
+        // Unleasable for now (gate-only).
+        assert!(lease_scope_for(&a).is_none());
+    }
 
     #[test]
     fn proactive_channel_send_strict_denies() {

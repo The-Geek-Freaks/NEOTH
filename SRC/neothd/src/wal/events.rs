@@ -1097,6 +1097,15 @@ pub const EVENT_TYPE_PLUGIN_CAP_USED: u8 = 0xC6;
 /// NEVER changes the fail-closed refusal the plugin already got).
 /// Payload: `{plugin, hostcall, required, granted}`.
 pub const EVENT_TYPE_PLUGIN_CAP_DENIED: u8 = 0xC7;
+
+/// `0xC8 TODO_WRITE` — TD-02. The operator created or completed a task on an
+/// EXTERNAL task service (CalDAV today; the Todoist/Google REST writes can fold
+/// in) through `neoth todo --provider <p> add|close`. An outbound network
+/// mutation, gated by the autonomy/consent layer (`Action::ExternalTaskWrite`)
+/// + an interactive/`--yes` confirm, so the audit records that a write left the
+/// device + to which provider. `--dry-run` does NOT emit (no write happened).
+/// Payload (JSON): `{provider, action, uid, summary?, ts_unix}`.
+pub const EVENT_TYPE_TODO_WRITE: u8 = 0xC8;
 /// `0xC1 MCP_TOOL_REJECTED` — operator's MCP client refused to invoke
 /// a tool because either (a) the tool name is not in the server's
 /// `allow_tools` list, (b) the tool description failed the prompt-
@@ -1481,6 +1490,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("plugin_fuel_exhausted", EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED),
     ("plugin_cap_used", EVENT_TYPE_PLUGIN_CAP_USED),
     ("plugin_cap_denied", EVENT_TYPE_PLUGIN_CAP_DENIED),
+    ("todo_write", EVENT_TYPE_TODO_WRITE),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -1815,6 +1825,7 @@ const _: () = {
         [(); 1][(EVENT_TYPE_PLUGIN_CAP_USED < 0xC0 || EVENT_TYPE_PLUGIN_CAP_USED > 0xCF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PLUGIN_CAP_DENIED < 0xC0 || EVENT_TYPE_PLUGIN_CAP_DENIED > 0xCF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_TODO_WRITE < 0xC0 || EVENT_TYPE_TODO_WRITE > 0xCF) as usize];
     // V11 Pick #38 (2026-05-19): coding-workflow band 0x70..=0x7F.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_OPENED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_OPENED > 0x7F) as usize];
@@ -2056,6 +2067,7 @@ mod tests {
             ("PLUGIN_FUEL_EXHAUSTED", EVENT_TYPE_PLUGIN_FUEL_EXHAUSTED),
             ("PLUGIN_CAP_USED", EVENT_TYPE_PLUGIN_CAP_USED),
             ("PLUGIN_CAP_DENIED", EVENT_TYPE_PLUGIN_CAP_DENIED),
+            ("TODO_WRITE", EVENT_TYPE_TODO_WRITE),
             ("KANBAN_SESSION_OPENED", EVENT_TYPE_KANBAN_SESSION_OPENED),
             ("KANBAN_TASK_CREATED", EVENT_TYPE_KANBAN_TASK_CREATED),
             ("KANBAN_TASK_ASSIGNED", EVENT_TYPE_KANBAN_TASK_ASSIGNED),
