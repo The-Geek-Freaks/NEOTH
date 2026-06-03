@@ -3827,6 +3827,30 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             // channel reply. Channels are async-delivery — a hung
             // extract LLM call would otherwise pin the entire ingress
             // task and starve other channel messages.
+            // KF-05: a reply was produced for this channel message — record a
+            // best-effort Hebbian acceptance for (channel, topic) so the
+            // per-channel familiarity store accumulates. Fire-and-forget: a
+            // write error never blocks the reply. Read back via
+            // `neoth ecology channel-weights`.
+            {
+                let topic_hash = xxhash_rust::xxh3::xxh3_64(
+                    inbound.text.as_deref().unwrap_or("").as_bytes(),
+                );
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let home = crate::config::FreedomConfig::default_neoth_home();
+                if let Err(e) = crate::memory::channel_weights::record_channel_acceptance(
+                    &home,
+                    channel_str,
+                    topic_hash,
+                    now,
+                ) {
+                    tracing::debug!(error = %e, "channel_weights: acceptance record failed (non-fatal)");
+                }
+            }
+
             let env_disable = std::env::var("NEOTH_PROFILE_LEARN_DISABLE")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false);

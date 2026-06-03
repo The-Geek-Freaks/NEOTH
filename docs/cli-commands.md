@@ -465,6 +465,12 @@ Compose dreams over the recent window right now (default: last 24h)
 
 CH-13 / F4-01 — Ecology self-adaptation diagnostics. `correlation` reports providers that won many consecutive outer-council debates (a low-dissent fitness signal). Read-only + deterministic
 
+### `neoth ecology channel-weights`
+
+KF-05 — report the per-channel Hebbian acceptance weights (which channels' messages most often produce a successful reply). Read-only
+
+- `--home <DIR>` — Override the NEOTH home (mostly for tests)
+
 ### `neoth ecology correlation`
 
 Report council-winner correlation: providers that won many consecutive outer-council debates (a low-dissent fitness signal). Read-only

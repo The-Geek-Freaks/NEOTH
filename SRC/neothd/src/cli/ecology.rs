@@ -37,10 +37,21 @@ pub enum EcologyAction {
         #[arg(long, value_name = "DIR")]
         wal_dir: Option<PathBuf>,
     },
+    /// KF-05 — report the per-channel Hebbian acceptance weights (which
+    /// channels' messages most often produce a successful reply). Read-only.
+    ChannelWeights {
+        /// Override the NEOTH home (mostly for tests).
+        #[arg(long, value_name = "DIR")]
+        home: Option<PathBuf>,
+    },
 }
 
 pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
     match args.action {
+        EcologyAction::ChannelWeights { home } => {
+            run_channel_weights(home, args.output);
+            Ok(())
+        }
         EcologyAction::Correlation {
             min_streak,
             wal_dir,
@@ -84,6 +95,52 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
                 }
             }
             Ok(())
+        }
+    }
+}
+
+/// KF-05 — read + report the per-channel Hebbian acceptance weights. Read-only
+/// consumer of `memory::channel_weights` (the serve.rs reply path writes them).
+fn run_channel_weights(home: Option<PathBuf>, output: OutputFormat) {
+    use std::collections::BTreeMap;
+    let home = home.unwrap_or_else(crate::config::FreedomConfig::default_neoth_home);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let weights = crate::memory::channel_weights::load_channel_weights(&home);
+
+    // Aggregate per channel: topic-row count + the strongest decayed weight.
+    let mut by_channel: BTreeMap<String, (usize, f32)> = BTreeMap::new();
+    for row in &weights.rows {
+        let w =
+            crate::memory::channel_weights::channel_weight_of(&weights, &row.channel, row.topic_hash, now);
+        let e = by_channel.entry(row.channel.clone()).or_insert((0, 0.0));
+        e.0 += 1;
+        if w > e.1 {
+            e.1 = w;
+        }
+    }
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = by_channel
+                .iter()
+                .map(|(ch, (topics, max_w))| {
+                    serde_json::json!({ "channel": ch, "topics": topics, "max_familiarity": max_w })
+                })
+                .collect();
+            println!("{}", serde_json::json!({ "channels": rows }));
+        }
+        OutputFormat::Table => {
+            if by_channel.is_empty() {
+                println!("(no channel-acceptance history yet — it accrues as channels get replies)");
+                return;
+            }
+            println!("per-channel acceptance familiarity (KF-05):");
+            for (ch, (topics, max_w)) in &by_channel {
+                println!("  {ch}: {topics} topic(s), strongest familiarity {max_w:.2}");
+            }
         }
     }
 }

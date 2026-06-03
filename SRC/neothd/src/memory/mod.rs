@@ -35,6 +35,7 @@ pub mod migrations;
 pub mod operator_md;
 pub mod pre_decay_export;
 pub mod region_router;
+pub mod channel_weights;
 pub mod regions;
 pub mod routing_weights;
 pub mod store;
