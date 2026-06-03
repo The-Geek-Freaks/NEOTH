@@ -18,3 +18,9 @@ pub mod correlation_detector;
 /// auto-applies — the DESIGN_CH13 P2 review-gate), emitting
 /// `0x4C ECOLOGY_SCHEDULER_FIRED` as the audit trail. Off by default.
 pub mod scheduler;
+/// F4-01 Phase 3 — tool genealogy. A deterministic, read-only inventory of the
+/// tools NEOTH actually exercises (MCP tools via `0xC0`, plugins via
+/// `0xC4`/`0xC6`/`0xC2`) + installed skills as zero-count nodes. Surfaced via
+/// `neoth ecology genealogy`. Winner-chain correlation + co-occurrence edges are
+/// precursor-gated on tool-id in the `0x63` winner frame (see module docs).
+pub mod genealogy;

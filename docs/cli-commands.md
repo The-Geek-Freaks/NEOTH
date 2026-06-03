@@ -478,6 +478,14 @@ Report council-winner correlation: providers that won many consecutive outer-cou
 - `--min-streak <MIN_STREAK>` — Minimum consecutive-win streak to report. Defaults to `freedom.yaml::ecology.correlation_min_streak` (5)
 - `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
 
+### `neoth ecology genealogy`
+
+F4-01 Phase 3 — tool genealogy: an inventory of the tools NEOTH actually exercises (MCP tools + plugins, by recorded use-count) plus installed skills as available-but-untraced nodes. Read-only + deterministic
+
+- `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
+- `--home <DIR>` — Override the NEOTH home for the installed-skill inventory
+- `--top <TOP>` — Show only the top-N most-used tools. Default: all
+
 ## `neoth email`
 
 EM-01b — inbound email. `fetch` pulls newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and triages each through the sanitizer→threat pipeline. Live socket needs the `imap_fetch` build feature; `--dry-run` works on every build

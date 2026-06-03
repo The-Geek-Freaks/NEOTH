@@ -44,12 +44,30 @@ pub enum EcologyAction {
         #[arg(long, value_name = "DIR")]
         home: Option<PathBuf>,
     },
+    /// F4-01 Phase 3 — tool genealogy: an inventory of the tools NEOTH actually
+    /// exercises (MCP tools + plugins, by recorded use-count) plus installed
+    /// skills as available-but-untraced nodes. Read-only + deterministic.
+    Genealogy {
+        /// Override the WAL directory (mostly for tests).
+        #[arg(long, value_name = "DIR")]
+        wal_dir: Option<PathBuf>,
+        /// Override the NEOTH home for the installed-skill inventory.
+        #[arg(long, value_name = "DIR")]
+        home: Option<PathBuf>,
+        /// Show only the top-N most-used tools. Default: all.
+        #[arg(long)]
+        top: Option<usize>,
+    },
 }
 
 pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
     match args.action {
         EcologyAction::ChannelWeights { home } => {
             run_channel_weights(home, args.output);
+            Ok(())
+        }
+        EcologyAction::Genealogy { wal_dir, home, top } => {
+            run_genealogy(wal_dir, home, top, args.output).await;
             Ok(())
         }
         EcologyAction::Correlation {
@@ -140,6 +158,77 @@ fn run_channel_weights(home: Option<PathBuf>, output: OutputFormat) {
             println!("per-channel acceptance familiarity (KF-05):");
             for (ch, (topics, max_w)) in &by_channel {
                 println!("  {ch}: {topics} topic(s), strongest familiarity {max_w:.2}");
+            }
+        }
+    }
+}
+
+/// F4-01 Phase 3 — build + render the tool genealogy. Read-only: loads the
+/// installed-skill inventory + walks the WAL for tool-activity frames, then
+/// reports a use-count-ranked node list. Changes nothing.
+async fn run_genealogy(
+    wal_dir: Option<PathBuf>,
+    home: Option<PathBuf>,
+    top: Option<usize>,
+    output: OutputFormat,
+) {
+    let wal_dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
+    let home = home.unwrap_or_else(FreedomConfig::default_neoth_home);
+    let skills_dir = home.join("skills");
+
+    // Installed-skill ids (best-effort — a missing/empty skills dir just yields
+    // no skill nodes; the WAL-derived tool nodes still report).
+    let skill_ids: Vec<String> = match crate::skills::load_all(&skills_dir).await {
+        Ok(skills) => skills.iter().map(|s| s.id().to_string()).collect(),
+        Err(_) => Vec::new(),
+    };
+
+    let genealogy = crate::ecology::genealogy::build_tool_genealogy(&wal_dir, &skill_ids);
+    let shown: Vec<&crate::ecology::genealogy::ToolNode> = match top {
+        Some(n) => genealogy.top_tools(n),
+        None => genealogy.top_tools(genealogy.nodes.len()),
+    };
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = shown
+                .iter()
+                .map(|n| {
+                    serde_json::json!({
+                        "tool_id": n.tool_id,
+                        "kind": n.kind.as_str(),
+                        "use_count": n.use_count,
+                        "last_used_unix": n.last_used_unix,
+                    })
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::json!({
+                    "total_tools": genealogy.nodes.len(),
+                    "tools": rows,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            if genealogy.nodes.is_empty() {
+                println!(
+                    "(no tools recorded yet — install a skill/plugin or invoke an MCP tool)"
+                );
+                return;
+            }
+            println!(
+                "tool genealogy — {} tool(s) (use-count = recorded MCP calls / plugin hostcalls; \
+                 skills show 0 because injection is not WAL-traced):",
+                genealogy.nodes.len()
+            );
+            for n in &shown {
+                println!(
+                    "  [{}] {} — {} use(s)",
+                    n.kind.as_str(),
+                    n.tool_id,
+                    n.use_count
+                );
             }
         }
     }
