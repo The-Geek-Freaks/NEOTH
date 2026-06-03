@@ -1728,6 +1728,15 @@ NOOB-UX-5 first-launch tour. `neoth tour` walks the operator through chat / memo
 
 - `--step <ID>` — Show one tour stop only. Stops: `chat` / `memory` / `consent` / `audit` / `next`. Without this flag, prints every stop in order (the full guided tour)
 
+## `neoth transfer`
+
+Export a recipient-encrypted, operator-signed memory bundle (A3-01): `transfer --dest <x25519_pubkey_b64>` seals the last N days of hot-tier memory with ephemeral X25519 ECDH → AES-256-GCM, signs it with the operator's ed25519 key, and writes it to `~/.neoth/exports/`. Only the recipient's secret can decrypt. Emits `0xF5 MEMORY_TRANSFER_EXPORTED`
+
+- `--dest <DEST>` — Recipient's X25519 public key (base64). The bundle is encrypted so only the holder of the matching secret can read it
+- `--out <OUT>` — Output path for the bundle JSON. Default: `~/.neoth/exports/transfer-<unix>.json`
+- `--days <DAYS>` — Look-back window in days for the hot-tier memory to export. Default 7
+- `--dry-run <DRY_RUN>` — Show what WOULD be exported (recipient, event count, bundle size) without writing the file or emitting the audit frame
+
 ## `neoth tts`
 
 Text-to-speech synthesis (A-45). `speak` writes audio bytes to a file via ElevenLabs (cloud) or piper-rs (Phase 2 local)

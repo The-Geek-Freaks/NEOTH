@@ -39,5 +39,6 @@ pub mod regions;
 pub mod routing_weights;
 pub mod store;
 pub mod tiers;
+pub mod transfer_bundle;
 pub mod vector_index;
 pub mod views;

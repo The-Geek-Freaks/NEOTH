@@ -1502,6 +1502,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("regression_alert", EVENT_TYPE_REGRESSION_ALERT),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
     ("dream_composed", EVENT_TYPE_DREAM_COMPOSED),
+    ("memory_transfer_exported", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
     ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
@@ -1608,6 +1609,16 @@ pub const EVENT_TYPE_REDACTION_MARKER: u8 = 0xF3;
 /// Payload (JSON): `{day, dreams, events_considered, path_taken, ts_unix}`
 /// (`path_taken` = "Embedding" | "Deterministic").
 pub const EVENT_TYPE_DREAM_COMPOSED: u8 = 0xF4;
+
+/// `0xF5 MEMORY_TRANSFER_EXPORTED` — A3-01. The operator ran `neoth transfer
+/// --dest <pubkey>` to export a recipient-encrypted, operator-signed memory
+/// bundle (ephemeral X25519 ECDH → HKDF-SHA256 → AES-256-GCM, ed25519-signed).
+/// The audit anchor records THAT an export happened + to whom + how large —
+/// never the plaintext (the bundle ciphertext lives in `~/.neoth/exports/`).
+///
+/// Payload (JSON): `{dest_pubkey_b64, bundle_bytes, events_exported, window,
+/// ts_unix}`.
+pub const EVENT_TYPE_MEMORY_TRANSFER_EXPORTED: u8 = 0xF5;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -1880,6 +1891,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_PRE_MUTATION_SNAPSHOT < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_REDACTION_MARKER < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_DREAM_COMPOSED < 0xF0) as usize];
+    let _ = [(); 1][(EVENT_TYPE_MEMORY_TRANSFER_EXPORTED < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -2110,6 +2122,7 @@ mod tests {
             ("PRE_MUTATION_SNAPSHOT", EVENT_TYPE_PRE_MUTATION_SNAPSHOT),
             ("REDACTION_MARKER", EVENT_TYPE_REDACTION_MARKER),
             ("DREAM_COMPOSED", EVENT_TYPE_DREAM_COMPOSED),
+            ("MEMORY_TRANSFER_EXPORTED", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {

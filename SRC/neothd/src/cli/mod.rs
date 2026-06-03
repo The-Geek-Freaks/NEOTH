@@ -41,6 +41,7 @@ pub mod autonomy;
 pub mod credential;
 pub mod cron;
 pub mod dream;
+pub mod transfer;
 pub mod gui;
 pub mod n8n;
 pub mod gui_stream;
@@ -244,6 +245,13 @@ pub enum Commands {
     /// episodes into themed Dream records under `~/.neoth/dreams/` — instead of
     /// waiting for the nightly cron. Emits `0xF4 DREAM_COMPOSED`.
     Dream(dream::DreamArgs),
+
+    /// Export a recipient-encrypted, operator-signed memory bundle (A3-01):
+    /// `transfer --dest <x25519_pubkey_b64>` seals the last N days of hot-tier
+    /// memory with ephemeral X25519 ECDH → AES-256-GCM, signs it with the
+    /// operator's ed25519 key, and writes it to `~/.neoth/exports/`. Only the
+    /// recipient's secret can decrypt. Emits `0xF5 MEMORY_TRANSFER_EXPORTED`.
+    Transfer(transfer::TransferArgs),
 
     /// Manage `credentials.yaml`: `list` shows which credential keys are set
     /// (NAMES only, never values); `import --file <path>` merges a
@@ -857,6 +865,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Dream(args) => {
             dream::run_dream(args, global_output).await?;
+        }
+        Commands::Transfer(args) => {
+            transfer::run_transfer(args, global_output).await?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;
