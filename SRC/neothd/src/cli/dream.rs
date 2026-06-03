@@ -12,14 +12,15 @@
 //! no daemon owns the WAL writer (a live daemon's nightly pass is the primary
 //! path; a one-shot writer would race the daemon's segment).
 
-use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use crate::cli::OutputFormat;
-use crate::cli::dreaming_task::{DEFAULT_MAX_EVENTS, DEFAULT_WINDOW, PassReport, run_one_pass};
+use crate::cli::dreaming_task::{
+    DEFAULT_MAX_EVENTS, DEFAULT_WINDOW, PassReport, dream_composed_payload, run_one_pass,
+};
 use crate::config::FreedomConfig;
 
 #[derive(Args, Debug, Clone)]
@@ -58,10 +59,22 @@ async fn run_now(
     let home = FreedomConfig::default_neoth_home();
     let config = FreedomConfig::load_from_default_path().unwrap_or_default();
     let embed = crate::providers::embed_provider_from_config(&config).await;
+    // SPEC-12 Phase 4b — LLM theme labels, gated behind
+    // `dreaming.summarize_themes` (cost-safe default OFF: it spends one
+    // chat-provider call per cluster, which on a metered cloud provider
+    // would bill). Built only when the flag is on AND a provider is
+    // configured; otherwise deterministic `cluster-N-seed-id` labels.
+    let chat: Option<Box<dyn crate::providers::Provider>> = if config.dreaming.summarize_themes {
+        crate::providers::from_config(&config).await.ok()
+    } else {
+        None
+    };
     let window = window_secs.map(Duration::from_secs).unwrap_or(DEFAULT_WINDOW);
     let max = max_events.unwrap_or(DEFAULT_MAX_EVENTS);
 
-    let report = run_one_pass(&home, embed.as_deref(), window, max).await?;
+    // One-shot CLI: writer = None — `emit_dream_composed` below handles the
+    // audit (skips when a daemon owns the writer, to avoid a segment race).
+    let report = run_one_pass(&home, embed.as_deref(), chat.as_deref(), window, max, None).await?;
 
     // Best-effort DREAM_COMPOSED audit — only when this process wrote dreams
     // AND no daemon owns the writer (avoid racing the daemon's segment).
@@ -71,16 +84,6 @@ async fn run_now(
 
     render(&report, output);
     Ok(())
-}
-
-/// `YYYY-MM-DD` from the report's JSONL path stem (the file the dreams landed
-/// in, e.g. `~/.neoth/dreams/2026-06-03.jsonl` → `2026-06-03`). Falls back to
-/// the empty string if the path has no stem — the audit frame still emits.
-fn day_from_path(path: &Path) -> String {
-    path.file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_string()
 }
 
 fn emit_dream_composed(report: &PassReport) {
@@ -106,14 +109,9 @@ fn emit_dream_composed(report: &PassReport) {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "day": day_from_path(&report.path),
-        "dreams": report.dreams_written,
-        "events_considered": report.events_considered,
-        "path_taken": format!("{:?}", report.path_taken),
-        "ts_unix": now_unix,
-    }))
-    .unwrap_or_default();
+    // Shared payload builder — identical shape to the daemon cron's 0xF4
+    // frame (only the emit mechanism + provenance flag differ).
+    let payload = dream_composed_payload(report, now_unix);
     let header =
         crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_DREAM_COMPOSED, &payload)
             .build();
@@ -127,7 +125,7 @@ fn render(report: &PassReport, output: OutputFormat) {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
             serde_json::json!({
-                "day": day_from_path(&report.path),
+                "day": report.day_label(),
                 "events_considered": report.events_considered,
                 "dreams_written": report.dreams_written,
                 "path": report.path.display().to_string(),
@@ -154,16 +152,17 @@ fn render(report: &PassReport, output: OutputFormat) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cli::dreaming_task::DreamingPath;
     use std::path::PathBuf;
 
     #[test]
-    fn day_from_path_extracts_yyyy_mm_dd() {
-        let p = PathBuf::from("/home/op/.neoth/dreams/2026-06-03.jsonl");
-        assert_eq!(day_from_path(&p), "2026-06-03");
-    }
-
-    #[test]
-    fn day_from_path_empty_when_no_stem() {
-        assert_eq!(day_from_path(Path::new("/")), "");
+    fn day_label_extracts_yyyy_mm_dd() {
+        let report = PassReport {
+            events_considered: 0,
+            dreams_written: 0,
+            path: PathBuf::from("/home/op/.neoth/dreams/2026-06-03.jsonl"),
+            path_taken: DreamingPath::Deterministic,
+        };
+        assert_eq!(report.day_label(), "2026-06-03");
     }
 }

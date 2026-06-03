@@ -128,6 +128,11 @@ inference:
 #   interval_secs: 86400    # seconds between passes (default 86400 = 24h)
 #   window_secs: 86400      # episode lookback window per pass (default 24h)
 #   max_events: 500         # cap on events processed per pass (default 500)
+#   summarize_themes: false # LLM-label each cluster via the chat provider
+#                           #   (SPEC-12 Phase 4b). OFF by default: it adds
+#                           #   one LLM call per cluster — on a metered cloud
+#                           #   provider an opted-in nightly run would bill.
+#                           #   false/no-provider/error → deterministic label.
 
 # ── 5a. Recipe: cloud-Qwen via OpenRouter (no local GPU needed) ──────────────
 #

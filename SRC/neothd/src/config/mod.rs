@@ -1106,6 +1106,19 @@ pub struct DreamingConfig {
     /// Off by default — opt-in (NEOTH never adds a skill unprompted; the
     /// operator adopts it via `neoth proactive accept`).
     pub forge_skills: bool,
+    /// SPEC-12 Phase 4b — when `true`, each embedding-clustered dream's
+    /// theme label is summarised by the configured CHAT provider (turns
+    /// `cluster-3-seed-918` into a real motif like "auth refactor +
+    /// deploy"). Off by default because it spends one extra LLM call per
+    /// cluster per pass: on a metered cloud provider an opted-in nightly
+    /// dreaming run would otherwise silently bill — so the operator opts
+    /// in explicitly (cost-safe default, matching the `claude_cli is the
+    /// cost-free path` rule). When `false`, OR when no chat provider is
+    /// configured, OR when a summarisation call fails, the deterministic
+    /// `cluster-N-seed-id` label is used (no behaviour change). Has no
+    /// effect without an embedding provider (the deterministic path has
+    /// no clusters to label).
+    pub summarize_themes: bool,
 }
 
 impl Default for DreamingConfig {
@@ -1117,6 +1130,7 @@ impl Default for DreamingConfig {
             window_secs: None,
             max_events: None,
             forge_skills: false,
+            summarize_themes: false,
         }
     }
 }

@@ -25,7 +25,9 @@ use crate::daemon::dreaming::{
     DREAMING_CLUSTER_THRESHOLD, EventRef, append_dream, compose_dream,
     compose_dreams_with_embeddings,
 };
+use crate::providers::Provider;
 use crate::providers::embed::EmbedProvider;
+use crate::wal::writer::WalWriterHandle;
 
 /// Default cadence: every 24h. Matches the "nightly dreaming" UX the
 /// R-02 SPEC describes (cron 03:00). On a long-running daemon a 24h
@@ -50,32 +52,53 @@ pub const DEFAULT_MAX_EVENTS: usize = 500;
 /// `interval = None` → [`DEFAULT_INTERVAL`]. `window = None` →
 /// [`DEFAULT_WINDOW`]. `max_events = None` → [`DEFAULT_MAX_EVENTS`].
 /// `embed_provider = None` → deterministic theme labels only
-/// (composer still runs, dreams still land).
+/// (composer still runs, dreams still land). `chat_provider = Some`
+/// (SPEC-12 Phase 4b) → LLM-summarised cluster theme labels; `None`
+/// keeps the deterministic `cluster-N-seed-id` labels. `writer = Some`
+/// → the daemon owns the WAL writer and each non-empty pass emits a
+/// `0xF4 DREAM_COMPOSED` audit frame (`None` for one-shot callers that
+/// audit separately, e.g. `neoth dream now`).
 pub fn spawn(
     home: PathBuf,
     embed_provider: Option<std::sync::Arc<dyn EmbedProvider>>,
+    chat_provider: Option<std::sync::Arc<dyn Provider>>,
     interval: Option<Duration>,
     window: Option<Duration>,
     max_events: Option<usize>,
+    writer: Option<WalWriterHandle>,
 ) -> JoinHandle<Result<()>> {
     let interval = interval.unwrap_or(DEFAULT_INTERVAL);
     let window = window.unwrap_or(DEFAULT_WINDOW);
     let max_events = max_events.unwrap_or(DEFAULT_MAX_EVENTS);
-    tokio::spawn(async move { run(home, embed_provider, interval, window, max_events).await })
+    tokio::spawn(async move {
+        run(
+            home,
+            embed_provider,
+            chat_provider,
+            interval,
+            window,
+            max_events,
+            writer,
+        )
+        .await
+    })
 }
 
 async fn run(
     home: PathBuf,
     embed_provider: Option<std::sync::Arc<dyn EmbedProvider>>,
+    chat_provider: Option<std::sync::Arc<dyn Provider>>,
     interval: Duration,
     window: Duration,
     max_events: usize,
+    writer: Option<WalWriterHandle>,
 ) -> Result<()> {
     info!(
         interval_secs = interval.as_secs(),
         window_secs = window.as_secs(),
         max_events,
         embed_enabled = embed_provider.is_some(),
+        summarize_themes = chat_provider.is_some(),
         "dreaming task started"
     );
     let mut ticker = tokio::time::interval(interval);
@@ -85,7 +108,16 @@ async fn run(
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        match run_one_pass(&home, embed_provider.as_deref(), window, max_events).await {
+        match run_one_pass(
+            &home,
+            embed_provider.as_deref(),
+            chat_provider.as_deref(),
+            window,
+            max_events,
+            writer.as_ref(),
+        )
+        .await
+        {
             Ok(report) => {
                 if report.dreams_written > 0 {
                     info!(
@@ -119,6 +151,55 @@ pub struct PassReport {
     pub path_taken: DreamingPath,
 }
 
+impl PassReport {
+    /// `YYYY-MM-DD` derived from the JSONL path stem (e.g.
+    /// `~/.neoth/dreams/2026-06-03.jsonl` → `2026-06-03`). Empty when the
+    /// path has no stem. Used by the `0xF4 DREAM_COMPOSED` audit payload +
+    /// the operator render — single source so the daemon + CLI agree.
+    pub(crate) fn day_label(&self) -> String {
+        self.path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string()
+    }
+}
+
+/// Build the `0xF4 DREAM_COMPOSED` audit payload from a pass report.
+/// Shared by the daemon cron emit ([`run_one_pass`] when a writer is
+/// passed) and the one-shot `neoth dream now` CLI emit so the two paths
+/// never drift in payload shape (only the emit MECHANISM + provenance
+/// flag differ: daemon = `writer.append` + SYNTHETIC; CLI = one-shot
+/// writer, operator-triggered).
+pub(crate) fn dream_composed_payload(report: &PassReport, ts_unix: u64) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "day": report.day_label(),
+        "dreams": report.dreams_written,
+        "events_considered": report.events_considered,
+        "path_taken": format!("{:?}", report.path_taken),
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default()
+}
+
+/// Daemon-side `0xF4 DREAM_COMPOSED` emit. Best-effort + SYNTHETIC (this
+/// is a daemon-derived frame, matching the regression / recall-latency
+/// cron convention). A WAL append failure logs + never fails the pass.
+async fn emit_dream_composed_daemon(writer: &WalWriterHandle, report: &PassReport) {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = dream_composed_payload(report, ts_unix);
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_DREAM_COMPOSED, &payload)
+            .flags(crate::wal::EventFlags::SYNTHETIC)
+            .build();
+    if let Err(e) = writer.append(header, payload).await {
+        warn!(error = %e, "dreaming: DREAM_COMPOSED frame append failed (audit gap)");
+    }
+}
+
 /// Which composer ran. Surfaces in the operator log so a sudden
 /// flip from `embedding` → `deterministic` (e.g. local_qwen weights
 /// went missing) is visible without grepping for "embed failed".
@@ -139,8 +220,10 @@ pub enum DreamingPath {
 pub async fn run_one_pass(
     home: &Path,
     embed_provider: Option<&dyn EmbedProvider>,
+    chat_provider: Option<&dyn Provider>,
     window: Duration,
     max_events: usize,
+    writer: Option<&WalWriterHandle>,
 ) -> Result<PassReport> {
     let events = gather_window_events(home, window, max_events)?;
     let day = today_utc_date();
@@ -156,8 +239,14 @@ pub async fn run_one_pass(
     }
 
     let (dreams, path_taken) = if let Some(provider) = embed_provider {
-        match compose_dreams_with_embeddings(&day, &events, provider, DREAMING_CLUSTER_THRESHOLD)
-            .await
+        match compose_dreams_with_embeddings(
+            &day,
+            &events,
+            provider,
+            chat_provider,
+            DREAMING_CLUSTER_THRESHOLD,
+        )
+        .await
         {
             Ok(d) => (d, DreamingPath::Embedding),
             Err(e) => {
@@ -196,12 +285,24 @@ pub async fn run_one_pass(
         forge_and_stage_dreams(home, &dreams);
     }
 
-    Ok(PassReport {
+    let report = PassReport {
         events_considered: events.len(),
         dreams_written: written,
         path,
         path_taken,
-    })
+    };
+
+    // SPEC-12 daemon-side audit: when the daemon owns the WAL writer and
+    // this pass actually wrote dreams, emit a `0xF4 DREAM_COMPOSED` frame so
+    // the nightly cron is auditable just like `neoth dream now`. One-shot
+    // callers pass `writer = None` and audit via their own path.
+    if report.dreams_written > 0 {
+        if let Some(w) = writer {
+            emit_dream_composed_daemon(w, &report).await;
+        }
+    }
+
+    Ok(report)
 }
 
 /// KF-04 — forge a candidate skill from each dream + stage it as an
@@ -373,7 +474,7 @@ mod tests {
     #[tokio::test]
     async fn one_pass_returns_empty_report_for_missing_views_db() {
         let dir = tempdir().unwrap();
-        let report = run_one_pass(dir.path(), None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS)
+        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS, None)
             .await
             .unwrap();
         assert_eq!(report.events_considered, 0);
@@ -392,7 +493,7 @@ mod tests {
                 (2, n - 1800 * 1_000_000_000, "second event"),
             ],
         );
-        let report = run_one_pass(dir.path(), None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS)
+        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS, None)
             .await
             .unwrap();
         assert_eq!(report.events_considered, 2);
@@ -417,8 +518,10 @@ mod tests {
         let report = run_one_pass(
             dir.path(),
             Some(&provider),
+            None,
             DEFAULT_WINDOW,
             DEFAULT_MAX_EVENTS,
+            None,
         )
         .await
         .unwrap();
@@ -437,8 +540,10 @@ mod tests {
         let report = run_one_pass(
             dir.path(),
             Some(&provider),
+            None,
             DEFAULT_WINDOW,
             DEFAULT_MAX_EVENTS,
+            None,
         )
         .await
         .unwrap();
@@ -460,7 +565,7 @@ mod tests {
             .collect();
         let rows_ref: Vec<_> = rows.iter().map(|(a, b, c)| (*a, *b, *c)).collect();
         seed_views_db(dir.path(), &rows_ref);
-        let report = run_one_pass(dir.path(), None, DEFAULT_WINDOW, 3)
+        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, 3, None)
             .await
             .unwrap();
         assert_eq!(report.events_considered, 3, "truncate at max_events=3");
@@ -481,8 +586,10 @@ mod tests {
         let report = run_one_pass(
             dir.path(),
             None,
+            None,
             Duration::from_secs(1800),
             DEFAULT_MAX_EVENTS,
+            None,
         )
         .await
         .unwrap();
@@ -508,7 +615,9 @@ mod tests {
         let task = spawn(
             dir.path().to_path_buf(),
             None,
+            None,
             Some(Duration::from_millis(50)),
+            None,
             None,
             None,
         );
@@ -522,5 +631,189 @@ mod tests {
         assert_eq!(DEFAULT_INTERVAL.as_secs(), 86_400);
         assert_eq!(DEFAULT_WINDOW.as_secs(), 86_400);
         assert_eq!(DEFAULT_MAX_EVENTS, 500);
+    }
+
+    // ── SPEC-12 daemon-side 0xF4 DREAM_COMPOSED emit + chat-label wiring ──────
+
+    /// Count `0xF4 DREAM_COMPOSED` frames in a sealed WAL segment.
+    fn count_dream_composed_frames(seg: &Path) -> usize {
+        let Ok(bytes) = std::fs::read(seg) else {
+            return 0;
+        };
+        let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
+            return 0;
+        };
+        let mut cursor = hdr.header_len();
+        let mut count = 0usize;
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_DREAM_COMPOSED {
+                count += 1;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        count
+    }
+
+    /// Chat provider returning a fixed reply — exercises the run_one_pass
+    /// chat-label wiring end-to-end.
+    struct FixedLabelChat;
+    #[async_trait::async_trait]
+    impl Provider for FixedLabelChat {
+        fn name(&self) -> &'static str {
+            "fixed_label_chat"
+        }
+        async fn complete(
+            &self,
+            _req: crate::providers::Request,
+        ) -> Result<crate::providers::Completion> {
+            Ok(crate::providers::Completion {
+                text: "weekend trip planning".into(),
+                model: "fixed_label_chat".into(),
+                latency: Duration::from_micros(1),
+                input_tokens: None,
+                output_tokens: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn run_one_pass_emits_dream_composed_when_writer_present() {
+        let dir = tempdir().unwrap();
+        let n = now_ns();
+        seed_views_db(
+            dir.path(),
+            &[(1, n - 1800 * 1_000_000_000, "an event in the window")],
+        );
+        let seg_dir = tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let report = run_one_pass(
+            dir.path(),
+            None,
+            None,
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+            Some(&writer),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.dreams_written, 1);
+
+        drop(writer);
+        join.await.ok();
+        assert_eq!(
+            count_dream_composed_frames(&seg),
+            1,
+            "a writer-backed pass that wrote dreams must emit exactly one 0xF4",
+        );
+    }
+
+    #[tokio::test]
+    async fn run_one_pass_no_frame_when_writer_none() {
+        // The CLI one-shot path passes writer = None (it audits separately).
+        let dir = tempdir().unwrap();
+        let n = now_ns();
+        seed_views_db(dir.path(), &[(1, n - 1800 * 1_000_000_000, "event")]);
+        let seg_dir = tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let report = run_one_pass(dir.path(), None, None, DEFAULT_WINDOW, DEFAULT_MAX_EVENTS, None)
+            .await
+            .unwrap();
+        assert_eq!(report.dreams_written, 1);
+
+        drop(writer);
+        join.await.ok();
+        assert_eq!(
+            count_dream_composed_frames(&seg),
+            0,
+            "writer = None must not emit a frame on this segment",
+        );
+    }
+
+    #[tokio::test]
+    async fn run_one_pass_no_frame_when_no_dreams() {
+        // Empty window (no views.db) → 0 dreams → no audit frame even with a writer.
+        let dir = tempdir().unwrap();
+        let seg_dir = tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let report = run_one_pass(
+            dir.path(),
+            None,
+            None,
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+            Some(&writer),
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.dreams_written, 0);
+
+        drop(writer);
+        join.await.ok();
+        assert_eq!(count_dream_composed_frames(&seg), 0);
+    }
+
+    #[tokio::test]
+    async fn run_one_pass_threads_chat_label_into_dreams() {
+        // embed groups everything into one cluster; the chat provider labels it.
+        let dir = tempdir().unwrap();
+        let n = now_ns();
+        seed_views_db(
+            dir.path(),
+            &[
+                (1, n - 1800 * 1_000_000_000, "first"),
+                (2, n - 900 * 1_000_000_000, "second"),
+            ],
+        );
+        let embed = AlwaysWeatherEmbed;
+        let report = run_one_pass(
+            dir.path(),
+            Some(&embed),
+            Some(&FixedLabelChat),
+            DEFAULT_WINDOW,
+            DEFAULT_MAX_EVENTS,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(report.path_taken, DreamingPath::Embedding);
+
+        let day = report.day_label();
+        let dreams = crate::daemon::dreaming::load_dreams_for_day(dir.path(), &day);
+        assert_eq!(dreams.len(), 1);
+        assert_eq!(
+            dreams[0].theme_label, "weekend trip planning",
+            "the LLM label must replace the deterministic cluster-N-seed-id",
+        );
+    }
+
+    #[test]
+    fn dream_composed_payload_has_stable_shape() {
+        let report = PassReport {
+            events_considered: 5,
+            dreams_written: 2,
+            path: PathBuf::from("/home/op/.neoth/dreams/2026-06-03.jsonl"),
+            path_taken: DreamingPath::Embedding,
+        };
+        let bytes = dream_composed_payload(&report, 1_700_000_000);
+        let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(v["day"], "2026-06-03");
+        assert_eq!(v["dreams"], 2);
+        assert_eq!(v["events_considered"], 5);
+        assert_eq!(v["path_taken"], "Embedding");
+        assert_eq!(v["ts_unix"], 1_700_000_000_u64);
     }
 }

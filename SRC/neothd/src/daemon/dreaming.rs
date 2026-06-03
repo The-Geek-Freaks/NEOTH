@@ -40,6 +40,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use crate::providers::{Provider, Request};
+
 /// One persisted dream entry. The deterministic v0.1 composer
 /// fills `theme_label` with a stable string derived from input
 /// event ids; Phase 2 replaces this with LLM-summarised themes
@@ -446,6 +448,93 @@ pub async fn embed_events(
 /// the wizard step ships (Phase 4b).
 pub const DREAMING_CLUSTER_THRESHOLD: f32 = 0.55;
 
+// ── SPEC-12 Phase 4b: LLM theme summarisation ───────────────────────────
+
+/// Max characters of one event preview fed into the theme-summary prompt.
+/// Bounds the prompt even when a cluster holds long events.
+const THEME_SUMMARY_PREVIEW_CHARS: usize = 200;
+/// Max previews included in the prompt. A cluster can be large; the first
+/// N give the model enough signal without an unbounded prompt.
+const THEME_SUMMARY_MAX_PREVIEWS: usize = 12;
+/// Max characters of the sanitised theme label (the rest is a `…` clamp).
+const THEME_LABEL_MAX_CHARS: usize = 60;
+
+/// Build the theme-summarisation prompt from a cluster's event previews.
+/// Pure + deterministic (no wall-clock, no RNG) so the prompt is replay-
+/// stable for a given cluster. Each preview is trimmed + truncated and the
+/// count is capped to keep the prompt bounded.
+pub fn build_theme_summary_prompt(previews: &[String]) -> String {
+    let mut body = String::new();
+    for p in previews.iter().take(THEME_SUMMARY_MAX_PREVIEWS) {
+        let trimmed = truncate_safe(p.trim(), THEME_SUMMARY_PREVIEW_CHARS);
+        if trimmed.is_empty() {
+            continue;
+        }
+        body.push_str("- ");
+        body.push_str(&trimmed);
+        body.push('\n');
+    }
+    format!(
+        "You are labelling a cluster of related memory snippets for a personal \
+         AI's nightly dream journal. Read the snippets and reply with ONLY a short \
+         theme label of 3 to 6 words — no punctuation, no quotes, no preamble, no \
+         explanation.\n\n\
+         Snippets:\n{body}\nTheme label:"
+    )
+}
+
+/// Sanitise a raw LLM theme label into a safe, bounded, single-line string.
+/// Replaces control chars with spaces, collapses whitespace runs, strips
+/// wrapping quotes/backticks, and clamps the length. An empty result (model
+/// returned nothing usable) falls back to `fallback` — the deterministic
+/// `cluster-N-seed-id` label — so a useless reply never blanks the theme.
+pub fn sanitize_theme_label(raw: &str, fallback: &str) -> String {
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let collapsed = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let unquoted = collapsed
+        .trim_matches(|c| c == '"' || c == '\'' || c == '`')
+        .trim();
+    if unquoted.is_empty() {
+        return fallback.to_string();
+    }
+    truncate_safe(unquoted, THEME_LABEL_MAX_CHARS)
+}
+
+/// Summarise one cluster's theme via the chat `provider`, or return the
+/// deterministic `fallback` label. Best-effort: `chat = None`, a provider
+/// error, or an empty/garbage reply all yield `fallback` — theme
+/// summarisation NEVER fails the dreaming pass (the dreams are the product;
+/// the label is a nicety).
+async fn summarise_or_fallback(
+    chat: Option<&dyn Provider>,
+    cluster_events: &[EventRef],
+    fallback: &str,
+) -> String {
+    let Some(provider) = chat else {
+        return fallback.to_string();
+    };
+    let previews: Vec<String> = cluster_events.iter().map(|e| e.preview.clone()).collect();
+    let prompt = build_theme_summary_prompt(&previews);
+    let req = Request {
+        prompt,
+        ..Default::default()
+    };
+    match provider.complete(req).await {
+        Ok(c) => sanitize_theme_label(&c.text, fallback),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                cluster = %fallback,
+                "dreaming: theme summarisation failed; using deterministic label",
+            );
+            fallback.to_string()
+        }
+    }
+}
+
 /// Single-linkage agglomerative clustering on event embeddings.
 ///
 /// Input: parallel slices — `events[i]` ↔ `embeddings[i]`. Output:
@@ -494,19 +583,23 @@ pub fn cluster_events_by_cosine(
 }
 
 /// Orchestrator: embed every event, cluster by cosine, compose one
-/// Dream per cluster. The theme_label is a stable string derived
-/// from the cluster's first event id; Phase 4b will replace this
-/// with an LLM-summarised motif (once the daemon has a chat
-/// `Provider` wired alongside the `EmbedProvider`).
+/// Dream per cluster. When `chat` is `Some`, each cluster's theme label
+/// is summarised by the chat provider (SPEC-12 Phase 4b — turns
+/// `cluster-3-seed-918` into a real motif); when `None` (or a per-cluster
+/// summary call fails) it falls back to the deterministic
+/// `cluster-N-seed-id` label so the shape never breaks.
 ///
 /// Returns `Err` when any embed call fails — the dreaming task in
 /// `daemon/dreaming_task.rs` (Phase 4c) catches this + falls back to
 /// the deterministic `compose_dream` path so the operator still
-/// gets a dream entry per day even when local inference is down.
+/// gets a dream entry per day even when local inference is down. A chat
+/// (theme-summary) failure is NON-fatal — it degrades that one label,
+/// never the pass.
 pub async fn compose_dreams_with_embeddings(
     day: &str,
     events: &[EventRef],
     provider: &dyn crate::providers::embed::EmbedProvider,
+    chat: Option<&dyn Provider>,
     threshold: f32,
 ) -> anyhow::Result<Vec<Dream>> {
     if events.is_empty() {
@@ -518,7 +611,8 @@ pub async fn compose_dreams_with_embeddings(
     for (idx, group) in groups.iter().enumerate() {
         let cluster_events: Vec<EventRef> = group.iter().map(|&i| events[i].clone()).collect();
         let seed_id = cluster_events.first().map(|e| e.id).unwrap_or(0);
-        let theme_label = format!("cluster-{idx}-seed-{seed_id}");
+        let fallback = format!("cluster-{idx}-seed-{seed_id}");
+        let theme_label = summarise_or_fallback(chat, &cluster_events, &fallback).await;
         dreams.push(compose_dream(day, &theme_label, &cluster_events));
     }
     Ok(dreams)
@@ -854,7 +948,7 @@ mod tests {
             cluster_ev(2, "weather pattern shifting"),
             cluster_ev(3, "news from berlin"),
         ];
-        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, 0.5)
+        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, None, 0.5)
             .await
             .unwrap();
         assert_eq!(dreams.len(), 2);
@@ -872,10 +966,130 @@ mod tests {
 
     #[tokio::test]
     async fn compose_dreams_empty_input_returns_empty() {
-        let dreams = compose_dreams_with_embeddings("2026-05-23", &[], &DreamSlotMock, 0.5)
+        let dreams = compose_dreams_with_embeddings("2026-05-23", &[], &DreamSlotMock, None, 0.5)
             .await
             .unwrap();
         assert!(dreams.is_empty());
+    }
+
+    // ── SPEC-12 Phase 4b — LLM theme summarisation ───────────────────────────
+
+    /// Chat provider that returns a fixed reply — exercises the summarised
+    /// theme-label path.
+    struct FixedLabelChat {
+        reply: &'static str,
+    }
+    #[async_trait::async_trait]
+    impl Provider for FixedLabelChat {
+        fn name(&self) -> &'static str {
+            "fixed_label_chat"
+        }
+        async fn complete(&self, _req: Request) -> anyhow::Result<crate::providers::Completion> {
+            Ok(crate::providers::Completion {
+                text: self.reply.into(),
+                model: "fixed_label_chat".into(),
+                latency: std::time::Duration::from_micros(1),
+                input_tokens: None,
+                output_tokens: None,
+            })
+        }
+    }
+
+    /// Chat provider that always errors — exercises the deterministic fallback.
+    struct FailingChat;
+    #[async_trait::async_trait]
+    impl Provider for FailingChat {
+        fn name(&self) -> &'static str {
+            "failing_chat"
+        }
+        async fn complete(&self, _req: Request) -> anyhow::Result<crate::providers::Completion> {
+            anyhow::bail!("chat provider down")
+        }
+    }
+
+    #[test]
+    fn build_theme_summary_prompt_lists_previews_and_instruction() {
+        let previews = vec!["weather forecast".to_string(), "rain on monday".to_string()];
+        let prompt = build_theme_summary_prompt(&previews);
+        assert!(prompt.contains("- weather forecast"));
+        assert!(prompt.contains("- rain on monday"));
+        assert!(prompt.contains("Theme label:"));
+        assert!(prompt.contains("3 to 6 words"));
+    }
+
+    #[test]
+    fn build_theme_summary_prompt_caps_preview_count() {
+        let previews: Vec<String> = (0..30).map(|i| format!("snippet number {i}")).collect();
+        let prompt = build_theme_summary_prompt(&previews);
+        // Only the first THEME_SUMMARY_MAX_PREVIEWS bullets appear.
+        let bullets = prompt.matches("- snippet number").count();
+        assert_eq!(
+            bullets, THEME_SUMMARY_MAX_PREVIEWS,
+            "prompt must cap previews at {THEME_SUMMARY_MAX_PREVIEWS}",
+        );
+        assert!(prompt.contains("snippet number 0"));
+        assert!(!prompt.contains("snippet number 29"));
+    }
+
+    #[test]
+    fn sanitize_theme_label_collapses_and_strips() {
+        assert_eq!(
+            sanitize_theme_label("  auth   refactor\n", "fb"),
+            "auth refactor"
+        );
+        assert_eq!(sanitize_theme_label("\"deploy pipeline\"", "fb"), "deploy pipeline");
+        assert_eq!(sanitize_theme_label("`code review`", "fb"), "code review");
+    }
+
+    #[test]
+    fn sanitize_theme_label_empty_falls_back() {
+        assert_eq!(sanitize_theme_label("", "cluster-0-seed-1"), "cluster-0-seed-1");
+        assert_eq!(sanitize_theme_label("   \n\t  ", "fb"), "fb");
+        assert_eq!(sanitize_theme_label("\"\"", "fb"), "fb");
+    }
+
+    #[test]
+    fn sanitize_theme_label_clamps_long_output() {
+        let long = "a".repeat(200);
+        let out = sanitize_theme_label(&long, "fb");
+        assert!(out.chars().count() <= THEME_LABEL_MAX_CHARS + 1, "got {} chars", out.chars().count());
+        assert!(out.ends_with('…'));
+    }
+
+    #[tokio::test]
+    async fn compose_dreams_uses_llm_label_when_chat_present() {
+        let day = "2026-06-03";
+        let events = vec![
+            cluster_ev(1, "weather forecast for monday"),
+            cluster_ev(2, "weather pattern shifting"),
+        ];
+        let chat = FixedLabelChat {
+            reply: "  monday weather outlook  ",
+        };
+        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&chat), 0.5)
+            .await
+            .unwrap();
+        assert_eq!(dreams.len(), 1);
+        // The LLM label replaced the deterministic cluster-N-seed-id.
+        assert_eq!(dreams[0].theme_label, "monday weather outlook");
+        assert!(!dreams[0].theme_label.contains("cluster-"));
+    }
+
+    #[tokio::test]
+    async fn compose_dreams_falls_back_to_deterministic_on_chat_error() {
+        let day = "2026-06-03";
+        let events = vec![cluster_ev(1, "weather forecast for monday")];
+        let dreams =
+            compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&FailingChat), 0.5)
+                .await
+                .unwrap();
+        assert_eq!(dreams.len(), 1);
+        // Chat error must degrade the label, never fail the pass.
+        assert!(
+            dreams[0].theme_label.starts_with("cluster-"),
+            "expected deterministic fallback, got {}",
+            dreams[0].theme_label,
+        );
     }
 
     // ── OB-01a (Session 24) to_obsidian_md serializer ─────────────────
