@@ -17,6 +17,7 @@ pub mod arxiv;
 pub mod caldav;
 pub mod github;
 pub mod google_tasks;
+pub mod microsoft_todo;
 pub mod todoist;
 pub mod tts;
 pub mod web_fetch;

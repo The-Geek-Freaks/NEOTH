@@ -103,6 +103,17 @@ pub struct Credentials {
     /// TD-02 CalDAV — Basic-auth password / app-password (SecretString for the
     /// same mlock+zeroize handling). Override: `NEOTH_CALDAV_PASSWORD`.
     pub caldav_password: Option<SecretString>,
+    /// TD-02 Microsoft To Do — Azure AD tenant (`common` for personal accounts,
+    /// or a tenant GUID). Override: `NEOTH_MS_TODO_TENANT_ID`.
+    pub ms_todo_tenant_id: Option<String>,
+    /// TD-02 Microsoft To Do — Azure app registration client id. Override:
+    /// `NEOTH_MS_TODO_CLIENT_ID`.
+    pub ms_todo_client_id: Option<String>,
+    /// TD-02 Microsoft To Do — client secret. Override: `NEOTH_MS_TODO_CLIENT_SECRET`.
+    pub ms_todo_client_secret: Option<SecretString>,
+    /// TD-02 Microsoft To Do — long-lived OAuth refresh token (scope
+    /// `Tasks.ReadWrite offline_access`). Override: `NEOTH_MS_TODO_REFRESH_TOKEN`.
+    pub ms_todo_refresh_token: Option<SecretString>,
     /// SL-00 (Session 32) — the cluster shared-secret passphrase. ALL nodes
     /// in one cluster share this phrase; it derives the `cluster_key` that
     /// HMAC-authenticates every announce + (future) gossip/task frame, so a
@@ -188,6 +199,10 @@ impl Credentials {
             caldav_url,
             caldav_username,
             caldav_password,
+            ms_todo_tenant_id,
+            ms_todo_client_id,
+            ms_todo_client_secret,
+            ms_todo_refresh_token,
             cluster_passphrase,
         } = self;
         provider_key.is_none()
@@ -207,6 +222,10 @@ impl Credentials {
             && caldav_url.is_none()
             && caldav_username.is_none()
             && caldav_password.is_none()
+            && ms_todo_tenant_id.is_none()
+            && ms_todo_client_id.is_none()
+            && ms_todo_client_secret.is_none()
+            && ms_todo_refresh_token.is_none()
             && cluster_passphrase.is_none()
     }
 

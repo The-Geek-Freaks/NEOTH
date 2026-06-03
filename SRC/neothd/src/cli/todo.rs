@@ -24,7 +24,7 @@ use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::secret::SecretString;
-use crate::tools::{caldav, google_tasks, todoist};
+use crate::tools::{caldav, google_tasks, microsoft_todo, todoist};
 
 #[derive(Args, Debug, Clone)]
 pub struct TodoArgs {
@@ -64,6 +64,10 @@ pub enum TaskProvider {
     /// autonomy/consent confirm, and a `0xC8 TODO_WRITE` audit frame). Needs
     /// `caldav_{url,username,password}` in credentials.yaml (or `NEOTH_CALDAV_*`).
     Caldav,
+    /// TD-02 — Microsoft To Do (MS Graph) via OAuth refresh. Needs
+    /// `ms_todo_{tenant_id,client_id,client_secret,refresh_token}` in
+    /// credentials.yaml (or `NEOTH_MS_TODO_*`).
+    Microsoft,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -87,6 +91,7 @@ pub async fn run_todo(args: TodoArgs) -> Result<()> {
         TaskProvider::Todoist => run_todoist(&args).await,
         TaskProvider::Google => run_google(&args).await,
         TaskProvider::Caldav => run_caldav(&args).await,
+        TaskProvider::Microsoft => run_microsoft(&args).await,
     }
 }
 
@@ -512,6 +517,119 @@ fn env_secret(var: &str) -> Option<SecretString> {
         .ok()
         .filter(|s| !s.is_empty())
         .map(SecretString::from)
+}
+
+// ── Microsoft To Do (TD-02) ────────────────────────────────────────────
+
+async fn run_microsoft(args: &TodoArgs) -> Result<()> {
+    let creds = microsoft_creds()?;
+    let access = microsoft_todo::refresh_access_token(
+        &creds.tenant_id,
+        &creds.client_id,
+        &creds.client_secret,
+        &creds.refresh_token,
+    )
+    .await?;
+    match &args.action {
+        TodoAction::List => {
+            let tasks = microsoft_todo::list_tasks(&access).await?;
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string_pretty(&tasks)?);
+                }
+                OutputFormat::Table => {
+                    if tasks.is_empty() {
+                        println!("(no open tasks)");
+                        return Ok(());
+                    }
+                    for t in &tasks {
+                        let due = t
+                            .due
+                            .as_ref()
+                            .map(|d| format!("  (due {})", d.date_time))
+                            .unwrap_or_default();
+                        println!("{}  {}{}", t.id, t.title, due);
+                    }
+                }
+            }
+        }
+        TodoAction::Add { content } => {
+            let task = microsoft_todo::create_task(&access, content).await?;
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::to_string_pretty(&task)?);
+                }
+                OutputFormat::Table => println!("✓ created {} — {}", task.id, task.title),
+            }
+        }
+        TodoAction::Close { id } => {
+            microsoft_todo::close_task(&access, id).await?;
+            match args.output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::json!({ "closed": id, "ok": true }))
+                }
+                OutputFormat::Table => println!("✓ closed {id}"),
+            }
+        }
+    }
+    Ok(())
+}
+
+struct MicrosoftCreds {
+    tenant_id: String,
+    client_id: String,
+    client_secret: SecretString,
+    refresh_token: SecretString,
+}
+
+/// Resolve MS To Do creds: `credentials.yaml::ms_todo_*` then the
+/// `NEOTH_MS_TODO_*` env overrides. `tenant_id` defaults to `common` (personal
+/// accounts); the rest bail with the exact missing field.
+fn microsoft_creds() -> Result<MicrosoftCreds> {
+    let creds = crate::config::credentials::Credentials::load_or_default(
+        &crate::config::credentials::default_path(),
+    )
+    .context("load credentials.yaml")?;
+    let tenant_id = creds
+        .ms_todo_tenant_id
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("NEOTH_MS_TODO_TENANT_ID")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+        .unwrap_or_else(|| "common".to_string());
+    let client_id = creds
+        .ms_todo_client_id
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            std::env::var("NEOTH_MS_TODO_CLIENT_ID")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
+        .ok_or_else(|| missing_ms("client_id", "NEOTH_MS_TODO_CLIENT_ID"))?;
+    let client_secret = creds
+        .ms_todo_client_secret
+        .or_else(|| env_secret("NEOTH_MS_TODO_CLIENT_SECRET"))
+        .ok_or_else(|| missing_ms("client_secret", "NEOTH_MS_TODO_CLIENT_SECRET"))?;
+    let refresh_token = creds
+        .ms_todo_refresh_token
+        .or_else(|| env_secret("NEOTH_MS_TODO_REFRESH_TOKEN"))
+        .ok_or_else(|| missing_ms("refresh_token", "NEOTH_MS_TODO_REFRESH_TOKEN"))?;
+    Ok(MicrosoftCreds {
+        tenant_id,
+        client_id,
+        client_secret,
+        refresh_token,
+    })
+}
+
+fn missing_ms(field: &str, env: &str) -> anyhow::Error {
+    anyhow::anyhow!(
+        "no Microsoft To Do {field} — add `ms_todo_{field}` to ~/.neoth/credentials.yaml or set {env}. \
+         Register an Azure app (delegated `Tasks.ReadWrite` + `offline_access`), run the OAuth consent \
+         flow to mint a refresh token; tenant defaults to `common` for personal accounts."
+    )
 }
 
 fn missing_google(field: &str, env: &str) -> anyhow::Error {
