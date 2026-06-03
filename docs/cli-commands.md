@@ -146,6 +146,28 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `--sampling-seed <SEED>` — Optional RNG seed for reproducible sampling. Pair with `--temperature > 0` to make a non-greedy call replayable. Unused on cloud providers
 - `--resume-from <HASH>` — Round-3 v0.4 QU-11 / ARS-6 — resume a prior session from a `MODE_CHECKPOINT` (WAL `0x9A`) snapshot. Takes the 12-char checkpoint hash (or any unique prefix) printed by the prior session at checkpoint-emission time. NEOTH looks up the snapshot via `recall::reconstruct::reconstruct_from_checkpoint`, prints a one-line resume banner ("resuming session X / phase Y / provider Z"), and prepends a typed RESUME-CONTEXT block to the chat's system prompt so the assistant knows the prior pipeline shape. Full pipeline-state rehydration (re-scoping MCP servers, restoring council hemisphere routing) lands as a follow-up — this surface unblocks the operator-facing `chat resume from <hash>` workflow today
 
+## `neoth checkpoint`
+
+SC-02 — named checkpoints over the rollback snapshot primitive. `save <label>` tags the most recent pre-mutation snapshot; `list` shows them; `restore <label>` resolves the name + delegates to the rollback `apply` path
+
+### `neoth checkpoint list`
+
+List saved checkpoints
+
+### `neoth checkpoint restore`
+
+Restore the state captured by a named checkpoint (delegates to the rollback `apply` path with `--confirm`)
+
+- `<LABEL>` — Checkpoint label saved via `neoth checkpoint save`
+
+### `neoth checkpoint save`
+
+Tag the most recent pre-mutation snapshot with a name. The snapshot must already exist (run a mutation first, e.g. `neoth config set`)
+
+- `<LABEL>` — Checkpoint label: `[A-Za-z0-9_-][A-Za-z0-9_.-]{0,63}`
+- `--description <DESCRIPTION>` — Optional human description
+- `--force <FORCE>` — Overwrite an existing checkpoint with the same label
+
 ## `neoth cloud`
 
 Mirror the session archive into the operator's cloud-client local folder (R-8). NEOTH writes into `<dest>/<subdir>/`; the cloud vendor's desktop client (Dropbox / GDrive / OneDrive / iCloud) handles the actual upload. `status` shows the wired destination + last sync state, `sync` runs a pass right now

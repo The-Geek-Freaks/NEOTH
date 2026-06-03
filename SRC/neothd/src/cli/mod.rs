@@ -38,6 +38,7 @@ pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
 pub mod autonomy;
+pub mod checkpoint;
 pub mod credential;
 pub mod cron;
 pub mod dream;
@@ -448,6 +449,12 @@ pub enum Commands {
     /// reports providers that won many consecutive outer-council debates (a
     /// low-dissent fitness signal). Read-only + deterministic.
     Ecology(ecology::EcologyArgs),
+
+    /// SC-02 — named checkpoints over the rollback snapshot primitive.
+    /// `save <label>` tags the most recent pre-mutation snapshot; `list`
+    /// shows them; `restore <label>` resolves the name + delegates to the
+    /// rollback `apply` path.
+    Checkpoint(checkpoint::CheckpointArgs),
 
     /// Round-3 v0.4 SC-04 — operator-facing security posture
     /// aggregator. `neoth security audit` runs every available
@@ -1106,6 +1113,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Ecology(mut args) => {
             args.output = global_output;
             ecology::run_ecology(args).await?;
+        }
+        Commands::Checkpoint(mut args) => {
+            args.output = global_output;
+            checkpoint::run_checkpoint(args).await?;
         }
         Commands::Security(args) => {
             // SC-04: security audit aggregator has its own output
