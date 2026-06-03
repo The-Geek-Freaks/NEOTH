@@ -94,10 +94,13 @@ pub fn resolve_or_create_human_uuid(
 }
 
 /// Merge `victim` into `canonical`: every alias pointing at `victim` is
-/// reassigned to `canonical`, then the victim's identity row is deleted.
-/// Returns the number of aliases reassigned. An alias that would collide with
-/// an existing canonical alias (UNIQUE) is dropped (the canonical one wins).
-pub fn merge_human_uuids(conn: &Connection, canonical: &str, victim: &str) -> Result<u64> {
+/// reassigned to `canonical`, then `victim` is TOMBSTONED (its `merged_into` is
+/// set — the row is kept, NOT deleted, so the merge is reversible + auditable).
+/// Returns the victim's aliases as they were BEFORE the merge (the audit
+/// before-state — the caller emits a `0x9B IDENTITY_MERGED` frame with these so
+/// a future `neoth identity split` can reconstruct the split). An alias that
+/// would collide with an existing canonical alias (UNIQUE) is dropped.
+pub fn merge_human_uuids(conn: &Connection, canonical: &str, victim: &str) -> Result<Vec<Alias>> {
     if canonical == victim {
         anyhow::bail!("cannot merge an identity into itself");
     }
@@ -113,12 +116,27 @@ pub fn merge_human_uuids(conn: &Connection, canonical: &str, victim: &str) -> Re
     if !canonical_exists {
         anyhow::bail!("canonical identity {canonical} does not exist");
     }
-    let reassigned = conn
-        .execute(
-            "UPDATE OR IGNORE idx_human_identity_aliases SET uuid = ?1 WHERE uuid = ?2",
-            rusqlite::params![canonical, victim],
-        )
-        .context("reassign aliases")? as u64;
+    // Capture the victim's aliases BEFORE reassignment — the reversible
+    // before-state for the audit frame.
+    let before: Vec<Alias> = {
+        let mut stmt = conn.prepare(
+            "SELECT channel, sender_id, chat_id FROM idx_human_identity_aliases \
+             WHERE uuid = ?1 ORDER BY channel, sender_id",
+        )?;
+        stmt.query_map([victim], |r| {
+            Ok(Alias {
+                channel: r.get(0)?,
+                sender_id: r.get(1)?,
+                chat_id: r.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?
+    };
+    conn.execute(
+        "UPDATE OR IGNORE idx_human_identity_aliases SET uuid = ?1 WHERE uuid = ?2",
+        rusqlite::params![canonical, victim],
+    )
+    .context("reassign aliases")?;
     // Any alias left on the victim collided with an existing canonical alias —
     // drop the duplicate (the canonical row already covers that triple).
     conn.execute(
@@ -126,9 +144,13 @@ pub fn merge_human_uuids(conn: &Connection, canonical: &str, victim: &str) -> Re
         [victim],
     )
     .context("drop leftover victim aliases")?;
-    conn.execute("DELETE FROM idx_human_identity WHERE uuid = ?1", [victim])
-        .context("delete victim identity")?;
-    Ok(reassigned)
+    // Tombstone (NOT delete) — keeps the merge reversible + the row out of `list`.
+    conn.execute(
+        "UPDATE idx_human_identity SET merged_into = ?1 WHERE uuid = ?2",
+        rusqlite::params![canonical, victim],
+    )
+    .context("tombstone victim identity")?;
+    Ok(before)
 }
 
 /// List every identity + its aliases, optionally filtered to those that have at
@@ -136,7 +158,8 @@ pub fn merge_human_uuids(conn: &Connection, canonical: &str, victim: &str) -> Re
 /// order ≈ creation order).
 pub fn list_identities(conn: &Connection, channel_filter: Option<&str>) -> Result<Vec<Identity>> {
     let mut stmt = conn.prepare(
-        "SELECT uuid, created_at_unix FROM idx_human_identity ORDER BY created_at_unix ASC, uuid ASC",
+        "SELECT uuid, created_at_unix FROM idx_human_identity \
+         WHERE merged_into IS NULL ORDER BY created_at_unix ASC, uuid ASC",
     )?;
     let ids: Vec<(String, i64)> = stmt
         .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
@@ -179,7 +202,7 @@ mod tests {
     fn db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE idx_human_identity (uuid TEXT NOT NULL PRIMARY KEY, created_at_unix INTEGER NOT NULL);
+            "CREATE TABLE idx_human_identity (uuid TEXT NOT NULL PRIMARY KEY, created_at_unix INTEGER NOT NULL, merged_into TEXT);
              CREATE TABLE idx_human_identity_aliases (uuid TEXT NOT NULL, channel TEXT NOT NULL, \
                 sender_id TEXT NOT NULL, chat_id TEXT NOT NULL, UNIQUE(channel, sender_id, chat_id));",
         )
@@ -213,17 +236,20 @@ mod tests {
         let conn = db();
         let tg = resolve_or_create_human_uuid(&conn, "telegram", "100", "chatA").unwrap();
         let sl = resolve_or_create_human_uuid(&conn, "slack", "U200", "chatB").unwrap();
-        let n = merge_human_uuids(&conn, &tg, &sl).unwrap();
-        assert_eq!(n, 1, "the slack alias reassigned to the telegram uuid");
-        // Victim identity gone; both aliases now resolve to tg.
-        let victim_left: i64 = conn
+        let before = merge_human_uuids(&conn, &tg, &sl).unwrap();
+        assert_eq!(before.len(), 1, "the slack alias reassigned to the telegram uuid");
+        assert_eq!(before[0].channel, "slack");
+        // Victim is TOMBSTONED (kept, merged_into set), not deleted — reversible.
+        let merged_into: Option<String> = conn
             .query_row(
-                "SELECT count(*) FROM idx_human_identity WHERE uuid = ?1",
+                "SELECT merged_into FROM idx_human_identity WHERE uuid = ?1",
                 [&sl],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(victim_left, 0);
+        assert_eq!(merged_into.as_deref(), Some(tg.as_str()));
+        // `list` excludes the tombstoned victim → only the canonical remains.
+        assert_eq!(list_identities(&conn, None).unwrap().len(), 1);
         let resolved = resolve_or_create_human_uuid(&conn, "slack", "U200", "chatB").unwrap();
         assert_eq!(resolved, tg, "the merged slack alias now points at the canonical");
     }

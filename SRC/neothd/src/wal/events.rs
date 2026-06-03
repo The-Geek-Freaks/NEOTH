@@ -775,6 +775,17 @@ pub const EVENT_TYPE_GROUNDTRUTH_IMPORTED: u8 = 0x99;
 /// Payload: `{checkpoint_hash, session_id, mode, ts}`.
 pub const EVENT_TYPE_MODE_CHECKPOINT: u8 = 0x9A;
 
+/// `0x9B IDENTITY_MERGED` — SPEC-11. The operator ran `neoth identity merge
+/// <canonical> <victim>`: every alias of `victim` was reassigned to `canonical`
+/// and `victim` was tombstoned (kept, `merged_into` set). The frame carries the
+/// FULL before-state (the reassigned aliases) so the merge is auditable AND
+/// reversible — a future `neoth identity split` can reconstruct it. Memory-ops
+/// band — identity is a memory-attribution operation.
+///
+/// Payload (JSON): `{canonical, victim, aliases: [{channel, sender_id,
+/// chat_id}], aliases_reassigned, ts_unix}`.
+pub const EVENT_TYPE_IDENTITY_MERGED: u8 = 0x9B;
+
 // ---- 0xA0..=0xAF  Permissions / autonomy (R-23) ---------------------------
 
 /// Permission decision returned `Allow` (after a possible Confirm round-trip).
@@ -1513,6 +1524,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
     ("dream_composed", EVENT_TYPE_DREAM_COMPOSED),
     ("memory_transfer_exported", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
+    ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
     ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
@@ -1769,6 +1781,8 @@ const _: () = {
         || EVENT_TYPE_GROUNDTRUTH_IMPORTED > 0x9F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MODE_CHECKPOINT < 0x90 || EVENT_TYPE_MODE_CHECKPOINT > 0x9F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_IDENTITY_MERGED < 0x90 || EVENT_TYPE_IDENTITY_MERGED > 0x9F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PERMISSION_GRANTED < 0xA0 || EVENT_TYPE_PERMISSION_GRANTED > 0xAF) as usize];
     let _ = [(); 1]
@@ -2022,6 +2036,7 @@ mod tests {
             ("GROUNDTRUTH_REVOKED", EVENT_TYPE_GROUNDTRUTH_REVOKED),
             ("GROUNDTRUTH_IMPORTED", EVENT_TYPE_GROUNDTRUTH_IMPORTED),
             ("MODE_CHECKPOINT", EVENT_TYPE_MODE_CHECKPOINT),
+            ("IDENTITY_MERGED", EVENT_TYPE_IDENTITY_MERGED),
             ("PERMISSION_GRANTED", EVENT_TYPE_PERMISSION_GRANTED),
             ("PERMISSION_DENIED", EVENT_TYPE_PERMISSION_DENIED),
             ("LEVEL_ELEVATED", EVENT_TYPE_LEVEL_ELEVATED),

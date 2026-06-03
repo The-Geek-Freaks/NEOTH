@@ -490,7 +490,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         -- on next open with no migration step).
         CREATE TABLE IF NOT EXISTS idx_human_identity (
             uuid             TEXT NOT NULL PRIMARY KEY,
-            created_at_unix  INTEGER NOT NULL
+            created_at_unix  INTEGER NOT NULL,
+            -- SPEC-11 merge tombstone: when set, this identity was folded into
+            -- the `merged_into` uuid (its aliases were reassigned there). Kept
+            -- (not deleted) so the merge is reversible + auditable; `list`
+            -- excludes tombstoned rows.
+            merged_into      TEXT
         );
         CREATE TABLE IF NOT EXISTS idx_human_identity_aliases (
             uuid       TEXT NOT NULL,
@@ -551,6 +556,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         "#,
     )
     .context("apply views schema")?;
+
+    // SPEC-11 merge tombstone — idempotent column add for an `idx_human_identity`
+    // created before the `merged_into` column existed. `CREATE TABLE IF NOT
+    // EXISTS` never alters an existing table, so back-fill the column here;
+    // `.ok()` swallows the "duplicate column" error on tables that already have it.
+    let _ = conn.execute("ALTER TABLE idx_human_identity ADD COLUMN merged_into TEXT", []);
 
     // Stamp schema version (idempotent).
     conn.execute(

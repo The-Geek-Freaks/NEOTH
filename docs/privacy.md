@@ -89,4 +89,29 @@ NEOTH is designed for a single operator or trusted private cluster first.
 | Private mesh pairing and transport policy. | Public internet control plane by default. |
 | Redaction and evidence semantics. | Perfect deletion from third-party providers already called by policy. |
 
+## Cross-channel identity (SPEC-11)
+
+When you reach NEOTH from more than one channel (Telegram, Slack, WhatsApp, …),
+it can link those channel-native aliases under one stable `human_uuid` so it
+treats "you on Telegram" and "you on Slack" as the same person. This is useful —
+but a unified identity is also a **tracking amplifier**, so it is bounded:
+
+- **Auto-link is per-channel-alias, never cross-channel.** The inbound resolver
+  mints a `human_uuid` per `(channel, sender_id, chat_id)` triple. NEOTH does
+  **not** guess that two *different* channel aliases are the same person.
+- **Linking two aliases is operator-controlled, explicit, and auditable.** Only
+  `neoth identity merge <keep> <fold>` joins two identities. Every merge writes a
+  `0x9B IDENTITY_MERGED` WAL frame carrying the full before-state (the reassigned
+  aliases), so the link is reviewable in the audit chain (`neoth wal show --type
+  identity_merged`).
+- **Merge is reversible by design.** The folded identity is *tombstoned*
+  (`merged_into` set), not deleted — the row + the audit frame retain enough to
+  reconstruct a future `identity split`. No attribution history is destroyed.
+- **The identity map never leaves the machine.** It lives in the local
+  `views.db` like the rest of memory; it is not shared with providers or peers.
+
+The `human_uuid` you receive an encrypted memory transfer under is your X25519
+receiving key (`neoth identity pubkey`); it is unrelated to the channel-identity
+map above and is auto-managed locally.
+
 For vulnerability reporting, see [../SECURITY.md](../SECURITY.md).
