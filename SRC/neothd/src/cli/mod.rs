@@ -40,6 +40,7 @@ pub mod groundtruth_wizard;
 pub mod autonomy;
 pub mod credential;
 pub mod cron;
+pub mod dream;
 pub mod gui;
 pub mod n8n;
 pub mod gui_stream;
@@ -237,6 +238,12 @@ pub enum Commands {
     /// | full | custom`) in freedom.yaml. `show` prints the current level;
     /// `set <level>` persists a new one without re-running the wizard.
     Autonomy(autonomy::AutonomyArgs),
+
+    /// Compose dreams now (SPEC-12 / R-02): `dream now` runs one dreaming pass
+    /// over the recent window on-demand — embed + cosine-cluster the window's
+    /// episodes into themed Dream records under `~/.neoth/dreams/` — instead of
+    /// waiting for the nightly cron. Emits `0xF4 DREAM_COMPOSED`.
+    Dream(dream::DreamArgs),
 
     /// Manage `credentials.yaml`: `list` shows which credential keys are set
     /// (NAMES only, never values); `import --file <path>` merges a
@@ -847,6 +854,9 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Credential(args) => {
             credential::run_credential(args, global_output)?;
+        }
+        Commands::Dream(args) => {
+            dream::run_dream(args, global_output).await?;
         }
         Commands::Gui(args) => {
             gui::run_gui(args, global_output)?;

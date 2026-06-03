@@ -1496,6 +1496,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     ("regression_alert", EVENT_TYPE_REGRESSION_ALERT),
     ("tombstone_requested", EVENT_TYPE_TOMBSTONE_REQUESTED),
+    ("dream_composed", EVENT_TYPE_DREAM_COMPOSED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
     ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
@@ -1591,6 +1592,17 @@ pub const EVENT_TYPE_PRE_MUTATION_SNAPSHOT: u8 = 0xF2;
 /// matched, so a future audit consumer can map each marker back to
 /// its driving forget request.
 pub const EVENT_TYPE_REDACTION_MARKER: u8 = 0xF3;
+
+/// `0xF4 DREAM_COMPOSED` — SPEC-12 / R-02. The dreaming pass (operator-triggered
+/// `neoth dream now`, or the nightly cron) composed one or more dream records
+/// over a recent window: it embedded the window's episodes, cosine-clustered
+/// them into themes, and appended a Dream per cluster to
+/// `~/.neoth/dreams/YYYY-MM-DD.jsonl`. The audit trail for memory consolidation
+/// — an operator can reconstruct when dreams were formed + over how many events.
+///
+/// Payload (JSON): `{day, dreams, events_considered, path_taken, ts_unix}`
+/// (`path_taken` = "Embedding" | "Deterministic").
+pub const EVENT_TYPE_DREAM_COMPOSED: u8 = 0xF4;
 
 // ---------------------------------------------------------------------------
 // Compile-time invariants: assert every constant sits in its declared band.
@@ -1862,6 +1874,7 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_TOMBSTONE_REQUESTED < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_PRE_MUTATION_SNAPSHOT < 0xF0) as usize];
     let _ = [(); 1][(EVENT_TYPE_REDACTION_MARKER < 0xF0) as usize];
+    let _ = [(); 1][(EVENT_TYPE_DREAM_COMPOSED < 0xF0) as usize];
 };
 
 #[cfg(test)]
@@ -2091,6 +2104,7 @@ mod tests {
             ("TOMBSTONE_REQUESTED", EVENT_TYPE_TOMBSTONE_REQUESTED),
             ("PRE_MUTATION_SNAPSHOT", EVENT_TYPE_PRE_MUTATION_SNAPSHOT),
             ("REDACTION_MARKER", EVENT_TYPE_REDACTION_MARKER),
+            ("DREAM_COMPOSED", EVENT_TYPE_DREAM_COMPOSED),
         ];
         for i in 0..codes.len() {
             for j in (i + 1)..codes.len() {

@@ -428,6 +428,17 @@ Run operator health checks (freedom/credentials/db/wal/hmac/quota/...). Exit cod
 - `--explain <NAME>` — V03-07: print operator-facing documentation for the named check (what it tests, common failures, fix steps) instead of running the full diagnostic suite. Combine with `--output json` for scripted runbook lookups. Pair with `--list-checks` to see what's available
 - `--list-checks <LIST_CHECKS>` — V03-07: print the list of check names recognised by `--explain`. Useful for tab-completion + operator-side runbook generation
 
+## `neoth dream`
+
+Compose dreams now (SPEC-12 / R-02): `dream now` runs one dreaming pass over the recent window on-demand — embed + cosine-cluster the window's episodes into themed Dream records under `~/.neoth/dreams/` — instead of waiting for the nightly cron. Emits `0xF4 DREAM_COMPOSED`
+
+### `neoth dream now`
+
+Compose dreams over the recent window right now (default: last 24h)
+
+- `--window-secs <WINDOW_SECS>` — Look-back window in seconds. Default 86400 (24h)
+- `--max-events <MAX_EVENTS>` — Max events to embed + cluster this pass. Default 500
+
 ## `neoth events`
 
 Browse the WAL event-type registry. Self-documenting audit trail — `neoth events` lists every code NEOTH writes, `--code 0xNN` looks up a single byte, `--band 0x90` filters to memory-tier events
