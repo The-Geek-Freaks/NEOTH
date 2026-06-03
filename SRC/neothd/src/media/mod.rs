@@ -20,6 +20,10 @@ pub mod document;
 pub mod pdf;
 pub mod pdf_forms;
 pub mod stt_dispatch;
+/// MM-01b — cloud STT providers (OpenAI Whisper API + Azure Speech) + the
+/// `make_stt_provider` factory. REST via `providers::http_client`. Transcript
+/// text is never WAL-written (privacy).
+pub mod stt_provider;
 /// MM-03b — cloud TTS providers (Azure Cognitive Services + ElevenLabs) +
 /// the `make_tts_provider` factory. REST via `providers::http_client`.
 pub mod tts_cloud;

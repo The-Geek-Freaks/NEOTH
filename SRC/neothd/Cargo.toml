@@ -339,7 +339,7 @@ pin-project = "1"
 # `rustls-tls` only (no openssl dep, no platform certs ambiguity).
 # `json` feature gives serde-backed request/response helpers.
 # `stream` feature enables byte-stream responses for SSE parsing in Phase 5C.
-reqwest      = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking", "socks"] }
+reqwest      = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "blocking", "socks", "multipart"] }
 futures-util = "0.3"
 
 # A7 inbound webhook listener -- minimal HTTP/1.1 server on 127.0.0.1
