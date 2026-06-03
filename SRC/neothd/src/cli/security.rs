@@ -365,6 +365,32 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
         },
     });
 
+    // PL-05b email LLM tie-breaker — engaged (off) means no LLM ever sees an
+    // inbound mail; relaxed (on) spends an LLM call per borderline email.
+    rails.push(Rail {
+        name: "email_llm_tiebreak",
+        engaged: !cfg.email.llm_tiebreak,
+        detail: if cfg.email.llm_tiebreak {
+            "ON — an LLM second-opinion classifies borderline inbound mail".to_string()
+        } else {
+            "off — deterministic rules only; no LLM sees your mail".to_string()
+        },
+    });
+
+    // PL-05b email downgrade — the DANGEROUS direction: a benign LLM verdict
+    // overriding the rules to auto-DELIVER a flagged email. Engaged = denied.
+    rails.push(Rail {
+        name: "email_downgrade_allowed",
+        engaged: !cfg.email.llm_tiebreak_allow_downgrade,
+        detail: if cfg.email.llm_tiebreak_allow_downgrade {
+            "ALLOWED — a benign LLM verdict may auto-DELIVER a flagged email (dangerous; \
+             an LLM false-negative could let phishing reach auto-action)"
+                .to_string()
+        } else {
+            "denied — the LLM may only hold/quarantine, never auto-deliver".to_string()
+        },
+    });
+
     rails
 }
 
@@ -980,20 +1006,36 @@ mod tests {
         // A fresh install's protective defaults must read as ENGAGED.
         let cfg = FreedomConfig::default();
         let rails = collect_rails(&cfg);
-        assert_eq!(rails.len(), 8, "all rails surfaced");
+        assert_eq!(rails.len(), 10, "all rails surfaced");
         for name in [
-            "autonomy_gate",       // default Standard = gated
-            "private_inference",   // default no cloud fallback
-            "proactive_messaging", // default off
-            "cluster_transport",   // default off
-            "os_file_tools",       // default empty allowlists = deny-all
-            "os_app_launch",       // default empty exec allowlist = deny-all
+            "autonomy_gate",          // default Standard = gated
+            "private_inference",      // default no cloud fallback
+            "proactive_messaging",    // default off
+            "cluster_transport",      // default off
+            "os_file_tools",          // default empty allowlists = deny-all
+            "os_app_launch",          // default empty exec allowlist = deny-all
+            "email_llm_tiebreak",     // default off = no LLM sees mail
+            "email_downgrade_allowed", // default denied = no LLM auto-deliver
         ] {
             assert!(
                 rail(&rails, name).engaged,
                 "{name} must be engaged on a default install"
             );
         }
+    }
+
+    #[test]
+    fn safe_mode_email_downgrade_relaxes_when_allowed() {
+        // The DANGEROUS switch must read as RELAXED when the operator opts in,
+        // so it's visible in the security surface.
+        let mut cfg = FreedomConfig::default();
+        cfg.email.llm_tiebreak = true;
+        cfg.email.llm_tiebreak_allow_downgrade = true;
+        let rails = collect_rails(&cfg);
+        assert!(!rail(&rails, "email_llm_tiebreak").engaged);
+        let downgrade = rail(&rails, "email_downgrade_allowed");
+        assert!(!downgrade.engaged, "downgrade-allowed must read RELAXED");
+        assert!(downgrade.detail.to_lowercase().contains("auto-deliver"));
     }
 
     #[test]

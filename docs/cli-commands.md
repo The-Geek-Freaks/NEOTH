@@ -487,6 +487,26 @@ Fetch newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and
 - `--dry-run <DRY_RUN>` — Show the resolved connection (host/port/user/auth-kind) WITHOUT connecting, authenticating, or fetching. Never prints the secret
 - `--include-seen <INCLUDE_SEEN>` — Re-process messages already in the local seen-state table (P1c dedup). By default a re-fetch SKIPS mail NEOTH already triaged (UNSEEN + `BODY.PEEK[]` would otherwise re-pull it forever); pass this to triage them again (e.g. after enabling the tie-breaker)
 
+### `neoth email trust`
+
+P1a — manage the trusted-sender domain allowlist (`freedom.yaml::email.trusted_domains`). A trusted sender is FLAGGED in the triage output + audit, but its mail is STILL fully sanitized + threat-scored ("trusted but still sanitized")
+
+#### `neoth email trust add`
+
+Add a domain to the trusted-sender allowlist
+
+- `<DOMAIN>` — Domain (e.g. `acme.com`). Matches exactly + as a subdomain
+
+#### `neoth email trust list`
+
+List the trusted-sender domains
+
+#### `neoth email trust remove`
+
+Remove a domain from the trusted-sender allowlist
+
+- `<DOMAIN>` — Domain to remove
+
 ## `neoth events`
 
 Browse the WAL event-type registry. Self-documenting audit trail — `neoth events` lists every code NEOTH writes, `--code 0xNN` looks up a single byte, `--band 0x90` filters to memory-tier events

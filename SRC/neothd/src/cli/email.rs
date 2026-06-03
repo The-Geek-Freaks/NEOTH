@@ -57,6 +57,30 @@ pub enum EmailAction {
         #[arg(long)]
         include_seen: bool,
     },
+    /// P1a — manage the trusted-sender domain allowlist
+    /// (`freedom.yaml::email.trusted_domains`). A trusted sender is FLAGGED in
+    /// the triage output + audit, but its mail is STILL fully sanitized +
+    /// threat-scored ("trusted but still sanitized").
+    Trust {
+        #[command(subcommand)]
+        action: EmailTrustAction,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum EmailTrustAction {
+    /// Add a domain to the trusted-sender allowlist.
+    Add {
+        /// Domain (e.g. `acme.com`). Matches exactly + as a subdomain.
+        domain: String,
+    },
+    /// List the trusted-sender domains.
+    List,
+    /// Remove a domain from the trusted-sender allowlist.
+    Remove {
+        /// Domain to remove.
+        domain: String,
+    },
 }
 
 pub async fn run_email(args: EmailArgs) -> Result<()> {
@@ -69,7 +93,139 @@ pub async fn run_email(args: EmailArgs) -> Result<()> {
             dry_run,
             include_seen,
         } => run_fetch(args.output, limit, username, host, port, dry_run, include_seen).await,
+        EmailAction::Trust { action } => run_email_trust(action, args.output),
     }
+}
+
+/// Pure: apply an add/remove to a trusted-domains list (lowercased, trimmed,
+/// dedup-on-add). Returns the new list — the caller does the IO.
+fn apply_domain_op(
+    mut domains: Vec<String>,
+    op: &EmailTrustAction,
+) -> (Vec<String>, &'static str) {
+    match op {
+        EmailTrustAction::Add { domain } => {
+            let d = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+            if !d.is_empty() && !domains.iter().any(|x| x == &d) {
+                domains.push(d);
+                domains.sort();
+            }
+            (domains, "added")
+        }
+        EmailTrustAction::Remove { domain } => {
+            let d = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+            let before = domains.len();
+            domains.retain(|x| x != &d);
+            let verb = if domains.len() < before {
+                "removed"
+            } else {
+                "not present"
+            };
+            (domains, verb)
+        }
+        EmailTrustAction::List => (domains, "listed"),
+    }
+}
+
+/// Read the current `email.trusted_domains` from freedom.yaml (empty when
+/// absent/unset).
+fn read_trusted_domains() -> Vec<String> {
+    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    cfg.email.trusted_domains
+}
+
+fn run_email_trust(action: EmailTrustAction, output: OutputFormat) -> Result<()> {
+    let current = read_trusted_domains();
+
+    if matches!(action, EmailTrustAction::List) {
+        return render_trusted(&current, output);
+    }
+
+    let (updated, verb) = apply_domain_op(current, &action);
+    write_trusted_domains(&updated)?;
+    let touched = match &action {
+        EmailTrustAction::Add { domain } | EmailTrustAction::Remove { domain } => domain.clone(),
+        EmailTrustAction::List => String::new(),
+    };
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => println!(
+            "{}",
+            serde_json::json!({ "op": verb, "domain": touched, "trusted_domains": updated })
+        ),
+        OutputFormat::Table => {
+            println!("✓ {verb}: {touched}");
+            render_trusted(&updated, output)?;
+        }
+    }
+    Ok(())
+}
+
+fn render_trusted(domains: &[String], output: OutputFormat) -> Result<()> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::json!({ "trusted_domains": domains }))
+        }
+        OutputFormat::Table => {
+            if domains.is_empty() {
+                println!("(no trusted domains — `neoth email trust add <domain>`)");
+            } else {
+                for d in domains {
+                    println!("{d}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Write `email.trusted_domains` back to freedom.yaml, preserving every other
+/// key (only the `email.trusted_domains` sequence is replaced). Atomic
+/// (`.tmp` + rename). Comments on the rewritten file are not preserved (a known
+/// serde_yaml limitation — the operator edits via this CLI, not by hand, which
+/// is the point of P1a's UX).
+fn write_trusted_domains(domains: &[String]) -> Result<()> {
+    use std::io::Write;
+    let path = crate::config::FreedomConfig::default_path();
+    let mut root: serde_yaml::Value = if path.exists() {
+        let text = std::fs::read_to_string(&path)
+            .with_context(|| format!("read {}", path.display()))?;
+        serde_yaml::from_str(&text).with_context(|| format!("parse {}", path.display()))?
+    } else {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    };
+    let map = root
+        .as_mapping_mut()
+        .context("freedom.yaml is not a YAML mapping")?;
+    let email_key = serde_yaml::Value::from("email");
+    let mut email = map
+        .get(&email_key)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    email.insert(
+        serde_yaml::Value::from("trusted_domains"),
+        serde_yaml::Value::Sequence(
+            domains
+                .iter()
+                .map(|d| serde_yaml::Value::from(d.clone()))
+                .collect(),
+        ),
+    );
+    map.insert(email_key, serde_yaml::Value::Mapping(email));
+
+    let body = serde_yaml::to_string(&root).context("serialise freedom.yaml")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let tmp = path.with_extension("yaml.tmp");
+    {
+        let mut f = std::fs::File::create(&tmp)
+            .with_context(|| format!("create {}", tmp.display()))?;
+        f.write_all(body.as_bytes())
+            .with_context(|| format!("write {}", tmp.display()))?;
+    }
+    std::fs::rename(&tmp, &path).with_context(|| format!("rename into {}", path.display()))?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -446,4 +602,49 @@ async fn fetch_and_triage(
          unavailable. Release binaries include it; from source, rebuild with \
          `cargo build --features imap_fetch`. (`--dry-run` works on every build.)"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn add(d: &str) -> EmailTrustAction {
+        EmailTrustAction::Add { domain: d.to_string() }
+    }
+    fn remove(d: &str) -> EmailTrustAction {
+        EmailTrustAction::Remove { domain: d.to_string() }
+    }
+
+    #[test]
+    fn trust_add_normalises_and_dedups() {
+        let (d, verb) = apply_domain_op(vec![], &add("  .ACME.com "));
+        assert_eq!(d, vec!["acme.com"]);
+        assert_eq!(verb, "added");
+        // Re-adding the same (differently-cased) domain is a no-op.
+        let (d2, _) = apply_domain_op(d, &add("acme.com"));
+        assert_eq!(d2, vec!["acme.com"]);
+    }
+
+    #[test]
+    fn trust_add_keeps_sorted() {
+        let (d, _) = apply_domain_op(vec!["zed.com".into()], &add("acme.com"));
+        assert_eq!(d, vec!["acme.com", "zed.com"]);
+    }
+
+    #[test]
+    fn trust_remove_reports_presence() {
+        let (d, verb) = apply_domain_op(vec!["acme.com".into(), "x.org".into()], &remove("acme.com"));
+        assert_eq!(d, vec!["x.org"]);
+        assert_eq!(verb, "removed");
+        let (d2, verb2) = apply_domain_op(d, &remove("absent.com"));
+        assert_eq!(verb2, "not present");
+        assert_eq!(d2, vec!["x.org"]);
+    }
+
+    #[test]
+    fn trust_list_is_unchanged() {
+        let (d, verb) = apply_domain_op(vec!["a.com".into()], &EmailTrustAction::List);
+        assert_eq!(d, vec!["a.com"]);
+        assert_eq!(verb, "listed");
+    }
 }
