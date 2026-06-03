@@ -114,4 +114,41 @@ The `human_uuid` you receive an encrypted memory transfer under is your X25519
 receiving key (`neoth identity pubkey`); it is unrelated to the channel-identity
 map above and is auto-managed locally.
 
+## OMI transcript ingest (OM-01)
+
+OMI ingest is the **single most sensitive** surface in NEOTH: it passively reads
+transcripts (potentially your everyday conversation) and feeds the high-confidence
+ones into long-term memory. It is therefore the most tightly bounded surface, and
+it is **off unless you turn it on**.
+
+- **Default off.** `omi.enabled` is `false` on every fresh install. With it off,
+  the ingest task never spawns and no transcript is ever read. Its state is
+  visible at a glance as the `omi_ingest` safe-mode rail (`neoth security
+  safe-mode`) and in `neoth trust`.
+- **Local-only endpoint — a cloud endpoint is refused at startup.** When you
+  enable it, the daemon polls `omi.endpoint` (default `http://127.0.0.1:8002`).
+  An **SC-14 startup gate refuses to boot** if `omi.endpoint` resolves to a
+  non-local host (e.g. `api.omi.me`) — so transcripts are pulled from *your*
+  self-hosted backend and never sent to, or fetched from, an OMI cloud service.
+  NEOTH itself opens no outbound connection except to that one local endpoint
+  (enforced by the `no_outbound_network` build guard).
+- **Every transcript passes the sanitizer first.** Each item is run through the
+  `StreamBatchSanitizer` (SC-18) before anything else. A quarantined chunk
+  (prompt-injection markers, control sequences) is **dropped** — it is never
+  promoted to memory and never reaches a provider.
+- **Only high-confidence items are promoted.** A surviving transcript is
+  promoted to ground-truth **only** when its confidence is at or above
+  `omi.confidence_threshold` (default `0.75`). Below the threshold it is
+  discarded. Action items detected in the text become kanban tasks.
+- **Raw transcript text is NOT stored in the audit trail.** The promotion emits
+  a `0x9C OMI_ACTION_PROMOTED` WAL frame that carries **metadata only** — a text
+  hash + the confidence, never the verbatim transcript. The promoted *statement*
+  itself lives in the local ground-truth store (`views.db`) like the rest of
+  memory; it never leaves the machine.
+- **Delete / export controls.** A promoted statement is ordinary local memory:
+  inspect it with `neoth recall`, export the full audit trail with `neoth wal
+  export --sign`, and remove items through the standard memory-decay / forget
+  path — there is no separate OMI silo. Turning `omi.enabled` back off stops all
+  future ingest immediately; nothing already promoted is re-fetched.
+
 For vulnerability reporting, see [../SECURITY.md](../SECURITY.md).
