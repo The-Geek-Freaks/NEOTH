@@ -162,12 +162,50 @@ async fn fetch_and_triage(
     cfg: &ImapConnectionConfig,
     limit: usize,
 ) -> Result<()> {
-    use crate::email::inbound::triage_inbound;
+    use crate::email::inbound::{InboundAction, triage_inbound};
 
     let emails = crate::email::imap_fetch::fetch_unseen(cfg, limit)
         .await
         .context("IMAP fetch failed")?;
-    let triaged: Vec<_> = emails.iter().map(triage_inbound).collect();
+    let mut triaged: Vec<_> = emails.iter().map(triage_inbound).collect();
+
+    // PL-05b — optional LLM second-opinion on the borderline ReviewQueue band.
+    // Gated default-OFF (cost): only when `email.llm_tiebreak` is set AND a
+    // provider is configured. A provider error per-email is fail-safe (the
+    // deterministic ReviewQueue verdict stands). No call is made for any
+    // non-ReviewQueue email, so there is zero LLM cost on a clean inbox.
+    let fcfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    if fcfg.email.llm_tiebreak && triaged.iter().any(|t| t.action == InboundAction::ReviewQueue) {
+        match crate::providers::from_config(&fcfg).await {
+            Ok(provider) => {
+                let allow = fcfg.email.llm_tiebreak_allow_downgrade;
+                let mut reviewed = Vec::with_capacity(triaged.len());
+                for t in triaged {
+                    // Caller-side cost/safety gate (independent of the callee's
+                    // own ReviewQueue guard): only borderline emails ever reach
+                    // the provider, so a clean inbox makes zero LLM calls and a
+                    // Quarantine/Dropped email is never re-classified.
+                    if t.action == InboundAction::ReviewQueue {
+                        reviewed.push(
+                            crate::email::threat_tiebreak::tiebreak_review_inbound(
+                                t,
+                                provider.as_ref(),
+                                allow,
+                            )
+                            .await,
+                        );
+                    } else {
+                        reviewed.push(t);
+                    }
+                }
+                triaged = reviewed;
+            }
+            Err(e) => tracing::warn!(
+                error = %e,
+                "email.llm_tiebreak is on but no provider is configured — keeping deterministic verdicts"
+            ),
+        }
+    }
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -180,12 +218,17 @@ async fn fetch_and_triage(
             }
             for t in &triaged {
                 let score = t.threat.as_ref().map(|a| a.score).unwrap_or(0);
+                let tb = t
+                    .tiebreak
+                    .map(|v| format!("  (llm:{})", v.as_str()))
+                    .unwrap_or_default();
                 println!(
-                    "[{}] score={:<3} {}  —  {}",
+                    "[{}] score={:<3} {}  —  {}{}",
                     t.action.as_str(),
                     score,
                     t.from,
-                    t.subject
+                    t.subject,
+                    tb
                 );
             }
         }

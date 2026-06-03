@@ -299,6 +299,12 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub transfer: TransferConfig,
 
+    /// EM-01b / PL-05b — inbound email knobs. The LLM threat tie-breaker is
+    /// off by default (it spends an LLM call per borderline email — see
+    /// `EmailConfig::llm_tiebreak`).
+    #[serde(default)]
+    pub email: EmailConfig,
+
     /// EL-02 — arXiv topic-feed periodic ingest. Off by default; opt in
     /// via `arxiv.enabled: true` + a non-empty `arxiv.topics` list. When
     /// active, the daemon runs each topic query on a cadence (default 6h),
@@ -589,6 +595,39 @@ mod wal_config_tests {
         let parsed: FreedomConfig =
             serde_yaml::from_str("operator_id: alice\n").expect("parse minimal freedom.yaml");
         assert!(parsed.tools.os.allowed_paths.is_empty());
+    }
+
+    #[test]
+    fn email_config_tiebreak_serde_defaults_are_safe() {
+        // PL-05b — both flags off by default (cost-safe + security-conservative).
+        let d = EmailConfig::default();
+        assert!(!d.llm_tiebreak);
+        assert!(!d.llm_tiebreak_allow_downgrade);
+
+        // Absent `email:` block ⇒ both false.
+        let absent: FreedomConfig =
+            serde_yaml::from_str("operator_id: alice\n").expect("parse minimal");
+        assert!(!absent.email.llm_tiebreak);
+        assert!(!absent.email.llm_tiebreak_allow_downgrade);
+
+        // Partial block (opt into the tie-breaker, OMIT the dangerous downgrade)
+        // ⇒ the downgrade must stay false (the most important regression guard).
+        let partial: FreedomConfig =
+            serde_yaml::from_str("operator_id: a\nemail:\n  llm_tiebreak: true\n")
+                .expect("parse partial email block");
+        assert!(partial.email.llm_tiebreak);
+        assert!(
+            !partial.email.llm_tiebreak_allow_downgrade,
+            "omitted downgrade flag must default false, never silently true"
+        );
+
+        // Full explicit opt-in ⇒ both true (the opt-in path isn't suppressed).
+        let full: FreedomConfig = serde_yaml::from_str(
+            "operator_id: a\nemail:\n  llm_tiebreak: true\n  llm_tiebreak_allow_downgrade: true\n",
+        )
+        .expect("parse full email block");
+        assert!(full.email.llm_tiebreak);
+        assert!(full.email.llm_tiebreak_allow_downgrade);
     }
 
     #[test]
@@ -1161,6 +1200,43 @@ impl Default for DreamingConfig {
             max_events: None,
             forge_skills: false,
             summarize_themes: false,
+        }
+    }
+}
+
+/// EM-01b / PL-05b — inbound email knobs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct EmailConfig {
+    /// PL-05b — when `true`, an email that the deterministic PL-05 rule engine
+    /// lands in the borderline `ReviewQueue` band (score 50-79) gets a SECOND
+    /// opinion from the configured CHAT provider: the redacted body is
+    /// classified benign / spam / phishing / malware, which can PROMOTE it to
+    /// Quarantine (always safe — more restrictive) or, only with
+    /// `llm_tiebreak_allow_downgrade`, demote it to Deliver.
+    ///
+    /// Off by default because it spends one LLM call PER borderline email: on
+    /// a metered cloud provider an opted-in inbox poll would otherwise silently
+    /// bill — so the operator opts in explicitly (cost-safe default, matching
+    /// the `claude_cli is the cost-free path` rule). A provider error, or no
+    /// configured provider, leaves the deterministic `ReviewQueue` verdict
+    /// unchanged (fail-safe — the email is still held for the operator).
+    pub llm_tiebreak: bool,
+    /// PL-05b — gate the one DANGEROUS direction. When `false` (default), the
+    /// tie-breaker may only CONFIRM `ReviewQueue` or PROMOTE to Quarantine; a
+    /// `benign` verdict keeps the email in `ReviewQueue` (the operator still
+    /// decides). When `true`, a high-confidence benign verdict DEMOTES the
+    /// email to `Deliver` (the agent may auto-act) — opt-in because it lets an
+    /// LLM false-negative override the deterministic rules.
+    pub llm_tiebreak_allow_downgrade: bool,
+}
+
+impl Default for EmailConfig {
+    fn default() -> Self {
+        // Both off — opt-in per the cost-safe + security-conservative defaults.
+        Self {
+            llm_tiebreak: false,
+            llm_tiebreak_allow_downgrade: false,
         }
     }
 }

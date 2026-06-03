@@ -77,6 +77,35 @@ impl InboundAction {
     }
 }
 
+/// PL-05b — the LLM second-opinion classification for a borderline
+/// (`ReviewQueue`) email. Set on [`InboundTriage::tiebreak`] when the
+/// `email.llm_tiebreak` config is on; `None` otherwise (the deterministic
+/// rules stand). Defined here (the data) so [`InboundTriage`] is
+/// self-contained; the prompt/parse/apply LOGIC lives in
+/// [`super::threat_tiebreak`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TiebreakVerdict {
+    Benign,
+    Spam,
+    Phishing,
+    Malware,
+    /// The model declined to classify (ambiguous / unparseable reply).
+    Uncertain,
+}
+
+impl TiebreakVerdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TiebreakVerdict::Benign => "benign",
+            TiebreakVerdict::Spam => "spam",
+            TiebreakVerdict::Phishing => "phishing",
+            TiebreakVerdict::Malware => "malware",
+            TiebreakVerdict::Uncertain => "uncertain",
+        }
+    }
+}
+
 /// The triage verdict for one inbound email.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboundTriage {
@@ -91,6 +120,11 @@ pub struct InboundTriage {
     /// (we never reach the scorer).
     pub threat: Option<ThreatAssessment>,
     pub action: InboundAction,
+    /// PL-05b — the LLM second-opinion verdict, when an `email.llm_tiebreak`
+    /// review ran on a borderline (`ReviewQueue`) email. `None` = the
+    /// deterministic rules stood (no review, or not a borderline email).
+    #[serde(default)]
+    pub tiebreak: Option<TiebreakVerdict>,
 }
 
 /// Run an inbound email through the full triage pipeline. Pure.
@@ -119,6 +153,7 @@ pub fn triage_inbound(email: &InboundEmail) -> InboundTriage {
             safe_attachments,
             threat: None,
             action: InboundAction::DroppedAtSanitizer,
+            tiebreak: None,
         };
     }
 
@@ -146,6 +181,7 @@ pub fn triage_inbound(email: &InboundEmail) -> InboundTriage {
         safe_attachments,
         threat: Some(threat),
         action,
+        tiebreak: None,
     }
 }
 
