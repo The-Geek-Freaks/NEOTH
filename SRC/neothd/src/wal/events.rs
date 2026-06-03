@@ -557,6 +557,17 @@ pub const EVENT_TYPE_CHANNEL_SILENCE_ALERT: u8 = 0x4A;
 /// Payload (JSON): `{p95_ms, threshold_ms, sample_count, ts_unix}`.
 pub const EVENT_TYPE_RECALL_LATENCY_ALERT: u8 = 0x4B;
 
+/// `0x4C ECOLOGY_SCHEDULER_FIRED` — F4-01 Phase 1. The Ecology auto-scheduler
+/// cron ticked, detected a low-dissent council regime (one provider winning a
+/// streak ≥ `ecology.correlation_min_streak`), and ran the P-04 self-dev
+/// proposal generator. Proposals are STAGED for `neoth self-dev review`, never
+/// auto-applied — this frame is the audit trail proving the scheduler only ever
+/// PROPOSES (the DESIGN_CH13 P2 constraint: fitness must never silently rewrite
+/// policy). Cron band. Emitted only when ≥1 streak signal fired this tick.
+///
+/// Payload (JSON): `{streak_signals_count, proposals_queued, ts_unix}`.
+pub const EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED: u8 = 0x4C;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit
@@ -1592,6 +1603,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
     ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
     ("recall_latency_alert", EVENT_TYPE_RECALL_LATENCY_ALERT),
+    (
+        "ecology_scheduler_fired",
+        EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED,
+    ),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -1810,6 +1825,8 @@ const _: () = {
         || EVENT_TYPE_CHANNEL_SILENCE_ALERT > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_RECALL_LATENCY_ALERT < 0x40
         || EVENT_TYPE_RECALL_LATENCY_ALERT > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED < 0x40
+        || EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
@@ -2075,6 +2092,10 @@ mod tests {
             ("CRASH_LOG_ALERT", EVENT_TYPE_CRASH_LOG_ALERT),
             ("CHANNEL_SILENCE_ALERT", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
             ("RECALL_LATENCY_ALERT", EVENT_TYPE_RECALL_LATENCY_ALERT),
+            (
+                "ECOLOGY_SCHEDULER_FIRED",
+                EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED,
+            ),
             ("RECOVERY_TRUNCATED", EVENT_TYPE_RECOVERY_TRUNCATED),
             (
                 "COUNCIL_SYNTHESIS_ATTEMPTED",

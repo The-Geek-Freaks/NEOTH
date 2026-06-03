@@ -1297,17 +1297,26 @@ impl Default for EmailConfig {
     }
 }
 
+/// F4-01 Phase 1 — default Ecology auto-scheduler cadence: 6h.
+pub const DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS: u64 = 6 * 3600;
+
 /// CH-13 / F4-01 — Ecology self-adaptation layer knobs.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct EcologyConfig {
-    /// Master switch for the future 6h auto-scheduler (Phase 1). Off by default
+    /// Master switch for the 6h auto-scheduler (F4-01 Phase 1). Off by default
     /// per the AGENTER hard rule (matches `proactive.enabled` / `dreaming.enabled`).
-    /// Does NOT gate the read-only `neoth ecology correlation` scan.
+    /// Does NOT gate the read-only `neoth ecology correlation` scan. When ON, the
+    /// scheduler only ever STAGES `neoth self-dev` proposals (never auto-applies)
+    /// + emits `0x4C ECOLOGY_SCHEDULER_FIRED` — the DESIGN_CH13 P2 review-gate.
     pub enabled: bool,
     /// F4-01 — minimum consecutive same-winner streak the correlation scan
-    /// reports as a low-dissent signal. Default 5.
+    /// reports as a low-dissent signal. Default 5. Doubles as the scheduler's
+    /// fire-threshold (a streak ≥ this triggers a self-dev proposal pass).
     pub correlation_min_streak: usize,
+    /// F4-01 Phase 1 — auto-scheduler tick interval in seconds. Default 6h.
+    /// Clamped to a 60s floor by [`EcologyConfig::scheduler_interval_duration`].
+    pub scheduler_interval_secs: u64,
 }
 
 impl Default for EcologyConfig {
@@ -1315,7 +1324,16 @@ impl Default for EcologyConfig {
         Self {
             enabled: false,
             correlation_min_streak: 5,
+            scheduler_interval_secs: DEFAULT_ECOLOGY_SCHEDULER_INTERVAL_SECS,
         }
+    }
+}
+
+impl EcologyConfig {
+    /// Scheduler tick interval as a [`std::time::Duration`], clamped to a 60s
+    /// floor so a misconfigured `0` can't spin the cron loop hot.
+    pub fn scheduler_interval_duration(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.scheduler_interval_secs.max(60))
     }
 }
 

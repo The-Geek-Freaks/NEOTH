@@ -12,3 +12,9 @@
 //! signal is a pure function over WAL data.
 
 pub mod correlation_detector;
+/// F4-01 Phase 1 — Ecology auto-scheduler cron. A 6h tick that detects a
+/// low-dissent council regime (winner streak >= `ecology.correlation_min_streak`)
+/// and STAGES P-04 self-dev proposals for `neoth self-dev review` (never
+/// auto-applies — the DESIGN_CH13 P2 review-gate), emitting
+/// `0x4C ECOLOGY_SCHEDULER_FIRED` as the audit trail. Off by default.
+pub mod scheduler;

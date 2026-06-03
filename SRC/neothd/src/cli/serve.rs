@@ -1706,6 +1706,31 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── Ecology auto-scheduler (F4-01 Phase 1) ────────────────────────────
+    // Decides WHEN to adapt: on a low-dissent council regime (winner streak ≥
+    // `ecology.correlation_min_streak`) it STAGES P-04 self-dev proposals for
+    // `neoth self-dev review` and emits 0x4C. NEVER auto-applies — the
+    // DESIGN_CH13 P2 review-gate. Off by default → `spawn_*` returns None.
+    let ecology_cron_handle: Option<tokio::task::JoinHandle<()>> = {
+        let home = FreedomConfig::default_neoth_home();
+        let wal_dir_for_ecology = wal_dir.clone();
+        let writer_for_ecology = writer.clone();
+        let handle = crate::ecology::scheduler::spawn_ecology_cron_loop(
+            home,
+            wal_dir_for_ecology,
+            config.ecology.clone(),
+            writer_for_ecology,
+        );
+        if handle.is_some() {
+            info!(
+                interval_secs = config.ecology.scheduler_interval_secs,
+                min_streak = config.ecology.correlation_min_streak,
+                "ecology auto-scheduler cron loop spawned (F4-01 — proposals review-gated)"
+            );
+        }
+        handle
+    };
+
     // ── Behaviour-pattern cron (G-01 full detector suite) ─────────────────
     // Each tick runs the inactivity / query-repeat / topic-burst /
     // time-of-day-shift detectors and enqueues their nudges (per-detector
@@ -2549,6 +2574,11 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let _ = task.await;
     }
     if let Some(task) = profile_adapt_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
+    // Abort the F4-01 ecology auto-scheduler (drain before writer close).
+    if let Some(task) = ecology_cron_handle {
         task.abort();
         let _ = task.await;
     }
