@@ -230,29 +230,8 @@ async fn emit_audit_events(
     embedding_persisted: bool,
     embedding_dim: Option<usize>,
 ) -> Result<()> {
-    let pidfile = crate::daemon::pidfile::default_pidfile();
-    if let Ok(Some(pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
-        tracing::warn!(
-            daemon_pid = pid,
-            "ingest audit skipped: `neothd serve` is running on PID {pid} \
-             and owns the WAL writer. Re-run `neoth ingest` after the \
-             daemon writes its own INGEST_EXTRACTED frame on its next pass, \
-             or stop the daemon first."
-        );
-        return Ok(());
-    }
-
-    let segment_path = args
-        .wal_segment
-        .clone()
-        .unwrap_or_else(|| FreedomConfig::default_wal_dir().join("000001.wal"));
-    if let Some(parent) = segment_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create WAL dir {}", parent.display()))?;
-    }
-    let (writer, writer_join) =
-        wal_spawn(segment_path).context("spawn one-shot WAL writer for ingest audit")?;
-
+    // Build the frame payloads up front — both the forward path (daemon live)
+    // and the one-shot-writer path emit the same bytes.
     let source_ref = canonical_source_ref(&args.path);
     let kind_str = format!("{asset_kind:?}").to_lowercase();
     let model = extraction.metadata["extractor"]
@@ -268,14 +247,8 @@ async fn emit_audit_events(
         "model": model,
         "ts_unix": now,
     }))?;
-    let extracted_header = make_header(EVENT_TYPE_INGEST_EXTRACTED, &extracted_payload);
-    writer
-        .append(extracted_header, extracted_payload)
-        .await
-        .context("append INGEST_EXTRACTED")?;
-
-    if embedding_persisted {
-        let embed_payload = serde_json::to_vec(&serde_json::json!({
+    let embed_payload = if embedding_persisted {
+        Some(serde_json::to_vec(&serde_json::json!({
             "source_kind": match asset_kind {
                 AssetKind::Image => "image",
                 AssetKind::Audio => "audio_segment",
@@ -288,10 +261,62 @@ async fn emit_audit_events(
             "model": clip_engine::DEFAULT_CLIP_REPO,
             "dim": embedding_dim.unwrap_or(clip_engine::EMBED_DIM),
             "ts_unix": now,
-        }))?;
-        let embed_header = make_header(EVENT_TYPE_EMBED_PERSISTED, &embed_payload);
+        }))?)
+    } else {
+        None
+    };
+
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
+        // AUDIT-RPC-01: daemon owns the WAL writer → forward the ingest frames
+        // over the loopback channel (0x2C/0x2D allowlisted) instead of silently
+        // skipping. Best-effort: an unreachable/disabled listener falls through
+        // to no-frame (the asset was still ingested).
+        let home = FreedomConfig::default_neoth_home();
+        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+            &home,
+            EVENT_TYPE_INGEST_EXTRACTED,
+            &extracted_payload,
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "ingest 0x2C forward skipped (daemon listener unreachable)");
+        }
+        if let Some(p) = &embed_payload {
+            if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+                &home,
+                EVENT_TYPE_EMBED_PERSISTED,
+                p,
+            )
+            .await
+            {
+                tracing::debug!(error = %e, "ingest 0x2D forward skipped (daemon listener unreachable)");
+            }
+        }
+        return Ok(());
+    }
+
+    let segment_path = args
+        .wal_segment
+        .clone()
+        .unwrap_or_else(|| FreedomConfig::default_wal_dir().join("000001.wal"));
+    if let Some(parent) = segment_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create WAL dir {}", parent.display()))?;
+    }
+    let (writer, writer_join) =
+        wal_spawn(segment_path).context("spawn one-shot WAL writer for ingest audit")?;
+
+    let extracted_header = make_header(EVENT_TYPE_INGEST_EXTRACTED, &extracted_payload);
+    writer
+        .append(extracted_header, extracted_payload)
+        .await
+        .context("append INGEST_EXTRACTED")?;
+
+    if let Some(p) = embed_payload {
+        let embed_header = make_header(EVENT_TYPE_EMBED_PERSISTED, &p);
         writer
-            .append(embed_header, embed_payload)
+            .append(embed_header, p)
             .await
             .context("append EMBED_PERSISTED")?;
     }

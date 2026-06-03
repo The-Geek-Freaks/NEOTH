@@ -1084,6 +1084,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         store::default_path(),
         crate::memory::decay_task::DEFAULT_INTERVAL,
         pre_decay_vault.clone(),
+        // KF-10: the daemon owns the WAL writer, so each pass that touches rows
+        // emits a `0x94 CONSOLIDATION_PASS` audit frame.
+        Some(writer.clone()),
     ));
     info!(
         interval_secs = crate::memory::decay_task::DEFAULT_INTERVAL.as_secs(),

@@ -186,9 +186,35 @@ fn render(r: &ParityRunResult, output: &OutputFormat) {
 /// abort evidence is incomplete). When the daemon owns the WAL we return `true`
 /// (the daemon's own audit path is responsible; we don't race it).
 async fn emit_critical_divergences(r: &ParityRunResult) -> bool {
+    let now = now_unix();
     let pidfile = crate::daemon::pidfile::default_pidfile();
     if let Ok(Some(_)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
-        tracing::debug!("recall-score: 0x3E audit skipped — neothd serve owns the WAL");
+        // AUDIT-RPC-01: daemon owns the WAL → forward each 0x3E frame over the
+        // loopback channel instead of silently skipping. Best-effort: a disabled
+        // listener is the operator's config choice, not an audit failure, so we
+        // still report the audit as complete (return true) — symmetric with the
+        // prior daemon-live behaviour.
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        for c in &r.critical_queries {
+            let payload = serde_json::json!({
+                "query_id": c.query_id,
+                "reason": format!("{:?}", c.reason),
+                "factual_parity_kappa": c.factual_parity_kappa,
+                "usefulness_parity_kappa": c.usefulness_parity_kappa,
+                "ts_unix": now,
+            })
+            .to_string()
+            .into_bytes();
+            if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+                &home,
+                crate::wal::events::EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
+                &payload,
+            )
+            .await
+            {
+                tracing::debug!(error = %e, "recall-score: 0x3E forward skipped (daemon listener unreachable)");
+            }
+        }
         return true;
     }
     let segment = crate::config::FreedomConfig::default_neoth_home()
@@ -197,7 +223,6 @@ async fn emit_critical_divergences(r: &ParityRunResult) -> bool {
     if let Some(parent) = segment.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let now = now_unix();
     let mut all_ok = true;
     match crate::wal::spawn(segment) {
         Ok((writer, join)) => {

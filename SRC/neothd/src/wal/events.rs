@@ -738,9 +738,14 @@ pub const EVENT_TYPE_EPISODE_ARCHIVED: u8 = 0x92;
 /// MT-3. Payload: `{event_id, old, new, query_hash, ts}`.
 pub const EVENT_TYPE_IMPORTANCE_REINFORCED: u8 = 0x93;
 
-/// One daily consolidation pass completed. Summary frame (not per-event).
-/// Phase 28c R-24 GT-3. Payload: `{ts, events_touched, mean_before, mean_after,
-/// count_forgotten, count_promoted}`.
+/// One consolidation/decay pass completed. Summary frame (not per-event).
+/// Phase 28c R-24 GT-3; emit site wired by KF-10 (Session 36) from the decay
+/// task. Emitted only when the pass actually touched rows (a no-op pass writes
+/// nothing — keeps the audit clean). Payload: `{ts_unix, hot_decayed,
+/// consolidated, hot_archived, promoted, warm_archived, warm_decayed,
+/// cold_decayed, cold_swept, pre_decay_drafted}` — mirrors
+/// `memory::consolidate::PassReport` so an operator can correlate
+/// `neoth wal show --type consolidation_pass` with the Obsidian PreDecay drafts.
 pub const EVENT_TYPE_CONSOLIDATION_PASS: u8 = 0x94;
 /// An event crossed `FORGET_FLOOR` (downward) or `PROMOTION_THRESHOLD`
 /// (upward) on the current pass. Payload: `{event_id, before, after, direction}`.

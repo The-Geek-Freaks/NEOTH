@@ -203,36 +203,50 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
 
     // HF-01 audit: best-effort one-shot WAL writer. Skipped when the
     // daemon is live (it owns the writer + would emit its own frames).
-    let audit = {
-        let pidfile = crate::daemon::pidfile::default_pidfile();
-        if matches!(
-            crate::daemon::pidfile::live_daemon_pid(&pidfile),
-            Ok(Some(_))
-        ) {
-            None
-        } else {
-            let seg = FreedomConfig::default_wal_dir().join("000001.wal");
-            if let Some(p) = seg.parent() {
-                let _ = std::fs::create_dir_all(p);
-            }
-            wal_spawn(seg).ok()
+    // AUDIT-RPC-01: when the daemon owns the WAL we forward the download frames
+    // over the loopback channel (0xD7/0xD8 allowlisted); otherwise a one-shot
+    // writer emits them directly.
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+        Ok(Some(_))
+    );
+    let audit = if daemon_live {
+        None
+    } else {
+        let seg = FreedomConfig::default_wal_dir().join("000001.wal");
+        if let Some(p) = seg.parent() {
+            let _ = std::fs::create_dir_all(p);
         }
+        wal_spawn(seg).ok()
     };
+    let audit_home = FreedomConfig::default_neoth_home();
 
-    if let Some((w, _)) = &audit {
+    {
         let payload = serde_json::to_vec(&serde_json::json!({
             "model_id": model_id.as_str(),
             "ts_unix": now_unix_secs(),
         }))
         .unwrap_or_default();
-        if let Err(e) = w
-            .append(
-                make_header(EVENT_TYPE_MODEL_DOWNLOAD_START, &payload),
-                payload,
+        if let Some((w, _)) = &audit {
+            if let Err(e) = w
+                .append(
+                    make_header(EVENT_TYPE_MODEL_DOWNLOAD_START, &payload),
+                    payload,
+                )
+                .await
+            {
+                tracing::warn!(error = %e, "MODEL_DOWNLOAD_START WAL emit failed (non-fatal)");
+            }
+        } else if daemon_live {
+            if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+                &audit_home,
+                EVENT_TYPE_MODEL_DOWNLOAD_START,
+                &payload,
             )
             .await
-        {
-            tracing::warn!(error = %e, "MODEL_DOWNLOAD_START WAL emit failed (non-fatal)");
+            {
+                tracing::debug!(error = %e, "0xD7 forward skipped (daemon listener unreachable)");
+            }
         }
     }
 
@@ -256,7 +270,7 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
         _ => unreachable!("model id validated above"),
     };
 
-    if let Some((w, join)) = audit {
+    {
         let payload = serde_json::to_vec(&serde_json::json!({
             "model_id": model_id.as_str(),
             "cached_path": cache_dir.display().to_string(),
@@ -264,17 +278,29 @@ async fn run_pull(name: &str, repo_override: Option<&str>) -> Result<()> {
             "ts_unix": now_unix_secs(),
         }))
         .unwrap_or_default();
-        if let Err(e) = w
-            .append(
-                make_header(EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, &payload),
-                payload,
+        if let Some((w, join)) = audit {
+            if let Err(e) = w
+                .append(
+                    make_header(EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, &payload),
+                    payload,
+                )
+                .await
+            {
+                tracing::warn!(error = %e, "MODEL_DOWNLOAD_COMPLETE WAL emit failed (non-fatal)");
+            }
+            drop(w);
+            let _ = join.await;
+        } else if daemon_live {
+            if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+                &audit_home,
+                EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE,
+                &payload,
             )
             .await
-        {
-            tracing::warn!(error = %e, "MODEL_DOWNLOAD_COMPLETE WAL emit failed (non-fatal)");
+            {
+                tracing::debug!(error = %e, "0xD8 forward skipped (daemon listener unreachable)");
+            }
         }
-        drop(w);
-        let _ = join.await;
     }
 
     println!("{} cached at {}", name, cache_dir.display());

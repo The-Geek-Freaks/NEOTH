@@ -273,10 +273,34 @@ async fn emit_self_update_applied(
     target: &str,
     trigger_source: &str,
 ) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "from_version": outcome.from_version,
+        "to_version": outcome.to_version,
+        "backup_path": outcome.backup_path.display().to_string(),
+        "repo": repo,
+        "target_triple": target,
+        "archive_sha256": outcome.archive_sha256,
+        "download_url": outcome.download_url,
+        "signature_status": outcome.signature_status,
+        "trigger_source": trigger_source,
+        "ts_unix": now_unix_secs(),
+    }))
+    .unwrap_or_default();
     if let Ok(Some(_pid)) =
         crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile())
     {
-        tracing::info!("daemon live — skipping 0xD2 emit to preserve single-writer invariant");
+        // AUDIT-RPC-01: daemon owns the writer → forward the 0xD2 frame over
+        // the loopback channel instead of silently skipping. Best-effort.
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+            &home,
+            crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED,
+            &payload,
+        )
+        .await
+        {
+            tracing::debug!(error = %e, "0xD2 audit forward skipped (daemon listener unreachable)");
+        }
         return;
     }
     let wal_dir = crate::config::FreedomConfig::default_wal_dir();
@@ -291,19 +315,6 @@ async fn emit_self_update_applied(
             return;
         }
     };
-    let payload = serde_json::to_vec(&serde_json::json!({
-        "from_version": outcome.from_version,
-        "to_version": outcome.to_version,
-        "backup_path": outcome.backup_path.display().to_string(),
-        "repo": repo,
-        "target_triple": target,
-        "archive_sha256": outcome.archive_sha256,
-        "download_url": outcome.download_url,
-        "signature_status": outcome.signature_status,
-        "trigger_source": trigger_source,
-        "ts_unix": now_unix_secs(),
-    }))
-    .unwrap_or_default();
     let header = crate::wal::HeaderBuilder::new(
         crate::wal::events::EVENT_TYPE_SELF_UPDATE_APPLIED,
         &payload,

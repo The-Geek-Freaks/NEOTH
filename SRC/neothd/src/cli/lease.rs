@@ -192,9 +192,18 @@ fn lease_payload(event_type: u8, lease: &CapabilityLease) -> Vec<u8> {
 /// daemon re-derives lease state from leases.json on its next pass. The
 /// lease mutation itself already succeeded on disk before we get here.
 async fn emit_lease(home: &std::path::Path, event_type: u8, lease: &CapabilityLease) {
+    let payload = lease_payload(event_type, lease);
     let pidfile = crate::daemon::pidfile::default_pidfile();
     if let Ok(Some(_pid)) = crate::daemon::pidfile::live_daemon_pid(&pidfile) {
-        tracing::debug!("lease audit skipped: neothd serve owns the WAL writer");
+        // AUDIT-RPC-01: the daemon owns the single WAL writer → forward the
+        // lease audit over the loopback channel (0xA5/0xA6/0xA7 allowlisted)
+        // instead of silently dropping it. Best-effort: an unreachable/disabled
+        // listener falls through to no-frame (the lease itself still applied).
+        if let Err(e) =
+            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
+        {
+            tracing::debug!(error = %e, "lease audit forward skipped (daemon listener unreachable)");
+        }
         return;
     }
     let segment = home.join("wal").join("000001.wal");
@@ -203,7 +212,6 @@ async fn emit_lease(home: &std::path::Path, event_type: u8, lease: &CapabilityLe
             return;
         }
     }
-    let payload = lease_payload(event_type, lease);
     let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
     match crate::wal::spawn(segment) {
         Ok((writer, join)) => {

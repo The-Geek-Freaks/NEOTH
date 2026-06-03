@@ -16,6 +16,7 @@ use anyhow::Result;
 use tokio::task::JoinHandle;
 
 use crate::memory::{consolidate, store};
+use crate::wal::writer::WalWriterHandle;
 
 /// 2 hours. Matches the hippocampus-preprocess.timer cadence pattern.
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
@@ -24,8 +25,16 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 ///
 /// `db_path` lets tests inject a tempdir db; production callers pass
 /// `store::default_path()`. Same for `interval` — tests use a short tick.
-pub fn spawn(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) -> JoinHandle<()> {
-    tokio::spawn(async move { run(db_path, interval, vault).await })
+/// `wal_writer = Some` (KF-10) → each pass that touched rows emits a
+/// `0x94 CONSOLIDATION_PASS` audit frame; `None` keeps the silent behaviour
+/// (one-shot CLI callers + tests).
+pub fn spawn(
+    db_path: PathBuf,
+    interval: Duration,
+    vault: Option<PathBuf>,
+    wal_writer: Option<WalWriterHandle>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move { run(db_path, interval, vault, wal_writer).await })
 }
 
 /// M-04 (Session 24): infinite-loop body never returns Ok(()), so
@@ -34,7 +43,12 @@ pub fn spawn(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) -> Jo
 /// tick), and the only way the function exits is via task abort or
 /// panic. Return-unit makes the never-returns semantics honest +
 /// matches the JoinHandle<()> the caller actually observes.
-async fn run(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) {
+async fn run(
+    db_path: PathBuf,
+    interval: Duration,
+    vault: Option<PathBuf>,
+    wal_writer: Option<WalWriterHandle>,
+) {
     let mut ticker = tokio::time::interval(interval);
     // Skip missed ticks rather than bursting (the codebase-wide default for
     // every periodic task — auto_update / doctor_cron / drift_alert_cron /
@@ -51,7 +65,7 @@ async fn run(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) {
     ticker.tick().await;
     loop {
         ticker.tick().await;
-        if let Err(e) = run_once(&db_path, vault.clone()).await {
+        if let Err(e) = run_once(&db_path, vault.clone(), wal_writer.as_ref()).await {
             tracing::warn!(
                 db = %db_path.display(),
                 error = %e,
@@ -61,14 +75,61 @@ async fn run(db_path: PathBuf, interval: Duration, vault: Option<PathBuf>) {
     }
 }
 
+/// KF-10 — emit the `0x94 CONSOLIDATION_PASS` summary frame. Best-effort +
+/// SYNTHETIC (daemon-derived). Called only for passes that actually touched
+/// rows (see [`pass_did_work`]). A WAL append failure logs + never fails the
+/// pass.
+async fn emit_consolidation_pass(writer: &WalWriterHandle, report: &consolidate::PassReport) {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "ts_unix": ts_unix,
+        "hot_decayed": report.hot_decayed,
+        "consolidated": report.consolidated,
+        "hot_archived": report.hot_archived,
+        "promoted": report.promoted,
+        "warm_archived": report.warm_archived,
+        "warm_decayed": report.warm_decayed,
+        "cold_decayed": report.cold_decayed,
+        "cold_swept": report.cold_swept,
+        "pre_decay_drafted": report.pre_decay_drafted,
+    }))
+    .unwrap_or_default();
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_CONSOLIDATION_PASS, &payload)
+            .flags(crate::wal::EventFlags::SYNTHETIC)
+            .build();
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "decay: CONSOLIDATION_PASS frame append failed (audit gap)");
+    }
+}
+
+/// True when a pass touched at least one row in any tier — gates the `0x94`
+/// emit so a no-op pass (empty/quiet db) writes no audit noise.
+fn pass_did_work(r: &consolidate::PassReport) -> bool {
+    r.hot_decayed
+        + r.consolidated
+        + r.hot_archived
+        + r.promoted
+        + r.warm_archived
+        + r.warm_decayed
+        + r.cold_decayed
+        + r.cold_swept
+        + r.pre_decay_drafted
+        > 0
+}
+
 /// One-shot decay pass — useful for `neoth memory --decay` style CLIs +
 /// for unit tests.
 pub async fn run_once(
     db_path: &std::path::Path,
     vault: Option<PathBuf>,
+    wal_writer: Option<&WalWriterHandle>,
 ) -> Result<consolidate::PassReport> {
     let db = db_path.to_path_buf();
-    tokio::task::spawn_blocking(move || -> Result<consolidate::PassReport> {
+    let report = tokio::task::spawn_blocking(move || -> Result<consolidate::PassReport> {
         let mut conn = store::open(&db)?;
         // M-03 (Session 24): SystemTime::now().duration_since(UNIX_EPOCH)
         // can fail when the host clock has rolled BEFORE 1970 (broken
@@ -118,7 +179,15 @@ pub async fn run_once(
         };
         consolidate::run_consolidation_pass(&mut conn, now_ns, vault.as_deref())
     })
-    .await?
+    .await??;
+
+    // KF-10: audit the pass when the daemon owns the writer + it touched rows.
+    if let Some(w) = wal_writer {
+        if pass_did_work(&report) {
+            emit_consolidation_pass(w, &report).await;
+        }
+    }
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -130,7 +199,7 @@ mod tests {
     async fn run_once_returns_a_pass_report_against_empty_db() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("v.db");
-        let report = run_once(&db, None).await.expect("run once");
+        let report = run_once(&db, None, None).await.expect("run once");
         // Empty db: nothing to decay, nothing to promote, nothing to forget.
         assert_eq!(report.hot_decayed, 0);
         assert_eq!(report.hot_archived, 0);
@@ -143,12 +212,86 @@ mod tests {
         let db = dir.path().join("v.db");
         // 10ms interval — task ticks fast enough to be in `interval.tick()`
         // when we abort.
-        let task = spawn(db, Duration::from_millis(10), None);
+        let task = spawn(db, Duration::from_millis(10), None, None);
         // Give it a moment to enter the loop.
         tokio::time::sleep(Duration::from_millis(25)).await;
         task.abort();
         // JoinError on aborted tasks is expected — we just want the
         // abort to not hang the test.
         let _ = task.await;
+    }
+
+    fn count_consolidation_frames(seg: &std::path::Path) -> usize {
+        let Ok(bytes) = std::fs::read(seg) else {
+            return 0;
+        };
+        let Ok(hdr) = crate::wal::segment_header::parse_segment_header(&bytes) else {
+            return 0;
+        };
+        let mut cursor = hdr.header_len();
+        let mut count = 0usize;
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_CONSOLIDATION_PASS {
+                count += 1;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        count
+    }
+
+    #[tokio::test]
+    async fn run_once_emits_0x94_when_pass_does_work() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("v.db");
+        // Seed one idx_episode row — Phase-1 decay multiplies its importance,
+        // so hot_decayed >= 1 → pass_did_work → the 0x94 frame must fire.
+        {
+            let conn = store::open(&db).unwrap();
+            conn.execute(
+                "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance) \
+                 VALUES (1, 1, 1, 'seeded', 'h', 0.5)",
+                [],
+            )
+            .unwrap();
+        }
+        let seg_dir = tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let report = run_once(&db, None, Some(&writer)).await.unwrap();
+        assert!(report.hot_decayed >= 1, "decay must touch the seeded row");
+
+        drop(writer);
+        join.await.ok();
+        assert_eq!(
+            count_consolidation_frames(&seg),
+            1,
+            "a pass that touched rows must emit exactly one 0x94 frame",
+        );
+    }
+
+    #[tokio::test]
+    async fn run_once_no_frame_on_noop_pass() {
+        // Empty db → no rows touched → pass_did_work false → no audit noise.
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("v.db");
+        let seg_dir = tempdir().unwrap();
+        let seg = seg_dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        let report = run_once(&db, None, Some(&writer)).await.unwrap();
+        assert_eq!(report.hot_decayed, 0);
+
+        drop(writer);
+        join.await.ok();
+        assert_eq!(count_consolidation_frames(&seg), 0);
     }
 }

@@ -33,13 +33,20 @@ async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 11);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 17);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(is_allowed_client_event(c), "{c:#x} (autonomy) must be allowed");
     }
     for c in 0xA5u8..=0xADu8 {
         assert!(is_allowed_client_event(c), "{c:#x} must be allowed");
+    }
+    // AUDIT-RPC-01 Commit-3 (Session 36): the remaining one-shot CLIs —
+    // ingest (0x2C/0x2D), recall-score (0x3E), self-update (0xD2), and model
+    // pull (0xD7/0xD8) — now forward instead of silently skipping when a
+    // daemon owns the WAL.
+    for c in [0x2Cu8, 0x2D, 0x3E, 0xD2, 0xD7, 0xD8] {
+        assert!(is_allowed_client_event(c), "{c:#x} (one-shot) must be allowed");
     }
     // Daemon-lifecycle / cluster / quota codes are NOT forwardable — and the
     // autonomy codes must NOT bleed into the neighbouring 0xA0/0xA1/0xA4.

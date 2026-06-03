@@ -28,6 +28,9 @@ use crate::wal::writer::WalWriterHandle;
 /// widening it is a code change that goes through review, never a runtime flag
 /// an attacker (or a careless operator) could flip.
 pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
+    0x2C, // INGEST_EXTRACTED       — `neoth ingest` extracted an asset
+    0x2D, // EMBED_PERSISTED        — `neoth ingest` persisted an embedding
+    0x3E, // EVAL_CRITICAL_DIVERGENCE — `neoth recall-score` flagged a CRITICAL query
     0xA2, // LEVEL_ELEVATED   — `neoth autonomy set` raised the level
     0xA3, // LEVEL_DEROGATED  — `neoth autonomy set` lowered the level
     0xA5, // LEASE_GRANTED
@@ -39,6 +42,9 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xAB, // OS_FILE_WRITE_DENIED
     0xAC, // OS_APP_LAUNCH
     0xAD, // OS_APP_LAUNCH_DENIED
+    0xD2, // SELF_UPDATE_APPLIED    — `neoth update --apply` replaced the binary
+    0xD7, // MODEL_DOWNLOAD_START   — `neoth model pull` began a fetch
+    0xD8, // MODEL_DOWNLOAD_COMPLETE — `neoth model pull` finished a fetch
 ];
 
 /// Max inbound request size (headers + body). Audit payloads are small.
