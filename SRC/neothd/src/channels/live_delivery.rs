@@ -20,29 +20,89 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{Channel, ChannelError, ChannelKind, MessageId};
+use crate::config::LiveDeliveryConfig;
 use crate::wal::writer::WalWriterHandle;
 
+/// What one `send_or_edit` did. `Coalesced` = the edit was DROPPED by the
+/// rate limiter (too soon after the last edit, or past the per-message cap) —
+/// no API call was made. The final edit (when `final_edit_always_allowed`) is
+/// never coalesced, so the operator never sees a truncated draft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendOutcome {
+    /// A new message was sent (first send, or a degraded fresh-send).
+    Sent(MessageId),
+    /// The live message was edited in place.
+    Edited(MessageId),
+    /// The edit was rate-limited away (no network call).
+    Coalesced,
+}
+
 /// Stateful wrapper that sends a message once, then edits it in place on
-/// subsequent updates. NOT `Clone` — the `sent_message_id` is per-delivery
-/// state; share via the owning task, not by copying.
+/// subsequent updates — bounded by [`LiveDeliveryConfig`] so it can't trip a
+/// channel's edit rate limit. NOT `Clone` — the send/edit state is
+/// per-delivery; share via the owning task, not by copying.
 pub struct LiveDelivery {
     channel: Arc<dyn Channel>,
     chat_id: String,
     kind: ChannelKind,
+    config: LiveDeliveryConfig,
     /// `None` until the first `send_or_edit` succeeds; then the platform id of
     /// the live message every subsequent edit targets.
     sent_message_id: Option<MessageId>,
+    /// Wall-clock (ms) of the last edit/send that actually hit the wire — the
+    /// rate-limit reference point.
+    last_edit_ms: Option<u64>,
+    /// Edits that have hit the wire for this message (the per-message cap).
+    edit_count: u32,
+}
+
+/// SPEC-11 rate-limit decision — PURE so it is unit-testable with an explicit
+/// clock. `true` ⇒ the edit may hit the wire; `false` ⇒ coalesce (drop) it.
+/// The final edit always passes when `final_edit_always_allowed`.
+fn should_send_edit(
+    config: &LiveDeliveryConfig,
+    now_ms: u64,
+    last_edit_ms: Option<u64>,
+    edit_count: u32,
+    is_final: bool,
+) -> bool {
+    if is_final && config.final_edit_always_allowed {
+        return true;
+    }
+    if edit_count >= config.max_edits_per_message {
+        return false;
+    }
+    // Coalesce when the previous edit was within the min interval.
+    !matches!(
+        last_edit_ms,
+        Some(last) if now_ms.saturating_sub(last) < config.min_edit_interval_ms
+    )
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 impl LiveDelivery {
-    /// New delivery bound to `chat_id` on `channel` (of family `kind`). Nothing
-    /// is sent until the first [`LiveDelivery::send_or_edit`].
-    pub fn new(channel: Arc<dyn Channel>, chat_id: String, kind: ChannelKind) -> Self {
+    /// New delivery bound to `chat_id` on `channel` (of family `kind`), governed
+    /// by `config`. Nothing is sent until the first [`LiveDelivery::send_or_edit`].
+    pub fn new(
+        channel: Arc<dyn Channel>,
+        chat_id: String,
+        kind: ChannelKind,
+        config: LiveDeliveryConfig,
+    ) -> Self {
         Self {
             channel,
             chat_id,
             kind,
+            config,
             sent_message_id: None,
+            last_edit_ms: None,
+            edit_count: 0,
         }
     }
 
@@ -51,40 +111,77 @@ impl LiveDelivery {
         self.sent_message_id.is_some()
     }
 
-    /// Send (first call) or edit-in-place (subsequent calls).
-    ///
-    /// - First call: `send_text` → store + return the new `MessageId`.
-    /// - Subsequent calls: `edit_message` against the stored id → emit
-    ///   `0x38 CHANNEL_EDIT` + return the SAME id.
-    /// - If `edit_message` reports `NotSupported`: degrade to a fresh
-    ///   `send_text`, update the stored id, return the NEW id (no 0x38 — a
-    ///   brand-new message is not an edit).
-    ///
-    /// Any other `edit_message` / `send_text` error propagates unchanged.
+    /// Send (first call) or edit-in-place (subsequent calls), wall-clock-bounded.
+    /// `is_final = true` marks the completed reply — it bypasses the rate limits
+    /// (when `final_edit_always_allowed`) so the last edit always lands. See
+    /// [`LiveDelivery::send_or_edit_at`] for the testable, explicit-clock core.
     pub async fn send_or_edit(
         &mut self,
         writer: &WalWriterHandle,
         text: &str,
-    ) -> std::result::Result<MessageId, ChannelError> {
+        is_final: bool,
+    ) -> std::result::Result<SendOutcome, ChannelError> {
+        self.send_or_edit_at(writer, now_ms(), text, is_final).await
+    }
+
+    /// Explicit-clock core of [`LiveDelivery::send_or_edit`] (the `now_ms` seam
+    /// makes the rate limiter deterministically testable).
+    ///
+    /// - First call: `send_text` → store + return `Sent`.
+    /// - Subsequent call, rate-limited away: `Coalesced` (no API call).
+    /// - Subsequent call that passes: `edit_message` → emit `0x38` → `Edited`
+    ///   (same id). If edits are disabled OR the adapter reports `NotSupported`,
+    ///   degrade to a fresh `send_text` → `Sent` (no `0x38` — a new message is
+    ///   not an edit).
+    pub async fn send_or_edit_at(
+        &mut self,
+        writer: &WalWriterHandle,
+        now_ms: u64,
+        text: &str,
+        is_final: bool,
+    ) -> std::result::Result<SendOutcome, ChannelError> {
         match self.sent_message_id.clone() {
             None => {
                 let id = self.channel.send_text(&self.chat_id, text).await?;
                 self.sent_message_id = Some(id.clone());
-                Ok(id)
+                self.last_edit_ms = Some(now_ms);
+                Ok(SendOutcome::Sent(id))
             }
-            Some(existing) => match self.channel.edit_message(&self.chat_id, &existing, text).await {
-                Ok(()) => {
-                    self.emit_edit(writer, &existing, text).await;
-                    Ok(existing)
+            Some(existing) => {
+                // Rate limit: drop intermediate edits that arrive too fast or
+                // past the per-message cap (the final edit always passes).
+                if !should_send_edit(
+                    &self.config,
+                    now_ms,
+                    self.last_edit_ms,
+                    self.edit_count,
+                    is_final,
+                ) {
+                    return Ok(SendOutcome::Coalesced);
                 }
-                Err(ChannelError::NotSupported { .. }) => {
-                    // Adapter has no edit API → send a fresh message instead.
+                // Edits disabled → send-only: a fresh message instead of editing.
+                if !self.config.edits_enabled {
                     let id = self.channel.send_text(&self.chat_id, text).await?;
                     self.sent_message_id = Some(id.clone());
-                    Ok(id)
+                    self.last_edit_ms = Some(now_ms);
+                    return Ok(SendOutcome::Sent(id));
                 }
-                Err(e) => Err(e),
-            },
+                match self.channel.edit_message(&self.chat_id, &existing, text).await {
+                    Ok(()) => {
+                        self.emit_edit(writer, &existing, text).await;
+                        self.last_edit_ms = Some(now_ms);
+                        self.edit_count = self.edit_count.saturating_add(1);
+                        Ok(SendOutcome::Edited(existing))
+                    }
+                    Err(ChannelError::NotSupported { .. }) => {
+                        let id = self.channel.send_text(&self.chat_id, text).await?;
+                        self.sent_message_id = Some(id.clone());
+                        self.last_edit_ms = Some(now_ms);
+                        Ok(SendOutcome::Sent(id))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
         }
     }
 
@@ -218,15 +315,26 @@ mod tests {
         count
     }
 
+    /// Edits never rate-limited away — for the behavioural (non-rate-limit) tests.
+    fn fast_config() -> LiveDeliveryConfig {
+        LiveDeliveryConfig {
+            edits_enabled: true,
+            min_edit_interval_ms: 0,
+            max_edits_per_message: 1000,
+            final_edit_always_allowed: true,
+        }
+    }
+
     #[tokio::test]
     async fn first_call_sends_text() {
         let ch = Arc::new(MockChannel::new(false));
-        let mut live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Telegram);
+        let mut live =
+            LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Telegram, fast_config());
         let (writer, join, _dir) = test_writer();
 
         assert!(!live.has_sent());
-        let id = live.send_or_edit(&writer, "hello").await.unwrap();
-        assert_eq!(id, MessageId("msg-0".into()));
+        let out = live.send_or_edit(&writer, "hello", false).await.unwrap();
+        assert_eq!(out, SendOutcome::Sent(MessageId("msg-0".into())));
         assert!(live.has_sent());
         assert_eq!(ch.sends.load(Ordering::SeqCst), 1);
         assert_eq!(ch.edits.load(Ordering::SeqCst), 0);
@@ -238,20 +346,19 @@ mod tests {
     #[tokio::test]
     async fn second_call_edits_and_emits_0x38() {
         let ch = Arc::new(MockChannel::new(false));
-        let mut live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack);
+        let mut live =
+            LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, fast_config());
         let (writer, join, dir) = test_writer();
         let seg = dir.path().join("ld.wal");
 
-        let first = live.send_or_edit(&writer, "draft").await.unwrap();
-        let second = live.send_or_edit(&writer, "final").await.unwrap();
+        let first = live.send_or_edit(&writer, "draft", false).await.unwrap();
+        let second = live.send_or_edit(&writer, "final", true).await.unwrap();
+        assert_eq!(first, SendOutcome::Sent(MessageId("msg-0".into())));
         // Edit keeps the SAME id; no new send.
-        assert_eq!(first, second, "edit must reuse the original message id");
+        assert_eq!(second, SendOutcome::Edited(MessageId("msg-0".into())));
         assert_eq!(ch.sends.load(Ordering::SeqCst), 1);
         assert_eq!(ch.edits.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            ch.last_edit_text.lock().unwrap().as_deref(),
-            Some("final")
-        );
+        assert_eq!(ch.last_edit_text.lock().unwrap().as_deref(), Some("final"));
 
         drop(writer);
         let _ = join.await;
@@ -265,15 +372,16 @@ mod tests {
     #[tokio::test]
     async fn degrades_to_send_when_edit_not_supported() {
         let ch = Arc::new(MockChannel::new(true)); // edit → NotSupported
-        let mut live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Discord);
+        let mut live =
+            LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Discord, fast_config());
         let (writer, join, dir) = test_writer();
         let seg = dir.path().join("ld.wal");
 
-        let first = live.send_or_edit(&writer, "one").await.unwrap();
-        let second = live.send_or_edit(&writer, "two").await.unwrap();
+        let first = live.send_or_edit(&writer, "one", false).await.unwrap();
+        let second = live.send_or_edit(&writer, "two", false).await.unwrap();
         // Degrade path = a fresh send with a NEW id, no panic.
-        assert_eq!(first, MessageId("msg-0".into()));
-        assert_eq!(second, MessageId("msg-1".into()));
+        assert_eq!(first, SendOutcome::Sent(MessageId("msg-0".into())));
+        assert_eq!(second, SendOutcome::Sent(MessageId("msg-1".into())));
         assert_eq!(ch.sends.load(Ordering::SeqCst), 2, "edit degraded to a 2nd send");
 
         drop(writer);
@@ -288,10 +396,102 @@ mod tests {
     #[tokio::test]
     async fn finalize_is_noop() {
         let ch = Arc::new(MockChannel::new(false));
-        let mut live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Telegram);
+        let mut live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Telegram, fast_config());
         let (writer, join, _dir) = test_writer();
-        let _ = live.send_or_edit(&writer, "x").await.unwrap();
+        let _ = live.send_or_edit(&writer, "x", false).await.unwrap();
         assert!(live.finalize().await.is_ok());
+        drop(writer);
+        let _ = join.await;
+    }
+
+    // ── SPEC-11 rate limiting (P1) ──────────────────────────────────────────
+
+    #[test]
+    fn should_send_edit_respects_interval() {
+        let cfg = LiveDeliveryConfig {
+            min_edit_interval_ms: 1000,
+            ..fast_config()
+        };
+        // Too soon after the last edit → coalesce.
+        assert!(!should_send_edit(&cfg, 900, Some(500), 0, false));
+        // Past the interval → send.
+        assert!(should_send_edit(&cfg, 1600, Some(500), 0, false));
+        // No prior edit → send.
+        assert!(should_send_edit(&cfg, 100, None, 0, false));
+    }
+
+    #[test]
+    fn should_send_edit_respects_count_cap() {
+        let cfg = LiveDeliveryConfig {
+            max_edits_per_message: 3,
+            min_edit_interval_ms: 0,
+            ..fast_config()
+        };
+        assert!(should_send_edit(&cfg, 10, Some(0), 2, false));
+        assert!(!should_send_edit(&cfg, 10, Some(0), 3, false), "at the cap → coalesce");
+    }
+
+    #[test]
+    fn should_send_edit_final_bypasses_limits() {
+        let cfg = LiveDeliveryConfig {
+            min_edit_interval_ms: 10_000,
+            max_edits_per_message: 1,
+            final_edit_always_allowed: true,
+            ..fast_config()
+        };
+        // Past BOTH limits, but the final edit always lands.
+        assert!(should_send_edit(&cfg, 0, Some(0), 99, true));
+        // …unless the operator turned that off.
+        let cfg_off = LiveDeliveryConfig {
+            final_edit_always_allowed: false,
+            ..cfg
+        };
+        assert!(!should_send_edit(&cfg_off, 0, Some(0), 99, true));
+    }
+
+    #[tokio::test]
+    async fn rate_limit_coalesces_fast_intermediate_edit_then_final_lands() {
+        let ch = Arc::new(MockChannel::new(false));
+        let cfg = LiveDeliveryConfig {
+            min_edit_interval_ms: 1000,
+            ..fast_config()
+        };
+        let mut live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Telegram, cfg);
+        let (writer, join, _dir) = test_writer();
+
+        // t=0: first send.
+        let s = live.send_or_edit_at(&writer, 0, "draft", false).await.unwrap();
+        assert_eq!(s, SendOutcome::Sent(MessageId("msg-0".into())));
+        // t=100: too soon → coalesced (no edit hits the wire).
+        let c = live.send_or_edit_at(&writer, 100, "partial", false).await.unwrap();
+        assert_eq!(c, SendOutcome::Coalesced);
+        assert_eq!(ch.edits.load(Ordering::SeqCst), 0, "fast edit dropped");
+        // t=200: still too soon, but FINAL → always lands.
+        let f = live.send_or_edit_at(&writer, 200, "final", true).await.unwrap();
+        assert_eq!(f, SendOutcome::Edited(MessageId("msg-0".into())));
+        assert_eq!(ch.edits.load(Ordering::SeqCst), 1, "final edit landed");
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
+    async fn edits_disabled_sends_fresh_each_time() {
+        let ch = Arc::new(MockChannel::new(false));
+        let cfg = LiveDeliveryConfig {
+            edits_enabled: false,
+            min_edit_interval_ms: 0,
+            ..fast_config()
+        };
+        let mut live = LiveDelivery::new(ch.clone(), "c1".into(), ChannelKind::Slack, cfg);
+        let (writer, join, _dir) = test_writer();
+
+        let a = live.send_or_edit_at(&writer, 0, "a", false).await.unwrap();
+        let b = live.send_or_edit_at(&writer, 1, "b", false).await.unwrap();
+        assert_eq!(a, SendOutcome::Sent(MessageId("msg-0".into())));
+        assert_eq!(b, SendOutcome::Sent(MessageId("msg-1".into())), "send-only: never edits");
+        assert_eq!(ch.edits.load(Ordering::SeqCst), 0, "edits disabled → 0 edits");
+
         drop(writer);
         let _ = join.await;
     }
@@ -299,12 +499,12 @@ mod tests {
     #[tokio::test]
     async fn outbound_0x38_payload_shape() {
         let ch = Arc::new(MockChannel::new(false));
-        let mut live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Telegram);
+        let mut live = LiveDelivery::new(ch, "c1".into(), ChannelKind::Telegram, fast_config());
         let (writer, join, dir) = test_writer();
         let seg = dir.path().join("ld.wal");
 
-        live.send_or_edit(&writer, "draft").await.unwrap();
-        live.send_or_edit(&writer, "final").await.unwrap();
+        live.send_or_edit(&writer, "draft", false).await.unwrap();
+        live.send_or_edit(&writer, "final", true).await.unwrap();
         drop(writer);
         let _ = join.await;
 
