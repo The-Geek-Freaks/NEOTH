@@ -111,6 +111,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "loaded freedom.yaml"
     );
 
+    // OM-01 SC-14 hard rule: if OMI ingest is enabled, the endpoint MUST be a
+    // self-hosted/local address — refuse to start against a cloud OMI backend
+    // (api.omi.me) so operator transcripts never leave the machine.
+    if config.omi.enabled {
+        if let Err(reason) = crate::installers::omi::is_local_endpoint(&config.omi.endpoint) {
+            anyhow::bail!(
+                "SC-14 OMI hard rule: {reason}. Set freedom.yaml::omi.endpoint to a local \
+                 address (e.g. http://127.0.0.1:8002) or disable it (omi.enabled: false)."
+            );
+        }
+    }
+
     // ── 1a. Plugin discovery + invoker registration (Pick #34 follow-up) ───
     //
     // Discover `~/.neoth/plugins/<id>/`, compile each .wasm, register the
@@ -1653,6 +1665,22 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── OM-01 local OMI transcript ingest ─────────────────────────────────────
+    // Polls the operator's self-hosted OMI backend (SC-14 already confirmed the
+    // endpoint is local above), promotes high-confidence items to ground-truth
+    // (`0x9C`) + extracts action items to kanban. Default OFF → no task.
+    let omi_handle: Option<tokio::task::JoinHandle<()>> = if config.omi.enabled {
+        let handle = crate::daemon::omi_ingest_task::spawn_omi_ingest_task(
+            config.omi.clone(),
+            store::default_path(),
+            writer.clone(),
+        );
+        info!(endpoint = %config.omi.endpoint, "OMI ingest task spawned (OM-01)");
+        Some(handle)
+    } else {
+        None
+    };
+
     // ── Passive user-adaptation cron (SPEC-05) ────────────────────────────
     // Re-aggregates the behavioural snapshot from the WAL every
     // `profile_adapt.interval_secs` (daily default) + queues new self-dev
@@ -2347,6 +2375,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // Abort the HO-07 monitor alerting cron loop (drain before writer close).
     if let Some(task) = monitor_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
+    if let Some(task) = omi_handle {
         task.abort();
         let _ = task.await;
     }

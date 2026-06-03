@@ -316,6 +316,11 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub goal: GoalConfig,
 
+    /// OM-01 — local OMI transcript ingest. Off by default; the daemon REFUSES
+    /// to start (SC-14) if enabled with a non-local endpoint.
+    #[serde(default)]
+    pub omi: OmiConfig,
+
     /// EL-02 — arXiv topic-feed periodic ingest. Off by default; opt in
     /// via `arxiv.enabled: true` + a non-empty `arxiv.topics` list. When
     /// active, the daemon runs each topic query on a cadence (default 6h),
@@ -606,6 +611,24 @@ mod wal_config_tests {
         let parsed: FreedomConfig =
             serde_yaml::from_str("operator_id: alice\n").expect("parse minimal freedom.yaml");
         assert!(parsed.tools.os.allowed_paths.is_empty());
+    }
+
+    #[test]
+    fn omi_config_defaults_off_and_local() {
+        // OM-01 — default OFF, local endpoint, 30s/0.75 knobs; serde round-trips.
+        let d = OmiConfig::default();
+        assert!(!d.enabled);
+        assert_eq!(d.endpoint, crate::installers::omi::DEFAULT_OMI_ENDPOINT);
+        assert_eq!(d.poll_interval_secs, 30);
+        assert!((d.confidence_threshold - 0.75).abs() < 1e-6);
+        let absent: FreedomConfig = serde_yaml::from_str("operator_id: a\n").expect("parse");
+        assert!(!absent.omi.enabled);
+        let set: FreedomConfig = serde_yaml::from_str(
+            "operator_id: a\nomi:\n  enabled: true\n  endpoint: http://127.0.0.1:9999\n",
+        )
+        .expect("parse");
+        assert!(set.omi.enabled);
+        assert_eq!(set.omi.endpoint, "http://127.0.0.1:9999");
     }
 
     #[test]
@@ -1312,6 +1335,33 @@ impl Default for GoalConfig {
     fn default() -> Self {
         // 5 = the prior hardcoded dispatch-loop cap (no behaviour change).
         Self { max_turns: 5 }
+    }
+}
+
+/// OM-01 — local OMI transcript-ingest knobs.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct OmiConfig {
+    /// Off by default — opt-in. When `true` the daemon polls `endpoint` and the
+    /// SC-14 startup gate REFUSES a non-local `endpoint` (e.g. `api.omi.me`).
+    pub enabled: bool,
+    /// The LOCAL OMI backend base URL. Default `http://127.0.0.1:8002`.
+    pub endpoint: String,
+    /// Poll interval (seconds). Default 30; floored at 5.
+    pub poll_interval_secs: u64,
+    /// A transcript item at/above this score is promoted to ground-truth +
+    /// audited (`0x9C`). Default 0.75.
+    pub confidence_threshold: f32,
+}
+
+impl Default for OmiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            endpoint: crate::installers::omi::DEFAULT_OMI_ENDPOINT.to_string(),
+            poll_interval_secs: 30,
+            confidence_threshold: 0.75,
+        }
     }
 }
 

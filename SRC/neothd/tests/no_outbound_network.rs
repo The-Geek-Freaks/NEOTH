@@ -101,6 +101,14 @@
 //!                                    opt-in category as the channel adapters
 //!                                    above — an explicit, configured upstream,
 //!                                    never an unsolicited phone-home.
+//!   - `src/daemon/omi_ingest_task.rs`
+//!                                  — OM-01 operator-configured LOCAL OMI
+//!                                    transcript poll. Default OFF
+//!                                    (`omi.enabled: false`); when enabled the
+//!                                    SC-14 startup gate REFUSES any non-local
+//!                                    endpoint (api.omi.me rejected), so the
+//!                                    `reqwest` GET only ever dials the
+//!                                    operator's self-hosted backend.
 //!
 //! Adding a new allowed path means editing both the codebase AND this
 //! file, which makes the audit trail loud.
@@ -125,6 +133,7 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/cluster/",
     "src/transport/",
     "src/email/imap_fetch.rs",
+    "src/daemon/omi_ingest_task.rs",
 ];
 
 const FORBIDDEN_PATTERNS: &[&str] = &[

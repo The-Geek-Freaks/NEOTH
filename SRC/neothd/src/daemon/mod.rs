@@ -67,6 +67,11 @@ pub mod resource_watch;
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
+/// OM-01 — local OMI transcript ingest task. Polls a self-hosted OMI backend
+/// (SC-14: cloud endpoints refused at startup), sanitises + promotes
+/// high-confidence items to ground-truth (`0x9C`), extracts action items to
+/// kanban. Off by default.
+pub mod omi_ingest_task;
 /// ADV-14 — longitudinal recall-regression anchor cron. Weekly re-embeds the
 /// anchor queries' fresh answers + emits `0x3F REGRESSION_ALERT` on cosine
 /// drift below threshold. Off by default.

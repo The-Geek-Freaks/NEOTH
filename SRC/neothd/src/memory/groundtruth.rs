@@ -38,6 +38,10 @@ pub enum Source {
     /// Operator pasted a markdown file; the bulk-text extractor produced
     /// this claim.
     BulkText,
+    /// OM-01 — promoted from the operator's LOCAL OMI backend transcript feed
+    /// (SC-14: only ever a self-hosted endpoint; api.omi.me is refused at
+    /// daemon startup).
+    Omi,
 }
 
 impl Source {
@@ -52,6 +56,7 @@ impl Source {
             Source::ImportOpenhuman => "import:openhuman",
             Source::ImportVeronica => "import:veronica",
             Source::BulkText => "bulk-text",
+            Source::Omi => "omi",
         }
     }
 }

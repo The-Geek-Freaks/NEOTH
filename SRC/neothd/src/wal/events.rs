@@ -821,6 +821,16 @@ pub const EVENT_TYPE_MODE_CHECKPOINT: u8 = 0x9A;
 /// chat_id}], aliases_reassigned, ts_unix}`.
 pub const EVENT_TYPE_IDENTITY_MERGED: u8 = 0x9B;
 
+/// `0x9C OMI_ACTION_PROMOTED` — OM-01. A transcript item from the operator's
+/// LOCAL OMI backend crossed `omi.confidence_threshold` and was inserted into
+/// `idx_groundtruth` as a new ground-truth seed. SC-14 hard rule: `api.omi.me`
+/// is refused at daemon startup, so this event can only originate from a
+/// self-hosted endpoint. Memory-ops band (it mints a memory seed). Metadata
+/// only — the statement's hash, never the raw transcript.
+///
+/// Payload (JSON): `{text_hash, source: "omi", scope, confidence, ts_unix}`.
+pub const EVENT_TYPE_OMI_ACTION_PROMOTED: u8 = 0x9C;
+
 // ---- 0xA0..=0xAF  Permissions / autonomy (R-23) ---------------------------
 
 /// Permission decision returned `Allow` (after a possible Confirm round-trip).
@@ -1577,6 +1587,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("dream_composed", EVENT_TYPE_DREAM_COMPOSED),
     ("memory_transfer_exported", EVENT_TYPE_MEMORY_TRANSFER_EXPORTED),
     ("identity_merged", EVENT_TYPE_IDENTITY_MERGED),
+    ("omi_action_promoted", EVENT_TYPE_OMI_ACTION_PROMOTED),
     ("wal_crc_alert", EVENT_TYPE_WAL_CRC_ALERT),
     ("crash_log_alert", EVENT_TYPE_CRASH_LOG_ALERT),
     ("channel_silence_alert", EVENT_TYPE_CHANNEL_SILENCE_ALERT),
@@ -1842,6 +1853,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_MODE_CHECKPOINT < 0x90 || EVENT_TYPE_MODE_CHECKPOINT > 0x9F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_IDENTITY_MERGED < 0x90 || EVENT_TYPE_IDENTITY_MERGED > 0x9F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OMI_ACTION_PROMOTED < 0x90
+        || EVENT_TYPE_OMI_ACTION_PROMOTED > 0x9F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_PERMISSION_GRANTED < 0xA0 || EVENT_TYPE_PERMISSION_GRANTED > 0xAF) as usize];
     let _ = [(); 1]
@@ -2104,6 +2117,7 @@ mod tests {
             ("GROUNDTRUTH_IMPORTED", EVENT_TYPE_GROUNDTRUTH_IMPORTED),
             ("MODE_CHECKPOINT", EVENT_TYPE_MODE_CHECKPOINT),
             ("IDENTITY_MERGED", EVENT_TYPE_IDENTITY_MERGED),
+            ("OMI_ACTION_PROMOTED", EVENT_TYPE_OMI_ACTION_PROMOTED),
             ("PERMISSION_GRANTED", EVENT_TYPE_PERMISSION_GRANTED),
             ("PERMISSION_DENIED", EVENT_TYPE_PERMISSION_DENIED),
             ("LEVEL_ELEVATED", EVENT_TYPE_LEVEL_ELEVATED),
