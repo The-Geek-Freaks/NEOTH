@@ -58,6 +58,51 @@ pub enum EcologyAction {
         #[arg(long)]
         top: Option<usize>,
     },
+    /// Maturity matrix for the Ecology layer — what is read-only/beta vs
+    /// experimental/review-gated, and the scheduler's enabled state. The
+    /// Ecology layer is NOT "stable self-improvement"; this is the honest label.
+    Status,
+}
+
+/// CH-13 — one Ecology surface's maturity + access posture. PURE data for the
+/// `neoth ecology status` matrix.
+struct EcologySurface {
+    name: &'static str,
+    maturity: &'static str,
+    access: &'static str,
+    note: &'static str,
+}
+
+/// The honest maturity matrix. Correlation/genealogy/channel-weights are
+/// read-only diagnostics; the scheduler is experimental + review-gated (it
+/// STAGES proposals, never auto-applies).
+fn ecology_surfaces() -> [EcologySurface; 4] {
+    [
+        EcologySurface {
+            name: "correlation",
+            maturity: "beta",
+            access: "read-only",
+            note: "council low-dissent winner streaks (diagnostic)",
+        },
+        EcologySurface {
+            name: "genealogy",
+            maturity: "beta",
+            access: "read-only",
+            note: "tool-usage inventory from real WAL frames (diagnostic)",
+        },
+        EcologySurface {
+            name: "channel-weights",
+            maturity: "beta",
+            access: "read-only",
+            note: "per-channel KF-05 acceptance familiarity (diagnostic)",
+        },
+        EcologySurface {
+            name: "scheduler",
+            maturity: "experimental",
+            access: "review-gated",
+            note: "stages self-dev proposals, NEVER auto-applies (0x4C)",
+        },
+    ]
 }
 
 pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
@@ -68,6 +113,11 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
         }
         EcologyAction::Genealogy { wal_dir, home, top } => {
             run_genealogy(wal_dir, home, top, args.output).await;
+            Ok(())
+        }
+        EcologyAction::Status => {
+            let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+            run_status(cfg.ecology.enabled, args.output);
             Ok(())
         }
         EcologyAction::Correlation {
@@ -163,6 +213,58 @@ fn run_channel_weights(home: Option<PathBuf>, output: OutputFormat) {
     }
 }
 
+/// P1-6 — render the Ecology maturity matrix. `scheduler_enabled` is the live
+/// `ecology.enabled` state (the only surface with a runtime toggle).
+fn run_status(scheduler_enabled: bool, output: OutputFormat) {
+    let surfaces = ecology_surfaces();
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = surfaces
+                .iter()
+                .map(|s| {
+                    let mut row = serde_json::json!({
+                        "surface": s.name,
+                        "maturity": s.maturity,
+                        "access": s.access,
+                        "note": s.note,
+                    });
+                    if s.name == "scheduler" {
+                        row["enabled"] = serde_json::json!(scheduler_enabled);
+                    }
+                    row
+                })
+                .collect();
+            println!(
+                "{}",
+                serde_json::json!({
+                    "layer": "ecology (CH-13)",
+                    "headline": "NOT stable self-improvement — review-gated scheduler + read-only diagnostics",
+                    "surfaces": rows,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            println!("Ecology layer (CH-13) — maturity matrix");
+            println!("  (NOT stable self-improvement: read-only diagnostics + a review-gated scheduler)");
+            for s in &surfaces {
+                let state = if s.name == "scheduler" {
+                    if scheduler_enabled {
+                        "  [enabled]"
+                    } else {
+                        "  [disabled]"
+                    }
+                } else {
+                    ""
+                };
+                println!(
+                    "  {:<16} {:<13} {:<13}{}  — {}",
+                    s.name, s.maturity, s.access, state, s.note
+                );
+            }
+        }
+    }
+}
+
 /// F4-01 Phase 3 — build + render the tool genealogy. Read-only: loads the
 /// installed-skill inventory + walks the WAL for tool-activity frames, then
 /// reports a use-count-ranked node list. Changes nothing.
@@ -231,5 +333,28 @@ async fn run_genealogy(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maturity_matrix_is_honest() {
+        let s = ecology_surfaces();
+        assert_eq!(s.len(), 4);
+        // The diagnostics are beta + read-only.
+        for name in ["correlation", "genealogy", "channel-weights"] {
+            let row = s.iter().find(|r| r.name == name).unwrap();
+            assert_eq!(row.maturity, "beta");
+            assert_eq!(row.access, "read-only");
+        }
+        // The scheduler is explicitly experimental + review-gated — never
+        // labelled "stable self-improvement".
+        let sched = s.iter().find(|r| r.name == "scheduler").unwrap();
+        assert_eq!(sched.maturity, "experimental");
+        assert_eq!(sched.access, "review-gated");
+        assert!(sched.note.contains("NEVER auto-applies"));
     }
 }

@@ -508,6 +508,10 @@ F4-01 Phase 3 — tool genealogy: an inventory of the tools NEOTH actually exerc
 - `--home <DIR>` — Override the NEOTH home for the installed-skill inventory
 - `--top <TOP>` — Show only the top-N most-used tools. Default: all
 
+### `neoth ecology status`
+
+Maturity matrix for the Ecology layer — what is read-only/beta vs experimental/review-gated, and the scheduler's enabled state. The Ecology layer is NOT "stable self-improvement"; this is the honest label
+
 ## `neoth email`
 
 EM-01b — inbound email. `fetch` pulls newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and triages each through the sanitizer→threat pipeline. Live socket needs the `imap_fetch` build feature; `--dry-run` works on every build
