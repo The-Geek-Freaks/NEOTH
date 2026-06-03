@@ -311,6 +311,11 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub ecology: EcologyConfig,
 
+    /// GM-01 — agentic tool-use turn budget. `max_turns` is the operator-tunable
+    /// hard ceiling on MCP dispatch-loop iterations (was a hardcoded 5).
+    #[serde(default)]
+    pub goal: GoalConfig,
+
     /// EL-02 — arXiv topic-feed periodic ingest. Off by default; opt in
     /// via `arxiv.enabled: true` + a non-empty `arxiv.topics` list. When
     /// active, the daemon runs each topic query on a cadence (default 6h),
@@ -601,6 +606,18 @@ mod wal_config_tests {
         let parsed: FreedomConfig =
             serde_yaml::from_str("operator_id: alice\n").expect("parse minimal freedom.yaml");
         assert!(parsed.tools.os.allowed_paths.is_empty());
+    }
+
+    #[test]
+    fn goal_config_max_turns_defaults_to_five() {
+        // GM-01 — default 5 (the prior hardcoded dispatch-loop cap; no behaviour
+        // change). An absent `goal:` block + a partial one both read 5.
+        assert_eq!(GoalConfig::default().max_turns, 5);
+        let absent: FreedomConfig = serde_yaml::from_str("operator_id: a\n").expect("parse");
+        assert_eq!(absent.goal.max_turns, 5);
+        let set: FreedomConfig =
+            serde_yaml::from_str("operator_id: a\ngoal:\n  max_turns: 12\n").expect("parse");
+        assert_eq!(set.goal.max_turns, 12);
     }
 
     #[test]
@@ -1276,6 +1293,25 @@ impl Default for EcologyConfig {
             enabled: false,
             correlation_min_streak: 5,
         }
+    }
+}
+
+/// GM-01 — agentic tool-use turn budget knobs.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct GoalConfig {
+    /// Hard ceiling on MCP autoroute dispatch-loop iterations (each iteration is
+    /// one provider call + a round of tool calls). Bounds a model that keeps
+    /// emitting tool-call fences from burning budget. Default 5 (the prior
+    /// hardcoded `dispatch_loop::DEFAULT_MAX_ITERATIONS`); raise it for deeper
+    /// tool chains, lower it for a tighter leash.
+    pub max_turns: u32,
+}
+
+impl Default for GoalConfig {
+    fn default() -> Self {
+        // 5 = the prior hardcoded dispatch-loop cap (no behaviour change).
+        Self { max_turns: 5 }
     }
 }
 

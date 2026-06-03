@@ -778,6 +778,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             writer: writer_for_handler,
             operator_id,
             autonomy: config.autonomy,
+            goal_max_turns: config.goal.max_turns,
             meter: provider_meter.clone(),
             rate_limiter: Arc::clone(&rate_limiter),
             segment_path: segment_path.clone(),
@@ -841,6 +842,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 writer: writer.clone(),
                 operator_id: config.operator_id.clone(),
                 autonomy: config.autonomy,
+                goal_max_turns: config.goal.max_turns,
                 meter: provider_meter.clone(),
                 rate_limiter: Arc::clone(&rate_limiter),
                 segment_path: segment_path.clone(),
@@ -896,6 +898,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 writer: writer.clone(),
                 operator_id: config.operator_id.clone(),
                 autonomy: config.autonomy,
+                goal_max_turns: config.goal.max_turns,
                 meter: provider_meter.clone(),
                 rate_limiter: Arc::clone(&rate_limiter),
                 segment_path: segment_path.clone(),
@@ -2596,6 +2599,9 @@ pub(crate) struct PipelineHandlerDeps {
     pub(crate) writer: WalWriterHandle,
     pub(crate) operator_id: Option<String>,
     pub(crate) autonomy: crate::permissions::AutonomyLevel,
+    /// GM-01 — operator-tunable MCP dispatch-loop iteration ceiling
+    /// (`freedom.yaml::goal.max_turns`).
+    pub(crate) goal_max_turns: u32,
     pub(crate) meter: crate::providers::meter::Meter,
     pub(crate) rate_limiter: Arc<crate::channels::rate_limit::RateLimiter>,
     /// Segment path the channel-side profile pipeline replays before
@@ -2688,6 +2694,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
         writer,
         operator_id,
         autonomy,
+        goal_max_turns,
         meter,
         rate_limiter,
         segment_path,
@@ -3562,6 +3569,8 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     // Some(empty) also allows all; Some(non-empty)
                     // enforces.
                     channel_skill_allowlist.as_deref(),
+                    // GM-01 — operator-tunable dispatch-loop ceiling.
+                    goal_max_turns,
                 )
                 .await
                 {

@@ -1538,6 +1538,7 @@ pub async fn run_chat_with(
                 &writer,
                 Some(&config.rollback),
                 skill_allowlist,
+                config.goal.max_turns,
             )
             .await
             {
@@ -3803,6 +3804,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // matched this turn). Threaded down to the MCP gate so a matched
     // skill scopes which tools the model may call.
     skill_allowlist: Option<&[String]>,
+    // GM-01 — operator-tunable hard ceiling on dispatch-loop iterations
+    // (`freedom.yaml::goal.max_turns`, default 5).
+    max_iterations: u32,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -3876,7 +3880,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         provider,
         base: base_req,
     };
-    crate::mcp::dispatch_loop::run_tool_loop(
+    crate::mcp::dispatch_loop::run_tool_loop_with_cap(
         &mut driver,
         initial_prompt,
         servers,
@@ -3884,6 +3888,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         Some(writer),
         rollback_policy,
         skill_allowlist,
+        max_iterations.max(1),
     )
     .await
 }

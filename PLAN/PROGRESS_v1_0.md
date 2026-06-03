@@ -364,7 +364,7 @@ A1 binding: **PL-04 + PL-05 hard pre-condition before any EM-\* item merges.** A
 ### v1.0 — Hermes adopts (clarify + goal)
 
 - [ ] **CL-01** Clarify-prompt interrupt — mid-turn open question via SSE, 120s timeout. — 2.5d (hermes adopt)
-- [ ] **GM-01** Goal manager + turn budget — self-terminate when goal satisfied. — 3d (hermes adopt)
+- [x] **GM-01** Goal manager + turn budget — self-terminate when goal satisfied. — 3d (hermes adopt) ✅ **RESOLVED 2026-06-03 Session 36 (panel rank-8, verify-first).** The TURN-BUDGET half is now operator-tunable + the GOAL-SATISFACTION half is closed as an architectural mismatch. **Verify-first found:** NEOTH chat is single-turn request-response (no agentic multi-turn session to 'self-terminate'), and the ONE real iterative loop (MCP autoroute `dispatch_loop::run_tool_loop`) ALREADY had a turn budget (`DEFAULT_MAX_ITERATIONS=5` + `hit_cap`). A keyword-overlap 'goal satisfied' heuristic wired into that tool-loop would risk PREMATURE task termination → harmful, not helpful → NOT built (would be primitive-ahead + dangerous). **Shipped (the genuine deliverable):** the dispatch-loop cap is now operator-tunable via `freedom.yaml::goal.max_turns` (new `GoalConfig`, default 5 = no behaviour change) — threaded `run_mcp_dispatch_loop`→`run_tool_loop_with_cap` on BOTH the `neoth chat` + channel-serve paths (via `PipelineHandlerDeps.goal_max_turns`). 1 config test (default-5 / absent-block / explicit). lib 6792/0, clippy 0. The hermes 'goal manager + classify_goal_satisfaction' stays unbuilt by design (mismatch with NEOTH's request-response model; the coding-workflow already has its own `EarlyStopDetector`).
 
 ### v1.0 — Final four killer features (A6)
 
