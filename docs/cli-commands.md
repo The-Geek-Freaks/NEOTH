@@ -76,6 +76,28 @@ Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
 - `--no-wal <SKIP_WAL>` — Skip raw WAL segments. Default behaviour bundles them — the WAL is the source of truth + the operator-flow audit (2026-05-19) flagged "default-without-WAL produces inconsistent restores where views.db cursors reference segments that don't exist". Pass `--no-wal` to opt out (saves disk, but restored host needs to re-index from scratch)
 - `--home <DIR>` — Override the ~/.neoth source dir (mostly for tests)
 
+## `neoth calendar`
+
+EM-02b — CalDAV calendar. `list` reports VEVENTs in the configured collection; `add` PUTs a new event (gated + audited like every external write). Uses the same `caldav_{url,username,password}` as `neoth todo`
+
+### `neoth calendar add`
+
+Add (PUT) a new event. Gated + audited (`0xC8`) like every external write; idempotent by `(summary, start)` so a re-run never duplicates
+
+- `<SUMMARY>` — Event title (SUMMARY)
+- `--start <START>` — RFC-3339 / iCal start, e.g. `2026-05-30T09:00:00Z` or `2026-05-30` (date-only = all-day)
+- `--end <END>` — RFC-3339 / iCal end. Defaults to `start`
+- `--location <LOCATION>` — Optional LOCATION
+- `--description <DESCRIPTION>` — Optional DESCRIPTION
+- `--url <URL>` — Override the calendar collection URL
+- `--yes <YES>` — Skip the interactive confirm (non-interactive write)
+
+### `neoth calendar list`
+
+List VEVENTs in the configured CalDAV calendar collection. Read-only
+
+- `--url <URL>` — Override the calendar collection URL (else `credentials.yaml::caldav_url` / `NEOTH_CALDAV_URL`)
+
 ## `neoth catalog`
 
 LLM-provider model catalog (K-Models-Discovery, Session 14). `refresh` queries every configured provider's list-models endpoint + caches results at `~/.neoth/models_catalog.json`. `list` / `show` print cached entries. `defaults` reports the recommended model per provider — the wizard reads this on next `neoth init` run. `clear` wipes the cache to force a full rediscovery

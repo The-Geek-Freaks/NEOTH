@@ -150,7 +150,9 @@ fn local_name(raw: &[u8]) -> &str {
 
 /// Unfold iCalendar content lines (RFC 5545 §3.1): a CRLF followed by a single
 /// space or tab is a line continuation — strip it and join to the prior line.
-fn unfold_ics(ics: &str) -> Vec<String> {
+/// `pub(crate)` so the EM-02b VEVENT parser ([`super::caldav_calendar`]) reuses
+/// the same proven unfolding instead of duplicating it.
+pub(crate) fn unfold_ics(ics: &str) -> Vec<String> {
     let mut lines: Vec<String> = Vec::new();
     for raw in ics.split('\n') {
         let line = raw.strip_suffix('\r').unwrap_or(raw);
@@ -169,7 +171,8 @@ fn unfold_ics(ics: &str) -> Vec<String> {
 
 /// Split an iCalendar property line into `(NAME, VALUE)`, dropping any
 /// `;params` between the name and the `:`. `None` when there is no `:`.
-fn parse_property(line: &str) -> Option<(String, &str)> {
+/// `pub(crate)` — shared with the EM-02b VEVENT parser.
+pub(crate) fn parse_property(line: &str) -> Option<(String, &str)> {
     let colon = line.find(':')?;
     let name_part = &line[..colon];
     let value = &line[colon + 1..];

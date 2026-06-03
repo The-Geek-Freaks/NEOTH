@@ -97,7 +97,7 @@ pub async fn run_todo(args: TodoArgs) -> Result<()> {
         TodoAction::Close { .. } => Some("close"),
     };
     if let Some(action) = action {
-        gate_external_task_write(&args, provider, action)?;
+        gate_external_task_write(args.yes, provider, action)?;
         if args.dry_run {
             let target = match &args.action {
                 TodoAction::Add { content } => content.as_str(),
@@ -332,7 +332,11 @@ async fn run_caldav(args: &TodoArgs) -> Result<()> {
 /// network write). `Allow` proceeds. Under `required_for_oneshot_permission_
 /// events`, a live daemon with an unreachable audit-RPC listener REFUSES the
 /// write (the `0xC8 TODO_WRITE` frame couldn't land).
-fn gate_external_task_write(args: &TodoArgs, provider: &str, action: &str) -> Result<()> {
+pub(crate) fn gate_external_task_write(
+    yes: bool,
+    provider: &str,
+    action: &str,
+) -> Result<()> {
     use crate::permissions::{Action, Decision, evaluate};
     let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
     let home = crate::config::FreedomConfig::default_neoth_home();
@@ -354,7 +358,7 @@ fn gate_external_task_write(args: &TodoArgs, provider: &str, action: &str) -> Re
         Decision::Allow => Ok(()),
         Decision::Deny(r) => anyhow::bail!("denied: {r}"),
         Decision::Confirm(reason) => {
-            if args.yes {
+            if yes {
                 return Ok(());
             }
             use std::io::IsTerminal;
@@ -378,7 +382,7 @@ fn gate_external_task_write(args: &TodoArgs, provider: &str, action: &str) -> Re
 /// loopback audit-RPC channel (`0xC8` allowlisted) instead of skipping;
 /// otherwise open a one-shot writer. Metadata only (provider + action + uid +
 /// summary), never credentials.
-async fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str>) {
+pub(crate) async fn emit_todo_write(provider: &str, action: &str, uid: &str, summary: Option<&str>) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -453,17 +457,18 @@ fn render_write(args: &TodoArgs, msg: &str) {
     }
 }
 
-/// CalDAV connection settings.
-struct CaldavCreds {
-    url: String,
-    username: String,
-    password: SecretString,
+/// CalDAV connection settings. Shared by `neoth todo --provider caldav` and
+/// `neoth calendar` (EM-02b) — both resolve the same operator credentials.
+pub(crate) struct CaldavCreds {
+    pub url: String,
+    pub username: String,
+    pub password: SecretString,
 }
 
 /// Resolve CalDAV creds: `credentials.yaml::caldav_{url,username,password}`
 /// first, then `NEOTH_CALDAV_{URL,USERNAME,PASSWORD}`. Bails with the exact
 /// missing field + how to set it.
-fn caldav_creds() -> Result<CaldavCreds> {
+pub(crate) fn caldav_creds() -> Result<CaldavCreds> {
     let creds = crate::config::credentials::Credentials::load_or_default(
         &crate::config::credentials::default_path(),
     )

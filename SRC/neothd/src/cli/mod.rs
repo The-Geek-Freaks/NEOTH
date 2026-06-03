@@ -38,6 +38,8 @@ pub mod glossary;
 pub mod groundtruth;
 pub mod groundtruth_wizard;
 pub mod autonomy;
+/// EM-02b — `neoth calendar` CalDAV calendar (VEVENT) list/add surface.
+pub mod calendar;
 pub mod checkpoint;
 pub mod credential;
 pub mod cron;
@@ -444,6 +446,11 @@ pub enum Commands {
     /// the sanitizer→threat pipeline. Live socket needs the `imap_fetch`
     /// build feature; `--dry-run` works on every build.
     Email(email::EmailArgs),
+
+    /// EM-02b — CalDAV calendar. `list` reports VEVENTs in the configured
+    /// collection; `add` PUTs a new event (gated + audited like every external
+    /// write). Uses the same `caldav_{url,username,password}` as `neoth todo`.
+    Calendar(calendar::CalendarArgs),
 
     /// CH-13 / F4-01 — Ecology self-adaptation diagnostics. `correlation`
     /// reports providers that won many consecutive outer-council debates (a
@@ -1035,6 +1042,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Todo(mut args) => {
             args.output = global_output;
             todo::run_todo(args).await?;
+        }
+        Commands::Calendar(mut args) => {
+            args.output = global_output;
+            calendar::run_calendar(args).await?;
         }
         Commands::Lease(mut args) => {
             args.output = global_output;
