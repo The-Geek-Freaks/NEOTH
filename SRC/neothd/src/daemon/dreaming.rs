@@ -463,10 +463,18 @@ const THEME_LABEL_MAX_CHARS: usize = 60;
 /// Pure + deterministic (no wall-clock, no RNG) so the prompt is replay-
 /// stable for a given cluster. Each preview is trimmed + truncated and the
 /// count is capped to keep the prompt bounded.
+///
+/// **Privacy gate (SPEC-12):** the chat provider that labels the cluster may be
+/// a metered cloud model (the operator opted into `summarize_themes`), so every
+/// preview is run through [`crate::security::redact::redact_text`] FIRST —
+/// secrets/keys/tokens/PII never leave the device inside a summarisation
+/// prompt, even though the operator opted into LLM labels. Redact-then-truncate
+/// so a clipped preview can't leak a partial secret.
 pub fn build_theme_summary_prompt(previews: &[String]) -> String {
     let mut body = String::new();
     for p in previews.iter().take(THEME_SUMMARY_MAX_PREVIEWS) {
-        let trimmed = truncate_safe(p.trim(), THEME_SUMMARY_PREVIEW_CHARS);
+        let redacted = crate::security::redact::redact_text(p.trim());
+        let trimmed = truncate_safe(redacted.trim(), THEME_SUMMARY_PREVIEW_CHARS);
         if trimmed.is_empty() {
             continue;
         }
@@ -1029,6 +1037,24 @@ mod tests {
         );
         assert!(prompt.contains("snippet number 0"));
         assert!(!prompt.contains("snippet number 29"));
+    }
+
+    #[test]
+    fn build_theme_summary_prompt_redacts_secrets_before_the_cloud_call() {
+        // SPEC-12 privacy gate: a preview carrying a secret must NOT reach the
+        // (possibly cloud) summary prompt verbatim.
+        let previews = vec![
+            "deployed with key AKIAIOSFODNN7EXAMPLE to prod".to_string(),
+            "talked about the weekend trip".to_string(),
+        ];
+        let prompt = build_theme_summary_prompt(&previews);
+        assert!(
+            !prompt.contains("AKIAIOSFODNN7EXAMPLE"),
+            "raw secret leaked into the summary prompt: {prompt}"
+        );
+        assert!(prompt.contains("[REDACTED:"), "expected a redaction marker");
+        // Non-secret content still flows through.
+        assert!(prompt.contains("weekend trip"));
     }
 
     #[test]
