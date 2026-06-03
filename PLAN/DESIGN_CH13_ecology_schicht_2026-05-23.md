@@ -109,3 +109,23 @@ Three sub-loops, each runs on its own cadence:
 - `SRC/neothd/src/cli/ecology.rs`
 - `SRC/neothd/src/wal/events.rs` (add 3 event codes)
 - `SRC/neothd/src/config/mod.rs` (add `EcologyConfig` block default OFF)
+
+## HARD CONSTRAINT (operator-flagged 2026-06-03, Session 36) — Ecology must not become autopilot
+
+Read-only diagnostics (the shipped `neoth ecology correlation` + `neoth ecology
+channel-weights`) are fine. But the moment the layer gains the ability to ACT —
+the Phase-1 auto-scheduler firing P-04 self-dev, or a future CH-12.b cooldown-
+shortening / threshold-adjusting loop — that action MUST be either:
+
+1. **review-gated** — staged as an OB-03 proposal the operator accepts via
+   `neoth proactive review` (never auto-applied), OR
+2. **at minimum WAL-audited** — every Ecology decision that changes council/
+   routing POLICY emits a durable audit frame BEFORE it takes effect, so an
+   operator (and `neoth wal show --type ...`) can see exactly what the fitness
+   layer changed and when.
+
+**Council-fitness must never silently rewrite council-policy.** The signal layer
+(correlation, channel-weights, genealogy) reads; the policy layer (thresholds,
+cooldowns, routing) is only changed through a gate the operator can see. The
+Phase-5 WAL events (`ECOLOGY_PROPOSED`/`APPLIED`/`DECLINED`, now in the 0x4x
+cron band per the slot audit) are the mechanism for #2.
