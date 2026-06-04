@@ -1234,7 +1234,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Preset(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();
-            preset::run(&home, args)?;
+            preset::run(&home, args).await?;
         }
         Commands::SelfDev(args) => {
             let home = crate::config::FreedomConfig::default_neoth_home();

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::config::presets;
@@ -38,19 +38,58 @@ pub enum PresetAction {
     Apply { name: String },
 }
 
-pub fn run(home: &Path, args: PresetArgs) -> Result<()> {
+pub async fn run(home: &Path, args: PresetArgs) -> Result<()> {
     match args.action {
         PresetAction::List { json } => run_list(home, json),
         PresetAction::Show { name } => run_show(home, &name),
         PresetAction::Delete { name } => run_delete(home, &name),
         PresetAction::Activate { name } => run_activate(home, &name),
         PresetAction::Deactivate => run_deactivate(home),
-        PresetAction::Apply { name } => run_apply(home, &name),
+        PresetAction::Apply { name } => run_apply(home, &name).await,
     }
 }
 
-fn run_apply(home: &Path, name: &str) -> Result<()> {
+async fn run_apply(home: &Path, name: &str) -> Result<()> {
+    // P1 — fail-closed: a preset can change provider / cloud-fallback / rail /
+    // autonomy-adjacent fields, so under `required_for_oneshot_permission_events`
+    // the apply REFUSES if the `0xDA PRESET_APPLIED` audit cannot be written
+    // (live daemon + unreachable audit-RPC listener). Identical contract to the
+    // external-task-write gate.
+    let cfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
+    let audit_home = crate::config::FreedomConfig::default_neoth_home();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&crate::daemon::pidfile::default_pidfile()),
+        Ok(Some(_))
+    );
+    crate::daemon::audit_rpc::enforce_required_audit(
+        cfg.audit_rpc.required_for_oneshot_permission_events,
+        daemon_live,
+        &audit_home,
+    )
+    .context("preset apply refused: required audit cannot be written")?;
+
     let report = presets::apply(home, name)?;
+
+    // P1 — durable record: WHICH preset, WHICH field NAMES changed (never the
+    // values), from WHICH surface. One-shot-writer-or-audit-RPC path.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "name": name,
+        "fields_changed": report.fields_changed,
+        "source": "cli",
+        "ts_unix": now,
+    }))
+    .unwrap_or_default();
+    crate::cli::todo::emit_oneshot_audit(
+        crate::wal::events::EVENT_TYPE_PRESET_APPLIED,
+        payload,
+        "PRESET_APPLIED",
+    )
+    .await;
+
     if report.fields_changed.is_empty() {
         println!("applied preset `{name}` (no changes — preset was empty)");
     } else {

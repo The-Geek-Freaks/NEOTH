@@ -1342,6 +1342,16 @@ pub const EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE: u8 = 0xD8;
 /// `{ new_key_sha256, replaced, reason, ts_unix }`.
 pub const EVENT_TYPE_HMAC_KEY_ROTATED: u8 = 0xD9;
 
+/// `0xDA PRESET_APPLIED` — QM-8 + P1. `neoth preset apply <name>` merged a saved
+/// preset bundle INTO `freedom.yaml`. A preset can change provider / cloud-
+/// fallback / rail / autonomy-adjacent fields, so the merge is security-relevant
+/// + deserves a durable record: WHICH preset, WHICH fields changed, from WHICH
+/// surface. Config-lifecycle band. Under `required_for_oneshot_permission_
+/// events` the apply REFUSES fail-closed if this audit cannot be written.
+/// Payload (JSON): `{name, fields_changed, source, ts_unix}` (no secret values —
+/// only the changed field NAMES).
+pub const EVENT_TYPE_PRESET_APPLIED: u8 = 0xDA;
+
 // ---- 0xE0..=0xEF  Cluster lifecycle (R-7, Session 19; 0xE0..=0xEA assigned) ----
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
@@ -1621,6 +1631,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     ("stt_transcribed", EVENT_TYPE_STT_TRANSCRIBED),
     ("tts_synthesized", EVENT_TYPE_TTS_SYNTHESIZED),
+    ("preset_applied", EVENT_TYPE_PRESET_APPLIED),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -2020,6 +2031,7 @@ const _: () = {
         || EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE > 0xDF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_HMAC_KEY_ROTATED < 0xD0 || EVENT_TYPE_HMAC_KEY_ROTATED > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_PRESET_APPLIED < 0xD0 || EVENT_TYPE_PRESET_APPLIED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xEF).
     // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
     // (0xEB..=0xEF) share one declared band. Every assertion uses the full
@@ -2275,6 +2287,7 @@ mod tests {
                 EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE,
             ),
             ("HMAC_KEY_ROTATED", EVENT_TYPE_HMAC_KEY_ROTATED),
+            ("PRESET_APPLIED", EVENT_TYPE_PRESET_APPLIED),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",
