@@ -106,8 +106,13 @@ pub fn propose_adjustments(
     if profile.tone.sample_count >= 20 {
         let suggest_formal = profile.tone.casual_score < -0.4
             && !matches!(current_preset.preset, ProfilePreset::Formal);
+        // Symmetric with `suggest_formal`: a casual writer on ANY non-casual
+        // baseline (Formal / Deepdive / Tutor / Opsec) is nudged toward Lowkey.
+        // Before the profile-adapt cron honoured the operator's chosen basis it
+        // only ever saw Lowkey or Formal, so the old `== Formal` guard silently
+        // skipped the three middle presets the moment they became reachable.
         let suggest_casual = profile.tone.casual_score > 0.4
-            && matches!(current_preset.preset, ProfilePreset::Formal);
+            && !matches!(current_preset.preset, ProfilePreset::Lowkey);
 
         if suggest_formal {
             out.push(SelfDevProposal {
@@ -357,6 +362,26 @@ mod tests {
         let current = apply_preset(ProfilePreset::Formal);
         let props = propose_adjustments(&profile, &current);
         assert!(props.iter().all(|p| p.kind != ProposalKind::SwitchPreset));
+    }
+
+    #[test]
+    fn strong_casual_tone_proposes_lowkey_from_a_middle_preset() {
+        // Regression for the basis-aware gap: once the cron computes against the
+        // operator's chosen preset, a casual writer on Deepdive/Tutor/Opsec must
+        // also be nudged toward Lowkey — not silently skipped (the old `==Formal`
+        // guard fired for none of these three).
+        for basis in [ProfilePreset::Deepdive, ProfilePreset::Tutor, ProfilePreset::Opsec] {
+            let profile = profile_with_tone(0.9, 50);
+            let current = apply_preset(basis);
+            let switch = propose_adjustments(&profile, &current)
+                .into_iter()
+                .find(|p| p.kind == ProposalKind::SwitchPreset)
+                .unwrap_or_else(|| panic!("casual tone on {basis:?} must propose a switch"));
+            assert_eq!(switch.target, "lowkey", "basis {basis:?} should suggest Lowkey");
+        }
+        // ...and on Lowkey itself, a casual writer is already a match → no switch.
+        let on_lowkey = propose_adjustments(&profile_with_tone(0.9, 50), &apply_preset(ProfilePreset::Lowkey));
+        assert!(on_lowkey.iter().all(|p| p.kind != ProposalKind::SwitchPreset));
     }
 
     // ── length-driven verbosity ─────────────────────────────────

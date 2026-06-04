@@ -1036,6 +1036,13 @@ pub struct ProfileAdaptConfig {
     pub interval_secs: u64,
 }
 
+// NOTE: the cron computes proposals *against* the operator's chosen
+// behavioural preset, but that choice is NOT stored here — it lives in the
+// single canonical active-preset marker (`cli::profile::{record,load}_active_preset`,
+// set by `neoth profile preset set` / the GUI selector). The cron reads it
+// live each tick via `load_active_preset`, so there is exactly one source of
+// truth for "the operator's behavioural preset".
+
 /// 24 hours — the passive-adaptation cron default cadence.
 pub const DEFAULT_PROFILE_ADAPT_INTERVAL_SECS: u64 = 24 * 3600;
 

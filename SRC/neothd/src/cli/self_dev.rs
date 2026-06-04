@@ -634,6 +634,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn propose_and_store_honours_the_basis_preset() {
+        // SPEC-05: the profile-adapt cron calls EXACTLY this, passing its
+        // configured `basis_preset.as_str()`. A strongly-casual profile drifts
+        // AWAY from a Formal baseline (→ propose switch-to-lowkey) but already
+        // MATCHES a Lowkey baseline (→ no tone proposal). A different basis ⇒ a
+        // different outcome — proving the now-configurable basis is load-bearing,
+        // not cosmetic. (Only `tone` is set; the verbosity/temporal/topic blocks
+        // all gate on their own `sample_count >= 20`, so they stay silent here.)
+        use crate::profile::estimators::ToneEstimate;
+        use crate::profile::presets::ProfilePreset;
+
+        let profile = BehaviouralProfile {
+            tone: ToneEstimate {
+                sample_count: 20, // meets the >= 20 gate in propose_adjustments
+                casual_hits: 16,
+                formal_hits: 0,
+                casual_score: 0.8, // > 0.4 → strongly casual
+            },
+            ..Default::default()
+        };
+
+        // Separate homes — the per-home dedup store must not cross-contaminate.
+        let home_formal = tempdir().unwrap();
+        let home_lowkey = tempdir().unwrap();
+
+        let against_formal =
+            propose_and_store(home_formal.path(), &profile, ProfilePreset::Formal.as_str(), None)
+                .await
+                .unwrap();
+        let against_lowkey =
+            propose_and_store(home_lowkey.path(), &profile, ProfilePreset::Lowkey.as_str(), None)
+                .await
+                .unwrap();
+
+        assert!(
+            against_formal >= 1,
+            "casual behaviour vs a Formal baseline must propose a switch, got {against_formal}"
+        );
+        assert_eq!(
+            against_lowkey, 0,
+            "casual behaviour already MATCHES the Lowkey baseline → no proposal, got {against_lowkey}"
+        );
+    }
+
+    #[tokio::test]
     async fn propose_is_idempotent_on_same_profile_input() {
         // Run propose twice with the same profile → second run
         // adds zero new proposals (stable ids dedupe).

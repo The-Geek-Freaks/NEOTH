@@ -24,20 +24,22 @@
 //! the operator never sees the same suggestion twice unless they decline
 //! it and the underlying pattern re-emerges.
 //!
-//! Preset basis: there is no persisted behavioural `ProfilePreset` in
-//! `freedom.yaml` today (the `neoth preset` system is the orthogonal
-//! provider-bundle store), so proposals are computed against the `Lowkey`
-//! preset — the documented recommended default — exactly as the
-//! `neoth self-dev propose` CLI defaults (`--current-preset lowkey`).
+//! Preset basis: the cron computes proposals *against* the operator's
+//! chosen behavioural `ProfilePreset` — read LIVE each tick from the single
+//! canonical active-preset marker (`cli::profile::load_active_preset`, set
+//! by `neoth profile preset set` / the GUI selector). A drift away from THAT
+//! preset is what queues a proposal, so an operator who picks `Formal` gets
+//! adaptation toward Formal, not the hardcoded `Lowkey`. Falls back to
+//! `Lowkey` — the documented recommended baseline, matching the
+//! `neoth self-dev propose` CLI default — when no preset has been chosen.
+//! (This behavioural preset is orthogonal to the `neoth preset`
+//! provider-bundle store.)
 
 use std::path::PathBuf;
 
 use crate::config::ProfileAdaptConfig;
+use crate::profile::presets::ProfilePreset;
 use crate::wal::writer::WalWriterHandle;
-
-/// Preset the cron computes adaptation proposals against. Matches the
-/// `neoth self-dev propose` CLI default; see the module doc for why.
-const CRON_BASIS_PRESET: &str = "lowkey";
 
 /// G-03: window the feedback consumer aggregates over each tick. 7 days — long
 /// enough that a sustained-pushback episode (not a one-off bad turn) drives a
@@ -59,6 +61,7 @@ pub async fn run_profile_adapt_tick(
     home: &std::path::Path,
     wal_dir: &std::path::Path,
     writer: &WalWriterHandle,
+    basis_preset: ProfilePreset,
 ) -> Result<usize, String> {
     crate::cron::runner::aggregate_profile_snapshot(home, wal_dir)
         .await
@@ -76,10 +79,14 @@ pub async fn run_profile_adapt_tick(
         return Ok(feedback_added);
     };
 
-    let snapshot_added =
-        crate::cli::self_dev::propose_and_store(home, &profile, CRON_BASIS_PRESET, Some(writer))
-            .await
-            .map_err(|e| format!("propose + store: {e}"))?;
+    let snapshot_added = crate::cli::self_dev::propose_and_store(
+        home,
+        &profile,
+        basis_preset.as_str(),
+        Some(writer),
+    )
+    .await
+    .map_err(|e| format!("propose + store: {e}"))?;
     Ok(feedback_added + snapshot_added)
 }
 
@@ -120,6 +127,14 @@ async fn run_feedback_consumer(
     }
 }
 
+/// The behavioural preset the next tick computes proposals *against* — the
+/// operator's live choice from the single canonical active-preset marker
+/// (`neoth profile preset set` / GUI selector), or [`ProfilePreset::Lowkey`]
+/// (the recommended baseline) when none has been chosen.
+fn current_basis(home: &std::path::Path) -> ProfilePreset {
+    crate::cli::profile::load_active_preset(home).unwrap_or(ProfilePreset::Lowkey)
+}
+
 /// Spawn the passive-adaptation cron loop. Returns the `JoinHandle` so the
 /// daemon tracks it alongside the other background tasks; `None` when
 /// `config.enabled == false` (the default) so opt-out operators carry no
@@ -145,7 +160,10 @@ pub fn spawn_profile_adapt_cron_loop(
         );
         loop {
             ticker.tick().await;
-            match run_profile_adapt_tick(&home, &wal_dir, &writer).await {
+            // Read the operator's CURRENT behavioural preset each tick (single
+            // source of truth: the active-preset marker), so a mid-run
+            // `neoth profile preset set` is honoured on the next daily tick.
+            match run_profile_adapt_tick(&home, &wal_dir, &writer, current_basis(&home)).await {
                 Ok(0) => tracing::debug!("profile-adapt cron: no new proposals this tick"),
                 Ok(n) => tracing::info!(
                     new_proposals = n,
@@ -165,7 +183,7 @@ mod tests {
     fn enabled_config() -> ProfileAdaptConfig {
         ProfileAdaptConfig {
             enabled: true,
-            interval_secs: crate::config::DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
+            ..ProfileAdaptConfig::default()
         }
     }
 
@@ -177,7 +195,7 @@ mod tests {
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
         let cfg = ProfileAdaptConfig {
             enabled: false,
-            interval_secs: crate::config::DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
+            ..ProfileAdaptConfig::default()
         };
         let handle = spawn_profile_adapt_cron_loop(
             cfg,
@@ -214,7 +232,7 @@ mod tests {
         let wal_dir = tempfile::tempdir().unwrap();
         let seg = wal_dir.path().join("pa.wal");
         let (writer, _join) = crate::wal::writer::spawn(seg).unwrap();
-        let n = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer)
+        let n = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer, ProfilePreset::Lowkey)
             .await
             .expect("tick on empty wal must not error");
         assert_eq!(n, 0, "empty WAL → no behavioural data → no proposals");
@@ -250,13 +268,13 @@ mod tests {
         }
 
         // First tick queues the feedback proposal.
-        let n1 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer)
+        let n1 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer, ProfilePreset::Lowkey)
             .await
             .expect("tick must not error");
         assert!(n1 >= 1, "high pushback must queue a self-dev proposal, got {n1}");
 
         // Second tick is idempotent — the proposal is deduped by stable id.
-        let n2 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer)
+        let n2 = run_profile_adapt_tick(home.path(), wal_dir.path(), &writer, ProfilePreset::Lowkey)
             .await
             .expect("tick must not error");
         assert_eq!(n2, 0, "the feedback proposal must not re-queue on the next tick");
@@ -271,6 +289,26 @@ mod tests {
         assert_eq!(
             crate::config::DEFAULT_PROFILE_ADAPT_INTERVAL_SECS,
             24 * 3600
+        );
+    }
+
+    #[test]
+    fn current_basis_defaults_lowkey_then_follows_operator_choice() {
+        // The cron basis is the operator's live active-preset choice. Unset →
+        // Lowkey (recommended baseline). After `neoth profile preset set formal`
+        // the very next tick computes adaptation AGAINST Formal — proving the
+        // hardcoded-Lowkey basis is gone and the operator's pick is honoured.
+        let home = tempfile::tempdir().unwrap();
+        assert_eq!(
+            current_basis(home.path()),
+            ProfilePreset::Lowkey,
+            "no active preset chosen → Lowkey default"
+        );
+        crate::cli::profile::record_active_preset(home.path(), ProfilePreset::Formal).unwrap();
+        assert_eq!(
+            current_basis(home.path()),
+            ProfilePreset::Formal,
+            "after the operator picks Formal, the cron basis follows live"
         );
     }
 
