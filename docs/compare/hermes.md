@@ -18,7 +18,7 @@ Baseline sources:
 | If you want... | Pick |
 | :-- | :-- |
 | CLI/TUI-first self-improving agent workflow | Hermes Agent |
-| A private Jarvis-like buddy for normal users and pros, with coding canvas, six-layer memory, and audit-first privacy | NEOTH |
+| A private Jarvis-like buddy for normal users and pros, with coding canvas, five-tier memory + vault, and audit-first privacy | NEOTH |
 
 ## Capability comparison
 
@@ -26,7 +26,7 @@ Baseline sources:
 | :-- | :-- | :-- |
 | Product center | Private buddy plus operator runtime | Agent workflow that grows with usage |
 | Normal-user onboarding | GUI wizard, plain privacy choices, no YAML happy path | CLI/TUI and docs-first |
-| Memory | Six-layer memory, profile evidence, redaction semantics, WAL | Persistent memory and profiles |
+| Memory | Five-tier memory + vault ingest, profile evidence, redaction semantics, WAL | Persistent memory and profiles |
 | Coding workflow | Canvas, Kanban, repo memory, checks, review promotion | Strong CLI agent workflow and tools |
 | Privacy posture | Fail-closed profile extraction, explicit provider destinations, local audit | Security docs and command approval, operator setup dependent |
 | Skills/plugins | Skills plus WASM capability sandbox and hostcall audit | Skills and toolsets |

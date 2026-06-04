@@ -7,7 +7,7 @@
 <h3>Your private AI buddy. Loyal to you. Useful everywhere.</h3>
 
 <p>
-  <strong>One memory. Three brain paths. Six memory layers. Local-first by default.</strong>
+  <strong>One memory. Three brain paths. Five memory tiers + your vault. Local-first by default.</strong>
 </p>
 
 <p>
@@ -50,9 +50,9 @@
 
 ## Install
 
-> NEOTH is pre-1.0 (current crate version `0.2.1`, building toward the 1.0 target
-> below). It is **not yet published to crates.io**, so install from source or the
-> bootstrap script — `cargo install neoth` will land with the 1.0 release.
+> NEOTH is at the **1.0 release-candidate** stage (current crate version
+> `1.0.0-beta.1`). It is **not yet published to crates.io**, so install from source
+> or the bootstrap script — `cargo install neoth` will land with the 1.0 release.
 
 One-command install (Linux/macOS):
 
@@ -145,7 +145,7 @@ operator.
 | :-- | :-- |
 | **Buddy** | Keeps a durable personal profile, remembers approved facts, adapts to your style, and asks before crossing trust boundaries. |
 | **Brain** | Routes work through role-bound brain paths for fast answers, deeper reasoning, and verification. |
-| **Memory** | Uses six memory layers: episode, profile, ground truth, consolidated, long-term, and external vault context. |
+| **Memory** | Uses five durable memory tiers — episode, profile, ground truth, consolidated, long-term — plus your external vault (Obsidian/Paperless) ingested into them. |
 | **Daily life** | Ingests Paperless documents, email, calendar, notes, files, images, audio, and video into reviewable memory. |
 | **Coding** | Plans work, tracks tasks on a canvas/Kanban board, runs checks, learns repo context, and promotes reviewed decisions into memory. |
 | **Automation** | Runs small local cron jobs and bigger localhost n8n workflows through the same policy and audit layer. |
@@ -249,7 +249,7 @@ as one giant prompt.
 | **Left path** | Fast, pragmatic help, routing, daily buddy work, small tasks. |
 | **Right path** | Deeper reasoning, planning, alternatives, difficult code and architecture. |
 | **Corpus callosum** | Arbitration, evidence collection, contradiction handling, consensus, escalation. |
-| **Six memory layers** | Short recall, personal profile, ground truth anchors, consolidated facts, long-term knowledge, external vault context. |
+| **Five memory tiers + vault** | Short recall, personal profile, ground truth anchors, consolidated facts, long-term knowledge — plus ingested external-vault context. |
 
 The point is not mystical branding. The point is operational separation: fast
 tasks stay fast, serious tasks get more scrutiny, and durable memory gets
@@ -271,7 +271,7 @@ system, private mesh, and inspectable operator runtime in one product.
 | Fail-closed profile extraction | **Yes** | Partial | Partial | Partial |
 | Evidence-linked profile facts | **Yes** | Partial | Partial | Partial |
 | WAL/audit trail for sensitive actions | **Yes** | Partial | Partial | Partial |
-| Six-layer memory model | **Yes** | No | No | Partial |
+| Five-tier memory model + vault ingest | **Yes** | No | No | Partial |
 | Three role-bound brain paths | **Yes** | No | Partial | Partial |
 | Coding canvas + Kanban | **Yes** | Partial | Canvas-focused | CLI-focused |
 | Obsidian/vault workflow | **Yes** | Yes | File-based | Context-file based |

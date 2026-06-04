@@ -25,7 +25,7 @@ Baseline sources:
 | Product center | Buddy plus local operator runtime | Gateway plus channel-rich assistant |
 | Normal-user onboarding | GUI wizard and Doctor runbooks | Onboard CLI and docs-heavy setup |
 | Channel breadth | Focused 1.0 set: GUI, CLI, Telegram, WhatsApp, Slack, Discord, Keet/private | Very broad channel list |
-| Memory | Six-layer memory with evidence, profile review, redaction semantics | Local workspace and memory files |
+| Memory | Five-tier memory + vault, with evidence, profile review, redaction semantics | Local workspace and memory files |
 | Coding workflow | Planning canvas, Kanban, repo memory, check loop | Canvas and agent actions |
 | Privacy proof | WAL, provider destinations, plugin hostcalls, profile evidence | Local-first control, but less memory-proof focused |
 | Plugins/skills | Skills plus WASM capability sandbox, signatures, revocation, hostcall audit | Skills/workspace approach |

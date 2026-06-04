@@ -26,7 +26,7 @@ Baseline sources:
 | Product center | Private buddy plus operator runtime | Personal AI with UI-first managed convenience |
 | Normal-user onboarding | GUI wizard, no YAML happy path | Strong UI-first onboarding |
 | Managed backend dependency | None by default | Managed services used for account/model/integration convenience by default |
-| Memory | Six-layer local memory with evidence-linked profile facts | Memory Tree and local vault concepts |
+| Memory | Five-tier local memory + vault, with evidence-linked profile facts | Memory Tree and local vault concepts |
 | Profile extraction | Local/fail-closed by policy | Local plus managed path depending on configuration |
 | Privacy audit | WAL-backed audit, provider destinations, profile evidence, plugin hostcalls | Privacy story exists, but trust boundary includes managed services |
 | Coding workflow | Canvas, Kanban, repo memory, checks, review promotion | Not the primary differentiator |

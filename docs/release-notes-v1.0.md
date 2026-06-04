@@ -31,7 +31,7 @@ These are the deltas between this beta and a final 1.0 — tracked, not hidden:
 | :-- | :-- |
 | GUI first run | Guided setup, privacy defaults, provider/local-model choice, memory consent, channel selection. |
 | CLI | Chat, recall, profile, privacy audit, Doctor, providers, channels, plugins, cluster, coding, backup, WAL verification. |
-| Memory | Six-layer local memory with profile facts, evidence, confidence, redaction, recall, and consolidation. |
+| Memory | Five-tier local memory + vault ingest, with profile facts, evidence, confidence, redaction, recall, and consolidation. |
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |
 | Local models | Qwen profile path, optional local thinking model path, model cache diagnostics. |
 | Providers | Configured cloud providers, provider status, usage caps, circuit breakers, flapping detection. |
