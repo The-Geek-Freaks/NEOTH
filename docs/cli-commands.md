@@ -1297,6 +1297,8 @@ Remove a preset entry (idempotent — missing name is Ok)
 
 List every saved preset + the active one (if any)
 
+- `--json <JSON>` — Emit machine-readable JSON (`{presets:[{name,active}], active}`) — consumed by the GUI preset selector (SPEC-05). Default: a table
+
 ### `neoth preset show`
 
 Show one preset's full body as YAML

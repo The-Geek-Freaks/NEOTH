@@ -484,6 +484,35 @@ pub fn read_channel_status(neoth_home: &std::path::Path) -> Vec<ChannelStatus> {
     channel_status_from_credentials_yaml(&yaml)
 }
 
+// ── SPEC-05 preset selector (parse `neoth preset list --json`) ───────────────
+
+/// One saved preset for the selector.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PresetEntry {
+    pub name: String,
+    pub active: bool,
+}
+
+/// Parse `neoth preset list --json` (`{presets:[{name,active}], active}`).
+/// PURE + robust (malformed → empty; name-less entries skipped).
+pub fn parse_presets(json: &str) -> Vec<PresetEntry> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    v.get("presets")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    let name = p.get("name")?.as_str()?.to_string();
+                    let active = p.get("active").and_then(|a| a.as_bool()).unwrap_or(false);
+                    Some(PresetEntry { name, active })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,5 +850,27 @@ mod tests {
         let rows = read_channel_status(dir.path());
         assert_eq!(rows.len(), 5);
         assert!(rows.iter().all(|c| !c.connected));
+    }
+
+    // ── SPEC-05 parse_presets ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_presets_marks_active() {
+        let json = r#"{"presets":[{"name":"frugal","active":false},{"name":"weekend","active":true}],"active":"weekend"}"#;
+        let rows = parse_presets(json);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "frugal");
+        assert!(!rows[0].active);
+        assert_eq!(rows[1].name, "weekend");
+        assert!(rows[1].active);
+    }
+
+    #[test]
+    fn parse_presets_malformed_and_nameless_skipped() {
+        assert!(parse_presets("nope").is_empty());
+        assert!(parse_presets(r#"{"presets":[]}"#).is_empty());
+        let rows = parse_presets(r#"{"presets":[{"active":true},{"name":"ok"}]}"#);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].name, "ok");
     }
 }

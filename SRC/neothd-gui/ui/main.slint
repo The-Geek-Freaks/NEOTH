@@ -25,6 +25,12 @@ import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentR
 import { ChatView, ChatMessage } from "chat.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 
+// SPEC-05 — one saved preset for the selector tile.
+export struct PresetRow {
+    name: string,
+    active: bool,
+}
+
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
     /// onboarding flow (this binary keeps running) or the CLI wizard
@@ -129,6 +135,9 @@ export component MainWindow inherits Window {
     // QM-8 Phase 2: saved preset list + active marker.
     // Populated by a subprocess probe to `neoth preset list`.
     in property <string> preset-summary: "Loading presets…";
+    // SPEC-05: structured preset list for the click-to-activate selector,
+    // from `neoth preset list --json`.
+    in property <[PresetRow]> preset-list: [];
 
     // Pick #28 (12/10 polish): derive the step counter + label from
     // the active `WizardStep` so the top ProgressIndicator always
@@ -217,6 +226,10 @@ export component MainWindow inherits Window {
     /// hint string for logging — the active preset is resolved
     /// Rust-side from a fresh `neoth preset list` probe.
     callback preset-apply-clicked();
+    /// SPEC-05 — operator clicked a preset row in the selector. Rust shells
+    /// `neoth preset activate <name>` (sets the active marker) + refreshes the
+    /// list. `apply-active` then merges the active preset into freedom.yaml.
+    callback preset-activate-clicked(string);
 
     // ── Chat surface state (Pick #33) ─────────────────────────────────
     /// Scrollback feed. Rust pushes ChatMessage rows as the daemon
@@ -522,7 +535,7 @@ export component MainWindow inherits Window {
             // apply <active>` so operators flip the active bundle
             // into freedom.yaml in one click.
             Card {
-                preferred-height: 130px;
+                min-height: 130px;
                 VerticalBox {
                     padding: Theme.space-base;
                     spacing: Theme.space-tight;
@@ -534,12 +547,37 @@ export component MainWindow inherits Window {
                         letter-spacing: Theme.letter-spacing-tight;
                         color: Theme.accent-green;
                     }
-                    Text {
+                    // SPEC-05 — click-to-activate selector. Each row activates
+                    // that preset (sets the active marker); "Apply active" then
+                    // merges the active one into freedom.yaml.
+                    if root.preset-list.length == 0: Text {
                         text: root.preset-summary;
                         font-family: Theme.font-mono;
                         font-size: Theme.font-size-caption;
                         color: Theme.text-muted;
                         wrap: word-wrap;
+                    }
+                    for p in root.preset-list: ta := TouchArea {
+                        height: 22px;
+                        clicked => { root.preset-activate-clicked(p.name); }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: p.active ? "●" : "○";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: p.active ? Theme.accent-green : Theme.text-muted;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: p.name;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: ta.has-hover ? Theme.accent-teal : Theme.text-primary;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                        }
                     }
                     HorizontalLayout {
                         alignment: end;

@@ -176,10 +176,14 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         loop {
             let summary = probe_preset_summary_via_subprocess();
+            // SPEC-05 — also fetch the structured list for the click-to-activate
+            // selector (the summary string remains the empty-state fallback).
+            let presets = fetch_presets();
             let weak = weak_preset.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = weak.upgrade() {
                     w.set_preset_summary(summary.into());
+                    apply_presets(&w, presets);
                 }
             });
             std::thread::sleep(PRESET_REFRESH_INTERVAL);
@@ -521,6 +525,23 @@ fn main() -> Result<()> {
                 // the next 5-minute tick.
                 let summary = probe_preset_summary_via_subprocess();
                 w.set_preset_summary(summary.into());
+            }
+        });
+    });
+
+    // SPEC-05 — operator clicked a preset row: activate it + refresh the list so
+    // the active marker moves immediately (no wait for the 5-min tick).
+    let weak_preset_activate = window.as_weak();
+    window.on_preset_activate_clicked(move |name| {
+        let status = activate_preset_via_subprocess(&name);
+        let presets = fetch_presets();
+        let summary = probe_preset_summary_via_subprocess();
+        let weak = weak_preset_activate.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_status_line(status.into());
+                w.set_preset_summary(summary.into());
+                apply_presets(&w, presets);
             }
         });
     });
@@ -1631,6 +1652,60 @@ fn apply_channels(window: &MainWindow, channels: Vec<panel_logic::ChannelStatus>
         })
         .collect();
     window.set_channels(ModelRc::new(VecModel::from(rows)));
+}
+
+/// SPEC-05 — fetch the saved presets via `neoth preset list --json`. Empty on
+/// missing binary / failure. PARSE is the unit-tested `panel_logic::parse_presets`.
+fn fetch_presets() -> Vec<panel_logic::PresetEntry> {
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("preset")
+        .arg("list")
+        .arg("--json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_presets(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// SPEC-05 — push the preset selector list onto the MainWindow. UI-thread only.
+fn apply_presets(window: &MainWindow, presets: Vec<panel_logic::PresetEntry>) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<PresetRow> = presets
+        .into_iter()
+        .map(|p| PresetRow {
+            name: p.name.into(),
+            active: p.active,
+        })
+        .collect();
+    window.set_preset_list(ModelRc::new(VecModel::from(rows)));
+}
+
+/// SPEC-05 — activate a preset by name (`neoth preset activate <name>`): sets
+/// the active marker (does NOT merge into freedom.yaml — that's "Apply active").
+/// Returns an operator-readable status line.
+fn activate_preset_via_subprocess(name: &str) -> String {
+    let Some(bin) = which_neothd() else {
+        return "preset activate: neothd binary not found".to_string();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("preset")
+        .arg("activate")
+        .arg(name)
+        .output()
+    {
+        Ok(o) if o.status.success() => format!("active preset → {name}"),
+        Ok(o) => format!(
+            "preset activate failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => format!("preset activate could not start: {e}"),
+    }
 }
 
 fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {

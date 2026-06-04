@@ -17,7 +17,12 @@ pub struct PresetArgs {
 #[derive(Subcommand, Debug, Clone)]
 pub enum PresetAction {
     /// List every saved preset + the active one (if any).
-    List,
+    List {
+        /// Emit machine-readable JSON (`{presets:[{name,active}], active}`) —
+        /// consumed by the GUI preset selector (SPEC-05). Default: a table.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show one preset's full body as YAML.
     Show { name: String },
     /// Remove a preset entry (idempotent — missing name is Ok).
@@ -35,7 +40,7 @@ pub enum PresetAction {
 
 pub fn run(home: &Path, args: PresetArgs) -> Result<()> {
     match args.action {
-        PresetAction::List => run_list(home),
+        PresetAction::List { json } => run_list(home, json),
         PresetAction::Show { name } => run_show(home, &name),
         PresetAction::Delete { name } => run_delete(home, &name),
         PresetAction::Activate { name } => run_activate(home, &name),
@@ -60,8 +65,12 @@ fn run_apply(home: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn run_list(home: &Path) -> Result<()> {
+fn run_list(home: &Path, json: bool) -> Result<()> {
     let (names, active) = presets::list(home)?;
+    if json {
+        println!("{}", preset_list_json(&names, active.as_deref()));
+        return Ok(());
+    }
     if names.is_empty() {
         println!("(no presets — run `neoth preset --help` to see how to save one)");
         return Ok(());
@@ -75,6 +84,25 @@ fn run_list(home: &Path) -> Result<()> {
         println!("{marker} {name}");
     }
     Ok(())
+}
+
+/// Build the `neoth preset list --json` body: `{presets:[{name,active}], active}`.
+/// PURE — consumed by the GUI preset selector (SPEC-05).
+fn preset_list_json(names: &[String], active: Option<&str>) -> String {
+    let presets: Vec<serde_json::Value> = names
+        .iter()
+        .map(|n| {
+            serde_json::json!({
+                "name": n,
+                "active": active == Some(n.as_str()),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "presets": presets,
+        "active": active,
+    })
+    .to_string()
 }
 
 fn run_show(home: &Path, name: &str) -> Result<()> {
@@ -121,7 +149,8 @@ mod tests {
     #[test]
     fn run_list_with_no_presets_prints_hint_without_error() {
         let dir = tempdir().unwrap();
-        run_list(dir.path()).unwrap();
+        run_list(dir.path(), false).unwrap();
+        run_list(dir.path(), true).unwrap(); // json path on empty
     }
 
     #[test]
@@ -131,7 +160,30 @@ mod tests {
         upsert(dir.path(), "weekend", Preset::default()).unwrap();
         presets::set_active(dir.path(), "weekend").unwrap();
         // We don't capture stdout — smoke-only.
-        run_list(dir.path()).unwrap();
+        run_list(dir.path(), false).unwrap();
+        run_list(dir.path(), true).unwrap();
+    }
+
+    #[test]
+    fn preset_list_json_marks_active() {
+        let names = vec!["frugal".to_string(), "weekend".to_string()];
+        let out = preset_list_json(&names, Some("weekend"));
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["active"], "weekend");
+        let arr = v["presets"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], "frugal");
+        assert_eq!(arr[0]["active"], false);
+        assert_eq!(arr[1]["name"], "weekend");
+        assert_eq!(arr[1]["active"], true);
+    }
+
+    #[test]
+    fn preset_list_json_empty_and_no_active() {
+        let out = preset_list_json(&[], None);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v["active"].is_null());
+        assert_eq!(v["presets"].as_array().unwrap().len(), 0);
     }
 
     #[test]
