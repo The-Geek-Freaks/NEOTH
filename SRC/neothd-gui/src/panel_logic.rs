@@ -327,6 +327,163 @@ pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
         .collect()
 }
 
+// ── GU-01 plugins panel (parse `neoth plugin list --output json`) ────────────
+
+/// One discovered plugin for the Plugins panel.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PluginSummary {
+    pub id: String,
+    pub name: String,
+    pub activation: String, // "enabled" | "pending" | "disabled" | …
+}
+
+/// Parse `neoth plugin list --output json` (array of `{id,name,activation}`).
+/// PURE + robust (malformed/non-array → empty; id-less entries skipped).
+pub fn parse_plugins(json: &str) -> Vec<PluginSummary> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|p| {
+            let id = p.get("id")?.as_str()?.to_string();
+            let name = p
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("")
+                .to_string();
+            let activation = p
+                .get("activation")
+                .and_then(|a| a.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+            Some(PluginSummary {
+                id,
+                name,
+                activation,
+            })
+        })
+        .collect()
+}
+
+// ── GU-01 memory panel (parse `neoth memory --size --output json`) ───────────
+
+/// One memory block (source + path + byte size) for the Memory panel. The
+/// `--size` shape deliberately carries NO content — only metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MemoryBlockInfo {
+    pub source: String, // "global" | "project" | "rule" | "memory"
+    pub path: String,
+    pub bytes: i64,
+}
+
+/// Parsed memory snapshot: total bytes + per-block sizes.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MemorySnapshot {
+    pub total_bytes: i64,
+    pub blocks: Vec<MemoryBlockInfo>,
+}
+
+/// Parse `neoth memory --size --output json`
+/// (`{total_bytes, blocks:[{source,path,bytes}]}`). PURE + robust (malformed →
+/// empty; total derived from the blocks when absent).
+pub fn parse_memory_size(json: &str) -> MemorySnapshot {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return MemorySnapshot::default();
+    };
+    let blocks: Vec<MemoryBlockInfo> = v
+        .get("blocks")
+        .and_then(|b| b.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|b| {
+                    let source = b
+                        .get("source")
+                        .and_then(|s| s.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let path = b.get("path")?.as_str()?.to_string();
+                    let bytes = b.get("bytes").and_then(|n| n.as_i64()).unwrap_or(0);
+                    Some(MemoryBlockInfo {
+                        source,
+                        path,
+                        bytes,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let total_bytes = v
+        .get("total_bytes")
+        .and_then(|t| t.as_i64())
+        .unwrap_or_else(|| blocks.iter().map(|b| b.bytes).sum());
+    MemorySnapshot {
+        total_bytes,
+        blocks,
+    }
+}
+
+// ── GU-01 channels panel (credentials.yaml token PRESENCE, never the value) ──
+
+/// One channel's connection state for the Channels panel. ONLY the connected
+/// bool is derived — a secret token is NEVER read into this struct.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelStatus {
+    pub name: String,
+    pub connected: bool,
+}
+
+/// Derive per-channel connection state from the PRESENCE of credential fields
+/// in a `credentials.yaml` string. PURE + secret-safe: it deserialises each
+/// token into an `Option<String>` only to test `is_some() && !is_empty()`, and
+/// emits ONLY the boolean — token values never leave this function. A malformed
+/// file yields "all disconnected" (never panics, never partial-leaks).
+pub fn channel_status_from_credentials_yaml(yaml: &str) -> Vec<ChannelStatus> {
+    #[derive(serde::Deserialize, Default)]
+    struct MinimalCreds {
+        telegram_token: Option<String>,
+        whatsapp_token: Option<String>,
+        slack_bot_token: Option<String>,
+        keet_seed_phrase: Option<String>,
+        pears_bearer_token: Option<String>,
+    }
+    let creds: MinimalCreds = serde_yaml::from_str(yaml).unwrap_or_default();
+    let present = |o: &Option<String>| o.as_deref().map(|s| !s.trim().is_empty()).unwrap_or(false);
+    vec![
+        ChannelStatus {
+            name: "telegram".into(),
+            connected: present(&creds.telegram_token),
+        },
+        ChannelStatus {
+            name: "whatsapp".into(),
+            connected: present(&creds.whatsapp_token),
+        },
+        ChannelStatus {
+            name: "slack".into(),
+            connected: present(&creds.slack_bot_token),
+        },
+        ChannelStatus {
+            name: "keet".into(),
+            connected: present(&creds.keet_seed_phrase),
+        },
+        ChannelStatus {
+            name: "pears".into(),
+            connected: present(&creds.pears_bearer_token),
+        },
+    ]
+}
+
+/// Read `<neoth_home>/credentials.yaml` + derive channel connection state. A
+/// missing file yields "all disconnected". The fs read is the only impurity;
+/// the logic is the unit-tested [`channel_status_from_credentials_yaml`].
+pub fn read_channel_status(neoth_home: &std::path::Path) -> Vec<ChannelStatus> {
+    let path = neoth_home.join("credentials.yaml");
+    let yaml = std::fs::read_to_string(&path).unwrap_or_default();
+    channel_status_from_credentials_yaml(&yaml)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -584,5 +741,85 @@ mod tests {
         let rows = parse_skills(r#"[{"description":"no id"},{"id":"ok"}]"#);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, "ok");
+    }
+
+    // ── GU-01 parse_plugins ───────────────────────────────────────────────────
+
+    #[test]
+    fn parse_plugins_array() {
+        let json = r#"[
+            {"id":"faccam","name":"FacCam","activation":"enabled"},
+            {"id":"x","activation":"pending"}
+        ]"#;
+        let rows = parse_plugins(json);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "faccam");
+        assert_eq!(rows[0].name, "FacCam");
+        assert_eq!(rows[0].activation, "enabled");
+        assert_eq!(rows[1].name, "", "missing name -> empty");
+        assert_eq!(rows[1].activation, "pending");
+    }
+
+    #[test]
+    fn parse_plugins_malformed_is_empty() {
+        assert!(parse_plugins("nope").is_empty());
+        assert!(parse_plugins(r#"{"id":"x"}"#).is_empty(), "object not array");
+        assert_eq!(parse_plugins(r#"[{"name":"no id"},{"id":"ok"}]"#).len(), 1);
+    }
+
+    // ── GU-01 parse_memory_size ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_memory_size_full() {
+        let json = r#"{"total_bytes":300,"blocks":[
+            {"source":"global","path":"/a/CLAUDE.md","bytes":100},
+            {"source":"memory","path":"/b/MEMORY.md","bytes":200}
+        ]}"#;
+        let s = parse_memory_size(json);
+        assert_eq!(s.total_bytes, 300);
+        assert_eq!(s.blocks.len(), 2);
+        assert_eq!(s.blocks[0].source, "global");
+        assert_eq!(s.blocks[1].bytes, 200);
+    }
+
+    #[test]
+    fn parse_memory_size_derives_total_and_skips_pathless() {
+        let s = parse_memory_size(r#"{"blocks":[{"source":"x","path":"/p","bytes":5},{"source":"y","bytes":9}]}"#);
+        assert_eq!(s.blocks.len(), 1, "path-less block skipped");
+        assert_eq!(s.total_bytes, 5, "derived from present blocks");
+        assert_eq!(parse_memory_size("nope"), MemorySnapshot::default());
+    }
+
+    // ── GU-01 channel status (secret-safe) ────────────────────────────────────
+
+    #[test]
+    fn channel_status_reads_presence_not_values() {
+        let yaml = "telegram_token: \"123:abc\"\nslack_bot_token: \"xoxb-x\"\n";
+        let rows = channel_status_from_credentials_yaml(yaml);
+        let by = |n: &str| rows.iter().find(|c| c.name == n).unwrap().connected;
+        assert!(by("telegram"));
+        assert!(by("slack"));
+        assert!(!by("whatsapp"), "absent -> disconnected");
+        assert!(!by("keet"));
+        // The connected bool is all that's exposed — no token value in the struct.
+        assert_eq!(rows.len(), 5);
+    }
+
+    #[test]
+    fn channel_status_empty_token_is_disconnected_and_malformed_is_all_off() {
+        let rows = channel_status_from_credentials_yaml("telegram_token: \"  \"\n");
+        assert!(!rows.iter().find(|c| c.name == "telegram").unwrap().connected,
+            "whitespace-only token -> disconnected");
+        // Malformed YAML -> all disconnected, never a panic.
+        let all = channel_status_from_credentials_yaml("%%% not yaml %%%");
+        assert!(all.iter().all(|c| !c.connected));
+    }
+
+    #[test]
+    fn read_channel_status_missing_file_is_all_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let rows = read_channel_status(dir.path());
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().all(|c| !c.connected));
     }
 }

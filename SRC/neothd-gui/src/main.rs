@@ -605,12 +605,19 @@ fn main() -> Result<()> {
         let rails = fetch_safe_mode_snapshot();
         let hemis = fetch_hemispheres_snapshot();
         let skills = fetch_skills();
+        let plugins = fetch_plugins();
+        let memory = fetch_memory_snapshot();
+        // Channels read credentials.yaml PRESENCE only (no subprocess, no secrets).
+        let channels = panel_logic::read_channel_status(&default_neoth_home());
         let weak = weak_panels_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
                 apply_safe_mode(&w, rails);
                 apply_hemispheres(&w, hemis);
                 apply_skills(&w, skills);
+                apply_plugins(&w, plugins);
+                apply_memory(&w, memory);
+                apply_channels(&w, channels);
             }
         });
     });
@@ -1532,6 +1539,98 @@ fn apply_skills(window: &MainWindow, skills: Vec<panel_logic::SkillSummary>) {
         })
         .collect();
     window.set_skills(ModelRc::new(VecModel::from(rows)));
+}
+
+/// GU-01 — fetch discovered plugins via `neoth plugin list --output json`.
+fn fetch_plugins() -> Vec<panel_logic::PluginSummary> {
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("plugin")
+        .arg("list")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => panel_logic::parse_plugins(&String::from_utf8_lossy(&o.stdout)),
+        _ => Vec::new(),
+    }
+}
+
+/// GU-01 — push the discovered-plugin list onto the MainWindow. UI-thread only.
+fn apply_plugins(window: &MainWindow, plugins: Vec<panel_logic::PluginSummary>) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<PluginRow> = plugins
+        .into_iter()
+        .map(|p| PluginRow {
+            id: p.id.into(),
+            name: p.name.into(),
+            activation: p.activation.into(),
+        })
+        .collect();
+    window.set_plugins(ModelRc::new(VecModel::from(rows)));
+}
+
+/// GU-01 — fetch memory-block sizes via `neoth memory --size --output json`
+/// (metadata only — no content leaves the daemon).
+fn fetch_memory_snapshot() -> panel_logic::MemorySnapshot {
+    let Some(bin) = which_neothd() else {
+        return panel_logic::MemorySnapshot::default();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("memory")
+        .arg("--size")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_memory_size(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => panel_logic::MemorySnapshot::default(),
+    }
+}
+
+/// Human-readable byte size (B / KB / MB).
+fn fmt_bytes(n: i64) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    }
+}
+
+/// GU-01 — push the memory-block sizes onto the MainWindow. UI-thread only.
+fn apply_memory(window: &MainWindow, snap: panel_logic::MemorySnapshot) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<MemoryRow> = snap
+        .blocks
+        .into_iter()
+        .map(|b| MemoryRow {
+            source: b.source.into(),
+            path: b.path.into(),
+            bytes: fmt_bytes(b.bytes).into(),
+        })
+        .collect();
+    window.set_memory_blocks(ModelRc::new(VecModel::from(rows)));
+    window.set_memory_total(fmt_bytes(snap.total_bytes).into());
+}
+
+/// GU-01 — push per-channel connection state (presence of credentials, never
+/// the secret values) onto the MainWindow. UI-thread only.
+fn apply_channels(window: &MainWindow, channels: Vec<panel_logic::ChannelStatus>) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<ChannelRow> = channels
+        .into_iter()
+        .map(|c| ChannelRow {
+            name: c.name.into(),
+            connected: c.connected,
+        })
+        .collect();
+    window.set_channels(ModelRc::new(VecModel::from(rows)));
 }
 
 fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {

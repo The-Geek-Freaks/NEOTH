@@ -76,6 +76,26 @@ export struct SkillRow {
     keywords: string,  // joined trigger keywords
 }
 
+// GU-01 — one discovered plugin for the Plugins panel.
+export struct PluginRow {
+    id: string,
+    name: string,
+    activation: string,  // "enabled" | "pending" | "disabled" | …
+}
+
+// GU-01 — one memory block (metadata only) for the Memory panel.
+export struct MemoryRow {
+    source: string,   // "global" | "project" | "rule" | "memory"
+    path: string,
+    bytes: string,    // pre-formatted by Rust
+}
+
+// GU-01 — one channel's connection state (bool only, never a secret).
+export struct ChannelRow {
+    name: string,
+    connected: bool,
+}
+
 component TabButton inherits Rectangle {
     in property <string> label: "";
     in property <bool> active: false;
@@ -390,6 +410,11 @@ export component SettingsView inherits Rectangle {
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
     in property <[SkillRow]> skills: [];
+    // GU-01 — Channels / Plugins / Memory panels.
+    in property <[ChannelRow]> channels: [];
+    in property <[PluginRow]> plugins: [];
+    in property <[MemoryRow]> memory-blocks: [];
+    in property <string> memory-total: "";
 
     // GU-03 — persona-adaptive panel visibility. Rust (`panel_logic::panels_for`)
     // sets these from the operator's complexity level on startup; each gated
@@ -650,11 +675,36 @@ export component SettingsView inherits Rectangle {
                 }
             }
 
-            if root.active == SettingsTab.channels: PendingPanel {
-                title: "Channels";
-                subtitle: "Connect or disconnect messaging surfaces — Telegram, WhatsApp, Slack, Discord, Keet. Credentials are stored encrypted in ~/.neoth/credentials.yaml, readable only by you.";
-                mirrors-slash: "/connect <channel>   |   /disconnect <channel>";
-                pending-pick: "v0.2";
+            if root.active == SettingsTab.channels: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Channels";
+                    subtitle: "Messaging surfaces NEOTH can reach. Connect/disconnect via the CLI; this shows which have credentials configured — the secrets themselves never leave ~/.neoth/credentials.yaml.";
+                    mirrors-slash: "/connect <channel>   |   /disconnect <channel>";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        for c in root.channels: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: c.connected ? "connected" : "—";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: c.connected ? Theme.accent-green : Theme.text-muted;
+                            }
+                            Text {
+                                text: c.name;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                }
             }
 
             if root.active == SettingsTab.skills: VerticalBox {
@@ -712,18 +762,107 @@ export component SettingsView inherits Rectangle {
                 }
             }
 
-            if root.active == SettingsTab.plugins: PendingPanel {
-                title: "Plugins";
-                subtitle: "Extend NEOTH with WebAssembly plugins — sandboxed code modules that add new tools and slash commands. Drop a .wasm file into ~/.neoth/plugins/ and enable it here.";
-                mirrors-slash: "/plugin list   |   /plugin enable <id>";
-                pending-pick: "v0.2";
+            if root.active == SettingsTab.plugins: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Plugins";
+                    subtitle: "Sandboxed WebAssembly plugins. Drop a .wasm into ~/.neoth/plugins/ and enable via the CLI; this lists the discovered set + activation state.";
+                    mirrors-slash: "/plugin list   |   neoth plugin enable <id>";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: root.plugins.length + " plugin(s) discovered";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                        }
+                        if root.plugins.length == 0: Text {
+                            text: "(none — drop a .wasm into ~/.neoth/plugins/)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for p in root.plugins: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: p.activation;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: p.activation == "enabled" ? Theme.accent-green : Theme.text-muted;
+                            }
+                            Text {
+                                text: p.id;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: p.name;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
             }
 
-            if root.active == SettingsTab.memory: PendingPanel {
-                title: "Memory";
-                subtitle: "Inspect what NEOTH remembers about you. Four tiers — hot (last 7 days), warm (90 days), cold (long-term, decayed), and ground truth (never forgotten). Erase a topic to wipe it from every tier.";
-                mirrors-slash: "/memory view [topic]   |   /memory forget <topic>";
-                pending-pick: "v0.2";
+            if root.active == SettingsTab.memory: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Memory";
+                    subtitle: "What NEOTH loads as context — global/project/rule files + the memory tier. Sizes only; inspect or erase content via the CLI.";
+                    mirrors-slash: "/memory view [topic]   |   /memory forget <topic>";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "total " + root.memory-total;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                        }
+                        if root.memory-blocks.length == 0: Text {
+                            text: "(no memory blocks loaded yet)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for m in root.memory-blocks: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: m.source;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.accent-green;
+                            }
+                            Text {
+                                text: m.path;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: m.bytes;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
             }
 
             if root.active == SettingsTab.privacy: VerticalBox {
