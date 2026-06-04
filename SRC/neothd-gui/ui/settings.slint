@@ -476,6 +476,8 @@ export component SettingsView inherits Rectangle {
 
     callback wizard-rerun-clicked;
     callback reload-config-clicked;
+    // GU-01 — Chat tab "Open chat" button → MainWindow switches to the chat view.
+    callback open-chat-clicked;
     /// G-12 fix — operator picked a different provider in the
     /// Config tab. Rust persists the change to freedom.yaml + drops
     /// the reload sentinel.
@@ -605,11 +607,49 @@ export component SettingsView inherits Rectangle {
             // G-17 fix: replace internal "Pick #N" sprint labels with
             // operator-readable release identifiers. Internal tracking
             // belongs in PROGRESS.md, not in the settings UI.
-            if root.active == SettingsTab.chat: PendingPanel {
-                title: "Chat";
-                subtitle: "Your day-to-day conversation surface — message composer, scrollback, sidebar showing the active channel. Type a message, hit Enter or click Send. Press `/` to discover slash commands.";
-                mirrors-slash: "(primary daily surface)";
-                pending-pick: "next release";
+            if root.active == SettingsTab.chat: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Chat";
+                    subtitle: "Your day-to-day conversation surface — composer, scrollback, channel sidebar — lives in the main Chat view (it is the primary surface, not a settings sub-panel). Open it here.";
+                    mirrors-slash: "(primary daily surface)";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-base;
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "ACTIVE PROVIDER";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: Theme.accent-green;
+                            }
+                            Text {
+                                text: root.provider-current;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                            }
+                        }
+                        Text {
+                            text: "Press / in the chat composer to discover slash commands (provider, autonomy, skills, …).";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        NeothButton {
+                            label: "Open chat";
+                            primary: true;
+                            clicked => { root.open-chat-clicked(); }
+                        }
+                    }
+                }
             }
 
             if root.active == SettingsTab.hemispheres: VerticalBox {
