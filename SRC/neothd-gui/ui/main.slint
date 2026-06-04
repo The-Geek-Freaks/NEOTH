@@ -207,6 +207,9 @@ export component MainWindow inherits Window {
     /// state back to `mode-selection` so the operator walks the
     /// flow fresh.
     callback settings-wizard-rerun-clicked;
+    // SPEC-06 — forwarded from the Hemispheres rebind control; Rust shells
+    // `neoth hemispheres set --role <r> --provider <p>` + refreshes the panel.
+    callback hemisphere-set(string, string);
     /// G-12 fix — operator picked a different provider in Settings
     /// → Config. Rust persists the change.
     callback provider-changed(string);
@@ -276,6 +279,7 @@ export component MainWindow inherits Window {
     // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
+    in property <[string]> provider-ids: [];
     in property <[SkillRow]> skills: [];
     in property <[ChannelRow]> channels: [];
     in property <[PluginRow]> plugins: [];
@@ -1349,6 +1353,7 @@ export component MainWindow inherits Window {
             rails-total: root.rails-total;
             hemisphere-bindings: root.hemisphere-bindings;
             hemispheres-mode: root.hemispheres-mode;
+            provider-ids: root.provider-ids;
             skills: root.skills;
             channels: root.channels;
             plugins: root.plugins;
@@ -1359,6 +1364,9 @@ export component MainWindow inherits Window {
             }
             open-chat-clicked => {
                 root.step = WizardStep.chat;
+            }
+            hemisphere-set-clicked(role, provider) => {
+                root.hemisphere-set(role, provider);
             }
             reload-config-clicked => {
                 root.settings-reload-clicked();

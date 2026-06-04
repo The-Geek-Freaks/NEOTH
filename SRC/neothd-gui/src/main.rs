@@ -625,6 +625,7 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         let rails = fetch_safe_mode_snapshot();
         let hemis = fetch_hemispheres_snapshot();
+        let provider_ids = fetch_provider_ids();
         let skills = fetch_skills();
         let plugins = fetch_plugins();
         let memory = fetch_memory_snapshot();
@@ -635,10 +636,27 @@ fn main() -> Result<()> {
             if let Some(w) = weak.upgrade() {
                 apply_safe_mode(&w, rails);
                 apply_hemispheres(&w, hemis);
+                apply_provider_ids(&w, provider_ids);
                 apply_skills(&w, skills);
                 apply_plugins(&w, plugins);
                 apply_memory(&w, memory);
                 apply_channels(&w, channels);
+            }
+        });
+    });
+
+    // SPEC-06 — operator rebound a role in the Hemispheres panel: shell
+    // `neoth hemispheres set` then refresh the bindings so the panel reflects
+    // the new wiring immediately.
+    let weak_hemi_set = window.as_weak();
+    window.on_hemisphere_set(move |role, provider| {
+        let status = set_hemisphere_via_subprocess(&role, &provider);
+        let hemis = fetch_hemispheres_snapshot();
+        let weak = weak_hemi_set.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_status_line(status.into());
+                apply_hemispheres(&w, hemis);
             }
         });
     });
@@ -1684,6 +1702,59 @@ fn apply_presets(window: &MainWindow, presets: Vec<panel_logic::PresetEntry>) {
         })
         .collect();
     window.set_preset_list(ModelRc::new(VecModel::from(rows)));
+}
+
+/// SPEC-06 — fetch the implemented provider ids via `neoth provider list
+/// --output json` (the per-role rebind picker options). PARSE is the unit-tested
+/// `panel_logic::parse_provider_ids`.
+fn fetch_provider_ids() -> Vec<String> {
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("provider")
+        .arg("list")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_provider_ids(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// SPEC-06 — push the provider-id picker options onto the MainWindow. UI-thread.
+fn apply_provider_ids(window: &MainWindow, ids: Vec<String>) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<slint::SharedString> = ids.into_iter().map(|s| s.into()).collect();
+    window.set_provider_ids(ModelRc::new(VecModel::from(rows)));
+}
+
+/// SPEC-06 — rebind a hemisphere role to a provider (`neoth hemispheres set
+/// --role <r> --provider <p>`). The daemon owns the WAL `0x1F HEMISPHERE_REBOUND`
+/// audit + its own validation. Returns an operator-readable status line.
+fn set_hemisphere_via_subprocess(role: &str, provider: &str) -> String {
+    let Some(bin) = which_neothd() else {
+        return "hemispheres set: neothd binary not found".to_string();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("hemispheres")
+        .arg("set")
+        .arg("--role")
+        .arg(role)
+        .arg("--provider")
+        .arg(provider)
+        .output()
+    {
+        Ok(o) if o.status.success() => format!("{role} → {provider}"),
+        Ok(o) => format!(
+            "hemispheres set failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => format!("hemispheres set could not start: {e}"),
+    }
 }
 
 /// SPEC-05 — activate a preset by name (`neoth preset activate <name>`): sets

@@ -513,6 +513,27 @@ pub fn parse_presets(json: &str) -> Vec<PresetEntry> {
         .unwrap_or_default()
 }
 
+// ── SPEC-06 hemisphere switcher (parse `neoth provider list --output json`) ──
+
+/// Extract the IMPLEMENTED provider ids from `neoth provider list --output json`
+/// (`[{id, description, implemented}]`) — the options for the per-role provider
+/// picker. PURE + robust (malformed → empty; stub/unimplemented providers
+/// excluded so the operator can't bind a role to a non-functional adapter).
+/// This is a fixed adapter set, NOT a model whitelist — it stays
+/// model-version-agnostic (the model id is a separate free-form field).
+pub fn parse_provider_ids(json: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter(|p| p.get("implemented").and_then(|i| i.as_bool()).unwrap_or(true))
+        .filter_map(|p| p.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -872,5 +893,27 @@ mod tests {
         let rows = parse_presets(r#"{"presets":[{"active":true},{"name":"ok"}]}"#);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].name, "ok");
+    }
+
+    // ── SPEC-06 parse_provider_ids ────────────────────────────────────────────
+
+    #[test]
+    fn parse_provider_ids_keeps_implemented_only() {
+        let json = r#"[
+            {"id":"claude_cli","description":"x","implemented":true},
+            {"id":"aws_bedrock","description":"y","implemented":false},
+            {"id":"openai_api","description":"z","implemented":true}
+        ]"#;
+        let ids = parse_provider_ids(json);
+        assert_eq!(ids, vec!["claude_cli", "openai_api"], "stub provider excluded");
+    }
+
+    #[test]
+    fn parse_provider_ids_malformed_and_missing_flag() {
+        assert!(parse_provider_ids("nope").is_empty());
+        assert!(parse_provider_ids(r#"{"id":"x"}"#).is_empty(), "object not array");
+        // Missing `implemented` defaults to included (forward-compat).
+        let ids = parse_provider_ids(r#"[{"id":"a"},{"description":"no id"}]"#);
+        assert_eq!(ids, vec!["a"]);
     }
 }

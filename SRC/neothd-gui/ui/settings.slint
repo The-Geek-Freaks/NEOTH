@@ -356,42 +356,8 @@ component PanelHeader inherits VerticalLayout {
     }
 }
 
-component PendingPanel inherits VerticalBox {
-    in property <string> title: "";
-    in property <string> subtitle: "";
-    in property <string> mirrors-slash: "";
-    in property <string> pending-pick: "";
-
-    padding: Theme.space-loose;
-    spacing: Theme.space-loose;
-
-    PanelHeader {
-        title: root.title;
-        subtitle: root.subtitle;
-        mirrors-slash: root.mirrors-slash;
-    }
-    Card {
-        VerticalBox {
-            padding: Theme.space-base;
-            spacing: Theme.space-tight;
-            Text {
-                text: "Coming in " + root.pending-pick;
-                font-family: Theme.font-display;
-                font-size: Theme.font-size-caption;
-                font-weight: Theme.weight-medium;
-                letter-spacing: Theme.letter-spacing-tight;
-                color: Theme.accent-green;
-            }
-            Text {
-                text: "Use the CLI mirror above for now — the daemon writes the same freedom.yaml + credentials.yaml regardless of which surface you tweak.";
-                font-family: Theme.font-display;
-                font-size: Theme.font-size-body;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-            }
-        }
-    }
-}
+// GU-01: the PendingPanel "coming in vX" stub component was removed once all
+// six settings tabs became real panels — every former stub now renders live data.
 
 export component SettingsView inherits Rectangle {
     in-out property <SettingsTab> active: SettingsTab.chat;
@@ -409,6 +375,8 @@ export component SettingsView inherits Rectangle {
     // `neoth hemispheres show --output json` / `neoth skills --list --output json`.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
+    // SPEC-06 — implemented provider ids for the per-role rebind picker.
+    in property <[string]> provider-ids: [];
     in property <[SkillRow]> skills: [];
     // GU-01 — Channels / Plugins / Memory panels.
     in property <[ChannelRow]> channels: [];
@@ -478,6 +446,9 @@ export component SettingsView inherits Rectangle {
     callback reload-config-clicked;
     // GU-01 — Chat tab "Open chat" button → MainWindow switches to the chat view.
     callback open-chat-clicked;
+    // SPEC-06 — operator picked (role, provider) in the Hemispheres rebind
+    // control → MainWindow shells `neoth hemispheres set`.
+    callback hemisphere-set-clicked(string, string);
     /// G-12 fix — operator picked a different provider in the
     /// Config tab. Rust persists the change to freedom.yaml + drops
     /// the reload sentinel.
@@ -709,6 +680,51 @@ export component SettingsView inherits Rectangle {
                                 font-family: Theme.font-display;
                                 font-size: Theme.font-size-caption;
                                 color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
+                // SPEC-06 — rebind a role from the GUI (shells `neoth hemispheres
+                // set --role <r> --provider <p>`). The model id stays a CLI/key
+                // concern — this only swaps the provider adapter for a role.
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "REBIND A ROLE";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        if root.provider-ids.length == 0: Text {
+                            text: "(start the daemon to load the provider list)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.provider-ids.length > 0: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            role_combo := NeothComboBox {
+                                model: ["left", "right", "cerebellum"];
+                                horizontal-stretch: 1;
+                            }
+                            prov_combo := NeothComboBox {
+                                model: root.provider-ids;
+                                horizontal-stretch: 1;
+                            }
+                            NeothButton {
+                                label: "Set";
+                                primary: true;
+                                clicked => {
+                                    root.hemisphere-set-clicked(
+                                        role_combo.model[role_combo.current-index],
+                                        prov_combo.model[prov_combo.current-index],
+                                    );
+                                }
                             }
                         }
                     }
