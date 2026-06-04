@@ -8,9 +8,9 @@
 // so the daemon picks up changes within 2s without an explicit
 // "Apply" button.
 
-import { VerticalBox, HorizontalBox, LineEdit, CheckBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { NeothButton, Card, NeothComboBox } from "components.slint";
+import { NeothButton, Card, NeothComboBox, NeothCheckBox, NeothLineEdit } from "components.slint";
 
 export enum SettingsTab {
     chat,
@@ -1023,12 +1023,14 @@ export component SettingsView inherits Rectangle {
                             letter-spacing: Theme.letter-spacing-wide;
                             color: Theme.accent-green;
                         }
-                        CheckBox {
+                        NeothCheckBox {
                             text: "Auto-discover other NEOTH instances on this network";
                             checked: root.cluster-mdns-enabled;
-                            toggled => {
-                                root.cluster-mdns-enabled = self.checked;
-                                root.cluster-mdns-enabled-changed(self.checked);
+                            // GU-02: NeothCheckBox passes the new state as a callback arg
+                            // (toggled(bool)), unlike std-widgets CheckBox (toggled()).
+                            toggled(checked) => {
+                                root.cluster-mdns-enabled = checked;
+                                root.cluster-mdns-enabled-changed(checked);
                             }
                         }
                         Text {
@@ -1182,7 +1184,9 @@ export component SettingsView inherits Rectangle {
                             }
                             KanbanColumn {
                                 label: "IN PROGRESS";
-                                accent: Theme.accent-green;
+                                // GU-02: amber = active/attention, distinct from the
+                                // green "done/safe" + the blue/green backlog columns.
+                                accent: Theme.accent-amber;
                                 horizontal-stretch: 1;
                                 tasks: root.kanban-in-progress;
                                 selected-task-id: root.kanban-selected-task-id;
@@ -1480,7 +1484,7 @@ export component SettingsView inherits Rectangle {
                         HorizontalLayout {
                             spacing: Theme.space-tight;
                             alignment: stretch;
-                            comment_input := LineEdit {
+                            comment_input := NeothLineEdit {
                                 placeholder-text: "Add a comment to this task — press Enter or click Add";
                                 horizontal-stretch: 1;
                                 accepted(text) => {
