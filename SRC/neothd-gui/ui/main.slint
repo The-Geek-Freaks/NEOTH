@@ -21,7 +21,7 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, HemisphereRow, SkillRow } from "settings.slint";
 import { ChatView, ChatMessage } from "chat.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 
@@ -260,6 +260,10 @@ export component MainWindow inherits Window {
     in property <[SafeRailRow]> safety-rails: [];
     in property <int> rails-engaged-count: 0;
     in property <int> rails-total: 0;
+    // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
+    in property <[HemisphereRow]> hemisphere-bindings: [];
+    in property <string> hemispheres-mode: "";
+    in property <[SkillRow]> skills: [];
     /// HO-02: Cerebellum-bound flag, forwarded to the SettingsWindow
     /// Code Sessions tab. Default true so a probe failure doesn't
     /// false-alarm with the "no Cerebellum bound" banner.
@@ -1301,6 +1305,9 @@ export component MainWindow inherits Window {
             safety-rails: root.safety-rails;
             rails-engaged-count: root.rails-engaged-count;
             rails-total: root.rails-total;
+            hemisphere-bindings: root.hemisphere-bindings;
+            hemispheres-mode: root.hemispheres-mode;
+            skills: root.skills;
             wizard-rerun-clicked => {
                 root.settings-wizard-rerun-clicked();
             }

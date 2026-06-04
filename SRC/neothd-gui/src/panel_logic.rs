@@ -216,6 +216,117 @@ pub fn parse_safe_mode(json: &str) -> SafeModeSnapshot {
     }
 }
 
+// ── GU-01 hemispheres panel (parse `neoth hemispheres show --output json`) ───
+
+/// One role→provider binding for the Hemispheres panel.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HemisphereBinding {
+    pub role: String,     // "left" | "right" | "cerebellum"
+    pub provider: String, // canonical id, or "(unset)" when no provider bound
+    pub model: String,    // "" when the binding uses the provider default
+    pub has_key: bool,
+}
+
+/// Parsed hemisphere topology snapshot.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HemispheresSnapshot {
+    pub mode: String, // "single" | "custom" | "triplet"
+    pub bindings: Vec<HemisphereBinding>,
+}
+
+/// Parse `neoth hemispheres show --output json`. PURE + robust (malformed →
+/// empty). A null `provider` renders as `(unset)`; a null `model` as empty.
+pub fn parse_hemispheres(json: &str) -> HemispheresSnapshot {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return HemispheresSnapshot::default();
+    };
+    let mode = v
+        .get("mode")
+        .and_then(|m| m.as_str())
+        .unwrap_or("")
+        .to_string();
+    let bindings = v
+        .get("roles")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    let role = r.get("role")?.as_str()?.to_string();
+                    let provider = r
+                        .get("provider")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("(unset)")
+                        .to_string();
+                    let model = r
+                        .get("model")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let has_key = r.get("has_key").and_then(|k| k.as_bool()).unwrap_or(false);
+                    Some(HemisphereBinding {
+                        role,
+                        provider,
+                        model,
+                        has_key,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    HemispheresSnapshot { mode, bindings }
+}
+
+// ── GU-01 skills panel (parse `neoth skills --list --output json`) ───────────
+
+/// One installed skill for the Skills panel.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SkillSummary {
+    pub id: String,
+    pub description: String,
+    pub enabled: bool,
+    /// Trigger keywords joined with ", " for display.
+    pub keywords: String,
+}
+
+/// Parse `neoth skills --list --output json` (a JSON array of SkillManifest).
+/// PURE + robust (malformed → empty). A skill missing `enabled` defaults to
+/// `true` (matching the daemon's `#[serde(default = "default_true")]`).
+pub fn parse_skills(json: &str) -> Vec<SkillSummary> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(arr) = v.as_array() else {
+        return Vec::new();
+    };
+    arr.iter()
+        .filter_map(|s| {
+            let id = s.get("id")?.as_str()?.to_string();
+            let description = s
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("")
+                .to_string();
+            let enabled = s.get("enabled").and_then(|e| e.as_bool()).unwrap_or(true);
+            let keywords = s
+                .get("trigger_keywords")
+                .and_then(|k| k.as_array())
+                .map(|kw| {
+                    kw.iter()
+                        .filter_map(|w| w.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_default();
+            Some(SkillSummary {
+                id,
+                description,
+                enabled,
+                keywords,
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +524,65 @@ mod tests {
         let s = parse_safe_mode(r#"{"rails":[{"engaged":true},{"name":"ok","engaged":false}]}"#);
         assert_eq!(s.rails.len(), 1);
         assert_eq!(s.rails[0].name, "ok");
+    }
+
+    // ── GU-01 parse_hemispheres ───────────────────────────────────────────────
+
+    #[test]
+    fn parse_hemispheres_full() {
+        let json = r#"{
+            "mode": "triplet",
+            "single_provider_fallback": "ClaudeCli",
+            "roles": [
+                {"role":"left","provider":"claude_cli","model":"sonnet","endpoint":null,"has_key":true},
+                {"role":"right","provider":"openai_api","model":null,"endpoint":null,"has_key":false},
+                {"role":"cerebellum","provider":null,"model":null,"endpoint":null,"has_key":false}
+            ]
+        }"#;
+        let s = parse_hemispheres(json);
+        assert_eq!(s.mode, "triplet");
+        assert_eq!(s.bindings.len(), 3);
+        assert_eq!(s.bindings[0].role, "left");
+        assert_eq!(s.bindings[0].provider, "claude_cli");
+        assert_eq!(s.bindings[0].model, "sonnet");
+        assert!(s.bindings[0].has_key);
+        assert_eq!(s.bindings[1].model, "", "null model -> empty");
+        assert_eq!(s.bindings[2].provider, "(unset)", "null provider -> (unset)");
+    }
+
+    #[test]
+    fn parse_hemispheres_malformed_is_empty() {
+        assert_eq!(parse_hemispheres("nope"), HemispheresSnapshot::default());
+        // role-less entry skipped.
+        let s = parse_hemispheres(r#"{"mode":"single","roles":[{"provider":"x"},{"role":"left","provider":"y"}]}"#);
+        assert_eq!(s.bindings.len(), 1);
+        assert_eq!(s.bindings[0].role, "left");
+    }
+
+    // ── GU-01 parse_skills ────────────────────────────────────────────────────
+
+    #[test]
+    fn parse_skills_array_with_keywords() {
+        let json = r#"[
+            {"id":"verification","description":"verify before done","trigger_keywords":["verify","check"],"enabled":true},
+            {"id":"research","description":"deep research","trigger_keywords":[]}
+        ]"#;
+        let rows = parse_skills(json);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "verification");
+        assert_eq!(rows[0].keywords, "verify, check");
+        assert!(rows[0].enabled);
+        assert!(rows[1].enabled, "missing enabled defaults true");
+        assert_eq!(rows[1].keywords, "");
+    }
+
+    #[test]
+    fn parse_skills_malformed_and_non_array_is_empty() {
+        assert!(parse_skills("nope").is_empty());
+        assert!(parse_skills(r#"{"id":"x"}"#).is_empty(), "object, not array -> empty");
+        // id-less entry skipped.
+        let rows = parse_skills(r#"[{"description":"no id"},{"id":"ok"}]"#);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "ok");
     }
 }

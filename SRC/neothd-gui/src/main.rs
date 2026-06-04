@@ -597,16 +597,20 @@ fn main() -> Result<()> {
         });
     });
 
-    // GR-10 — one-shot safety-rails fetch on startup. Off the UI thread
-    // (subprocess), result marshalled back via invoke_from_event_loop. Mirrors
-    // the kanban-init pattern; cheap (one `neoth security safe-mode --json`).
-    let weak_rails_init = window.as_weak();
+    // GR-10 + GU-01 — one-shot startup fetch of the read-only settings panels
+    // (Safety Rails / Hemispheres / Skills). Off the UI thread (three quick
+    // subprocesses), each result marshalled back via invoke_from_event_loop.
+    let weak_panels_init = window.as_weak();
     std::thread::spawn(move || {
-        let snap = fetch_safe_mode_snapshot();
-        let weak = weak_rails_init.clone();
+        let rails = fetch_safe_mode_snapshot();
+        let hemis = fetch_hemispheres_snapshot();
+        let skills = fetch_skills();
+        let weak = weak_panels_init.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
-                apply_safe_mode(&w, snap);
+                apply_safe_mode(&w, rails);
+                apply_hemispheres(&w, hemis);
+                apply_skills(&w, skills);
             }
         });
     });
@@ -1456,6 +1460,78 @@ fn apply_safe_mode(window: &MainWindow, snap: panel_logic::SafeModeSnapshot) {
     window.set_safety_rails(ModelRc::new(VecModel::from(rows)));
     window.set_rails_engaged_count(snap.engaged_count);
     window.set_rails_total(snap.total);
+}
+
+/// GU-01 — fetch the hemisphere bindings via `neoth hemispheres show --output
+/// json`. Empty snapshot on missing binary / failure. PARSE is the unit-tested
+/// `panel_logic::parse_hemispheres`.
+fn fetch_hemispheres_snapshot() -> panel_logic::HemispheresSnapshot {
+    let Some(bin) = which_neothd() else {
+        return panel_logic::HemispheresSnapshot::default();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("hemispheres")
+        .arg("show")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_hemispheres(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => panel_logic::HemispheresSnapshot::default(),
+    }
+}
+
+/// GU-01 — push hemisphere bindings onto the MainWindow. UI-thread only.
+fn apply_hemispheres(window: &MainWindow, snap: panel_logic::HemispheresSnapshot) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<HemisphereRow> = snap
+        .bindings
+        .into_iter()
+        .map(|b| HemisphereRow {
+            role: b.role.into(),
+            provider: b.provider.into(),
+            model: b.model.into(),
+            has_key: b.has_key,
+        })
+        .collect();
+    window.set_hemisphere_bindings(ModelRc::new(VecModel::from(rows)));
+    window.set_hemispheres_mode(snap.mode.into());
+}
+
+/// GU-01 — fetch installed skills via `neoth skills --list --output json`.
+/// Empty on missing binary / failure. PARSE is the unit-tested
+/// `panel_logic::parse_skills`.
+fn fetch_skills() -> Vec<panel_logic::SkillSummary> {
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("skills")
+        .arg("--list")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => panel_logic::parse_skills(&String::from_utf8_lossy(&o.stdout)),
+        _ => Vec::new(),
+    }
+}
+
+/// GU-01 — push the installed-skill list onto the MainWindow. UI-thread only.
+fn apply_skills(window: &MainWindow, skills: Vec<panel_logic::SkillSummary>) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<SkillRow> = skills
+        .into_iter()
+        .map(|s| SkillRow {
+            id: s.id.into(),
+            description: s.description.into(),
+            enabled: s.enabled,
+            keywords: s.keywords.into(),
+        })
+        .collect();
+    window.set_skills(ModelRc::new(VecModel::from(rows)));
 }
 
 fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {

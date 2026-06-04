@@ -60,6 +60,22 @@ export struct SafeRailRow {
     detail: string,
 }
 
+// GU-01 — one role→provider binding for the Hemispheres panel.
+export struct HemisphereRow {
+    role: string,      // "left" | "right" | "cerebellum"
+    provider: string,  // canonical id or "(unset)"
+    model: string,     // "" when provider-default
+    has-key: bool,
+}
+
+// GU-01 — one installed skill for the Skills panel.
+export struct SkillRow {
+    id: string,
+    description: string,
+    enabled: bool,
+    keywords: string,  // joined trigger keywords
+}
+
 component TabButton inherits Rectangle {
     in property <string> label: "";
     in property <bool> active: false;
@@ -369,6 +385,12 @@ export component SettingsView inherits Rectangle {
     in property <int> rails-engaged-count: 0;
     in property <int> rails-total: 0;
 
+    // GU-01 — Hemispheres + Skills panels. Rust populates these on startup from
+    // `neoth hemispheres show --output json` / `neoth skills --list --output json`.
+    in property <[HemisphereRow]> hemisphere-bindings: [];
+    in property <string> hemispheres-mode: "";
+    in property <[SkillRow]> skills: [];
+
     // GU-03 — persona-adaptive panel visibility. Rust (`panel_logic::panels_for`)
     // sets these from the operator's complexity level on startup; each gated
     // sidebar tab is conditionally created (`if`), so a hidden tab is removed
@@ -565,11 +587,67 @@ export component SettingsView inherits Rectangle {
                 pending-pick: "next release";
             }
 
-            if root.active == SettingsTab.hemispheres: PendingPanel {
-                title: "Hemispheres";
-                subtitle: "NEOTH thinks across three roles: Left (fast, analytic — short replies, quick lookups), Right (deep, creative — long-form, complex reasoning), Cerebellum (the orchestrator that picks Left or Right). Bind a provider to each.";
-                mirrors-slash: "/provider [role] <kind>";
-                pending-pick: "next release";
+            if root.active == SettingsTab.hemispheres: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Hemispheres";
+                    subtitle: "NEOTH thinks across three roles: Left (fast, analytic), Right (deep, creative), Cerebellum (the orchestrator). Bind a provider to each via the CLI; this shows the live binding.";
+                    mirrors-slash: "/provider [role] <kind>   |   neoth hemispheres set";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "TOPOLOGY";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: Theme.accent-green;
+                            }
+                            Text {
+                                text: root.hemispheres-mode == "" ? "—" : root.hemispheres-mode;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+                        if root.hemisphere-bindings.length == 0: Text {
+                            text: "(start the daemon to read the live hemisphere bindings)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for b in root.hemisphere-bindings: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: b.role;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                color: Theme.text-primary;
+                            }
+                            Text {
+                                text: b.provider + (b.model == "" ? "" : " · " + b.model);
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: b.provider == "(unset)" ? Theme.text-muted : Theme.accent-green;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: b.has-key ? "key set" : "";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
+                }
             }
 
             if root.active == SettingsTab.channels: PendingPanel {
@@ -579,11 +657,59 @@ export component SettingsView inherits Rectangle {
                 pending-pick: "v0.2";
             }
 
-            if root.active == SettingsTab.skills: PendingPanel {
-                title: "Skills";
-                subtitle: "Install skill packs — small bundles of system-prompt text that teach NEOTH about a domain (writing style, code review preferences, your meeting cadence). Each skill loads automatically when its trigger words appear.";
-                mirrors-slash: "/skill list   |   /skill enable <name>";
-                pending-pick: "v0.2";
+            if root.active == SettingsTab.skills: VerticalBox {
+                padding: Theme.space-loose;
+                spacing: Theme.space-loose;
+                PanelHeader {
+                    title: "Skills";
+                    subtitle: "Skill packs teach NEOTH about a domain — each loads automatically when its trigger words appear. Manage them via the CLI; this lists the installed set.";
+                    mirrors-slash: "/skill list   |   neoth skills --install <path>";
+                }
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: root.skills.length + " skill(s) installed";
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                        }
+                        if root.skills.length == 0: Text {
+                            text: "(no skills installed — `neoth skills --install <path>`)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for s in root.skills: VerticalBox {
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: Theme.space-base;
+                                Text {
+                                    text: s.enabled ? "on" : "off";
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: s.enabled ? Theme.accent-green : Theme.text-muted;
+                                }
+                                Text {
+                                    text: s.id;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                            if s.description != "": Text {
+                                text: s.description;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
             }
 
             if root.active == SettingsTab.plugins: PendingPanel {
