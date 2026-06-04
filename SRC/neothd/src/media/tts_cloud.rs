@@ -214,7 +214,19 @@ pub fn make_tts_provider(
     kind: TtsProviderKind,
     api_key: Option<SecretString>,
     azure_region: Option<String>,
+    media_cfg: &crate::config::MediaConfig,
 ) -> Result<Box<dyn TtsProvider>, String> {
+    // P0 ENFORCEMENT — a CLOUD TTS provider sends the text-to-speak to a third
+    // party. It may only be constructed when the operator opted in
+    // (`media.cloud_tts_enabled`). The safe-mode rail makes this visible; this
+    // gate makes it REAL. `system_native` (and the deferred local engines) pass.
+    if !kind.is_local() && !media_cfg.cloud_tts_enabled {
+        return Err(format!(
+            "cloud TTS ({}) is disabled — set media.cloud_tts_enabled: true to send \
+             the spoken text to a cloud voice (your text then LEAVES the device)",
+            kind.as_str()
+        ));
+    }
     match kind {
         TtsProviderKind::SystemNative => Ok(Box::new(SystemNativeProvider::new())),
         TtsProviderKind::ElevenLabs => {
@@ -339,16 +351,21 @@ mod tests {
         );
     }
 
+    fn cloud_on() -> crate::config::MediaConfig {
+        crate::config::MediaConfig { cloud_tts_enabled: true, ..Default::default() }
+    }
+
     #[test]
     fn factory_returns_right_kind_or_deferral() {
+        let on = cloud_on();
         assert_eq!(
-            make_tts_provider(TtsProviderKind::SystemNative, None, None)
+            make_tts_provider(TtsProviderKind::SystemNative, None, None, &on)
                 .unwrap()
                 .kind(),
             TtsProviderKind::SystemNative
         );
         assert_eq!(
-            make_tts_provider(TtsProviderKind::ElevenLabs, Some(SecretString::from("k")), None)
+            make_tts_provider(TtsProviderKind::ElevenLabs, Some(SecretString::from("k")), None, &on)
                 .unwrap()
                 .kind(),
             TtsProviderKind::ElevenLabs
@@ -357,17 +374,40 @@ mod tests {
             make_tts_provider(
                 TtsProviderKind::AzureTts,
                 Some(SecretString::from("k")),
-                Some("eastus".into())
+                Some("eastus".into()),
+                &on,
             )
             .unwrap()
             .kind(),
             TtsProviderKind::AzureTts
         );
         // Missing creds + deferred engines → clear errors.
-        assert!(make_tts_provider(TtsProviderKind::ElevenLabs, None, None).is_err());
-        assert!(make_tts_provider(TtsProviderKind::AzureTts, Some(SecretString::from("k")), None).is_err());
-        assert!(make_tts_provider(TtsProviderKind::Piper, None, None).is_err());
-        assert!(make_tts_provider(TtsProviderKind::Coqui, None, None).is_err());
+        assert!(make_tts_provider(TtsProviderKind::ElevenLabs, None, None, &on).is_err());
+        assert!(make_tts_provider(TtsProviderKind::AzureTts, Some(SecretString::from("k")), None, &on).is_err());
+        assert!(make_tts_provider(TtsProviderKind::Piper, None, None, &on).is_err());
+        assert!(make_tts_provider(TtsProviderKind::Coqui, None, None, &on).is_err());
+    }
+
+    #[test]
+    fn cloud_kind_refused_when_flag_off() {
+        // P0 — cloud_tts_enabled OFF (default): a cloud voice cannot be built even
+        // with valid creds. `system_native` (local) is unaffected by the gate.
+        let off = crate::config::MediaConfig::default();
+        let err = make_tts_provider(TtsProviderKind::ElevenLabs, Some(SecretString::from("k")), None, &off)
+            .err()
+            .unwrap();
+        assert!(err.contains("cloud TTS") && err.contains("LEAVES the device"), "got: {err}");
+        assert!(make_tts_provider(
+            TtsProviderKind::AzureTts,
+            Some(SecretString::from("k")),
+            Some("eastus".into()),
+            &off,
+        )
+        .err()
+        .unwrap()
+        .contains("cloud TTS"));
+        // Local stays constructible regardless of the flag.
+        assert!(make_tts_provider(TtsProviderKind::SystemNative, None, None, &off).is_ok());
     }
 
     #[tokio::test]

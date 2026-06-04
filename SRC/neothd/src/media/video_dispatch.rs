@@ -43,7 +43,23 @@ pub async fn dispatch_video_analysis(
     prompt: &str,
     max_tokens: u32,
     writer: Option<&WalWriterHandle>,
+    media_cfg: &crate::config::MediaConfig,
 ) -> Result<String, String> {
+    // P0 ENFORCEMENT — decoding video frames and shipping them to a cloud vision
+    // model uploads imagery from the operator's files. It may only run when the
+    // operator opted in (`media.video_frame_upload_enabled`). The safe-mode rail
+    // makes this visible; this gate makes it REAL. A local synth (LocalLlava) is
+    // exempt — nothing leaves the device.
+    if !matches!(synth.provider(), MultimodalProvider::LocalLlava)
+        && !media_cfg.video_frame_upload_enabled
+    {
+        return Err(format!(
+            "video frame upload ({}) is disabled — set media.video_frame_upload_enabled: true \
+             to decode video frames and send them to a cloud vision model (those frames then \
+             LEAVE the device)",
+            synth.provider().as_str()
+        ));
+    }
     // Honour the provider's documented per-request frame cap.
     let cap = synth.provider().max_frames_per_request() as usize;
     let chosen: Vec<u64> = timestamps_ms.iter().take(cap).copied().collect();
@@ -146,6 +162,10 @@ mod tests {
         }
     }
 
+    fn frames_on() -> crate::config::MediaConfig {
+        crate::config::MediaConfig { video_frame_upload_enabled: true, ..Default::default() }
+    }
+
     fn test_writer() -> (WalWriterHandle, tokio::task::JoinHandle<()>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let (w, j) = crate::wal::writer::spawn(dir.path().join("vd.wal")).unwrap();
@@ -200,6 +220,7 @@ mod tests {
             "what happens?",
             256,
             Some(&writer),
+            &frames_on(),
         )
         .await
         .unwrap();
@@ -235,6 +256,7 @@ mod tests {
             "p",
             64,
             Some(&writer),
+            &frames_on(),
         )
         .await
         .unwrap();
@@ -258,11 +280,35 @@ mod tests {
             seen_frames: std::sync::Mutex::new(0),
         };
         let err = dispatch_video_analysis(
-            &decoder, &synth, &asset(), &[], FrameFormat::Jpeg, "p", 64, None,
+            &decoder, &synth, &asset(), &[], FrameFormat::Jpeg, "p", 64, None, &frames_on(),
         )
         .await
         .unwrap_err();
         assert!(err.contains("no frame timestamps"));
+    }
+
+    #[tokio::test]
+    async fn cloud_frame_upload_refused_when_flag_off() {
+        // P0 — video_frame_upload_enabled OFF (default): a cloud synth must be
+        // refused BEFORE any frame is decoded (no decoder calls, no WAL frame).
+        let decoder = MockDecoder {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let synth = MockSynth {
+            provider: MultimodalProvider::AnthropicClaude,
+            answer: "leaked".into(),
+            seen_frames: std::sync::Mutex::new(0),
+        };
+        let off = crate::config::MediaConfig::default();
+        let err = dispatch_video_analysis(
+            &decoder, &synth, &asset(), &[0, 500], FrameFormat::Jpeg, "p", 64, None, &off,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("video frame upload") && err.contains("LEAVE the device"), "got: {err}");
+        // Gate fired before decoding — nothing touched the asset.
+        assert_eq!(decoder.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(*synth.seen_frames.lock().unwrap(), 0);
     }
 
     #[test]

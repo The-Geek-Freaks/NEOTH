@@ -282,7 +282,19 @@ pub fn make_stt_provider(
     kind: SttProviderKind,
     api_key: Option<SecretString>,
     azure_region: Option<String>,
+    media_cfg: &crate::config::MediaConfig,
 ) -> Result<Box<dyn SttProviderImpl>, String> {
+    // P0 ENFORCEMENT — a CLOUD STT provider may only be constructed when the
+    // operator has opted in (`media.cloud_stt_enabled`). The safe-mode rail makes
+    // this visible; this gate makes it REAL — audio cannot leave the device for a
+    // cloud transcriber while the flag is off. Local STT carries no gate.
+    if !kind.is_local() && !media_cfg.cloud_stt_enabled {
+        return Err(format!(
+            "cloud STT ({}) is disabled — set media.cloud_stt_enabled: true to send \
+             audio to a cloud transcriber (your audio then LEAVES the device)",
+            kind.as_str()
+        ));
+    }
     match kind {
         SttProviderKind::OpenAiWhisperApi => {
             let key = api_key.ok_or("openai whisper requires an api key")?;
@@ -426,10 +438,15 @@ mod tests {
         assert_eq!(c.endpoint(), "https://api.openai.com/v1/audio/transcriptions");
     }
 
+    fn cloud_on() -> crate::config::MediaConfig {
+        crate::config::MediaConfig { cloud_stt_enabled: true, ..Default::default() }
+    }
+
     #[test]
     fn factory_returns_right_kind_or_deferral() {
+        let on = cloud_on();
         assert_eq!(
-            make_stt_provider(SttProviderKind::OpenAiWhisperApi, Some(SecretString::from("k")), None)
+            make_stt_provider(SttProviderKind::OpenAiWhisperApi, Some(SecretString::from("k")), None, &on)
                 .unwrap()
                 .kind(),
             SttProviderKind::OpenAiWhisperApi
@@ -438,16 +455,44 @@ mod tests {
             make_stt_provider(
                 SttProviderKind::AzureSpeech,
                 Some(SecretString::from("k")),
-                Some("eastus".into())
+                Some("eastus".into()),
+                &on,
             )
             .unwrap()
             .kind(),
             SttProviderKind::AzureSpeech
         );
-        assert!(make_stt_provider(SttProviderKind::OpenAiWhisperApi, None, None).is_err());
-        assert!(make_stt_provider(SttProviderKind::AzureSpeech, Some(SecretString::from("k")), None).is_err());
-        assert!(make_stt_provider(SttProviderKind::WhisperRsLocal, None, None).is_err());
-        assert!(make_stt_provider(SttProviderKind::Vosk, None, None).is_err());
+        assert!(make_stt_provider(SttProviderKind::OpenAiWhisperApi, None, None, &on).is_err());
+        assert!(make_stt_provider(SttProviderKind::AzureSpeech, Some(SecretString::from("k")), None, &on).is_err());
+        assert!(make_stt_provider(SttProviderKind::WhisperRsLocal, None, None, &on).is_err());
+        assert!(make_stt_provider(SttProviderKind::Vosk, None, None, &on).is_err());
+    }
+
+    #[test]
+    fn cloud_kind_refused_when_flag_off() {
+        // P0 — with cloud_stt_enabled OFF (the default), a cloud transcriber
+        // cannot be constructed even with valid creds. Local kinds are unaffected
+        // by the gate (they fail later as deferred, not as a privacy refusal).
+        let off = crate::config::MediaConfig::default();
+        let err = make_stt_provider(
+            SttProviderKind::OpenAiWhisperApi,
+            Some(SecretString::from("k")),
+            None,
+            &off,
+        )
+        .err()
+        .unwrap();
+        assert!(err.contains("cloud STT") && err.contains("LEAVES the device"), "got: {err}");
+        // Azure likewise refused by the gate (region present, still blocked).
+        assert!(make_stt_provider(
+            SttProviderKind::AzureSpeech,
+            Some(SecretString::from("k")),
+            Some("eastus".into()),
+            &off,
+        )
+        .err()
+        .unwrap()
+        .contains("cloud STT"));
     }
 
     #[tokio::test]
