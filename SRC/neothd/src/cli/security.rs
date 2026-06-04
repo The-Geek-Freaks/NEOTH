@@ -475,6 +475,57 @@ pub fn collect_rails(cfg: &FreedomConfig) -> Vec<Rail> {
         },
     });
 
+    // MM-01b/02b/03b cloud-media rails — audio/image/video are more sensitive
+    // than text. Engaged (off) = the media NEVER leaves the device for a cloud
+    // provider; relaxed (on) = the operator accepted that it does. Each says so
+    // plainly so "this media leaves your device" is never hidden.
+    rails.push(Rail {
+        name: "cloud_stt_enabled",
+        engaged: !cfg.media.cloud_stt_enabled,
+        detail: if cfg.media.cloud_stt_enabled {
+            "ON — your AUDIO leaves the device to a cloud STT provider \
+             (OpenAI Whisper / Azure Speech). Transcripts are not WAL-stored; \
+             the cloud call itself is audited 0xCC STT_TRANSCRIBED (metadata only)."
+                .to_string()
+        } else {
+            "off — speech-to-text stays on-device (local candle Whisper); no audio leaves".to_string()
+        },
+    });
+    rails.push(Rail {
+        name: "cloud_tts_enabled",
+        engaged: !cfg.media.cloud_tts_enabled,
+        detail: if cfg.media.cloud_tts_enabled {
+            "ON — your TEXT leaves the device to a cloud TTS provider \
+             (Azure / ElevenLabs). Audited 0xCD TTS_SYNTHESIZED (input HASH only)."
+                .to_string()
+        } else {
+            "off — text-to-speech stays on-device (system voice); no text leaves".to_string()
+        },
+    });
+    rails.push(Rail {
+        name: "cloud_vision_enabled",
+        engaged: !cfg.media.cloud_vision_enabled,
+        detail: if cfg.media.cloud_vision_enabled {
+            "ON — your IMAGES leave the device to a cloud vision model \
+             (Anthropic / OpenAI / Gemini). Audited 0xC9 VIDEO_FRAME_SYNTHESIZED \
+             (provider + counts + prompt HASH; never the pixels or prompt text)."
+                .to_string()
+        } else {
+            "off — no images sent to a cloud vision model".to_string()
+        },
+    });
+    rails.push(Rail {
+        name: "video_frame_upload_enabled",
+        engaged: !cfg.media.video_frame_upload_enabled,
+        detail: if cfg.media.video_frame_upload_enabled {
+            "ON — decoded VIDEO FRAMES are uploaded to a cloud vision model (a \
+             sampled sequence — far more than a single still). Audited 0xC9."
+                .to_string()
+        } else {
+            "off — no video frames uploaded to the cloud".to_string()
+        },
+    });
+
     rails
 }
 
@@ -1090,7 +1141,7 @@ mod tests {
         // A fresh install's protective defaults must read as ENGAGED.
         let cfg = FreedomConfig::default();
         let rails = collect_rails(&cfg);
-        assert_eq!(rails.len(), 15, "all rails surfaced");
+        assert_eq!(rails.len(), 19, "all rails surfaced");
         for name in [
             "autonomy_gate",          // default Standard = gated
             "private_inference",      // default no cloud fallback
@@ -1103,6 +1154,10 @@ mod tests {
             "omi_ingest",             // default off = no passive ingest
             "ecology_scheduler",      // default off = no auto-scheduler
             "channel_weight_learning", // default operator_only = poison-resistant
+            "cloud_stt_enabled",      // default off = audio stays on-device
+            "cloud_tts_enabled",      // default off = text stays on-device
+            "cloud_vision_enabled",   // default off = no images to cloud
+            "video_frame_upload_enabled", // default off = no frames to cloud
         ] {
             assert!(
                 rail(&rails, name).engaged,

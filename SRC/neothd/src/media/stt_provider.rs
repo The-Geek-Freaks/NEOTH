@@ -306,6 +306,57 @@ pub fn make_stt_provider(
     }
 }
 
+/// P0 — transcribe through `provider` and emit the metadata-only
+/// `0xCC STT_TRANSCRIBED` audit. Records that audio went to a cloud provider
+/// (provider id + audio byte count + transcript char count) — NEVER the
+/// transcript itself. This is the audited entry point a cloud-STT consumer
+/// uses; the audit is best-effort (a WAL error logs, never fails the call).
+pub async fn transcribe_and_audit(
+    provider: &dyn SttProviderImpl,
+    audio: &[u8],
+    request: &TranscriptionRequest,
+    writer: &crate::wal::writer::WalWriterHandle,
+) -> Result<TranscriptionResult, String> {
+    let result = provider.transcribe(audio, request).await?;
+    emit_stt_transcribed(
+        writer,
+        provider.kind(),
+        audio.len(),
+        result.text.chars().count(),
+    )
+    .await;
+    Ok(result)
+}
+
+async fn emit_stt_transcribed(
+    writer: &crate::wal::writer::WalWriterHandle,
+    provider: SttProviderKind,
+    audio_bytes: usize,
+    output_chars: usize,
+) {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "provider": provider.as_str(),
+        "audio_bytes": audio_bytes,
+        "output_chars": output_chars,
+        "ts_unix": ts_unix,
+    })) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "serialize STT_TRANSCRIBED (0xCC) failed");
+            return;
+        }
+    };
+    let header =
+        crate::wal::make_header(crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED, &payload);
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "WAL append STT_TRANSCRIBED (0xCC) failed (non-fatal)");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -404,5 +455,68 @@ mod tests {
         let c = OpenAiWhisperClient::new(SecretString::from("k")).with_base_url("http://127.0.0.1:1");
         let err = c.transcribe(b"RIFF....", &req("en")).await.unwrap_err();
         assert!(err.contains("openai whisper"), "expected an openai error, got: {err}");
+    }
+
+    struct MockStt;
+    #[async_trait]
+    impl SttProviderImpl for MockStt {
+        fn kind(&self) -> SttProviderKind {
+            SttProviderKind::OpenAiWhisperApi
+        }
+        async fn transcribe(
+            &self,
+            _audio: &[u8],
+            _request: &TranscriptionRequest,
+        ) -> Result<TranscriptionResult, String> {
+            Ok(TranscriptionResult {
+                text: "hello there".into(), // 11 chars
+                segments: vec![],
+                language: "en".into(),
+                confidence: None,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn transcribe_and_audit_emits_metadata_only_0xcc() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("stt.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let audio = vec![0u8; 4096];
+        let out = transcribe_and_audit(&MockStt, &audio, &req("en"), &writer)
+            .await
+            .unwrap();
+        assert_eq!(out.text, "hello there");
+        drop(writer);
+        let _ = join.await;
+
+        // Decode the 0xCC frame: metadata only, NEVER the transcript text.
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut found = false;
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_STT_TRANSCRIBED {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                assert_eq!(v["provider"], "openai_whisper_api");
+                assert_eq!(v["audio_bytes"], 4096);
+                assert_eq!(v["output_chars"], 11);
+                assert!(
+                    !dec.payload.windows(5).any(|w| w == b"hello"),
+                    "transcript text must NEVER be in the audit frame"
+                );
+                found = true;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert!(found, "expected a 0xCC STT_TRANSCRIBED frame");
     }
 }

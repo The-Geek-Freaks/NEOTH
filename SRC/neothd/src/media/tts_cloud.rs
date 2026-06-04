@@ -234,6 +234,55 @@ pub fn make_tts_provider(
     }
 }
 
+/// P0 — synthesise through `provider` and emit the metadata-only
+/// `0xCD TTS_SYNTHESIZED` audit. Records that text went to a cloud provider
+/// (provider id + input xxh3-64 HASH + input/audio byte counts) — NEVER the
+/// input text. Best-effort audit (a WAL error logs, never fails the call).
+pub async fn synth_and_audit(
+    provider: &dyn TtsProvider,
+    request: &TtsRequest,
+    writer: &crate::wal::writer::WalWriterHandle,
+) -> Result<TtsResponse, String> {
+    let resp = provider.synth(request).await?;
+    emit_tts_synthesized(
+        writer,
+        provider.kind(),
+        &request.text,
+        resp.audio_bytes.len(),
+    )
+    .await;
+    Ok(resp)
+}
+
+async fn emit_tts_synthesized(
+    writer: &crate::wal::writer::WalWriterHandle,
+    provider: TtsProviderKind,
+    input_text: &str,
+    audio_bytes: usize,
+) {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "provider": provider.as_str(),
+        "input_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(input_text.as_bytes())),
+        "input_bytes": input_text.len(),
+        "audio_bytes": audio_bytes,
+        "ts_unix": ts_unix,
+    })) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::warn!(error = %e, "serialize TTS_SYNTHESIZED (0xCD) failed");
+            return;
+        }
+    };
+    let header = crate::wal::make_header(crate::wal::events::EVENT_TYPE_TTS_SYNTHESIZED, &payload);
+    if let Err(e) = writer.append(header, payload).await {
+        tracing::warn!(error = %e, "WAL append TTS_SYNTHESIZED (0xCD) failed (non-fatal)");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,5 +377,64 @@ mod tests {
         let c = ElevenLabsClient::new(SecretString::from("k")).with_base_url("http://127.0.0.1:1");
         let err = c.synth(&req("hi", "Rachel", TtsFormat::Mp3)).await.unwrap_err();
         assert!(err.contains("elevenlabs"), "expected an elevenlabs error, got: {err}");
+    }
+
+    struct MockTts;
+    #[async_trait]
+    impl TtsProvider for MockTts {
+        fn kind(&self) -> TtsProviderKind {
+            TtsProviderKind::ElevenLabs
+        }
+        async fn synth(&self, _request: &TtsRequest) -> Result<TtsResponse, String> {
+            Ok(TtsResponse {
+                audio_bytes: vec![1u8; 2048],
+                format: TtsFormat::Mp3,
+                duration_ms: 0,
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn synth_and_audit_emits_metadata_only_0xcd() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("tts.wal");
+        let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+        let r = req("secret spoken words", "Rachel", TtsFormat::Mp3);
+        let resp = synth_and_audit(&MockTts, &r, &writer).await.unwrap();
+        assert_eq!(resp.audio_bytes.len(), 2048);
+        drop(writer);
+        let _ = join.await;
+
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut found = false;
+        while cursor < bytes.len() {
+            let dec = match crate::wal::frame::decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_TTS_SYNTHESIZED {
+                let v: serde_json::Value = serde_json::from_slice(dec.payload).unwrap();
+                assert_eq!(v["provider"], "eleven_labs");
+                assert_eq!(v["input_bytes"], "secret spoken words".len());
+                assert_eq!(v["audio_bytes"], 2048);
+                assert_eq!(
+                    v["input_hash"],
+                    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(b"secret spoken words"))
+                );
+                assert!(
+                    !dec.payload.windows(6).any(|w| w == b"secret"),
+                    "spoken text must NEVER be in the audit frame"
+                );
+                found = true;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert!(found, "expected a 0xCD TTS_SYNTHESIZED frame");
     }
 }

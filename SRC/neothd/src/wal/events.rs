@@ -1202,6 +1202,21 @@ pub const EVENT_TYPE_CALENDAR_WRITE_DENIED: u8 = 0xCB;
 /// Payload (JSON): `{provider, frame_count, prompt_hash, output_chars, ts_unix}`.
 pub const EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED: u8 = 0xC9;
 
+/// `0xCC STT_TRANSCRIBED` — MM-01b. A CLOUD speech-to-text call completed:
+/// audio left the device to OpenAI Whisper / Azure Speech and a transcript came
+/// back. Per the privacy model the TRANSCRIPT is NEVER WAL-stored — this frame
+/// is metadata-only durable evidence that audio went to a cloud provider, so an
+/// operator can audit cloud-media use without the spoken content being recorded.
+/// Tool band. Payload (JSON): `{provider, audio_bytes, output_chars, ts_unix}`.
+pub const EVENT_TYPE_STT_TRANSCRIBED: u8 = 0xCC;
+
+/// `0xCD TTS_SYNTHESIZED` — MM-03b. A CLOUD text-to-speech call completed: text
+/// left the device to Azure / ElevenLabs and audio came back. The input TEXT is
+/// never stored — only its xxh3-64 HASH + byte length — so this is durable
+/// evidence of cloud-media use without recording what was spoken. Tool band.
+/// Payload (JSON): `{provider, input_hash, input_bytes, audio_bytes, ts_unix}`.
+pub const EVENT_TYPE_TTS_SYNTHESIZED: u8 = 0xCD;
+
 /// `0xC1 MCP_TOOL_REJECTED` — operator's MCP client refused to invoke
 /// a tool because either (a) the tool name is not in the server's
 /// `allow_tools` list, (b) the tool description failed the prompt-
@@ -1604,6 +1619,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "video_frame_synthesized",
         EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
     ),
+    ("stt_transcribed", EVENT_TYPE_STT_TRANSCRIBED),
+    ("tts_synthesized", EVENT_TYPE_TTS_SYNTHESIZED),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -1970,6 +1987,8 @@ const _: () = {
         || EVENT_TYPE_CALENDAR_WRITE_DENIED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED < 0xC0
         || EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED > 0xCF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_STT_TRANSCRIBED < 0xC0 || EVENT_TYPE_STT_TRANSCRIBED > 0xCF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_TTS_SYNTHESIZED < 0xC0 || EVENT_TYPE_TTS_SYNTHESIZED > 0xCF) as usize];
     // V11 Pick #38 (2026-05-19): coding-workflow band 0x70..=0x7F.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_OPENED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_OPENED > 0x7F) as usize];
@@ -2235,6 +2254,8 @@ mod tests {
                 "VIDEO_FRAME_SYNTHESIZED",
                 EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
             ),
+            ("STT_TRANSCRIBED", EVENT_TYPE_STT_TRANSCRIBED),
+            ("TTS_SYNTHESIZED", EVENT_TYPE_TTS_SYNTHESIZED),
             ("KANBAN_SESSION_OPENED", EVENT_TYPE_KANBAN_SESSION_OPENED),
             ("KANBAN_TASK_CREATED", EVENT_TYPE_KANBAN_TASK_CREATED),
             ("KANBAN_TASK_ASSIGNED", EVENT_TYPE_KANBAN_TASK_ASSIGNED),

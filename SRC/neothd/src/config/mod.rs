@@ -321,6 +321,14 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub omi: OmiConfig,
 
+    /// MM-01b/02b/03b — cloud media (STT / TTS / vision / video frames). ALL
+    /// default OFF: audio, images, and video are more sensitive than text
+    /// prompts, so sending them to a cloud provider is an explicit opt-in. Each
+    /// flag is surfaced as its own safe-mode rail ("this media leaves your
+    /// device").
+    #[serde(default)]
+    pub media: MediaConfig,
+
     /// EM-02b — CalDAV calendar writes (`neoth calendar add`). A power surface
     /// (external network mutation): a kill switch the operator can flip without
     /// touching credentials. Default ON (the surface ships usable), but it is
@@ -1419,6 +1427,27 @@ impl Default for OmiConfig {
             confidence_threshold: 0.75,
         }
     }
+}
+
+/// MM-01b/02b/03b — cloud media opt-ins. ALL default OFF (`false`). Each flag,
+/// when `true`, means the operator has accepted that THIS media type leaves the
+/// device for a cloud provider. Audio/image/video are more sensitive than text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+#[serde(default)]
+pub struct MediaConfig {
+    /// Cloud speech-to-text (OpenAI Whisper / Azure Speech). On = your AUDIO
+    /// leaves the device to be transcribed. Local candle STT needs no flag.
+    pub cloud_stt_enabled: bool,
+    /// Cloud text-to-speech (Azure / ElevenLabs). On = your TEXT leaves the
+    /// device to be synthesised into audio.
+    pub cloud_tts_enabled: bool,
+    /// Cloud vision (Anthropic / OpenAI / Gemini). On = your IMAGES/frames leave
+    /// the device for a multimodal model.
+    pub cloud_vision_enabled: bool,
+    /// Upload decoded VIDEO FRAMES to a cloud vision provider. Distinct from
+    /// `cloud_vision_enabled` (a single still vs a sampled sequence of frames):
+    /// a video upload exposes far more, so it is its own opt-in.
+    pub video_frame_upload_enabled: bool,
 }
 
 /// EM-02b — CalDAV calendar-write knobs.
