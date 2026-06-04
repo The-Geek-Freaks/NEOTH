@@ -24,7 +24,7 @@ use crate::config::ResourceWatchConfig;
 use crate::wal::writer::WalWriterHandle;
 
 /// A live VRAM reading — used + total in MiB.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub struct VramReading {
     pub used_mib: u32,
     pub total_mib: u32,
@@ -158,7 +158,9 @@ fn read_amd_vram() -> Option<VramReading> {
 /// tooling) — the watcher is then a clean no-op. Intel discrete (Arc)
 /// has no `nvidia-smi`/`rocm-smi` equivalent (its `intel_gpu_top` JSON is
 /// a separate, messier slice) so it is intentionally not probed here.
-fn read_gpu_vram() -> Option<VramReading> {
+/// `pub(crate)` so the hardware probe (SL-03 — `neoth hardware`) can include a
+/// live VRAM reading alongside the static accelerator capability info.
+pub(crate) fn read_gpu_vram() -> Option<VramReading> {
     read_nvidia_vram().or_else(read_amd_vram)
 }
 

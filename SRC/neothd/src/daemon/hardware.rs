@@ -39,6 +39,12 @@ pub struct HardwareReport {
     /// model NEOTH currently knows about. Surfaced in the wizard so the
     /// disk check can warn before a 5 GiB download fails halfway.
     pub estimated_full_cache_gib: f64,
+    /// SL-03 — LIVE GPU VRAM reading (used + total MiB) at probe time, via
+    /// `nvidia-smi`/`rocm-smi`. `None` on a CPU-only host or when no GPU tool
+    /// is on PATH. Distinct from `accelerator` (which is a static capability
+    /// probe) — this is the moment-in-time utilisation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vram: Option<crate::daemon::resource_watch::VramReading>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -138,6 +144,9 @@ pub fn probe(neoth_home: &Path) -> HardwareReport {
     //   whisper-large-v3-turbo ~1.6 GiB
     //   openai/clip-vit-base-patch32 ~0.6 GiB
     let estimated_full_cache_gib = 6.0 + 1.6 + 0.6;
+    // SL-03 — best-effort LIVE VRAM read (nvidia-smi/rocm-smi). None on a
+    // CPU-only host or when no GPU tool is on PATH; never fails the probe.
+    let vram = crate::daemon::resource_watch::read_gpu_vram();
     HardwareReport {
         cpu,
         memory,
@@ -147,6 +156,7 @@ pub fn probe(neoth_home: &Path) -> HardwareReport {
         disk,
         recommended_qwen_repo,
         estimated_full_cache_gib,
+        vram,
     }
 }
 
@@ -360,6 +370,16 @@ impl HardwareReport {
             self.estimated_full_cache_gib,
         );
         let _ = writeln!(s, "  Recommended Qwen: {}", self.recommended_qwen_repo);
+        // SL-03 — live VRAM line when a GPU tool reported a reading.
+        if let Some(v) = self.vram {
+            let _ = writeln!(
+                s,
+                "  GPU VRAM:      {} / {} MiB ({:.0}% used)",
+                v.used_mib,
+                v.total_mib,
+                v.pressure_pct(),
+            );
+        }
         s
     }
 }
@@ -368,6 +388,27 @@ impl HardwareReport {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn render_summary_shows_vram_line_only_when_present() {
+        use crate::daemon::resource_watch::VramReading;
+        let dir = tempdir().unwrap();
+        let mut report = probe(dir.path());
+        // With a reading → a GPU VRAM line is present + json carries `vram`.
+        report.vram = Some(VramReading {
+            used_mib: 4000,
+            total_mib: 8000,
+        });
+        let summary = report.render_summary();
+        assert!(summary.contains("GPU VRAM:      4000 / 8000 MiB (50% used)"), "got: {summary}");
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"vram\""));
+        assert!(json.contains("\"used_mib\":4000"));
+        // Without a reading → no VRAM line + the field is omitted from json.
+        report.vram = None;
+        assert!(!report.render_summary().contains("GPU VRAM"));
+        assert!(!serde_json::to_string(&report).unwrap().contains("\"vram\""));
+    }
 
     #[test]
     fn probe_returns_non_zero_cpu_and_memory_on_real_host() {
