@@ -242,8 +242,10 @@ fn ensure_gh_ready() -> Result<()> {
 fn gh_set_secret(slug: &str, name: &str, value: &str) -> Result<()> {
     use std::io::Write;
     use std::process::{Command, Stdio};
+    // `gh secret set NAME --repo R` reads the value from STDIN when `--body` is
+    // omitted — so the secret never appears in argv / the process list.
     let mut child = Command::new("gh")
-        .args(["secret", "set", name, "--repo", slug, "--body-file", "-"])
+        .args(["secret", "set", name, "--repo", slug])
         .stdin(Stdio::piped())
         .spawn()
         .context("spawn `gh secret set`")?;
