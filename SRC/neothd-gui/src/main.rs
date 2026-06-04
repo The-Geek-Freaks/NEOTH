@@ -597,6 +597,20 @@ fn main() -> Result<()> {
         });
     });
 
+    // GR-10 — one-shot safety-rails fetch on startup. Off the UI thread
+    // (subprocess), result marshalled back via invoke_from_event_loop. Mirrors
+    // the kanban-init pattern; cheap (one `neoth security safe-mode --json`).
+    let weak_rails_init = window.as_weak();
+    std::thread::spawn(move || {
+        let snap = fetch_safe_mode_snapshot();
+        let weak = weak_rails_init.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                apply_safe_mode(&w, snap);
+            }
+        });
+    });
+
     let weak_kanban_refresh = window.as_weak();
     let mutex_refresh = kanban_snapshot.clone();
     window.on_kanban_refresh_clicked(move || {
@@ -1405,6 +1419,45 @@ fn spawn_neothd_plain(bin: &Path) -> std::process::Command {
 /// Returns an empty snapshot with a friendly summary when the operator
 /// hasn't opened a coding session yet, OR when the daemon binary is
 /// missing — the GUI degrades gracefully instead of erroring out.
+/// GR-10 — fetch the daemon's safety-rail state via `neoth security safe-mode
+/// --json`. Returns an empty snapshot when the binary is absent or the call
+/// fails (the panel renders a "no data" state, never crashes). The PARSE is the
+/// unit-tested `panel_logic::parse_safe_mode`; this is the thin subprocess shell.
+fn fetch_safe_mode_snapshot() -> panel_logic::SafeModeSnapshot {
+    let Some(bin) = which_neothd() else {
+        return panel_logic::SafeModeSnapshot::default();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("security")
+        .arg("safe-mode")
+        .arg("--json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_safe_mode(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => panel_logic::SafeModeSnapshot::default(),
+    }
+}
+
+/// GR-10 — push a parsed safe-mode snapshot onto the `MainWindow` Privacy-tab
+/// Safety Rails panel. UI-thread only (called via `invoke_from_event_loop`).
+fn apply_safe_mode(window: &MainWindow, snap: panel_logic::SafeModeSnapshot) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<SafeRailRow> = snap
+        .rails
+        .into_iter()
+        .map(|r| SafeRailRow {
+            name: r.name.into(),
+            engaged: r.engaged,
+            detail: r.detail.into(),
+        })
+        .collect();
+    window.set_safety_rails(ModelRc::new(VecModel::from(rows)));
+    window.set_rails_engaged_count(snap.engaged_count);
+    window.set_rails_total(snap.total);
+}
+
 fn fetch_kanban_board_snapshot() -> KanbanBoardSnapshot {
     let Some(bin) = which_neothd() else {
         return KanbanBoardSnapshot {

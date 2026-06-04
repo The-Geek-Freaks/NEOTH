@@ -53,6 +53,13 @@ export struct KanbanCommentRow {
     body: string,
 }
 
+// GR-10 — one row in the Safety Rails panel, from `neoth security safe-mode --json`.
+export struct SafeRailRow {
+    name: string,
+    engaged: bool,
+    detail: string,
+}
+
 component TabButton inherits Rectangle {
     in property <string> label: "";
     in property <bool> active: false;
@@ -355,6 +362,13 @@ export component SettingsView inherits Rectangle {
     in-out property <string> autonomy-current: "standard";
     in-out property <string> provider-current: "claude_cli";
 
+    // GR-10 — Safety Rails (from `neoth security safe-mode --json`), rendered in
+    // the Privacy tab. Rust populates these on startup; `engaged` rails are the
+    // ones actively restricting the daemon.
+    in property <[SafeRailRow]> safety-rails: [];
+    in property <int> rails-engaged-count: 0;
+    in property <int> rails-total: 0;
+
     // GU-03 — persona-adaptive panel visibility. Rust (`panel_logic::panels_for`)
     // sets these from the operator's complexity level on startup; each gated
     // sidebar tab is conditionally created (`if`), so a hidden tab is removed
@@ -618,6 +632,61 @@ export component SettingsView inherits Rectangle {
                             font-size: Theme.font-size-caption;
                             color: Theme.text-muted;
                             wrap: word-wrap;
+                        }
+                    }
+                }
+                // GR-10 — Safety Rails card: which restrictions are actively
+                // engaged on the daemon (`neoth security safe-mode --json`).
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        HorizontalLayout {
+                            alignment: space-between;
+                            Text {
+                                text: "SAFETY RAILS";
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                font-weight: Theme.weight-medium;
+                                letter-spacing: Theme.letter-spacing-tight;
+                                color: Theme.accent-green;
+                            }
+                            Text {
+                                text: root.rails-engaged-count + " / " + root.rails-total + " engaged";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+                        if root.safety-rails.length == 0: Text {
+                            text: "(start the daemon to read live safe-mode rails)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for rail in root.safety-rails: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: rail.engaged ? "engaged" : "open";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: rail.engaged ? Theme.accent-green : Theme.text-muted;
+                            }
+                            Text {
+                                text: rail.name;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                            }
+                            Text {
+                                text: rail.detail;
+                                font-family: Theme.font-display;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                                horizontal-stretch: 1;
+                                wrap: word-wrap;
+                            }
                         }
                     }
                 }

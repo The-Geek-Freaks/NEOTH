@@ -150,6 +150,72 @@ pub fn read_complexity_level(home: &std::path::Path) -> ComplexityLevel {
     }
 }
 
+// ── GR-10 — Safety Rails panel (parse `neoth security safe-mode --json`) ──────
+
+/// One safety rail as reported by `neoth security safe-mode --json`. The GUI
+/// `SafeRailRow` Slint struct is built from this in `main.rs`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SafeRail {
+    pub name: String,
+    pub engaged: bool,
+    pub detail: String,
+}
+
+/// The parsed safe-mode snapshot: every rail + the engaged/total counts.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SafeModeSnapshot {
+    pub rails: Vec<SafeRail>,
+    pub engaged_count: i32,
+    pub total: i32,
+}
+
+/// Parse the JSON emitted by `neoth security safe-mode --json`
+/// (`{rails:[{name,engaged,detail}], engaged_count, total}`). PURE + robust: a
+/// missing/malformed payload yields an EMPTY snapshot so the panel renders a
+/// "no data" state rather than crashing the GUI. The counts are derived from
+/// the rails when the top-level fields are absent (forward-compatible).
+pub fn parse_safe_mode(json: &str) -> SafeModeSnapshot {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return SafeModeSnapshot::default();
+    };
+    let rails: Vec<SafeRail> = v
+        .get("rails")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|r| {
+                    let name = r.get("name")?.as_str()?.to_string();
+                    let engaged = r.get("engaged").and_then(|e| e.as_bool()).unwrap_or(false);
+                    let detail = r
+                        .get("detail")
+                        .and_then(|d| d.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Some(SafeRail {
+                        name,
+                        engaged,
+                        detail,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let engaged_count = v
+        .get("engaged_count")
+        .and_then(|c| c.as_i64())
+        .unwrap_or_else(|| rails.iter().filter(|r| r.engaged).count() as i64)
+        as i32;
+    let total = v
+        .get("total")
+        .and_then(|t| t.as_i64())
+        .unwrap_or(rails.len() as i64) as i32;
+    SafeModeSnapshot {
+        rails,
+        engaged_count,
+        total,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -301,5 +367,51 @@ mod tests {
         ] {
             assert_eq!(parse_complexity_level(lvl.as_str()), lvl);
         }
+    }
+
+    // ── GR-10 parse_safe_mode ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_safe_mode_full_payload() {
+        let json = r#"{
+            "rails": [
+                {"name": "autonomy_gate", "engaged": true, "detail": "strict"},
+                {"name": "email_llm_tiebreak", "engaged": false, "detail": "off"}
+            ],
+            "engaged_count": 1,
+            "total": 2
+        }"#;
+        let s = parse_safe_mode(json);
+        assert_eq!(s.rails.len(), 2);
+        assert_eq!(s.rails[0].name, "autonomy_gate");
+        assert!(s.rails[0].engaged);
+        assert_eq!(s.rails[0].detail, "strict");
+        assert!(!s.rails[1].engaged);
+        assert_eq!(s.engaged_count, 1);
+        assert_eq!(s.total, 2);
+    }
+
+    #[test]
+    fn parse_safe_mode_derives_counts_when_absent() {
+        // Forward-compat: missing engaged_count/total derive from the rails.
+        let json = r#"{"rails":[
+            {"name":"a","engaged":true,"detail":""},
+            {"name":"b","engaged":true,"detail":""},
+            {"name":"c","engaged":false}
+        ]}"#;
+        let s = parse_safe_mode(json);
+        assert_eq!(s.engaged_count, 2, "derived from engaged rails");
+        assert_eq!(s.total, 3, "derived from rail count");
+        assert_eq!(s.rails[2].detail, "", "missing detail defaults empty");
+    }
+
+    #[test]
+    fn parse_safe_mode_malformed_is_empty_not_panic() {
+        assert_eq!(parse_safe_mode("not json"), SafeModeSnapshot::default());
+        assert_eq!(parse_safe_mode(""), SafeModeSnapshot::default());
+        // A rail missing its required `name` is skipped, not fatal.
+        let s = parse_safe_mode(r#"{"rails":[{"engaged":true},{"name":"ok","engaged":false}]}"#);
+        assert_eq!(s.rails.len(), 1);
+        assert_eq!(s.rails[0].name, "ok");
     }
 }
