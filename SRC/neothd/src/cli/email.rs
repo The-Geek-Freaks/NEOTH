@@ -409,6 +409,20 @@ async fn fetch_and_triage(
         })
         .collect();
 
+    // P1a — GATED enforcement (default off). Runs AFTER annotation, BEFORE the
+    // audit so an escalated/relaxed action is what gets recorded. Spoof defence
+    // (trusted domain + failing SPF/DKIM/DMARC → quarantine) is the primary win;
+    // relaxation is double-gated by `trusted_sender_allow_relax`.
+    if fcfg.email.trusted_sender_policy {
+        for t in triaged.iter_mut() {
+            crate::email::sender_policy::apply_trust_policy(
+                t,
+                true,
+                fcfg.email.trusted_sender_allow_relax,
+            );
+        }
+    }
+
     // EM-01b/PL-05b — record each inbound-mail security decision in the audit
     // ledger (metadata only). Best-effort: an audit gap never blocks the fetch.
     emit_email_audit_batch(&triaged).await;
@@ -519,6 +533,9 @@ async fn emit_email_audit_batch(triaged: &[crate::email::inbound::InboundTriage]
                     "dkim": a.dkim.as_str(),
                     "dmarc": a.dmarc.as_str(),
                 })),
+                // P1a — what the gated trusted-sender policy did (spoof escalate
+                // / relax / no_change); absent when the policy is off.
+                "trust_policy": t.trust_policy.map(|o| o.as_str()),
                 "ts_unix": now,
             }))
             .unwrap_or_default(),

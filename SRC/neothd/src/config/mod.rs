@@ -1303,6 +1303,22 @@ pub struct EmailConfig {
     /// "trusted but still sanitized"). Default empty.
     #[serde(default)]
     pub trusted_domains: Vec<String>,
+    /// P1a — turn the trusted-sender ENFORCEMENT policy ON (default off, opt-in).
+    /// When on, the PRIMARY behaviour is spoof defence: a `trusted_domains` match
+    /// whose mail carries a FAILING SPF/DKIM/DMARC verdict is escalated to
+    /// quarantine (the allowlist alone is spoofable — failing auth on a "trusted"
+    /// domain is the attack tell). Only ever MORE restrictive. Visibility-only
+    /// annotation still runs regardless of this flag.
+    #[serde(default)]
+    pub trusted_sender_policy: bool,
+    /// P1a — gate the one RELAXING direction (default off, double-opt-in like
+    /// `llm_tiebreak_allow_downgrade`). When on AND `trusted_sender_policy` is on,
+    /// a VERIFIED-trust sender (allowlist + auth pass) whose mail is a borderline
+    /// `ReviewQueue` — with no LLM tie-break already applied — is delivered. Never
+    /// downgrades a quarantine; opt-in because it lets trust override a
+    /// deterministic borderline hold.
+    #[serde(default)]
+    pub trusted_sender_allow_relax: bool,
 }
 
 impl Default for EmailConfig {
@@ -1313,6 +1329,8 @@ impl Default for EmailConfig {
             llm_tiebreak: false,
             llm_tiebreak_allow_downgrade: false,
             trusted_domains: Vec::new(),
+            trusted_sender_policy: false,
+            trusted_sender_allow_relax: false,
         }
     }
 }

@@ -11,10 +11,31 @@
 //! runs AFTER [`super::inbound::triage_inbound`] and touches ONLY the two new
 //! visibility fields — it never changes `action`, `clean_body`, or `threat`.
 //! So a trusted sender's mail is still fully sanitized + threat-scored; trust
-//! can never weaken a security decision. Enforcement (auto-deliver a
-//! trusted+DMARC-pass sender, etc.) is a deliberate later slice, gated.
+//! can never weaken a security decision.
+//!
+//! ## The gated ENFORCEMENT slice ([`apply_trust_policy`])
+//!
+//! [`apply_trust_policy`] is the deliberate later slice — opt-in via
+//! `email.trusted_sender_policy` (default off). It combines the allowlist match
+//! with the SPF/DKIM/DMARC verdicts to make TWO bounded decisions:
+//!
+//! - **Spoof defence (the security win, always-on when the policy is on):** a
+//!   domain allowlist ALONE is spoofable — anyone can put `From: ceo@acme.com`
+//!   in a header. When a "trusted" domain's mail carries a FAILING SPF/DKIM/
+//!   DMARC verdict, the receiving server has already told us the alignment was
+//!   rejected → that's the spoof tell. The policy ESCALATES it to quarantine
+//!   (only ever more restrictive). This is why visibility alone is not enough:
+//!   without it, the allowlist is a liability (an attacker spoofs a trusted
+//!   domain to look safer).
+//! - **Relaxation (double-gated, conservative):** only under the additional
+//!   `trusted_sender_allow_relax` flag, a VERIFIED-trust sender (allowlist +
+//!   auth pass) whose mail is a borderline `ReviewQueue` — AND that no LLM
+//!   tie-break already ruled on — is delivered. It NEVER downgrades a
+//!   quarantine + never un-sanitizes; the sanitizer/scorer always ran first.
 
-use super::inbound::{AuthVerdict, EmailAuthStatus, InboundEmail, InboundTriage};
+use super::inbound::{
+    AuthVerdict, EmailAuthStatus, InboundAction, InboundEmail, InboundTriage, TrustPolicyOutcome,
+};
 
 /// Parse a receiving server's `Authentication-Results` header into per-mechanism
 /// verdicts. Robust to ordering, casing, and the comment/`smtp.mailfrom=`
@@ -94,6 +115,96 @@ pub fn annotate_sender_policy(
         .as_deref()
         .map(parse_authentication_results);
     triage
+}
+
+/// The trust-policy decision after combining the allowlist match with the
+/// authentication (SPF/DKIM/DMARC) verdicts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TrustDecision {
+    /// Sender is not on the allowlist — the policy has nothing to say.
+    NotTrusted,
+    /// Trusted domain, but the receiving server reported NO auth results —
+    /// the allowlist match cannot be confirmed not-spoofed. No relaxation.
+    TrustedUnverified,
+    /// Trusted domain AND authentication confirms alignment (DMARC pass, or
+    /// DKIM+SPF both pass). Eligible for the gated relaxation.
+    VerifiedTrust,
+    /// Trusted domain but a mechanism explicitly FAILED — the spoof tell.
+    SpoofSuspected,
+}
+
+/// Combine the allowlist flag + the parsed auth into a [`TrustDecision`]. PURE.
+///
+/// An explicit `Fail` on ANY of DMARC/DKIM/SPF for a trusted-domain claim is
+/// treated as a spoof: the receiving server rejected the alignment, so the
+/// `From` domain is almost certainly forged. `SoftFail`/`Neutral`/`None`/
+/// `Unknown` are NOT treated as spoofs (too weak a signal to escalate on) but
+/// also do NOT qualify as verified (no relaxation) — the conservative middle.
+pub fn evaluate_trust_decision(
+    sender_trusted: bool,
+    auth: Option<&EmailAuthStatus>,
+) -> TrustDecision {
+    if !sender_trusted {
+        return TrustDecision::NotTrusted;
+    }
+    let Some(a) = auth else {
+        return TrustDecision::TrustedUnverified;
+    };
+    if a.dmarc == AuthVerdict::Fail || a.dkim == AuthVerdict::Fail || a.spf == AuthVerdict::Fail {
+        return TrustDecision::SpoofSuspected;
+    }
+    // DMARC pass is the strongest single signal (it checks From-alignment);
+    // otherwise require BOTH DKIM and SPF to pass.
+    if a.dmarc == AuthVerdict::Pass
+        || (a.dkim == AuthVerdict::Pass && a.spf == AuthVerdict::Pass)
+    {
+        return TrustDecision::VerifiedTrust;
+    }
+    TrustDecision::TrustedUnverified
+}
+
+/// Apply the GATED trusted-sender policy to an already-annotated triage.
+///
+/// Returns `None` when the policy is disabled (`enabled == false`). Otherwise
+/// returns `Some(outcome)` AND records it on `triage.trust_policy`. Conservative
+/// by construction:
+/// - **Spoof** → escalate `Deliver`/`ReviewQueue` to `Quarantine` + blank the
+///   body. Never touches an already-`Quarantine`/`DroppedAtSanitizer` verdict.
+/// - **Relax** (only with `allow_relax`) → a `VerifiedTrust` borderline
+///   `ReviewQueue` with NO prior LLM tie-break becomes `Deliver`. NEVER
+///   downgrades a quarantine; if a tie-break already ruled, its verdict stands.
+pub fn apply_trust_policy(
+    triage: &mut InboundTriage,
+    enabled: bool,
+    allow_relax: bool,
+) -> Option<TrustPolicyOutcome> {
+    if !enabled {
+        return None;
+    }
+    let decision = evaluate_trust_decision(triage.sender_trusted, triage.auth.as_ref());
+    let outcome = match decision {
+        TrustDecision::SpoofSuspected
+            if matches!(
+                triage.action,
+                InboundAction::Deliver | InboundAction::ReviewQueue
+            ) =>
+        {
+            triage.action = InboundAction::Quarantine;
+            triage.clean_body = String::new();
+            TrustPolicyOutcome::EscalatedSpoof
+        }
+        TrustDecision::VerifiedTrust
+            if allow_relax
+                && matches!(triage.action, InboundAction::ReviewQueue)
+                && triage.tiebreak.is_none() =>
+        {
+            triage.action = InboundAction::Deliver;
+            TrustPolicyOutcome::RelaxedToDeliver
+        }
+        _ => TrustPolicyOutcome::NoChange,
+    };
+    triage.trust_policy = Some(outcome);
+    Some(outcome)
 }
 
 #[cfg(test)]
@@ -204,5 +315,122 @@ mod tests {
         let annotated = annotate_sender_policy(triage, &e, &["acme.com".to_string()]);
         assert!(!annotated.sender_trusted);
         assert!(annotated.auth.is_none());
+    }
+
+    // ── gated enforcement (apply_trust_policy) ──────────────────────────────
+
+    fn status(spf: AuthVerdict, dkim: AuthVerdict, dmarc: AuthVerdict) -> EmailAuthStatus {
+        EmailAuthStatus { spf, dkim, dmarc }
+    }
+
+    #[test]
+    fn decision_matrix() {
+        use AuthVerdict::*;
+        use TrustDecision::*;
+        // Untrusted → nothing, regardless of auth.
+        assert_eq!(
+            evaluate_trust_decision(false, Some(&status(Pass, Pass, Pass))),
+            NotTrusted
+        );
+        // Trusted + no auth → unverified.
+        assert_eq!(evaluate_trust_decision(true, None), TrustedUnverified);
+        // Trusted + DMARC fail → spoof (the key case).
+        assert_eq!(
+            evaluate_trust_decision(true, Some(&status(Pass, Pass, Fail))),
+            SpoofSuspected
+        );
+        // Trusted + DKIM fail → spoof.
+        assert_eq!(
+            evaluate_trust_decision(true, Some(&status(Pass, Fail, NoneResult))),
+            SpoofSuspected
+        );
+        // Trusted + DMARC pass → verified.
+        assert_eq!(
+            evaluate_trust_decision(true, Some(&status(NoneResult, NoneResult, Pass))),
+            VerifiedTrust
+        );
+        // Trusted + DKIM+SPF pass (no DMARC) → verified.
+        assert_eq!(
+            evaluate_trust_decision(true, Some(&status(Pass, Pass, Unknown))),
+            VerifiedTrust
+        );
+        // Trusted + softfail only → unverified (too weak to escalate or relax).
+        assert_eq!(
+            evaluate_trust_decision(true, Some(&status(SoftFail, Unknown, Unknown))),
+            TrustedUnverified
+        );
+    }
+
+    /// Helper: triage a benign mail, annotate as trusted, with the given auth.
+    fn trusted_triage(auth: Option<&str>) -> InboundTriage {
+        let e = email_with("Boss <ceo@acme.com>", auth);
+        let t = triage_inbound(&e);
+        annotate_sender_policy(t, &e, &["acme.com".to_string()])
+    }
+
+    #[test]
+    fn policy_disabled_is_inactive() {
+        let mut t = trusted_triage(Some("mx; spf=fail; dkim=fail; dmarc=fail"));
+        let before = t.action;
+        assert_eq!(apply_trust_policy(&mut t, false, false), None);
+        assert_eq!(t.action, before, "disabled policy changes nothing");
+        assert!(t.trust_policy.is_none());
+    }
+
+    #[test]
+    fn spoof_escalates_a_deliverable_to_quarantine() {
+        // A trusted-domain From with FAILING auth = spoof → quarantine even
+        // though the body itself scored Deliver.
+        let mut t = trusted_triage(Some("mx; spf=fail; dkim=fail; dmarc=fail"));
+        assert_eq!(t.action, InboundAction::Deliver, "benign body scores Deliver");
+        let out = apply_trust_policy(&mut t, true, false);
+        assert_eq!(out, Some(TrustPolicyOutcome::EscalatedSpoof));
+        assert_eq!(t.action, InboundAction::Quarantine);
+        assert!(t.clean_body.is_empty(), "spoof body must not reach the LLM");
+        assert_eq!(t.trust_policy, Some(TrustPolicyOutcome::EscalatedSpoof));
+    }
+
+    #[test]
+    fn verified_trust_does_not_relax_without_the_flag() {
+        // A verified-trust borderline is NOT relaxed unless allow_relax is on.
+        let mut t = trusted_triage(Some("mx; spf=pass; dkim=pass; dmarc=pass"));
+        t.action = InboundAction::ReviewQueue; // force a borderline
+        let out = apply_trust_policy(&mut t, true, false);
+        assert_eq!(out, Some(TrustPolicyOutcome::NoChange));
+        assert_eq!(t.action, InboundAction::ReviewQueue, "no relax without the flag");
+    }
+
+    #[test]
+    fn verified_trust_relaxes_a_borderline_with_the_flag() {
+        let mut t = trusted_triage(Some("mx; spf=pass; dkim=pass; dmarc=pass"));
+        t.action = InboundAction::ReviewQueue;
+        let out = apply_trust_policy(&mut t, true, true);
+        assert_eq!(out, Some(TrustPolicyOutcome::RelaxedToDeliver));
+        assert_eq!(t.action, InboundAction::Deliver);
+    }
+
+    #[test]
+    fn relax_never_overrides_an_llm_tiebreak() {
+        // If the LLM tie-break already ruled, trust must NOT relax over it.
+        let mut t = trusted_triage(Some("mx; spf=pass; dkim=pass; dmarc=pass"));
+        t.action = InboundAction::ReviewQueue;
+        t.tiebreak = Some(crate::email::inbound::TiebreakVerdict::Phishing);
+        let out = apply_trust_policy(&mut t, true, true);
+        assert_eq!(out, Some(TrustPolicyOutcome::NoChange));
+        assert_eq!(t.action, InboundAction::ReviewQueue, "tie-break verdict stands");
+    }
+
+    #[test]
+    fn relax_never_downgrades_a_quarantine() {
+        // A real threat from a verified-trust sender STAYS quarantined.
+        let mut e = email_with("ceo@acme.com", Some("mx; spf=pass; dkim=pass; dmarc=pass"));
+        e.body =
+            "Your account has been suspended. Verify your account and confirm your identity.".into();
+        let t = triage_inbound(&e);
+        let mut t = annotate_sender_policy(t, &e, &["acme.com".to_string()]);
+        assert_eq!(t.action, InboundAction::Quarantine);
+        let out = apply_trust_policy(&mut t, true, true);
+        assert_eq!(out, Some(TrustPolicyOutcome::NoChange));
+        assert_eq!(t.action, InboundAction::Quarantine, "trust never frees a real threat");
     }
 }

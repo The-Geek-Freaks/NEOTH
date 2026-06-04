@@ -127,6 +127,33 @@ impl TiebreakVerdict {
     }
 }
 
+/// P1a (gated) — what the trusted-sender POLICY did to a triage's `action`,
+/// recorded so the security decision is auditable. Set on
+/// [`InboundTriage::trust_policy`] by [`super::sender_policy::apply_trust_policy`]
+/// when `email.trusted_sender_policy` is on; `None` = the policy did not run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustPolicyOutcome {
+    /// Policy ran but left the action unchanged.
+    NoChange,
+    /// A trusted-domain claim with a FAILING SPF/DKIM/DMARC verdict was
+    /// escalated to quarantine — the allowlist was being spoofed.
+    EscalatedSpoof,
+    /// A verified-trust (allowlist + auth pass) borderline `ReviewQueue` email
+    /// was relaxed to `Deliver` (only under `trusted_sender_allow_relax`).
+    RelaxedToDeliver,
+}
+
+impl TrustPolicyOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TrustPolicyOutcome::NoChange => "no_change",
+            TrustPolicyOutcome::EscalatedSpoof => "escalated_spoof",
+            TrustPolicyOutcome::RelaxedToDeliver => "relaxed_to_deliver",
+        }
+    }
+}
+
 /// P1a — the result of one email-authentication mechanism (SPF / DKIM / DMARC),
 /// as reported by the receiving server's `Authentication-Results` header. A
 /// VISIBILITY signal — NEOTH surfaces it, it does not (in this slice) change a
@@ -194,6 +221,11 @@ pub struct InboundTriage {
     /// it. `None` = no `Authentication-Results` header was present.
     #[serde(default)]
     pub auth: Option<EmailAuthStatus>,
+    /// P1a (gated) — what the trusted-sender policy did to `action`. `None` =
+    /// the policy did not run (`email.trusted_sender_policy` off). Set by
+    /// [`super::sender_policy::apply_trust_policy`].
+    #[serde(default)]
+    pub trust_policy: Option<TrustPolicyOutcome>,
 }
 
 /// Run an inbound email through the full triage pipeline. Pure.
@@ -225,6 +257,7 @@ pub fn triage_inbound(email: &InboundEmail) -> InboundTriage {
             tiebreak: None,
             sender_trusted: false,
             auth: None,
+            trust_policy: None,
         };
     }
 
@@ -255,6 +288,7 @@ pub fn triage_inbound(email: &InboundEmail) -> InboundTriage {
         tiebreak: None,
         sender_trusted: false,
         auth: None,
+        trust_policy: None,
     }
 }
 
