@@ -259,6 +259,10 @@ fn main() -> Result<()> {
         window.set_cluster_mdns_enabled(cluster_state.mdns_enabled);
         window.set_cluster_listen_port(cluster_state.listen_port as i32);
         window.set_cluster_trusted_ssids_summary(cluster_state.trusted_ssids_summary.into());
+        // PF-01-GUI — reflect the current skills.always_embed_route on the toggle.
+        window.set_skills_always_embed_route(read_skills_always_embed_route(
+            &neoth_dir.join("freedom.yaml"),
+        ));
 
         window.set_status_line(
             format!(
@@ -1003,6 +1007,36 @@ fn main() -> Result<()> {
         }
     });
 
+    // PF-01-GUI — operator flipped the Skills auto-route toggle. Mutate
+    // `skills.always_embed_route` losslessly + drop the reload sentinel, same
+    // dispatch path as the cluster mDNS toggle.
+    let weak_skills_route = window.as_weak();
+    window.on_skills_always_embed_route_set(move |enabled| {
+        let neoth_dir = default_neoth_home();
+        let freedom_path = neoth_dir.join("freedom.yaml");
+        let result = (|| -> anyhow::Result<()> {
+            set_skills_always_embed_route_in_freedom(&freedom_path, enabled)?;
+            std::fs::write(neoth_dir.join(".reload-requested"), b"reload\n")
+                .with_context(|| "write reload sentinel")?;
+            Ok(())
+        })();
+        if let Some(w) = weak_skills_route.upgrade() {
+            match result {
+                Ok(_) => {
+                    info!(enabled, "skills: always_embed_route rewritten + reload sentinel dropped");
+                    let verb = if enabled { "on" } else { "off" };
+                    w.set_status_line(
+                        format!("Skill auto-routing {verb}. Daemon reloading within 2s.").into(),
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "skills: always_embed_route toggle failed");
+                    w.set_status_line(format!("Skill auto-route toggle failed: {e}").into());
+                }
+            }
+        }
+    });
+
     // Pick #32 — Settings panel "Re-run wizard". Reset the wizard
     // state back to mode-selection so the operator walks the flow
     // fresh.
@@ -1341,6 +1375,56 @@ fn set_top_level_string_in_freedom(path: &Path, key: &str, value: &str) -> Resul
     map.insert(serde_yaml::Value::from(key), serde_yaml::Value::from(value));
     let serialised = serde_yaml::to_string(&root)
         .with_context(|| format!("serialise freedom.yaml after setting {key}"))?;
+    write_mode_0600(path, serialised.as_bytes())
+}
+
+/// PF-01-GUI — read `skills.always_embed_route` from freedom.yaml. Defaults to
+/// `true` (matching the daemon's `SkillsConfig` default) on a missing file /
+/// key / malformed YAML, so the GUI toggle reflects the effective behaviour.
+fn read_skills_always_embed_route(path: &Path) -> bool {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return true;
+    };
+    let Ok(root) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return true;
+    };
+    root.get("skills")
+        .and_then(|s| s.get("always_embed_route"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true)
+}
+
+/// PF-01-GUI — lossless nested set of `skills.always_embed_route`. Mirrors
+/// `set_cluster_mdns_enabled_in_freedom`: a serde_yaml `Value` round-trip that
+/// preserves EVERY other field. Atomic via `write_mode_0600`.
+fn set_skills_always_embed_route_in_freedom(path: &Path, enabled: bool) -> Result<()> {
+    let body = if path.exists() {
+        std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?
+    } else {
+        String::new()
+    };
+    let mut root: serde_yaml::Value = if body.trim().is_empty() {
+        serde_yaml::Value::Mapping(serde_yaml::Mapping::new())
+    } else {
+        serde_yaml::from_str(&body).with_context(|| format!("parse {}", path.display()))?
+    };
+    let map = match &mut root {
+        serde_yaml::Value::Mapping(m) => m,
+        _ => anyhow::bail!("freedom.yaml is not a YAML mapping"),
+    };
+    let skills_key = serde_yaml::Value::from("skills");
+    let mut skills_map = map
+        .get(&skills_key)
+        .and_then(|v| v.as_mapping())
+        .cloned()
+        .unwrap_or_default();
+    skills_map.insert(
+        serde_yaml::Value::from("always_embed_route"),
+        serde_yaml::Value::from(enabled),
+    );
+    map.insert(skills_key, serde_yaml::Value::Mapping(skills_map));
+    let serialised = serde_yaml::to_string(&root)
+        .context("serialise freedom.yaml after skills.always_embed_route toggle")?;
     write_mode_0600(path, serialised.as_bytes())
 }
 
@@ -3546,5 +3630,49 @@ mod tests {
         assert!(body.contains("topology: triplet"));
         assert!(body.contains("listen_port: 50000"));
         assert!(body.contains("home-wifi"));
+    }
+
+    // ── PF-01-GUI: skills.always_embed_route toggle ──────────────────────────
+
+    #[test]
+    fn read_skills_always_embed_route_defaults_true() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        // Missing file → true (matches the daemon SkillsConfig default).
+        assert!(read_skills_always_embed_route(&path));
+        // Present but no skills key → true.
+        std::fs::write(&path, "operator_id: a\n").unwrap();
+        assert!(read_skills_always_embed_route(&path));
+        // Malformed → true.
+        std::fs::write(&path, "%%% not yaml %%%").unwrap();
+        assert!(read_skills_always_embed_route(&path));
+    }
+
+    #[test]
+    fn skills_always_embed_route_write_read_roundtrip() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        set_skills_always_embed_route_in_freedom(&path, false).unwrap();
+        assert!(!read_skills_always_embed_route(&path));
+        set_skills_always_embed_route_in_freedom(&path, true).unwrap();
+        assert!(read_skills_always_embed_route(&path));
+    }
+
+    #[test]
+    fn set_skills_always_embed_route_preserves_other_fields() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        let original = "operator_id: alice\n\
+                        provider_kind: openai_api\n\
+                        skills:\n  disabled_for_eval_sessions: true\n\
+                        cluster:\n  listen_port: 50000\n";
+        std::fs::write(&path, original).unwrap();
+        set_skills_always_embed_route_in_freedom(&path, false).unwrap();
+        assert!(!read_skills_always_embed_route(&path));
+        let body = std::fs::read_to_string(&path).unwrap();
+        // Sibling under skills + unrelated fields survived the nested write.
+        assert!(body.contains("disabled_for_eval_sessions: true"));
+        assert!(body.contains("operator_id: alice"));
+        assert!(body.contains("listen_port: 50000"));
     }
 }

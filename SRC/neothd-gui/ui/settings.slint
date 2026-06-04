@@ -378,6 +378,9 @@ export component SettingsView inherits Rectangle {
     // SPEC-06 — implemented provider ids for the per-role rebind picker.
     in property <[string]> provider-ids: [];
     in property <[SkillRow]> skills: [];
+    // PF-01-GUI — skills.always_embed_route toggle (freedom.yaml write-back).
+    in-out property <bool> skills-always-embed-route: true;
+    callback skills-always-embed-route-changed(bool);
     // GU-01 — Channels / Plugins / Memory panels.
     in property <[ChannelRow]> channels: [];
     in property <[PluginRow]> plugins: [];
@@ -770,6 +773,28 @@ export component SettingsView inherits Rectangle {
                     title: "Skills";
                     subtitle: "Skill packs teach NEOTH about a domain — each loads automatically when its trigger words appear. Manage them via the CLI; this lists the installed set.";
                     mirrors-slash: "/skill list   |   neoth skills --install <path>";
+                }
+                // PF-01-GUI — skill auto-routing toggle (skills.always_embed_route).
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        NeothCheckBox {
+                            text: "Auto-route skills (embed a skill's prompt when its triggers fire)";
+                            checked: root.skills-always-embed-route;
+                            toggled(checked) => {
+                                root.skills-always-embed-route = checked;
+                                root.skills-always-embed-route-changed(checked);
+                            }
+                        }
+                        Text {
+                            text: "Off = skills load only when you ask explicitly. Writes skills.always_embed_route in freedom.yaml; the daemon hot-reloads.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                    }
                 }
                 Card {
                     VerticalBox {

@@ -210,6 +210,9 @@ export component MainWindow inherits Window {
     // SPEC-06 — forwarded from the Hemispheres rebind control; Rust shells
     // `neoth hemispheres set --role <r> --provider <p>` + refreshes the panel.
     callback hemisphere-set(string, string);
+    // PF-01-GUI — forwarded from the Skills auto-route toggle; Rust writes
+    // `skills.always_embed_route` into freedom.yaml + drops the reload sentinel.
+    callback skills-always-embed-route-set(bool);
     /// G-12 fix — operator picked a different provider in Settings
     /// → Config. Rust persists the change.
     callback provider-changed(string);
@@ -281,6 +284,7 @@ export component MainWindow inherits Window {
     in property <string> hemispheres-mode: "";
     in property <[string]> provider-ids: [];
     in property <[SkillRow]> skills: [];
+    in-out property <bool> skills-always-embed-route: true;
     in property <[ChannelRow]> channels: [];
     in property <[PluginRow]> plugins: [];
     in property <[MemoryRow]> memory-blocks: [];
@@ -1355,6 +1359,8 @@ export component MainWindow inherits Window {
             hemispheres-mode: root.hemispheres-mode;
             provider-ids: root.provider-ids;
             skills: root.skills;
+            skills-always-embed-route: root.skills-always-embed-route;
+            skills-always-embed-route-changed(v) => { root.skills-always-embed-route-set(v); }
             channels: root.channels;
             plugins: root.plugins;
             memory-blocks: root.memory-blocks;
