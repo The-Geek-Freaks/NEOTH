@@ -113,14 +113,22 @@ jobs:
         with:
           tool: cross
 
+      # MAR-02: bake the release verification pubkey into the binary at build
+      # time. `neoth release setup` sets this repo VARIABLE automatically via
+      # `gh variable set` — nothing to edit here. Empty until setup runs (then
+      # the self-updater simply has no pinned key yet, which is the safe default).
       - name: Build (native)
         if: "!matrix.use_cross"
         working-directory: SRC/neothd
+        env:
+          NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross
         working-directory: SRC/neothd
+        env:
+          NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
         run: cross build --release --target ${{ matrix.target }}
 
       - name: Extract version from tag

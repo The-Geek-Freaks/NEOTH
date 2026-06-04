@@ -32,9 +32,22 @@ pub struct ReleaseArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum ReleaseAction {
+    /// ONE-COMMAND DAU setup: generate the keypair AND provision it into the
+    /// repo's CI via `gh` (sets the `NEOTH_RELEASE_MINISIGN_SECRET` secret + the
+    /// `NEOTH_RELEASE_MINISIGN_PUBKEY` variable). No copy-paste, no GitHub UI.
+    /// The secret never prints — it is piped straight to `gh` over stdin.
+    Setup {
+        /// `owner/name`. Defaults to the `origin` git remote.
+        #[arg(long)]
+        repo: Option<String>,
+        /// Rotate: replace an existing local key (then re-provision CI).
+        #[arg(long)]
+        force: bool,
+    },
     /// Generate the project release-signing keypair (maintainers, one-time).
     /// Prints the PUBLIC key (safe to share — goes in CI build env) + the
-    /// SECRET (goes in a GitHub secret, never committed).
+    /// SECRET (goes in a GitHub secret, never committed). Prefer `setup` for
+    /// the zero-copy-paste path.
     Keygen {
         /// Overwrite an existing key. DANGER: invalidates every signature made
         /// with the currently-published public key — only when rotating.
@@ -58,6 +71,7 @@ pub fn run_release(args: ReleaseArgs) -> Result<()> {
     let home = FreedomConfig::default_neoth_home();
     let key_path = sig_keygen::default_release_key_path(&home);
     match &args.action {
+        ReleaseAction::Setup { repo, force } => setup(&key_path, repo.as_deref(), *force, args.output),
         ReleaseAction::Keygen { force } => keygen(&key_path, *force, args.output),
         ReleaseAction::Sign { file, comment } => {
             sign(&key_path, file, comment.as_deref(), args.output)
@@ -112,6 +126,149 @@ fn keygen(key_path: &std::path::Path, force: bool, output: OutputFormat) -> Resu
             println!("a swapped or tampered release is rejected. (You never touch the");
             println!("`minisign` tool; NEOTH did the keygen + will do the signing.)");
         }
+    }
+    Ok(())
+}
+
+/// The build-time env var / repo VARIABLE that pins the verification pubkey.
+const PUBKEY_VAR: &str = "NEOTH_RELEASE_MINISIGN_PUBKEY";
+
+/// ONE-COMMAND setup: generate-or-reuse the key, then provision the repo's CI
+/// via `gh`. The secret is piped to `gh` over STDIN — never argv, never printed.
+fn setup(key_path: &std::path::Path, repo: Option<&str>, force: bool, output: OutputFormat) -> Result<()> {
+    let slug = match repo {
+        Some(r) => r.to_string(),
+        None => detect_repo_slug().context(
+            "could not detect the GitHub repo from `git remote get-url origin` — \
+             pass `--repo owner/name`",
+        )?,
+    };
+
+    // Reuse an existing key on a plain re-run (idempotent: re-provision the SAME
+    // key); regenerate only with --force (rotation).
+    let kp = if key_path.exists() && !force {
+        sig_keygen::load_secret_key(key_path)?
+    } else {
+        let kp = ReleaseKeypair::generate()?;
+        sig_keygen::save_secret_key(key_path, &kp, true)?;
+        kp
+    };
+    let pubkey = kp.public_key_base64();
+    let secret_b64 = base64::engine::general_purpose::STANDARD.encode(kp.secret_bytes());
+
+    ensure_gh_ready()?;
+    gh_set_secret(&slug, SECRET_ENV, &secret_b64)
+        .with_context(|| format!("set the `{SECRET_ENV}` GitHub secret on {slug}"))?;
+    gh_set_variable(&slug, PUBKEY_VAR, &pubkey)
+        .with_context(|| format!("set the `{PUBKEY_VAR}` GitHub variable on {slug}"))?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "repo": slug,
+                    "key_id": kp.key_id_hex(),
+                    "public_key": pubkey,
+                    "provisioned": true,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            println!("✓ Release signing is set up for {slug} (key id {}).", kp.key_id_hex());
+            println!("  • GitHub secret   {SECRET_ENV}  — set (the private key; never shown).");
+            println!("  • GitHub variable {PUBKEY_VAR}  — set (the public key).");
+            println!();
+            println!("Nothing else to do. The next release CI run signs every artifact and");
+            println!("end-users' NEOTH verifies it before any auto-update.");
+        }
+    }
+    Ok(())
+}
+
+/// Parse `owner/name` from a GitHub remote URL (https / ssh / token-embedded).
+fn parse_repo_slug(remote_url: &str) -> Option<String> {
+    let s = remote_url.trim();
+    let idx = s.find("github.com")?;
+    let rest = &s[idx + "github.com".len()..];
+    // After `github.com` comes `:` (ssh) or `/` (https); strip any leading sep.
+    let rest = rest.trim_start_matches([':', '/']);
+    let rest = rest.trim_end_matches('/').trim_end_matches(".git");
+    let mut parts = rest.split('/');
+    let owner = parts.next()?.trim();
+    let name = parts.next()?.trim();
+    if owner.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{name}"))
+}
+
+/// Resolve the repo slug from the `origin` git remote.
+fn detect_repo_slug() -> Result<String> {
+    let out = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .output()
+        .context("run `git remote get-url origin` (is this a git repo with an origin?)")?;
+    if !out.status.success() {
+        anyhow::bail!("`git remote get-url origin` failed — pass `--repo owner/name`");
+    }
+    let url = String::from_utf8_lossy(&out.stdout);
+    parse_repo_slug(url.trim())
+        .ok_or_else(|| anyhow::anyhow!("could not parse a GitHub `owner/name` from `{}`", url.trim()))
+}
+
+/// Fail early + actionably if `gh` is missing or not authenticated.
+fn ensure_gh_ready() -> Result<()> {
+    let v = std::process::Command::new("gh").arg("--version").output();
+    if v.map(|o| !o.status.success()).unwrap_or(true) {
+        anyhow::bail!(
+            "the GitHub CLI `gh` is not available. Install it (https://cli.github.com) and run \
+             `gh auth login`, then re-run `neoth release setup`. Or use the manual path: \
+             `neoth release keygen` prints the two values to paste yourself."
+        );
+    }
+    let auth = std::process::Command::new("gh")
+        .args(["auth", "status"])
+        .output()
+        .context("run `gh auth status`")?;
+    if !auth.status.success() {
+        anyhow::bail!("`gh` is installed but not authenticated — run `gh auth login` first");
+    }
+    Ok(())
+}
+
+/// `gh secret set <name> --repo <slug>` reading the value from STDIN, so the
+/// secret never appears in argv / the process list / shell history.
+fn gh_set_secret(slug: &str, name: &str, value: &str) -> Result<()> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("gh")
+        .args(["secret", "set", name, "--repo", slug, "--body-file", "-"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .context("spawn `gh secret set`")?;
+    child
+        .stdin
+        .take()
+        .context("gh stdin")?
+        .write_all(value.as_bytes())
+        .context("pipe secret to gh")?;
+    let status = child.wait().context("wait for `gh secret set`")?;
+    if !status.success() {
+        anyhow::bail!("`gh secret set {name}` exited {status}");
+    }
+    Ok(())
+}
+
+/// `gh variable set <name> --repo <slug> --body <value>` (the value is the
+/// PUBLIC key — safe on argv).
+fn gh_set_variable(slug: &str, name: &str, value: &str) -> Result<()> {
+    let status = std::process::Command::new("gh")
+        .args(["variable", "set", name, "--repo", slug, "--body", value])
+        .status()
+        .context("run `gh variable set`")?;
+    if !status.success() {
+        anyhow::bail!("`gh variable set {name}` exited {status}");
     }
     Ok(())
 }
@@ -226,6 +383,34 @@ mod tests {
         let sig = minisign_verify::Signature::decode(&sig_text).unwrap();
         pk.verify(b"artifact bytes", &sig, false)
             .expect("CLI-produced .minisig must verify");
+    }
+
+    #[test]
+    fn parse_repo_slug_handles_https_ssh_and_token_forms() {
+        assert_eq!(
+            parse_repo_slug("https://github.com/The-Geek-Freaks/NEOTH.git").as_deref(),
+            Some("The-Geek-Freaks/NEOTH")
+        );
+        assert_eq!(
+            parse_repo_slug("https://github.com/owner/name").as_deref(),
+            Some("owner/name")
+        );
+        assert_eq!(
+            parse_repo_slug("git@github.com:owner/name.git").as_deref(),
+            Some("owner/name")
+        );
+        assert_eq!(
+            parse_repo_slug("https://x-access-token:ghp_AAA@github.com/o/n.git").as_deref(),
+            Some("o/n")
+        );
+        // Trailing newline (git output) + slash tolerated.
+        assert_eq!(
+            parse_repo_slug("https://github.com/o/n/\n").as_deref(),
+            Some("o/n")
+        );
+        // Non-github / malformed → None (caller falls back to --repo).
+        assert!(parse_repo_slug("https://gitlab.com/o/n.git").is_none());
+        assert!(parse_repo_slug("github.com/onlyowner").is_none());
     }
 
     #[test]

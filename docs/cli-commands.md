@@ -1615,13 +1615,20 @@ MAR-02 — DAU-friendly release signing. `keygen` mints the project signing keyp
 
 ### `neoth release keygen`
 
-Generate the project release-signing keypair (maintainers, one-time). Prints the PUBLIC key (safe to share — goes in CI build env) + the SECRET (goes in a GitHub secret, never committed)
+Generate the project release-signing keypair (maintainers, one-time). Prints the PUBLIC key (safe to share — goes in CI build env) + the SECRET (goes in a GitHub secret, never committed). Prefer `setup` for the zero-copy-paste path
 
 - `--force <FORCE>` — Overwrite an existing key. DANGER: invalidates every signature made with the currently-published public key — only when rotating
 
 ### `neoth release pubkey`
 
 Print the saved key's PUBLIC key line (paste into CI build env)
+
+### `neoth release setup`
+
+ONE-COMMAND DAU setup: generate the keypair AND provision it into the repo's CI via `gh` (sets the `NEOTH_RELEASE_MINISIGN_SECRET` secret + the `NEOTH_RELEASE_MINISIGN_PUBKEY` variable). No copy-paste, no GitHub UI. The secret never prints — it is piped straight to `gh` over stdin
+
+- `--repo <REPO>` — `owner/name`. Defaults to the `origin` git remote
+- `--force <FORCE>` — Rotate: replace an existing local key (then re-provision CI)
 
 ### `neoth release sign`
 
