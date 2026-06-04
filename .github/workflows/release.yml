@@ -246,44 +246,50 @@ jobs:
       # release also ships `.minisig` companions and the unattended
       # self-update path (`require_signature = true`) starts accepting them.
       #
-      # Provisioning (Alex action, one-time):
-      #   1. `rsign generate` (or `minisign -G`) — produce a passwordless
-      #      key (`-W` flag) so CI can sign without a password secret. The
-      #      .pub file holds the public key.
-      #   2. Repo Settings → Secrets → Actions:
-      #        - NEOTH_RELEASE_MINISIGN_SECRET_KEY = entire content of the
-      #          generated `minisign.key` (or `*.sec`) file.
-      #        - NEOTH_RELEASE_MINISIGN_PASSWORD   = the key password, OR
-      #          leave UNSET when the key is passwordless (`-W`).
-      #   3. Build the release binaries with the public key baked in:
-      #      pass `NEOTH_RELEASE_MINISIGN_PUBKEY=<contents-of-.pub-file>`
-      #      to `cargo build --release` (add it to the `Build (native)` /
-      #      `Build (cross)` env: in this matrix when ready).
-      - name: Sign archives (minisign — self-update verify)
+      # Provisioning (Alex action, one-time — DAU-friendly, NO `minisign` tool,
+      # no install, no password). MAR-02: the keygen + signing are BUILT INTO
+      # neoth itself (`updater::sig_keygen`):
+      #   1. Run `neoth release keygen` locally — NEOTH mints the keypair
+      #      IN-PROCESS and prints the PUBLIC key + the SECRET (base64) with
+      #      step-by-step instructions.
+      #   2. Repo Settings → Secrets → Actions → add:
+      #        NEOTH_RELEASE_MINISIGN_SECRET = the SECRET line from keygen.
+      #   3. Bake the PUBLIC key into the release builds: set
+      #      `NEOTH_RELEASE_MINISIGN_PUBKEY=<public key from keygen>` on the
+      #      `cargo build --release` steps (working-directory: SRC/neothd, above).
+      #
+      # GRACEFUL-SKIP when the secret is unset (non-breaking: existing releases
+      # keep shipping cosign-only; once the secret lands the next release also
+      # ships `.minisig` companions and unattended self-update accepts them).
+      - name: Sign archives (neoth release sign — in-process, self-update verify)
         env:
-          MINISIGN_SECRET_KEY: ${{ secrets.NEOTH_RELEASE_MINISIGN_SECRET_KEY }}
-          MINISIGN_PASSWORD: ${{ secrets.NEOTH_RELEASE_MINISIGN_PASSWORD }}
+          NEOTH_RELEASE_MINISIGN_SECRET: ${{ secrets.NEOTH_RELEASE_MINISIGN_SECRET }}
         run: |
-          if [ -z "$MINISIGN_SECRET_KEY" ]; then
-            echo "::notice::NEOTH_RELEASE_MINISIGN_SECRET_KEY not set — skipping minisign signing."
-            echo "::notice::Manual self-update (neoth update --self) will still work; unattended"
-            echo "::notice::self-update (require_signature=true) refuses until this secret is set."
+          if [ -z "$NEOTH_RELEASE_MINISIGN_SECRET" ]; then
+            echo "::notice::NEOTH_RELEASE_MINISIGN_SECRET not set — skipping signing."
+            echo "::notice::Run 'neoth release keygen' + add the secret to enable unattended self-update."
             exit 0
           fi
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq minisign
-          KEY_FILE="$RUNNER_TEMP/minisign.key"
-          printf '%s' "$MINISIGN_SECRET_KEY" > "$KEY_FILE"
-          chmod 600 "$KEY_FILE"
+          # Dogfood: sign with NEOTH's OWN in-process signer — the linux neothd
+          # binary from this very release. No external minisign tool, no password.
+          LINUX_TARBALL=$(ls dist/*x86_64-unknown-linux-gnu*.tar.gz 2>/dev/null | head -1)
+          if [ -z "$LINUX_TARBALL" ]; then
+            echo "::error::no linux x86_64 tarball in dist/ to source the signer binary"; exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/signer"
+          tar xzf "$LINUX_TARBALL" -C "$RUNNER_TEMP/signer"
+          NEOTH=$(find "$RUNNER_TEMP/signer" -name neothd -type f | head -1)
+          if [ -z "$NEOTH" ]; then
+            echo "::error::neothd binary not found inside $LINUX_TARBALL"; exit 1
+          fi
+          chmod +x "$NEOTH"
           cd dist
           shopt -s nullglob
           for f in *.tar.gz *.zip; do
-            # Pipe the password (empty string is fine for a `-W` passwordless key).
-            printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$KEY_FILE" -m "$f" \
-              || { echo "::error::minisign signing failed for $f"; rm -f "$KEY_FILE"; exit 1; }
+            "$NEOTH" release sign "$f" \
+              || { echo "::error::neoth release sign failed for $f"; exit 1; }
           done
-          rm -f "$KEY_FILE"
-          echo "minisign companions produced:"
+          echo "minisign companions produced (in-process, no minisign tool):"
           ls -la *.minisig 2>/dev/null || echo "  (none — investigate)"
 
       - name: Create GitHub Release

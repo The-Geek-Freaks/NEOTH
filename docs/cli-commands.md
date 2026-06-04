@@ -1609,6 +1609,27 @@ SPEC-10: dry-run the recovery selection for a refusal WITHOUT calling a provider
 - `<TEXT>` — The refusal text to classify + plan recovery for
 - `--prompt <PROMPT>` — Optional original prompt to reframe — shows the exact rewritten prompt the first applicable reframing emits
 
+## `neoth release`
+
+MAR-02 — DAU-friendly release signing. `keygen` mints the project signing keypair in-process (no `minisign` tool); `sign` produces a `.minisig` the updater verifies; `pubkey` reprints the public key for CI
+
+### `neoth release keygen`
+
+Generate the project release-signing keypair (maintainers, one-time). Prints the PUBLIC key (safe to share — goes in CI build env) + the SECRET (goes in a GitHub secret, never committed)
+
+- `--force <FORCE>` — Overwrite an existing key. DANGER: invalidates every signature made with the currently-published public key — only when rotating
+
+### `neoth release pubkey`
+
+Print the saved key's PUBLIC key line (paste into CI build env)
+
+### `neoth release sign`
+
+Sign a release artifact, writing `<file>.minisig` next to it. The secret is read from `NEOTH_RELEASE_MINISIGN_SECRET` (CI) or the saved key file
+
+- `<FILE>` — The artifact to sign (e.g. `neoth-x86_64-unknown-linux-gnu.tar.gz`)
+- `--comment <COMMENT>` — Optional trusted comment embedded + signed into the `.minisig`
+
 ## `neoth reload`
 
 Pick #37 (Session 14, Agent #4 design-consensus): trigger the running `neoth serve` daemon to re-read `freedom.yaml` and atomically swap its live `Arc<FreedomConfig>` via `arc-swap`. Touches a sentinel file `~/.neoth/.reload-requested`; the daemon polls for it on every ingress tick. Immutable fields (`operator_id`, `provider_kind`, `telegram_user_id`) cause a `CONFIG_RELOAD_REJECTED` audit frame + the prior config stays live. Tunable fields (`council.*`, `code_map.*`, `claude_cli.tmux.*`, autonomy level, …) reload without a daemon restart

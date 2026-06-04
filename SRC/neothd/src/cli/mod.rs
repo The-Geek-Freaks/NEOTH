@@ -86,6 +86,8 @@ pub mod recall;
 pub mod recall_score;
 pub mod recover;
 pub mod refusal;
+/// MAR-02 — `neoth release {keygen, sign, pubkey}` DAU-friendly release signing.
+pub mod release;
 pub mod reload;
 pub mod rollback;
 pub mod schema;
@@ -207,6 +209,11 @@ pub enum Commands {
     /// `--apply` runs `npm install -g <pkg>@latest` for each component that needs it.
     /// `--list` prints the static list of components NEOTH knows.
     Update(update::UpdateArgs),
+
+    /// MAR-02 — DAU-friendly release signing. `keygen` mints the project signing
+    /// keypair in-process (no `minisign` tool); `sign` produces a `.minisig` the
+    /// updater verifies; `pubkey` reprints the public key for CI.
+    Release(release::ReleaseArgs),
 
     /// MV-01b #3 — install/remove the OS-native process supervisor
     /// (systemd user unit / launchd LaunchAgent / Windows Task) that
@@ -876,6 +883,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Update(mut args) => {
             args.output = global_output;
             update::run_update(args).await?;
+        }
+        Commands::Release(mut args) => {
+            args.output = global_output;
+            release::run_release(args)?;
         }
         Commands::Supervisor(mut args) => {
             args.output = global_output;

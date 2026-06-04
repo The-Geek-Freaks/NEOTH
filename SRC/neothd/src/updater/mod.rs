@@ -27,6 +27,9 @@ use tracing::{info, warn};
 pub mod pipeline;
 pub mod probes;
 pub mod self_update;
+/// MAR-02 — in-process minisign keypair generation + release signing (the
+/// DAU-friendly `neoth release keygen`/`sign`; no external `minisign` binary).
+pub mod sig_keygen;
 pub mod sig_verify;
 pub mod skill_resolver;
 
