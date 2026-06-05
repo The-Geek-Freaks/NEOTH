@@ -226,9 +226,128 @@ pub fn run_show(provider_str: &str, output: &OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// Pure: which hemisphere roles are wired to `target` in the topology. The
+/// SAME `slot_for` resolution the runtime uses, so this reflects what the
+/// daemon would actually dispatch. Single mode → one collapsed label (all
+/// roles share `default_slot`); triplet/custom → the matching role labels.
+fn provider_bindings(
+    topo: &crate::config::inference::InferenceTopology,
+    target: InferenceProvider,
+) -> Vec<String> {
+    use crate::config::inference::{HemisphereRole, TopologyMode};
+    if topo.mode == TopologyMode::Single {
+        return if topo.slot_for(HemisphereRole::Left).provider == Some(target) {
+            vec!["all hemispheres (single mode)".to_string()]
+        } else {
+            Vec::new()
+        };
+    }
+    [
+        (HemisphereRole::Left, "left"),
+        (HemisphereRole::Right, "right"),
+        (HemisphereRole::Cerebellum, "cerebellum"),
+    ]
+    .into_iter()
+    .filter(|(role, _)| topo.slot_for(*role).provider == Some(target))
+    .map(|(_, label)| label.to_string())
+    .collect()
+}
+
+/// `neoth provider test <id>` — a SAFE wiring check: is `<id>` actually
+/// dispatched on any hemisphere, and where? It does NOT make a live LLM call
+/// (that would bill a metered provider) and does NOT construct the provider
+/// (which could eagerly load local weights) — it points at
+/// `neoth hemispheres test --role <r> --live` for the real round-trip, which
+/// already exists. Honest scope: confirm the wiring + hand off the round-trip.
+pub fn run_test(provider_str: &str, output: &OutputFormat) -> Result<()> {
+    let target = InferenceProvider::from_str(provider_str).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown provider `{provider_str}`. Run `neoth provider list` for the full list."
+        )
+    })?;
+    let cfg = crate::config::FreedomConfig::load_from_default_path()
+        .map_err(|e| anyhow::anyhow!("load freedom.yaml: {e}"))?;
+    let roles = provider_bindings(&cfg.inference, target);
+    let wired = !roles.is_empty();
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "provider": target.as_str(),
+                    "wired": wired,
+                    "roles": roles,
+                    "live_round_trip": "neoth hemispheres test --role <role> --live",
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            if wired {
+                println!("✓ provider `{}` is wired into: {}", target.as_str(), roles.join(", "));
+                println!(
+                    "  live round-trip: `neoth hemispheres test --role {} --live`",
+                    // first concrete role label, or 'left' for the single-mode collapse
+                    roles
+                        .iter()
+                        .find(|r| matches!(r.as_str(), "left" | "right" | "cerebellum"))
+                        .map(String::as_str)
+                        .unwrap_or("left")
+                );
+            } else {
+                println!(
+                    "✗ provider `{}` is not wired into any hemisphere.",
+                    target.as_str()
+                );
+                println!(
+                    "  bind it: `neoth hemispheres set --role <left|right|cerebellum> --provider {}`",
+                    target.as_str()
+                );
+                println!("  see current bindings: `neoth hemispheres show`");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::inference::{HemisphereSlot, InferenceTopology, TopologyMode};
+
+    #[test]
+    fn provider_bindings_single_mode_collapses_to_one_label() {
+        let mut topo = InferenceTopology::default();
+        topo.mode = TopologyMode::Single;
+        topo.default_slot.provider = Some(InferenceProvider::ClaudeCli);
+        assert_eq!(
+            provider_bindings(&topo, InferenceProvider::ClaudeCli),
+            vec!["all hemispheres (single mode)".to_string()]
+        );
+        // A provider that isn't the single-mode slot is not wired.
+        assert!(provider_bindings(&topo, InferenceProvider::LocalQwen).is_empty());
+    }
+
+    #[test]
+    fn provider_bindings_triplet_lists_matching_roles_with_default_fallback() {
+        let mut topo = InferenceTopology::default();
+        topo.mode = TopologyMode::Triplet;
+        topo.left = HemisphereSlot {
+            provider: Some(InferenceProvider::ClaudeCli),
+            ..Default::default()
+        };
+        topo.cerebellum = HemisphereSlot {
+            provider: Some(InferenceProvider::LocalQwen),
+            ..Default::default()
+        };
+        // `right` is unset → falls back to default_slot (gemini).
+        topo.default_slot.provider = Some(InferenceProvider::Gemini);
+        assert_eq!(provider_bindings(&topo, InferenceProvider::ClaudeCli), vec!["left"]);
+        assert_eq!(provider_bindings(&topo, InferenceProvider::LocalQwen), vec!["cerebellum"]);
+        assert_eq!(provider_bindings(&topo, InferenceProvider::Gemini), vec!["right"]);
+        // A provider on no slot is unwired.
+        assert!(provider_bindings(&topo, InferenceProvider::OpenAi).is_empty());
+    }
 
     #[test]
     fn all_providers_covers_every_variant() {

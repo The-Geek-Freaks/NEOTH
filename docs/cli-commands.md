@@ -1508,7 +1508,7 @@ Show details for one provider by id (e.g. `claude_cli`, `openai_compat`)
 
 ### `neoth provider test`
 
-Test connection to a provider (reserved — use `neoth hemispheres test`)
+Show where a provider is wired into the hemispheres (live round-trip: `neoth hemispheres test --role <r> --live`)
 
 - `<PROVIDER>`
 

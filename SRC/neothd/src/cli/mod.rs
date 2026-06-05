@@ -837,7 +837,8 @@ pub enum ProviderAction {
     /// Fireworks, Perplexity, plus local Ollama / LM Studio / vLLM)
     /// with their endpoint URL, default model, and doc link.
     Known,
-    /// Test connection to a provider (reserved — use `neoth hemispheres test`)
+    /// Show where a provider is wired into the hemispheres (live round-trip:
+    /// `neoth hemispheres test --role <r> --live`).
     Test { provider: String },
     /// Remove a provider (reserved — use `neoth init`)
     Remove { provider: String },
@@ -1219,13 +1220,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderAction::List => providers::run_list(&global_output)?,
             ProviderAction::Show { provider } => providers::run_show(&provider, &global_output)?,
             ProviderAction::Known => providers::run_known(&global_output)?,
-            ProviderAction::Add | ProviderAction::Test { .. } | ProviderAction::Remove { .. } => {
+            ProviderAction::Test { provider } => providers::run_test(&provider, &global_output)?,
+            ProviderAction::Add | ProviderAction::Remove { .. } => {
                 anyhow::bail!(
-                    "`neoth provider {{add,test,remove}}` not in v0.1. Use \
+                    "`neoth provider {{add,remove}}` not in this release. Use \
                      `neoth init` (full wizard), `neoth hemispheres set`, or \
                      edit ~/.neoth/freedom.yaml. `neoth status` shows the \
                      active provider; `neoth provider list` enumerates every \
-                     supported backend."
+                     supported backend; `neoth provider test <id>` shows where \
+                     a provider is wired."
                 );
             }
         },
