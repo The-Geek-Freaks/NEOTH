@@ -156,6 +156,18 @@ pub fn decode_frame(raw: &str) -> DecodedFrame {
                     envelope_id: envelope.envelope_id,
                 };
             }
+            // A Slack message_event without a `user` (bot post, message
+            // tombstone) must NOT propagate an empty sender_id — it would
+            // collide in the shared "slack/" rate-limit bucket + mint a phantom
+            // identity row. Drop it.
+            let sender_id = match user {
+                Some(u) if !u.is_empty() => u,
+                _ => {
+                    return DecodedFrame::NonMessage {
+                        envelope_id: envelope.envelope_id,
+                    };
+                }
+            };
             // Slack `ts` is a numeric string like "1700000000.000100"
             // (seconds.microseconds). Convert to (u64 secs, i64 ms).
             let (secs, ms) = parse_slack_ts(&ts);
@@ -163,7 +175,7 @@ pub fn decode_frame(raw: &str) -> DecodedFrame {
                 channel: ChannelKind::Slack,
                 chat_id: channel,
                 thread_id: None,
-                sender_id: user.unwrap_or_default(),
+                sender_id,
                 sender_display: None,
                 text: Some(body),
                 media: None,

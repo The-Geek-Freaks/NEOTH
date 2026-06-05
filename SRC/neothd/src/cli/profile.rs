@@ -1354,8 +1354,13 @@ fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<
         )
     };
 
-    std::fs::write(&path, updated.as_bytes())
-        .with_context(|| format!("write {}", path.display()))?;
+    // Atomic write — `.tmp` + rename (same pattern as config::presets::apply),
+    // so a crash mid-write can never leave freedom.yaml truncated/corrupt.
+    let tmp = path.with_extension("yaml.tmp");
+    std::fs::write(&tmp, updated.as_bytes())
+        .with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, &path)
+        .with_context(|| format!("rename into {}", path.display()))?;
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
