@@ -1252,14 +1252,14 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Channel { action } => match action {
             ChannelAction::List => channel::run_list(&global_output)?,
             ChannelAction::Test { channel: ch } => channel::run_test(&ch, &global_output).await?,
-            ChannelAction::Add { .. } | ChannelAction::Remove { .. } => {
+            ChannelAction::Add { channel: ch } => channel::run_add(&ch, &global_output).await?,
+            ChannelAction::Remove { .. } => {
                 anyhow::bail!(
-                    "`neoth channel {{add,remove}}` not yet in this release. \
-                     Use `neoth init` (full wizard) to connect a channel, or edit \
-                     ~/.neoth/freedom.yaml::telegram_token + ~/.neoth/credentials.yaml \
-                     (slack/whatsapp/keet). `neoth channel list` shows which channels \
-                     are configured; `neoth channel test <ch>` validates a configured \
-                     one's credentials live."
+                    "`neoth channel remove` not yet in this release. To remove a channel, \
+                     delete its entry from ~/.neoth/credentials.yaml (telegram_token / \
+                     slack_bot_token+slack_app_token / whatsapp_token+whatsapp_phone_id / \
+                     keet_seed_phrase) and `neoth serve` won't start it. `neoth channel \
+                     list` shows configured state; `neoth channel add <ch>` (re)connects."
                 );
             }
         },
