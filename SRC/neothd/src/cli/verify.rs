@@ -805,4 +805,173 @@ mod tests {
         };
         assert!(window_overlaps_authorised(p, 100, 300, &[r2]));
     }
+
+    /// Append a fully-formed `0xF3 REDACTION_MARKER` frame, signed by `key`, into
+    /// a fresh audit segment in `wal_dir`. Models an attacker who can WRITE a WAL
+    /// frame + sign it with THEIR OWN key — the exact shape `run_verify` must
+    /// refuse unless `key` is the operator's trusted signing key.
+    async fn write_signed_redaction_frame(
+        wal_dir: &Path,
+        audit_name: &str,
+        target_segment: &str,
+        offsets: &[u64],
+        bytes_redacted: u64,
+        topic: &str,
+        ts_unix: i64,
+        key: &ed25519_dalek::SigningKey,
+    ) {
+        let msg = crate::wal::redact::redaction_authorisation_message(
+            target_segment,
+            offsets,
+            bytes_redacted,
+            topic,
+            ts_unix,
+        );
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "segment": target_segment,
+            "redacted_offsets": offsets,
+            "bytes_redacted": bytes_redacted,
+            "topic": topic,
+            "source": "attacker",
+            "ts_unix": ts_unix,
+            "signer_pubkey": crate::wal::signing::pubkey_b64(key),
+            "sig": crate::wal::signing::sign_b64(key, &msg),
+        }))
+        .unwrap();
+        let (w, j) = crate::wal::writer::spawn(wal_dir.join(audit_name)).unwrap();
+        let header =
+            crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_REDACTION_MARKER, &payload)
+                .build();
+        w.append(header, payload).await.unwrap();
+        drop(w);
+        let _ = j.await;
+    }
+
+    /// AP-08 — end-to-end `run_verify` over the `0xF3` redaction-exemption path:
+    /// the public-CLI-entry counterpart to the function-level
+    /// `extract_redaction_authorisations` test. Proves at the `run_verify` seam
+    /// (not just the extracted helper) that the Session-39 signature closure holds:
+    /// a clean WAL passes; a tampered HMAC window FAILS; an ATTACKER-signed `0xF3`
+    /// does NOT authorise it (the bypass that was open); and only the OPERATOR-
+    /// signed `0xF3` reclassifies it to PASS.
+    #[tokio::test]
+    async fn run_verify_e2e_redaction_exemption_signature_trust() {
+        use crate::wal::compaction::{load_or_init_key, CompactionState};
+        use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_RAW_TEXT};
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{SegmentHeader, SEGMENT_HEADER_LEN};
+
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path();
+        let seg = wal_dir.join("000001.wal");
+        let key_path = wal_dir.join("hmac.key");
+        let key = load_or_init_key(&key_path).unwrap();
+
+        // The operator's ed25519 signing key must exist BEFORE the attacker step,
+        // so the trust root is the operator key (not "no key") — that lets the test
+        // prove key-MISMATCH rejection, not merely the fail-closed no-key path.
+        let signing_key_path = wal_dir.join("signing.key");
+        crate::wal::signing::load_or_init_signing_key(&signing_key_path).unwrap();
+
+        // 1+2. Build the verified segment FULLY MANUALLY — SEGMENT_HEADER + 3 data
+        //      frames + the COMPACTION_MARKER over them, every frame via the same
+        //      `encode_frame` the walker decodes. (A mixed writer-frames +
+        //      manual-marker-append segment hits the writer-reopen tangle the
+        //      module note at the top of `tests` warns about; a single-encoder
+        //      build sidesteps it entirely.) `tamper` flips a byte INSIDE the
+        //      marker window AFTER the HMAC is computed → an authorisation-or-fail.
+        // 1+2. Build the verified segment manually — SEGMENT_HEADER + 3 data
+        //      frames + a COMPACTION_MARKER (0xF0) over them, every frame via the
+        //      same `encode_frame` the walker decodes. (A mixed writer-frames +
+        //      manual-append segment hits the writer-reopen tangle the module note
+        //      atop `tests` warns about; a single-encoder build sidesteps it.)
+        let from = SEGMENT_HEADER_LEN as u64;
+        let mut seg_bytes = SegmentHeader::new(1, 1, 0, 0, [0u8; 16]).to_le_bytes().to_vec();
+        for p in [b"alpha".as_slice(), b"beta", b"gamma"] {
+            let h = crate::wal::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, p).build();
+            seg_bytes.extend_from_slice(&encode_frame(&h, p));
+        }
+        let to = seg_bytes.len() as u64;
+        let mut state = CompactionState::new(&key, from);
+        state.update(&seg_bytes[from as usize..]);
+        let marker = state.finalise_marker(&key, to);
+        let mpayload = serde_json::to_vec(&marker).unwrap();
+        let mh = crate::wal::HeaderBuilder::new(EVENT_TYPE_COMPACTION_MARKER, &mpayload).build();
+        seg_bytes.extend_from_slice(&encode_frame(&mh, &mpayload));
+        std::fs::write(&seg, &seg_bytes).unwrap();
+
+        let args = || VerifyArgs {
+            wal_dir: Some(wal_dir.to_path_buf()),
+            key: Some(key_path.clone()),
+            segment: None,
+            since_rotation: false,
+            output: OutputFormat::Json,
+        };
+
+        // 2a. Intact window → PASS.
+        run_verify(args())
+            .await
+            .expect("an intact marker window verifies clean");
+
+        // 3. Redact frame 1 with the REAL `redact_frame_in_place` primitive (zeros
+        //    payload + sets REDACTED + recomputes the frame CRC so the segment stays
+        //    walkable + the 0xF0 marker reachable) → the marker's pre-redaction HMAC
+        //    now mismatches. With NO authorisation, run_verify FAILS.
+        {
+            let mut f = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&seg)
+                .unwrap();
+            let h1 = crate::wal::HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, b"alpha".as_slice()).build();
+            crate::wal::redact::redact_frame_in_place(&mut f, from, &h1).unwrap();
+            f.sync_all().unwrap();
+        }
+        assert!(
+            run_verify(args()).await.is_err(),
+            "a redacted (HMAC-mismatched) window with no authorisation must FAIL",
+        );
+
+        // 4. ATTACKER-signed 0xF3 over the redacted frame offset → NOT the operator
+        //    key → must NOT authorise → still FAILS (the bypass closure). The 0xF3
+        //    offset is the FRAME-START offset (= `from`), matching what the real
+        //    `scan_and_redact` records in `frames_redacted`.
+        let redacted_offset = from;
+        let attacker = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        write_signed_redaction_frame(
+            wal_dir,
+            "attacker-audit.wal",
+            "000001.wal",
+            &[redacted_offset],
+            1,
+            "e2e",
+            1700,
+            &attacker,
+        )
+        .await;
+        assert!(
+            run_verify(args()).await.is_err(),
+            "a 0xF3 signed by a NON-operator key must NOT authorise the window",
+        );
+
+        // 5. OPERATOR-signed 0xF3 (real emit, signs with <wal_dir>/signing.key) →
+        //    honoured → the window reclassifies to PASS.
+        let (rw, rj) = crate::wal::writer::spawn(wal_dir.join("redact-audit.wal")).unwrap();
+        crate::wal::redact::emit_redaction_marker(
+            &rw,
+            &seg,
+            &[redacted_offset],
+            1,
+            "e2e",
+            "operator",
+            1700,
+        )
+        .await
+        .unwrap();
+        drop(rw);
+        let _ = rj.await;
+        run_verify(args())
+            .await
+            .expect("an operator-signed 0xF3 over the tampered window reclassifies to PASS");
+    }
 }
