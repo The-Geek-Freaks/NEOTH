@@ -131,7 +131,11 @@ impl Provider for AnthropicAdapter {
                 // BEFORE consuming the body (same contract as openai_api).
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body = response.text().await.unwrap_or_default();
+                    let body = response
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .replace(self.api_key.expose(), "[REDACTED]");
                     return Err(anyhow::Error::new(QuotaError {
                         provider: "anthropic_api",
                         retry_after,
@@ -141,7 +145,8 @@ impl Provider for AnthropicAdapter {
                 let body = response
                     .text()
                     .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
+                    .unwrap_or_else(|_| "<unreadable body>".into())
+                    .replace(self.api_key.expose(), "[REDACTED]");
                 anyhow::bail!(
                     "anthropic_api returned HTTP {}: {}",
                     status.as_u16(),

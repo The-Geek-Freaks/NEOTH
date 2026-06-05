@@ -173,7 +173,11 @@ impl Provider for AzureOpenAiAdapter {
             if !status.is_success() {
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body_text = response.text().await.unwrap_or_default();
+                    let body_text = response
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .replace(self.api_key.expose(), "[REDACTED]");
                     return Err(anyhow::Error::new(QuotaError {
                         provider: "azure_openai",
                         retry_after,
@@ -183,7 +187,8 @@ impl Provider for AzureOpenAiAdapter {
                 let body_text = response
                     .text()
                     .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
+                    .unwrap_or_else(|_| "<unreadable body>".into())
+                    .replace(self.api_key.expose(), "[REDACTED]");
                 return Err(map_azure_error(status, &body_text, &deployment));
             }
 

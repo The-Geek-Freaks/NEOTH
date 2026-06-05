@@ -126,7 +126,11 @@ impl Provider for CohereAdapter {
             if !status.is_success() {
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body = response.text().await.unwrap_or_default();
+                    let body = response
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .replace(self.api_key.expose(), "[REDACTED]");
                     return Err(anyhow::Error::new(QuotaError {
                         provider: "cohere_api",
                         retry_after,
@@ -136,7 +140,8 @@ impl Provider for CohereAdapter {
                 let body = response
                     .text()
                     .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
+                    .unwrap_or_else(|_| "<unreadable body>".into())
+                    .replace(self.api_key.expose(), "[REDACTED]");
                 anyhow::bail!(
                     "cohere_api returned HTTP {}: {}",
                     status.as_u16(),

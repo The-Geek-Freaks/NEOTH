@@ -123,7 +123,11 @@ impl Provider for OpenAiAdapter {
                 // operator for diagnostics.
                 if status.as_u16() == 429 {
                     let retry_after = parse_retry_after(response.headers());
-                    let body = response.text().await.unwrap_or_default();
+                    let body = response
+                        .text()
+                        .await
+                        .unwrap_or_default()
+                        .replace(self.api_key.expose(), "[REDACTED]");
                     return Err(anyhow::Error::new(QuotaError {
                         provider: self.name,
                         retry_after,
@@ -133,7 +137,8 @@ impl Provider for OpenAiAdapter {
                 let body = response
                     .text()
                     .await
-                    .unwrap_or_else(|_| "<unreadable body>".into());
+                    .unwrap_or_else(|_| "<unreadable body>".into())
+                    .replace(self.api_key.expose(), "[REDACTED]");
                 anyhow::bail!(
                     "{} returned HTTP {}: {}",
                     self.name,
