@@ -631,6 +631,19 @@ pub async fn run_rewrap_hmac_key(args: &RewrapHmacKeyArgs) -> Result<()> {
 /// audit-RPC; otherwise open a one-shot writer. Metadata only — the SHA-256 of
 /// the NEW key (never the raw bytes). Best-effort: an audit gap never fails the
 /// rewrap (the operator's recovery already succeeded).
+/// Canonical, deterministic bytes signed by [`emit_hmac_key_rotated`] and
+/// re-verified by `neoth verify`. Fixed `field|…` layout (NOT JSON, to avoid any
+/// serialiser field-order dependence) over the fields a verifier uses to treat a
+/// 0xD9 frame as a rotation boundary.
+pub(crate) fn rotation_authorisation_message(
+    new_key_sha256: &str,
+    replaced: bool,
+    reason: &str,
+    ts_unix: i64,
+) -> Vec<u8> {
+    format!("hmac-key-rotated-v1|{new_key_sha256}|{replaced}|{reason}|{ts_unix}").into_bytes()
+}
+
 async fn emit_hmac_key_rotated(home: &std::path::Path, new_key: &[u8], replaced: bool, reason: &str) {
     use sha2::{Digest, Sha256};
     let new_key_sha256: String = Sha256::digest(new_key)
@@ -641,11 +654,36 @@ async fn emit_hmac_key_rotated(home: &std::path::Path, new_key: &[u8], replaced:
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    // Sign the rotation boundary with the operator's ed25519 key (same key +
+    // 0600/DPAPI protection as redaction-marker signing, under <home>/wal).
+    // `neoth verify --since-rotation` only treats a 0xD9 frame as a boundary when
+    // its signature verifies against the operator's OWN key — so a forged
+    // CRC32c-only rotation frame (writable but not signable without the key) can
+    // no longer silence the pre-injection history. Best-effort: if the key can't
+    // load, emit unsigned — verify then IGNORES it and verifies the FULL history
+    // (fail SAFE: more verification, never less).
+    let (signer_pubkey, sig) = match crate::wal::signing::load_or_init_signing_key(
+        &home.join("wal").join("signing.key"),
+    ) {
+        Ok(key) => {
+            let msg = rotation_authorisation_message(&new_key_sha256, replaced, reason, now as i64);
+            (
+                crate::wal::signing::pubkey_b64(&key),
+                crate::wal::signing::sign_b64(&key, &msg),
+            )
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "security: signing key load failed; 0xD9 emitted UNSIGNED");
+            (String::new(), String::new())
+        }
+    };
     let payload = serde_json::to_vec(&serde_json::json!({
         "new_key_sha256": new_key_sha256,
         "replaced": replaced,
         "reason": reason,
         "ts_unix": now,
+        "signer_pubkey": signer_pubkey,
+        "sig": sig,
     }))
     .unwrap_or_default();
 

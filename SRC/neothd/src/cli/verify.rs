@@ -230,7 +230,16 @@ fn render_verify_outcome(segments: &[PathBuf], outcome: &VerifyOutcome, output: 
 /// marker verifies regardless; a future `rotate-hmac-key` (new key value) would
 /// want frame-granular precision, tracked as a follow-on.
 fn apply_since_rotation_filter(segments: Vec<PathBuf>, output: OutputFormat) -> Vec<PathBuf> {
-    match find_last_rotation_segment(&segments) {
+    // The rotation boundary is only trusted when its 0xD9 frame is SIGNED by the
+    // operator's OWN key (read from <wal_dir>/signing.key). `None` (no key on
+    // disk) ⇒ no boundary ⇒ the FULL history is verified (fail safe — a forged
+    // 0xD9 can no longer make `--since-rotation` skip genuine history).
+    let trusted_pubkey = segments
+        .first()
+        .and_then(|s| s.parent())
+        .map(|dir| dir.join("signing.key"))
+        .and_then(|p| crate::wal::signing::load_signing_pubkey_if_present(&p));
+    match find_last_rotation_segment(&segments, trusted_pubkey.as_deref()) {
         Some(idx) => {
             let skipped = idx;
             if !matches!(output, OutputFormat::Json | OutputFormat::Jsonl) && skipped > 0 {
@@ -256,22 +265,28 @@ fn apply_since_rotation_filter(segments: Vec<PathBuf>, output: OutputFormat) -> 
 
 /// Index (in the sorted `segments`) of the LAST segment containing a
 /// `0xD9 HMAC_KEY_ROTATED` frame, or `None` if no segment has one.
-fn find_last_rotation_segment(segments: &[PathBuf]) -> Option<usize> {
+fn find_last_rotation_segment(segments: &[PathBuf], trusted_pubkey: Option<&str>) -> Option<usize> {
     segments
         .iter()
         .enumerate()
-        .filter(|(_, seg)| segment_has_rotation(seg))
+        .filter(|(_, seg)| segment_has_rotation(seg, trusted_pubkey))
         .map(|(i, _)| i)
         .next_back()
 }
 
-/// Does this segment contain at least one `0xD9 HMAC_KEY_ROTATED` frame?
-/// Tolerant — a torn tail / unreadable file just yields `false`.
-fn segment_has_rotation(seg: &Path) -> bool {
+/// Does this segment contain at least one OPERATOR-SIGNED `0xD9 HMAC_KEY_ROTATED`
+/// frame? Tolerant — a torn tail / unreadable file just yields `false`. A 0xD9
+/// frame whose signature does NOT verify against the operator's own key
+/// (`trusted_pubkey`) is IGNORED — that is the forged-rotation bypass closure.
+fn segment_has_rotation(seg: &Path, trusted_pubkey: Option<&str>) -> bool {
     use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
+    // No operator key on disk ⇒ no rotation boundary can be authenticated ⇒ none.
+    let Some(trusted_pubkey) = trusted_pubkey else {
+        return false;
+    };
     let Ok(bytes) = std::fs::read(seg) else {
         return false;
     };
@@ -284,7 +299,24 @@ fn segment_has_rotation(seg: &Path) -> bool {
             break;
         };
         if dec.header.event_type == EVENT_TYPE_HMAC_KEY_ROTATED {
-            return true;
+            // AUTHENTICATE before trusting it as a boundary — a forged CRC32c-only
+            // 0xD9 has no valid operator signature ⇒ NOT a rotation point.
+            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(dec.payload) {
+                let new_key_sha256 = payload["new_key_sha256"].as_str().unwrap_or("");
+                let replaced = payload["replaced"].as_bool().unwrap_or(false);
+                let reason = payload["reason"].as_str().unwrap_or("");
+                let ts_unix = payload["ts_unix"].as_i64().unwrap_or(0);
+                let sig = payload["sig"].as_str().unwrap_or("");
+                let msg = crate::cli::security::rotation_authorisation_message(
+                    new_key_sha256,
+                    replaced,
+                    reason,
+                    ts_unix,
+                );
+                if crate::wal::signing::verify_b64(trusted_pubkey, sig, &msg).is_ok() {
+                    return true;
+                }
+            }
         }
         let total = dec.header.total_len as usize;
         if total == 0 {
@@ -527,16 +559,47 @@ mod tests {
         join.await.ok();
     }
 
+    /// Write a segment with an OPERATOR-SIGNED 0xD9 rotation frame (the signing
+    /// key lives in `dir`, the same place verify reads its trust root from).
+    async fn write_signed_rotation_seg(dir: &std::path::Path, seg: std::path::PathBuf) {
+        use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
+        let key = crate::wal::signing::load_or_init_signing_key(&dir.join("signing.key")).unwrap();
+        let msg =
+            crate::cli::security::rotation_authorisation_message("abc123", true, "rewrap", 1700);
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "new_key_sha256": "abc123",
+            "replaced": true,
+            "reason": "rewrap",
+            "ts_unix": 1700,
+            "signer_pubkey": crate::wal::signing::pubkey_b64(&key),
+            "sig": crate::wal::signing::sign_b64(&key, &msg),
+        }))
+        .unwrap();
+        let (writer, join) = crate::wal::writer::spawn(seg).unwrap();
+        let header = crate::wal::HeaderBuilder::new(EVENT_TYPE_HMAC_KEY_ROTATED, &payload).build();
+        writer.append(header, payload).await.unwrap();
+        drop(writer);
+        join.await.ok();
+    }
+
+    fn trusted_for(dir: &std::path::Path) -> Option<String> {
+        crate::wal::signing::load_signing_pubkey_if_present(&dir.join("signing.key"))
+    }
+
     #[tokio::test]
     async fn since_rotation_finds_last_rotation_segment_and_filters() {
-        use crate::wal::events::{EVENT_TYPE_HMAC_KEY_ROTATED, EVENT_TYPE_RAW_TEXT};
+        use crate::wal::events::EVENT_TYPE_RAW_TEXT;
         let dir = tempfile::tempdir().unwrap();
         write_event_seg(dir.path().join("000001.wal"), EVENT_TYPE_RAW_TEXT).await;
-        write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
+        write_signed_rotation_seg(dir.path(), dir.path().join("000002.wal")).await;
         write_event_seg(dir.path().join("000003.wal"), EVENT_TYPE_RAW_TEXT).await;
         let segs = list_segments(dir.path()).unwrap();
-        assert_eq!(find_last_rotation_segment(&segs), Some(1));
-        // The filter keeps the rotation segment + everything after it.
+        assert_eq!(
+            find_last_rotation_segment(&segs, trusted_for(dir.path()).as_deref()),
+            Some(1)
+        );
+        // The filter loads the trust root from the wal dir internally + keeps the
+        // rotation segment + everything after it.
         let filtered = apply_since_rotation_filter(segs, OutputFormat::Json);
         assert_eq!(filtered.len(), 2);
         assert!(filtered[0].to_string_lossy().contains("000002"));
@@ -544,13 +607,34 @@ mod tests {
 
     #[tokio::test]
     async fn since_rotation_last_wins_with_two_rotations() {
-        use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
         let dir = tempfile::tempdir().unwrap();
-        write_event_seg(dir.path().join("000001.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
-        write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
+        write_signed_rotation_seg(dir.path(), dir.path().join("000001.wal")).await;
+        write_signed_rotation_seg(dir.path(), dir.path().join("000002.wal")).await;
         let segs = list_segments(dir.path()).unwrap();
         // The MOST RECENT rotation is the boundary.
-        assert_eq!(find_last_rotation_segment(&segs), Some(1));
+        assert_eq!(
+            find_last_rotation_segment(&segs, trusted_for(dir.path()).as_deref()),
+            Some(1)
+        );
+    }
+
+    #[tokio::test]
+    async fn since_rotation_ignores_a_forged_unsigned_rotation_frame() {
+        // The 0xD9 bypass closure: a CRC32c-valid but UNSIGNED 0xD9 (an attacker
+        // can write but not sign it) must NOT be treated as a boundary — else
+        // `--since-rotation` would skip the genuine history. A real signed
+        // rotation sits at 000001; the forged one at 000002 is ignored, so the
+        // boundary is index 0, NOT 1.
+        use crate::wal::events::EVENT_TYPE_HMAC_KEY_ROTATED;
+        let dir = tempfile::tempdir().unwrap();
+        write_signed_rotation_seg(dir.path(), dir.path().join("000001.wal")).await;
+        write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_HMAC_KEY_ROTATED).await;
+        let segs = list_segments(dir.path()).unwrap();
+        assert_eq!(
+            find_last_rotation_segment(&segs, trusted_for(dir.path()).as_deref()),
+            Some(0),
+            "a forged unsigned 0xD9 must be ignored",
+        );
     }
 
     #[tokio::test]
@@ -560,7 +644,7 @@ mod tests {
         write_event_seg(dir.path().join("000001.wal"), EVENT_TYPE_RAW_TEXT).await;
         write_event_seg(dir.path().join("000002.wal"), EVENT_TYPE_RAW_TEXT).await;
         let segs = list_segments(dir.path()).unwrap();
-        assert_eq!(find_last_rotation_segment(&segs), None);
+        assert_eq!(find_last_rotation_segment(&segs, None), None);
         // No rotation → the full list is returned unchanged.
         let n = segs.len();
         assert_eq!(apply_since_rotation_filter(segs, OutputFormat::Json).len(), n);
@@ -571,8 +655,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
         std::fs::write(&seg, b"short").unwrap();
-        assert!(!segment_has_rotation(&seg));
-        assert!(!segment_has_rotation(&dir.path().join("does-not-exist.wal")));
+        assert!(!segment_has_rotation(&seg, Some("anything")));
+        assert!(!segment_has_rotation(&dir.path().join("does-not-exist.wal"), Some("anything")));
     }
 
     // V02-03 acceptance (note 2026-05-16): the end-to-end "tamper
