@@ -539,6 +539,12 @@ pub struct OsToolsConfig {
     /// the binary between resolution and exec; entries in user-private dirs are
     /// safe, system dirs are safest.
     pub allowed_exec_paths: Vec<std::path::PathBuf>,
+    /// PC-01 (clipboard slice): OS clipboard read/write policy. Default = fully
+    /// OFF. Compiled unconditionally (pure data, no `arboard` dependency); the
+    /// `os-clipboard` cargo feature only gates the backend + the gate functions
+    /// that consume this config.
+    #[serde(default)]
+    pub clipboard: ClipboardConfig,
 }
 
 impl Default for OsToolsConfig {
@@ -549,6 +555,54 @@ impl Default for OsToolsConfig {
             allowed_write_paths: Vec::new(),
             max_write_bytes: 1024 * 1024,
             allowed_exec_paths: Vec::new(),
+            clipboard: ClipboardConfig::default(),
+        }
+    }
+}
+
+/// PC-01 (clipboard slice) — OS clipboard policy. Default is the MOST
+/// RESTRICTIVE posture: every toggle OFF, so a fresh install (or any
+/// `freedom.yaml` missing the `tools.os.clipboard` key) can neither read nor
+/// write the operator's clipboard. The operator opts in PER DIRECTION
+/// (`read_enabled` / `write_enabled` are SEPARATE ON PURPOSE — mirroring the
+/// `allowed_paths` vs `allowed_write_paths` split: reading is not writing).
+///
+/// Security rationale: the OS clipboard is an UNSCOPED ambient secret store
+/// (read can capture a just-copied password) and a passive injection sink
+/// (write enables pastejacking). Both directions are also autonomy-gated and
+/// WAL-audited downstream; these flags are the upstream master switches.
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct ClipboardConfig {
+    /// Master switch. `false` (default) ⇒ neither read nor write is possible.
+    pub enabled: bool,
+    /// Allow `OsClipboardRead`. `false` (default) ⇒ reads denied even if
+    /// `enabled`.
+    pub read_enabled: bool,
+    /// Allow `OsClipboardWrite`. `false` (default) ⇒ writes denied even if
+    /// `enabled`.
+    pub write_enabled: bool,
+    /// Max bytes a clipboard READ may surface (default 4 KiB) — caps how much
+    /// ambient content a single read can pull.
+    pub max_clipboard_read_bytes: usize,
+    /// Max bytes a clipboard WRITE may place (default 4 KiB).
+    pub max_clipboard_write_bytes: usize,
+    /// Permit newline/CR characters in a WRITE. `false` (default) ⇒ the gate
+    /// STRUCTURALLY rejects newline-bearing content (the terminal auto-execute
+    /// precondition of a pastejacking attack). Set `true` only for deliberate
+    /// multi-line clipboard use; the gate then logs a warning per write.
+    pub allow_newlines_in_write: bool,
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            read_enabled: false,
+            write_enabled: false,
+            max_clipboard_read_bytes: 4096,
+            max_clipboard_write_bytes: 4096,
+            allow_newlines_in_write: false,
         }
     }
 }

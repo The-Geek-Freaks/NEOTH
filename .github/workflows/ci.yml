@@ -301,6 +301,10 @@ jobs:
         include:
           - { os: ubuntu-24.04, feature: qwen-cuda }
           - { os: macos-14, feature: qwen-metal }
+          # PC-01 clipboard — verify arboard (x11rb + wl-clipboard-rs) compiles on
+          # a headless Linux runner (the pure-Rust backends need no display libs
+          # at build time; default-OFF in source so this matrix entry is its check).
+          - { os: ubuntu-24.04, feature: os-clipboard }
     steps:
       - uses: actions/checkout@v4
 

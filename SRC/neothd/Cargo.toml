@@ -38,6 +38,20 @@ wasm-plugin-host = ["dep:wasmtime"]
 # operator's email config. rustls-only via tokio-rustls (no native-tls).
 imap_fetch = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mailparse", "dep:futures"]
 
+# PC-01 (clipboard slice) — gated OS clipboard read/write via `arboard`. Default
+# OFF for source builds (same precedent as `wasm-plugin-host` / `imap_fetch`):
+# the clipboard backend is desktop-oriented + platform-specific, so keeping it
+# out of a plain `cargo build` keeps contributor/headless-server/CI builds slim
+# and free of any display-backend coupling. Shipped release binaries flip it ON
+# via cargo-dist release-args (see release.yml). Per the
+# `neoth-features-default-on-runtime-toggle` rule, the RUNTIME behaviour is gated
+# by `freedom.yaml::tools.os.clipboard.{enabled,read_enabled,write_enabled}`
+# (all default `false`) — the cargo feature only decides whether the backend is
+# compiled in at all. All clipboard code is `#[cfg(feature = "os-clipboard")]`;
+# the `Action`/`ClipboardConfig`/WAL-event surface stays compiled in both configs
+# (pure data, no `arboard` dependency) so the autonomy mapping is always testable.
+os-clipboard = ["dep:arboard"]
+
 # D14b Phase 2c — GPU acceleration for local_qwen. Pin per-platform
 # so contributors building on a non-GPU laptop don't fight CUDA
 # toolkit setup. Default OFF; release binaries flip ON via cargo-dist
@@ -435,6 +449,18 @@ neoth-plugin-sdk = { path = "../neoth-plugin-sdk", version = "0.1.0-alpha.0", fe
 # enough for the Engine + Store + Linker surface we need. Compile-cost:
 # ~30s + ~80 MiB of transitive deps so a default `cargo build` skips it.
 wasmtime = { version = "36", default-features = false, features = ["cranelift", "runtime"], optional = true }
+
+# PC-01 (clipboard slice, feature `os-clipboard`) — cross-platform OS clipboard.
+# `default-features = false` drops the `image-data` feature (we only ever move
+# UTF-8 text), avoiding the `image` crate + its transitive tree. We DO opt back
+# into `wl-clipboard-rs` so a modern Wayland-only Linux desktop (GNOME/Wayland
+# without XWayland — the default on many current distros) has a working backend;
+# the always-compiled `x11rb` backend (pure-Rust X11 over a socket — no libxcb
+# dev headers at build time) covers X11 sessions. Both backends are Linux-cfg'd,
+# so the Windows/macOS build is unaffected. A missing display still surfaces as
+# an `Err` from `Clipboard::new()` at RUNTIME → mapped to `ClipboardUnavailable`
+# (never a panic, never a build failure).
+arboard = { version = "3", default-features = false, features = ["wl-clipboard-rs"], optional = true }
 
 # Unix-only: mlock for SecretString pages, umask at daemon startup.
 # Inline libc shim in main.rs covered umask; the libc crate is required for

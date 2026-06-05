@@ -18,6 +18,8 @@ use clap::{Args, Subcommand};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::os_tools::{AuditSink, OsGateError, launch_os_app};
+#[cfg(feature = "os-clipboard")]
+use crate::os_tools::{read_os_clipboard, write_os_clipboard};
 
 #[derive(Args, Debug, Clone)]
 pub struct OsArgs {
@@ -41,6 +43,24 @@ pub enum OsAction {
         /// `tools.os.allowed_exec_paths`).
         program: PathBuf,
     },
+    /// PC-01 (clipboard slice): READ the OS clipboard through the gated surface.
+    /// Gated STRICTER than file-read: only Full autonomy auto-allows (Strict
+    /// denies, Standard/Elevated confirm ⇒ blocked here without a TTY), AND both
+    /// `tools.os.clipboard.enabled` + `.read_enabled` must be set. The content is
+    /// printed to YOUR stdout (you asked for it) but NEVER recorded in the WAL —
+    /// the `0xBC`/`0xBD` audit frame carries a byte count only.
+    #[cfg(feature = "os-clipboard")]
+    ClipboardGet,
+    /// PC-01 (clipboard slice): WRITE text to the OS clipboard through the gated
+    /// surface. Gated STRICTER than app-launch (Strict + Standard deny, Elevated
+    /// confirms ⇒ blocked without a TTY, only Full auto-allows) AND requires
+    /// `tools.os.clipboard.enabled` + `.write_enabled`. Newline-bearing content is
+    /// refused (pastejacking guard) unless `allow_newlines_in_write`.
+    #[cfg(feature = "os-clipboard")]
+    ClipboardSet {
+        /// Text to place on the clipboard. If omitted, read from stdin.
+        text: Option<String>,
+    },
 }
 
 pub async fn run_os(args: OsArgs) -> Result<()> {
@@ -48,6 +68,12 @@ pub async fn run_os(args: OsArgs) -> Result<()> {
         .context("load freedom.yaml — run `neoth init` first if absent")?;
     match &args.action {
         OsAction::Launch { program } => run_launch(program, &cfg, args.output).await,
+        #[cfg(feature = "os-clipboard")]
+        OsAction::ClipboardGet => run_clipboard_get(&cfg, args.output).await,
+        #[cfg(feature = "os-clipboard")]
+        OsAction::ClipboardSet { text } => {
+            run_clipboard_set(text.as_deref(), &cfg, args.output).await
+        }
     }
 }
 
@@ -126,6 +152,143 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
             )
         }
         Err(e) => anyhow::bail!("os launch denied: {e}"),
+    }
+}
+
+/// PC-01 clipboard READ surface. Mirrors `run_launch`'s one-shot-WAL audit
+/// dance (forward to the live daemon over audit-RPC, else open a one-shot
+/// writer, else proceed un-audited with a warning) — the gate enforces the
+/// kill-switches + autonomy + size cap. On success the content is printed to the
+/// operator's OWN stdout (they explicitly asked for it); it is NEVER recorded.
+#[cfg(feature = "os-clipboard")]
+async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<()> {
+    let now = now_unix();
+    let home = FreedomConfig::default_neoth_home();
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+        Ok(Some(_))
+    );
+    // A clipboard read is a permission event ⇒ refuse it un-audited if the
+    // daemon owns the WAL but its audit-RPC listener is unreachable.
+    crate::daemon::audit_rpc::enforce_required_audit(
+        cfg.audit_rpc.required_for_oneshot_permission_events,
+        daemon_live,
+        &home,
+    )?;
+    let clip = &cfg.tools.os.clipboard;
+    let result = if daemon_live {
+        read_os_clipboard(clip, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
+    } else {
+        let segment = home.join("wal").join("000001.wal");
+        if let Some(parent) = segment.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match crate::wal::spawn(segment) {
+            Ok((writer, join)) => {
+                let r = read_os_clipboard(clip, cfg.autonomy, AuditSink::Writer(&writer), now).await;
+                drop(writer);
+                let _ = join.await;
+                r
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "clipboard read proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
+                read_os_clipboard(clip, cfg.autonomy, AuditSink::None, now).await
+            }
+        }
+    };
+
+    match result {
+        Ok(content) => {
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!(
+                        "{}",
+                        serde_json::json!({ "content": content, "bytes": content.len() })
+                    );
+                }
+                OutputFormat::Table => {
+                    // Operator-requested content → their stdout. The WAL never saw it.
+                    print!("{content}");
+                }
+            }
+            Ok(())
+        }
+        Err(e) => anyhow::bail!("clipboard read denied: {e}"),
+    }
+}
+
+/// PC-01 clipboard WRITE surface. Same audit dance as `run_clipboard_get`. The
+/// content NEVER appears in the WAL or in the success output (only a byte count).
+#[cfg(feature = "os-clipboard")]
+async fn run_clipboard_set(
+    text: Option<&str>,
+    cfg: &FreedomConfig,
+    output: OutputFormat,
+) -> Result<()> {
+    // Resolve the content: explicit arg, else stdin (no echo).
+    let content: String = match text {
+        Some(t) => t.to_string(),
+        None => {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .context("read clipboard text from stdin")?;
+            buf
+        }
+    };
+
+    let now = now_unix();
+    let home = FreedomConfig::default_neoth_home();
+    let pidfile = crate::daemon::pidfile::default_pidfile();
+    let daemon_live = matches!(
+        crate::daemon::pidfile::live_daemon_pid(&pidfile),
+        Ok(Some(_))
+    );
+    crate::daemon::audit_rpc::enforce_required_audit(
+        cfg.audit_rpc.required_for_oneshot_permission_events,
+        daemon_live,
+        &home,
+    )?;
+    let clip = &cfg.tools.os.clipboard;
+    let result = if daemon_live {
+        write_os_clipboard(&content, clip, cfg.autonomy, AuditSink::DaemonRpc(&home), now).await
+    } else {
+        let segment = home.join("wal").join("000001.wal");
+        if let Some(parent) = segment.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match crate::wal::spawn(segment) {
+            Ok((writer, join)) => {
+                let r =
+                    write_os_clipboard(&content, clip, cfg.autonomy, AuditSink::Writer(&writer), now)
+                        .await;
+                drop(writer);
+                let _ = join.await;
+                r
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "clipboard write proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
+                write_os_clipboard(&content, clip, cfg.autonomy, AuditSink::None, now).await
+            }
+        }
+    };
+
+    match result {
+        Ok(bytes) => {
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!("{}", serde_json::json!({ "bytes": bytes, "written": true }));
+                }
+                OutputFormat::Table => {
+                    // Never echo the content back.
+                    println!("✓ clipboard updated ({bytes} bytes)");
+                }
+            }
+            Ok(())
+        }
+        Err(e) => anyhow::bail!("clipboard write denied: {e}"),
     }
 }
 

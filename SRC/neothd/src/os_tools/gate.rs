@@ -38,6 +38,23 @@ pub enum OsGateError {
     /// binary vanished between resolution and spawn, exec perms, ENOMEM, …).
     #[error("OS app launch failed after gate passed: {0}")]
     LaunchFailed(String),
+    /// PC-01 clipboard slice: the OS clipboard backend could not be opened —
+    /// almost always a headless host with no display/clipboard server. The
+    /// action is gated + audited (`0xBD`) exactly like any other refusal; this
+    /// just distinguishes "policy refused" from "no backend here".
+    #[error("OS clipboard backend unavailable (headless / no display?): {0}")]
+    ClipboardUnavailable(String),
+    /// PC-01 clipboard slice: a clipboard WRITE was refused because its content
+    /// contains a newline/CR — the terminal auto-execute precondition of a
+    /// pastejacking attack — and `tools.os.clipboard.allow_newlines_in_write` is
+    /// off (the default). Fires structurally, BEFORE the autonomy gate.
+    #[error("OS clipboard write denied (pastejacking guard): {0}")]
+    PastejackingPattern(String),
+    /// PC-01 clipboard slice: the clipboard content read back exceeds
+    /// `max_clipboard_read_bytes`. Surfaced as a refusal (no oversize content is
+    /// returned to the caller).
+    #[error("OS clipboard read denied: {0}")]
+    ReadTooLarge(String),
 }
 
 /// Where a gated OS-tool action sends its WAL audit frame. Replaces the old
@@ -309,6 +326,191 @@ pub async fn launch_os_app(
     }
 }
 
+/// Characters that act as a LINE TERMINATOR in a terminal — the AUTO-EXECUTE
+/// precondition a pastejacking clipboard write needs. Beyond ASCII `\n`/`\r`
+/// this includes NEL (U+0085), LINE SEPARATOR (U+2028), and PARAGRAPH SEPARATOR
+/// (U+2029), which some terminals also honour and whose UTF-8 encodings contain
+/// no 0x0A/0x0D byte (so a `bytes()`-level scan would miss them).
+#[cfg(feature = "os-clipboard")]
+fn is_clipboard_line_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{0085}' | '\u{2028}' | '\u{2029}')
+}
+
+/// PC-01 (clipboard slice) — the complete gated clipboard READ. Layers, in
+/// order: (-1) runtime kill-switches (`clipboard.enabled` + `read_enabled`),
+/// (2) autonomy gate (`OsClipboardRead`: Strict deny / Standard + Elevated
+/// confirm ⇒ fail-closed here / Full allow), (1) open the backend (graceful on
+/// headless), (0) size cap on the value read back. Every refusal AND the success
+/// emit `0xBC`/`0xBD` carrying ONLY `{op, bytes|reason, ts_unix}` — the clipboard
+/// CONTENT is never in any frame, log, or error. Returns the text on success.
+#[cfg(feature = "os-clipboard")]
+pub async fn read_os_clipboard(
+    cfg: &crate::config::ClipboardConfig,
+    autonomy: AutonomyLevel,
+    sink: AuditSink<'_>,
+    now_unix: i64,
+) -> Result<String, OsGateError> {
+    // Layer -1 — runtime kill-switches (master + read sub-toggle). Fail-closed,
+    // and a disabled surface NEVER touches the clipboard backend.
+    if !cfg.enabled {
+        let reason = "clipboard disabled (freedom.yaml::tools.os.clipboard.enabled=false)";
+        emit_clipboard_denied(sink, "read", reason, now_unix).await;
+        return Err(OsGateError::Denied(reason.into()));
+    }
+    if !cfg.read_enabled {
+        let reason =
+            "clipboard read disabled (freedom.yaml::tools.os.clipboard.read_enabled=false)";
+        emit_clipboard_denied(sink, "read", reason, now_unix).await;
+        return Err(OsGateError::Denied(reason.into()));
+    }
+    // Layer 2 — autonomy gate, BEFORE touching the backend: a denied read must
+    // never open the clipboard.
+    match evaluate(&Action::OsClipboardRead, autonomy) {
+        Decision::Allow => {}
+        Decision::Deny(reason) => {
+            emit_clipboard_denied(sink, "read", &reason, now_unix).await;
+            return Err(OsGateError::Denied(reason));
+        }
+        Decision::Confirm(reason) => {
+            emit_clipboard_denied(sink, "read", &format!("confirm-required: {reason}"), now_unix)
+                .await;
+            return Err(OsGateError::ConfirmRequired(reason));
+        }
+    }
+    // Layer 1 — open the backend + read. Graceful on headless / no-display. The
+    // value is held in a `Zeroizing` buffer so a clipboard SECRET that the size
+    // cap (or any error below) then rejects is WIPED from the heap on drop rather
+    // than lingering in freed memory.
+    let text = match crate::os_tools::clipboard::read_clipboard_text() {
+        Ok(t) => zeroize::Zeroizing::new(t),
+        Err(e) => {
+            emit_clipboard_denied(sink, "read", "clipboard-backend-unavailable", now_unix).await;
+            return Err(OsGateError::ClipboardUnavailable(e.to_string()));
+        }
+    };
+    // Layer 0 (post-read) — size cap: never surface an oversize clipboard value.
+    // The WAL reason is a STATIC tag; the byte-count detail lives only in the
+    // returned error, never in the audit frame. (`text` wipes on the early drop.)
+    if text.len() > cfg.max_clipboard_read_bytes {
+        emit_clipboard_denied(sink, "read", "read-too-large", now_unix).await;
+        return Err(OsGateError::ReadTooLarge(format!(
+            "clipboard content {} bytes exceeds max_clipboard_read_bytes {}",
+            text.len(),
+            cfg.max_clipboard_read_bytes
+        )));
+    }
+    // Layer 3 — audit (byte COUNT only — content never in the frame) + return.
+    // The returned copy is the operator's (they invoked the read); the backend
+    // buffer (`text`) wipes on drop at the end of this function.
+    emit_clipboard_access(sink, "read", text.len(), now_unix).await;
+    Ok(text.to_string())
+}
+
+/// PC-01 (clipboard slice) — the complete gated clipboard WRITE. Layers: (-1)
+/// kill-switches (`enabled` + `write_enabled`), (0) size cap, (0b) pastejacking
+/// newline guard (STRUCTURAL — fires at EVERY autonomy level, even Full, unless
+/// `allow_newlines_in_write`), (2) autonomy gate (`OsClipboardWrite`: Strict +
+/// Standard deny / Elevated confirm ⇒ fail-closed / Full allow), (1+3) write +
+/// audit. `0xBC`/`0xBD` carry only `{op, bytes|reason, ts_unix}` — never content.
+/// Returns the byte count written on success.
+#[cfg(feature = "os-clipboard")]
+pub async fn write_os_clipboard(
+    content: &str,
+    cfg: &crate::config::ClipboardConfig,
+    autonomy: AutonomyLevel,
+    sink: AuditSink<'_>,
+    now_unix: i64,
+) -> Result<usize, OsGateError> {
+    // Layer -1 — kill-switches.
+    if !cfg.enabled {
+        let reason = "clipboard disabled (freedom.yaml::tools.os.clipboard.enabled=false)";
+        emit_clipboard_denied(sink, "write", reason, now_unix).await;
+        return Err(OsGateError::Denied(reason.into()));
+    }
+    if !cfg.write_enabled {
+        let reason =
+            "clipboard write disabled (freedom.yaml::tools.os.clipboard.write_enabled=false)";
+        emit_clipboard_denied(sink, "write", reason, now_unix).await;
+        return Err(OsGateError::Denied(reason.into()));
+    }
+    // Layer 0 — size cap (cheap reject before anything else). STATIC WAL reason;
+    // the byte-count detail lives only in the returned error, never the frame.
+    if content.len() > cfg.max_clipboard_write_bytes {
+        emit_clipboard_denied(sink, "write", "write-too-large", now_unix).await;
+        return Err(OsGateError::WriteTooLarge(format!(
+            "content {} bytes exceeds max_clipboard_write_bytes {}",
+            content.len(),
+            cfg.max_clipboard_write_bytes
+        )));
+    }
+    // Layer 0a — control-character guard. ALWAYS rejected (independent of
+    // autonomy AND of `allow_newlines_in_write`): ESC + the other C0/C1 control
+    // characters have no legitimate place in clipboard TEXT and are the building
+    // blocks of terminal-escape / bracketed-paste-escape injections (e.g.
+    // `\x1b[201~…` closes paste mode so the trailing bytes auto-execute) that
+    // would otherwise sail straight past the line-terminator guard. Tab is the
+    // sole permitted control character; line terminators are handled in Layer 0b.
+    if let Some(c) = content
+        .chars()
+        .find(|&c| c.is_control() && c != '\t' && !is_clipboard_line_terminator(c))
+    {
+        emit_clipboard_denied(sink, "write", "control-character-in-write", now_unix).await;
+        return Err(OsGateError::PastejackingPattern(format!(
+            "control character U+{:04X} not permitted in a clipboard write \
+             (terminal-escape / paste-injection guard)",
+            c as u32
+        )));
+    }
+    // Layer 0b — pastejacking LINE-TERMINATOR guard. A line terminator is the
+    // terminal AUTO-EXECUTE precondition. This covers not only `\n`/`\r` but the
+    // Unicode line terminators NEL (U+0085), LS (U+2028), PS (U+2029) that some
+    // terminals also act on and whose UTF-8 encodings contain no 0x0A/0x0D byte
+    // (so a `bytes()`-only check would miss them). Rejected STRUCTURALLY at every
+    // autonomy level (audited) unless the operator opts in.
+    let has_line_terminator = content.chars().any(is_clipboard_line_terminator);
+    if has_line_terminator && !cfg.allow_newlines_in_write {
+        emit_clipboard_denied(sink, "write", "line-terminator-in-write", now_unix).await;
+        return Err(OsGateError::PastejackingPattern(
+            "content contains a line terminator (\\n / \\r / NEL / U+2028 / U+2029 — the terminal \
+             auto-execute precondition); set tools.os.clipboard.allow_newlines_in_write=true to \
+             permit multi-line writes"
+                .into(),
+        ));
+    }
+    // Layer 2 — autonomy gate.
+    match evaluate(&Action::OsClipboardWrite, autonomy) {
+        Decision::Allow => {}
+        Decision::Deny(reason) => {
+            emit_clipboard_denied(sink, "write", &reason, now_unix).await;
+            return Err(OsGateError::Denied(reason));
+        }
+        Decision::Confirm(reason) => {
+            emit_clipboard_denied(sink, "write", &format!("confirm-required: {reason}"), now_unix)
+                .await;
+            return Err(OsGateError::ConfirmRequired(reason));
+        }
+    }
+    // Observability (Lens 3 advisory): a permitted multi-line write still carries
+    // pastejacking risk; surface it for the operator's audit trail.
+    if has_line_terminator {
+        tracing::warn!(
+            "OS clipboard write contains a line terminator (allow_newlines_in_write=true) — \
+             pastejacking risk acknowledged by config"
+        );
+    }
+    // Layer 1+3 — open the backend (graceful), write, audit (byte count only).
+    match crate::os_tools::clipboard::write_clipboard_text(content) {
+        Ok(()) => {
+            emit_clipboard_access(sink, "write", content.len(), now_unix).await;
+            Ok(content.len())
+        }
+        Err(e) => {
+            emit_clipboard_denied(sink, "write", "clipboard-backend-unavailable", now_unix).await;
+            Err(OsGateError::ClipboardUnavailable(e.to_string()))
+        }
+    }
+}
+
 async fn emit_launch(sink: AuditSink<'_>, program: &str, pid: u32, ts_unix: i64) {
     let payload = serde_json::to_vec(&serde_json::json!({
         "program": program,
@@ -386,6 +588,44 @@ async fn emit_denied(sink: AuditSink<'_>, path: &str, reason: &str, ts_unix: i64
     dispatch_frame(sink, EVENT_TYPE_OS_FILE_DENIED, payload).await;
 }
 
+/// PC-01 clipboard — success audit (`0xBC`). **CONTENT IS NEVER A PARAMETER** —
+/// only the operation (`read`/`write`) + the byte COUNT. This is the load-bearing
+/// no-exfil invariant: a clipboard frequently holds a just-copied secret, so the
+/// frame must carry metadata only.
+#[cfg(feature = "os-clipboard")]
+async fn emit_clipboard_access(sink: AuditSink<'_>, op: &str, bytes: usize, ts_unix: i64) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "op": op,
+        "bytes": bytes,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    dispatch_frame(
+        sink,
+        crate::wal::events::EVENT_TYPE_OS_CLIPBOARD_ACCESS,
+        payload,
+    )
+    .await;
+}
+
+/// PC-01 clipboard — denial audit (`0xBD`). `reason` is a policy/diagnostic
+/// string (+ byte counts) — NEVER the clipboard content.
+#[cfg(feature = "os-clipboard")]
+async fn emit_clipboard_denied(sink: AuditSink<'_>, op: &str, reason: &str, ts_unix: i64) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "op": op,
+        "reason": reason,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    dispatch_frame(
+        sink,
+        crate::wal::events::EVENT_TYPE_OS_CLIPBOARD_DENIED,
+        payload,
+    )
+    .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -399,6 +639,7 @@ mod tests {
             allowed_write_paths: vec![dir.to_path_buf()],
             max_write_bytes: 1024 * 1024,
             allowed_exec_paths: Vec::new(),
+            clipboard: crate::config::ClipboardConfig::default(),
         }
     }
 
@@ -457,6 +698,7 @@ mod tests {
             allowed_write_paths: vec![], // deny-all writes
             max_write_bytes: 1024,
             allowed_exec_paths: Vec::new(),
+            clipboard: crate::config::ClipboardConfig::default(),
         };
         let r = write_os_file(&dir.path().join("x.txt"), b"y", &cfg, AutonomyLevel::Full, AuditSink::None, 0)
             .await;
@@ -475,6 +717,7 @@ mod tests {
             allowed_write_paths: vec![dir.path().to_path_buf()],
             max_write_bytes: 4,
             allowed_exec_paths: Vec::new(),
+            clipboard: crate::config::ClipboardConfig::default(),
         };
         let r = write_os_file(
             &dir.path().join("x.txt"),
@@ -511,6 +754,7 @@ mod tests {
             allowed_write_paths: vec![],
             max_write_bytes: 1024,
             allowed_exec_paths: Vec::new(),
+            clipboard: crate::config::ClipboardConfig::default(),
         };
         let r = read_os_file(&f, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await;
         assert!(matches!(
@@ -609,6 +853,7 @@ mod tests {
             allowed_write_paths: vec![],
             max_write_bytes: 1024,
             allowed_exec_paths: Vec::new(),
+            clipboard: crate::config::ClipboardConfig::default(),
         };
         let segdir = tempdir().unwrap();
         let seg = segdir.path().join("000001.wal");
@@ -652,6 +897,7 @@ mod tests {
             allowed_write_paths: Vec::new(),
             max_write_bytes: 1024,
             allowed_exec_paths: vec![exe.to_path_buf()],
+            clipboard: crate::config::ClipboardConfig::default(),
         }
     }
 
@@ -762,5 +1008,267 @@ mod tests {
         assert_eq!(frame.header.event_type, EVENT_TYPE_OS_APP_LAUNCH);
         let v: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
         assert!(v["pid"].as_u64().unwrap() > 0);
+    }
+
+    // ── PC-01 clipboard gate (feature `os-clipboard`) ────────────────────────
+    #[cfg(feature = "os-clipboard")]
+    mod clipboard_tests {
+        use crate::config::ClipboardConfig;
+        use crate::os_tools::gate::{read_os_clipboard, write_os_clipboard, AuditSink, OsGateError};
+        use crate::permissions::AutonomyLevel;
+        // `emit_clipboard_access` is private to the gate module — reachable from
+        // this descendant via `super::super::`.
+        use super::super::emit_clipboard_access;
+
+        fn clip_cfg(enabled: bool, read: bool, write: bool) -> ClipboardConfig {
+            ClipboardConfig {
+                enabled,
+                read_enabled: read,
+                write_enabled: write,
+                max_clipboard_read_bytes: 4096,
+                max_clipboard_write_bytes: 4096,
+                allow_newlines_in_write: false,
+            }
+        }
+
+        #[tokio::test]
+        async fn master_switch_off_denies_both_even_at_full() {
+            let cfg = clip_cfg(false, true, true);
+            assert!(matches!(
+                read_os_clipboard(&cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                Err(OsGateError::Denied(_))
+            ));
+            assert!(matches!(
+                write_os_clipboard("x", &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                Err(OsGateError::Denied(_))
+            ));
+        }
+
+        #[tokio::test]
+        async fn read_sub_toggle_off_denies() {
+            let cfg = clip_cfg(true, false, true);
+            assert!(matches!(
+                read_os_clipboard(&cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                Err(OsGateError::Denied(_))
+            ));
+        }
+
+        #[tokio::test]
+        async fn write_sub_toggle_off_denies() {
+            let cfg = clip_cfg(true, true, false);
+            assert!(matches!(
+                write_os_clipboard("x", &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                Err(OsGateError::Denied(_))
+            ));
+        }
+
+        #[tokio::test]
+        async fn read_denied_at_strict() {
+            let cfg = clip_cfg(true, true, true);
+            assert!(matches!(
+                read_os_clipboard(&cfg, AutonomyLevel::Strict, AuditSink::None, 0).await,
+                Err(OsGateError::Denied(_))
+            ));
+        }
+
+        #[tokio::test]
+        async fn read_confirms_fail_closed_at_standard_and_elevated() {
+            let cfg = clip_cfg(true, true, true);
+            for lvl in [AutonomyLevel::Standard, AutonomyLevel::Elevated] {
+                assert!(
+                    matches!(
+                        read_os_clipboard(&cfg, lvl, AuditSink::None, 0).await,
+                        Err(OsGateError::ConfirmRequired(_))
+                    ),
+                    "read at {lvl:?} must fail closed (no TTY)"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn write_denied_at_strict_and_standard() {
+            let cfg = clip_cfg(true, true, true);
+            for lvl in [AutonomyLevel::Strict, AutonomyLevel::Standard] {
+                assert!(
+                    matches!(
+                        write_os_clipboard("x", &cfg, lvl, AuditSink::None, 0).await,
+                        Err(OsGateError::Denied(_))
+                    ),
+                    "write at {lvl:?} must Deny (stricter than app-launch)"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn write_confirms_fail_closed_at_elevated() {
+            let cfg = clip_cfg(true, true, true);
+            assert!(matches!(
+                write_os_clipboard("x", &cfg, AutonomyLevel::Elevated, AuditSink::None, 0).await,
+                Err(OsGateError::ConfirmRequired(_))
+            ));
+        }
+
+        #[tokio::test]
+        async fn write_rejects_newline_structurally_even_at_full() {
+            // Layer 0b fires BEFORE the autonomy gate + the backend.
+            let cfg = clip_cfg(true, true, true);
+            assert!(matches!(
+                write_os_clipboard("rm -rf /\n", &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                Err(OsGateError::PastejackingPattern(_))
+            ));
+            assert!(
+                matches!(
+                    write_os_clipboard("a\rb", &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                    Err(OsGateError::PastejackingPattern(_))
+                ),
+                "a carriage return is also an auto-execute precondition"
+            );
+        }
+
+        #[tokio::test]
+        async fn write_rejects_unicode_line_terminators() {
+            // NEL (U+0085), LS (U+2028), PS (U+2029) — none contain 0x0A/0x0D, so a
+            // bytes()-only guard would have missed them. All are auto-execute
+            // preconditions and must be refused (allow_newlines off).
+            let cfg = clip_cfg(true, true, true);
+            for bad in ["a\u{0085}b", "a\u{2028}b", "a\u{2029}b"] {
+                assert!(
+                    matches!(
+                        write_os_clipboard(bad, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                        Err(OsGateError::PastejackingPattern(_))
+                    ),
+                    "unicode line terminator in {bad:?} must be rejected"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn write_rejects_control_chars_even_when_newlines_allowed() {
+            // ESC (bracketed-paste escape) + NUL + BEL are ALWAYS refused, even
+            // with allow_newlines_in_write=true — controls bypass the line-terminator
+            // guard and have no legitimate clipboard-text use.
+            let mut cfg = clip_cfg(true, true, true);
+            cfg.allow_newlines_in_write = true;
+            for bad in ["benign\x1b[201~rm -rf /", "a\x00b", "ding\x07"] {
+                assert!(
+                    matches!(
+                        write_os_clipboard(bad, &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                        Err(OsGateError::PastejackingPattern(_))
+                    ),
+                    "control char in {bad:?} must be rejected even with newlines allowed"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn write_allows_tab_through_the_guard() {
+            // Tab is the sole permitted control character — it clears the guard +
+            // autonomy and reaches the backend (Ok on a desktop, ClipboardUnavailable
+            // on headless CI — both prove the guard did not reject it).
+            let cfg = clip_cfg(true, true, true);
+            let w = write_os_clipboard("col1\tcol2", &cfg, AutonomyLevel::Full, AuditSink::None, 0)
+                .await;
+            assert!(
+                matches!(w, Ok(_) | Err(OsGateError::ClipboardUnavailable(_))),
+                "a tab must pass the control-char guard (got {w:?})"
+            );
+        }
+
+        #[tokio::test]
+        async fn write_too_large_rejected_before_backend() {
+            let mut cfg = clip_cfg(true, true, true);
+            cfg.max_clipboard_write_bytes = 4;
+            assert!(matches!(
+                write_os_clipboard("way too long", &cfg, AutonomyLevel::Full, AuditSink::None, 0).await,
+                Err(OsGateError::WriteTooLarge(_))
+            ));
+        }
+
+        #[tokio::test]
+        async fn newline_opted_in_passes_guard() {
+            // With allow_newlines + Full + enabled, the gate clears the pastejack
+            // guard + autonomy and reaches the backend. On a desktop the write
+            // succeeds; on headless CI the backend is unavailable. BOTH outcomes
+            // prove the guard did NOT reject it.
+            let mut cfg = clip_cfg(true, true, true);
+            cfg.allow_newlines_in_write = true;
+            let w = write_os_clipboard("line1\nline2", &cfg, AutonomyLevel::Full, AuditSink::None, 0)
+                .await;
+            assert!(
+                matches!(w, Ok(_) | Err(OsGateError::ClipboardUnavailable(_))),
+                "opted-in multi-line write must pass the pastejack guard (got {w:?})"
+            );
+        }
+
+        /// The load-bearing no-exfil invariant: NO clipboard frame ever carries
+        /// content. Drive a denied write (carrying a secret in the `content` arg)
+        /// + a direct access emit through a real WAL writer, then assert no
+        /// content-bearing key — and the literal secret — appears in any frame.
+        #[tokio::test]
+        async fn wal_frame_never_contains_content() {
+            use crate::wal::events::{
+                EVENT_TYPE_OS_CLIPBOARD_ACCESS, EVENT_TYPE_OS_CLIPBOARD_DENIED,
+            };
+            use crate::wal::frame::decode_frame;
+            use crate::wal::segment_header::SEGMENT_HEADER_LEN;
+            use crate::wal::spawn as wal_spawn;
+
+            const SECRET: &str = "SUPER-SECRET-PASSWORD-hunter2";
+            let segdir = tempfile::tempdir().unwrap();
+            let seg = segdir.path().join("000001.wal");
+            let (writer, join) = wal_spawn(seg.clone()).unwrap();
+            // (1) Denied write (write_enabled=false) → 0xBD, secret in the arg.
+            let _ = write_os_clipboard(
+                SECRET,
+                &clip_cfg(true, true, false),
+                AutonomyLevel::Full,
+                AuditSink::Writer(&writer),
+                0,
+            )
+            .await;
+            // (2) A FULL write of the secret that clears every gate + reaches the
+            //     backend → emits either 0xBC access (byte count) on a desktop or
+            //     0xBD "clipboard-backend-unavailable" on headless CI. Either way
+            //     the SECRET must NOT appear in the frame.
+            let _ = write_os_clipboard(
+                SECRET,
+                &clip_cfg(true, true, true),
+                AutonomyLevel::Full,
+                AuditSink::Writer(&writer),
+                0,
+            )
+            .await;
+            // (3) A direct success-path access emit (byte count only).
+            emit_clipboard_access(AuditSink::Writer(&writer), "read", SECRET.len(), 0).await;
+            drop(writer);
+            join.await.unwrap();
+
+            let bytes = tokio::fs::read(&seg).await.unwrap();
+            let mut cursor = SEGMENT_HEADER_LEN;
+            let mut clip_frames = 0;
+            while cursor < bytes.len() {
+                let Ok(frame) = decode_frame(&bytes[cursor..]) else {
+                    break;
+                };
+                let et = frame.header.event_type;
+                if et == EVENT_TYPE_OS_CLIPBOARD_ACCESS || et == EVENT_TYPE_OS_CLIPBOARD_DENIED {
+                    let v: serde_json::Value = serde_json::from_slice(frame.payload).unwrap();
+                    for forbidden in ["content", "text", "data", "preview", "value", "payload"] {
+                        assert!(
+                            v.get(forbidden).is_none(),
+                            "clipboard frame leaked a content key '{forbidden}': {v}"
+                        );
+                    }
+                    let raw = String::from_utf8_lossy(frame.payload);
+                    assert!(
+                        !raw.contains(SECRET),
+                        "clipboard secret leaked into the WAL frame: {raw}"
+                    );
+                    clip_frames += 1;
+                }
+                cursor += frame.header.total_len as usize;
+            }
+            assert!(clip_frames >= 3, "expected >=3 clipboard frames, got {clip_frames}");
+        }
     }
 }

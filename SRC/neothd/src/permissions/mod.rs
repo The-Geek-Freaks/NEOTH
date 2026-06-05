@@ -179,6 +179,25 @@ pub enum Action {
         /// Canonical, exec-allowlist-validated program path.
         program: std::path::PathBuf,
     },
+    /// PC-01 (clipboard slice): READ the OS clipboard through the gated OS-tool
+    /// surface. Unlike `OsFileRead`, the clipboard has NO path-allowlist to
+    /// scope it — it is an ambient secret store, so any read can capture the
+    /// most-recent password/token the operator copied. It is therefore gated
+    /// STRICTER than `OsFileRead` (Standard=Allow): Strict denies, Standard AND
+    /// Elevated confirm (no TTY ⇒ fail-closed), only Full allows — the same
+    /// posture as `OsAppLaunch`. The `tools.os.clipboard.{enabled,read_enabled}`
+    /// runtime kill-switches gate it further upstream (in `os_tools::gate`).
+    OsClipboardRead,
+    /// PC-01 (clipboard slice): WRITE the OS clipboard through the gated OS-tool
+    /// surface. A clipboard write is a PASSIVE INJECTION vector (pastejacking):
+    /// the operator may paste attacker-chosen content into a shell WITHOUT
+    /// inspecting it, so a malicious write is a direct shell-command-injection
+    /// analogue. It is gated STRICTER than `OsAppLaunch`: Strict AND Standard
+    /// deny (a passive injection needs no per-write confirm to be dangerous),
+    /// Elevated confirms (no TTY ⇒ fail-closed), only Full allows. The gate also
+    /// structurally rejects newline-bearing content (the terminal auto-execute
+    /// precondition) unless `tools.os.clipboard.allow_newlines_in_write`.
+    OsClipboardWrite,
     /// SL-01: accept a task DELEGATED by a cluster master and run it through
     /// this node's local provider. The peer has already authenticated (Noise +
     /// cluster_key proof) and been operator-paired; this gate is the autonomy
@@ -346,6 +365,12 @@ pub fn lease_scope_for(action: &Action) -> Option<lease::LeaseScope> {
         // coarse scope models it and the blast radius is the whole machine, so
         // it stays gate-only and is never lease-unlockable.
         | Action::OsAppLaunch { .. }
+        // PC-01 clipboard: an UNSCOPED ambient store (read) + a passive injection
+        // sink (write) — no coarse lease scope models either, and a `Read` lease
+        // must NEVER silently unlock arbitrary clipboard content for a delegated
+        // plugin/peer. Gate-only, never lease-unlockable.
+        | Action::OsClipboardRead
+        | Action::OsClipboardWrite
         // TD-02 external task write: no coarse lease scope models it yet; the
         // operator confirms each (or runs at Elevated+) — gate-only for now.
         | Action::ExternalTaskWrite { .. } => None,
@@ -409,6 +434,12 @@ fn evaluate_strict(action: &Action) -> Decision {
             "strict: launching {} denied (arbitrary program execution)",
             program.display()
         )),
+        Action::OsClipboardRead => Decision::Deny(
+            "strict: OS clipboard read denied (unscoped ambient secret store)".into(),
+        ),
+        Action::OsClipboardWrite => Decision::Deny(
+            "strict: OS clipboard write denied (pastejacking injection vector)".into(),
+        ),
         Action::ExternalTaskWrite { provider, action: act } => Decision::Confirm(format!(
             "strict: external task {act} on {provider} requires confirm"
         )),
@@ -474,6 +505,22 @@ fn evaluate_standard(action: &Action) -> Decision {
             "standard: launching {} requires confirm (program execution)",
             program.display()
         )),
+        // Stricter than OsFileRead (Standard=Allow): the clipboard has NO
+        // path-allowlist to scope it, so a read at Standard could silently
+        // capture a just-copied secret. Confirm ⇒ no TTY ⇒ suppressed until Full.
+        Action::OsClipboardRead => Decision::Confirm(
+            "standard: OS clipboard read requires confirm (unscoped secret-capture risk; \
+             no TTY ⇒ suppressed until Full)"
+                .into(),
+        ),
+        // Stricter than OsAppLaunch (Standard=Confirm): pastejacking is a PASSIVE
+        // injection — the operator may paste without inspecting — so a clipboard
+        // write is denied outright at Standard, not merely confirm-gated.
+        Action::OsClipboardWrite => Decision::Deny(
+            "standard: OS clipboard write denied (passive pastejacking injection \
+             vector — stricter than program launch)"
+                .into(),
+        ),
         // The creds are the operator's own + they typed the command, but a
         // network MUTATION still confirms at Standard (a TTY prompt or `--yes`
         // satisfies it) so an accidental write to the wrong list is caught.
@@ -547,6 +594,21 @@ fn evaluate_elevated(action: &Action) -> Decision {
             "elevated: launching {} requires confirm (program execution)",
             program.display()
         )),
+        // The clipboard is UNSCOPED: an operator at Elevated has not thereby
+        // granted scoped clipboard consent the way an allowed_path grants scoped
+        // file-read. So both directions still Confirm at Elevated (no TTY ⇒
+        // suppressed until Full) — mirroring OsAppLaunch's highest-blast-radius
+        // caution. Read = secret-capture, Write = pastejacking.
+        Action::OsClipboardRead => Decision::Confirm(
+            "elevated: OS clipboard read requires confirm (unscoped secret-capture; \
+             no TTY ⇒ suppressed until Full)"
+                .into(),
+        ),
+        Action::OsClipboardWrite => Decision::Confirm(
+            "elevated: OS clipboard write requires confirm (pastejacking injection; \
+             no TTY ⇒ suppressed until Full)"
+                .into(),
+        ),
         // Elevated = the operator opted into autonomous behaviour; writing to
         // their own task service proceeds (the creds are the operator's).
         Action::ExternalTaskWrite { .. } => Decision::Allow,
@@ -617,6 +679,12 @@ fn evaluate_full(action: &Action) -> Decision {
             "full: daemon self-replace {from} -> {to} from {repo} requires confirm — \
              highest blast radius (RCE surface), never auto-allowed"
         )),
+        // PC-01 clipboard: EXPLICIT (not via the wildcard) per this fn's own
+        // "add an arm when in doubt" guidance — clipboard write is a pastejacking
+        // vector. At Full the operator opted into unattended autonomy; the runtime
+        // kill-switches (`tools.os.clipboard.{enabled,read_enabled,write_enabled}`)
+        // + the structural newline guard are the remaining gates in `os_tools::gate`.
+        Action::OsClipboardRead | Action::OsClipboardWrite => Decision::Allow,
         // Full = trust the operator's other gates (policy.yaml allowlist,
         // hardware-2FA at level-set time). Everything else allowed —
         // INCLUDING the exec-capable actions that confirm at every lower level
@@ -653,6 +721,68 @@ mod tests {
         assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
         // Unleasable for now (gate-only).
         assert!(lease_scope_for(&a).is_none());
+    }
+
+    // ── PC-01 clipboard autonomy mapping ─────────────────────────────────────
+
+    #[test]
+    fn clipboard_read_ladder() {
+        let a = Action::OsClipboardRead;
+        assert!(matches!(evaluate(&a, AutonomyLevel::Strict), Decision::Deny(_)));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Standard), Decision::Confirm(_)));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Confirm(_)));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
+    }
+
+    #[test]
+    fn clipboard_write_ladder() {
+        let a = Action::OsClipboardWrite;
+        assert!(matches!(evaluate(&a, AutonomyLevel::Strict), Decision::Deny(_)));
+        // Stricter than write/launch: Standard DENIES (not Confirm) — pastejacking.
+        assert!(matches!(evaluate(&a, AutonomyLevel::Standard), Decision::Deny(_)));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Elevated), Decision::Confirm(_)));
+        assert!(matches!(evaluate(&a, AutonomyLevel::Full), Decision::Allow));
+    }
+
+    #[test]
+    fn clipboard_read_is_stricter_than_file_read() {
+        // OsFileRead Allows at Standard (the allowlist is the scoped opt-in);
+        // the unscoped clipboard read only Confirms (fail-closed) at Standard.
+        assert!(matches!(
+            evaluate(&Action::OsClipboardRead, AutonomyLevel::Standard),
+            Decision::Confirm(_)
+        ));
+        assert!(matches!(
+            evaluate(
+                &Action::OsFileRead { path: std::path::PathBuf::from("/x") },
+                AutonomyLevel::Standard
+            ),
+            Decision::Allow
+        ));
+    }
+
+    #[test]
+    fn clipboard_write_stricter_than_app_launch_at_standard() {
+        // App-launch Confirms at Standard; clipboard write DENIES (pastejacking
+        // is a passive injection that needs no confirm to be dangerous).
+        assert!(matches!(
+            evaluate(&Action::OsClipboardWrite, AutonomyLevel::Standard),
+            Decision::Deny(_)
+        ));
+        assert!(matches!(
+            evaluate(
+                &Action::OsAppLaunch { program: std::path::PathBuf::from("/x") },
+                AutonomyLevel::Standard
+            ),
+            Decision::Confirm(_)
+        ));
+    }
+
+    #[test]
+    fn clipboard_actions_are_unleasable() {
+        // A Read lease must NEVER silently unlock the unscoped clipboard.
+        assert!(lease_scope_for(&Action::OsClipboardRead).is_none());
+        assert!(lease_scope_for(&Action::OsClipboardWrite).is_none());
     }
 
     #[test]

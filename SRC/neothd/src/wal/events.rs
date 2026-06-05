@@ -1134,6 +1134,25 @@ pub const EVENT_TYPE_PROFILE_DRIFT_ALERT: u8 = 0xBA;
 /// prompt itself is NOT stored (hash only; no message-content leak).
 pub const EVENT_TYPE_OPERATOR_FEEDBACK: u8 = 0xBB;
 
+/// `0xBC OS_CLIPBOARD_ACCESS` — PC-01 (clipboard slice). A gated OS clipboard
+/// READ or WRITE succeeded through `os_tools::gate`. **Band note:** clipboard is
+/// an OS-tool action (sibling of `0xA8 OS_FILE_READ` / `0xAC OS_APP_LAUNCH`) but
+/// the 0xA permissions band is FULL (0xAE/0xAF = AUDIT_RPC), so it overflows into
+/// the reserved 0xB0..=0xDF space here — the same "semantically-adjacent
+/// overflow" precedent as `0x67 CHANNEL_SEND` (channels band full → council band).
+/// Payload (JSON): `{ op: "read" | "write", bytes, ts_unix }`. **`bytes` is a
+/// COUNT only — the clipboard CONTENT is NEVER recorded** (a clipboard frequently
+/// holds a just-copied password/token; logging it would be the exact exfil this
+/// gate exists to prevent).
+pub const EVENT_TYPE_OS_CLIPBOARD_ACCESS: u8 = 0xBC;
+/// `0xBD OS_CLIPBOARD_DENIED` — PC-01 (clipboard slice). A gated OS clipboard
+/// read/write was REFUSED: a runtime kill-switch (`tools.os.clipboard.*`), the
+/// autonomy gate, the size cap, the pastejacking newline guard, or an
+/// unavailable backend (headless / no display). Same 0xB-overflow band note as
+/// `0xBC`. Payload (JSON): `{ op: "read" | "write", reason, ts_unix }` — `reason`
+/// is a policy/diagnostic string + byte count, NEVER clipboard content.
+pub const EVENT_TYPE_OS_CLIPBOARD_DENIED: u8 = 0xBD;
+
 // ---- 0xF0..=0xFF  Operator / system ---------------------------------------
 
 /// Daemon refused a WAL write because `~/.neoth/` exceeded the configured
@@ -1690,6 +1709,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("audit_rpc_accept", EVENT_TYPE_AUDIT_RPC_ACCEPT),
     ("audit_rpc_reject", EVENT_TYPE_AUDIT_RPC_REJECT),
     ("operator_feedback", EVENT_TYPE_OPERATOR_FEEDBACK),
+    ("os_clipboard_access", EVENT_TYPE_OS_CLIPBOARD_ACCESS),
+    ("os_clipboard_denied", EVENT_TYPE_OS_CLIPBOARD_DENIED),
     (
         "eval_critical_divergence",
         EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE,
@@ -2028,6 +2049,11 @@ const _: () = {
         [(EVENT_TYPE_PROFILE_DRIFT_ALERT < 0xB0 || EVENT_TYPE_PROFILE_DRIFT_ALERT > 0xBF) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_OPERATOR_FEEDBACK < 0xB0 || EVENT_TYPE_OPERATOR_FEEDBACK > 0xBF) as usize];
+    // PC-01 clipboard — OS-tool overflow from the full 0xA band into reserved 0xB space.
+    let _ = [(); 1][(EVENT_TYPE_OS_CLIPBOARD_ACCESS < 0xB0
+        || EVENT_TYPE_OS_CLIPBOARD_ACCESS > 0xBF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_OS_CLIPBOARD_DENIED < 0xB0
+        || EVENT_TYPE_OS_CLIPBOARD_DENIED > 0xBF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_MCP_TOOL_CALLED < 0xC0 || EVENT_TYPE_MCP_TOOL_CALLED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PLUGIN_LOADED < 0xC0 || EVENT_TYPE_PLUGIN_LOADED > 0xCF) as usize];
@@ -2301,6 +2327,8 @@ mod tests {
             ),
             ("PROFILE_DRIFT_ALERT", EVENT_TYPE_PROFILE_DRIFT_ALERT),
             ("OPERATOR_FEEDBACK", EVENT_TYPE_OPERATOR_FEEDBACK),
+            ("OS_CLIPBOARD_ACCESS", EVENT_TYPE_OS_CLIPBOARD_ACCESS),
+            ("OS_CLIPBOARD_DENIED", EVENT_TYPE_OS_CLIPBOARD_DENIED),
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
@@ -2443,6 +2471,17 @@ mod tests {
         ] {
             assert!(needs_immediate_sync(code));
         }
+    }
+
+    #[test]
+    fn clipboard_audit_frames_are_durable() {
+        // PC-01: a clipboard ACCESS (a read that captured a secret, or a write)
+        // and a DENIED (a refused pastejack / policy refusal) are security-relevant
+        // audit anchors — they MUST survive a crash. `needs_immediate_sync` is a
+        // deny-list (absent ⇒ immediate fsync); this pins that 0xBC/0xBD are NEVER
+        // added to the batchable list.
+        assert!(needs_immediate_sync(EVENT_TYPE_OS_CLIPBOARD_ACCESS));
+        assert!(needs_immediate_sync(EVENT_TYPE_OS_CLIPBOARD_DENIED));
     }
 
     #[test]
