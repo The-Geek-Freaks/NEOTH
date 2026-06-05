@@ -550,6 +550,21 @@ fn main() -> Result<()> {
         });
     });
 
+    // SPEC-05 step5c — operator picked a response style: apply it + refresh so
+    // the active marker moves immediately.
+    let weak_profile_apply = window.as_weak();
+    window.on_profile_preset_apply_clicked(move |name| {
+        let status = apply_profile_preset_via_subprocess(&name);
+        let presets = fetch_profile_presets();
+        let weak = weak_profile_apply.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_status_line(status.into());
+                apply_profile_presets(&w, presets);
+            }
+        });
+    });
+
     window.on_open_license_url(|| {
         let url = "https://github.com/owner/neoth/blob/main/LICENSE";
         let result = if cfg!(target_os = "windows") {
@@ -631,6 +646,7 @@ fn main() -> Result<()> {
         let trust = fetch_trust_snapshot();
         let hardware = fetch_hardware_snapshot();
         let council_budget = fetch_council_budget();
+        let profile_presets = fetch_profile_presets();
         let hemis = fetch_hemispheres_snapshot();
         let provider_ids = fetch_provider_ids();
         let skills = fetch_skills();
@@ -645,6 +661,7 @@ fn main() -> Result<()> {
                 apply_trust(&w, trust);
                 apply_hardware(&w, hardware);
                 apply_council_budget(&w, council_budget);
+                apply_profile_presets(&w, profile_presets);
                 apply_hemispheres(&w, hemis);
                 apply_provider_ids(&w, provider_ids);
                 apply_skills(&w, skills);
@@ -1909,6 +1926,64 @@ fn apply_presets(window: &MainWindow, presets: Vec<panel_logic::PresetEntry>) {
         })
         .collect();
     window.set_preset_list(ModelRc::new(VecModel::from(rows)));
+}
+
+/// SPEC-05 step5c — fetch the behavioural-profile presets via
+/// `neoth profile preset list --output json`. PARSE is unit-tested.
+fn fetch_profile_presets() -> Vec<panel_logic::ProfilePresetRow> {
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("profile")
+        .arg("preset")
+        .arg("list")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_profile_presets(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// SPEC-05 step5c — push the behavioural-profile list onto the MainWindow.
+fn apply_profile_presets(window: &MainWindow, rows: Vec<panel_logic::ProfilePresetRow>) {
+    use slint::{ModelRc, VecModel};
+    let model: Vec<ProfilePresetRow> = rows
+        .into_iter()
+        .map(|p| ProfilePresetRow {
+            name: p.name.into(),
+            description: p.description.into(),
+            recommended: p.recommended,
+            active: p.active,
+        })
+        .collect();
+    window.set_profile_preset_list(ModelRc::new(VecModel::from(model)));
+}
+
+/// SPEC-05 step5c — activate the operator's chosen response style via
+/// `neoth profile preset apply <name>`.
+fn apply_profile_preset_via_subprocess(name: &str) -> String {
+    let Some(bin) = which_neothd() else {
+        return "profile preset: neothd binary not found".to_string();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("profile")
+        .arg("preset")
+        .arg("apply")
+        .arg(name)
+        .output()
+    {
+        Ok(o) if o.status.success() => format!("response style → {name}"),
+        Ok(o) => format!(
+            "profile preset apply failed: {}",
+            String::from_utf8_lossy(&o.stderr).trim()
+        ),
+        Err(e) => format!("profile preset apply could not start: {e}"),
+    }
 }
 
 /// SPEC-06 — fetch the implemented provider ids via `neoth provider list

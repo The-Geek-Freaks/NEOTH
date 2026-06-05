@@ -31,6 +31,15 @@ export struct PresetRow {
     active: bool,
 }
 
+// SPEC-05 step5c — one behavioural profile preset (LOWKEY/Formal/Deepdive/…)
+// for the interaction-register selector.
+export struct ProfilePresetRow {
+    name: string,
+    description: string,
+    recommended: bool,
+    active: bool,
+}
+
 export enum WizardStep {
     /// Very first screen the operator sees — pick between the GUI
     /// onboarding flow (this binary keeps running) or the CLI wizard
@@ -138,6 +147,9 @@ export component MainWindow inherits Window {
     // SPEC-05: structured preset list for the click-to-activate selector,
     // from `neoth preset list --json`.
     in property <[PresetRow]> preset-list: [];
+    // SPEC-05 step5c: behavioural-profile presets (LOWKEY/Formal/…) from
+    // `neoth profile preset list --json` — the operator's interaction register.
+    in property <[ProfilePresetRow]> profile-preset-list: [];
 
     // Pick #28 (12/10 polish): derive the step counter + label from
     // the active `WizardStep` so the top ProgressIndicator always
@@ -236,6 +248,9 @@ export component MainWindow inherits Window {
     /// `neoth preset activate <name>` (sets the active marker) + refreshes the
     /// list. `apply-active` then merges the active preset into freedom.yaml.
     callback preset-activate-clicked(string);
+    // SPEC-05 step5c: operator picked a behavioural profile — Rust runs
+    // `neoth profile preset apply <name>` + refreshes the list.
+    callback profile-preset-apply-clicked(string);
 
     // ── Chat surface state (Pick #33) ─────────────────────────────────
     /// Scrollback feed. Rust pushes ChatMessage rows as the daemon
@@ -612,6 +627,59 @@ export component MainWindow inherits Window {
                             label: "Apply active";
                             primary: false;
                             clicked => { root.preset-apply-clicked(); }
+                        }
+                    }
+                }
+            }
+            // SPEC-05 step5c — behavioural-profile selector: how NEOTH talks to
+            // you (casual / formal / deep-dive / tutor / opsec). Click to apply.
+            Card {
+                VerticalBox {
+                    padding: Theme.space-base;
+                    spacing: Theme.space-tight;
+                    Text {
+                        text: "RESPONSE STYLE";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        font-weight: Theme.weight-medium;
+                        letter-spacing: Theme.letter-spacing-tight;
+                        color: Theme.accent-green;
+                    }
+                    if root.profile-preset-list.length == 0: Text {
+                        text: "(start the daemon to choose a response style)";
+                        font-family: Theme.font-display;
+                        font-size: Theme.font-size-caption;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    for p in root.profile-preset-list: ta2 := TouchArea {
+                        height: 38px;
+                        clicked => { root.profile-preset-apply-clicked(p.name); }
+                        HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: p.active ? "●" : "○";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: p.active ? Theme.accent-green : Theme.text-muted;
+                                vertical-alignment: center;
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                Text {
+                                    text: p.name + (p.recommended ? "  (recommended)" : "");
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: ta2.has-hover ? Theme.accent-teal : Theme.text-primary;
+                                }
+                                Text {
+                                    text: p.description;
+                                    font-family: Theme.font-display;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-muted;
+                                    wrap: word-wrap;
+                                }
+                            }
                         }
                     }
                 }
