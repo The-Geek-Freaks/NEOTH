@@ -106,6 +106,28 @@ pub fn channel_send_denied_payload(
     .unwrap_or_default()
 }
 
+/// Build a `CHANNEL_EGRESS` payload for a send that was ATTEMPTED but did NOT
+/// reach the recipient (Meta API rejection or transport failure). Same
+/// metadata-only shape — hashed recipient, no body — plus `delivered: false`
+/// and a coarse `error_kind`. Without this, a rejected/failed send leaves no
+/// WAL trace at all, making it indistinguishable from a reply that never
+/// reached the Send verdict. PURE.
+pub fn channel_egress_failed_payload(
+    channel: &str,
+    recipient: &str,
+    error_kind: &str,
+    ts_unix: u64,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "channel": channel,
+        "to_hash": format!("{:016x}", xxhash_rust::xxh3::xxh3_64(recipient.as_bytes())),
+        "delivered": false,
+        "error_kind": error_kind,
+        "ts_unix": ts_unix,
+    }))
+    .unwrap_or_default()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -181,5 +203,23 @@ mod tests {
         assert_eq!(v["action"], "channel_send");
         assert_eq!(v["reason"], "strict: confirm");
         assert!(v.get("message_hash").is_none(), "no body field at all on a denial");
+    }
+
+    #[test]
+    fn failed_payload_hashes_recipient_marks_undelivered_no_body() {
+        let bytes =
+            channel_egress_failed_payload("whatsapp", "+4915112345678", "meta_api_error", 1700);
+        let s = String::from_utf8(bytes).unwrap();
+        // No phone number in the clear, and no body field ever.
+        assert!(!s.contains("+4915112345678"), "recipient phone leaked: {s}");
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["channel"], "whatsapp");
+        assert_eq!(v["delivered"], false);
+        assert_eq!(v["error_kind"], "meta_api_error");
+        assert!(v.get("message_hash").is_none(), "no body field on a failed send");
+        assert_eq!(
+            v["to_hash"],
+            format!("{:016x}", xxhash_rust::xxh3::xxh3_64("+4915112345678".as_bytes()))
+        );
     }
 }

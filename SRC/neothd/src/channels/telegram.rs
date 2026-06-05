@@ -382,12 +382,9 @@ async fn handle_one_message(
         Ok(payload) => payload,
         Err(e) => {
             tracing::warn!(error = %e, "Telegram attachment download failed");
-            let _ = bot
-                .send_message(
-                    msg.chat.id,
-                    format!("[NEOTH] could not download attachment: {e}"),
-                )
-                .await;
+            let notice = format!("[NEOTH] could not download attachment: {e}");
+            let _ = bot.send_message(msg.chat.id, notice.clone()).await;
+            audit_notice_egress(gate_writer.as_ref(), &msg.chat.id.to_string(), &notice).await;
             return Ok(());
         }
     };
@@ -401,12 +398,12 @@ async fn handle_one_message(
         // Sticker / location / poll / service event. Acknowledge so
         // the operator knows their message hit NEOTH but the type
         // isn't supported in v0.1.x.
-        bot.send_message(
-            msg.chat.id,
-            "[NEOTH] message kind not supported in v0.1.x (no text, no photo/voice/audio).",
-        )
-        .await
-        .context("Telegram sendMessage (unsupported-kind reply)")?;
+        let notice =
+            "[NEOTH] message kind not supported in v0.1.x (no text, no photo/voice/audio).";
+        bot.send_message(msg.chat.id, notice)
+            .await
+            .context("Telegram sendMessage (unsupported-kind reply)")?;
+        audit_notice_egress(gate_writer.as_ref(), &msg.chat.id.to_string(), notice).await;
         return Ok(());
     }
 
@@ -455,13 +452,41 @@ async fn handle_one_message(
             // Provider failure or WAL failure. Tell the operator something
             // went wrong without leaking internals.
             tracing::warn!(error = %e, "pipeline error for Telegram message");
-            bot.send_message(msg.chat.id, "[NEOTH] internal error; see daemon logs.")
+            let notice = "[NEOTH] internal error; see daemon logs.";
+            bot.send_message(msg.chat.id, notice)
                 .await
                 .context("Telegram sendMessage (error notice)")?;
+            audit_notice_egress(gate_writer.as_ref(), &msg.chat.id.to_string(), notice).await;
         }
     }
 
     Ok(())
+}
+
+/// Audit an out-of-pipeline error-notice send (attachment-failed /
+/// unsupported-kind / internal-error notices) so every external Telegram
+/// mutation leaves a metadata-only `CHANNEL_EGRESS` trail — even the ones that
+/// don't flow through the pipeline's `ChannelSend` gate. Recipient + body are
+/// HASHED (never the chat id or the text in the clear). Audit-only: these
+/// operator-facing notices are intentionally NOT gate-suppressed, so the
+/// operator still learns their message failed even at Strict autonomy.
+async fn audit_notice_egress(
+    gate_writer: Option<&crate::wal::writer::WalWriterHandle>,
+    chat_id: &str,
+    body: &str,
+) {
+    let Some(w) = gate_writer else {
+        return;
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload =
+        crate::channels::send_gate::channel_egress_payload("telegram", chat_id, body, None, false, now);
+    let header =
+        crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS, &payload);
+    let _ = w.append(header, payload).await;
 }
 
 /// SD-03: handle a Telegram *edited* message. Audit-only — builds an

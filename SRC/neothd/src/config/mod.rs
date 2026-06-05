@@ -1459,6 +1459,16 @@ pub struct MediaConfig {
     /// that CANNOT be audited (no WAL sink available) is REFUSED rather than run
     /// best-effort. Default `false` — the normal posture audits best-effort; flip
     /// on when every cloud-media call must be provable or not happen at all.
+    ///
+    /// COVERAGE NOTE: this flag is enforced by the audited wrappers
+    /// (`media::stt_provider::transcribe_and_audit`,
+    /// `media::tts_cloud::synth_and_audit`,
+    /// `media::video_dispatch::dispatch_video_analysis`). Until the channel
+    /// pipeline routes cloud media THROUGH those wrappers, the protection only
+    /// applies where they are called. The `tests/no_unaudited_media_calls.rs`
+    /// source guard prevents a new caller from bypassing them; wiring them onto
+    /// the production hot path is the remaining step before this flag is a
+    /// whole-product guarantee.
     pub required_audit_for_cloud_media: bool,
 }
 

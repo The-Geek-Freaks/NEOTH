@@ -9,18 +9,37 @@
 //! close.
 //!
 //! This source-scan guard fails the build if any `.transcribe(` / `.synth(` /
-//! `.synthesize(` CALL appears outside `src/media/` (where the wrappers, the
-//! provider impls, and their tests legitimately live). Adding a new caller
-//! elsewhere is then a deliberate, reviewed act: route it through the audited
-//! wrapper, or extend the allowlist in this file with justification.
+//! `.synthesize(` CALL appears in a `src/media/*.rs` file that is NOT on the
+//! file-granular allowlist below — and in ANY file outside `src/media/`.
+//! Adding a new caller is then a deliberate, reviewed act: route it through
+//! the audited wrapper, or add the file to the allowlist with justification.
+//!
+//! A blanket `src/media/` directory grant would let a new
+//! `src/media/pipeline.rs` call a cloud provider directly and ship audio/text/
+//! frames with no audit — so the allowlist names individual files instead.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Directories/files where calling a cloud-media provider method directly is
-/// legitimate: the audited wrappers + the provider adapters + their tests all
-/// live under `src/media/`.
-const ALLOWED_PREFIXES: &[&str] = &["src/media/"];
+/// Files where calling a cloud-media provider method directly is legitimate
+/// TODAY. FILE-GRANULAR on purpose: a new file under `src/media/` that calls
+/// `.transcribe(` / `.synth(` / `.synthesize(` is flagged until it is added
+/// here with justification — routing a new caller around the audited wrappers
+/// becomes a reviewed act, not a silent directory-wide grant.
+const ALLOWED_PREFIXES: &[&str] = &[
+    // The three audited cloud wrappers (each calls the provider method
+    // internally, AFTER the `enforce_cloud_media_audit` pre-flight) + their
+    // in-file unit tests.
+    "src/media/stt_provider.rs",
+    "src/media/tts_cloud.rs",
+    "src/media/video_dispatch.rs",
+    // LOCAL whisper STT — `engine.transcribe(...)` never leaves the host, so
+    // it is outside the cloud-audit contract entirely.
+    "src/media/audio.rs",
+    // Provider traits + their mock-based unit tests (no real cloud egress).
+    "src/media/tts_provider.rs",
+    "src/media/multimodal_synth.rs",
+];
 
 /// Method-call patterns (NOTE the leading dot — `fn transcribe(` definitions and
 /// `synthesized_payload(` are deliberately NOT matched, only `.method(` calls).

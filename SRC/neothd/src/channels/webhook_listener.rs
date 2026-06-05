@@ -439,6 +439,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
         let chat_id = msg.chat_id.clone();
         match (cfg.pipeline)(msg).await {
             Ok(Some(outbound)) => {
+                // PII guard: the recipient id is a phone number for WhatsApp.
+                // Hash it once for the tracing lines below — the WAL helpers
+                // hash internally, but tracing is a parallel persistent sink
+                // (journald / OTLP / log files) not covered by that hash.
+                let recipient_hash = format!(
+                    "{:016x}",
+                    xxhash_rust::xxh3::xxh3_64(outbound.recipient_id.as_bytes())
+                );
                 // GR-01 Pick B: route pipeline-produced replies back
                 // through the WhatsApp Graph API when the listener
                 // was wired with send credentials. Pre-GR-01 this
@@ -479,14 +487,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                 let _ = w.append(h, p).await;
                             }
                             warn!(
-                                recipient = %outbound.recipient_id,
+                                recipient_hash = %recipient_hash,
                                 reason = %reason,
                                 "P0: WhatsApp send DENIED by channel-send gate",
                             );
                         }
                         ChannelSendVerdict::RefusedNoAudit => {
                             warn!(
-                                recipient = %outbound.recipient_id,
+                                recipient_hash = %recipient_hash,
                                 "P0: WhatsApp send REFUSED — required-audit on but no writable audit sink (fail-closed)",
                             );
                         }
@@ -507,7 +515,7 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                 let _ = w.append(h, p).await;
                             }
                             debug!(
-                                recipient = %outbound.recipient_id,
+                                recipient_hash = %recipient_hash,
                                 "P0: WhatsApp send DRY-RUN (audited, not sent)",
                             );
                         }
@@ -539,21 +547,51 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                         let _ = w.append(h, p).await;
                                     }
                                     debug!(
-                                        recipient = %outbound.recipient_id,
+                                        recipient_hash = %recipient_hash,
                                         wamid = ?r.message_id,
                                         "GR-01 Pick B: webhook reply delivered via Graph API",
                                     );
                                 }
                                 Ok(r) => {
+                                    // Audit the FAILED attempt too — a Meta API
+                                    // rejection must leave a durable trace, not
+                                    // an indistinguishable WAL gap.
+                                    if let Some(w) = gov.wal_writer.as_ref() {
+                                        let p = send_gate::channel_egress_failed_payload(
+                                            "whatsapp",
+                                            &outbound.recipient_id,
+                                            "meta_api_error",
+                                            now,
+                                        );
+                                        let h = crate::wal::make_header(
+                                            crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                            &p,
+                                        );
+                                        let _ = w.append(h, p).await;
+                                    }
                                     warn!(
-                                        recipient = %outbound.recipient_id,
+                                        recipient_hash = %recipient_hash,
                                         error = ?r.error,
                                         "GR-01 Pick B: webhook reply failed (Meta API error)",
                                     );
                                 }
                                 Err(e) => {
+                                    // Transport failure: same durable-trace rule.
+                                    if let Some(w) = gov.wal_writer.as_ref() {
+                                        let p = send_gate::channel_egress_failed_payload(
+                                            "whatsapp",
+                                            &outbound.recipient_id,
+                                            "transport_error",
+                                            now,
+                                        );
+                                        let h = crate::wal::make_header(
+                                            crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                            &p,
+                                        );
+                                        let _ = w.append(h, p).await;
+                                    }
                                     warn!(
-                                        recipient = %outbound.recipient_id,
+                                        recipient_hash = %recipient_hash,
                                         error = %e,
                                         "GR-01 Pick B: webhook reply failed (transport)",
                                     );
@@ -563,7 +601,7 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                     }
                 } else {
                     debug!(
-                        recipient = %outbound.recipient_id,
+                        recipient_hash = %recipient_hash,
                         "pipeline produced outbound but listener has no send creds — dropping (configure whatsapp_send_creds to wire send)"
                     );
                 }

@@ -3854,23 +3854,12 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 }
             }
 
-            // ── Emit CHANNEL_EGRESS ───────────────────────────────────────
-            let egress_payload = serde_json::to_vec(&serde_json::json!({
-                "channel": inbound.channel,
-                "recipient_id": inbound.sender_id,
-                "reply_hash_xxh3": xxhash_rust::xxh3::xxh3_64(completion.text.as_bytes()),
-                "reply_bytes": completion.text.len(),
-                "provider": provider.name(),
-                "model": completion.model,
-                "latency_ns": u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX),
-                "input_tokens": completion.input_tokens,
-                "output_tokens": completion.output_tokens,
-            }))?;
-            let egress_header = crate::wal::make_header(EVENT_TYPE_CHANNEL_EGRESS, &egress_payload);
-            writer
-                .append(egress_header, egress_payload)
-                .await
-                .context("write CHANNEL_EGRESS WAL frame")?;
+            // ── CHANNEL_EGRESS is emitted AFTER the PreEgress hooks + the
+            // ChannelSend autonomy gate (see below). Emitting it here — before
+            // a hook-Block or a gate-Deny can `return Ok(None)` — would record
+            // a reply as egressed that was actually suppressed: a false audit
+            // attestation. The frame now fires only on the path that genuinely
+            // releases the reply to the transport, and hashes the recipient.
 
             // ── SESSION ARCHIVE (Phase 28a MT-4) ──────────────────────────
             // Append the turn pair to the operator-readable MD archive.
@@ -4123,6 +4112,14 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 });
             }
 
+            // PII guard: for WhatsApp the sender id is an E.164 phone number.
+            // Hash it once and use the hash in every audit frame + log on the
+            // egress path below — never the number in the clear.
+            let sender_hash = format!(
+                "{:016x}",
+                xxhash_rust::xxh3::xxh3_64(inbound.sender_id.as_bytes())
+            );
+
             // ── PreEgress hooks (Phase 29 R-15) ───────────────────────────
             // Last filter before the channel adapter sends the reply. A
             // Replace rewrites the outbound text (per-messenger formatting
@@ -4139,7 +4136,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                             "name": name,
                             "stage": "pre_egress",
                             "channel": channel_str,
-                            "recipient_id": inbound.sender_id,
+                            "recipient_hash": sender_hash,
                             "ts_unix": std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs())
@@ -4160,7 +4157,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
                     info!(
                         channel = channel_str,
-                        recipient = %inbound.sender_id,
+                        recipient_hash = %sender_hash,
                         hook = %name,
                         reason = %reason,
                         "outbound dropped by pre_egress hook"
@@ -4169,7 +4166,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                         "name": name,
                         "stage": "pre_egress",
                         "channel": channel_str,
-                        "recipient_id": inbound.sender_id,
+                        "recipient_hash": sender_hash,
                         "reason": reason,
                         "ts_unix": std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
@@ -4238,6 +4235,29 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     return Ok(::std::option::Option::None);
                 }
             }
+
+            // ── Emit CHANNEL_EGRESS (post-gate) ───────────────────────────
+            // The reply passed every PreEgress hook and the ChannelSend gate,
+            // so it is now genuinely released to the transport. The recipient
+            // (a phone number for WhatsApp) is HASHED — never stored in the
+            // clear — and we attest the hash of the *post-hook* outbound text,
+            // not the raw completion.
+            let egress_payload = serde_json::to_vec(&serde_json::json!({
+                "channel": inbound.channel,
+                "to_hash": sender_hash,
+                "reply_hash_xxh3": xxhash_rust::xxh3::xxh3_64(reply_text.as_bytes()),
+                "reply_bytes": reply_text.len(),
+                "provider": provider.name(),
+                "model": completion.model,
+                "latency_ns": u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX),
+                "input_tokens": completion.input_tokens,
+                "output_tokens": completion.output_tokens,
+            }))?;
+            let egress_header = crate::wal::make_header(EVENT_TYPE_CHANNEL_EGRESS, &egress_payload);
+            writer
+                .append(egress_header, egress_payload)
+                .await
+                .context("write CHANNEL_EGRESS WAL frame")?;
 
             Ok(Some(OutboundMessage {
                 recipient_id: inbound.sender_id,
