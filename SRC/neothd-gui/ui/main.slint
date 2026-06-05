@@ -286,6 +286,14 @@ export component MainWindow inherits Window {
     in property <[TrustRow]> trust-privacy: [];
     in property <[TrustRow]> trust-recovery: [];
     in property <[TrustRow]> trust-ledger: [];
+    // SL-03 — Local resources (Cluster tab), forwarded to SettingsView. Rust
+    // sets these on startup from `neoth hardware --output json`.
+    in property <string> hw-cpu: "";
+    in property <string> hw-memory: "";
+    in property <string> hw-accelerator: "";
+    in property <string> hw-vram: "";
+    in property <string> hw-disk: "";
+    in property <[TrustRow]> hw-models: [];
     // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
@@ -1367,6 +1375,12 @@ export component MainWindow inherits Window {
             trust-privacy: root.trust-privacy;
             trust-recovery: root.trust-recovery;
             trust-ledger: root.trust-ledger;
+            hw-cpu: root.hw-cpu;
+            hw-memory: root.hw-memory;
+            hw-accelerator: root.hw-accelerator;
+            hw-vram: root.hw-vram;
+            hw-disk: root.hw-disk;
+            hw-models: root.hw-models;
             hemisphere-bindings: root.hemisphere-bindings;
             hemispheres-mode: root.hemispheres-mode;
             provider-ids: root.provider-ids;

@@ -386,6 +386,15 @@ export component SettingsView inherits Rectangle {
     in property <[TrustRow]> trust-recovery: [];
     in property <[TrustRow]> trust-ledger: [];
 
+    // SL-03 — Local resources (Cluster tab), from `neoth hardware --output json`:
+    // CPU / memory / accelerator / VRAM / disk headlines + cached-model rows.
+    in property <string> hw-cpu: "";
+    in property <string> hw-memory: "";
+    in property <string> hw-accelerator: "";
+    in property <string> hw-vram: "";
+    in property <string> hw-disk: "";
+    in property <[TrustRow]> hw-models: [];
+
     // GU-01 — Hemispheres + Skills panels. Rust populates these on startup from
     // `neoth hemispheres show --output json` / `neoth skills --list --output json`.
     in property <[HemisphereRow]> hemisphere-bindings: [];
@@ -1165,6 +1174,83 @@ export component SettingsView inherits Rectangle {
                     title: "Cluster";
                     subtitle: "Auto-discover other NEOTH instances on your network and connect them into one team — shared memory, shared chat, shared task board. Uses lightweight mDNS broadcasts (same tech as AirPlay and Chromecast).";
                     mirrors-slash: "/cluster enable   |   /cluster disable   |   neoth cluster discover";
+                }
+                // SL-03 — Local resources card: CPU / memory / accelerator /
+                // VRAM / disk + cached local models (`neoth hardware --output
+                // json`). Read-only; the operator sees node capacity at a glance.
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "LOCAL RESOURCES";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        if root.hw-cpu == "": Text {
+                            text: "(start the daemon to read local hardware)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.hw-cpu != "": Text {
+                            text: "cpu:  " + root.hw-cpu;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                            wrap: word-wrap;
+                        }
+                        if root.hw-cpu != "": Text {
+                            text: "mem:  " + root.hw-memory;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        if root.hw-cpu != "": Text {
+                            text: "accel: " + root.hw-accelerator;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        if root.hw-cpu != "": Text {
+                            text: "vram: " + root.hw-vram;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        if root.hw-cpu != "": Text {
+                            text: "disk: " + root.hw-disk;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        for row in root.hw-models: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "model";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                            Text {
+                                text: row.label;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: row.value;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: row.value == "cached" ? Theme.accent-green : Theme.text-muted;
+                            }
+                        }
+                    }
                 }
                 Card {
                     VerticalBox {

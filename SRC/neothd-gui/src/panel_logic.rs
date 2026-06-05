@@ -326,6 +326,106 @@ fn object_rows(obj: Option<&serde_json::Value>) -> Vec<TrustRow> {
         .unwrap_or_default()
 }
 
+// ── SL-03 resource tab (parse `neoth hardware --output json`) ────────────────
+
+/// Parsed `neoth hardware --output json`: the local-machine resource snapshot
+/// the SL-03 resource panel shows — CPU, memory, accelerator, VRAM, disk, and
+/// which local models are cached. Headline fields are pre-formatted strings;
+/// `models` is label→state rows (reusing [`TrustRow`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct HardwareSnapshot {
+    pub cpu: String,
+    pub memory: String,
+    pub accelerator: String,
+    pub vram: String,
+    pub disk: String,
+    pub models: Vec<TrustRow>,
+}
+
+/// Bytes → whole GiB (rounded) as a display string.
+fn gib(bytes: u64) -> u64 {
+    bytes / (1024 * 1024 * 1024)
+}
+
+/// PURE + robust: garbage/empty → default (panel shows a "no daemon" state).
+pub fn parse_hardware(json: &str) -> HardwareSnapshot {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return HardwareSnapshot::default();
+    };
+    let g = |p: &str| v.pointer(p).and_then(|x| x.as_u64());
+
+    let cpu = {
+        let brand = v
+            .pointer("/cpu/brand")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let phys = g("/cpu/physical_cores").unwrap_or(0);
+        let log = g("/cpu/logical_cores").unwrap_or(0);
+        let mhz = g("/cpu/frequency_mhz").unwrap_or(0);
+        if brand.is_empty() {
+            String::new()
+        } else {
+            format!("{brand} — {phys}c/{log}t @ {mhz} MHz")
+        }
+    };
+    let memory = match (g("/memory/available_bytes"), g("/memory/total_bytes")) {
+        (Some(a), Some(t)) if t > 0 => format!("{} / {} GiB available", gib(a), gib(t)),
+        _ => String::new(),
+    };
+    let accelerator = {
+        let picked = v
+            .pointer("/accelerator/picked")
+            .and_then(|x| x.as_str())
+            .unwrap_or("");
+        let gpu = v
+            .pointer("/accelerator/has_gpu_path")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false);
+        if picked.is_empty() {
+            String::new()
+        } else if gpu {
+            format!("{picked} — GPU path active")
+        } else {
+            format!("{picked} — CPU only")
+        }
+    };
+    let vram = match (g("/vram/used_mib"), g("/vram/total_mib")) {
+        (Some(u), Some(t)) if t > 0 => {
+            format!("{u} / {t} MiB used ({}%)", (u.saturating_mul(100)) / t)
+        }
+        _ => "(no GPU detected)".to_string(),
+    };
+    let disk = match (g("/disk/home_available_bytes"), g("/disk/home_total_bytes")) {
+        (Some(a), Some(t)) if t > 0 => {
+            let mount = v
+                .pointer("/disk/home_mount")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            format!("{} / {} GiB free ({mount})", gib(a), gib(t))
+        }
+        _ => String::new(),
+    };
+    let models = object_rows(v.get("cached_models"))
+        .into_iter()
+        .map(|r| TrustRow {
+            label: r.label,
+            // cached_models values are bools (on/off) → cached/missing.
+            value: if r.value == "on" { "cached".to_string() } else { "not cached".to_string() },
+        })
+        .collect();
+
+    HardwareSnapshot {
+        cpu,
+        memory,
+        accelerator,
+        vram,
+        disk,
+        models,
+    }
+}
+
 // ── GU-01 hemispheres panel (parse `neoth hemispheres show --output json`) ───
 
 /// One role→provider binding for the Hemispheres panel.
@@ -680,6 +780,36 @@ mod tests {
         // A future switch the CLI adds shows up generically (forward-compatible).
         let t = parse_trust(r#"{"privacy_switches":{"some_future_switch":true}}"#);
         assert_eq!(t.privacy, vec![TrustRow { label: "some_future_switch".into(), value: "on".into() }]);
+    }
+
+    // ── SL-03 resource panel parser ───────────────────────────────────────
+    #[test]
+    fn parse_hardware_formats_the_resource_snapshot() {
+        let json = r#"{
+            "cpu":{"brand":"AMD Ryzen Threadripper PRO 5965WX  ","logical_cores":48,"physical_cores":24,"frequency_mhz":4700},
+            "memory":{"total_bytes":274702249984,"available_bytes":241575075840},
+            "accelerator":{"picked":"cuda","has_gpu_path":true},
+            "vram":{"used_mib":1405,"total_mib":24576},
+            "disk":{"home_available_bytes":116186198016,"home_total_bytes":1799240114176,"home_mount":"C:\\"},
+            "cached_models":{"qwen2_5_3b":true,"clip_vit_b32":false}
+        }"#;
+        let h = parse_hardware(json);
+        assert_eq!(h.cpu, "AMD Ryzen Threadripper PRO 5965WX — 24c/48t @ 4700 MHz");
+        assert_eq!(h.memory, "224 / 255 GiB available");
+        assert_eq!(h.accelerator, "cuda — GPU path active");
+        assert_eq!(h.vram, "1405 / 24576 MiB used (5%)");
+        assert!(h.disk.starts_with("108 / 1675 GiB free (C:"));
+        assert!(h.models.iter().any(|r| r.label == "qwen2_5_3b" && r.value == "cached"));
+        assert!(h.models.iter().any(|r| r.label == "clip_vit_b32" && r.value == "not cached"));
+    }
+
+    #[test]
+    fn parse_hardware_robust_and_no_gpu() {
+        assert_eq!(parse_hardware("nope"), HardwareSnapshot::default());
+        // No vram node → explicit "(no GPU detected)".
+        let h = parse_hardware(r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#);
+        assert_eq!(h.vram, "(no GPU detected)");
+        assert_eq!(h.accelerator, "");
     }
 
     // ── parse ────────────────────────────────────────────────────────────

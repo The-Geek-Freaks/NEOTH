@@ -629,6 +629,7 @@ fn main() -> Result<()> {
     std::thread::spawn(move || {
         let rails = fetch_safe_mode_snapshot();
         let trust = fetch_trust_snapshot();
+        let hardware = fetch_hardware_snapshot();
         let hemis = fetch_hemispheres_snapshot();
         let provider_ids = fetch_provider_ids();
         let skills = fetch_skills();
@@ -641,6 +642,7 @@ fn main() -> Result<()> {
             if let Some(w) = weak.upgrade() {
                 apply_safe_mode(&w, rails);
                 apply_trust(&w, trust);
+                apply_hardware(&w, hardware);
                 apply_hemispheres(&w, hemis);
                 apply_provider_ids(&w, provider_ids);
                 apply_skills(&w, skills);
@@ -1633,6 +1635,46 @@ fn apply_trust(window: &MainWindow, snap: panel_logic::TrustSnapshot) {
     window.set_trust_privacy(to_rows(snap.privacy));
     window.set_trust_recovery(to_rows(snap.recovery));
     window.set_trust_ledger(to_rows(snap.ledger));
+}
+
+/// SL-03 — fetch the local resource snapshot via `neoth hardware --output json`.
+/// Empty snapshot on missing binary / failure. PARSE is the unit-tested
+/// `panel_logic::parse_hardware`; this is the thin subprocess shell.
+fn fetch_hardware_snapshot() -> panel_logic::HardwareSnapshot {
+    let Some(bin) = which_neothd() else {
+        return panel_logic::HardwareSnapshot::default();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("hardware")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_hardware(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => panel_logic::HardwareSnapshot::default(),
+    }
+}
+
+/// SL-03 — push the parsed resource snapshot onto the `MainWindow` Cluster-tab
+/// Local Resources panel. UI-thread only.
+fn apply_hardware(window: &MainWindow, snap: panel_logic::HardwareSnapshot) {
+    use slint::{ModelRc, VecModel};
+    let models: Vec<TrustRow> = snap
+        .models
+        .into_iter()
+        .map(|r| TrustRow {
+            label: r.label.into(),
+            value: r.value.into(),
+        })
+        .collect();
+    window.set_hw_cpu(snap.cpu.into());
+    window.set_hw_memory(snap.memory.into());
+    window.set_hw_accelerator(snap.accelerator.into());
+    window.set_hw_vram(snap.vram.into());
+    window.set_hw_disk(snap.disk.into());
+    window.set_hw_models(ModelRc::new(VecModel::from(models)));
 }
 
 /// GU-01 — fetch the hemisphere bindings via `neoth hemispheres show --output
