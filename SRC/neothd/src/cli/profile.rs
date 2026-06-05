@@ -1758,13 +1758,18 @@ async fn run_preset_sub(sub: PresetSub, output: &OutputFormat) -> Result<()> {
                 name: &'static str,
                 description: &'static str,
                 recommended: bool,
+                /// The operator's currently-active behavioural preset (the
+                /// `active_preset.txt` marker). Lets the GUI selector mark it.
+                active: bool,
             }
+            let active = load_active_preset(&home);
             let rows: Vec<Row> = ProfilePreset::ALL
                 .iter()
                 .map(|p| Row {
                     name: p.as_str(),
                     description: p.description(),
                     recommended: matches!(p, ProfilePreset::Lowkey),
+                    active: active.is_some_and(|a| a.as_str() == p.as_str()),
                 })
                 .collect();
             match output {
@@ -1772,13 +1777,9 @@ async fn run_preset_sub(sub: PresetSub, output: &OutputFormat) -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&rows)?);
                 }
                 OutputFormat::Table => {
-                    let active = load_active_preset(&home);
                     println!("Profile presets:");
                     for row in &rows {
-                        let active_tag = match active {
-                            Some(p) if p.as_str() == row.name => " (active)",
-                            _ => "",
-                        };
+                        let active_tag = if row.active { " (active)" } else { "" };
                         let recommended = if row.recommended { "(recommended)" } else { "" };
                         println!("  {} {recommended}{active_tag}", row.name);
                         println!("    {}", row.description);

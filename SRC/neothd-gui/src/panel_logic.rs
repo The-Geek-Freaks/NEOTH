@@ -780,6 +780,47 @@ pub fn parse_presets(json: &str) -> Vec<PresetEntry> {
         .unwrap_or_default()
 }
 
+// ── SPEC-05 step5c behavioural-profile selector ──────────────────────────────
+
+/// One behavioural profile preset (LOWKEY/Formal/Deepdive/Tutor/Opsec) for the
+/// step5c selector. Distinct from [`PresetEntry`] (provider-bundle presets) —
+/// this is the operator's interaction register.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProfilePresetRow {
+    pub name: String,
+    pub description: String,
+    pub recommended: bool,
+    pub active: bool,
+}
+
+/// Parse `neoth profile preset list --output json`
+/// (`[{name,description,recommended,active}]`). PURE + robust: malformed →
+/// empty; name-less entries skipped.
+pub fn parse_profile_presets(json: &str) -> Vec<ProfilePresetRow> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    v.as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|p| {
+                    let name = p.get("name")?.as_str()?.to_string();
+                    Some(ProfilePresetRow {
+                        name,
+                        description: p
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        recommended: p.get("recommended").and_then(|r| r.as_bool()).unwrap_or(false),
+                        active: p.get("active").and_then(|a| a.as_bool()).unwrap_or(false),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // ── SPEC-06 hemisphere switcher (parse `neoth provider list --output json`) ──
 
 /// Extract the IMPLEMENTED provider ids from `neoth provider list --output json`
@@ -892,6 +933,27 @@ mod tests {
     #[test]
     fn parse_council_budget_robust_to_garbage() {
         assert_eq!(parse_council_budget("nope"), CouncilBudgetPanel::default());
+    }
+
+    // ── SPEC-05 step5c behavioural-profile selector parser ────────────────
+    #[test]
+    fn parse_profile_presets_reads_name_desc_recommended_active() {
+        let json = r#"[
+            {"name":"lowkey","description":"casual","recommended":true,"active":true},
+            {"name":"formal","description":"polite","recommended":false,"active":false},
+            {"active":true}
+        ]"#;
+        let rows = parse_profile_presets(json);
+        assert_eq!(rows.len(), 2, "name-less entry skipped");
+        assert_eq!(rows[0], ProfilePresetRow { name: "lowkey".into(), description: "casual".into(), recommended: true, active: true });
+        assert_eq!(rows[1].name, "formal");
+        assert!(!rows[1].active && !rows[1].recommended);
+    }
+
+    #[test]
+    fn parse_profile_presets_robust_to_garbage() {
+        assert!(parse_profile_presets("nope").is_empty());
+        assert!(parse_profile_presets("{}").is_empty());
     }
 
     // ── parse ────────────────────────────────────────────────────────────
