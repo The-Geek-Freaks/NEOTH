@@ -1767,6 +1767,47 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── MONITOR-02 worker-watch ───────────────────────────────────────────
+    // Real-time death detection for the long-running cron/worker loops: hold a
+    // cheap `AbortHandle` clone of each + poll `is_finished()`, emitting
+    // `0x4D WORKER_DIED` (naming the task) the moment one panics/exits — lower
+    // latency + attribution than the HO-07 crash.log scan. Gated on the same
+    // `monitor.enabled` as the HO-07 cron. Holds only abort-handle clones, so the
+    // shutdown-abort of the original handles (below) is entirely unaffected.
+    let worker_watch_handle: Option<tokio::task::JoinHandle<()>> = if config.monitor.enabled {
+        use crate::daemon::worker_watch::WatchedWorker;
+        let watched: Vec<WatchedWorker> = [
+            cron_task.as_ref().map(|h| WatchedWorker::new("cron_scheduler", h.abort_handle())),
+            updater_self_task.as_ref().map(|h| WatchedWorker::new("updater_self", h.abort_handle())),
+            updater_cli_task.as_ref().map(|h| WatchedWorker::new("updater_cli", h.abort_handle())),
+            updater_skill_task.as_ref().map(|h| WatchedWorker::new("updater_skill", h.abort_handle())),
+            cli_autoupdate_task.as_ref().map(|h| WatchedWorker::new("cli_autoupdate", h.abort_handle())),
+            self_stage_task.as_ref().map(|h| WatchedWorker::new("self_stage", h.abort_handle())),
+            doctor_cron_task.as_ref().map(|h| WatchedWorker::new("doctor_cron", h.abort_handle())),
+            resource_watch_handle.as_ref().map(|h| WatchedWorker::new("resource_watch", h.abort_handle())),
+            monitor_cron_handle.as_ref().map(|h| WatchedWorker::new("monitor_cron", h.abort_handle())),
+            omi_handle.as_ref().map(|h| WatchedWorker::new("omi_ingest", h.abort_handle())),
+            profile_adapt_cron_handle.as_ref().map(|h| WatchedWorker::new("profile_adapt_cron", h.abort_handle())),
+            ecology_cron_handle.as_ref().map(|h| WatchedWorker::new("ecology_scheduler", h.abort_handle())),
+            pattern_cron_handle.as_ref().map(|h| WatchedWorker::new("pattern_cron", h.abort_handle())),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        let watched_count = watched.len();
+        let handle = crate::daemon::worker_watch::spawn_worker_watch(
+            watched,
+            writer.clone(),
+            config.monitor.interval_secs,
+        );
+        if handle.is_some() {
+            info!(watched = watched_count, "MONITOR-02 worker-watch spawned");
+        }
+        handle
+    } else {
+        None
+    };
+
     // ── 5e. Models catalog refresh task — K-Models-Discovery (Session 14) ──
     //
     // Daemon-internal background task that refreshes
@@ -2383,6 +2424,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
             Err(e) => warn!(error = %e, "OnShutdown hook dispatch failed"),
         }
+    }
+
+    // MONITOR-02: abort the worker-watch FIRST — so the deliberate abort of the
+    // watched workers (below) is never mistaken for an unexpected death + alerted.
+    if let Some(task) = worker_watch_handle {
+        task.abort();
+        let _ = task.await;
     }
 
     // Abort channel tasks first so they stop generating new WAL frames.

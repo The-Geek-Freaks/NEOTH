@@ -67,6 +67,11 @@ pub mod resource_watch;
 /// `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` /
 /// `0x4A CHANNEL_SILENCE_ALERT` on anomalies. Off by default.
 pub mod monitor_cron;
+/// MONITOR-02 — real-time worker-task death detection. Polls the daemon's
+/// long-running cron/worker abort handles + emits `0x4D WORKER_DIED` (naming the
+/// task) the moment one panics/exits — lower latency + attribution than the
+/// HO-07 crash.log scan. Holds only abort-handle clones (shutdown unaffected).
+pub mod worker_watch;
 /// OM-01 — local OMI transcript ingest task. Polls a self-hosted OMI backend
 /// (SC-14: cloud endpoints refused at startup), sanitises + promotes
 /// high-confidence items to ground-truth (`0x9C`), extracts action items to

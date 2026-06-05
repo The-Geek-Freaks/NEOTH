@@ -568,6 +568,18 @@ pub const EVENT_TYPE_RECALL_LATENCY_ALERT: u8 = 0x4B;
 /// Payload (JSON): `{streak_signals_count, proposals_queued, ts_unix}`.
 pub const EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED: u8 = 0x4C;
 
+/// `0x4D WORKER_DIED` — MONITOR-02 real-time worker-task death detection. A
+/// long-running daemon cron/worker loop should NEVER finish on its own; one that
+/// does has panicked or exited unexpectedly. The worker-watch task polls each
+/// worker's `AbortHandle::is_finished()` and emits this frame (once per worker)
+/// naming the dead task — lower latency + WHICH-task attribution vs the HO-07
+/// `0x49 CRASH_LOG_ALERT` retro crash.log scan. Cron band. Durable (a worker
+/// dying is an operational-integrity signal that must survive a crash).
+///
+/// Payload (JSON): `{ worker, ts_unix }` — `worker` is the static task name
+/// (e.g. `"monitor_cron"`, `"ecology_scheduler"`).
+pub const EVENT_TYPE_WORKER_DIED: u8 = 0x4D;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit
@@ -1702,6 +1714,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "ecology_scheduler_fired",
         EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED,
     ),
+    ("worker_died", EVENT_TYPE_WORKER_DIED),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -1922,6 +1935,7 @@ const _: () = {
         || EVENT_TYPE_RECALL_LATENCY_ALERT > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED < 0x40
         || EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_WORKER_DIED < 0x40 || EVENT_TYPE_WORKER_DIED > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
@@ -2204,6 +2218,7 @@ mod tests {
                 "ECOLOGY_SCHEDULER_FIRED",
                 EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED,
             ),
+            ("WORKER_DIED", EVENT_TYPE_WORKER_DIED),
             ("RECOVERY_TRUNCATED", EVENT_TYPE_RECOVERY_TRUNCATED),
             (
                 "COUNCIL_SYNTHESIS_ATTEMPTED",
