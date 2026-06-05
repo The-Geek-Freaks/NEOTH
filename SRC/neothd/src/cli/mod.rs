@@ -14,6 +14,7 @@ pub mod arxiv;
 pub mod arxiv_ingest_task;
 pub mod backup;
 pub mod catalog;
+pub mod channel;
 pub mod chat;
 pub mod cloud;
 pub mod cloud_sync_task;
@@ -1245,15 +1246,18 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             // daemon supplies the writer via a different call path.
             self_dev::run(&home, args, None).await?;
         }
-        Commands::Channel { action } => {
-            let _ = action;
-            anyhow::bail!(
-                "`neoth channel` is not in v0.1. Use `neoth init` (full \
-                 wizard) or edit ~/.neoth/freedom.yaml::telegram_token to \
-                 enable Telegram. Other channels (Keet/WhatsApp/Slack) \
-                 ship in Round-2."
-            );
-        }
+        Commands::Channel { action } => match action {
+            ChannelAction::List => channel::run_list(&global_output)?,
+            ChannelAction::Add { .. } | ChannelAction::Test { .. } | ChannelAction::Remove { .. } => {
+                anyhow::bail!(
+                    "`neoth channel {{add,test,remove}}` not yet in this release. \
+                     Use `neoth init` (full wizard) to connect a channel, or edit \
+                     ~/.neoth/freedom.yaml::telegram_token + ~/.neoth/credentials.yaml \
+                     (slack/whatsapp/keet). `neoth channel list` shows which channels \
+                     are configured right now."
+                );
+            }
+        },
         Commands::Plugin(mut args) => {
             args.output = global_output;
             plugin::run_plugin(args).await?;
