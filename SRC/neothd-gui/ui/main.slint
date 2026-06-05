@@ -294,6 +294,10 @@ export component MainWindow inherits Window {
     in property <string> hw-vram: "";
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
+    // KF-08 — Council budget meter (Config tab), forwarded to SettingsView.
+    in property <string> council-cap: "";
+    in property <string> council-daily-usd: "";
+    in property <[TrustRow]> council-last-debate: [];
     // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
@@ -1381,6 +1385,9 @@ export component MainWindow inherits Window {
             hw-vram: root.hw-vram;
             hw-disk: root.hw-disk;
             hw-models: root.hw-models;
+            council-cap: root.council-cap;
+            council-daily-usd: root.council-daily-usd;
+            council-last-debate: root.council-last-debate;
             hemisphere-bindings: root.hemisphere-bindings;
             hemispheres-mode: root.hemispheres-mode;
             provider-ids: root.provider-ids;

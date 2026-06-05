@@ -395,6 +395,12 @@ export component SettingsView inherits Rectangle {
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
 
+    // KF-08 — Council budget meter (Config tab), from `neoth council budget
+    // --output json`: the per-message cap + last debate's live usage.
+    in property <string> council-cap: "";
+    in property <string> council-daily-usd: "";
+    in property <[TrustRow]> council-last-debate: [];
+
     // GU-01 — Hemispheres + Skills panels. Rust populates these on startup from
     // `neoth hemispheres show --output json` / `neoth skills --list --output json`.
     in property <[HemisphereRow]> hemisphere-bindings: [];
@@ -1766,6 +1772,63 @@ export component SettingsView inherits Rectangle {
                     title: "Config";
                     subtitle: "Change the LLM provider, force a config reload, or restart the setup wizard. Every choice writes back to ~/.neoth/freedom.yaml — no manual YAML editing required.";
                     mirrors-slash: "/config   |   /wizard   |   /reload";
+                }
+                // KF-08 — Council budget meter: the per-message council call cap
+                // + the last debate's live usage (`neoth council budget --json`).
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "COUNCIL BUDGET";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        if root.council-cap == "": Text {
+                            text: "(start the daemon to read the council budget)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.council-cap != "": Text {
+                            text: "cap:   " + root.council-cap;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        if root.council-cap != "": Text {
+                            text: "daily: " + root.council-daily-usd;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        if root.council-cap != "" && root.council-last-debate.length == 0: Text {
+                            text: "(no council debate has run yet)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                        }
+                        for row in root.council-last-debate: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: row.label;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: row.value;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+                    }
                 }
                 Card {
                     VerticalBox {

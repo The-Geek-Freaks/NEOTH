@@ -630,6 +630,7 @@ fn main() -> Result<()> {
         let rails = fetch_safe_mode_snapshot();
         let trust = fetch_trust_snapshot();
         let hardware = fetch_hardware_snapshot();
+        let council_budget = fetch_council_budget();
         let hemis = fetch_hemispheres_snapshot();
         let provider_ids = fetch_provider_ids();
         let skills = fetch_skills();
@@ -643,6 +644,7 @@ fn main() -> Result<()> {
                 apply_safe_mode(&w, rails);
                 apply_trust(&w, trust);
                 apply_hardware(&w, hardware);
+                apply_council_budget(&w, council_budget);
                 apply_hemispheres(&w, hemis);
                 apply_provider_ids(&w, provider_ids);
                 apply_skills(&w, skills);
@@ -1675,6 +1677,42 @@ fn apply_hardware(window: &MainWindow, snap: panel_logic::HardwareSnapshot) {
     window.set_hw_vram(snap.vram.into());
     window.set_hw_disk(snap.disk.into());
     window.set_hw_models(ModelRc::new(VecModel::from(models)));
+}
+
+/// KF-08 — fetch the council budget meter via `neoth council budget --output
+/// json`. PARSE is the unit-tested `panel_logic::parse_council_budget`.
+fn fetch_council_budget() -> panel_logic::CouncilBudgetPanel {
+    let Some(bin) = which_neothd() else {
+        return panel_logic::CouncilBudgetPanel::default();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("council")
+        .arg("budget")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_council_budget(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => panel_logic::CouncilBudgetPanel::default(),
+    }
+}
+
+/// KF-08 — push the council budget meter onto the `MainWindow` Config-tab panel.
+fn apply_council_budget(window: &MainWindow, snap: panel_logic::CouncilBudgetPanel) {
+    use slint::{ModelRc, VecModel};
+    let rows: Vec<TrustRow> = snap
+        .last_debate
+        .into_iter()
+        .map(|r| TrustRow {
+            label: r.label.into(),
+            value: r.value.into(),
+        })
+        .collect();
+    window.set_council_cap(snap.configured_cap.into());
+    window.set_council_daily_usd(snap.daily_usd_cap.into());
+    window.set_council_last_debate(ModelRc::new(VecModel::from(rows)));
 }
 
 /// GU-01 — fetch the hemisphere bindings via `neoth hemispheres show --output

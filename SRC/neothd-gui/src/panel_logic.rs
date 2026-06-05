@@ -426,6 +426,63 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
     }
 }
 
+// ── KF-08 council budget meter (parse `neoth council budget --output json`) ──
+
+/// Parsed `neoth council budget --output json`: the per-message council cap +
+/// the last debate's live runtime usage. Headlines are pre-formatted; the
+/// last-debate runtime renders as label→value rows (empty when no debate has
+/// run yet, so the panel shows a "no debate yet" state).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CouncilBudgetPanel {
+    pub configured_cap: String,
+    pub daily_usd_cap: String,
+    pub last_debate: Vec<TrustRow>,
+}
+
+/// PURE + robust: garbage/empty → default.
+pub fn parse_council_budget(json: &str) -> CouncilBudgetPanel {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return CouncilBudgetPanel::default();
+    };
+    let configured_cap = match v.get("configured_cap").and_then(|x| x.as_u64()) {
+        Some(c) => format!("{c} calls / message"),
+        None => String::new(),
+    };
+    let daily_usd_cap = match v.get("daily_usd_cap").and_then(|x| x.as_f64()) {
+        Some(u) => format!("${u:.2} / day"),
+        None => "no daily USD cap".to_string(),
+    };
+    let last_debate = match v.get("runtime") {
+        Some(r) if r.is_object() => {
+            let u = |k: &str| r.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+            vec![
+                TrustRow {
+                    label: "used last message".to_string(),
+                    value: format!("{} / {}", u("used_last_msg"), u("cap_at_last_debate")),
+                },
+                TrustRow {
+                    label: "exhausted last message".to_string(),
+                    value: if r.get("exhausted_last_msg").and_then(|x| x.as_bool()).unwrap_or(false) {
+                        "yes".to_string()
+                    } else {
+                        "no".to_string()
+                    },
+                },
+                TrustRow {
+                    label: "exhaustions (rolling)".to_string(),
+                    value: u("exhaustions_rolling").to_string(),
+                },
+            ]
+        }
+        _ => Vec::new(),
+    };
+    CouncilBudgetPanel {
+        configured_cap,
+        daily_usd_cap,
+        last_debate,
+    }
+}
+
 // ── GU-01 hemispheres panel (parse `neoth hemispheres show --output json`) ───
 
 /// One role→provider binding for the Hemispheres panel.
@@ -810,6 +867,31 @@ mod tests {
         let h = parse_hardware(r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#);
         assert_eq!(h.vram, "(no GPU detected)");
         assert_eq!(h.accelerator, "");
+    }
+
+    // ── KF-08 council budget meter parser ─────────────────────────────────
+    #[test]
+    fn parse_council_budget_with_and_without_runtime() {
+        // No debate yet → headlines set, no runtime rows.
+        let b = parse_council_budget(r#"{"configured_cap":15,"daily_usd_cap":null,"runtime":null}"#);
+        assert_eq!(b.configured_cap, "15 calls / message");
+        assert_eq!(b.daily_usd_cap, "no daily USD cap");
+        assert!(b.last_debate.is_empty());
+
+        // With a last-debate runtime + a daily cap.
+        let b = parse_council_budget(
+            r#"{"configured_cap":3,"daily_usd_cap":5.0,"runtime":{"cap_at_last_debate":3,"used_last_msg":2,"exhausted_last_msg":false,"exhaustions_rolling":1}}"#,
+        );
+        assert_eq!(b.configured_cap, "3 calls / message");
+        assert_eq!(b.daily_usd_cap, "$5.00 / day");
+        assert!(b.last_debate.iter().any(|r| r.label == "used last message" && r.value == "2 / 3"));
+        assert!(b.last_debate.iter().any(|r| r.label == "exhausted last message" && r.value == "no"));
+        assert!(b.last_debate.iter().any(|r| r.label == "exhaustions (rolling)" && r.value == "1"));
+    }
+
+    #[test]
+    fn parse_council_budget_robust_to_garbage() {
+        assert_eq!(parse_council_budget("nope"), CouncilBudgetPanel::default());
     }
 
     // ── parse ────────────────────────────────────────────────────────────
