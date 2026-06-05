@@ -238,6 +238,9 @@ pub async fn run_one_pass(
         });
     }
 
+    let merge_cross_themes = crate::config::FreedomConfig::load_from_default_path()
+        .map(|c| c.dreaming.merge_cross_themes)
+        .unwrap_or(false);
     let (dreams, path_taken) = if let Some(provider) = embed_provider {
         match compose_dreams_with_embeddings(
             &day,
@@ -245,6 +248,7 @@ pub async fn run_one_pass(
             provider,
             chat_provider,
             DREAMING_CLUSTER_THRESHOLD,
+            merge_cross_themes,
         )
         .await
         {

@@ -1269,6 +1269,14 @@ pub struct DreamingConfig {
     /// effect without an embedding provider (the deterministic path has
     /// no clusters to label).
     pub summarize_themes: bool,
+    /// SPEC-12 cross-theme merging — when `true`, after per-cluster dreams are
+    /// composed, clusters whose centroid embeddings have cosine ≥
+    /// [`crate::daemon::dreaming::DREAMING_CROSS_THEME_THRESHOLD`] are merged
+    /// into a single combined meta-theme. Off by default. PURE deterministic
+    /// centroid math — no LLM, no extra cost. Has no effect without an embedding
+    /// provider (the deterministic path has no centroids to compare) or with a
+    /// single cluster.
+    pub merge_cross_themes: bool,
 }
 
 impl Default for DreamingConfig {
@@ -1281,6 +1289,7 @@ impl Default for DreamingConfig {
             max_events: None,
             forge_skills: false,
             summarize_themes: false,
+            merge_cross_themes: false,
         }
     }
 }
@@ -3319,6 +3328,16 @@ mod tests {
         assert!(cfg.interval_secs.is_none());
         assert!(cfg.window_secs.is_none());
         assert!(cfg.max_events.is_none());
+        assert!(!cfg.summarize_themes);
+        assert!(!cfg.merge_cross_themes, "SPEC-12 cross-theme merge is opt-in");
+    }
+
+    #[test]
+    fn dreaming_merge_cross_themes_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_yaml(dir.path(), "dreaming:\n  merge_cross_themes: true\n");
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert!(cfg.dreaming.merge_cross_themes);
     }
 
     #[test]

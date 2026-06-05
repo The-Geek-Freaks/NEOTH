@@ -133,6 +133,10 @@ inference:
 #                           #   one LLM call per cluster — on a metered cloud
 #                           #   provider an opted-in nightly run would bill.
 #                           #   false/no-provider/error → deterministic label.
+#   merge_cross_themes: false # SPEC-12 cross-theme merge: collapse clusters
+#                           #   whose centroid embeddings are co-located
+#                           #   (cosine >= 0.75) into one meta-theme. OFF by
+#                           #   default. PURE centroid math — no LLM, no cost.
 
 # ── 5a. Recipe: cloud-Qwen via OpenRouter (no local GPU needed) ──────────────
 #

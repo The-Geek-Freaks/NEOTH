@@ -448,6 +448,13 @@ pub async fn embed_events(
 /// the wizard step ships (Phase 4b).
 pub const DREAMING_CLUSTER_THRESHOLD: f32 = 0.55;
 
+/// SPEC-12 cross-theme merge: cosine threshold above which two ALREADY-distinct
+/// per-cluster centroids collapse into one meta-theme. Stricter than
+/// [`DREAMING_CLUSTER_THRESHOLD`] (0.55) — two clusters the intra-event pass kept
+/// apart should only re-merge when their centroids are genuinely co-located, not
+/// merely loosely related. Off by default (`freedom.yaml::dreaming.merge_cross_themes`).
+pub const DREAMING_CROSS_THEME_THRESHOLD: f32 = 0.75;
+
 // ── SPEC-12 Phase 4b: LLM theme summarisation ───────────────────────────
 
 /// Max characters of one event preview fed into the theme-summary prompt.
@@ -603,12 +610,128 @@ pub fn cluster_events_by_cosine(
 /// gets a dream entry per day even when local inference is down. A chat
 /// (theme-summary) failure is NON-fatal — it degrades that one label,
 /// never the pass.
+/// SPEC-12 cross-theme dependency merging (clustering-of-clusters). Merge Dreams
+/// whose per-cluster centroid embeddings have cosine ≥ `threshold` into one
+/// meta-theme. PURE — no I/O, no async, no RNG; `O(K²)` over K clusters (a day's
+/// clusters number in the low tens).
+///
+/// - `cluster_groups[i]` are the event-index members of `dreams[i]`.
+/// - `embeddings` is the full per-event slice (same indexing as the original
+///   `events`). The centroid of cluster `i` is the **L2-normalised** mean of its
+///   members' embeddings — normalisation is load-bearing: the mean of unit
+///   vectors is NOT unit-length, so an un-normalised centroid would deflate every
+///   cross-cluster cosine and the threshold would never fire.
+///
+/// Single-linkage agglomeration over centroids (same shape as
+/// [`cluster_events_by_cosine`]). The first cluster of a merged group is the seed
+/// (gives `day` / `composed_ts_unix` / the leading label); members' `event_ids`
+/// (de-duplicated, input order) + `tags` (de-duplicated, sorted) are unioned; the
+/// merged label is `"<a> + <b>"` (sanitised + clamped) and the summary is
+/// prefixed `"Merged N themes: …"`. Clusters not merged pass through unchanged.
+/// Defensive: returns the input clone when `dreams.len() < 2`, on a
+/// `cluster_groups` length mismatch, or when embeddings have zero dimension.
+pub fn merge_overlapping_dreams(
+    dreams: &[Dream],
+    cluster_groups: &[Vec<usize>],
+    embeddings: &[Vec<f32>],
+    threshold: f32,
+) -> Vec<Dream> {
+    if dreams.len() < 2 || cluster_groups.len() != dreams.len() {
+        return dreams.to_vec();
+    }
+    let dim = embeddings.iter().map(|e| e.len()).max().unwrap_or(0);
+    if dim == 0 {
+        return dreams.to_vec();
+    }
+    // L2-normalised centroid per cluster (mean of member embeddings, normalised).
+    let centroids: Vec<Vec<f32>> = cluster_groups
+        .iter()
+        .map(|members| {
+            let mut c = vec![0.0f32; dim];
+            let mut n = 0usize;
+            for &j in members {
+                if let Some(e) = embeddings.get(j) {
+                    for (slot, v) in e.iter().enumerate().take(dim) {
+                        c[slot] += *v;
+                    }
+                    n += 1;
+                }
+            }
+            if n > 0 {
+                let inv = 1.0 / n as f32;
+                for x in c.iter_mut() {
+                    *x *= inv;
+                }
+            }
+            let norm = c.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > f32::EPSILON {
+                for x in c.iter_mut() {
+                    *x /= norm;
+                }
+            }
+            c
+        })
+        .collect();
+    // Single-linkage agglomeration over centroids → meta-groups of dream indices.
+    let mut meta: Vec<Vec<usize>> = Vec::new();
+    for i in 0..dreams.len() {
+        let mut placed = false;
+        for g in meta.iter_mut() {
+            let hits = g
+                .iter()
+                .any(|&j| crate::providers::embed::cosine(&centroids[i], &centroids[j]) >= threshold);
+            if hits {
+                g.push(i);
+                placed = true;
+                break;
+            }
+        }
+        if !placed {
+            meta.push(vec![i]);
+        }
+    }
+    meta.into_iter()
+        .map(|g| {
+            if g.len() == 1 {
+                return dreams[g[0]].clone();
+            }
+            let seed = &dreams[g[0]];
+            let merged_labels = g
+                .iter()
+                .map(|&i| dreams[i].theme_label.as_str())
+                .collect::<Vec<_>>()
+                .join(" + ");
+            let theme_label = sanitize_theme_label(&merged_labels, &seed.theme_label);
+            let mut event_ids: Vec<i64> = Vec::new();
+            for &i in &g {
+                for id in &dreams[i].event_ids {
+                    if !event_ids.contains(id) {
+                        event_ids.push(*id);
+                    }
+                }
+            }
+            let mut tags: Vec<String> = g.iter().flat_map(|&i| dreams[i].tags.clone()).collect();
+            tags.sort();
+            tags.dedup();
+            Dream {
+                composed_ts_unix: seed.composed_ts_unix,
+                day: seed.day.clone(),
+                theme_label,
+                summary: format!("Merged {} themes: {}", g.len(), seed.summary),
+                event_ids,
+                tags,
+            }
+        })
+        .collect()
+}
+
 pub async fn compose_dreams_with_embeddings(
     day: &str,
     events: &[EventRef],
     provider: &dyn crate::providers::embed::EmbedProvider,
     chat: Option<&dyn Provider>,
     threshold: f32,
+    merge_cross_themes: bool,
 ) -> anyhow::Result<Vec<Dream>> {
     if events.is_empty() {
         return Ok(Vec::new());
@@ -622,6 +745,15 @@ pub async fn compose_dreams_with_embeddings(
         let fallback = format!("cluster-{idx}-seed-{seed_id}");
         let theme_label = summarise_or_fallback(chat, &cluster_events, &fallback).await;
         dreams.push(compose_dream(day, &theme_label, &cluster_events));
+    }
+    // SPEC-12 cross-theme merge — opt-in, after per-cluster Dreams exist.
+    if merge_cross_themes && dreams.len() > 1 {
+        return Ok(merge_overlapping_dreams(
+            &dreams,
+            &groups,
+            &embeddings,
+            DREAMING_CROSS_THEME_THRESHOLD,
+        ));
     }
     Ok(dreams)
 }
@@ -890,6 +1022,107 @@ mod tests {
         }
     }
 
+    // ── SPEC-12 cross-theme merge ────────────────────────────────────────
+
+    fn dream_with(label: &str, ids: Vec<i64>, tags: &[&str]) -> Dream {
+        Dream {
+            composed_ts_unix: 1700,
+            day: "2026-06-05".into(),
+            theme_label: label.into(),
+            summary: format!("summary-{label}"),
+            event_ids: ids,
+            tags: tags.iter().map(|t| (*t).to_string()).collect(),
+        }
+    }
+
+    fn slot_vec(slot: usize) -> Vec<f32> {
+        let mut v = vec![0.0f32; 4];
+        v[slot] = 1.0;
+        v
+    }
+
+    #[test]
+    fn merge_no_overlap_keeps_clusters_separate() {
+        // Orthogonal slot-0/1/2 centroids → no cross-merge.
+        let dreams = vec![
+            dream_with("weather", vec![1], &["w"]),
+            dream_with("news", vec![2], &["n"]),
+            dream_with("code", vec![3], &["c"]),
+        ];
+        let groups = vec![vec![0], vec![1], vec![2]];
+        let embeddings = vec![slot_vec(0), slot_vec(1), slot_vec(2)];
+        let out = merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.75);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].event_ids, vec![1]);
+        assert_eq!(out[2].event_ids, vec![3]);
+    }
+
+    #[test]
+    fn merge_high_overlap_collapses_into_one() {
+        // Both centroids at slot-0 (cosine = 1.0) → merge.
+        let dreams = vec![
+            dream_with("auth", vec![1, 2], &["a", "shared"]),
+            dream_with("login", vec![2, 3], &["b", "shared"]),
+        ];
+        let groups = vec![vec![0], vec![1]];
+        let embeddings = vec![slot_vec(0), slot_vec(0)];
+        let out = merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.75);
+        assert_eq!(out.len(), 1);
+        // event_ids unioned in input order, de-duplicated (the shared `2` once).
+        assert_eq!(out[0].event_ids, vec![1, 2, 3]);
+        assert!(out[0].theme_label.contains("auth") && out[0].theme_label.contains("login"));
+        assert!(out[0].summary.starts_with("Merged 2 themes:"));
+        // tags unioned, sorted, de-duplicated.
+        assert_eq!(
+            out[0].tags,
+            vec!["a".to_string(), "b".to_string(), "shared".to_string()]
+        );
+    }
+
+    #[test]
+    fn merge_threshold_boundary_flips_behaviour() {
+        // centroid_B has cosine 0.78 with centroid_A = [1,0,0,0].
+        let cos = 0.78f32;
+        let b = vec![cos, (1.0 - cos * cos).sqrt(), 0.0, 0.0];
+        let dreams = vec![dream_with("a", vec![1], &[]), dream_with("b", vec![2], &[])];
+        let groups = vec![vec![0], vec![1]];
+        let embeddings = vec![slot_vec(0), b];
+        // threshold below the pair's cosine → merge.
+        assert_eq!(merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.75).len(), 1);
+        // threshold above the pair's cosine → stay separate.
+        assert_eq!(merge_overlapping_dreams(&dreams, &groups, &embeddings, 0.80).len(), 2);
+    }
+
+    #[test]
+    fn merge_defensive_passthrough() {
+        // single dream → unchanged.
+        let one = vec![dream_with("solo", vec![1], &[])];
+        assert_eq!(merge_overlapping_dreams(&one, &[vec![0]], &[slot_vec(0)], 0.75).len(), 1);
+        // cluster_groups length mismatch → input clone (no merge attempted).
+        let two = vec![dream_with("a", vec![1], &[]), dream_with("b", vec![2], &[])];
+        assert_eq!(merge_overlapping_dreams(&two, &[vec![0]], &[slot_vec(0)], 0.75).len(), 2);
+        // empty → empty.
+        assert!(merge_overlapping_dreams(&[], &[], &[], 0.75).is_empty());
+    }
+
+    #[tokio::test]
+    async fn compose_with_merge_flag_does_not_over_merge_orthogonal_clusters() {
+        // weather + news form 2 orthogonal clusters; merge_cross_themes=true must
+        // NOT collapse them (centroid cosine 0.0 < 0.75) — proves the flag is
+        // wired end-to-end AND that the merge is conservative.
+        let events = vec![
+            cluster_ev(1, "weather sunny"),
+            cluster_ev(2, "weather rainy"),
+            cluster_ev(3, "news election"),
+            cluster_ev(4, "news economy"),
+        ];
+        let dreams =
+            compose_dreams_with_embeddings("2026-06-05", &events, &DreamSlotMock, None, 0.5, true)
+                .await
+                .unwrap();
+        assert_eq!(dreams.len(), 2, "orthogonal weather/news clusters must not cross-merge");
+    }
+
     #[test]
     fn cluster_events_single_linkage_chains_through_existing() {
         // A at slot 0, B at slot 0 (joins A), C orthogonal to A and B
@@ -956,7 +1189,7 @@ mod tests {
             cluster_ev(2, "weather pattern shifting"),
             cluster_ev(3, "news from berlin"),
         ];
-        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, None, 0.5)
+        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, None, 0.5, false)
             .await
             .unwrap();
         assert_eq!(dreams.len(), 2);
@@ -974,7 +1207,7 @@ mod tests {
 
     #[tokio::test]
     async fn compose_dreams_empty_input_returns_empty() {
-        let dreams = compose_dreams_with_embeddings("2026-05-23", &[], &DreamSlotMock, None, 0.5)
+        let dreams = compose_dreams_with_embeddings("2026-05-23", &[], &DreamSlotMock, None, 0.5, false)
             .await
             .unwrap();
         assert!(dreams.is_empty());
@@ -1092,7 +1325,7 @@ mod tests {
         let chat = FixedLabelChat {
             reply: "  monday weather outlook  ",
         };
-        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&chat), 0.5)
+        let dreams = compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&chat), 0.5, false)
             .await
             .unwrap();
         assert_eq!(dreams.len(), 1);
@@ -1106,7 +1339,7 @@ mod tests {
         let day = "2026-06-03";
         let events = vec![cluster_ev(1, "weather forecast for monday")];
         let dreams =
-            compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&FailingChat), 0.5)
+            compose_dreams_with_embeddings(day, &events, &DreamSlotMock, Some(&FailingChat), 0.5, false)
                 .await
                 .unwrap();
         assert_eq!(dreams.len(), 1);
