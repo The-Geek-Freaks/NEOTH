@@ -486,7 +486,9 @@ async fn audit_notice_egress(
         crate::channels::send_gate::channel_egress_payload("telegram", chat_id, body, None, false, now);
     let header =
         crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS, &payload);
-    let _ = w.append(header, payload).await;
+    if let Err(e) = w.append(header, payload).await {
+        tracing::warn!(error = %e, "Telegram notice-egress WAL append failed (non-fatal)");
+    }
 }
 
 /// SD-03: handle a Telegram *edited* message. Audit-only — builds an

@@ -193,6 +193,20 @@ impl WalWriterHandle {
         self
     }
 
+    /// Liveness probe: `true` while the background writer task is still
+    /// draining the channel. A crashed/aborted writer task drops the
+    /// receiver, flipping `tx.is_closed()` to true — so this is a cheap,
+    /// synchronous way to tell a *live* sink from a `Some`-but-dead handle.
+    ///
+    /// Used as the `audit_writable` pre-flight on required-audit send paths:
+    /// `is_some()` alone passes a dead writer, which would let a send proceed
+    /// while the mandatory audit frame is silently dropped — a
+    /// "proof not slogans" violation. `is_alive()` makes that path fail closed.
+    #[must_use]
+    pub(crate) fn is_alive(&self) -> bool {
+        !self.tx.is_closed()
+    }
+
     pub async fn append(&self, header: EventHeaderV2, payload: Vec<u8>) -> Result<u64, WalError> {
         if payload.len() > MAX_PAYLOAD_BYTES {
             return Err(WalError::PayloadTooLarge(payload.len(), MAX_PAYLOAD_BYTES));
@@ -1099,6 +1113,30 @@ mod tests {
         let h = header_for(payload.len() as u32, 1);
         let err = handle.append_no_ack(h, payload).await.unwrap_err();
         assert!(matches!(err, WalError::WriterClosed));
+    }
+
+    #[tokio::test]
+    async fn is_alive_distinguishes_live_writer_from_dead_handle() {
+        // A freshly-spawned writer task holds the receiver → handle is alive.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (handle, join) = spawn(seg).expect("spawn");
+        assert!(handle.is_alive(), "freshly-spawned writer must report alive");
+
+        // A `Some`-but-crashed writer: receiver dropped → `tx.is_closed()` true.
+        // `is_alive()` must report false AND `append()` must fail closed so a
+        // required-audit pre-flight refuses rather than sending un-audited.
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        let dead = WalWriterHandle { tx, quota: None };
+        assert!(!dead.is_alive(), "a crashed-but-Some writer must report not-alive");
+        let h = header_for(1, 1);
+        let err = dead.append(h, b"x".to_vec()).await.unwrap_err();
+        assert!(matches!(err, WalError::WriterClosed));
+
+        // Tidy: dropping the last sender lets the live writer task exit.
+        drop(handle);
+        let _ = join.await;
     }
 
     #[tokio::test]

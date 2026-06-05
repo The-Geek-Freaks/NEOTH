@@ -468,7 +468,9 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                     let verdict = send_gate::decide_channel_send(
                         &gov.decision,
                         gov.dry_run,
-                        gov.wal_writer.is_some(),
+                        // `is_some()` would pass a Some-but-crashed writer; probe
+                        // liveness so required_audit fails closed on a dead sink.
+                        gov.wal_writer.as_ref().is_some_and(|w| w.is_alive()),
                         gov.required_audit,
                     );
                     match verdict {
@@ -484,7 +486,9 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                     crate::wal::events::EVENT_TYPE_PERMISSION_DENIED,
                                     &p,
                                 );
-                                let _ = w.append(h, p).await;
+                                if let Err(e) = w.append(h, p).await {
+                                    warn!(error = %e, "WAL write failed for channel-send denial audit frame");
+                                }
                             }
                             warn!(
                                 recipient_hash = %recipient_hash,
@@ -512,7 +516,9 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                     crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
                                     &p,
                                 );
-                                let _ = w.append(h, p).await;
+                                if let Err(e) = w.append(h, p).await {
+                                    warn!(error = %e, "WAL write failed for dry-run egress audit frame");
+                                }
                             }
                             debug!(
                                 recipient_hash = %recipient_hash,
@@ -529,8 +535,11 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                             .await;
                             match send {
                                 Ok(r) if r.ok => {
-                                    // Best-effort audit (required-audit was already
-                                    // pre-flighted into the verdict above).
+                                    // Mandatory audit frame. The Graph API send at
+                                    // the top of this arm already happened and
+                                    // cannot be undone, so a WAL-write failure here
+                                    // means the audit chain is broken for a REAL
+                                    // egress — surface it at ERROR, never silently.
                                     if let Some(w) = gov.wal_writer.as_ref() {
                                         let p = send_gate::channel_egress_payload(
                                             "whatsapp",
@@ -544,7 +553,9 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
                                             &p,
                                         );
-                                        let _ = w.append(h, p).await;
+                                        if let Err(e) = w.append(h, p).await {
+                                            error!(error = %e, "required-audit WAL write failed AFTER send — audit chain broken for a delivered egress");
+                                        }
                                     }
                                     debug!(
                                         recipient_hash = %recipient_hash,
@@ -567,7 +578,9 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
                                             &p,
                                         );
-                                        let _ = w.append(h, p).await;
+                                        if let Err(e) = w.append(h, p).await {
+                                            warn!(error = %e, "WAL write failed for Meta-API-error egress audit frame");
+                                        }
                                     }
                                     warn!(
                                         recipient_hash = %recipient_hash,
@@ -588,7 +601,9 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
                                             &p,
                                         );
-                                        let _ = w.append(h, p).await;
+                                        if let Err(we) = w.append(h, p).await {
+                                            warn!(error = %we, "WAL write failed for transport-error egress audit frame");
+                                        }
                                     }
                                     warn!(
                                         recipient_hash = %recipient_hash,
