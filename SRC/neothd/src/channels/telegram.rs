@@ -61,6 +61,20 @@ impl TelegramChannel {
         self.gate_writer = Some(writer);
         self
     }
+
+    /// Validate the bot token WITHOUT starting the long-poll loop — calls
+    /// Telegram `getMe` and returns the bot's `@username` on success. This is
+    /// the live pre-flight behind `neoth channel test telegram`: a bad token
+    /// surfaces here as a clear error instead of a silent retry at daemon
+    /// startup (the same `get_me()` the `run` loop does, hoisted to a check).
+    pub async fn validate(&self) -> std::result::Result<String, ChannelError> {
+        let bot = Bot::new(self.token.expose());
+        let me = bot
+            .get_me()
+            .await
+            .map_err(|e| ChannelError::Transport(format!("Telegram getMe: {e}")))?;
+        Ok(me.username.clone().unwrap_or_else(|| "(unknown)".to_string()))
+    }
 }
 
 #[async_trait]

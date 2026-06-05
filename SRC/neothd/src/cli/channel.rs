@@ -148,6 +148,166 @@ fn render(rows: &[ChannelStatus], output: &OutputFormat) -> Result<String> {
     }
 }
 
+// ── `neoth channel test <channel>` ────────────────────────────────────────
+
+/// What `channel test <name>` does — decided purely from config + credentials
+/// so the dispatch is unit-testable without touching the network.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelTestPlan {
+    /// Unknown channel name.
+    Unknown,
+    /// Known channel, not configured (nothing to test).
+    NotConfigured,
+    /// Telegram `getMe` live check.
+    Telegram,
+    /// Slack `auth.test` live check.
+    Slack,
+    /// WhatsApp phone-node live check.
+    Whatsapp,
+    /// Keet — OFFLINE seed-phrase format validation (no network).
+    KeetOffline,
+    /// Discord — no credential field yet, not testable.
+    DiscordNoCred,
+}
+
+/// Decide the test plan for `<name>`. PURE. Slack needs only the BOT token to
+/// `auth.test` (the app token is for socket mode, not auth), so the test bar
+/// is lower than the "startable" bar `channel_statuses` uses for slack.
+pub fn plan_channel_test(name: &str, cfg: &FreedomConfig, creds: &Credentials) -> ChannelTestPlan {
+    let yes_if = |configured: bool, yes: ChannelTestPlan| {
+        if configured {
+            yes
+        } else {
+            ChannelTestPlan::NotConfigured
+        }
+    };
+    match name.trim().to_ascii_lowercase().as_str() {
+        "telegram" => yes_if(cfg.telegram_token.is_some(), ChannelTestPlan::Telegram),
+        "slack" => yes_if(creds.slack_bot_token.is_some(), ChannelTestPlan::Slack),
+        "whatsapp" => yes_if(
+            creds.whatsapp_token.is_some() && creds.whatsapp_phone_id.is_some(),
+            ChannelTestPlan::Whatsapp,
+        ),
+        "keet" => yes_if(creds.keet_seed_phrase.is_some(), ChannelTestPlan::KeetOffline),
+        "discord" => ChannelTestPlan::DiscordNoCred,
+        _ => ChannelTestPlan::Unknown,
+    }
+}
+
+/// Outcome of a channel test — render-agnostic + serde for `--output json`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelTestResult {
+    pub channel: String,
+    /// `ok` (live check passed) / `fail` (live check failed) / `skipped`
+    /// (not configured / not testable).
+    pub status: &'static str,
+    pub detail: String,
+}
+
+/// `neoth channel test <channel>` — live pre-flight for ONE channel: validate
+/// the configured credentials actually work. Telegram/Slack/WhatsApp make a
+/// read-only API call (getMe / auth.test / phone-node GET — no message sent,
+/// nothing billed); Keet validates the seed phrase OFFLINE; Discord has no
+/// credential field yet. The network calls delegate to the channel adapters
+/// (already in the `no_outbound_network` allowlist) — this dispatcher stays
+/// network-free + secret-free.
+pub async fn run_test(name: &str, output: &OutputFormat) -> Result<()> {
+    let cfg = FreedomConfig::load_from_default_path().unwrap_or_default();
+    let creds = Credentials::load_or_default(&crate::config::credentials::default_path())
+        .unwrap_or_default();
+    let chan = name.trim().to_ascii_lowercase();
+
+    let result = match plan_channel_test(&chan, &cfg, &creds) {
+        ChannelTestPlan::Unknown => anyhow::bail!(
+            "unknown channel `{name}`. Known: telegram, slack, whatsapp, keet, discord. \
+             `neoth channel list` shows configured state."
+        ),
+        ChannelTestPlan::NotConfigured => skipped(
+            chan,
+            "not configured — `neoth channel list` shows what to set".to_string(),
+        ),
+        ChannelTestPlan::DiscordNoCred => skipped(
+            chan,
+            "no credentials.yaml field yet — outbound adapter only".to_string(),
+        ),
+        ChannelTestPlan::Telegram => {
+            let ch = crate::channels::telegram::TelegramChannel::new(
+                cfg.telegram_token.clone().expect("plan guarantees configured"),
+                cfg.telegram_user_id,
+            );
+            match ch.validate().await {
+                Ok(user) => ok(chan, format!("bot @{user}")),
+                Err(e) => fail(chan, e.to_string()),
+            }
+        }
+        ChannelTestPlan::Slack => {
+            let bot = creds.slack_bot_token.clone().expect("plan guarantees configured");
+            match crate::channels::slack_api::auth_test(&bot).await {
+                Ok(r) if r.ok => ok(
+                    chan,
+                    format!(
+                        "team {} as {}",
+                        r.team.as_deref().unwrap_or("?"),
+                        r.user.as_deref().unwrap_or("?")
+                    ),
+                ),
+                Ok(r) => fail(chan, r.error.unwrap_or_else(|| "auth.test returned ok=false".into())),
+                Err(e) => fail(chan, e.to_string()),
+            }
+        }
+        ChannelTestPlan::Whatsapp => {
+            let token = creds.whatsapp_token.clone().expect("plan guarantees configured");
+            let phone = creds.whatsapp_phone_id.clone().expect("plan guarantees configured");
+            match crate::channels::whatsapp_api::validate_token(&token, &phone).await {
+                Ok(r) if r.ok => ok(
+                    chan,
+                    format!("number {}", r.display_phone_number.as_deref().unwrap_or("?")),
+                ),
+                Ok(r) => fail(chan, r.error.unwrap_or_else(|| "validate returned ok=false".into())),
+                Err(e) => fail(chan, e.to_string()),
+            }
+        }
+        ChannelTestPlan::KeetOffline => {
+            let seed = creds.keet_seed_phrase.clone().expect("plan guarantees configured");
+            let v = crate::channels::keet::validate_seed_phrase(seed.expose());
+            if v.is_valid() {
+                ok(chan, "valid 24-word pairing phrase (offline format check)".to_string())
+            } else {
+                fail(chan, format!("seed phrase invalid: {}", v.as_str()))
+            }
+        }
+    };
+
+    print!("{}", render_test(&result, output)?);
+    Ok(())
+}
+
+fn ok(channel: String, detail: String) -> ChannelTestResult {
+    ChannelTestResult { channel, status: "ok", detail }
+}
+fn fail(channel: String, detail: String) -> ChannelTestResult {
+    ChannelTestResult { channel, status: "fail", detail }
+}
+fn skipped(channel: String, detail: String) -> ChannelTestResult {
+    ChannelTestResult { channel, status: "skipped", detail }
+}
+
+fn render_test(r: &ChannelTestResult, output: &OutputFormat) -> Result<String> {
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            Ok(format!("{}\n", serde_json::to_string_pretty(r)?))
+        }
+        OutputFormat::Table => {
+            let glyph = match r.status {
+                "ok" => "✓",
+                "fail" => "✗",
+                _ => "–",
+            };
+            Ok(format!("{glyph} {} — {}\n", r.channel, r.detail))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,6 +378,60 @@ mod tests {
         let d = rows.iter().find(|r| r.name == "discord").unwrap();
         assert!(!d.configured);
         assert!(d.detail.contains("no credentials.yaml field yet"));
+    }
+
+    #[test]
+    fn plan_channel_test_routes_each_channel_purely() {
+        let cfg = FreedomConfig::default();
+        let creds = creds_empty();
+        // Fresh install: known-but-unconfigured → NotConfigured; discord special; unknown.
+        assert_eq!(plan_channel_test("telegram", &cfg, &creds), ChannelTestPlan::NotConfigured);
+        assert_eq!(plan_channel_test("slack", &cfg, &creds), ChannelTestPlan::NotConfigured);
+        assert_eq!(plan_channel_test("keet", &cfg, &creds), ChannelTestPlan::NotConfigured);
+        assert_eq!(plan_channel_test("discord", &cfg, &creds), ChannelTestPlan::DiscordNoCred);
+        assert_eq!(plan_channel_test("nope", &cfg, &creds), ChannelTestPlan::Unknown);
+
+        // Telegram token → live plan; case-insensitive.
+        let mut cfg2 = FreedomConfig::default();
+        cfg2.telegram_token = Some(SecretString::from("t"));
+        assert_eq!(plan_channel_test("telegram", &cfg2, &creds), ChannelTestPlan::Telegram);
+        assert_eq!(plan_channel_test("TELEGRAM", &cfg2, &creds), ChannelTestPlan::Telegram);
+
+        // Slack auth.test needs only the BOT token (app token is for socket mode).
+        let mut creds_s = creds_empty();
+        creds_s.slack_bot_token = Some(SecretString::from("xoxb"));
+        assert_eq!(plan_channel_test("slack", &cfg, &creds_s), ChannelTestPlan::Slack);
+
+        // WhatsApp needs BOTH token + phone id.
+        let mut creds_w = creds_empty();
+        creds_w.whatsapp_token = Some(SecretString::from("t"));
+        assert_eq!(plan_channel_test("whatsapp", &cfg, &creds_w), ChannelTestPlan::NotConfigured);
+        creds_w.whatsapp_phone_id = Some("123".to_string());
+        assert_eq!(plan_channel_test("whatsapp", &cfg, &creds_w), ChannelTestPlan::Whatsapp);
+
+        // Keet seed → offline plan.
+        let mut creds_k = creds_empty();
+        creds_k.keet_seed_phrase = Some(SecretString::from("x"));
+        assert_eq!(plan_channel_test("keet", &cfg, &creds_k), ChannelTestPlan::KeetOffline);
+    }
+
+    #[test]
+    fn render_test_table_and_json() {
+        let r = ChannelTestResult {
+            channel: "telegram".to_string(),
+            status: "ok",
+            detail: "bot @neoth".to_string(),
+        };
+        assert!(render_test(&r, &OutputFormat::Table).unwrap().contains("✓ telegram"));
+        let j: serde_json::Value =
+            serde_json::from_str(&render_test(&r, &OutputFormat::Json).unwrap()).unwrap();
+        assert_eq!(j["status"], "ok");
+        assert_eq!(j["channel"], "telegram");
+        // A failed/skipped status renders its own glyph.
+        let f = ChannelTestResult { channel: "slack".to_string(), status: "fail", detail: "bad token".to_string() };
+        assert!(render_test(&f, &OutputFormat::Table).unwrap().starts_with("✗"));
+        let s = ChannelTestResult { channel: "discord".to_string(), status: "skipped", detail: "no field".to_string() };
+        assert!(render_test(&s, &OutputFormat::Table).unwrap().starts_with("–"));
     }
 
     #[test]

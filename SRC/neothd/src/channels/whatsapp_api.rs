@@ -111,6 +111,88 @@ pub(crate) fn parse_send_response(http_ok: bool, body: &str) -> Result<SendMessa
     })
 }
 
+/// Result of a phone-number-node GET — validates the access token + phone id
+/// WITHOUT sending a message (no recipient, no opt-in needed).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ValidateResult {
+    pub ok: bool,
+    pub display_phone_number: Option<String>,
+    pub verified_name: Option<String>,
+    pub error: Option<String>,
+}
+
+/// GET the phone-number node to validate that the access token works AND the
+/// configured phone id resolves. Behind `neoth channel test whatsapp` — proves
+/// the credentials before the operator wonders why a send silently no-ops.
+pub async fn validate_token(
+    access_token: &SecretString,
+    phone_number_id: &str,
+) -> Result<ValidateResult> {
+    if phone_number_id.is_empty() {
+        anyhow::bail!("whatsapp_phone_id is empty — set it in credentials.yaml");
+    }
+    let url = format!(
+        "https://graph.facebook.com/v18.0/{phone_number_id}?fields=display_phone_number,verified_name"
+    );
+    let client = http_client::build_client()?;
+    let resp = client
+        .get(&url)
+        .bearer_auth(access_token.expose())
+        .send()
+        .await
+        .context("WhatsApp Graph API validate request")?;
+    let status = resp.status();
+    let body_text = resp.text().await.unwrap_or_default();
+    parse_validate_response(status.is_success(), &body_text)
+}
+
+/// Pure parser for the phone-number-node response — unit-tested without network.
+pub(crate) fn parse_validate_response(http_ok: bool, body: &str) -> Result<ValidateResult> {
+    if http_ok {
+        if let Ok(node) = serde_json::from_str::<PhoneNode>(body) {
+            // A live node returns at least the display number; treat its
+            // presence (or a verified name) as proof the token + id are good.
+            if node.display_phone_number.is_some() || node.verified_name.is_some() {
+                return Ok(ValidateResult {
+                    ok: true,
+                    display_phone_number: node.display_phone_number,
+                    verified_name: node.verified_name,
+                    error: None,
+                });
+            }
+        }
+    }
+    if let Ok(err) = serde_json::from_str::<ErrorBody>(body) {
+        return Ok(ValidateResult {
+            ok: false,
+            display_phone_number: None,
+            verified_name: None,
+            error: Some(format!(
+                "{}: {}",
+                err.error.error_type.as_deref().unwrap_or("api_error"),
+                err.error.message,
+            )),
+        });
+    }
+    Ok(ValidateResult {
+        ok: false,
+        display_phone_number: None,
+        verified_name: None,
+        error: Some(format!(
+            "unrecognised response (first 200 chars): {}",
+            body.chars().take(200).collect::<String>()
+        )),
+    })
+}
+
+#[derive(Deserialize)]
+struct PhoneNode {
+    #[serde(default)]
+    display_phone_number: Option<String>,
+    #[serde(default)]
+    verified_name: Option<String>,
+}
+
 #[derive(Deserialize)]
 struct SuccessBody {
     #[serde(default)]
@@ -190,6 +272,33 @@ mod tests {
         let err = r.error.unwrap();
         assert!(err.contains("unrecognised"));
         assert!(err.contains("503"));
+    }
+
+    #[test]
+    fn parse_validate_response_accepts_a_live_phone_node() {
+        let body = r#"{"display_phone_number":"+49 151 12345678","verified_name":"NEOTH Bot","id":"123"}"#;
+        let r = parse_validate_response(true, body).unwrap();
+        assert!(r.ok);
+        assert_eq!(r.display_phone_number.as_deref(), Some("+49 151 12345678"));
+        assert_eq!(r.verified_name.as_deref(), Some("NEOTH Bot"));
+        assert!(r.error.is_none());
+    }
+
+    #[test]
+    fn parse_validate_response_surfaces_bad_token() {
+        let body = r#"{"error":{"message":"Invalid OAuth access token.","type":"OAuthException","code":190}}"#;
+        let r = parse_validate_response(false, body).unwrap();
+        assert!(!r.ok);
+        let err = r.error.unwrap();
+        assert!(err.contains("OAuthException") && err.contains("Invalid OAuth"));
+    }
+
+    #[test]
+    fn parse_validate_response_rejects_empty_node_as_not_ok() {
+        // A 200 with no phone fields (e.g. a permissions-scoped token that can
+        // see the node id but not its fields) is NOT proof the channel works.
+        let r = parse_validate_response(true, r#"{"id":"123"}"#).unwrap();
+        assert!(!r.ok);
     }
 
     #[test]
