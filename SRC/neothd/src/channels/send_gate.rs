@@ -6,13 +6,13 @@
 //!
 //!   1. Evaluate the operator's channel-send permission ([`Action::ChannelSend`]
 //!      under the active autonomy level). An explicit **Deny** blocks the send
-//!      and emits `0xA1 PERMISSION_DENIED`.
+//!      and emits `0x68 CHANNEL_SEND_DENIED`.
 //!   2. **required-audit fail-closed**: when the operator demands every send be
 //!      provable, a send that cannot be audited is REFUSED (never silently
 //!      sent).
 //!   3. **dry-run**: skip the real API call but still emit the audit so the
 //!      operator sees what WOULD have gone out.
-//!   4. Otherwise send + emit `0x33 CHANNEL_EGRESS`.
+//!   4. Otherwise send + emit `0x67 CHANNEL_SEND`.
 //!
 //! The audit is **metadata-only**: the recipient (a phone number for WhatsApp)
 //! and the message body are xxh3-64 HASHED, never stored in the clear.
@@ -23,12 +23,12 @@ use crate::permissions::Decision;
 /// is unit-testable without a network or a WAL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChannelSendVerdict {
-    /// Proceed with the real API send, then emit `CHANNEL_EGRESS`.
+    /// Proceed with the real API send, then emit `CHANNEL_SEND`.
     Send,
-    /// `dry_run`: do NOT hit the API, but emit a dry-run `CHANNEL_EGRESS` so the
+    /// `dry_run`: do NOT hit the API, but emit a dry-run `CHANNEL_SEND` so the
     /// operator sees what would have gone out.
     DryRun,
-    /// The permission gate denied the send — emit `PERMISSION_DENIED`, do not
+    /// The permission gate denied the send — emit `CHANNEL_SEND_DENIED`, do not
     /// send. Carries the gate's reason.
     Denied(String),
     /// `required_audit` is on but the audit sink is unavailable — fail closed:
@@ -50,7 +50,7 @@ pub enum ChannelSendVerdict {
 /// gate which resolves Strict's Confirm to Deny and returns `Ok(None)` BEFORE
 /// `decide_channel_send` is ever reached. The fallthrough therefore only fires
 /// for an operator-constructed listener that bypasses that pipeline gate — and
-/// when it does, the `confirm_degraded: true` flag in the `CHANNEL_EGRESS`
+/// when it does, the `confirm_degraded: true` flag in the `CHANNEL_SEND`
 /// payload marks the governance posture in the WAL. The durable audit + the
 /// hard Deny remain the governance for a headless, TTY-less reply path.
 pub fn decide_channel_send(
@@ -71,7 +71,7 @@ pub fn decide_channel_send(
     ChannelSendVerdict::Send
 }
 
-/// Build the metadata-only `CHANNEL_EGRESS` payload for an outbound send. The
+/// Build the metadata-only `CHANNEL_SEND` payload for an outbound send. The
 /// recipient AND the message body are xxh3-64 HASHED — never the phone number
 /// or the text in the clear. PURE so the no-plaintext invariant is testable.
 ///
@@ -100,7 +100,7 @@ pub fn channel_egress_payload(
     .unwrap_or_default()
 }
 
-/// Build the `PERMISSION_DENIED` payload for a refused send. Also metadata-only
+/// Build the `CHANNEL_SEND_DENIED` payload for a refused send. Also metadata-only
 /// (hashed recipient, no body) + the gate's reason.
 pub fn channel_send_denied_payload(
     channel: &str,
@@ -118,7 +118,7 @@ pub fn channel_send_denied_payload(
     .unwrap_or_default()
 }
 
-/// Build a `CHANNEL_EGRESS` payload for a send that was ATTEMPTED but did NOT
+/// Build a `CHANNEL_SEND` payload for a send that was ATTEMPTED but did NOT
 /// reach the recipient (Meta API rejection or transport failure). Same
 /// metadata-only shape — hashed recipient, no body — plus `delivered: false`
 /// and a coarse `error_kind`. Without this, a rejected/failed send leaves no

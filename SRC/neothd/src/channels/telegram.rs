@@ -486,7 +486,7 @@ async fn audit_notice_egress(
         "telegram", chat_id, body, None, false, false, now,
     );
     let header =
-        crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS, &payload);
+        crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_SEND, &payload);
     if let Err(e) = w.append(header, payload).await {
         tracing::warn!(error = %e, "Telegram notice-egress WAL append failed (non-fatal)");
     }

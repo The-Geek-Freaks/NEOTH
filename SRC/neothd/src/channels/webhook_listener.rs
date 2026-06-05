@@ -487,7 +487,7 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                     now,
                                 );
                                 let h = crate::wal::make_header(
-                                    crate::wal::events::EVENT_TYPE_PERMISSION_DENIED,
+                                    crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED,
                                     &p,
                                 );
                                 if let Err(e) = w.append(h, p).await {
@@ -518,11 +518,11 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                     now,
                                 );
                                 let h = crate::wal::make_header(
-                                    crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                    crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
                                     &p,
                                 );
                                 if let Err(e) = w.append(h, p).await {
-                                    warn!(error = %e, "WAL write failed for dry-run egress audit frame");
+                                    warn!(error = %e, "WAL write failed for dry-run channel-send audit frame");
                                 }
                             }
                             debug!(
@@ -563,11 +563,11 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             now,
                                         );
                                         let h = crate::wal::make_header(
-                                            crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                            crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
                                             &p,
                                         );
                                         if let Err(e) = w.append(h, p).await {
-                                            error!(error = %e, "required-audit WAL write failed AFTER send — audit chain broken for a delivered egress");
+                                            error!(error = %e, "required-audit WAL write failed AFTER send — audit chain broken for a delivered channel-send");
                                         }
                                     }
                                     debug!(
@@ -588,11 +588,11 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             now,
                                         );
                                         let h = crate::wal::make_header(
-                                            crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                            crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
                                             &p,
                                         );
                                         if let Err(e) = w.append(h, p).await {
-                                            warn!(error = %e, "WAL write failed for Meta-API-error egress audit frame");
+                                            warn!(error = %e, "WAL write failed for Meta-API-error channel-send audit frame");
                                         }
                                     }
                                     warn!(
@@ -611,11 +611,11 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             now,
                                         );
                                         let h = crate::wal::make_header(
-                                            crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                            crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
                                             &p,
                                         );
                                         if let Err(we) = w.append(h, p).await {
-                                            warn!(error = %we, "WAL write failed for transport-error egress audit frame");
+                                            warn!(error = %we, "WAL write failed for transport-error channel-send audit frame");
                                         }
                                     }
                                     warn!(
@@ -837,7 +837,7 @@ mod tests {
             "Deny verdict must not hit the WhatsApp Graph API"
         );
         let (event_type, payload) = read_first_frame(&seg);
-        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_PERMISSION_DENIED);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED);
         let text = String::from_utf8_lossy(&payload);
         assert!(!text.contains("+4900000"), "recipient phone leaked: {text}");
         assert!(text.contains("channel_send"), "denial payload tags the action");
@@ -870,7 +870,7 @@ mod tests {
             "dry-run must not hit the WhatsApp Graph API"
         );
         let (event_type, payload) = read_first_frame(&seg);
-        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND);
         let text = String::from_utf8_lossy(&payload);
         // Metadata-only: hashed recipient + body, dry-run flag set.
         assert!(!text.contains("+4900000"), "recipient leaked: {text}");
@@ -916,7 +916,7 @@ mod tests {
         let reqs = server.received_requests().await.unwrap();
         assert_eq!(reqs.len(), 1, "Allow+send must hit the Graph API exactly once");
         let (event_type, payload) = read_first_frame(&seg);
-        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_SEND);
         let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
         assert_eq!(v["dry_run"], false);
         assert_eq!(v["channel"], "whatsapp");

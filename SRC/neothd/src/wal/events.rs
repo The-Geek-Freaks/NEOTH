@@ -687,6 +687,36 @@ pub const EVENT_TYPE_CONSENT_DECISION: u8 = 0x65;
 /// part of the auditable record.
 pub const EVENT_TYPE_COUNCIL_TRANSCRIPT: u8 = 0x66;
 
+/// `0x67 CHANNEL_SEND` — SC-SEND (Session 39). An OUTBOUND channel send was
+/// GOVERNED + executed (or dry-run previewed) through the send-gate: the
+/// channel-send permission was evaluated (gate), required-audit fail-closed +
+/// dry-run honoured, and the adapter performed (or previewed) the send. The
+/// dedicated governance event for the now-reachable WhatsApp send adapter
+/// (GR-01 Pick B) + the telegram notice path — DISTINCT from `0x33
+/// CHANNEL_EGRESS` (the generic "a reply was released to the transport" record
+/// the indexer feeds into recall) so an operator can grep exactly when an
+/// adapter actually SENT under governance. A failed attempt carries
+/// `delivered:false` + `error_kind` in the same frame.
+///
+/// **Band note**: the natural home is the channels band `0x30..=0x3F`, but that
+/// band is FULL. A channel-send GATE decision (allow / deny / confirm / dry-run
+/// + required-audit) is an operator-GOVERNANCE decision — the same reason
+/// `0x65 CONSENT_DECISION` already lives in this `0x60..=0x6F` band — so the
+/// send-governance pair lands here next to it.
+///
+/// Payload (JSON, metadata-only): `{channel, to_hash, message_hash,
+/// message_bytes, provider_message_id, dry_run, confirm_degraded, ts_unix}`.
+pub const EVENT_TYPE_CHANNEL_SEND: u8 = 0x67;
+
+/// `0x68 CHANNEL_SEND_DENIED` — SC-SEND (Session 39). The channel-send gate
+/// DENIED an outbound send (`send_gate::decide_channel_send` returned a hard
+/// Deny). Distinct from `0xA1 PERMISSION_DENIED` (the generic gate-denial the
+/// pipeline ChannelSend gate still emits) so an operator can grep specifically
+/// for blocked CHANNEL sends. Metadata-only: hashed recipient + the gate's
+/// reason, never the body. Same `0x60..=0x6F` band-note as `0x67 CHANNEL_SEND`.
+/// Payload (JSON): `{action:"channel_send", channel, to_hash, reason, ts_unix}`.
+pub const EVENT_TYPE_CHANNEL_SEND_DENIED: u8 = 0x68;
+
 // ---- 0x70..=0x7F  Coding workflow (V11 Pick #38, 2026-05-19) --------------
 //
 // Hermes-adapted autonomous software engineering pipeline per
@@ -1614,6 +1644,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ),
     ("consent_decision", EVENT_TYPE_CONSENT_DECISION),
     ("council_transcript", EVENT_TYPE_COUNCIL_TRANSCRIPT),
+    ("channel_send", EVENT_TYPE_CHANNEL_SEND),
+    ("channel_send_denied", EVENT_TYPE_CHANNEL_SEND_DENIED),
     ("mcp_tool_called", EVENT_TYPE_MCP_TOOL_CALLED),
     ("mcp_tool_rejected", EVENT_TYPE_MCP_TOOL_REJECTED),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
@@ -1903,6 +1935,10 @@ const _: () = {
         || EVENT_TYPE_COUNCIL_DIVERSITY_WARNING > 0x6F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_COUNCIL_TRANSCRIPT < 0x60 || EVENT_TYPE_COUNCIL_TRANSCRIPT > 0x6F) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_CHANNEL_SEND < 0x60 || EVENT_TYPE_CHANNEL_SEND > 0x6F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CHANNEL_SEND_DENIED < 0x60
+        || EVENT_TYPE_CHANNEL_SEND_DENIED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_FIRED < 0x80 || EVENT_TYPE_HOOK_FIRED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_BLOCKED < 0x80 || EVENT_TYPE_HOOK_BLOCKED > 0x8F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HOOK_REPLACED < 0x80 || EVENT_TYPE_HOOK_REPLACED > 0x8F) as usize];
@@ -2187,6 +2223,8 @@ mod tests {
                 EVENT_TYPE_COUNCIL_DIVERSITY_WARNING,
             ),
             ("COUNCIL_TRANSCRIPT", EVENT_TYPE_COUNCIL_TRANSCRIPT),
+            ("CHANNEL_SEND", EVENT_TYPE_CHANNEL_SEND),
+            ("CHANNEL_SEND_DENIED", EVENT_TYPE_CHANNEL_SEND_DENIED),
             ("HOOK_FIRED", EVENT_TYPE_HOOK_FIRED),
             ("HOOK_BLOCKED", EVENT_TYPE_HOOK_BLOCKED),
             ("HOOK_REPLACED", EVENT_TYPE_HOOK_REPLACED),
@@ -2585,6 +2623,28 @@ mod tests {
                 "gossip diagnostic 0x{code:02X} must be batchable"
             );
         }
+    }
+
+    #[test]
+    fn channel_send_codes_are_0x67_0x68_distinct_durable_and_in_band() {
+        // SC-SEND (Session 39): dedicated channel-send governance events.
+        // Pin the literals (operators bake `neoth wal show --type channel_send`
+        // into runbooks) + confirm they replace, not collide with, the generic
+        // codes they used to reuse.
+        assert_eq!(EVENT_TYPE_CHANNEL_SEND, 0x67);
+        assert_eq!(EVENT_TYPE_CHANNEL_SEND_DENIED, 0x68);
+        assert_ne!(EVENT_TYPE_CHANNEL_SEND, EVENT_TYPE_CHANNEL_SEND_DENIED);
+        for code in [EVENT_TYPE_CHANNEL_SEND, EVENT_TYPE_CHANNEL_SEND_DENIED] {
+            assert!(
+                (0x60..=0x6F).contains(&code),
+                "0x{code:02X} escaped the operator-decision band 0x60..=0x6F"
+            );
+            // Governance audit anchors — durability-critical, never batched.
+            assert!(needs_immediate_sync(code), "0x{code:02X} must be immediate-sync");
+        }
+        // Distinct from the generic codes they replace.
+        assert_ne!(EVENT_TYPE_CHANNEL_SEND, EVENT_TYPE_CHANNEL_EGRESS);
+        assert_ne!(EVENT_TYPE_CHANNEL_SEND_DENIED, EVENT_TYPE_PERMISSION_DENIED);
     }
 
     #[test]
