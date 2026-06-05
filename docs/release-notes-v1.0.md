@@ -35,7 +35,7 @@ These are the deltas between this beta and a final 1.0 — tracked, not hidden:
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |
 | Local models | Qwen profile path, optional local thinking model path, model cache diagnostics. |
 | Providers | Configured cloud providers, provider status, usage caps, circuit breakers, flapping detection. |
-| Channels | CLI + onboarding GUI: Telegram, WhatsApp Business, Slack Socket Mode, Discord, Keet/private path. Post-onboarding the GUI surfaces status; connect/disconnect runs via the CLI until the in-GUI Channels panel (GU-01) lands. |
+| Channels | CLI + onboarding GUI: Telegram, WhatsApp Business, Slack Socket Mode, Discord, Keet/private path. Post-onboarding the GUI surfaces status; connect/disconnect runs via the onboarding wizard (`neoth init --reconfigure`) + `freedom.yaml`/`credentials.yaml` (the `/connect` `/disconnect` chat commands print that flow) until the in-GUI Channels panel (GU-01) lands. |
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Automation | Local cron and localhost n8n API under the same policy/audit surface. |
 | Plugins | Skills and WASM plugins with capabilities, signatures, revocation, hostcall WAL events. |
