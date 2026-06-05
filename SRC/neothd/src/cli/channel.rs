@@ -498,6 +498,86 @@ fn read_plain(prompt: &str) -> Result<String> {
     Ok(line.trim().to_string())
 }
 
+// ── `neoth channel remove <channel>` ──────────────────────────────────────
+
+/// Clear `channel`'s credentials from `base`, returning the updated
+/// [`Credentials`] + whether anything was actually configured (so the caller
+/// can say "nothing to remove" rather than rewriting an unchanged file). PURE —
+/// only the named channel's fields are cleared; other channels are untouched.
+pub fn stage_channel_remove(channel: &str, base: Credentials) -> Result<(Credentials, bool)> {
+    let mut creds = base;
+    let removed = match channel.trim().to_ascii_lowercase().as_str() {
+        "telegram" => {
+            let had = creds.telegram_token.is_some();
+            creds.telegram_token = None;
+            had
+        }
+        "slack" => {
+            let had = creds.slack_bot_token.is_some() || creds.slack_app_token.is_some();
+            creds.slack_bot_token = None;
+            creds.slack_app_token = None;
+            had
+        }
+        "whatsapp" => {
+            let had = creds.whatsapp_token.is_some() || creds.whatsapp_phone_id.is_some();
+            creds.whatsapp_token = None;
+            creds.whatsapp_phone_id = None;
+            creds.whatsapp_verify_token = None;
+            creds.whatsapp_app_secret = None;
+            had
+        }
+        "keet" => {
+            let had = creds.keet_seed_phrase.is_some();
+            creds.keet_seed_phrase = None;
+            had
+        }
+        // Discord stores no credential, so there is never anything to remove.
+        "discord" => false,
+        other => anyhow::bail!(
+            "unknown channel `{other}`. Removable: telegram, slack, whatsapp, keet. \
+             `neoth channel list` shows configured state."
+        ),
+    };
+    Ok((creds, removed))
+}
+
+/// `neoth channel remove <channel>` — clear a channel's credentials from
+/// credentials.yaml (atomic mode-0600 rewrite; the file is deleted when the
+/// last credential is removed). No network. After removal `neoth serve` won't
+/// start the channel.
+pub fn run_remove(channel: &str, output: &OutputFormat) -> Result<()> {
+    let chan = channel.trim().to_ascii_lowercase();
+    let path = crate::config::credentials::default_path();
+    let base = Credentials::load_or_default(&path).unwrap_or_default();
+    let (updated, removed) = stage_channel_remove(&chan, base)?;
+
+    if removed {
+        updated
+            .write(&path)
+            .with_context(|| format!("rewrite credentials at {}", path.display()))?;
+    }
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "channel": chan,
+                    "removed": removed,
+                }))?
+            );
+        }
+        OutputFormat::Table if removed => {
+            println!("✓ removed {chan} credentials from {}", path.display());
+            println!("  `neoth serve` will no longer start it. Re-add: `neoth channel add {chan}`");
+        }
+        OutputFormat::Table => {
+            println!("– {chan} was not configured — nothing to remove.");
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -727,6 +807,46 @@ mod tests {
         let c = stage_channel_add("slack", &f, base).unwrap();
         assert!(c.telegram_token.is_some(), "existing telegram must be preserved");
         assert!(c.slack_bot_token.is_some(), "new slack must be added");
+    }
+
+    #[test]
+    fn stage_remove_clears_only_the_named_channel() {
+        // Start with telegram + slack configured.
+        let mut base = Credentials::default();
+        base.telegram_token = Some(SecretString::from(valid_tg_token().as_str()));
+        base.slack_bot_token = Some(SecretString::from("xoxb-1"));
+        base.slack_app_token = Some(SecretString::from("xapp-1"));
+        let (c, removed) = stage_channel_remove("slack", base).unwrap();
+        assert!(removed);
+        assert!(c.slack_bot_token.is_none() && c.slack_app_token.is_none(), "slack cleared");
+        assert!(c.telegram_token.is_some(), "telegram untouched");
+    }
+
+    #[test]
+    fn stage_remove_reports_false_when_nothing_configured() {
+        let (_, removed) = stage_channel_remove("telegram", Credentials::default()).unwrap();
+        assert!(!removed);
+        // Discord never stores anything → always false, never an error.
+        let (_, d) = stage_channel_remove("discord", Credentials::default()).unwrap();
+        assert!(!d);
+    }
+
+    #[test]
+    fn stage_remove_clears_all_whatsapp_fields() {
+        let mut base = Credentials::default();
+        base.whatsapp_token = Some(SecretString::from("EAA"));
+        base.whatsapp_phone_id = Some("123".to_string());
+        base.whatsapp_verify_token = Some(SecretString::from("v"));
+        base.whatsapp_app_secret = Some(SecretString::from("s"));
+        let (c, removed) = stage_channel_remove("whatsapp", base).unwrap();
+        assert!(removed);
+        assert!(c.whatsapp_token.is_none() && c.whatsapp_phone_id.is_none());
+        assert!(c.whatsapp_verify_token.is_none() && c.whatsapp_app_secret.is_none());
+    }
+
+    #[test]
+    fn stage_remove_rejects_unknown_channel() {
+        assert!(stage_channel_remove("bogus", Credentials::default()).is_err());
     }
 
     #[test]

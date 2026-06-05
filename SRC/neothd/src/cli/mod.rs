@@ -1253,15 +1253,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             ChannelAction::List => channel::run_list(&global_output)?,
             ChannelAction::Test { channel: ch } => channel::run_test(&ch, &global_output).await?,
             ChannelAction::Add { channel: ch } => channel::run_add(&ch, &global_output).await?,
-            ChannelAction::Remove { .. } => {
-                anyhow::bail!(
-                    "`neoth channel remove` not yet in this release. To remove a channel, \
-                     delete its entry from ~/.neoth/credentials.yaml (telegram_token / \
-                     slack_bot_token+slack_app_token / whatsapp_token+whatsapp_phone_id / \
-                     keet_seed_phrase) and `neoth serve` won't start it. `neoth channel \
-                     list` shows configured state; `neoth channel add <ch>` (re)connects."
-                );
-            }
+            ChannelAction::Remove { channel: ch } => channel::run_remove(&ch, &global_output)?,
         },
         Commands::Plugin(mut args) => {
             args.output = global_output;
