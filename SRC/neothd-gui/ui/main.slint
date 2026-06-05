@@ -21,7 +21,7 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow } from "settings.slint";
 import { ChatView, ChatMessage } from "chat.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 
@@ -279,6 +279,13 @@ export component MainWindow inherits Window {
     in property <[SafeRailRow]> safety-rails: [];
     in property <int> rails-engaged-count: 0;
     in property <int> rails-total: 0;
+    // GR-03 — Trust panel (Privacy tab), forwarded to SettingsView. Rust sets
+    // these on startup from `neoth trust --output json`.
+    in property <string> trust-autonomy-level: "";
+    in property <string> trust-autonomy-behavior: "";
+    in property <[TrustRow]> trust-privacy: [];
+    in property <[TrustRow]> trust-recovery: [];
+    in property <[TrustRow]> trust-ledger: [];
     // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
     in property <[HemisphereRow]> hemisphere-bindings: [];
     in property <string> hemispheres-mode: "";
@@ -1355,6 +1362,11 @@ export component MainWindow inherits Window {
             safety-rails: root.safety-rails;
             rails-engaged-count: root.rails-engaged-count;
             rails-total: root.rails-total;
+            trust-autonomy-level: root.trust-autonomy-level;
+            trust-autonomy-behavior: root.trust-autonomy-behavior;
+            trust-privacy: root.trust-privacy;
+            trust-recovery: root.trust-recovery;
+            trust-ledger: root.trust-ledger;
             hemisphere-bindings: root.hemisphere-bindings;
             hemispheres-mode: root.hemispheres-mode;
             provider-ids: root.provider-ids;

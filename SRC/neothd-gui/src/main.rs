@@ -628,6 +628,7 @@ fn main() -> Result<()> {
     let weak_panels_init = window.as_weak();
     std::thread::spawn(move || {
         let rails = fetch_safe_mode_snapshot();
+        let trust = fetch_trust_snapshot();
         let hemis = fetch_hemispheres_snapshot();
         let provider_ids = fetch_provider_ids();
         let skills = fetch_skills();
@@ -639,6 +640,7 @@ fn main() -> Result<()> {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
                 apply_safe_mode(&w, rails);
+                apply_trust(&w, trust);
                 apply_hemispheres(&w, hemis);
                 apply_provider_ids(&w, provider_ids);
                 apply_skills(&w, skills);
@@ -1590,6 +1592,47 @@ fn apply_safe_mode(window: &MainWindow, snap: panel_logic::SafeModeSnapshot) {
     window.set_safety_rails(ModelRc::new(VecModel::from(rows)));
     window.set_rails_engaged_count(snap.engaged_count);
     window.set_rails_total(snap.total);
+}
+
+/// GR-03 — fetch the trust posture via `neoth trust --output json`. Empty
+/// snapshot on missing binary / failure. PARSE is the unit-tested
+/// `panel_logic::parse_trust`; this is the thin subprocess shell.
+fn fetch_trust_snapshot() -> panel_logic::TrustSnapshot {
+    let Some(bin) = which_neothd() else {
+        return panel_logic::TrustSnapshot::default();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("trust")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_trust(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => panel_logic::TrustSnapshot::default(),
+    }
+}
+
+/// GR-03 — push a parsed trust snapshot onto the `MainWindow` Privacy-tab Trust
+/// panel. UI-thread only (called via `invoke_from_event_loop`).
+fn apply_trust(window: &MainWindow, snap: panel_logic::TrustSnapshot) {
+    use slint::{ModelRc, VecModel};
+    let to_rows = |rows: Vec<panel_logic::TrustRow>| -> ModelRc<TrustRow> {
+        let v: Vec<TrustRow> = rows
+            .into_iter()
+            .map(|r| TrustRow {
+                label: r.label.into(),
+                value: r.value.into(),
+            })
+            .collect();
+        ModelRc::new(VecModel::from(v))
+    };
+    window.set_trust_autonomy_level(snap.autonomy_level.into());
+    window.set_trust_autonomy_behavior(snap.autonomy_behavior.into());
+    window.set_trust_privacy(to_rows(snap.privacy));
+    window.set_trust_recovery(to_rows(snap.recovery));
+    window.set_trust_ledger(to_rows(snap.ledger));
 }
 
 /// GU-01 — fetch the hemisphere bindings via `neoth hemispheres show --output

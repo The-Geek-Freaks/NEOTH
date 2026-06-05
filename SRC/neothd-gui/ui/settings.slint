@@ -60,6 +60,12 @@ export struct SafeRailRow {
     detail: string,
 }
 
+// GR-03 — one label→value row in the Trust panel, from `neoth trust --output json`.
+export struct TrustRow {
+    label: string,
+    value: string,
+}
+
 // GU-01 — one role→provider binding for the Hemispheres panel.
 export struct HemisphereRow {
     role: string,      // "left" | "right" | "cerebellum"
@@ -370,6 +376,15 @@ export component SettingsView inherits Rectangle {
     in property <[SafeRailRow]> safety-rails: [];
     in property <int> rails-engaged-count: 0;
     in property <int> rails-total: 0;
+
+    // GR-03 — Trust panel (from `neoth trust --output json`): autonomy posture,
+    // privacy switches, recovery-key readiness, and WAL trust-ledger size. Rust
+    // populates these on startup; all read-only.
+    in property <string> trust-autonomy-level: "";
+    in property <string> trust-autonomy-behavior: "";
+    in property <[TrustRow]> trust-privacy: [];
+    in property <[TrustRow]> trust-recovery: [];
+    in property <[TrustRow]> trust-ledger: [];
 
     // GU-01 — Hemispheres + Skills panels. Rust populates these on startup from
     // `neoth hemispheres show --output json` / `neoth skills --list --output json`.
@@ -1032,6 +1047,105 @@ export component SettingsView inherits Rectangle {
                                 color: Theme.text-muted;
                                 horizontal-stretch: 1;
                                 wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+
+                // GR-03 — Trust card: autonomy posture, privacy switches,
+                // recovery-key readiness, and the WAL trust-ledger size — the
+                // single "what protects me + what I can prove" surface
+                // (`neoth trust --output json`).
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "TRUST · POSTURE & PROOF";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        if root.trust-autonomy-level == "": Text {
+                            text: "(start the daemon to read live trust posture)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.trust-autonomy-level != "": Text {
+                            text: "autonomy: " + root.trust-autonomy-level + " — " + root.trust-autonomy-behavior;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                            wrap: word-wrap;
+                        }
+                        for row in root.trust-privacy: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "privacy";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                            Text {
+                                text: row.label;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: row.value;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                        }
+                        for row in root.trust-recovery: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "recovery";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                            Text {
+                                text: row.label;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: row.value;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: row.value == "present" ? Theme.accent-green : Theme.text-muted;
+                            }
+                        }
+                        for row in root.trust-ledger: HorizontalLayout {
+                            spacing: Theme.space-base;
+                            Text {
+                                text: "ledger";
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                            }
+                            Text {
+                                text: row.label;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-primary;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: row.value;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
                             }
                         }
                     }

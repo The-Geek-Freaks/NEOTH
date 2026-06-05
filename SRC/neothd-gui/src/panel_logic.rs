@@ -216,6 +216,116 @@ pub fn parse_safe_mode(json: &str) -> SafeModeSnapshot {
     }
 }
 
+// ── GR-03 trust panel (parse `neoth trust --output json`) ────────────────────
+
+/// One label→value row for the Trust panel (autonomy / privacy / recovery /
+/// ledger sections all render as these).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TrustRow {
+    pub label: String,
+    pub value: String,
+}
+
+/// Parsed `neoth trust --output json`: the four read-only sections the CLI
+/// exposes (autonomy posture, privacy switches, recovery-key readiness, WAL
+/// trust-ledger size). The GUI renders this as a single legible "what is
+/// protecting me + what can I prove" surface.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TrustSnapshot {
+    pub autonomy_level: String,
+    pub autonomy_behavior: String,
+    pub gated_examples: Vec<String>,
+    pub privacy: Vec<TrustRow>,
+    pub recovery: Vec<TrustRow>,
+    pub ledger: Vec<TrustRow>,
+}
+
+/// Render any JSON scalar as a compact display string (bool → on/off; the rest
+/// via their natural string form). Keeps the parser forward-compatible: a new
+/// privacy switch the CLI adds shows up automatically, whatever its type.
+fn trust_scalar_display(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::Bool(b) => if *b { "on" } else { "off" }.to_string(),
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Null => "—".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// PURE + robust: a missing/malformed payload yields an EMPTY snapshot (the
+/// panel shows a "no daemon / no data" state rather than crashing the GUI).
+/// Unknown privacy-switch keys are rendered generically so the panel never goes
+/// stale when the CLI grows a new switch.
+pub fn parse_trust(json: &str) -> TrustSnapshot {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return TrustSnapshot::default();
+    };
+    let autonomy_level = v
+        .pointer("/autonomy/level")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let autonomy_behavior = v
+        .pointer("/autonomy/behavior")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .to_string();
+    let gated_examples = v
+        .pointer("/autonomy/gated_examples")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    // Privacy switches: a flat object of mixed bool/string values — render each
+    // generically, sorted by key for a stable display order.
+    let privacy = object_rows(v.get("privacy_switches"));
+    // Recovery keys: *_present bools → present/missing rows.
+    let recovery = v
+        .get("recovery")
+        .and_then(|r| r.as_object())
+        .map(|o| {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            keys.into_iter()
+                .map(|k| TrustRow {
+                    label: k.clone(),
+                    value: if o.get(k).and_then(|x| x.as_bool()).unwrap_or(false) {
+                        "present".to_string()
+                    } else {
+                        "missing".to_string()
+                    },
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let ledger = object_rows(v.get("trust_ledger"));
+
+    TrustSnapshot {
+        autonomy_level,
+        autonomy_behavior,
+        gated_examples,
+        privacy,
+        recovery,
+        ledger,
+    }
+}
+
+/// Turn a flat JSON object into sorted label→value rows (None → empty).
+fn object_rows(obj: Option<&serde_json::Value>) -> Vec<TrustRow> {
+    obj.and_then(|o| o.as_object())
+        .map(|o| {
+            let mut keys: Vec<&String> = o.keys().collect();
+            keys.sort();
+            keys.into_iter()
+                .map(|k| TrustRow {
+                    label: k.clone(),
+                    value: trust_scalar_display(o.get(k).unwrap_or(&serde_json::Value::Null)),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 // ── GU-01 hemispheres panel (parse `neoth hemispheres show --output json`) ───
 
 /// One role→provider binding for the Hemispheres panel.
@@ -537,6 +647,40 @@ pub fn parse_provider_ids(json: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── GR-03 trust panel parser ──────────────────────────────────────────
+    #[test]
+    fn parse_trust_extracts_all_four_sections() {
+        let json = r#"{
+            "autonomy":{"level":"full","behavior":"boundary asks Allow","gated_examples":["fs write","ProactiveChannelSend"]},
+            "privacy_switches":{"omi_ingest":false,"channel_weight_scope":"operator_only","live_delivery_edits":true},
+            "recovery":{"hmac_key_present":true,"proof_key_present":false,"transfer_key_present":false},
+            "trust_ledger":{"segments":787,"total_frames":780,"bad_frames":1,"size_bytes":496628}
+        }"#;
+        let t = parse_trust(json);
+        assert_eq!(t.autonomy_level, "full");
+        assert!(t.autonomy_behavior.contains("Allow"));
+        assert_eq!(t.gated_examples.len(), 2);
+        // privacy: bool→on/off, string verbatim; sorted by key.
+        assert_eq!(t.privacy[0], TrustRow { label: "channel_weight_scope".into(), value: "operator_only".into() });
+        assert!(t.privacy.iter().any(|r| r.label == "omi_ingest" && r.value == "off"));
+        assert!(t.privacy.iter().any(|r| r.label == "live_delivery_edits" && r.value == "on"));
+        // recovery: *_present → present/missing.
+        assert!(t.recovery.iter().any(|r| r.label == "hmac_key_present" && r.value == "present"));
+        assert!(t.recovery.iter().any(|r| r.label == "proof_key_present" && r.value == "missing"));
+        // ledger numbers render as strings.
+        assert!(t.ledger.iter().any(|r| r.label == "segments" && r.value == "787"));
+        assert!(t.ledger.iter().any(|r| r.label == "bad_frames" && r.value == "1"));
+    }
+
+    #[test]
+    fn parse_trust_is_robust_to_garbage_and_unknown_keys() {
+        assert_eq!(parse_trust("not json"), TrustSnapshot::default());
+        assert_eq!(parse_trust("{}"), TrustSnapshot::default());
+        // A future switch the CLI adds shows up generically (forward-compatible).
+        let t = parse_trust(r#"{"privacy_switches":{"some_future_switch":true}}"#);
+        assert_eq!(t.privacy, vec![TrustRow { label: "some_future_switch".into(), value: "on".into() }]);
+    }
 
     // ── parse ────────────────────────────────────────────────────────────
     #[test]
