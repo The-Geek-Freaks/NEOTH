@@ -2797,6 +2797,12 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
         let views_conn = views_conn.clone();
         Box::pin(async move {
             let mut inbound = inbound;
+            // PII guard: the sender id is a phone number for WhatsApp. Hash it
+            // ONCE and use the hash in every WAL frame + tracing line on the
+            // inbound path — the plaintext id stays in-process only (rate
+            // limiter, permission gate, identity resolve), never on disk.
+            let sender_hash =
+                format!("{:016x}", xxhash_rust::xxh3::xxh3_64(inbound.sender_id.as_bytes()));
             // ── SPEC-11: cross-channel identity resolve ────────────────────
             // Stamp `human_uuid` from the `(channel, sender_id, chat_id)` triple
             // so downstream + the WAL can attribute this message to a stable
@@ -2831,7 +2837,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     "channel": inbound.channel,
                     "chat_id": inbound.chat_id,
                     "message_id": inbound.message_id,
-                    "sender_id": inbound.sender_id,
+                    "sender_id_hash": sender_hash,
                     "new_text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(new_text.as_bytes()),
                     "new_text_bytes": new_text.len(),
                     "edit_ts_unix": edit_ts_unix,
@@ -2850,7 +2856,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 }
                 info!(
                     channel = inbound.channel.as_str(),
-                    sender = %inbound.sender_id,
+                    sender_hash = %sender_hash,
                     "inbound message edit recorded (audit-only, no re-run)"
                 );
                 return Ok(::std::option::Option::None);
@@ -2882,7 +2888,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             let Some(raw_text) = effective_text.as_deref() else {
                 info!(
                     channel = inbound.channel.as_str(),
-                    sender = %inbound.sender_id,
+                    sender_hash = %sender_hash,
                     "inbound message has no text payload + no media; dropping silently"
                 );
                 return Ok(::std::option::Option::None);
@@ -2918,7 +2924,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                             "name": name,
                             "stage": "pre_channel_ingress",
                             "channel": channel_str,
-                            "sender_id": inbound.sender_id,
+                            "sender_id_hash": sender_hash,
                             "ts_unix": std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs())
@@ -2944,7 +2950,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
                     info!(
                         channel = channel_str,
-                        sender = %inbound.sender_id,
+                        sender_hash = %sender_hash,
                         hook = %name,
                         reason = %reason,
                         "inbound dropped by pre_channel_ingress hook"
@@ -2953,7 +2959,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                         "name": name,
                         "stage": "pre_channel_ingress",
                         "channel": channel_str,
-                        "sender_id": inbound.sender_id,
+                        "sender_id_hash": sender_hash,
                         "reason": reason,
                         "ts_unix": std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
@@ -2993,7 +2999,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 crate::channels::rate_limit::Decision::RateLimited { retry_after_ms } => {
                     info!(
                         channel = channel_str,
-                        sender = %inbound.sender_id,
+                        sender_hash = %sender_hash,
                         retry_after_ms,
                         "inbound rate-limited; dropping",
                     );
@@ -3004,7 +3010,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     // drop the audit frame entirely.
                     let payload = match serde_json::to_vec(&serde_json::json!({
                         "channel": channel_str,
-                        "sender_id": inbound.sender_id,
+                        "sender_id_hash": sender_hash,
                         "reason": "rate_limited",
                         "retry_after_ms": retry_after_ms,
                     })) {
@@ -3043,7 +3049,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             if report.quarantined {
                 info!(
                     channel = channel_str,
-                    sender = %inbound.sender_id,
+                    sender_hash = %sender_hash,
                     findings = ?report.findings,
                     input_hash = %report.input_hash,
                     "inbound message quarantined; dropping silently"
@@ -3081,8 +3087,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
             // ── Emit CHANNEL_INGRESS (hashed metadata) ────────────────────
             let ingress_payload = serde_json::to_vec(&serde_json::json!({
                 "channel": inbound.channel,
-                "sender_id": inbound.sender_id,
-                "sender_display": inbound.sender_display,
+                "sender_id_hash": sender_hash,
                 "text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(sanitized_text.as_bytes()),
                 "text_bytes": sanitized_text.len(),
                 "operator_id": operator_id,
@@ -3349,7 +3354,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                     .await;
                                     warn!(
                                         channel = channel_str,
-                                        sender = %inbound.sender_id,
+                                        sender_hash = %sender_hash,
                                         action = action.as_str(),
                                         "ADV-09: destructive slash action rejected from channel"
                                     );
@@ -3572,7 +3577,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 ) {
                     warn!(
                         channel = channel_str,
-                        sender = %inbound.sender_id,
+                        sender_hash = %sender_hash,
                         error = %e,
                         "consent revoked mid-run; dropping inbound"
                     );
@@ -3702,7 +3707,7 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                     let payload = serde_json::to_vec(&serde_json::json!({
                         "operator_id": operator_id,
                         "channel": inbound.channel,
-                        "sender_id": inbound.sender_id,
+                        "sender_id_hash": sender_hash,
                         "provider": provider.name(),
                         "model": completion.model,
                         "refusal_class": report.class.as_str(),

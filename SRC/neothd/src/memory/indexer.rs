@@ -221,8 +221,12 @@ fn index_frame(
                     .get("channel")
                     .and_then(|x| x.as_str())
                     .map(|s| s.to_string());
+                // Prefer the hashed `sender_id_hash` (current frames never carry
+                // the plaintext id — it's a phone number for WhatsApp); fall back
+                // to legacy `sender_id` so pre-hardening segments still index.
                 let sender = v
-                    .get("sender_id")
+                    .get("sender_id_hash")
+                    .or_else(|| v.get("sender_id"))
                     .and_then(|x| x.as_str())
                     .map(|s| s.to_string());
                 let operator = v
