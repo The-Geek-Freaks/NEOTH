@@ -298,6 +298,11 @@ fn ok(channel: String, detail: String) -> ChannelTestResult {
     ChannelTestResult { channel, status: "ok", detail }
 }
 fn fail(channel: String, detail: String) -> ChannelTestResult {
+    // P1 — run the provider's error text through the secret redactor before it
+    // reaches the operator-visible result. Meta/Slack/Telegram normally don't
+    // echo token fragments in errors, but a trust product must not assume: a
+    // bearer token / key / id pattern in the error becomes `[REDACTED:<kind>]`.
+    let detail = crate::security::redact::redact_text(&detail);
     ChannelTestResult { channel, status: "fail", detail }
 }
 fn skipped(channel: String, detail: String) -> ChannelTestResult {
@@ -700,6 +705,19 @@ mod tests {
         let mut creds_k = creds_empty();
         creds_k.keet_seed_phrase = Some(SecretString::from("x"));
         assert_eq!(plan_channel_test("keet", &cfg, &creds_k), ChannelTestPlan::KeetOffline);
+    }
+
+    #[test]
+    fn channel_test_fail_redacts_secrets_in_error_text() {
+        // P1 — a provider error that echoes a token must NOT reach the operator
+        // result verbatim; the secret redactor masks it.
+        let r = fail(
+            "slack".to_string(),
+            "auth.test failed: token ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 rejected".to_string(),
+        );
+        assert_eq!(r.status, "fail");
+        assert!(!r.detail.contains("ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"), "secret leaked: {}", r.detail);
+        assert!(r.detail.contains("[REDACTED"), "expected a redaction marker: {}", r.detail);
     }
 
     #[test]
