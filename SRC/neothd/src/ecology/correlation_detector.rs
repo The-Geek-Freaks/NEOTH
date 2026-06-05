@@ -32,6 +32,11 @@ pub struct WinnerRecord {
     pub role: String,
     /// The winner's selection score.
     pub score: f64,
+    /// The selection mode that produced this winner (`legacy_majority` /
+    /// `consensus_or_best` / `best_always`), or `unknown` for pre-mode frames.
+    /// In-frame since Session 14 — carried so the winner-chain (F4-01) can report
+    /// the mode mix without a second WAL walk.
+    pub mode: String,
 }
 
 /// A detected run of consecutive same-provider winners.
@@ -148,10 +153,16 @@ fn parse_winner_payload(payload: &[u8]) -> Option<WinnerRecord> {
         .unwrap_or("unknown")
         .to_string();
     let score = v.get("score").and_then(|s| s.as_f64()).unwrap_or(0.0);
+    let mode = v
+        .get("mode")
+        .and_then(|m| m.as_str())
+        .unwrap_or("unknown")
+        .to_string();
     Some(WinnerRecord {
         provider,
         role,
         score,
+        mode,
     })
 }
 
@@ -164,6 +175,7 @@ mod tests {
             provider: provider.into(),
             role: "left".into(),
             score: 0.9,
+            mode: "consensus_or_best".into(),
         }
     }
 
@@ -214,11 +226,15 @@ mod tests {
 
     #[test]
     fn parse_payload_outer_only() {
-        let outer = br#"{"depth":0,"role":"left","provider":"claude_cli","score":0.91}"#;
+        let outer = br#"{"depth":0,"role":"left","provider":"claude_cli","score":0.91,"mode":"best_always"}"#;
         let nested = br#"{"depth":1,"role":"right","provider":"openai_api","score":0.8}"#;
         let r = parse_winner_payload(outer).expect("outer parses");
         assert_eq!(r.provider, "claude_cli");
         assert_eq!(r.role, "left");
+        assert_eq!(r.mode, "best_always", "mode is captured from the frame");
+        // A pre-mode frame defaults to "unknown" rather than dropping the record.
+        let no_mode = br#"{"depth":0,"role":"left","provider":"x","score":0.5}"#;
+        assert_eq!(parse_winner_payload(no_mode).unwrap().mode, "unknown");
         assert!(parse_winner_payload(nested).is_none(), "nested must be skipped");
         assert!(parse_winner_payload(b"not json").is_none());
         assert!(

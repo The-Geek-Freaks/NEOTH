@@ -14,6 +14,7 @@ use clap::{Args, Subcommand};
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::ecology::correlation_detector::{detect_winner_streaks, scan_winner_records};
+use crate::ecology::winner_chain::build_winner_chain;
 
 #[derive(Args, Debug, Clone)]
 pub struct EcologyArgs {
@@ -58,6 +59,17 @@ pub enum EcologyAction {
         #[arg(long)]
         top: Option<usize>,
     },
+    /// F4-01 — council winner-chain: the measured win-distribution over the
+    /// `0x63` winner frames (per provider+role, with avg/last score + the
+    /// selection-mode mix). Read-only + deterministic — every field is in-frame.
+    WinnerChain {
+        /// Override the WAL directory (mostly for tests).
+        #[arg(long, value_name = "DIR")]
+        wal_dir: Option<PathBuf>,
+        /// Show only the top-N winning voices. Default: all.
+        #[arg(long)]
+        top: Option<usize>,
+    },
     /// Maturity matrix for the Ecology layer — what is read-only/beta vs
     /// experimental/review-gated, and the scheduler's enabled state. The
     /// Ecology layer is NOT "stable self-improvement"; this is the honest label.
@@ -76,13 +88,19 @@ struct EcologySurface {
 /// The honest maturity matrix. Correlation/genealogy/channel-weights are
 /// read-only diagnostics; the scheduler is experimental + review-gated (it
 /// STAGES proposals, never auto-applies).
-fn ecology_surfaces() -> [EcologySurface; 4] {
+fn ecology_surfaces() -> [EcologySurface; 5] {
     [
         EcologySurface {
             name: "correlation",
             maturity: "beta",
             access: "read-only",
             note: "council low-dissent winner streaks (diagnostic)",
+        },
+        EcologySurface {
+            name: "winner-chain",
+            maturity: "beta",
+            access: "read-only",
+            note: "measured council win-distribution per provider/role/mode (diagnostic)",
         },
         EcologySurface {
             name: "genealogy",
@@ -113,6 +131,10 @@ pub async fn run_ecology(args: EcologyArgs) -> Result<()> {
         }
         EcologyAction::Genealogy { wal_dir, home, top } => {
             run_genealogy(wal_dir, home, top, args.output).await;
+            Ok(())
+        }
+        EcologyAction::WinnerChain { wal_dir, top } => {
+            run_winner_chain(wal_dir, top, args.output);
             Ok(())
         }
         EcologyAction::Status => {
@@ -336,6 +358,81 @@ async fn run_genealogy(
     }
 }
 
+/// F4-01 — build + render the council winner-chain. Read-only: walks the `0x63`
+/// winner frames + aggregates the in-frame provider/role/score/mode fields into
+/// a win-distribution. Changes nothing.
+fn run_winner_chain(wal_dir: Option<PathBuf>, top: Option<usize>, output: OutputFormat) {
+    let wal_dir = wal_dir.unwrap_or_else(FreedomConfig::default_wal_dir);
+    let records = scan_winner_records(&wal_dir);
+    let chain = build_winner_chain(&records);
+    let shown: Vec<_> = match top {
+        Some(n) => chain.stats.iter().take(n).collect(),
+        None => chain.stats.iter().collect(),
+    };
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = shown
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "provider": s.provider,
+                        "role": s.role,
+                        "wins": s.wins,
+                        "win_share": s.win_share,
+                        "avg_score": s.avg_score,
+                        "last_score": s.last_score,
+                    })
+                })
+                .collect();
+            let modes: Vec<_> = chain
+                .by_mode
+                .iter()
+                .map(|(m, n)| serde_json::json!({ "mode": m, "wins": n }))
+                .collect();
+            println!(
+                "{}",
+                serde_json::json!({
+                    "total_debates": chain.total_debates,
+                    "winners": rows,
+                    "by_mode": modes,
+                })
+            );
+        }
+        OutputFormat::Table => {
+            if chain.total_debates == 0 {
+                println!(
+                    "(no council winners recorded yet — the winner-chain accrues as councils run)"
+                );
+                return;
+            }
+            println!(
+                "council winner-chain — {} outer-council debate(s) scanned:",
+                chain.total_debates
+            );
+            for s in &shown {
+                println!(
+                    "  {} [{}] — {} win(s), {:.0}% share, avg score {:.2} (last {:.2})",
+                    s.provider,
+                    s.role,
+                    s.wins,
+                    s.win_share * 100.0,
+                    s.avg_score,
+                    s.last_score
+                );
+            }
+            if !chain.by_mode.is_empty() {
+                let modes: Vec<String> = chain
+                    .by_mode
+                    .iter()
+                    .map(|(m, n)| format!("{m}×{n}"))
+                    .collect();
+                println!("  selection-mode mix: {}", modes.join(", "));
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -343,9 +440,9 @@ mod tests {
     #[test]
     fn maturity_matrix_is_honest() {
         let s = ecology_surfaces();
-        assert_eq!(s.len(), 4);
+        assert_eq!(s.len(), 5);
         // The diagnostics are beta + read-only.
-        for name in ["correlation", "genealogy", "channel-weights"] {
+        for name in ["correlation", "winner-chain", "genealogy", "channel-weights"] {
             let row = s.iter().find(|r| r.name == name).unwrap();
             assert_eq!(row.maturity, "beta");
             assert_eq!(row.access, "read-only");

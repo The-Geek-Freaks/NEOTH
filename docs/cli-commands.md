@@ -513,6 +513,13 @@ F4-01 Phase 3 — tool genealogy: an inventory of the tools NEOTH actually exerc
 
 Maturity matrix for the Ecology layer — what is read-only/beta vs experimental/review-gated, and the scheduler's enabled state. The Ecology layer is NOT "stable self-improvement"; this is the honest label
 
+### `neoth ecology winner-chain`
+
+F4-01 — council winner-chain: the measured win-distribution over the `0x63` winner frames (per provider+role, with avg/last score + the selection-mode mix). Read-only + deterministic — every field is in-frame
+
+- `--wal-dir <DIR>` — Override the WAL directory (mostly for tests)
+- `--top <TOP>` — Show only the top-N winning voices. Default: all
+
 ## `neoth email`
 
 EM-01b — inbound email. `fetch` pulls newest UNSEEN inbox messages over IMAP (non-destructive `BODY.PEEK[]`) and triages each through the sanitizer→threat pipeline. Live socket needs the `imap_fetch` build feature; `--dry-run` works on every build

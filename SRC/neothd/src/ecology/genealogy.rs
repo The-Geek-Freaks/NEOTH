@@ -14,13 +14,16 @@
 //! WAL-traced today (only `0x29 SKILL_INJECT_SKIPPED`, a negative signal), so a
 //! truthful count is "unknown → 0" rather than a fabricated number.
 //!
-//! The blueprint's richer notion — a per-tool "winner-chain" correlation (which
-//! tool drove a council win) + tool co-occurrence edges — is deliberately NOT
-//! built: `0x63 COUNCIL_WINNER_SELECTED` carries no tool/skill id and `0xC0`
-//! carries no session id, so any such linkage would be invented, not measured.
-//! It awaits a council-layer precursor (tool-id on the winner frame), tracked as
-//! a future ecology slice. Reporting fabricated edges would violate the CH-13
-//! design pin (every signal is a pure function over REAL WAL data).
+//! The blueprint's richer notion has two halves. The MEASURABLE half — which
+//! provider/hemisphere wins councils, at what score, under which mode — is built
+//! in [`super::winner_chain`] (those fields ARE on the `0x63` frame). The other
+//! half — a per-TOOL "winner-chain" (which tool drove a council win) + tool
+//! co-occurrence edges — is deliberately NOT built: `0x63 COUNCIL_WINNER_SELECTED`
+//! carries no tool/skill id and `0xC0` carries no session id, so any TOOL→win
+//! linkage would be invented, not measured. It awaits a council-layer precursor
+//! (tool-id on the winner frame), tracked as a future ecology slice. Reporting
+//! fabricated edges would violate the CH-13 design pin (every signal is a pure
+//! function over REAL WAL data).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
