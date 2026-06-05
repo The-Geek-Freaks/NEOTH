@@ -254,6 +254,28 @@ pub async fn emit_redaction_marker(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| segment_path.display().to_string());
+    // Sign the AUTHORISATION (segment + offsets + topic + ts) with the operator's
+    // ed25519 signing key. `neoth verify` only honours a redaction exemption whose
+    // signature verifies against the operator's OWN public key — so a forged
+    // CRC32c-only 0xF3 frame (which an attacker can write but cannot sign, the
+    // key being 0600 / DPAPI-wrapped) can no longer make a tampered HMAC window
+    // reclassify as PASS. Fail closed if the key can't be loaded (an
+    // unauthenticatable redaction must not be emitted).
+    // The signing key lives in the SAME WAL dir as the segment
+    // (`<wal_dir>/signing.key`) — in production that's `~/.neoth/wal/signing.key`
+    // (= the default path), and a tempdir WAL keeps its own key so the scheme is
+    // self-consistent + test-isolated. `neoth verify` resolves the trust root the
+    // same way (the segments' parent dir).
+    let signing_key_path = segment_path
+        .parent()
+        .map(|p| p.join("signing.key"))
+        .unwrap_or_else(crate::wal::signing::default_signing_key_path);
+    let signing_key = crate::wal::signing::load_or_init_signing_key(&signing_key_path)
+        .context("load operator signing key to authenticate the redaction marker")?;
+    let signed_msg =
+        redaction_authorisation_message(&segment_name, redacted_offsets, bytes_redacted, topic, now_unix);
+    let sig = crate::wal::signing::sign_b64(&signing_key, &signed_msg);
+    let signer_pubkey = crate::wal::signing::pubkey_b64(&signing_key);
     let payload = serde_json::to_vec(&serde_json::json!({
         "segment": segment_name,
         "redacted_offsets": redacted_offsets,
@@ -261,6 +283,8 @@ pub async fn emit_redaction_marker(
         "topic": topic,
         "source": source,
         "ts_unix": now_unix,
+        "signer_pubkey": signer_pubkey,
+        "sig": sig,
     }))
     .context("serialize REDACTION_MARKER payload")?;
     let header =
@@ -269,6 +293,27 @@ pub async fn emit_redaction_marker(
         .append(header, payload)
         .await
         .context("append REDACTION_MARKER frame")
+}
+
+/// Canonical, deterministic bytes signed by [`emit_redaction_marker`] and
+/// re-verified by `neoth verify`. A fixed `field|field|…` layout (NOT JSON, to
+/// avoid any serialiser field-order dependence) over exactly the fields the
+/// verifier uses to GRANT an exemption: segment name, redacted offsets, byte
+/// count, topic, timestamp. Any change to those invalidates the signature.
+pub(crate) fn redaction_authorisation_message(
+    segment: &str,
+    redacted_offsets: &[u64],
+    bytes_redacted: u64,
+    topic: &str,
+    ts_unix: i64,
+) -> Vec<u8> {
+    let offsets = redacted_offsets
+        .iter()
+        .map(|o| o.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("redaction-marker-v1|{segment}|{offsets}|{bytes_redacted}|{topic}|{ts_unix}")
+        .into_bytes()
 }
 
 #[cfg(test)]
@@ -462,11 +507,13 @@ mod tests {
         let dir = tempdir().unwrap();
         let seg = dir.path().join("marker-audit.wal");
         let (writer, join) = spawn(seg.clone()).unwrap();
-        let target_segment = std::path::Path::new("/some/wal/000001.wal");
+        // Real path in the tempdir so the operator signing key can be created
+        // alongside it (mirrors production: segment + marker + key share a dir).
+        let target_segment = dir.path().join("000001.wal");
         let offsets = vec![100u64, 250u64, 410u64];
         let _ = emit_redaction_marker(
             &writer,
-            target_segment,
+            &target_segment,
             &offsets,
             42,
             "AcmeCorp",
@@ -503,5 +550,9 @@ mod tests {
         assert_eq!(payload["topic"], "AcmeCorp");
         assert_eq!(payload["source"], "cli");
         assert_eq!(payload["ts_unix"], 1_700_000_000_i64);
+        // The marker is now operator-SIGNED — verify only honours authenticated
+        // exemptions, so the signature + pubkey must be present.
+        assert!(payload["signer_pubkey"].as_str().is_some(), "marker carries operator pubkey");
+        assert!(payload["sig"].as_str().is_some(), "marker is signed");
     }
 }

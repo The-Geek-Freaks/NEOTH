@@ -78,6 +78,23 @@ pub fn pubkey_b64(key: &SigningKey) -> String {
     base64::engine::general_purpose::STANDARD.encode(key.verifying_key().to_bytes())
 }
 
+/// LOAD-ONLY trusted public key: read the operator's signing key if it already
+/// exists and return its base64 public key, WITHOUT generating one. Used by
+/// `neoth verify` to authenticate redaction/rotation frames against the
+/// operator's OWN key — it must never mint a key as a side effect of verifying,
+/// and `None` (no key on disk) correctly means "no signed authorisation can be
+/// trusted" so the verifier fails closed. Returns `None` on a missing/unreadable
+/// /malformed key rather than erroring — a bad trust root simply trusts nothing.
+pub fn load_signing_pubkey_if_present(path: &Path) -> Option<String> {
+    if !path.exists() {
+        return None;
+    }
+    let body = std::fs::read(path).ok()?;
+    let seed = crate::wal::compaction::maybe_unwrap_dpapi(&body, path).ok()?;
+    let seed: [u8; 32] = seed.as_slice().try_into().ok()?;
+    Some(pubkey_b64(&SigningKey::from_bytes(&seed)))
+}
+
 /// Sign `msg`, returning base64 (standard) of the 64-byte detached signature.
 pub fn sign_b64(key: &SigningKey, msg: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(key.sign(msg).to_bytes())

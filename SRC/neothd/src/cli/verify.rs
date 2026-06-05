@@ -106,9 +106,19 @@ pub async fn run_verify(args: VerifyArgs) -> Result<()> {
 /// [`verify_segments`] to reclassify HMAC mismatches that fall inside
 /// an operator-authorised window as PASS-with-note.
 fn collect_authorised_ranges(segments: &[PathBuf]) -> Result<Vec<AuthorisedRange>> {
+    // Trust root for redaction exemptions = the operator's OWN ed25519 key, read
+    // from `<wal_dir>/signing.key` (the segments' shared parent). `None` (no key
+    // on disk) ⇒ no exemption can be authenticated ⇒ every 0xF3 frame is ignored,
+    // so a forged CRC32c-only marker can no longer reclassify a tampered HMAC
+    // window as PASS.
+    let trusted_pubkey = segments
+        .first()
+        .and_then(|s| s.parent())
+        .map(|dir| dir.join("signing.key"))
+        .and_then(|p| crate::wal::signing::load_signing_pubkey_if_present(&p));
     let mut out = Vec::new();
     for seg in segments {
-        let ranges = extract_redaction_authorisations(seg)?;
+        let ranges = extract_redaction_authorisations(seg, trusted_pubkey.as_deref())?;
         out.extend(ranges);
     }
     Ok(out)
@@ -332,11 +342,19 @@ struct AuthorisedRange {
 /// emitted by `cli/memory.rs::run_physical_redaction`; the segment
 /// being verified is NOT the same file as the segment named INSIDE
 /// the marker (that's the segment whose bytes were rewritten).
-fn extract_redaction_authorisations(seg: &Path) -> Result<Vec<AuthorisedRange>> {
+fn extract_redaction_authorisations(
+    seg: &Path,
+    trusted_pubkey: Option<&str>,
+) -> Result<Vec<AuthorisedRange>> {
     use crate::wal::events::EVENT_TYPE_REDACTION_MARKER;
     use crate::wal::frame::decode_frame;
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
+    // No operator key on disk ⇒ no redaction exemption can be authenticated ⇒
+    // trust NONE (fail closed against forged 0xF3 frames).
+    let Some(trusted_pubkey) = trusted_pubkey else {
+        return Ok(Vec::new());
+    };
     let bytes = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
     if bytes.len() < SEGMENT_HEADER_LEN {
         return Ok(Vec::new());
@@ -357,7 +375,24 @@ fn extract_redaction_authorisations(seg: &Path) -> Result<Vec<AuthorisedRange>> 
                     .as_array()
                     .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
                     .unwrap_or_default();
-                if !segment.is_empty() && !offsets.is_empty() {
+                let bytes_redacted = payload["bytes_redacted"].as_u64().unwrap_or(0);
+                let topic = payload["topic"].as_str().unwrap_or("");
+                let ts_unix = payload["ts_unix"].as_i64().unwrap_or(0);
+                let sig = payload["sig"].as_str().unwrap_or("");
+                // AUTHENTICATE: the marker's signature MUST verify against the
+                // OPERATOR's own key over the canonical authorisation. A forged
+                // CRC32c-only frame has no valid signature ⇒ ignored. We verify
+                // against the trusted ON-DISK key, NEVER the payload's
+                // `signer_pubkey` (an attacker would set that to their own key).
+                let msg = crate::wal::redact::redaction_authorisation_message(
+                    &segment,
+                    &offsets,
+                    bytes_redacted,
+                    topic,
+                    ts_unix,
+                );
+                let authentic = crate::wal::signing::verify_b64(trusted_pubkey, sig, &msg).is_ok();
+                if authentic && !segment.is_empty() && !offsets.is_empty() {
                     out.push(AuthorisedRange { segment, offsets });
                 }
             }
@@ -570,18 +605,40 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let audit_seg = dir.path().join("memory-redact-1.wal");
         let (writer, join) = spawn(audit_seg.clone()).unwrap();
-        let target = std::path::Path::new("/some/wal/000001.wal");
+        // Target segment lives in the SAME wal dir as the marker writer + the
+        // signing key (mirrors production: redacted segment, marker, and key all
+        // under ~/.neoth/wal).
+        let target = dir.path().join("000001.wal");
         let offsets = vec![100u64, 250u64];
-        emit_redaction_marker(&writer, target, &offsets, 32, "Acme", "cli", 1700)
+        emit_redaction_marker(&writer, &target, &offsets, 32, "Acme", "cli", 1700)
             .await
             .unwrap();
         drop(writer);
         let _ = join.await;
 
-        let ranges = extract_redaction_authorisations(&audit_seg).unwrap();
-        assert_eq!(ranges.len(), 1);
+        // Load the trust root the same way `collect_authorised_ranges` does.
+        let trusted =
+            crate::wal::signing::load_signing_pubkey_if_present(&dir.path().join("signing.key"));
+        assert!(trusted.is_some(), "emit must have created the operator signing key");
+        let ranges = extract_redaction_authorisations(&audit_seg, trusted.as_deref()).unwrap();
+        assert_eq!(ranges.len(), 1, "an operator-signed marker must be honoured");
         assert!(ranges[0].segment.ends_with("000001.wal"));
         assert_eq!(ranges[0].offsets, offsets);
+
+        // The 0xF3 bypass closure: an exemption NOT signed by the operator key is
+        // IGNORED. No trust root ⇒ nothing honoured; a different key ⇒ rejected.
+        assert!(
+            extract_redaction_authorisations(&audit_seg, None).unwrap().is_empty(),
+            "no trust root ⇒ no exemption honoured",
+        );
+        let wrong_key =
+            crate::wal::signing::pubkey_b64(&ed25519_dalek::SigningKey::from_bytes(&[42u8; 32]));
+        assert!(
+            extract_redaction_authorisations(&audit_seg, Some(&wrong_key))
+                .unwrap()
+                .is_empty(),
+            "a marker signed by a DIFFERENT key must not be honoured",
+        );
     }
 
     #[test]
