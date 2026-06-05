@@ -146,6 +146,10 @@ pub struct WebhookListenerConfig {
 pub struct WhatsAppSendCreds {
     pub access_token: crate::secret::SecretString,
     pub phone_number_id: String,
+    /// Graph API base-URL override. `None` = production
+    /// (`whatsapp_api::GRAPH_API_BASE`); tests point it at a wiremock server so
+    /// the send path's "skips API on Deny/DryRun" contract is machine-verified.
+    pub base_url: Option<String>,
 }
 
 /// Bind to `addr` and run the listener until the cancellation
@@ -527,7 +531,11 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                             );
                         }
                         ChannelSendVerdict::Send => {
-                            let send = crate::channels::whatsapp_api::send_text_message(
+                            let send = crate::channels::whatsapp_api::send_text_message_at(
+                                creds
+                                    .base_url
+                                    .as_deref()
+                                    .unwrap_or(crate::channels::whatsapp_api::GRAPH_API_BASE),
                                 &creds.access_token,
                                 &creds.phone_number_id,
                                 &outbound.recipient_id,
@@ -771,7 +779,7 @@ mod tests {
 
     /// Build a config with send creds + the given governance (the Deny/DryRun
     /// verdicts below never touch the network, so the fake token is safe).
-    fn gated_cfg(gov: SendGovernance) -> WebhookListenerConfig {
+    fn gated_cfg(gov: SendGovernance, base_url: Option<String>) -> WebhookListenerConfig {
         WebhookListenerConfig {
             meta_app_secret: b"m".to_vec(),
             meta_verify_token: "v".to_string(),
@@ -780,6 +788,7 @@ mod tests {
             whatsapp_send_creds: Some(WhatsAppSendCreds {
                 access_token: crate::secret::SecretString::from("fake-token"),
                 phone_number_id: "123".to_string(),
+                base_url,
             }),
             send_governance: gov,
             max_concurrent_connections: None,
@@ -798,17 +807,24 @@ mod tests {
 
     #[tokio::test]
     async fn p0_denied_send_skips_api_and_audits_permission_denied() {
-        // A Deny verdict must NOT call the Graph API (no network) and MUST emit
-        // a 0xA1 PERMISSION_DENIED frame with the recipient HASHED.
+        // A Deny verdict must NOT call the Graph API and MUST emit a 0xA1
+        // PERMISSION_DENIED frame with the recipient HASHED. base_url points at a
+        // wiremock server with NO mounted route, so any stray send is recorded —
+        // we machine-assert the server saw ZERO requests (the "skips API" half).
+        use wiremock::MockServer;
+        let server = MockServer::start().await;
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
-        let cfg = gated_cfg(SendGovernance {
-            wal_writer: Some(writer.clone()),
-            decision: crate::permissions::Decision::Deny("test-deny".into()),
-            required_audit: false,
-            dry_run: false,
-        });
+        let cfg = gated_cfg(
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                decision: crate::permissions::Decision::Deny("test-deny".into()),
+                required_audit: false,
+                dry_run: false,
+            },
+            Some(server.uri()),
+        );
         dispatch_messages(&cfg, vec![inbound_fixture()]).await;
         // Drop cfg FIRST — it holds a writer clone inside send_governance; the
         // writer task only finishes (so `join` returns) once every handle is
@@ -816,6 +832,10 @@ mod tests {
         drop(cfg);
         drop(writer);
         let _ = join.await;
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "Deny verdict must not hit the WhatsApp Graph API"
+        );
         let (event_type, payload) = read_first_frame(&seg);
         assert_eq!(event_type, crate::wal::events::EVENT_TYPE_PERMISSION_DENIED);
         let text = String::from_utf8_lossy(&payload);
@@ -826,22 +846,29 @@ mod tests {
     #[tokio::test]
     async fn p0_dry_run_audits_egress_without_sending() {
         // dry_run + Allow → emit a 0x33 CHANNEL_EGRESS (dry_run:true), no API.
+        // Machine-verified: the wiremock server receives ZERO requests.
+        use wiremock::MockServer;
+        let server = MockServer::start().await;
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
-        let cfg = gated_cfg(SendGovernance {
-            wal_writer: Some(writer.clone()),
-            decision: crate::permissions::Decision::Allow,
-            required_audit: false,
-            dry_run: true,
-        });
+        let cfg = gated_cfg(
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                decision: crate::permissions::Decision::Allow,
+                required_audit: false,
+                dry_run: true,
+            },
+            Some(server.uri()),
+        );
         dispatch_messages(&cfg, vec![inbound_fixture()]).await;
-        // Drop cfg FIRST — it holds a writer clone inside send_governance; the
-        // writer task only finishes (so `join` returns) once every handle is
-        // gone. (Production never joins: the daemon owns the writer for life.)
         drop(cfg);
         drop(writer);
         let _ = join.await;
+        assert!(
+            server.received_requests().await.unwrap().is_empty(),
+            "dry-run must not hit the WhatsApp Graph API"
+        );
         let (event_type, payload) = read_first_frame(&seg);
         assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS);
         let text = String::from_utf8_lossy(&payload);
@@ -853,18 +880,50 @@ mod tests {
         assert_eq!(v["channel"], "whatsapp");
     }
 
-    // NOTE on GR-01 Pick B behaviour test: a true behaviour test —
-    // verifying the dispatch path actually CALLS the graph API when
-    // creds are set — needs `whatsapp_api` to accept an injectable
-    // base URL so tests can point at wiremock instead of the real
-    // graph.facebook.com endpoint. That refactor is tracked as a
-    // v0.4 follow-up. For now the wire-in is covered by:
-    //   - the structural test above (no panic, no log-and-drop loop),
-    //   - the dispatch_messages code review (if-let arm routes
-    //     through send_text_message),
-    //   - the existing `whatsapp_inbound_live_when_full_meta_secrets_present`
-    //     integration test that pins the LIVE-mode credential
-    //     wiring at the wizard level.
+    #[tokio::test]
+    async fn p0_send_hits_api_once_and_audits_delivered_egress() {
+        // WA-SEAM-01: Allow + not-dry-run → exactly ONE POST to the Graph API
+        // (machine-verified via wiremock) AND a 0x33 CHANNEL_EGRESS frame
+        // attesting the delivered reply (recipient + body HASHED, real wamid).
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/123/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"contacts":[{"wa_id":"49000"}],"messages":[{"id":"wamid.OK"}]}"#,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let cfg = gated_cfg(
+            SendGovernance {
+                wal_writer: Some(writer.clone()),
+                decision: crate::permissions::Decision::Allow,
+                required_audit: false,
+                dry_run: false,
+            },
+            Some(server.uri()),
+        );
+        dispatch_messages(&cfg, vec![inbound_fixture()]).await;
+        drop(cfg);
+        drop(writer);
+        let _ = join.await;
+        // Exactly one Graph API POST landed (also enforced by `.expect(1)`).
+        let reqs = server.received_requests().await.unwrap();
+        assert_eq!(reqs.len(), 1, "Allow+send must hit the Graph API exactly once");
+        let (event_type, payload) = read_first_frame(&seg);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS);
+        let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(v["dry_run"], false);
+        assert_eq!(v["channel"], "whatsapp");
+        assert_eq!(v["provider_message_id"], "wamid.OK");
+        let text = String::from_utf8_lossy(&payload);
+        assert!(!text.contains("+4900000"), "recipient leaked: {text}");
+    }
 
     async fn http_get(host: &str, path: &str) -> (u16, String) {
         let url = format!("http://{host}{path}");

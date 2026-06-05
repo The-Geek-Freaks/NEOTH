@@ -19,6 +19,11 @@ use serde::Deserialize;
 use crate::providers::http_client;
 use crate::secret::SecretString;
 
+/// Production WhatsApp Business Cloud Graph API base. Split out as a `const` so
+/// the send + validate paths share ONE source of truth and tests can override
+/// it with a `wiremock` base URL via the `*_at` variants below.
+pub const GRAPH_API_BASE: &str = "https://graph.facebook.com/v18.0";
+
 /// Result of a `messages` POST. `id` is WhatsApp's wamid (e.g.
 /// `"wamid.HBgL..."`); operators can use it for delivery-status webhooks
 /// once the receive path lands.
@@ -43,10 +48,24 @@ pub async fn send_text_message(
     to: &str,
     message: &str,
 ) -> Result<SendMessageResult> {
+    send_text_message_at(GRAPH_API_BASE, access_token, phone_number_id, to, message).await
+}
+
+/// Base-URL-injectable core of [`send_text_message`]. The public wrapper passes
+/// [`GRAPH_API_BASE`]; the webhook send path + tests point `base_url` at a
+/// `wiremock::MockServer` so the "skips API on Deny/DryRun" governance contract
+/// is machine-verifiable without touching Meta's network.
+pub(crate) async fn send_text_message_at(
+    base_url: &str,
+    access_token: &SecretString,
+    phone_number_id: &str,
+    to: &str,
+    message: &str,
+) -> Result<SendMessageResult> {
     if phone_number_id.is_empty() {
         anyhow::bail!("whatsapp_phone_id is empty — set it in credentials.yaml");
     }
-    let url = format!("https://graph.facebook.com/v18.0/{phone_number_id}/messages");
+    let url = format!("{base_url}/{phone_number_id}/messages");
     let client = http_client::build_client()?;
     let resp = client
         .post(&url)
@@ -128,12 +147,19 @@ pub async fn validate_token(
     access_token: &SecretString,
     phone_number_id: &str,
 ) -> Result<ValidateResult> {
+    validate_token_at(GRAPH_API_BASE, access_token, phone_number_id).await
+}
+
+/// Base-URL-injectable core of [`validate_token`] — see [`send_text_message_at`].
+pub(crate) async fn validate_token_at(
+    base_url: &str,
+    access_token: &SecretString,
+    phone_number_id: &str,
+) -> Result<ValidateResult> {
     if phone_number_id.is_empty() {
         anyhow::bail!("whatsapp_phone_id is empty — set it in credentials.yaml");
     }
-    let url = format!(
-        "https://graph.facebook.com/v18.0/{phone_number_id}?fields=display_phone_number,verified_name"
-    );
+    let url = format!("{base_url}/{phone_number_id}?fields=display_phone_number,verified_name");
     let client = http_client::build_client()?;
     let resp = client
         .get(&url)
@@ -334,5 +360,46 @@ mod tests {
         let r = send_text_message(&token, "", "+15551234567", "hi").await;
         let err = r.unwrap_err();
         assert!(err.to_string().contains("whatsapp_phone_id is empty"));
+    }
+
+    #[tokio::test]
+    async fn send_text_message_at_posts_once_and_parses_wamid() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/123/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"contacts":[{"wa_id":"4915112345678"}],"messages":[{"id":"wamid.X"}]}"#,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let token = SecretString::from("fake");
+        let r = send_text_message_at(&server.uri(), &token, "123", "+4915112345678", "hi")
+            .await
+            .unwrap();
+        assert!(r.ok);
+        assert_eq!(r.message_id.as_deref(), Some("wamid.X"));
+        // The mock's `.expect(1)` is verified on `server` drop: exactly one POST.
+    }
+
+    #[tokio::test]
+    async fn validate_token_at_gets_the_phone_node() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/123"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"display_phone_number":"+49 151 1","verified_name":"NEOTH","id":"123"}"#,
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let token = SecretString::from("fake");
+        let r = validate_token_at(&server.uri(), &token, "123").await.unwrap();
+        assert!(r.ok);
+        assert_eq!(r.verified_name.as_deref(), Some("NEOTH"));
     }
 }

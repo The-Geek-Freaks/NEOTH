@@ -933,6 +933,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 whatsapp_send_creds: Some(crate::channels::webhook_listener::WhatsAppSendCreds {
                     access_token: token.clone(),
                     phone_number_id: phone.clone(),
+                    base_url: None,
                 }),
                 // P0 — gate + audit the WhatsApp webhook reply send. The daemon
                 // owns the WAL writer; evaluate the channel-send permission once
