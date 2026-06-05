@@ -43,10 +43,16 @@ pub enum ChannelSendVerdict {
 ///   3. dry-run preview.
 ///   4. else Send.
 ///
-/// `Confirm` (e.g. Strict autonomy) degrades to a normal audited send on the
-/// REPLY path: a webhook reply answers an operator-initiated, allowlist-passed
-/// inbound, and a headless listener has no TTY to prompt — so the governance
-/// here is the durable audit + the hard Deny, not an interactive block.
+/// `Decision::Confirm` (e.g. Strict autonomy) has NO arm here and falls through
+/// to `Send`. That degrade is UNREACHABLE on the standard serve.rs
+/// `build_pipeline_handler` wiring: that pipeline runs a
+/// `Gate::for_level(..).with_confirm(ConfirmStrategy::FailClosed)` ChannelSend
+/// gate which resolves Strict's Confirm to Deny and returns `Ok(None)` BEFORE
+/// `decide_channel_send` is ever reached. The fallthrough therefore only fires
+/// for an operator-constructed listener that bypasses that pipeline gate — and
+/// when it does, the `confirm_degraded: true` flag in the `CHANNEL_EGRESS`
+/// payload marks the governance posture in the WAL. The durable audit + the
+/// hard Deny remain the governance for a headless, TTY-less reply path.
 pub fn decide_channel_send(
     decision: &Decision,
     dry_run: bool,
@@ -68,12 +74,17 @@ pub fn decide_channel_send(
 /// Build the metadata-only `CHANNEL_EGRESS` payload for an outbound send. The
 /// recipient AND the message body are xxh3-64 HASHED — never the phone number
 /// or the text in the clear. PURE so the no-plaintext invariant is testable.
+///
+/// `confirm_degraded` records whether a Strict-autonomy `Decision::Confirm` was
+/// degraded to a send on this path (see [`decide_channel_send`]); `false` on
+/// every standard production path (the pipeline gate blocks Confirm upstream).
 pub fn channel_egress_payload(
     channel: &str,
     recipient: &str,
     message: &str,
     provider_message_id: Option<&str>,
     dry_run: bool,
+    confirm_degraded: bool,
     ts_unix: u64,
 ) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
@@ -83,6 +94,7 @@ pub fn channel_egress_payload(
         "message_bytes": message.len(),
         "provider_message_id": provider_message_id,
         "dry_run": dry_run,
+        "confirm_degraded": confirm_degraded,
         "ts_unix": ts_unix,
     }))
     .unwrap_or_default()
@@ -177,7 +189,8 @@ mod tests {
     fn egress_payload_is_metadata_only_no_plaintext() {
         let recipient = "+4915112345678";
         let message = "secret message body";
-        let bytes = channel_egress_payload("whatsapp", recipient, message, Some("wamid.X"), false, 1700);
+        let bytes =
+            channel_egress_payload("whatsapp", recipient, message, Some("wamid.X"), false, true, 1700);
         let s = String::from_utf8(bytes).unwrap();
         // The phone number and the body NEVER appear in the clear.
         assert!(!s.contains(recipient), "recipient phone leaked: {s}");
@@ -192,6 +205,7 @@ mod tests {
             format!("{:016x}", xxhash_rust::xxh3::xxh3_64(recipient.as_bytes()))
         );
         assert!(v["message_hash"].as_str().unwrap().len() == 16);
+        assert_eq!(v["confirm_degraded"], true);
     }
 
     #[test]

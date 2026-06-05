@@ -510,6 +510,7 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                     &outbound.text,
                                     None,
                                     true,
+                                    false,
                                     now,
                                 );
                                 let h = crate::wal::make_header(
@@ -547,6 +548,10 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             &outbound.text,
                                             r.message_id.as_deref(),
                                             false,
+                                            // confirm_degraded: records a Strict
+                                            // Confirm that reached send (dead path
+                                            // under the standard pipeline gate).
+                                            matches!(gov.decision, crate::permissions::Decision::Confirm(_)),
                                             now,
                                         );
                                         let h = crate::wal::make_header(

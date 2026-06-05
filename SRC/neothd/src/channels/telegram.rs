@@ -482,8 +482,9 @@ async fn audit_notice_egress(
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let payload =
-        crate::channels::send_gate::channel_egress_payload("telegram", chat_id, body, None, false, now);
+    let payload = crate::channels::send_gate::channel_egress_payload(
+        "telegram", chat_id, body, None, false, false, now,
+    );
     let header =
         crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS, &payload);
     if let Err(e) = w.append(header, payload).await {
