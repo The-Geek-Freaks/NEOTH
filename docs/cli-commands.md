@@ -115,6 +115,7 @@ Print the recommended-default model per provider — what the wizard / `freedom.
 Print every cached model, grouped by provider
 
 - `--include-deprecated <INCLUDE_DEPRECATED>` — Include models the provider has flagged as deprecated / scheduled for sunset. Off by default — the wizard never surfaces deprecated entries either
+- `--provider <PROVIDER>` — Show only this provider's models (e.g. `anthropic_api`). Omit to list every cached provider. The JSON shape is identical — just narrowed to the one key — which drives the GUI per-role model picker via a clean `--output json` subprocess call (MV-01c)
 
 ### `neoth catalog refresh`
 

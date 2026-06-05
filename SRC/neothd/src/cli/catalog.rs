@@ -56,6 +56,12 @@ pub enum CatalogAction {
         /// surfaces deprecated entries either.
         #[arg(long)]
         include_deprecated: bool,
+        /// Show only this provider's models (e.g. `anthropic_api`). Omit to
+        /// list every cached provider. The JSON shape is identical — just
+        /// narrowed to the one key — which drives the GUI per-role model
+        /// picker via a clean `--output json` subprocess call (MV-01c).
+        #[arg(long)]
+        provider: Option<String>,
     },
     /// Print one provider's full catalog with metadata.
     Show {
@@ -78,9 +84,10 @@ pub async fn run_catalog(args: CatalogArgs) -> Result<()> {
         CatalogAction::Refresh { stale_only } => {
             run_refresh(&home, &path, stale_only, args.output).await
         }
-        CatalogAction::List { include_deprecated } => {
-            run_list(&path, include_deprecated, args.output)
-        }
+        CatalogAction::List {
+            include_deprecated,
+            provider,
+        } => run_list(&path, include_deprecated, provider.as_deref(), args.output),
         CatalogAction::Show { provider } => run_show(&path, &provider, args.output),
         CatalogAction::Defaults => run_defaults(&path, args.output),
         CatalogAction::Clear => run_clear(&path, args.output),
@@ -151,9 +158,31 @@ async fn run_refresh(
     Ok(())
 }
 
-fn run_list(path: &std::path::Path, include_deprecated: bool, output: OutputFormat) -> Result<()> {
+/// PURE provider selection: `None` returns every cached provider; `Some(p)`
+/// narrows to the single matching key (empty when `p` is absent). Split out so
+/// the `--provider` filter is unit-testable without capturing stdout, and so
+/// the JSON + table render paths share one source of truth.
+fn select_providers<'a>(
+    catalog: &'a ModelsCatalog,
+    provider: Option<&str>,
+) -> Vec<(&'a str, &'a ProviderCatalog)> {
+    catalog
+        .providers
+        .iter()
+        .filter(|(name, _)| provider.is_none() || provider == Some(name.as_str()))
+        .map(|(name, pc)| (name.as_str(), pc))
+        .collect()
+}
+
+fn run_list(
+    path: &std::path::Path,
+    include_deprecated: bool,
+    provider: Option<&str>,
+    output: OutputFormat,
+) -> Result<()> {
     let catalog = ModelsCatalog::load_from(path);
-    if catalog.providers.is_empty() {
+    let selected = select_providers(&catalog, provider);
+    if selected.is_empty() {
         match output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 println!("{{\"providers\":{{}}}}");
@@ -167,17 +196,16 @@ fn run_list(path: &std::path::Path, include_deprecated: bool, output: OutputForm
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
-            let filtered: serde_json::Map<String, serde_json::Value> = catalog
-                .providers
+            let filtered: serde_json::Map<String, serde_json::Value> = selected
                 .iter()
-                .map(|(name, pc)| {
+                .map(|&(name, pc)| {
                     let models: Vec<&_> = pc
                         .models
                         .iter()
                         .filter(|m| include_deprecated || !m.deprecated)
                         .collect();
                     (
-                        name.clone(),
+                        name.to_string(),
                         json!({
                             "fetched_at_unix": pc.fetched_at_unix,
                             "source": pc.source,
@@ -193,7 +221,7 @@ fn run_list(path: &std::path::Path, include_deprecated: bool, output: OutputForm
             );
         }
         _ => {
-            for (name, pc) in &catalog.providers {
+            for &(name, pc) in &selected {
                 let fresh_marker = if pc.is_fresh(now_unix(), catalog.effective_ttl_secs()) {
                     "fresh"
                 } else {
@@ -363,7 +391,35 @@ mod tests {
     fn list_on_empty_catalog_does_not_error() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("models_catalog.json");
-        run_list(&path, false, OutputFormat::Json).expect("must succeed on empty catalog");
+        run_list(&path, false, None, OutputFormat::Json).expect("must succeed on empty catalog");
+    }
+
+    #[test]
+    fn select_providers_filters_to_one_or_returns_all() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("models_catalog.json");
+        let mut cat = ModelsCatalog::default().with_path(path);
+        cat.upsert("anthropic_api", SourceOrigin::Api, vec![ModelEntry::new("claude-opus-4-7")]);
+        cat.upsert("gemini_api", SourceOrigin::Api, vec![ModelEntry::new("gemini-3.1-pro")]);
+        // None → every cached provider.
+        assert_eq!(select_providers(&cat, None).len(), 2);
+        // Some(match) → exactly that one key.
+        let one = select_providers(&cat, Some("anthropic_api"));
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].0, "anthropic_api");
+        // Some(no-match) → empty (run_list then prints the empty envelope).
+        assert!(select_providers(&cat, Some("does_not_exist")).is_empty());
+    }
+
+    #[test]
+    fn list_with_provider_filter_does_not_error() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("models_catalog.json");
+        let mut cat = ModelsCatalog::default().with_path(path.clone());
+        cat.upsert("anthropic_api", SourceOrigin::Api, vec![ModelEntry::new("claude-opus-4-7")]);
+        cat.save().unwrap();
+        run_list(&path, false, Some("anthropic_api"), OutputFormat::Json).expect("filtered list ok");
+        run_list(&path, false, Some("absent"), OutputFormat::Json).expect("absent provider → empty ok");
     }
 
     #[test]

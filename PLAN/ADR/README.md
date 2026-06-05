@@ -45,3 +45,4 @@ Body sections:
 - [ADR-003 — R-02 Phase 3 dream-composition cadence](003-r02-phase3-dream-cadence.md) — Proposed (opt-in `neoth dream now` default + opt-in nightly cron, pending Day-14b).
 - [ADR-004 — R-02 Phase 3 embedding model selection](004-r02-phase3-embedding-model.md) — Proposed (Qwen3-Q8 default + BGE-M3 opt-in fallback, gated on Day-14b `embed()` surface).
 - [ADR-005 — R-02 Phase 3 channel-ingress privacy boundary](005-r02-phase3-privacy-boundary.md) — Accepted (episodes-only, no counterparty-leak via clustering).
+- [ADR-006 — HO-08: no separate `council/adaptation.rs`](006-ho08-ecology-council-adaptation-hook.md) — Accepted (the adaptation callback is `cli::self_dev::propose_and_store`; no placeholder module).

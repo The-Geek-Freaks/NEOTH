@@ -842,9 +842,65 @@ pub fn parse_provider_ids(json: &str) -> Vec<String> {
         .collect()
 }
 
+/// MV-01c — extract the non-deprecated model ids for `provider` from
+/// `neoth catalog list --provider <p> --output json` (shape
+/// `{providers:{<p>:{models:[{id,deprecated},…]}}}`). PURE + robust (malformed
+/// JSON or an absent provider → empty) so the per-role model picker offers the
+/// LIVE catalog ids without ever hard-failing the GUI on a subprocess hiccup.
+/// Stays model-version-agnostic — surfaces whatever the catalog holds, no
+/// whitelist (a new model id appears the moment `catalog refresh` sees it).
+pub fn parse_catalog_model_ids(json: &str, provider: &str) -> Vec<String> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(models) = v
+        .get("providers")
+        .and_then(|p| p.get(provider))
+        .and_then(|pc| pc.get("models"))
+        .and_then(|m| m.as_array())
+    else {
+        return Vec::new();
+    };
+    models
+        .iter()
+        .filter(|m| !m.get("deprecated").and_then(|d| d.as_bool()).unwrap_or(false))
+        .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(|s| s.to_string()))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── MV-01c catalog model-id parser ────────────────────────────────────
+    #[test]
+    fn parse_catalog_model_ids_happy_path_preserves_order() {
+        let json = r#"{"providers":{"anthropic_api":{"models":[
+            {"id":"claude-opus-4-8","deprecated":false},
+            {"id":"claude-sonnet-4-6"}
+        ]}}}"#;
+        assert_eq!(
+            parse_catalog_model_ids(json, "anthropic_api"),
+            vec!["claude-opus-4-8".to_string(), "claude-sonnet-4-6".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_catalog_model_ids_excludes_deprecated_and_other_providers() {
+        let json = r#"{"providers":{
+            "anthropic_api":{"models":[{"id":"old","deprecated":true},{"id":"new","deprecated":false}]},
+            "gemini_api":{"models":[{"id":"g"}]}
+        }}"#;
+        assert_eq!(parse_catalog_model_ids(json, "anthropic_api"), vec!["new".to_string()]);
+        assert_eq!(parse_catalog_model_ids(json, "gemini_api"), vec!["g".to_string()]);
+    }
+
+    #[test]
+    fn parse_catalog_model_ids_empty_on_malformed_or_absent() {
+        assert!(parse_catalog_model_ids("not json", "anthropic_api").is_empty());
+        assert!(parse_catalog_model_ids(r#"{"providers":{}}"#, "anthropic_api").is_empty());
+        assert!(parse_catalog_model_ids(r#"{"providers":{"x":{"models":[{"id":"m"}]}}}"#, "absent").is_empty());
+    }
 
     // ── GR-03 trust panel parser ──────────────────────────────────────────
     #[test]
