@@ -26,6 +26,32 @@ Every channel should pass through:
 - outbound send policy
 - WAL event trail
 
+## Managing channels from the CLI
+
+The `neoth channel` family manages the messaging channels (Telegram, Slack,
+WhatsApp, Keet) without the full wizard:
+
+```bash
+neoth channel list                 # which channels are configured right now
+neoth channel add telegram         # connect a channel (prompts for the token, no echo)
+neoth channel test telegram        # live read-only credential check (no message sent)
+neoth channel remove telegram      # clear a channel's credentials
+```
+
+- **`add`** prompts for the channel's credential(s) with no terminal echo on an
+  interactive TTY, and writes them to `~/.neoth/credentials.yaml` (mode-0600).
+  Pipe to script it: `printf '%s\n' "$TOKEN" | neoth channel add telegram`.
+- **`test`** validates the configured credentials actually work — Telegram
+  `getMe`, Slack `auth.test`, WhatsApp phone-node lookup, Keet seed-phrase format
+  (offline). It is read-only: nothing is sent, nothing is billed.
+- **`list`** / **`remove`** show and clear configured state. All four accept
+  `--output json`.
+
+Channel credentials live only in `credentials.yaml`; `neoth serve` reads them on
+start. Discord ships an outbound adapter but has no credential field yet, so it
+is not yet `add`-able. Email and calendar are configured through the wizard
+(`neoth init`) — they are sensitive ingest surfaces, not bot tokens.
+
 ## Telegram
 
 ### Setup
@@ -37,14 +63,8 @@ Every channel should pass through:
 5. Run:
 
 ```bash
-neoth channel setup telegram
-neoth serve
-```
-
-Manual environment path:
-
-```bash
-export TELEGRAM_BOT_TOKEN="123456789:ABC-DEF..."
+neoth channel add telegram
+neoth channel test telegram
 neoth serve
 ```
 
@@ -65,7 +85,8 @@ NEOTH uses the official Meta WhatsApp Business Cloud API. No personal-number hac
 ### Setup
 
 ```bash
-neoth channel setup whatsapp
+neoth channel add whatsapp
+neoth channel test whatsapp
 neoth serve
 ```
 
@@ -92,7 +113,8 @@ Credential fields:
 Slack uses Socket Mode so you do not need a public HTTPS endpoint.
 
 ```bash
-neoth channel setup slack
+neoth channel add slack
+neoth channel test slack
 neoth serve
 ```
 
@@ -108,10 +130,9 @@ Required Slack scopes:
 
 ## Discord
 
-```bash
-neoth channel setup discord
-neoth serve
-```
+Discord ships an outbound adapter, but inbound credential storage is a follow-up
+— it has no `credentials.yaml` field yet, so `neoth channel add discord` is not
+available. Track the gap in the project status.
 
 Discord notes:
 
@@ -127,7 +148,8 @@ Discord notes:
 Keet is the private/P2P channel direction.
 
 ```bash
-neoth channel setup keet
+neoth channel add keet
+neoth channel test keet
 neoth serve
 ```
 
@@ -137,9 +159,9 @@ Keet is useful when the operator wants less platform gravity and more private me
 
 Email is treated as a sensitive channel because it contains other people's text, attachments, tracking links, and prompt-injection bait.
 
-```bash
-neoth channel setup email
-```
+Email is configured through the wizard (`neoth init`), which collects the IMAP
+account binding — it is a sensitive ingest surface, not a bot token, so it does
+not go through `neoth channel add`.
 
 Default behavior:
 
@@ -154,9 +176,8 @@ Default behavior:
 
 ## Calendar
 
-```bash
-neoth channel setup calendar
-```
+Calendar is configured through the wizard (`neoth init`), which collects the
+CalDAV / provider account binding.
 
 Default behavior:
 
@@ -173,11 +194,18 @@ NEOTH does not silently merge identities. If you talk to it from Telegram and
 Slack, those stay separate by default — each channel is its own conversation
 surface with its own consent gate.
 
-> **Planned (SPEC-11, not in the current build):** an operator-driven
-> `identity list` / `identity merge` surface to deliberately link two channel
-> identities so recall and profile can follow the same operator across
-> surfaces. Until it ships, channels stay independent — which is the
-> fail-closed default.
+When you DO want recall and profile to follow you across surfaces, link them
+deliberately:
+
+```bash
+neoth identity list                 # every channel identity NEOTH has seen
+neoth identity merge <keep> <fold>  # link two identities (audited, reversible)
+```
+
+The merge is operator-driven, written to a `0x9B IDENTITY_MERGED` WAL frame
+(reversible tombstone — see [privacy.md](privacy.md)), and the alias map never
+leaves the machine. Without an explicit merge, channels stay independent — the
+fail-closed default.
 
 ## Channel safety checklist
 
@@ -197,7 +225,8 @@ Use [live-e2e-protocol.md](live-e2e-protocol.md) before trusting a production ch
 Typical smoke:
 
 ```bash
-neoth channel doctor
+neoth channel test <channel>   # live credential check for one channel
+neoth doctor                    # full setup diagnostics (incl. channel wiring)
 neoth serve
 neoth privacy audit --last 1h
 ```

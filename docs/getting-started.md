@@ -104,10 +104,11 @@ Telegram is usually the fastest phone path.
 1. Open Telegram and talk to `@BotFather`.
 2. Create a bot with `/newbot`.
 3. Copy the bot token.
-4. Run the channel wizard:
+4. Connect the channel:
 
 ```bash
-neoth channel setup telegram
+neoth channel add telegram
+neoth channel test telegram
 neoth serve
 ```
 
@@ -115,12 +116,12 @@ Other surfaces:
 
 | Surface | Command |
 | :-- | :-- |
-| WhatsApp Business | `neoth channel setup whatsapp` |
-| Slack | `neoth channel setup slack` |
-| Discord | `neoth channel setup discord` |
-| Keet | `neoth channel setup keet` |
-| Email | `neoth channel setup email` |
-| Calendar | `neoth channel setup calendar` |
+| WhatsApp Business | `neoth channel add whatsapp` |
+| Slack | `neoth channel add slack` |
+| Keet | `neoth channel add keet` |
+| Discord | no credential field yet (outbound adapter only) |
+| Email | `neoth init` (IMAP account binding) |
+| Calendar | `neoth init` (CalDAV / provider binding) |
 
 See [channels.md](channels.md) for credentials, allowlists, webhook notes, and E2E checks.
 

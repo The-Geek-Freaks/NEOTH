@@ -103,22 +103,23 @@ neoth model fetch whisper
 ## Channels
 
 ```bash
-neoth channel setup telegram
-neoth channel setup whatsapp
-neoth channel setup slack
-neoth channel setup discord
-neoth channel setup keet
-neoth channel setup email
-neoth channel setup calendar
-neoth channel doctor
+neoth channel list                 # which channels are configured
+neoth channel add telegram         # connect a channel (no-echo token prompt)
+neoth channel test telegram        # live read-only credential check
+neoth channel remove telegram      # clear a channel's credentials
 neoth serve
 ```
 
 | Command | Purpose |
 | :-- | :-- |
-| `channel setup <name>` | Guided channel setup. |
-| `channel doctor` | Verify credentials, allowlists, webhooks, send path. |
+| `channel list` | Show every channel + whether it is configured. |
+| `channel add <name>` | Connect a channel (telegram/slack/whatsapp/keet); writes credentials.yaml. |
+| `channel test <name>` | Live read-only credential check (no message sent, nothing billed). |
+| `channel remove <name>` | Clear a channel's credentials. |
 | `serve` | Run daemon/channel server. |
+
+Email and calendar are ingest surfaces configured through `neoth init`, not bot
+tokens. Discord has no credential field yet (outbound adapter only).
 
 ## Coding buddy
 
