@@ -934,6 +934,20 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     access_token: token.clone(),
                     phone_number_id: phone.clone(),
                 }),
+                // P0 — gate + audit the WhatsApp webhook reply send. The daemon
+                // owns the WAL writer; evaluate the channel-send permission once
+                // under the active autonomy; honour the proof-hardline
+                // required-audit switch (a send that can't be audited is then
+                // refused fail-closed).
+                send_governance: crate::channels::webhook_listener::SendGovernance {
+                    wal_writer: Some(writer.clone()),
+                    decision: crate::permissions::evaluate(
+                        &crate::permissions::Action::ChannelSend,
+                        config.autonomy,
+                    ),
+                    required_audit: config.audit_rpc.required_for_oneshot_permission_events,
+                    dry_run: false,
+                },
                 max_concurrent_connections: None,
             };
             let task = tokio::spawn(async move {

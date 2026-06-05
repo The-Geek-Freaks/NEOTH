@@ -77,6 +77,34 @@ pub const DEFAULT_MAX_CONCURRENT_CONNECTIONS: usize = 64;
 /// retries via its own client logic.
 pub const SHUTDOWN_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// P0 — governance inputs for the outbound channel send. The daemon evaluates
+/// the channel-send permission ONCE (at config build) + threads its WAL writer
+/// so every WhatsApp webhook reply is gated + audited via
+/// [`crate::channels::send_gate`]. `Default` is the writerless, permissive
+/// posture used by tests / non-sending listeners.
+pub struct SendGovernance {
+    /// Daemon WAL writer for the `CHANNEL_EGRESS` / `PERMISSION_DENIED` audit.
+    /// `None` ⇒ no audit is written (and a `required_audit` send fails closed).
+    pub wal_writer: Option<crate::wal::writer::WalWriterHandle>,
+    /// Pre-evaluated `Action::ChannelSend` decision under the active autonomy.
+    pub decision: crate::permissions::Decision,
+    /// When true, a send that cannot be audited is REFUSED (fail-closed).
+    pub required_audit: bool,
+    /// When true, skip the real API call — emit a dry-run audit only.
+    pub dry_run: bool,
+}
+
+impl Default for SendGovernance {
+    fn default() -> Self {
+        Self {
+            wal_writer: None,
+            decision: crate::permissions::Decision::Allow,
+            required_audit: false,
+            dry_run: false,
+        }
+    }
+}
+
 /// Operator-configurable settings the listener needs to do its job.
 /// Cloned once into the `Arc` the per-connection service shares.
 pub struct WebhookListenerConfig {
@@ -103,6 +131,9 @@ pub struct WebhookListenerConfig {
     /// the documented gap where inbound-LIVE webhooks would call
     /// the pipeline but silently drop the reply.
     pub whatsapp_send_creds: Option<WhatsAppSendCreds>,
+    /// P0 — channel-send governance (gate decision + audit writer + fail-closed
+    /// flags). `Default` = writerless permissive (tests / non-sending listeners).
+    pub send_governance: SendGovernance,
     /// R2-P1-1 concurrency cap. `None` → `DEFAULT_MAX_CONCURRENT_CONNECTIONS`.
     /// Operators behind a reverse proxy can raise this if their proxy
     /// fans out many concurrent webhook calls; localhost-only deploys
@@ -415,34 +446,119 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                 // supposed to own send), which silently broke the
                 // inbound→reply loop in webhook mode.
                 if let Some(creds) = cfg.whatsapp_send_creds.as_ref() {
-                    let send = crate::channels::whatsapp_api::send_text_message(
-                        &creds.access_token,
-                        &creds.phone_number_id,
-                        &outbound.recipient_id,
-                        &outbound.text,
-                    )
-                    .await;
-                    match send {
-                        Ok(r) if r.ok => {
+                    // P0 — every WhatsApp webhook reply is a real external
+                    // mutation: gate it (a Deny blocks + audits), honour
+                    // required-audit fail-closed + dry-run, and audit every send
+                    // metadata-only (recipient + body HASHED — never the phone
+                    // number / text in the clear).
+                    use crate::channels::send_gate::{self, ChannelSendVerdict};
+                    let gov = &cfg.send_governance;
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let verdict = send_gate::decide_channel_send(
+                        &gov.decision,
+                        gov.dry_run,
+                        gov.wal_writer.is_some(),
+                        gov.required_audit,
+                    );
+                    match verdict {
+                        ChannelSendVerdict::Denied(reason) => {
+                            if let Some(w) = gov.wal_writer.as_ref() {
+                                let p = send_gate::channel_send_denied_payload(
+                                    "whatsapp",
+                                    &outbound.recipient_id,
+                                    &reason,
+                                    now,
+                                );
+                                let h = crate::wal::make_header(
+                                    crate::wal::events::EVENT_TYPE_PERMISSION_DENIED,
+                                    &p,
+                                );
+                                let _ = w.append(h, p).await;
+                            }
+                            warn!(
+                                recipient = %outbound.recipient_id,
+                                reason = %reason,
+                                "P0: WhatsApp send DENIED by channel-send gate",
+                            );
+                        }
+                        ChannelSendVerdict::RefusedNoAudit => {
+                            warn!(
+                                recipient = %outbound.recipient_id,
+                                "P0: WhatsApp send REFUSED — required-audit on but no writable audit sink (fail-closed)",
+                            );
+                        }
+                        ChannelSendVerdict::DryRun => {
+                            if let Some(w) = gov.wal_writer.as_ref() {
+                                let p = send_gate::channel_egress_payload(
+                                    "whatsapp",
+                                    &outbound.recipient_id,
+                                    &outbound.text,
+                                    None,
+                                    true,
+                                    now,
+                                );
+                                let h = crate::wal::make_header(
+                                    crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                    &p,
+                                );
+                                let _ = w.append(h, p).await;
+                            }
                             debug!(
                                 recipient = %outbound.recipient_id,
-                                wamid = ?r.message_id,
-                                "GR-01 Pick B: webhook reply delivered via Graph API",
+                                "P0: WhatsApp send DRY-RUN (audited, not sent)",
                             );
                         }
-                        Ok(r) => {
-                            warn!(
-                                recipient = %outbound.recipient_id,
-                                error = ?r.error,
-                                "GR-01 Pick B: webhook reply failed (Meta API error)",
-                            );
-                        }
-                        Err(e) => {
-                            warn!(
-                                recipient = %outbound.recipient_id,
-                                error = %e,
-                                "GR-01 Pick B: webhook reply failed (transport)",
-                            );
+                        ChannelSendVerdict::Send => {
+                            let send = crate::channels::whatsapp_api::send_text_message(
+                                &creds.access_token,
+                                &creds.phone_number_id,
+                                &outbound.recipient_id,
+                                &outbound.text,
+                            )
+                            .await;
+                            match send {
+                                Ok(r) if r.ok => {
+                                    // Best-effort audit (required-audit was already
+                                    // pre-flighted into the verdict above).
+                                    if let Some(w) = gov.wal_writer.as_ref() {
+                                        let p = send_gate::channel_egress_payload(
+                                            "whatsapp",
+                                            &outbound.recipient_id,
+                                            &outbound.text,
+                                            r.message_id.as_deref(),
+                                            false,
+                                            now,
+                                        );
+                                        let h = crate::wal::make_header(
+                                            crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS,
+                                            &p,
+                                        );
+                                        let _ = w.append(h, p).await;
+                                    }
+                                    debug!(
+                                        recipient = %outbound.recipient_id,
+                                        wamid = ?r.message_id,
+                                        "GR-01 Pick B: webhook reply delivered via Graph API",
+                                    );
+                                }
+                                Ok(r) => {
+                                    warn!(
+                                        recipient = %outbound.recipient_id,
+                                        error = ?r.error,
+                                        "GR-01 Pick B: webhook reply failed (Meta API error)",
+                                    );
+                                }
+                                Err(e) => {
+                                    warn!(
+                                        recipient = %outbound.recipient_id,
+                                        error = %e,
+                                        "GR-01 Pick B: webhook reply failed (transport)",
+                                    );
+                                }
+                            }
                         }
                     }
                 } else {
@@ -588,10 +704,95 @@ mod tests {
             slack_signing_secret: b"s".to_vec(),
             pipeline: pipeline_with_outbound(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
         };
         // No panic, no network call — completes cleanly.
         dispatch_messages(&cfg, vec![inbound_fixture()]).await;
+    }
+
+    /// Build a config with send creds + the given governance (the Deny/DryRun
+    /// verdicts below never touch the network, so the fake token is safe).
+    fn gated_cfg(gov: SendGovernance) -> WebhookListenerConfig {
+        WebhookListenerConfig {
+            meta_app_secret: b"m".to_vec(),
+            meta_verify_token: "v".to_string(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline: pipeline_with_outbound(),
+            whatsapp_send_creds: Some(WhatsAppSendCreds {
+                access_token: crate::secret::SecretString::from("fake-token"),
+                phone_number_id: "123".to_string(),
+            }),
+            send_governance: gov,
+            max_concurrent_connections: None,
+        }
+    }
+
+    /// Decode the first WAL frame → (event_type, owned payload bytes).
+    fn read_first_frame(seg: &std::path::Path) -> (u8, Vec<u8>) {
+        let bytes = std::fs::read(seg).unwrap();
+        let f = crate::wal::frame::decode_frame(
+            &bytes[crate::wal::segment_header::SEGMENT_HEADER_LEN..],
+        )
+        .unwrap();
+        (f.header.event_type, f.payload.to_vec())
+    }
+
+    #[tokio::test]
+    async fn p0_denied_send_skips_api_and_audits_permission_denied() {
+        // A Deny verdict must NOT call the Graph API (no network) and MUST emit
+        // a 0xA1 PERMISSION_DENIED frame with the recipient HASHED.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let cfg = gated_cfg(SendGovernance {
+            wal_writer: Some(writer.clone()),
+            decision: crate::permissions::Decision::Deny("test-deny".into()),
+            required_audit: false,
+            dry_run: false,
+        });
+        dispatch_messages(&cfg, vec![inbound_fixture()]).await;
+        // Drop cfg FIRST — it holds a writer clone inside send_governance; the
+        // writer task only finishes (so `join` returns) once every handle is
+        // gone. (Production never joins: the daemon owns the writer for life.)
+        drop(cfg);
+        drop(writer);
+        let _ = join.await;
+        let (event_type, payload) = read_first_frame(&seg);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_PERMISSION_DENIED);
+        let text = String::from_utf8_lossy(&payload);
+        assert!(!text.contains("+4900000"), "recipient phone leaked: {text}");
+        assert!(text.contains("channel_send"), "denial payload tags the action");
+    }
+
+    #[tokio::test]
+    async fn p0_dry_run_audits_egress_without_sending() {
+        // dry_run + Allow → emit a 0x33 CHANNEL_EGRESS (dry_run:true), no API.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let cfg = gated_cfg(SendGovernance {
+            wal_writer: Some(writer.clone()),
+            decision: crate::permissions::Decision::Allow,
+            required_audit: false,
+            dry_run: true,
+        });
+        dispatch_messages(&cfg, vec![inbound_fixture()]).await;
+        // Drop cfg FIRST — it holds a writer clone inside send_governance; the
+        // writer task only finishes (so `join` returns) once every handle is
+        // gone. (Production never joins: the daemon owns the writer for life.)
+        drop(cfg);
+        drop(writer);
+        let _ = join.await;
+        let (event_type, payload) = read_first_frame(&seg);
+        assert_eq!(event_type, crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS);
+        let text = String::from_utf8_lossy(&payload);
+        // Metadata-only: hashed recipient + body, dry-run flag set.
+        assert!(!text.contains("+4900000"), "recipient leaked: {text}");
+        assert!(!text.contains("auto-reply"), "message body leaked: {text}");
+        let v: serde_json::Value = serde_json::from_slice(&payload).unwrap();
+        assert_eq!(v["dry_run"], true);
+        assert_eq!(v["channel"], "whatsapp");
     }
 
     // NOTE on GR-01 Pick B behaviour test: a true behaviour test —
@@ -641,6 +842,7 @@ mod tests {
             slack_signing_secret: b"slack-sig".to_vec(),
             pipeline: fake_pipeline(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -684,6 +886,7 @@ mod tests {
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -727,6 +930,7 @@ mod tests {
             slack_signing_secret: b"slackkey".to_vec(),
             pipeline: fake_pipeline(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -774,6 +978,7 @@ mod tests {
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -810,6 +1015,7 @@ mod tests {
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -864,6 +1070,7 @@ mod tests {
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: Some(1),
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -937,6 +1144,7 @@ mod tests {
             slack_signing_secret: b"s".to_vec(),
             pipeline: fake_pipeline(),
             whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
