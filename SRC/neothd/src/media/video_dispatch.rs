@@ -60,6 +60,15 @@ pub async fn dispatch_video_analysis(
             synth.provider().as_str()
         ));
     }
+    // P0 fail-closed pre-flight: under proof-hardline, refuse a CLOUD frame
+    // upload that can't be audited (LocalLlava is exempt — nothing leaves, so no
+    // audit is owed).
+    if !matches!(synth.provider(), MultimodalProvider::LocalLlava) {
+        crate::media::enforce_cloud_media_audit(
+            media_cfg.required_audit_for_cloud_media,
+            writer.is_some(),
+        )?;
+    }
     // Honour the provider's documented per-request frame cap.
     let cap = synth.provider().max_frames_per_request() as usize;
     let chosen: Vec<u64> = timestamps_ms.iter().take(cap).copied().collect();
@@ -309,6 +318,32 @@ mod tests {
         // Gate fired before decoding — nothing touched the asset.
         assert_eq!(decoder.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert_eq!(*synth.seen_frames.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn cloud_frame_upload_refused_when_required_audit_and_no_writer() {
+        // P0 proof-hardline: upload enabled BUT required_audit on + no WAL sink →
+        // refuse before decoding (no unprovable cloud upload).
+        let decoder = MockDecoder {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let synth = MockSynth {
+            provider: MultimodalProvider::AnthropicClaude,
+            answer: "leaked".into(),
+            seen_frames: std::sync::Mutex::new(0),
+        };
+        let cfg = crate::config::MediaConfig {
+            video_frame_upload_enabled: true,
+            required_audit_for_cloud_media: true,
+            ..Default::default()
+        };
+        let err = dispatch_video_analysis(
+            &decoder, &synth, &asset(), &[0, 500], FrameFormat::Jpeg, "p", 64, None, &cfg,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("required_audit_for_cloud_media"), "got: {err}");
+        assert_eq!(decoder.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]

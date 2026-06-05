@@ -1455,6 +1455,11 @@ pub struct MediaConfig {
     /// `cloud_vision_enabled` (a single still vs a sampled sequence of frames):
     /// a video upload exposes far more, so it is its own opt-in.
     pub video_frame_upload_enabled: bool,
+    /// P0 "proof-hardline": when true, a cloud STT/TTS/Vision/Video operation
+    /// that CANNOT be audited (no WAL sink available) is REFUSED rather than run
+    /// best-effort. Default `false` — the normal posture audits best-effort; flip
+    /// on when every cloud-media call must be provable or not happen at all.
+    pub required_audit_for_cloud_media: bool,
 }
 
 /// EM-02b — CalDAV calendar-write knobs.

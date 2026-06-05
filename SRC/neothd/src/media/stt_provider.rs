@@ -327,16 +327,16 @@ pub async fn transcribe_and_audit(
     provider: &dyn SttProviderImpl,
     audio: &[u8],
     request: &TranscriptionRequest,
-    writer: &crate::wal::writer::WalWriterHandle,
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    required_audit: bool,
 ) -> Result<TranscriptionResult, String> {
+    // P0 fail-closed pre-flight: under proof-hardline, refuse BEFORE the cloud
+    // call when there is no audit sink — never transcribe unprovably.
+    crate::media::enforce_cloud_media_audit(required_audit, writer.is_some())?;
     let result = provider.transcribe(audio, request).await?;
-    emit_stt_transcribed(
-        writer,
-        provider.kind(),
-        audio.len(),
-        result.text.chars().count(),
-    )
-    .await;
+    if let Some(w) = writer {
+        emit_stt_transcribed(w, provider.kind(), audio.len(), result.text.chars().count()).await;
+    }
     Ok(result)
 }
 
@@ -523,12 +523,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transcribe_and_audit_refuses_when_required_and_no_writer() {
+        // P0 proof-hardline: required_audit + no sink → refuse BEFORE transcribing.
+        let audio = vec![0u8; 16];
+        let err = transcribe_and_audit(&MockStt, &audio, &req("en"), None, true)
+            .await
+            .unwrap_err();
+        assert!(err.contains("required_audit_for_cloud_media"), "got: {err}");
+        // Without required-audit, a writerless call still transcribes (best-effort).
+        assert!(transcribe_and_audit(&MockStt, &audio, &req("en"), None, false).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn transcribe_and_audit_emits_metadata_only_0xcc() {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("stt.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
         let audio = vec![0u8; 4096];
-        let out = transcribe_and_audit(&MockStt, &audio, &req("en"), &writer)
+        let out = transcribe_and_audit(&MockStt, &audio, &req("en"), Some(&writer), false)
             .await
             .unwrap();
         assert_eq!(out.text, "hello there");

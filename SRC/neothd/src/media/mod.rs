@@ -145,10 +145,37 @@ pub async fn route_to_first_match(
     })
 }
 
+/// P0 — fail-closed audit pre-flight for cloud-media operations. When the
+/// operator demands proof (`config::MediaConfig::required_audit_for_cloud_media`)
+/// and the audit sink is unavailable, the cloud STT / TTS / Vision / Video call
+/// is REFUSED *before* it runs — better no transcription than an unprovable one.
+/// PURE so the policy is unit-testable without a WAL.
+pub fn enforce_cloud_media_audit(required: bool, audit_available: bool) -> Result<(), String> {
+    if required && !audit_available {
+        return Err(
+            "required_audit_for_cloud_media is on but no WAL audit sink is available — \
+             refusing the cloud-media operation (it would run without an audit trail)"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn cloud_media_audit_fails_closed_only_when_required_and_unavailable() {
+        // The one refusal case: proof demanded + no sink.
+        assert!(enforce_cloud_media_audit(true, false).is_err());
+        // required but a sink IS available → proceeds.
+        assert!(enforce_cloud_media_audit(true, true).is_ok());
+        // not required → always proceeds (best-effort posture).
+        assert!(enforce_cloud_media_audit(false, false).is_ok());
+        assert!(enforce_cloud_media_audit(false, true).is_ok());
+    }
 
     struct AlwaysUnsupported(&'static str);
     #[async_trait::async_trait]

@@ -253,16 +253,16 @@ pub fn make_tts_provider(
 pub async fn synth_and_audit(
     provider: &dyn TtsProvider,
     request: &TtsRequest,
-    writer: &crate::wal::writer::WalWriterHandle,
+    writer: Option<&crate::wal::writer::WalWriterHandle>,
+    required_audit: bool,
 ) -> Result<TtsResponse, String> {
+    // P0 fail-closed pre-flight: under proof-hardline, refuse BEFORE the cloud
+    // call when there is no audit sink — never synthesise unprovably.
+    crate::media::enforce_cloud_media_audit(required_audit, writer.is_some())?;
     let resp = provider.synth(request).await?;
-    emit_tts_synthesized(
-        writer,
-        provider.kind(),
-        &request.text,
-        resp.audio_bytes.len(),
-    )
-    .await;
+    if let Some(w) = writer {
+        emit_tts_synthesized(w, provider.kind(), &request.text, resp.audio_bytes.len()).await;
+    }
     Ok(resp)
 }
 
@@ -435,12 +435,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn synth_and_audit_refuses_when_required_and_no_writer() {
+        // P0 proof-hardline: required_audit + no sink → refuse BEFORE synthesising.
+        let r = req("words", "Rachel", TtsFormat::Mp3);
+        let err = synth_and_audit(&MockTts, &r, None, true).await.unwrap_err();
+        assert!(err.contains("required_audit_for_cloud_media"), "got: {err}");
+        assert!(synth_and_audit(&MockTts, &r, None, false).await.is_ok());
+    }
+
+    #[tokio::test]
     async fn synth_and_audit_emits_metadata_only_0xcd() {
         let dir = tempfile::tempdir().unwrap();
         let seg = dir.path().join("tts.wal");
         let (writer, join) = crate::wal::writer::spawn(seg.clone()).unwrap();
         let r = req("secret spoken words", "Rachel", TtsFormat::Mp3);
-        let resp = synth_and_audit(&MockTts, &r, &writer).await.unwrap();
+        let resp = synth_and_audit(&MockTts, &r, Some(&writer), false).await.unwrap();
         assert_eq!(resp.audio_bytes.len(), 2048);
         drop(writer);
         let _ = join.await;
