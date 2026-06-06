@@ -686,15 +686,33 @@ fn evaluate_full(action: &Action) -> Decision {
         // + the structural newline guard are the remaining gates in `os_tools::gate`.
         Action::OsClipboardRead | Action::OsClipboardWrite => Decision::Allow,
         // Full = trust the operator's other gates (policy.yaml allowlist,
-        // hardware-2FA at level-set time). Everything else allowed —
+        // hardware-2FA at level-set time). Everything else is allowed —
         // INCLUDING the exec-capable actions that confirm at every lower level
         // (`OsAppLaunch`, `ExecArbitrary`): at Full the operator has opted into
         // unattended autonomy and the exec-allowlist (default deny-all) is the
-        // explicit per-binary opt-in. NOTE: this wildcard means a NEW
-        // high-blast-radius `Action` added to the enum is auto-allowed at Full
-        // unless it gets an explicit arm above (as `SelfBinaryReplace`,
-        // `PatchApplyToRepo`, `DangerousTarget` do) — add one when in doubt.
-        _ => Decision::Allow,
+        // explicit per-binary opt-in.
+        //
+        // GOLD-COR-05 / A-05: this arm is EXPLICITLY ENUMERATED, not a wildcard
+        // `_`. The old `_ => Allow` silently auto-allowed any NEW `Action`
+        // variant at Full — including a high-blast-radius one — until someone
+        // remembered to add an arm. Listing every variant makes the match
+        // exhaustive, so adding a variant to the `Action` enum is now a COMPILE
+        // ERROR here (and in the other three `evaluate_*` fns, which were
+        // already exhaustive), forcing a deliberate Full-level gate decision.
+        Action::Read
+        | Action::WriteNeothHome
+        | Action::WriteOutsideHome
+        | Action::ExecScripts
+        | Action::ExecArbitrary
+        | Action::ChannelSend
+        | Action::PaidProviderCall { .. }
+        | Action::McpToolInvocation { .. }
+        | Action::OsFileRead { .. }
+        | Action::OsFileWrite { .. }
+        | Action::OsAppLaunch { .. }
+        | Action::ClusterTaskAccept
+        | Action::ProactiveChannelSend { .. }
+        | Action::ExternalTaskWrite { .. } => Decision::Allow,
     }
 }
 
@@ -1051,6 +1069,46 @@ mod tests {
     fn full_allows_arbitrary_exec_and_outside_writes() {
         assert!(evaluate(&Action::ExecArbitrary, AutonomyLevel::Full).is_allow());
         assert!(evaluate(&Action::WriteOutsideHome, AutonomyLevel::Full).is_allow());
+    }
+
+    #[test]
+    fn full_explicit_enumeration_preserves_wildcard_allow_behaviour() {
+        // GOLD-COR-05 / A-05: `evaluate_full` was refactored from a catch-all
+        // `_ => Allow` to an EXPLICIT enumeration (so a new `Action` variant is
+        // a compile error, not a silent auto-allow). This pins that the refactor
+        // changed NO behaviour: every variant that the wildcard used to allow
+        // still resolves to Allow at Full. The Confirm/Deny variants
+        // (PatchApplyToRepo, SelfBinaryReplace, DangerousTarget) are covered by
+        // their own tests above.
+        use std::path::PathBuf;
+        let allow_at_full = [
+            Action::Read,
+            Action::WriteNeothHome,
+            Action::WriteOutsideHome,
+            Action::ExecScripts,
+            Action::ExecArbitrary,
+            Action::ChannelSend,
+            Action::PaidProviderCall { eur_estimate: 999.0 },
+            Action::McpToolInvocation {
+                server_id: "s".into(),
+                tool: "t".into(),
+            },
+            Action::OsFileRead { path: PathBuf::from("/tmp/x") },
+            Action::OsFileWrite { path: PathBuf::from("/tmp/x") },
+            Action::OsAppLaunch { program: PathBuf::from("/usr/bin/x") },
+            Action::ClusterTaskAccept,
+            Action::ProactiveChannelSend { channel: "telegram".into() },
+            Action::ExternalTaskWrite {
+                provider: "caldav".into(),
+                action: "add".into(),
+            },
+        ];
+        for a in &allow_at_full {
+            assert!(
+                evaluate(a, AutonomyLevel::Full).is_allow(),
+                "Full must allow {a:?} (preserved from the prior wildcard arm)"
+            );
+        }
     }
 
     // ── SL-01a-b lease_scope_for mapping (panel-pinned security floor) ──
