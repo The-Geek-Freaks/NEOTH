@@ -46,10 +46,20 @@ enum Command {
     /// later bite).
     Serve {
         /// Listen address. Default loopback-only for safe local
-        /// testing; operators bind to a public IP via
-        /// `--bind 0.0.0.0:8443`.
+        /// testing. A non-loopback bind (e.g. `0.0.0.0:8443`) is a
+        /// PUBLIC deploy and REQUIRES an auth token (`--token` or the
+        /// `NEOTH_RELAY_TOKEN` env var) — the relay refuses to start an
+        /// unauthenticated public listener that anyone could use to
+        /// write or delete cluster peers.
         #[arg(long, default_value = "127.0.0.1:8443")]
         bind: String,
+        /// Bearer token required on EVERY request
+        /// (`Authorization: Bearer <token>`). Mandatory for any
+        /// non-loopback bind. Prefer the `NEOTH_RELAY_TOKEN` env var —
+        /// a token passed on the command line is visible to other
+        /// users via the process list (`ps`).
+        #[arg(long)]
+        token: Option<String>,
         /// Peer cap per cluster_key. Default 5 (matches the
         /// architect-ratified `DEFAULT_MAX_PEERS_PER_KEY`); hard
         /// ceiling `MAX_PEERS_PER_KEY_CEILING` (50) enforced.
@@ -99,6 +109,7 @@ async fn main() -> Result<()> {
     match cli.command {
         Command::Serve {
             bind,
+            token,
             max_peers_per_key,
             hysteria_config,
         } => {
@@ -119,14 +130,31 @@ async fn main() -> Result<()> {
             let addr: SocketAddr = bind
                 .parse()
                 .with_context(|| format!("parse --bind `{bind}`"))?;
+            // Resolve the auth token: CLI flag first, then the
+            // NEOTH_RELAY_TOKEN env var (preferred — not visible in `ps`).
+            // Empty values are treated as "no token".
+            let token = token
+                .or_else(|| std::env::var("NEOTH_RELAY_TOKEN").ok())
+                .filter(|t| !t.is_empty());
+            // Fail closed: a public (non-loopback) bind without a token
+            // would expose the cluster peer roster to anyone (GOLD-SEC-01).
+            if serve::public_bind_requires_token(&addr, token.is_some()) {
+                anyhow::bail!(
+                    "refusing to bind public address {addr} without authentication — \
+                     set --token <TOKEN> or NEOTH_RELAY_TOKEN. The relay manages \
+                     cluster peer state; an unauthenticated public listener lets \
+                     anyone register or delete peers."
+                );
+            }
             let roster: Arc<Mutex<relay::PeerRoster>> =
                 Arc::new(Mutex::new(relay::PeerRoster::new(max_peers_per_key)));
             info!(
                 bind = %addr,
                 max_peers_per_key,
+                auth = token.is_some(),
                 "neoth-relay starting"
             );
-            serve::serve(addr, roster).await
+            serve::serve(addr, roster, token.map(Arc::new)).await
         }
         Command::Status { hysteria_config } => {
             println!(
@@ -218,10 +246,12 @@ mod tests {
         match cli.command {
             Command::Serve {
                 bind,
+                token,
                 max_peers_per_key,
                 hysteria_config,
             } => {
                 assert_eq!(bind, "127.0.0.1:8443");
+                assert!(token.is_none());
                 assert_eq!(max_peers_per_key, relay::DEFAULT_MAX_PEERS_PER_KEY);
                 assert!(hysteria_config.is_none());
             }
@@ -236,16 +266,20 @@ mod tests {
             "serve",
             "--bind",
             "0.0.0.0:9000",
+            "--token",
+            "s3cr3t",
             "--max-peers-per-key",
             "10",
         ]);
         match cli.command {
             Command::Serve {
                 bind,
+                token,
                 max_peers_per_key,
                 hysteria_config,
             } => {
                 assert_eq!(bind, "0.0.0.0:9000");
+                assert_eq!(token.as_deref(), Some("s3cr3t"));
                 assert_eq!(max_peers_per_key, 10);
                 assert!(hysteria_config.is_none());
             }

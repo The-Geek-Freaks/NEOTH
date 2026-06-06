@@ -68,7 +68,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 
 | Workstream | Total tasks | OPEN | DONE |
 |------------|-------------|------|------|
-| WS-A Security hardening | 35 | 35 | 0 |
+| WS-A Security hardening | 35 | 33 | 2 |
 | WS-B Honesty / truth-in-advertising | 26 | 26 | 0 |
 | WS-C Correctness / reliability | 34 | 34 | 0 |
 | WS-D Feature wiring (unwired modules) | 12 | 12 | 0 |
@@ -76,7 +76,9 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
 | WS-G Repo adoptions | 9 | 9 | 0 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **173** | **169** | **4** |
+| **TOTAL** | **173** | **167** | **6** |
+
+_Progress log: 2026-06-06 — GOLD-SEC-01 + GOLD-SEC-17 done (neoth-relay auth + connection cap)._
 
 **Verdict:** NEOTH has a strong security/crypto core (ed25519-signed WAL, consent gates, GDPR forget, PII redaction), but the surface over-promises on several fronts: migration (`apply` is a `bail!`), device-sync (memory ingest silently dropped), GUI (6 of 10 settings tabs are stubs), local TTS (deferred). Real exploitable bugs exist on operator paths: zip-slip in backup restore, path traversal in skill installer, LIKE wildcard mass-delete in GDPR forget, blocking code on async executor, and self-reported test results auto-promoting tasks. Both reviews are folded in: beta @ `35c94d2` (all A-01..A-10 still true); Roman @ `3ef9771` (14 net-new findings, CR-002 HLC is fixed, all others stand).
 
@@ -158,7 +160,7 @@ When a session opens a file, do ALL tasks for that file before closing it.
 
 External/unauthenticated exploits first, then operator-data-loss, then defense-in-depth.
 
-- [ ] **GOLD-SEC-01** Add bearer-token check at the top of `route()` in neoth-relay before dispatching any POST/GET branch, or gate public-bind with mandatory `--token` flag — *files:* `SRC/neoth-relay/src/serve.rs` — *test:* unauthenticated request to public-bind returns 401 — *origin:* A-01
+- [x] **GOLD-SEC-01** Add bearer-token check at the top of `route()` in neoth-relay before dispatching any POST/GET branch, or gate public-bind with mandatory `--token` flag — *files:* `SRC/neoth-relay/src/serve.rs`, `SRC/neoth-relay/src/main.rs` — *test:* unauthenticated request to public-bind returns 401 — *origin:* A-01 — ✅ **DONE:** `route()` auth-gate (constant-time compare, checked before dispatch incl. unknown paths) + `extract_bearer` + `public_bind_requires_token` predicate + fail-closed startup bail on non-loopback bind without `--token`/`NEOTH_RELAY_TOKEN`; token never logged. 49 tests / 0 fail, clippy `-D warnings` clean.
 - [ ] **GOLD-SEC-02** Before `entry.unpack(&dest)` in backup restore, canonicalize `dest` and bail if it does not start with `target_home` to prevent zip-slip path traversal — *files:* `SRC/neothd/src/daemon/backup.rs` — *test:* tar with `../../../tmp/pwned` entry is rejected — *origin:* A-06
 - [ ] **GOLD-SEC-03** Call `crate::skills::creator::validate_skill_id(&manifest.id)?` before `target_skills_dir.join(&manifest.id)` in `install_from_local` — *files:* `SRC/neothd/src/skills/installer.rs` — *test:* id of `"../etc/cron.d/x"` returns `Err` — *origin:* A-07
 - [ ] **GOLD-SEC-04** Create `escape_like(s: &str) -> String` escaping `\`, `%`, `_` and add `ESCAPE '\\'` to every LIKE clause in `forget.rs` and `regions.rs` — *files:* `SRC/neothd/src/memory/forget.rs`, `SRC/neothd/src/memory/regions.rs` — *test:* `--forget "%"` does not delete entire memory tier — *origin:* A-08, A-44
@@ -174,7 +176,7 @@ External/unauthenticated exploits first, then operator-data-loss, then defense-i
 - [ ] **GOLD-SEC-14** Apply `redact_text` in `compose_dream` before building the summary string; write `.neoth-test-output.log` with `OpenOptions::mode(0o600)` and pass output through `redact_text` — *files:* `SRC/neothd/src/dreaming.rs`, `SRC/neothd/src/coding/worktree.rs` — *test:* generated dream summary contains no raw PII tokens; log file has 0600 perms — *origin:* A-33
 - [ ] **GOLD-SEC-15** Use tmp+rename on both platforms for credentials write; set ACL/mode on tmp before rename; return `Err` (not warn) on DACL failure — *files:* `SRC/neothd/src/config/credentials.rs`, `SRC/neothd-gui/src/main.rs` — *test:* mid-write crash leaves no partially-written credentials file — *origin:* A-34
 - [ ] **GOLD-SEC-16** Gate `pub mod cluster` behind a `cluster` Cargo feature (default-on in release, opt-out for source builds) to reduce binary attack surface for solo-node operators — *files:* `SRC/neothd/src/lib.rs`, `SRC/neothd/Cargo.toml` — *test:* `cargo build --no-default-features` compiles without cluster code — *origin:* B-03
-- [ ] **GOLD-SEC-17** Add `Arc<Semaphore>` connection cap (e.g. 1024) to neoth-relay serve loop; allocate buffer only after permit acquired — *files:* `SRC/neoth-relay/src/serve.rs` — *test:* 2000 concurrent connections do not exhaust memory — *origin:* A-53
+- [x] **GOLD-SEC-17** Add `Arc<Semaphore>` connection cap (e.g. 1024) to neoth-relay serve loop; allocate buffer only after permit acquired — *files:* `SRC/neoth-relay/src/serve.rs` — *test:* 2000 concurrent connections do not exhaust memory — *origin:* A-53 — ✅ **DONE:** `Semaphore(1024)` permit acquired via `acquire_owned()` BEFORE spawn (serial accept loop → OS-backlog backpressure at cap; 64 KB buffer allocated only inside the permitted task); added a 10 s read-timeout to close the slowloris angle so a stalled client can't pin a permit. 49 tests / 0 fail, clippy clean.
 - [ ] **GOLD-SEC-18** Gate browser-credential-decrypt tree behind `feature = "browser-import"` (default-off in release binary) — *files:* `SRC/neothd/Cargo.toml`, `SRC/neothd/src/credentials/mod.rs` — *test:* `cargo build` without `browser-import` compiles without chrome/firefox modules — *origin:* B-06, B-13
 - [ ] **GOLD-SEC-19** Replace `lc_san.find(&lc_pat)` with case-insensitive `replace_all` in `mcp/sanitizer.rs`; add test for double-payload — *files:* `SRC/neothd/src/mcp/sanitizer.rs` — *test:* prompt with injection phrase twice is fully sanitized — *origin:* A-82
 - [ ] **GOLD-SEC-20** Add `is_symlink()` check in `wasm_plugin/discovery.rs::load_one()` before each `fs::read` — *files:* `SRC/neothd/src/wasm_plugin/discovery.rs` — *test:* symlink inside accepted plugin dir is rejected — *origin:* A-56
