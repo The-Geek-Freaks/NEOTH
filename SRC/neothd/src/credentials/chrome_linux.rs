@@ -117,6 +117,18 @@ pub struct DecryptedChromeCredential {
     pub password: String,
 }
 
+impl Drop for DecryptedChromeCredential {
+    fn drop(&mut self) {
+        // Scrub the decrypted plaintext password on drop (GOLD-SEC-12 /
+        // A-32). These credentials live in a `Vec` until they are mapped
+        // into `SecretBytes`, so without this the operator's Chrome
+        // passwords would linger unscrubbed on the heap (and could be
+        // swapped to disk).
+        use zeroize::Zeroize;
+        self.password.zeroize();
+    }
+}
+
 /// PBKDF2-HMAC-SHA1 with Chrome's hardcoded `"saltysalt"` salt + 1
 /// iteration → 16-byte AES-128 key. Pure helper — testable without
 /// any IO. The PBKDF2 input is the keyring-supplied password (typ
@@ -144,7 +156,11 @@ pub fn decrypt_chrome_password_linux(
     let pt = Aes128CbcDec::new(aes_key.into(), CHROME_CBC_IV.into())
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
         .map_err(|_| ChromeLinuxError::AesCbcDecrypt)?;
-    Ok(pt.to_vec())
+    let out = pt.to_vec();
+    // Scrub the in-place decrypted buffer (GOLD-SEC-12 / A-32).
+    use zeroize::Zeroize;
+    buf.zeroize();
+    Ok(out)
 }
 
 /// Look up Chrome's symmetric password in the operator's freedesktop

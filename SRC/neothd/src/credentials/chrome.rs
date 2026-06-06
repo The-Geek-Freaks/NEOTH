@@ -194,9 +194,9 @@ async fn discover_entries_windows() -> Result<DiscoveredCredentials, String> {
             ImportedCredential::new(
                 ImportSource::WizardPrompt,
                 c.origin_url.clone(),
-                c.origin_url,
-                c.username,
-                c.password,
+                c.origin_url.clone(),
+                c.username.clone(),
+                c.password.clone(),
                 vec!["chrome".to_string()],
             )
         })
@@ -237,9 +237,9 @@ async fn discover_entries_linux() -> Result<DiscoveredCredentials, String> {
             ImportedCredential::new(
                 ImportSource::WizardPrompt,
                 c.origin_url.clone(),
-                c.origin_url,
-                c.username,
-                c.password,
+                c.origin_url.clone(),
+                c.username.clone(),
+                c.password.clone(),
                 vec!["chrome".to_string()],
             )
         })
@@ -280,9 +280,9 @@ async fn discover_entries_macos() -> Result<DiscoveredCredentials, String> {
             ImportedCredential::new(
                 ImportSource::WizardPrompt,
                 c.origin_url.clone(),
-                c.origin_url,
-                c.username,
-                c.password,
+                c.origin_url.clone(),
+                c.username.clone(),
+                c.password.clone(),
                 vec!["chrome".to_string()],
             )
         })

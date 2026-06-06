@@ -116,6 +116,16 @@ pub struct DecryptedChromeCredential {
     pub password: String,
 }
 
+impl Drop for DecryptedChromeCredential {
+    fn drop(&mut self) {
+        // Scrub the decrypted plaintext password on drop (GOLD-SEC-12 /
+        // A-32) — see the chrome_linux note. Credentials live in a `Vec`
+        // until mapped into `SecretBytes`.
+        use zeroize::Zeroize;
+        self.password.zeroize();
+    }
+}
+
 /// PBKDF2-HMAC-SHA1 with Chrome's hardcoded `"saltysalt"` salt + **1003**
 /// iterations → 16-byte AES-128 key. The iteration count is the
 /// per-platform pinch — macOS uses 1003 where Linux uses 1.
@@ -140,7 +150,11 @@ pub fn decrypt_chrome_password_macos(
     let pt = Aes128CbcDec::new(aes_key.into(), CHROME_CBC_IV.into())
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
         .map_err(|_| ChromeMacosError::AesCbcDecrypt)?;
-    Ok(pt.to_vec())
+    let out = pt.to_vec();
+    // Scrub the in-place decrypted buffer (GOLD-SEC-12 / A-32).
+    use zeroize::Zeroize;
+    buf.zeroize();
+    Ok(out)
 }
 
 /// Look up the Chrome AES-key password in the operator's Login

@@ -282,6 +282,16 @@ pub struct DecryptedChromeCredential {
     pub password: String,
 }
 
+impl Drop for DecryptedChromeCredential {
+    fn drop(&mut self) {
+        // Scrub the decrypted plaintext password on drop (GOLD-SEC-12 /
+        // A-32) — see the chrome_linux note. Credentials live in a `Vec`
+        // until mapped into `SecretBytes`.
+        use zeroize::Zeroize;
+        self.password.zeroize();
+    }
+}
+
 /// Full discover orchestration: read Local State + Login Data, unwrap
 /// the AES-256-GCM master key, decrypt every row. Used by
 /// `chrome::ChromeImporter::discover_entries` on Windows. Per-entry

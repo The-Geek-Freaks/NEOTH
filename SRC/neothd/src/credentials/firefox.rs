@@ -225,7 +225,13 @@ pub fn decrypt_aes256_cbc_pkcs7(
     let pt = cipher
         .decrypt_padded_mut::<Pkcs7>(&mut buf)
         .map_err(|_| "aes-256-cbc decrypt or pkcs7 unpad failed".to_string())?;
-    Ok(pt.to_vec())
+    let out = pt.to_vec();
+    // Scrub the in-place decrypted buffer (GOLD-SEC-21 / A-86). This
+    // primitive decrypts both the username and the password envelopes, so
+    // the plaintext password never lingers here unscrubbed.
+    use zeroize::Zeroize;
+    buf.zeroize();
+    Ok(out)
 }
 
 // ─── Importer ─────────────────────────────────────────────────────────────
