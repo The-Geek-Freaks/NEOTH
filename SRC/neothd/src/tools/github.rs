@@ -32,6 +32,31 @@ pub fn locate_gh() -> Option<std::path::PathBuf> {
 /// Run `gh <args>` + return parsed stdout. Errors propagate the gh
 /// exit code + stderr so the operator sees the actual GitHub error
 /// message, not "subprocess failed".
+/// Validate an `owner/repo` slug before it reaches `gh --repo` (GOLD-SEC-23
+/// / A-85). Only `[A-Za-z0-9._-]` segments separated by exactly one `/` —
+/// so an operator/LLM-supplied value can't smuggle a `gh` flag (e.g.
+/// `--json` / `-X`) or an argument-injection token.
+fn validate_repo(repo: &str) -> Result<()> {
+    let segs: Vec<&str> = repo.split('/').collect();
+    let seg_ok = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    };
+    if segs.len() != 2 || !seg_ok(segs[0]) || !seg_ok(segs[1]) {
+        anyhow::bail!("github: invalid repo {repo:?} (expected owner/name using [A-Za-z0-9._-])");
+    }
+    Ok(())
+}
+
+/// Validate an issue/PR `--state` against gh's allowed set (GOLD-SEC-23 / A-85).
+fn validate_state(state: &str) -> Result<()> {
+    if !matches!(state, "open" | "closed" | "merged" | "all") {
+        anyhow::bail!("github: invalid state {state:?} (expected open|closed|merged|all)");
+    }
+    Ok(())
+}
+
 fn run_gh(args: &[&str]) -> Result<String> {
     let bin = locate_gh().ok_or_else(|| {
         anyhow::anyhow!(
@@ -95,10 +120,12 @@ pub fn list_issues(repo: Option<&str>, state: Option<&str>, limit: usize) -> Res
     let limit_s = limit.clamp(1, 100).to_string();
     let mut args: Vec<&str> = vec!["issue", "list"];
     if let Some(r) = repo {
+        validate_repo(r)?;
         args.push("--repo");
         args.push(r);
     }
     if let Some(s) = state {
+        validate_state(s)?;
         args.push("--state");
         args.push(s);
     }
@@ -118,6 +145,7 @@ pub fn create_issue(repo: Option<&str>, title: &str, body: &str) -> Result<Strin
     }
     let mut args: Vec<&str> = vec!["issue", "create"];
     if let Some(r) = repo {
+        validate_repo(r)?;
         args.push("--repo");
         args.push(r);
     }
@@ -141,10 +169,12 @@ pub fn list_prs(repo: Option<&str>, state: Option<&str>, limit: usize) -> Result
     let limit_s = limit.clamp(1, 100).to_string();
     let mut args: Vec<&str> = vec!["pr", "list"];
     if let Some(r) = repo {
+        validate_repo(r)?;
         args.push("--repo");
         args.push(r);
     }
     if let Some(s) = state {
+        validate_state(s)?;
         args.push("--state");
         args.push(s);
     }
@@ -162,6 +192,7 @@ pub fn view_pr(repo: Option<&str>, number: u64) -> Result<serde_json::Value> {
     let number_s = number.to_string();
     let mut args: Vec<&str> = vec!["pr", "view", &number_s];
     if let Some(r) = repo {
+        validate_repo(r)?;
         args.push("--repo");
         args.push(r);
     }
@@ -186,6 +217,7 @@ pub fn review_pr(
     let number_s = number.to_string();
     let mut args: Vec<&str> = vec!["pr", "review", &number_s];
     if let Some(r) = repo {
+        validate_repo(r)?;
         args.push("--repo");
         args.push(r);
     }
@@ -376,5 +408,28 @@ mod tests {
         assert_eq!(issues.len(), 2);
         assert_eq!(issues[0].title, "first");
         assert_eq!(issues[1].labels[0].name, "wontfix");
+    }
+
+    #[test]
+    fn validate_repo_accepts_owner_name_rejects_injection() {
+        // GOLD-SEC-23 / A-85
+        assert!(validate_repo("The-Geek-Freaks/NEOTH").is_ok());
+        assert!(validate_repo("owner.with.dots/repo_name").is_ok());
+        assert!(validate_repo("--json").is_err()); // flag smuggling
+        assert!(validate_repo("owner/repo/extra").is_err()); // too many segments
+        assert!(validate_repo("owner only").is_err()); // space / no slash
+        assert!(validate_repo("/repo").is_err()); // empty owner
+        assert!(validate_repo("owner/").is_err()); // empty name
+        assert!(validate_repo("a;b/c").is_err()); // stray punctuation
+    }
+
+    #[test]
+    fn validate_state_allowlist_only() {
+        for ok in ["open", "closed", "merged", "all"] {
+            assert!(validate_state(ok).is_ok(), "{ok}");
+        }
+        assert!(validate_state("--limit").is_err());
+        assert!(validate_state("OPEN").is_err()); // case-sensitive (gh expects lowercase)
+        assert!(validate_state("").is_err());
     }
 }

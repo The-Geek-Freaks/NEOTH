@@ -42,12 +42,50 @@ pub fn check_home_isolation(home: &Path) -> Result<()> {
     }
     #[cfg(windows)]
     {
-        // Best-effort: warn if the directory looks like it inherits from
-        // `Users` group. A full DACL parse would need the `windows`
-        // crate which we avoid. The wizard's `icacls /grant:r %USER%:(F)`
-        // pass (Phase 0 O-4) is the actual enforcement; this is the
-        // observability hook.
-        let _ = home;
+        // GOLD-SEC-29/33 / A-87: best-effort DACL check. A full parse would
+        // need the `windows` crate (deliberately avoided), so we read the ACL
+        // via `icacls` and WARN if it grants a broad principal (Everyone /
+        // Users / Authenticated Users — localized names + well-known SIDs
+        // covered). The wizard's `icacls /grant:r %USER%:(F)` (Phase 0 O-4)
+        // is the actual enforcement; this surfaces a leak at daemon start
+        // WITHOUT blocking — icacls output is locale-dependent, so a parse
+        // miss must never lock the operator out of their own daemon.
+        match std::process::Command::new("icacls.exe").arg(home).output() {
+            Ok(out) if out.status.success() => {
+                let acl = String::from_utf8_lossy(&out.stdout);
+                const BROAD_PRINCIPALS: &[&str] = &[
+                    "Everyone",
+                    "Jeder",
+                    "S-1-1-0", // Everyone
+                    "\\Users",
+                    "\\Benutzer",
+                    "S-1-5-32-545", // BUILTIN\Users
+                    "Authenticated Users",
+                    "Authentifizierte Benutzer",
+                    "S-1-5-11", // Authenticated Users
+                ];
+                if let Some(hit) = BROAD_PRINCIPALS
+                    .iter()
+                    .copied()
+                    .find(|p| acl.contains(p))
+                {
+                    tracing::warn!(
+                        home = %home.display(),
+                        principal = %hit,
+                        "NEOTH home directory ACL grants access to a broad principal — other \
+                         users on this host may read your state (API keys, memory). Fix: \
+                         icacls \"{}\" /inheritance:r /grant:r \"%USERNAME%:(OI)(CI)F\"",
+                        home.display(),
+                    );
+                }
+            }
+            _ => {
+                tracing::debug!(
+                    home = %home.display(),
+                    "icacls home-isolation check unavailable — relying on wizard-set ACL",
+                );
+            }
+        }
     }
     Ok(())
 }

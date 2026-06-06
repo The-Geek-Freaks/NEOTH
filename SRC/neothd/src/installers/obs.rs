@@ -178,6 +178,15 @@ async fn cli_version(binary: &str) -> Option<String> {
 /// on `port` with `password`. Wizard generates a fresh 32-byte CSPRNG
 /// base64url password operator never sees (stored in
 /// `freedom.yaml::plugins.facecam.obs_password` as SecretString).
+///
+/// # SECURITY — do NOT wire this verbatim (GOLD-SEC-23 / A-85)
+/// The `--websocket_password <pw>` argument is visible to every other user
+/// on the host via `ps` / Task Manager. This helper is currently UNWIRED
+/// (referenced only by tests). Before any code actually spawns OBS with it,
+/// the password MUST be delivered out-of-band instead — write the
+/// obs-websocket plugin config (`…/plugin_config/obs-websocket/config.json`,
+/// mode 0600) and launch WITHOUT the password flag. The port/tray/vcam flags
+/// are safe to pass on the command line.
 pub fn obs_headless_launch_args(port: u16, password: &str) -> Vec<String> {
     vec![
         "obs".into(),
