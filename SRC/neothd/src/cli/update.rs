@@ -46,6 +46,14 @@ pub struct UpdateArgs {
     #[arg(long = "self-repo", value_name = "OWNER/REPO")]
     pub self_repo: Option<String>,
 
+    /// Accept an UNSIGNED release on `--self --apply`. By default the
+    /// updater requires a verified minisign signature (supply-chain
+    /// integrity). Releases published before signing was enabled (no
+    /// pinned key / no `.minisig`) need this flag — only pass it from a
+    /// trusted network; an unsigned binary could be tampered in transit.
+    #[arg(long = "allow-unsigned")]
+    pub allow_unsigned: bool,
+
     /// Output format. Inherited from the global `--output` flag if unset.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -65,7 +73,7 @@ pub async fn run_update(args: UpdateArgs) -> Result<()> {
                 repo = repo,
                 "neoth update --self --apply: full Phase 2b flow"
             );
-            return run_self_apply(repo, args.output).await;
+            return run_self_apply(repo, args.allow_unsigned, args.output).await;
         }
         info!(repo = repo, "neoth update --self: checking GitHub release");
         let outcome = crate::updater::self_update::check_for_update(repo).await?;
@@ -124,7 +132,7 @@ fn render_self_check(check: &crate::updater::self_update::UpdateCheck, output: O
 /// and otherwise runs the full download → verify → extract →
 /// atomic-replace chain against the operator's current binary
 /// location (`std::env::current_exe()`).
-async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
+async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) -> Result<()> {
     use crate::updater::self_update::{
         apply_update, fetch_latest_release, host_target_triple, version_is_newer,
     };
@@ -205,17 +213,29 @@ async fn run_self_apply(repo: &str, output: OutputFormat) -> Result<()> {
         .parent()
         .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
 
-    // require_signature = false — the MANUAL operator path warns on an
-    // unsigned/unprovisioned release + proceeds (keeps the updater usable
-    // for releases published before minisign signing was enabled). The
-    // unattended daemon path passes `true`.
+    // GOLD-SEC-10 / A-22 — SIGNATURE REQUIRED BY DEFAULT. The manual path
+    // now requires a verified minisign signature unless the operator
+    // explicitly opts out with `--allow-unsigned`. (The unattended daemon
+    // path always requires it.) Until the CI signing keypair is
+    // provisioned, `PINNED_PUBKEY` is None, so a default apply fails the
+    // gate — surface a clear, actionable message instead of a cryptic
+    // bail, pointing at `--allow-unsigned` for trusted-network installs.
+    let require_signature = !allow_unsigned;
+    if require_signature && crate::updater::sig_verify::PINNED_PUBKEY.is_none() {
+        anyhow::bail!(
+            "this build has no pinned release-signing key yet, so the update cannot be \
+             cryptographically verified. Re-run with `--allow-unsigned` to accept an unsigned \
+             binary (only from a trusted network — it could be tampered in transit), or wait \
+             for a signed release."
+        );
+    }
     // The on-disk binary + the archive member basename are both `neothd`
     // (the Cargo package name; the release workflow packs `neothd` /
     // `neothd.exe` into each archive). Pre-Session-28f this was the wrong
     // string `"neoth"` (the product/CLI name, not the binary file), so the
     // asset extractor + the atomic-replace target both pointed at a file
     // that didn't exist. Aligned to reality.
-    let outcome = apply_update(&release, target, "neothd", install_dir, false).await?;
+    let outcome = apply_update(&release, target, "neothd", install_dir, require_signature).await?;
 
     // WAL audit frame 0xD2 SELF_UPDATE_APPLIED — best-effort one-shot
     // writer (HF-01 pattern). Guard: if the daemon is live it owns the

@@ -1992,6 +1992,7 @@ Check or apply updates for NEOTH-managed CLIs (claude-cli, antigravity-cli, code
 - `--list <LIST>` — Print the static list of components NEOTH knows how to update
 - `--self <SELF_CHECK>` — V03-09 (2026-05-20): check whether a newer NEOTH daemon release is published on GitHub. Without `--apply` this is probe-only (Phase 1). With `--apply` runs the full Phase 2b flow: download → SHA-256 verify → extract → atomic replace. Pass `--self-repo owner/name` to point at a fork; default is `The-Geek-Freaks/NEOTH`
 - `--self-repo <OWNER/REPO>` — Override the GitHub `owner/repo` slug for the self-check
+- `--allow-unsigned <ALLOW_UNSIGNED>` — Accept an UNSIGNED release on `--self --apply`. By default the updater requires a verified minisign signature (supply-chain integrity). Releases published before signing was enabled (no pinned key / no `.minisig`) need this flag — only pass it from a trusted network; an unsigned binary could be tampered in transit
 
 ## `neoth updater`
 

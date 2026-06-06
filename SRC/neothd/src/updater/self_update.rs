@@ -355,8 +355,39 @@ pub struct UpdateAssets<'a> {
 ///
 /// `binary` is the base name (e.g. `"neoth"`). The function adds
 /// `.exe` on Windows automatically.
+/// Hard ceiling on the size of any single extracted archive member /
+/// decompressed tarball (GOLD-SEC-11 / A-29). The real `neothd` binary is
+/// tens of MiB; 1 GiB is generous headroom while refusing a decompression
+/// bomb (a tiny crafted archive that expands to many GiB). The SHA-256 /
+/// minisig checks bind the bytes to the companion but say nothing about
+/// decompressed size — this cap is the missing guard.
+const MAX_EXTRACT_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// A `Write` that errors once more than `limit` bytes are written. Bounds
+/// the streaming xz output where there is no `Read::take` to cap.
+struct LimitedWriter {
+    buf: Vec<u8>,
+    limit: u64,
+}
+
+impl std::io::Write for LimitedWriter {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        if self.buf.len() as u64 + data.len() as u64 > self.limit {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "decompressed archive exceeds size cap (decompression-bomb guard)",
+            ));
+        }
+        self.buf.extend_from_slice(data);
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
     let reader = Cursor::new(zip_bytes);
     let mut archive = zip::ZipArchive::new(reader).context("open zip archive")?;
     let want = binary_filename_for_host(binary);
@@ -382,7 +413,12 @@ pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Res
     let dest = out_dir.join(&want);
     let mut out =
         std::fs::File::create(&dest).with_context(|| format!("create {}", dest.display()))?;
-    std::io::copy(&mut entry, &mut out).context("copy zip body to disk")?;
+    let written = std::io::copy(&mut (&mut entry).take(MAX_EXTRACT_BYTES + 1), &mut out)
+        .context("copy zip body to disk")?;
+    if written > MAX_EXTRACT_BYTES {
+        let _ = std::fs::remove_file(&dest);
+        anyhow::bail!("zip member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)");
+    }
     Ok(dest)
 }
 
@@ -391,10 +427,14 @@ pub fn extract_zip_binary(zip_bytes: &[u8], out_dir: &Path, binary: &str) -> Res
 /// resulting tarball. No system liblzma linkage.
 pub fn extract_tar_xz_binary(tar_xz_bytes: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
     use std::io::Cursor;
-    let mut decompressed: Vec<u8> = Vec::with_capacity(tar_xz_bytes.len() * 3);
+    let mut writer = LimitedWriter {
+        buf: Vec::with_capacity(tar_xz_bytes.len().saturating_mul(3).min(64 * 1024 * 1024)),
+        limit: MAX_EXTRACT_BYTES,
+    };
     let mut reader = Cursor::new(tar_xz_bytes);
-    lzma_rs::xz_decompress(&mut reader, &mut decompressed).context("xz decompress tarball")?;
-    extract_tar_binary_from_bytes(&decompressed, out_dir, binary)
+    lzma_rs::xz_decompress(&mut reader, &mut writer)
+        .context("xz decompress tarball (or size cap exceeded — decompression-bomb guard)")?;
+    extract_tar_binary_from_bytes(&writer.buf, out_dir, binary)
 }
 
 /// Extract a `.tar.gz` archive. Mirrors [`extract_tar_xz_binary`]
@@ -403,16 +443,22 @@ pub fn extract_tar_gz_binary(tar_gz_bytes: &[u8], out_dir: &Path, binary: &str) 
     use flate2::read::GzDecoder;
     use std::io::Read;
     let mut gz = GzDecoder::new(tar_gz_bytes);
-    let mut decompressed: Vec<u8> = Vec::with_capacity(tar_gz_bytes.len() * 3);
-    gz.read_to_end(&mut decompressed)
+    let mut decompressed: Vec<u8> = Vec::new();
+    let n = gz
+        .by_ref()
+        .take(MAX_EXTRACT_BYTES + 1)
+        .read_to_end(&mut decompressed)
         .context("gz decompress tarball")?;
+    if n as u64 > MAX_EXTRACT_BYTES {
+        anyhow::bail!("gz tarball exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)");
+    }
     extract_tar_binary_from_bytes(&decompressed, out_dir, binary)
 }
 
 /// Walk a raw tar byte stream looking for the binary member.
 /// Shared between the xz + gz paths.
 fn extract_tar_binary_from_bytes(raw_tar: &[u8], out_dir: &Path, binary: &str) -> Result<PathBuf> {
-    use std::io::Cursor;
+    use std::io::{Cursor, Read};
     let want = binary_filename_for_host(binary);
     let mut archive = tar::Archive::new(Cursor::new(raw_tar));
     std::fs::create_dir_all(out_dir)
@@ -428,7 +474,12 @@ fn extract_tar_binary_from_bytes(raw_tar: &[u8], out_dir: &Path, binary: &str) -
         if name == want {
             let mut out = std::fs::File::create(&dest)
                 .with_context(|| format!("create {}", dest.display()))?;
-            std::io::copy(&mut entry, &mut out).context("copy tar body to disk")?;
+            let written = std::io::copy(&mut (&mut entry).take(MAX_EXTRACT_BYTES + 1), &mut out)
+                .context("copy tar body to disk")?;
+            if written > MAX_EXTRACT_BYTES {
+                let _ = std::fs::remove_file(&dest);
+                anyhow::bail!("tar member `{want}` exceeds the {MAX_EXTRACT_BYTES}-byte extraction cap (decompression-bomb guard)");
+            }
             return Ok(dest);
         }
     }
