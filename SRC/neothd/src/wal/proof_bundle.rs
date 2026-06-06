@@ -82,7 +82,13 @@ impl ProofBundle {
     /// what the envelope digest covers. `serde_json` with struct field order
     /// (stable in Rust) gives a deterministic encoding.
     pub fn canonical_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
+        // `expect` (not `unwrap_or_default`): signing / digesting over EMPTY
+        // bytes on a serialization failure would silently void this bundle's
+        // tamper-evidence (GOLD-SEC-25 / A-48). ProofBundle is POD (ints +
+        // hex Strings + a clamped-finite `importance`), so serde_json cannot
+        // fail here — and if a future field makes it fallible we fail loud
+        // rather than sign over nothing.
+        serde_json::to_vec(self).expect("ProofBundle is POD; serde_json serialization is infallible")
     }
 
     /// SHA-256 (lowercase hex) over [`Self::canonical_bytes`].

@@ -237,12 +237,25 @@ async fn discover_scan(timeout_secs: u64) -> Result<Vec<DiscoveredPeer>> {
     let _ = daemon.shutdown();
     Ok(seen
         .into_iter()
+        // GOLD-SEC-26 / A-28: drop peers whose mDNS-announced pubkey isn't
+        // valid hex BEFORE they reach the picker / confirm path — defends the
+        // downstream slicing + keeps a malformed announce from polluting the list.
+        .filter(|(pub_key_hex, _)| validate_pub_key_hex(pub_key_hex).is_ok())
         .map(|(pub_key_hex, (label, addr))| DiscoveredPeer {
             pub_key_hex,
             label,
             addr,
         })
         .collect())
+}
+
+/// Truncate a peer pubkey hex to its first 16 chars for display WITHOUT
+/// panicking on a non-char boundary (GOLD-SEC-26 / A-28). An mDNS-announced
+/// `pub_key_hex` is attacker-controlled and may be non-ASCII, so a raw
+/// `[..16]` slice could panic the picker (externally-triggered DoS).
+/// `get(..16)` returns `None` on a bad boundary / short input → full value.
+fn short_key(s: &str) -> &str {
+    s.get(..16).unwrap_or(s)
 }
 
 /// Render a numbered-list picker for `cluster confirm --interactive`.
@@ -257,7 +270,7 @@ pub fn render_picker(peers: &[DiscoveredPeer]) -> String {
     let mut out = String::new();
     out.push_str("Pick a peer to confirm:\n");
     for (i, p) in peers.iter().enumerate() {
-        let key_short = &p.pub_key_hex[..16.min(p.pub_key_hex.len())];
+        let key_short = short_key(&p.pub_key_hex);
         out.push_str(&format!(
             "  [{idx}] {label} ({key_short}) @ {addr}\n",
             idx = i + 1,
@@ -376,7 +389,7 @@ async fn run_discover(timeout_secs: u64, force: bool) -> Result<()> {
                 "pub_key", "label", "addr", "via"
             );
             for p in &peers {
-                let key_short = &p.pub_key_hex[..16.min(p.pub_key_hex.len())];
+                let key_short = short_key(&p.pub_key_hex);
                 println!(
                     "{:<16} {:<24} {:<22} {:<10}",
                     key_short, p.label, p.addr, "mdns"
@@ -460,7 +473,7 @@ fn run_list() -> Result<()> {
         "pub_key", "label", "addr", "via"
     );
     for p in &reg.peers {
-        let key_short = &p.pub_key_hex[..16.min(p.pub_key_hex.len())];
+        let key_short = short_key(&p.pub_key_hex);
         println!(
             "{:<16} {:<24} {:<22} {:<14}",
             key_short,

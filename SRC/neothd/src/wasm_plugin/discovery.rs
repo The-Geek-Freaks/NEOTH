@@ -154,6 +154,12 @@ pub enum DiscoveryError {
         dir: PathBuf,
         kind: std::io::ErrorKind,
     },
+    /// A-56 / GOLD-SEC-20 — a plugin file is a symlink. The plugin dir is
+    /// attacker-controlled (SC-03 threat model); following a symlink would
+    /// let `plugin.wasm` point at an arbitrary file so the hash/signature
+    /// would cover the symlink TARGET, not the declared plugin. Refuse.
+    #[error("plugin {dir:?}: {file} is a symlink — refusing (symlink-redirect guard)")]
+    PathIsSymlink { dir: PathBuf, file: &'static str },
     #[error("plugin {dir:?}: manifest validation failed: {source}")]
     ManifestInvalid { dir: PathBuf, source: ManifestError },
     #[error("plugin {dir:?}: manifest id {got:?} does not match directory name {expected:?}")]
@@ -278,6 +284,22 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
         return Err(DiscoveryError::MissingWasm {
             dir: dir.to_path_buf(),
         });
+    }
+    // GOLD-SEC-20 / A-56: refuse symlinked plugin files. The top-level dir is
+    // already symlink-checked by `discover`, but the files INSIDE were read
+    // via `fs::read` with no check — a symlinked plugin.wasm would make the
+    // SHA-256 / signature cover the symlink target rather than the declared
+    // file. `symlink_metadata` does NOT follow the link.
+    for (p, name) in [(&toml_path, "plugin.toml"), (&wasm_path, "plugin.wasm")] {
+        if std::fs::symlink_metadata(p)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            return Err(DiscoveryError::PathIsSymlink {
+                dir: dir.to_path_buf(),
+                file: name,
+            });
+        }
     }
     let toml_bytes = fs::read(&toml_path).map_err(|e| DiscoveryError::TomlIo {
         dir: dir.to_path_buf(),

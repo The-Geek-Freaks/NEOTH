@@ -71,7 +71,10 @@ impl KeetIngressPayload {
     /// Serialize impl can't fail in practice (no Result-returning
     /// fields) so the empty path is dead code defended against.
     pub fn to_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
+        // GOLD-SEC-25 / A-48: fail loud rather than write an EMPTY payload
+        // into the WAL on a serialization failure. This payload is POD
+        // (strings/ints, no floats), so serde_json is infallible here.
+        serde_json::to_vec(self).expect("keet WAL payload is POD; serde_json serialization is infallible")
     }
 }
 
@@ -114,7 +117,10 @@ impl KeetEgressPayload {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        serde_json::to_vec(self).unwrap_or_default()
+        // GOLD-SEC-25 / A-48: fail loud rather than write an EMPTY payload
+        // into the WAL on a serialization failure. This payload is POD
+        // (strings/ints, no floats), so serde_json is infallible here.
+        serde_json::to_vec(self).expect("keet WAL payload is POD; serde_json serialization is infallible")
     }
 }
 
