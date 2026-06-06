@@ -141,11 +141,28 @@ fn verify_segments(
         reclassified: 0,
         authorised_count: authorised.len(),
     };
+    use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     for seg in segments {
-        let markers = extract_markers(seg)?;
+        let raw = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
+        // A sub-header stub (fresh/empty segment) carries no markers — skip it as
+        // before. Anything larger MUST reconstruct: a compressed (v2) segment whose
+        // zstd blob won't decompress is tamper-SUSPECT — surface it as a failure
+        // rather than the old silent "0 markers, clean" (which made `verify` a
+        // no-op on every compressed segment).
+        if raw.len() < SEGMENT_HEADER_LEN {
+            continue;
+        }
+        let (header_len, logical) = match compaction::logical_segment_bytes(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                outcome.failures.push(format!("{}: unreconstructable segment: {e}", seg.display()));
+                continue;
+            }
+        };
+        let markers = extract_markers_from(&logical, header_len);
         for m in &markers {
             outcome.total_markers += 1;
-            match compaction::verify_marker(seg, key, m) {
+            match compaction::verify_marker_bytes(&logical, key, m) {
                 Ok(()) => outcome.total_verified += 1,
                 Err(e) => {
                     if window_overlaps_authorised(seg, m.from_offset, m.to_offset, authorised) {
@@ -287,13 +304,18 @@ fn segment_has_rotation(seg: &Path, trusted_pubkey: Option<&str>) -> bool {
     let Some(trusted_pubkey) = trusted_pubkey else {
         return false;
     };
-    let Ok(bytes) = std::fs::read(seg) else {
+    let Ok(raw) = std::fs::read(seg) else {
         return false;
     };
-    if bytes.len() < SEGMENT_HEADER_LEN {
+    if raw.len() < SEGMENT_HEADER_LEN {
         return false;
     }
-    let mut cursor = SEGMENT_HEADER_LEN;
+    // Decompress-aware: a 0xD9 rotation frame inside a compressed (v2) segment's
+    // zstd blob must still anchor the `--since-rotation` boundary.
+    let Ok((header_len, bytes)) = compaction::logical_segment_bytes(&raw) else {
+        return false;
+    };
+    let mut cursor = header_len;
     while cursor < bytes.len() {
         let Ok(dec) = decode_frame(&bytes[cursor..]) else {
             break;
@@ -387,11 +409,18 @@ fn extract_redaction_authorisations(
     let Some(trusted_pubkey) = trusted_pubkey else {
         return Ok(Vec::new());
     };
-    let bytes = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
-    if bytes.len() < SEGMENT_HEADER_LEN {
+    let raw = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
+    if raw.len() < SEGMENT_HEADER_LEN {
         return Ok(Vec::new());
     }
-    let mut cursor = SEGMENT_HEADER_LEN;
+    // Decompress-aware: a 0xF3 redaction marker inside a compressed (v2)
+    // segment's zstd blob must still be found, else an operator-authorised
+    // redaction would surface as a bogus verify FAILURE.
+    let (header_len, bytes) = match compaction::logical_segment_bytes(&raw) {
+        Ok(v) => v,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut cursor = header_len;
     let mut out = Vec::new();
     while cursor < bytes.len() {
         let slice = &bytes[cursor..];
@@ -477,24 +506,22 @@ fn window_overlaps_authorised(
     false
 }
 
-/// Walk a WAL segment, decoding frames in order, and pull out the
-/// payload of every COMPACTION_MARKER event. Tolerates trailing partial
-/// frames (interrupted writer crashes) by stopping at the first decode
-/// error.
-fn extract_markers(seg: &Path) -> Result<Vec<compaction::MarkerPayload>> {
+/// Walk a LOGICAL segment byte slice (post-decompression — see
+/// [`compaction::logical_segment_bytes`]) from after its `header_len`, decoding
+/// frames in order, and pull out every COMPACTION_MARKER payload. Tolerates
+/// trailing partial frames (interrupted-writer crashes) by stopping at the first
+/// decode error.
+fn extract_markers_from(logical: &[u8], header_len: usize) -> Vec<compaction::MarkerPayload> {
     use crate::wal::events::EVENT_TYPE_COMPACTION_MARKER;
     use crate::wal::frame::decode_frame;
-    use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
-    let bytes = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
-    if bytes.len() < SEGMENT_HEADER_LEN {
-        return Ok(Vec::new());
-    }
-    let mut cursor = SEGMENT_HEADER_LEN;
     let mut out = Vec::new();
-    while cursor < bytes.len() {
-        let slice = &bytes[cursor..];
-        let dec = match decode_frame(slice) {
+    if logical.len() <= header_len {
+        return out;
+    }
+    let mut cursor = header_len;
+    while cursor < logical.len() {
+        let dec = match decode_frame(&logical[cursor..]) {
             Ok(d) => d,
             Err(_) => break, // partial trailing frame — stop walking
         };
@@ -509,7 +536,19 @@ fn extract_markers(seg: &Path) -> Result<Vec<compaction::MarkerPayload>> {
         }
         cursor += total;
     }
-    Ok(out)
+    out
+}
+
+/// Path-based convenience over [`extract_markers_from`]: reads the segment,
+/// reconstructs its LOGICAL bytes (decompressing a compressed v2 segment so the
+/// marker frames inside the zstd blob are actually walked), and extracts the
+/// markers. Tolerant: a too-short / unparseable file yields none.
+fn extract_markers(seg: &Path) -> Result<Vec<compaction::MarkerPayload>> {
+    let raw = std::fs::read(seg).with_context(|| format!("read segment {}", seg.display()))?;
+    let Ok((header_len, logical)) = compaction::logical_segment_bytes(&raw) else {
+        return Ok(Vec::new());
+    };
+    Ok(extract_markers_from(&logical, header_len))
 }
 
 #[cfg(test)]
@@ -973,5 +1012,64 @@ mod tests {
         run_verify(args())
             .await
             .expect("an operator-signed 0xF3 over the tampered window reclassifies to PASS");
+    }
+
+    /// Compression-verify gap closure: `run_verify` must FIND + verify a
+    /// COMPACTION_MARKER inside a COMPRESSED (v2) segment's zstd blob. Before the
+    /// fix, `extract_markers` walked raw compressed bytes → 0 markers → a silent
+    /// "clean" verdict that checked NOTHING. Now it decompresses first.
+    #[tokio::test]
+    async fn run_verify_finds_and_checks_markers_in_a_compressed_segment() {
+        use crate::wal::HeaderBuilder;
+        use crate::wal::compaction::{load_or_init_key, CompactionState};
+        use crate::wal::compress::compress_frames;
+        use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_RAW_TEXT};
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{
+            SegmentHeaderV2, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let wal_dir = dir.path();
+        let seg = wal_dir.join("000001.wal");
+        let key_path = wal_dir.join("hmac.key");
+        let key = load_or_init_key(&key_path).unwrap();
+        let from = SEGMENT_HEADER_V2_LEN as u64;
+
+        // 3 data frames + a COMPACTION_MARKER over them, then compress the lot.
+        let mut data = Vec::new();
+        for p in [b"alpha".as_slice(), b"bravo", b"charlie"] {
+            let h = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, p).build();
+            data.extend_from_slice(&encode_frame(&h, p));
+        }
+        let to = from + data.len() as u64;
+        let mut state = CompactionState::new(&key, from);
+        state.update(&data);
+        let marker = state.finalise_marker(&key, to);
+        let mpayload = serde_json::to_vec(&marker).unwrap();
+        let mh = HeaderBuilder::new(EVENT_TYPE_COMPACTION_MARKER, &mpayload).build();
+        data.extend_from_slice(&encode_frame(&mh, &mpayload));
+
+        let blob = compress_frames(&data).unwrap();
+        let hdr = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        let mut file = hdr.to_le_bytes().to_vec();
+        file.extend_from_slice(&blob);
+        std::fs::write(&seg, file).unwrap();
+
+        // The walk now decompresses → the marker inside the blob IS found.
+        let markers = extract_markers(&seg).unwrap();
+        assert_eq!(markers.len(), 1, "marker inside the compressed blob must be found");
+
+        // And `run_verify` checks it (clean) instead of reporting a hollow pass.
+        let args = VerifyArgs {
+            wal_dir: Some(wal_dir.to_path_buf()),
+            key: Some(key_path.clone()),
+            segment: None,
+            since_rotation: false,
+            output: OutputFormat::Json,
+        };
+        run_verify(args)
+            .await
+            .expect("a compressed segment with an intact marker verifies clean");
     }
 }

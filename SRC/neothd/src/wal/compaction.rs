@@ -27,11 +27,15 @@
 //! [`should_emit`] returns true when either threshold is exceeded. The
 //! writer calls this after each frame and emits a marker when due.
 
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+
+use super::compress::decompress_frames;
+use super::segment_header::parse_segment_header;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -279,34 +283,76 @@ pub(crate) fn write_key_securely(path: &Path, key: &[u8]) -> Result<()> {
 /// in `segment_path`. Returns `Ok(())` on match, `Err` with a clear
 /// message on mismatch.
 pub fn verify_marker(segment_path: &Path, key: &[u8], marker: &MarkerPayload) -> Result<()> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(segment_path)
-        .with_context(|| format!("open segment {}", segment_path.display()))?;
-    let len = (marker.to_offset - marker.from_offset) as usize;
-    if len == 0 {
+    let raw = std::fs::read(segment_path)
+        .with_context(|| format!("read segment {}", segment_path.display()))?;
+    // Compaction markers are computed over the UNCOMPRESSED frame stream at
+    // logical offsets. A finalized compressed segment (v2 header + zstd blob)
+    // stores those frames compressed, so the marker offsets no longer point at
+    // raw file bytes — reconstruct the logical (decompressed) bytes first, else
+    // `verify` would silently mis-read (false FAIL) or skip (false clean) every
+    // compressed segment, defeating the whole tamper-evidence guarantee.
+    let (_, logical) = logical_segment_bytes(&raw)
+        .with_context(|| format!("reconstruct logical bytes for {}", segment_path.display()))?;
+    verify_marker_bytes(&logical, key, marker).map_err(|e| {
+        // Preserve the segment-path context the operator needs.
+        anyhow::anyhow!("{} in {}", e, segment_path.display())
+    })
+}
+
+/// Reconstruct a segment's LOGICAL byte layout — the bytes the compaction
+/// markers' `from_offset`/`to_offset` index into. For an uncompressed (v1)
+/// segment that is just the raw file (borrowed, no copy). For a compressed (v2)
+/// segment it is `header || decompress(frame-blob)` — because the marker offsets
+/// were computed over the uncompressed frame stream during live operation, and
+/// the v2 header length (61) is identical live + finalized (the live segment is
+/// already v2 when compression is on), so no offset shift is needed. Returns the
+/// header length too, so frame walkers know where the first frame starts.
+pub(crate) fn logical_segment_bytes(raw: &[u8]) -> Result<(usize, Cow<'_, [u8]>)> {
+    // A file without a parseable segment header — a bare frame stream (minimal
+    // test fixture) or a pre-header artifact — is treated as raw, frames starting
+    // at offset 0. Only a header that parses AND sets the compression flag
+    // triggers decompression; a flagged-compressed header whose blob won't inflate
+    // IS an error (tamper-suspect), surfaced to the caller.
+    let Ok(hdr) = parse_segment_header(raw) else {
+        return Ok((0, Cow::Borrowed(raw)));
+    };
+    let header_len = hdr.header_len();
+    if !hdr.is_compressed() {
+        return Ok((header_len, Cow::Borrowed(raw)));
+    }
+    let blob = raw.get(header_len..).unwrap_or(&[]);
+    let frames = decompress_frames(blob).context("decompress segment frame blob")?;
+    let mut logical = Vec::with_capacity(header_len + frames.len());
+    logical.extend_from_slice(&raw[..header_len]);
+    logical.extend_from_slice(&frames);
+    Ok((header_len, Cow::Owned(logical)))
+}
+
+/// Verify a marker's HMAC against an in-memory LOGICAL segment byte slice (see
+/// [`logical_segment_bytes`]). Separated from [`verify_marker`] so the verifier
+/// can decompress a compressed segment ONCE and check every marker against the
+/// shared reconstruction instead of re-reading + re-decompressing per marker.
+pub fn verify_marker_bytes(segment_bytes: &[u8], key: &[u8], marker: &MarkerPayload) -> Result<()> {
+    let from = marker.from_offset as usize;
+    let to = marker.to_offset as usize;
+    if to <= from {
         anyhow::bail!("marker covers zero bytes — refuse to verify empty window");
     }
-    let mut buf = vec![0u8; len];
-    file.seek(SeekFrom::Start(marker.from_offset))
-        .with_context(|| format!("seek to {}", marker.from_offset))?;
-    file.read_exact(&mut buf).with_context(|| {
+    let buf = segment_bytes.get(from..to).with_context(|| {
         format!(
-            "read {} bytes from offset {} in {}",
-            len,
-            marker.from_offset,
-            segment_path.display()
+            "marker window {from}..{to} out of bounds for a {}-byte logical segment",
+            segment_bytes.len()
         )
     })?;
 
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC-SHA256 accepts any key length");
-    mac.update(&buf);
+    mac.update(buf);
     let tag = mac.finalize().into_bytes();
     let computed_hex: String = tag.iter().map(|b| format!("{b:02x}")).collect();
     if computed_hex != marker.hmac_hex {
         anyhow::bail!(
-            "HMAC mismatch in {} ({}..{}): marker={}, computed={}. \
+            "HMAC mismatch ({}..{}): marker={}, computed={}. \
              WAL window may have been tampered with.",
-            segment_path.display(),
             marker.from_offset,
             marker.to_offset,
             marker.hmac_hex,
@@ -545,6 +591,85 @@ mod tests {
         assert!(r.is_err(), "tampered bytes must fail HMAC check");
         let msg = format!("{r:?}");
         assert!(msg.contains("HMAC mismatch"), "error must explain: {msg}");
+    }
+
+    #[test]
+    fn verify_marker_works_on_compressed_segment() {
+        // The gap this closes: a finalized COMPRESSED (v2 header + zstd blob)
+        // segment stores its frames + compaction markers inside the blob, at
+        // logical offsets. The old `verify_marker` seeked RAW file bytes → it
+        // silently mis-read every compressed segment. `verify_marker` now
+        // reconstructs the logical bytes first, so the HMAC check actually runs.
+        use crate::wal::HeaderBuilder;
+        use crate::wal::compress::compress_frames;
+        use crate::wal::events::{EVENT_TYPE_COMPACTION_MARKER, EVENT_TYPE_RAW_TEXT};
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{
+            SegmentHeaderV2, SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN,
+        };
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let key = b"compression-verify-test-key";
+        let from = SEGMENT_HEADER_V2_LEN as u64; // 61 — live segment is already v2 when compressed
+
+        // Build the raw frame stream the writer would hold before compressing:
+        // 3 data frames + a COMPACTION_MARKER over them. `tamper` flips a byte in
+        // frame 1's payload AND fixes that frame's CRC (so the frame still decodes
+        // and the marker after it stays findable) — the marker's pre-tamper HMAC
+        // then mismatches, exactly like a post-redaction segment.
+        let build_raw = |tamper: bool| -> (Vec<u8>, MarkerPayload) {
+            let mut data = Vec::new();
+            for p in [b"alpha".as_slice(), b"bravo", b"charlie"] {
+                let h = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, p).build();
+                data.extend_from_slice(&encode_frame(&h, p));
+            }
+            let to = from + data.len() as u64;
+            let mut state = CompactionState::new(key, from);
+            state.update(&data);
+            let marker = state.finalise_marker(key, to);
+            if tamper {
+                let flen = encode_frame(
+                    &HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, b"alpha".as_slice()).build(),
+                    b"alpha",
+                )
+                .len();
+                data[100] ^= 0x01; // 4 magic + 96 header = first payload byte
+                let crc_off = flen - 4;
+                let new_crc = crc32c::crc32c(&data[..crc_off]);
+                data[crc_off..crc_off + 4].copy_from_slice(&new_crc.to_le_bytes());
+            }
+            // Append the marker FRAME so it lands inside the compressed blob.
+            let mpayload = serde_json::to_vec(&marker).unwrap();
+            let mh = HeaderBuilder::new(EVENT_TYPE_COMPACTION_MARKER, &mpayload).build();
+            data.extend_from_slice(&encode_frame(&mh, &mpayload));
+            (data, marker)
+        };
+        let write_compressed = |raw: &[u8]| {
+            let blob = compress_frames(raw).unwrap();
+            let hdr = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+            let mut file = hdr.to_le_bytes().to_vec();
+            file.extend_from_slice(&blob);
+            std::fs::write(&seg, file).unwrap();
+        };
+
+        // CLEAN — the compressed segment verifies.
+        let (raw_clean, marker) = build_raw(false);
+        write_compressed(&raw_clean);
+        // logical reconstruction = header + decompressed frames.
+        let file = std::fs::read(&seg).unwrap();
+        let (hl, logical) = logical_segment_bytes(&file).unwrap();
+        assert_eq!(hl, SEGMENT_HEADER_V2_LEN);
+        assert_eq!(&logical[hl..], &raw_clean[..], "decompress restores the frame stream");
+        verify_marker(&seg, key, &marker).expect("compressed segment verifies clean");
+
+        // TAMPER — a changed byte inside the compressed window now FAILS (no more
+        // silent false-clean on compressed segments).
+        let (raw_tampered, _) = build_raw(true);
+        write_compressed(&raw_tampered);
+        let r = verify_marker(&seg, key, &marker);
+        assert!(r.is_err(), "tampered compressed window must fail HMAC: {r:?}");
+        assert!(format!("{r:?}").contains("HMAC mismatch"), "got: {r:?}");
     }
 
     #[test]
