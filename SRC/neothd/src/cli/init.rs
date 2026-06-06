@@ -247,6 +247,60 @@ pub struct InitArgs {
     pub output_json: bool,
 }
 
+/// GOLD-COR-07 / A-26: single source of truth for the `WizardState::
+/// steps_completed` checkpoint markers. Previously every step pushed a bare
+/// magic number, and step 5d + step 6b BOTH pushed `60` — a silent collision
+/// that made the resume/checkpoint record ambiguous (a half-finished run
+/// couldn't tell whether 5d or 6b had completed). Naming every marker here +
+/// the `step_markers_are_unique` test makes a future duplicate a test failure
+/// instead of a latent bug. Values are identity tags, not an ordering — the Vec
+/// preserves push order — so the only invariant is uniqueness.
+pub(crate) mod step_markers {
+    pub const STEP_1_LICENSE: u8 = 1;
+    pub const STEP_2_OPERATOR_ID: u8 = 2;
+    pub const STEP_3_LANGUAGE: u8 = 3;
+    pub const STEP_4_ROLE: u8 = 4;
+    pub const STEP_5_PROVIDER: u8 = 5;
+    pub const STEP_6_CHANNEL: u8 = 6;
+    pub const STEP_7_AUTONOMY: u8 = 7;
+    pub const STEP_8_SUMMARY: u8 = 8;
+    pub const STEP_5B_TOPOLOGY: u8 = 56;
+    pub const STEP_5C_QWEN_WEIGHTS: u8 = 58;
+    pub const STEP_5D_PROFILE_GATE: u8 = 60;
+    pub const STEP_6C_OBSIDIAN: u8 = 61;
+    pub const STEP_6D_OBSIDIAN_VAULT: u8 = 62;
+    pub const STEP_6E_N8N: u8 = 63;
+    pub const STEP_6F_IMPORT_MEMORY: u8 = 64;
+    /// GOLD-COR-07: distinct from `STEP_5D_PROFILE_GATE` (was both `60`).
+    pub const STEP_6B_KEET_PAIRING: u8 = 65;
+    pub const STEP_7B_AUTO_UPDATE: u8 = 70;
+    pub const STEP_7C_WASM_PLUGINS: u8 = 71;
+    pub const STEP_7D_SUPERVISOR: u8 = 72;
+
+    /// Every marker, for the uniqueness guard. Adding a step MUST add it here.
+    pub const ALL: &[u8] = &[
+        STEP_1_LICENSE,
+        STEP_2_OPERATOR_ID,
+        STEP_3_LANGUAGE,
+        STEP_4_ROLE,
+        STEP_5_PROVIDER,
+        STEP_6_CHANNEL,
+        STEP_7_AUTONOMY,
+        STEP_8_SUMMARY,
+        STEP_5B_TOPOLOGY,
+        STEP_5C_QWEN_WEIGHTS,
+        STEP_5D_PROFILE_GATE,
+        STEP_6B_KEET_PAIRING,
+        STEP_6C_OBSIDIAN,
+        STEP_6D_OBSIDIAN_VAULT,
+        STEP_6E_N8N,
+        STEP_6F_IMPORT_MEMORY,
+        STEP_7B_AUTO_UPDATE,
+        STEP_7C_WASM_PLUGINS,
+        STEP_7D_SUPERVISOR,
+    ];
+}
+
 /// In-memory state accumulated across all 7 wizard steps.
 /// Written to disk atomically after step 7.
 ///
@@ -917,7 +971,7 @@ fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) ->
 
     if !interactive {
         if args.accept_license {
-            state.steps_completed.push(1);
+            state.steps_completed.push(step_markers::STEP_1_LICENSE);
             return Ok(());
         }
         anyhow::bail!("--accept-license required in non-interactive mode");
@@ -946,7 +1000,7 @@ fn step1_license(args: &InitArgs, interactive: bool, state: &mut WizardState) ->
         }
     }
 
-    state.steps_completed.push(1);
+    state.steps_completed.push(step_markers::STEP_1_LICENSE);
     Ok(())
 }
 
@@ -1186,7 +1240,7 @@ fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut WizardState
         }
     };
     state.operator_id = Some(id);
-    state.steps_completed.push(2);
+    state.steps_completed.push(step_markers::STEP_2_OPERATOR_ID);
     Ok(())
 }
 
@@ -1233,7 +1287,7 @@ fn step3_language(args: &InitArgs, interactive: bool, state: &mut WizardState) -
 
     state.language_primary = Some(primary);
     state.language_code = Some(code);
-    state.steps_completed.push(3);
+    state.steps_completed.push(step_markers::STEP_3_LANGUAGE);
     Ok(())
 }
 
@@ -1316,7 +1370,7 @@ fn step4_role(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Re
         }
     };
     state.role = Some(role);
-    state.steps_completed.push(4);
+    state.steps_completed.push(step_markers::STEP_4_ROLE);
     Ok(())
 }
 
@@ -1617,7 +1671,7 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
         }
     }
 
-    state.steps_completed.push(5);
+    state.steps_completed.push(step_markers::STEP_5_PROVIDER);
     Ok(())
 }
 
@@ -1748,7 +1802,7 @@ fn step5b_inference_topology(
                 );
             }
         }
-        state.steps_completed.push(56); // marker for step 5b (kept separate)
+        state.steps_completed.push(step_markers::STEP_5B_TOPOLOGY); // marker for step 5b (kept separate)
         return Ok(());
     }
 
@@ -2058,7 +2112,7 @@ fn step5b_inference_topology(
         // No dialoguer build → leave defaults from non-interactive path.
     }
 
-    state.steps_completed.push(56);
+    state.steps_completed.push(step_markers::STEP_5B_TOPOLOGY);
     Ok(())
 }
 
@@ -2499,7 +2553,7 @@ async fn step5c_qwen_weights(
     if !inference_uses_local_qwen(&state.inference, &state.provider_kind) {
         // Operator picked cloud-only — no LocalQwen path = nothing to
         // pre-download. Mark step run + return.
-        state.steps_completed.push(58);
+        state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
         return Ok(());
     }
 
@@ -2533,7 +2587,7 @@ async fn step5c_qwen_weights(
                 );
             }
         }
-        state.steps_completed.push(58);
+        state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
         return Ok(());
     }
 
@@ -2542,7 +2596,7 @@ async fn step5c_qwen_weights(
         println!();
         if cached {
             println!("[5c/9] Qwen weights already cached (~/.cache/huggingface/hub/). Skipping.");
-            state.steps_completed.push(58);
+            state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
             return Ok(());
         }
         // NOOB-UX gate: Beginner skips the pre-download prompt. The
@@ -2559,7 +2613,7 @@ async fn step5c_qwen_weights(
                 "[5c/9] Qwen weights will download automatically on your first chat (~{} GB, progress shown).",
                 qwen_weights::DEFAULT_QWEN_DOWNLOAD_GB,
             );
-            state.steps_completed.push(58);
+            state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
             return Ok(());
         }
         println!(
@@ -2576,7 +2630,7 @@ async fn step5c_qwen_weights(
             println!(
                 "  Skipped — weights will lazy-download on first chat (operator-visible progress)."
             );
-            state.steps_completed.push(58);
+            state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
             return Ok(());
         }
         state.download_qwen_weights = true;
@@ -2590,7 +2644,7 @@ async fn step5c_qwen_weights(
         );
     }
 
-    state.steps_completed.push(58);
+    state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
     Ok(())
 }
 
@@ -2673,7 +2727,7 @@ fn step5d_profile_approval_gate(interactive: bool, state: &mut WizardState) -> R
             println!("  Opt out anytime with: `neoth profile migrate-require-approval --disable`");
         }
     }
-    state.steps_completed.push(60); // 5d marker (between 5c=58 and 6=61).
+    state.steps_completed.push(step_markers::STEP_5D_PROFILE_GATE);
     Ok(())
 }
 
@@ -2729,7 +2783,7 @@ async fn step6_channel(args: &InitArgs, interactive: bool, state: &mut WizardSta
         println!("  [6/9] Telegram skipped. Add later: `neoth channel add telegram`");
     }
 
-    state.steps_completed.push(6);
+    state.steps_completed.push(step_markers::STEP_6_CHANNEL);
     Ok(())
 }
 
@@ -2769,7 +2823,7 @@ async fn step6b_keet_pairing(
         // ~/.neoth/credentials.yaml directly + running `neoth serve`.
         // No prompt available, no flag yet — K-3.5 deferred non-
         // interactive surface.
-        state.steps_completed.push(60); // 6b marker
+        state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING); // 6b marker
         return Ok(());
     }
 
@@ -2788,7 +2842,7 @@ async fn step6b_keet_pairing(
                 println!("       To enable Keet later, install Pears + re-run `neoth init`:");
                 println!("       $ {}", cmd.join(" "));
             }
-            state.steps_completed.push(60);
+            state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING);
             return Ok(());
         }
 
@@ -2798,7 +2852,7 @@ async fn step6b_keet_pairing(
             .interact()
             .context("keet pairing confirm")?;
         if !set_up {
-            state.steps_completed.push(60);
+            state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING);
             return Ok(());
         }
 
@@ -2856,7 +2910,7 @@ async fn step6b_keet_pairing(
         }
     }
 
-    state.steps_completed.push(60);
+    state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING);
     Ok(())
 }
 
@@ -2879,13 +2933,13 @@ async fn step6c_obsidian_install(
     if already {
         info!("obsidian already installed; skipping install step");
         state.install_obsidian = true;
-        state.steps_completed.push(61);
+        state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
         return Ok(());
     }
 
     if !interactive {
         if !args.install_obsidian {
-            state.steps_completed.push(61);
+            state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
             return Ok(());
         }
         state.install_obsidian = true;
@@ -2896,7 +2950,7 @@ async fn step6c_obsidian_install(
             cmd = %cmd.join(" "),
             "operator opted into obsidian install"
         );
-        state.steps_completed.push(61);
+        state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
         return Ok(());
     }
 
@@ -2910,7 +2964,7 @@ async fn step6c_obsidian_install(
             .interact()
             .context("obsidian install confirm")?;
         if !install {
-            state.steps_completed.push(61);
+            state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
             return Ok(());
         }
         state.install_obsidian = true;
@@ -2926,7 +2980,7 @@ async fn step6c_obsidian_install(
         }
     }
 
-    state.steps_completed.push(61);
+    state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
     Ok(())
 }
 
@@ -2970,7 +3024,7 @@ fn step6d_obsidian_vault_bootstrap_with_home(
 
     if !interactive {
         if !args.bootstrap_vault {
-            state.steps_completed.push(62);
+            state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
             return Ok(());
         }
         bootstrap = true;
@@ -2998,13 +3052,13 @@ fn step6d_obsidian_vault_bootstrap_with_home(
     }
 
     if !bootstrap {
-        state.steps_completed.push(62);
+        state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
         return Ok(());
     }
 
     let Some(path) = vault_path else {
         warn!("vault bootstrap requested but no default path resolvable (HOME unset); skipping");
-        state.steps_completed.push(62);
+        state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
         return Ok(());
     };
 
@@ -3035,7 +3089,7 @@ fn step6d_obsidian_vault_bootstrap_with_home(
 
     state.bootstrap_vault = true;
     state.vault_path = Some(path);
-    state.steps_completed.push(62);
+    state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
     Ok(())
 }
 
@@ -3056,7 +3110,7 @@ async fn step6e_n8n_install(
 
     if !interactive {
         if !args.install_n8n {
-            state.steps_completed.push(63);
+            state.steps_completed.push(step_markers::STEP_6E_N8N);
             return Ok(());
         }
         state.install_n8n = true;
@@ -3077,7 +3131,7 @@ async fn step6e_n8n_install(
                 );
             }
         }
-        state.steps_completed.push(63);
+        state.steps_completed.push(step_markers::STEP_6E_N8N);
         return Ok(());
     }
 
@@ -3095,7 +3149,7 @@ async fn step6e_n8n_install(
             crate::wizard::recommend::ExperienceLevel::Beginner
         ) {
             println!("[6e/9] Skipped optional workflow-engine install (n8n).");
-            state.steps_completed.push(63);
+            state.steps_completed.push(step_markers::STEP_6E_N8N);
             return Ok(());
         }
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -3104,7 +3158,7 @@ async fn step6e_n8n_install(
             .interact()
             .context("n8n install confirm")?;
         if !want {
-            state.steps_completed.push(63);
+            state.steps_completed.push(step_markers::STEP_6E_N8N);
             return Ok(());
         }
         state.install_n8n = true;
@@ -3131,7 +3185,7 @@ async fn step6e_n8n_install(
         }
     }
 
-    state.steps_completed.push(63);
+    state.steps_completed.push(step_markers::STEP_6E_N8N);
     Ok(())
 }
 
@@ -3156,7 +3210,7 @@ fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &mut WizardSt
                 .interact()
                 .context("legacy-ai import confirm")?;
             if !want {
-                state.steps_completed.push(64);
+                state.steps_completed.push(step_markers::STEP_6F_IMPORT_MEMORY);
                 return Ok(());
             }
             let raw: String =
@@ -3181,7 +3235,7 @@ fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &mut WizardSt
     };
 
     let Some(path) = path else {
-        state.steps_completed.push(64);
+        state.steps_completed.push(step_markers::STEP_6F_IMPORT_MEMORY);
         return Ok(());
     };
 
@@ -3213,7 +3267,7 @@ fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &mut WizardSt
         );
     }
 
-    state.steps_completed.push(64);
+    state.steps_completed.push(step_markers::STEP_6F_IMPORT_MEMORY);
     Ok(())
 }
 
@@ -3493,7 +3547,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
             None => AutonomyLevel::Standard,
         };
         state.autonomy = level;
-        state.steps_completed.push(7);
+        state.steps_completed.push(step_markers::STEP_7_AUTONOMY);
         return Ok(());
     }
 
@@ -3514,7 +3568,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
                 "  [7/9] autonomy: {} (safe default — change anytime in settings)",
                 state.autonomy.as_str(),
             );
-            state.steps_completed.push(7);
+            state.steps_completed.push(step_markers::STEP_7_AUTONOMY);
             return Ok(());
         }
         let options = [
@@ -3589,7 +3643,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
         state.autonomy = AutonomyLevel::Standard;
     }
 
-    state.steps_completed.push(7);
+    state.steps_completed.push(step_markers::STEP_7_AUTONOMY);
     Ok(())
 }
 
@@ -3610,7 +3664,7 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
     if !interactive {
         // Default = enabled:false, auto_apply:false. Already set
         // by WizardState::default(); just record the step.
-        state.steps_completed.push(70); // 7-and-a-half style marker
+        state.steps_completed.push(step_markers::STEP_7B_AUTO_UPDATE); // 7-and-a-half style marker
         return Ok(());
     }
 
@@ -3651,7 +3705,7 @@ fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mut WizardSta
         // Slim build: leave defaults.
     }
 
-    state.steps_completed.push(70);
+    state.steps_completed.push(step_markers::STEP_7B_AUTO_UPDATE);
     Ok(())
 }
 
@@ -3701,7 +3755,7 @@ fn step7c_wasm_plugin_activation(
                 plugins_root.display()
             );
         }
-        state.steps_completed.push(71); // 7c marker (7-and-three-quarters)
+        state.steps_completed.push(step_markers::STEP_7C_WASM_PLUGINS); // 7c marker (7-and-three-quarters)
         return Ok(());
     }
 
@@ -3749,7 +3803,7 @@ fn step7c_wasm_plugin_activation(
             disabled = ?disabled,
             "wasm plugins discovered; non-interactive activation applied"
         );
-        state.steps_completed.push(71);
+        state.steps_completed.push(step_markers::STEP_7C_WASM_PLUGINS);
         return Ok(());
     }
 
@@ -3804,7 +3858,7 @@ fn step7c_wasm_plugin_activation(
         // discovered id — same as non-interactive.
     }
 
-    state.steps_completed.push(71);
+    state.steps_completed.push(step_markers::STEP_7C_WASM_PLUGINS);
     Ok(())
 }
 
@@ -3823,7 +3877,7 @@ fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut WizardStat
 
     if !interactive {
         // Default = disabled (WizardState::default). Just record the step.
-        state.steps_completed.push(72);
+        state.steps_completed.push(step_markers::STEP_7D_SUPERVISOR);
         return Ok(());
     }
 
@@ -3832,7 +3886,7 @@ fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut WizardStat
         let kind = crate::daemon::supervisor::recommended_kind();
         if matches!(kind, crate::config::SupervisorKind::None) {
             println!("  [7d/9] supervisor: no supported supervisor for this OS — skipping");
-            state.steps_completed.push(72);
+            state.steps_completed.push(step_markers::STEP_7D_SUPERVISOR);
             return Ok(());
         }
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -3873,7 +3927,7 @@ fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut WizardStat
         // Slim build: leave defaults (disabled).
     }
 
-    state.steps_completed.push(72);
+    state.steps_completed.push(step_markers::STEP_7D_SUPERVISOR);
     Ok(())
 }
 
@@ -3955,7 +4009,7 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     // Step 7 (autonomy) already pushed `7`; pushing again here corrupted
     // `.initialized.steps_completed` so a partial-resume couldn't tell
     // whether step 7 had actually run. Step 8 is its own marker.
-    state.steps_completed.push(8);
+    state.steps_completed.push(step_markers::STEP_8_SUMMARY);
     let role_display = match state.role {
         Some(OperatorRole::Developer) => "developer",
         Some(OperatorRole::SecurityResearcher) => "security-researcher",
@@ -5745,7 +5799,34 @@ mod tests {
         step6b_keet_pairing(&args, false, &mut state).await.unwrap();
         assert!(state.keet_seed_phrase.is_none());
         assert!(state.pears_bearer_token.is_none());
-        assert!(state.steps_completed.contains(&60));
+        // GOLD-COR-07: 6b's marker is now distinct from 5d's (was both 60).
+        assert!(
+            state
+                .steps_completed
+                .contains(&step_markers::STEP_6B_KEET_PAIRING)
+        );
+    }
+
+    #[test]
+    fn step_markers_are_unique() {
+        // GOLD-COR-07 / A-26: the regression guard. step 5d and step 6b both
+        // used to push `60`, making the checkpoint record ambiguous. Every
+        // marker in `step_markers::ALL` must be distinct — a future duplicate
+        // (or a re-used value on a new sub-step) trips this test instead of
+        // silently corrupting resume state.
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for &m in step_markers::ALL {
+            assert!(
+                seen.insert(m),
+                "duplicate wizard step marker {m} in step_markers::ALL"
+            );
+        }
+        assert_eq!(
+            seen.len(),
+            step_markers::ALL.len(),
+            "step_markers::ALL must contain only distinct values"
+        );
     }
 
     #[test]
