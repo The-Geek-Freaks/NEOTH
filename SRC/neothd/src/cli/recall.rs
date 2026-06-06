@@ -88,6 +88,10 @@ pub struct RecallArgs {
     pub output: crate::cli::OutputFormat,
 }
 
+/// Result of the blocking recall task: the ranked rows plus the Hebbian
+/// reinforcement records (event_id + frame) to audit on the async side.
+type RecallTaskOutput = (Vec<EpisodeHit>, Vec<(i64, ReinforceFrame)>);
+
 pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // QM-18 citation-check short-circuit. No DB, no WAL, no network —
     // pure offline audit against the supplied text. `--citation-check -`
@@ -150,15 +154,16 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // the cumulative CPU+I/O time off the async worker was the Phase-3
     // performance regression the agent flagged.
     //
-    // The Connection moves INTO the blocking task and back OUT so the
-    // Hebbian reinforcement pass below (which needs the conn + per-row
-    // updates) can run on the async caller. `move` semantics keep the
-    // Connection's !Send constraint satisfied — it never crosses an
-    // async await point while in scope.
+    // The Connection moves INTO the blocking task and stays there: both
+    // the multi-tier read AND the Hebbian reinforcement writes run on the
+    // blocking thread (GOLD-SEC-06), and only the computed rows +
+    // reinforcement records cross back out. `move` semantics keep the
+    // Connection's !Send constraint satisfied — it never crosses an async
+    // await point while in scope.
     let query = args.query.clone();
     let limit = args.limit;
-    let (rows, conn) =
-        tokio::task::spawn_blocking(move || -> Result<(Vec<EpisodeHit>, Connection)> {
+    let (rows, reinforcements) = tokio::task::spawn_blocking(
+        move || -> Result<RecallTaskOutput> {
             // RECALL-METER-01: time the full multi-tier recall query.
             let recall_t0 = std::time::Instant::now();
             let hot = match recall_fts(&conn, &query, limit) {
@@ -194,75 +199,64 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 tracing::debug!(error = %e, "recall: latency sample not recorded");
             }
 
-            Ok((rows, conn))
-        })
-        .await
-        .context("recall query task panicked")??;
+            // GOLD-SEC-06 / A-05+A-66: run the Hebbian reinforcement
+            // writes (N synchronous SQLite UPDATEs) on THIS blocking
+            // thread, not on the async caller. Previously the conn was
+            // returned out and the loop hammered SQLite on the runtime
+            // worker — the exact thread-pinning the spawn_blocking was
+            // meant to avoid. Groundtruth rows are decay-immune (SPEC
+            // GT-3) and skipped; each reinforce is best-effort.
+            let mut reinforcements: Vec<(i64, ReinforceFrame)> = Vec::new();
+            for h in &rows {
+                let tier = match h.tier.as_str() {
+                    "hot" => Some(tiers::Tier::Hot),
+                    "warm" => Some(tiers::Tier::Warm),
+                    "cold" => Some(tiers::Tier::Cold),
+                    _ => None,
+                };
+                let Some(tier) = tier else { continue };
+                match tiers::hebbian_reinforce_at_tier(&conn, tier, h.event_id, now_ns) {
+                    Ok(Some(out)) => {
+                        tracing::debug!(
+                            event_id = h.event_id,
+                            tier = out.tier.as_str(),
+                            old = out.old,
+                            new = out.new,
+                            "hebbian reinforce on recall hit",
+                        );
+                        reinforcements.push((
+                            h.event_id,
+                            ReinforceFrame {
+                                tier: out.tier.as_str().to_string(),
+                                old: out.old,
+                                new: out.new,
+                            },
+                        ));
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(
+                        event_id = h.event_id,
+                        tier = tier.as_str(),
+                        error = %e,
+                        "reinforce failed",
+                    ),
+                }
+            }
+
+            Ok((rows, reinforcements))
+        },
+    )
+    .await
+    .context("recall query task panicked")??;
 
     // Phase 28a R-22 MT-3: Hebbian reinforce on EVERY recall hit (all
-    // tiers). Groundtruth rows are immutable (decay never touches the
-    // table per SPEC GT-3) — they're excluded explicitly below.
-    //
-    // M-01 (Session 24): pre-fix this branch silently skipped warm
-    // + cold hits with `if h.tier != "hot" { continue; }`, which left
-    // active access to consolidated/long-term memories invisible to
-    // the reinforcement loop and violated SPEC `MT-3` ("Hebbian
-    // reinforce on every recall hit, all tiers"). A frequently-recalled
-    // warm row would decay at the daily 0.99 rate without any
-    // counter-push, eventually falling below `PROMOTION_THRESHOLD`
-    // and dropping at the 90-day boundary instead of promoting to
-    // cold. Fix: dispatch the reinforce call to the tier's backing
-    // table via `hebbian_reinforce_at_tier`.
-    //
-    // M-02 (Session 24): pre-fix this branch reinforced rows
-    // silently because the CLI path had no WAL writer to emit
-    // `EVENT_TYPE_IMPORTANCE_REINFORCED` (0x93). That left a
-    // tamper-evidence hole — operator reads `neoth wal show
-    // --type importance_reinforced` + sees only daemon-path
-    // reinforcements while CLI recall mutated importance
-    // invisibly. Fix: collect every successful reinforce, then
-    // open a short-lived WAL writer once (only if there's at
-    // least one event to emit) and write one frame per
-    // reinforcement. Single best-effort batch — failures log a
-    // warn but never abort the recall reply.
-    let mut reinforcements: Vec<(i64, ReinforceFrame)> = Vec::new();
-    for h in &rows {
-        let tier = match h.tier.as_str() {
-            "hot" => Some(tiers::Tier::Hot),
-            "warm" => Some(tiers::Tier::Warm),
-            "cold" => Some(tiers::Tier::Cold),
-            // Groundtruth + any unknown tier label are skipped — the
-            // ground-truth table is decay-immune by design.
-            _ => None,
-        };
-        let Some(tier) = tier else { continue };
-        match tiers::hebbian_reinforce_at_tier(&conn, tier, h.event_id, now_ns) {
-            Ok(Some(out)) => {
-                tracing::debug!(
-                    event_id = h.event_id,
-                    tier = out.tier.as_str(),
-                    old = out.old,
-                    new = out.new,
-                    "hebbian reinforce on recall hit",
-                );
-                reinforcements.push((
-                    h.event_id,
-                    ReinforceFrame {
-                        tier: out.tier.as_str().to_string(),
-                        old: out.old,
-                        new: out.new,
-                    },
-                ));
-            }
-            Ok(None) => {}
-            Err(e) => tracing::warn!(
-                event_id = h.event_id,
-                tier = tier.as_str(),
-                error = %e,
-                "reinforce failed",
-            ),
-        }
-    }
+    // tiers) is computed inside the blocking task above (GOLD-SEC-06).
+    // The ground-truth table is decay-immune (SPEC GT-3) so its rows are
+    // skipped there. Here we only emit the audit frames — M-02 (Session
+    // 24): `EVENT_TYPE_IMPORTANCE_REINFORCED` (0x93) so `neoth wal show
+    // --type importance_reinforced` records CLI-path reinforcements too.
+    // The WAL append is async, so it stays on the async side; best-effort
+    // — a failure logs a warn but never aborts the recall reply.
     if !reinforcements.is_empty() {
         emit_reinforce_audit_frames(&reinforcements).await;
     }

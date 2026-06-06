@@ -422,7 +422,26 @@ pub async fn dispatch_session_with_apply(
                 // rejection the task is treated as a retryable
                 // failure with git's stderr as the diagnosis hint.
                 if let Some(cfg) = apply_config {
-                    match apply_patch_via_worktree(&task, &o, cfg) {
+                    // Offload the blocking apply (git subprocesses +
+                    // run_worktree_tests' process-poll loop with
+                    // std::thread::sleep) to a blocking thread so it never
+                    // stalls the async worker / serialises concurrent
+                    // sessions on the runtime (GOLD-SEC-05 / A-05). The
+                    // dispatcher stays async; only this sync sub-call moves
+                    // off the executor. All three args are Clone, so the
+                    // 'static + Send closure clones them rather than
+                    // borrowing `conn` (which is !Send).
+                    let apply_res = {
+                        let task_c = task.clone();
+                        let outcome_c = o.clone();
+                        let cfg_c = cfg.clone();
+                        tokio::task::spawn_blocking(move || {
+                            apply_patch_via_worktree(&task_c, &outcome_c, &cfg_c)
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(format!("apply task panicked: {e}")))
+                    };
+                    match apply_res {
                         Ok(()) => {
                             outcome.tasks_completed += 1;
                             retry_policy.reset(task.task_id);
