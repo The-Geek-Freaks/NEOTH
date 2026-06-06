@@ -1458,39 +1458,71 @@ fn validate_autonomy(level: &str) -> Result<()> {
     }
 }
 
+/// Per-process-unique sibling temp path for an atomic credentials write
+/// (GOLD-SEC-15 / A-34) — mirrors the daemon helper.
+fn atomic_tmp_path(path: &Path) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("credentials.yaml");
+    path.with_file_name(format!(".{name}.tmp{}", std::process::id()))
+}
+
 #[cfg(unix)]
 fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+    // Atomic 0600 write: temp (mode 0600 at create) → write+fsync → rename
+    // (GOLD-SEC-15 / A-34). Secrets are never on disk under a wider mode,
+    // and a crash mid-write leaves the old file intact.
+    let tmp = atomic_tmp_path(path);
+    let _ = std::fs::remove_file(&tmp);
     let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(path)
-        .with_context(|| format!("create {} mode 0600", path.display()))?;
+        .open(&tmp)
+        .with_context(|| format!("create {} mode 0600", tmp.display()))?;
     file.write_all(body)
-        .with_context(|| format!("write body to {}", path.display()))?;
+        .with_context(|| format!("write body to {}", tmp.display()))?;
     file.sync_all()
-        .with_context(|| format!("fsync {}", path.display()))?;
+        .with_context(|| format!("fsync {}", tmp.display()))?;
+    drop(file);
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("atomically replace {}", path.display()))?;
     Ok(())
 }
 
 #[cfg(windows)]
 fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
-    // Windows DACL restriction lives in the daemon's `wal::win_acl`
-    // module; pulling it in from the GUI crate would force a hard
-    // dependency on the whole daemon. Instead we ship the same icacls
-    // subprocess inline — the call surface is tiny and the GUI runs in
-    // the operator's session so it has the right privilege.
-    std::fs::write(path, body).with_context(|| format!("write {}", path.display()))?;
-    if let Err(e) = icacls_restrict_to_owner(path) {
-        tracing::warn!(
-            path = %path.display(),
-            error = %e,
-            "DACL restriction failed; file inherits parent ACL",
+    // GOLD-SEC-15 / A-34: restrict the DACL to owner-only BEFORE writing
+    // any secret bytes (previously written under the inherited ACL, then
+    // restricted — a readable window), then atomically rename. Fail CLOSED
+    // if the DACL can't be set — it is the only at-rest protection.
+    use std::io::Write;
+    let tmp = atomic_tmp_path(path);
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::File::create(&tmp).with_context(|| format!("create temp {}", tmp.display()))?;
+    if let Err(e) = icacls_restrict_to_owner(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::bail!(
+            "refusing to write {}: could not restrict the file to owner-only \
+             (DACL) — the only at-rest protection for plaintext secrets ({e})",
+            path.display()
         );
     }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&tmp)
+        .with_context(|| format!("open restricted temp {}", tmp.display()))?;
+    file.write_all(body)
+        .with_context(|| format!("write body to {}", tmp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("fsync {}", tmp.display()))?;
+    drop(file);
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("atomically replace {}", path.display()))?;
     Ok(())
 }
 

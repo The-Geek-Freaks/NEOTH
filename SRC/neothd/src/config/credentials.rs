@@ -236,35 +236,79 @@ impl Credentials {
     }
 }
 
+/// Per-process-unique sibling temp path for an atomic credentials write
+/// (GOLD-SEC-15 / A-34). Lives next to the target so the final
+/// `fs::rename` stays on the same filesystem (atomic).
+fn atomic_tmp_path(path: &Path) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("credentials.yaml");
+    path.with_file_name(format!(".{name}.tmp{}", std::process::id()))
+}
+
 #[cfg(unix)]
 pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+    // Atomic write: create a 0600 temp, write+fsync, then rename over the
+    // target. The mode is set at create time so the secrets are never on
+    // disk under a wider mode, and a crash mid-write leaves the old file
+    // intact (GOLD-SEC-15 / A-34).
+    let tmp = atomic_tmp_path(path);
+    let _ = std::fs::remove_file(&tmp);
     let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
         .mode(0o600)
-        .open(path)
-        .with_context(|| format!("create credentials at {} mode 0600", path.display()))?;
+        .open(&tmp)
+        .with_context(|| format!("create credentials temp {} mode 0600", tmp.display()))?;
     file.write_all(body)
-        .with_context(|| format!("write credentials body to {}", path.display()))?;
+        .with_context(|| format!("write credentials body to {}", tmp.display()))?;
     file.sync_all()
-        .with_context(|| format!("fsync credentials {}", path.display()))?;
+        .with_context(|| format!("fsync credentials temp {}", tmp.display()))?;
+    drop(file);
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("atomically replace credentials {}", path.display()))?;
     Ok(())
 }
 
 #[cfg(windows)]
 pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
-    std::fs::write(path, body)
-        .with_context(|| format!("write credentials at {}", path.display()))?;
-    if let Err(e) = crate::wal::win_acl::restrict_to_owner(path) {
-        tracing::warn!(
-            path = %path.display(),
-            error = %e,
-            "credentials file DACL restriction failed; file inherits parent DACL",
-        );
+    use std::io::Write;
+    // GOLD-SEC-15 / A-34: lock the DACL to owner-only BEFORE the secret
+    // bytes are written. Previously the body was written under the
+    // inherited (potentially wider) ACL and only restricted afterwards —
+    // a window where provider keys / channel tokens were readable on
+    // disk. We create an empty temp, restrict it, write into the
+    // already-restricted file, then atomically rename over the target.
+    // Fail CLOSED: the DACL is the only at-rest protection, so if it can
+    // not be set we refuse to write the secrets at all.
+    let tmp = atomic_tmp_path(path);
+    let _ = std::fs::remove_file(&tmp);
+    std::fs::File::create(&tmp)
+        .with_context(|| format!("create credentials temp {}", tmp.display()))?;
+    if let Err(e) = crate::wal::win_acl::restrict_to_owner(&tmp) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(anyhow::anyhow!(
+            "refusing to write credentials {}: could not restrict the file to \
+             owner-only (DACL) — the only at-rest protection for plaintext \
+             secrets ({e})",
+            path.display()
+        ));
     }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&tmp)
+        .with_context(|| format!("open restricted credentials temp {}", tmp.display()))?;
+    file.write_all(body)
+        .with_context(|| format!("write credentials body to {}", tmp.display()))?;
+    file.sync_all()
+        .with_context(|| format!("fsync credentials temp {}", tmp.display()))?;
+    drop(file);
+    std::fs::rename(&tmp, path)
+        .with_context(|| format!("atomically replace credentials {}", path.display()))?;
     Ok(())
 }
 
