@@ -170,10 +170,17 @@ pub fn render_yaml_config(cfg: &HysteriaConfig) -> String {
             s.to_string()
         }
     };
+    // GOLD-SEC-35 / A-69: emit each value as a DOUBLE-QUOTED, escaped YAML
+    // scalar. A bare `auth: {value}` mis-parsed when the value began with a
+    // YAML indicator (`*`, `&`, `{`, `[`, `!`, leading space) or contained
+    // `:` + space — silently corrupting the sidecar config. Control chars
+    // are already rejected by `sanitize`, so escaping `\` and `"` yields a
+    // valid double-quoted scalar.
+    let yaml_quote = |s: &str| -> String { format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")) };
     format!(
         "server: {}\nauth: {}\nsocks5:\n  listen: 127.0.0.1:{}\n",
-        sanitize(&cfg.server),
-        sanitize(cfg.auth.expose()),
+        yaml_quote(&sanitize(&cfg.server)),
+        yaml_quote(&sanitize(cfg.auth.expose())),
         cfg.local_socks_port,
     )
 }
@@ -357,9 +364,29 @@ mod tests {
             local_socks_port: 1080,
         };
         let s = render_yaml_config(&cfg);
-        assert!(s.contains("server: vps.example.com:443"));
-        assert!(s.contains("auth: secret"));
+        // GOLD-SEC-35: values are double-quoted YAML scalars.
+        assert!(s.contains("server: \"vps.example.com:443\""));
+        assert!(s.contains("auth: \"secret\""));
         assert!(s.contains("listen: 127.0.0.1:1080"));
+    }
+
+    #[test]
+    fn render_yaml_quotes_values_with_indicator_chars() {
+        // GOLD-SEC-35 / A-69: a value starting with a YAML indicator or
+        // containing `: ` must be quoted so Hysteria's parser reads it
+        // literally instead of mis-parsing the config.
+        let cfg = HysteriaConfig {
+            server: "*anchor: trap".into(),
+            auth: SecretString::new(" leading-space".into()),
+            local_socks_port: 1080,
+        };
+        let s = render_yaml_config(&cfg);
+        assert!(s.contains("server: \"*anchor: trap\""));
+        assert!(s.contains("auth: \" leading-space\""));
+        // The rendered config round-trips through a YAML parser cleanly.
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&s).expect("rendered config is valid YAML");
+        assert_eq!(parsed["server"].as_str(), Some("*anchor: trap"));
+        assert_eq!(parsed["auth"].as_str(), Some(" leading-space"));
     }
 
     #[test]

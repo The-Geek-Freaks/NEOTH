@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::{Bytes, Incoming};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
@@ -39,6 +39,12 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use super::webhook::{ConsultRequest, IngestRequest, handle_consult, handle_ingest};
+use crate::n8n_api::{constant_time_token_eq, extract_bearer_token};
+
+/// Hard cap on the ingest request body (GOLD-SEC-24 / A-84). Paperless
+/// webhook payloads are document metadata + small content; an unbounded
+/// `collect()` let a client stream arbitrary bytes into daemon memory.
+const MAX_INGEST_BODY_BYTES: usize = 8 * 1024 * 1024;
 
 /// Configuration for the webhook server.
 #[derive(Debug, Clone)]
@@ -97,10 +103,17 @@ pub async fn spawn_webhook_server(config: WebhookServerConfig) -> Result<ServerH
                     break;
                 }
                 accept = listener.accept() => {
-                    let (stream, _peer) = match accept {
+                    let (stream, peer) = match accept {
                         Ok(pair) => pair,
                         Err(_) => continue,
                     };
+                    // GOLD-SEC-24 / A-84: loopback peer-guard (mirrors n8n_api).
+                    // The paperless webhook is a local sidecar surface — drop
+                    // any non-loopback peer even if the bind addr is wider.
+                    if !peer.ip().is_loopback() {
+                        tracing::warn!(peer = %peer, "paperless webhook: non-loopback peer rejected at accept");
+                        continue;
+                    }
                     let io = TokioIo::new(stream);
                     tokio::spawn(async move {
                         let cfg = cfg;
@@ -138,14 +151,16 @@ async fn dispatch(req: Request<Incoming>, cfg: Arc<WebhookServerConfig>) -> Resp
     }
 
     // Bearer auth (skipped when bearer_token is empty — testing).
+    // GOLD-SEC-24 / A-84: constant-time compare (reuse n8n_api's helper) so
+    // the token can't be recovered byte-by-byte via a timing side channel.
     if !cfg.bearer_token.is_empty() {
-        let header = req
+        let provided = req
             .headers()
             .get("authorization")
             .and_then(|h| h.to_str().ok())
+            .and_then(extract_bearer_token)
             .unwrap_or("");
-        let expected = format!("Bearer {}", cfg.bearer_token);
-        if header != expected {
+        if !constant_time_token_eq(provided, &cfg.bearer_token) {
             return json_response(
                 StatusCode::UNAUTHORIZED,
                 &serde_json::json!({
@@ -157,14 +172,22 @@ async fn dispatch(req: Request<Incoming>, cfg: Arc<WebhookServerConfig>) -> Resp
     }
 
     if method == Method::POST && path == "/paperless/ingest" {
-        let body_bytes = match req.into_body().collect().await {
+        // GOLD-SEC-24 / A-84: cap the body so a client can't stream
+        // unbounded bytes into daemon memory. `Limited` errors once the cap
+        // is crossed (or on a real read error) — both refuse the request.
+        let body_bytes = match Limited::new(req.into_body(), MAX_INGEST_BODY_BYTES)
+            .collect()
+            .await
+        {
             Ok(c) => c.to_bytes(),
             Err(_) => {
                 return json_response(
-                    StatusCode::BAD_REQUEST,
+                    StatusCode::PAYLOAD_TOO_LARGE,
                     &serde_json::json!({
-                        "error_kind":"bad_request",
-                        "error_message":"failed to read body",
+                        "error_kind":"payload_too_large",
+                        "error_message": format!(
+                            "ingest body exceeds {MAX_INGEST_BODY_BYTES} bytes or could not be read"
+                        ),
                     }),
                 );
             }
