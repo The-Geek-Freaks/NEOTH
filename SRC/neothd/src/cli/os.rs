@@ -116,6 +116,15 @@ async fn run_launch(program: &Path, cfg: &FreedomConfig, output: OutputFormat) -
                     r
                 }
                 Err(e) => {
+                    // GOLD-SEC-13 / A-44: fail closed under a required-audit
+                    // posture — a gated privileged launch must never proceed
+                    // un-audited just because the one-shot writer failed.
+                    if cfg.audit_rpc.required_for_oneshot_permission_events {
+                        anyhow::bail!(
+                            "refusing to launch un-audited: required-audit posture is set but the \
+                             one-shot WAL writer could not be opened ({e})"
+                        );
+                    }
                     tracing::warn!(
                         error = %e,
                         "os launch proceeding WITHOUT WAL audit — could not open a one-shot WAL writer"
@@ -192,6 +201,13 @@ async fn run_clipboard_get(cfg: &FreedomConfig, output: OutputFormat) -> Result<
                 r
             }
             Err(e) => {
+                // GOLD-SEC-13 / A-44: fail closed under a required-audit posture.
+                if cfg.audit_rpc.required_for_oneshot_permission_events {
+                    anyhow::bail!(
+                        "refusing un-audited clipboard read: required-audit posture is set but the \
+                         one-shot WAL writer could not be opened ({e})"
+                    );
+                }
                 tracing::warn!(error = %e, "clipboard read proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
                 read_os_clipboard(clip, cfg.autonomy, AuditSink::None, now).await
             }
@@ -269,6 +285,13 @@ async fn run_clipboard_set(
                 r
             }
             Err(e) => {
+                // GOLD-SEC-13 / A-44: fail closed under a required-audit posture.
+                if cfg.audit_rpc.required_for_oneshot_permission_events {
+                    anyhow::bail!(
+                        "refusing un-audited clipboard write: required-audit posture is set but the \
+                         one-shot WAL writer could not be opened ({e})"
+                    );
+                }
                 tracing::warn!(error = %e, "clipboard write proceeding WITHOUT WAL audit — could not open a one-shot WAL writer");
                 write_os_clipboard(&content, clip, cfg.autonomy, AuditSink::None, now).await
             }
