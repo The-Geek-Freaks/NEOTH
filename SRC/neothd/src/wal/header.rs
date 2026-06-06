@@ -66,6 +66,26 @@ impl EventHeaderV2 {
         let reserved_len = u16::from_le_bytes([b[7], b[8]]);
         let total_len = u32::from_le_bytes([b[9], b[10], b[11], b[12]]);
         let payload_len = u32::from_le_bytes([b[13], b[14], b[15], b[16]]);
+        // GOLD-COR-06 / A-80: frame-header length self-consistency. `total_len`
+        // MUST equal preamble + header body + reserved + payload + CRC. Without
+        // this, `total_len` was effectively unvalidated — `decode_frame` derived
+        // payload boundaries from `payload_len` alone, so a corrupt/forged
+        // `total_len` slipped through every consumer of `from_le_bytes`. u64
+        // arithmetic avoids the u32 overflow a near-`u32::MAX` payload_len would
+        // cause. (Computed bound, not attacker-influenced beyond the header.)
+        let expected_total = PREAMBLE_LEN as u64
+            + HEADER_BODY_LEN as u64
+            + reserved_len as u64
+            + payload_len as u64
+            + CRC_LEN as u64;
+        if total_len as u64 != expected_total {
+            return Err(HeaderParseError::InconsistentTotalLen {
+                total_len,
+                payload_len,
+                reserved_len,
+                expected: expected_total,
+            });
+        }
         let generation = u32::from_le_bytes([b[17], b[18], b[19], b[20]]);
         let event_id_raw = u64::from_le_bytes(b[21..29].try_into().unwrap());
         let hlc_physical_ns = u64::from_le_bytes(b[29..37].try_into().unwrap());
@@ -184,7 +204,9 @@ mod tests {
             flags: EventFlags::TOMBSTONE | EventFlags::SYNTHETIC,
             header_len: HEADER_BODY_LEN as u16,
             reserved_len: 0,
-            total_len: 1234,
+            // GOLD-COR-06: total_len must satisfy 4+96+reserved+payload+4.
+            // For payload_len=1100, reserved=0 ⇒ 104+1100 = 1204.
+            total_len: 1204,
             payload_len: 1100,
             generation: 7,
             event_id: EventId(0xDEADBEEFCAFEBABE),
@@ -199,6 +221,35 @@ mod tests {
         let bytes = h.to_le_bytes();
         let parsed = EventHeaderV2::from_le_bytes(&bytes).expect("parse");
         assert_eq!(h, parsed);
+    }
+
+    #[test]
+    fn parser_rejects_inconsistent_total_len() {
+        // GOLD-COR-06 / A-80: a header whose total_len does not match
+        // 4+96+reserved+payload+4 must be rejected at parse time — before this
+        // check, total_len was effectively unvalidated.
+        let mut h = EventHeaderV2::empty();
+        h.payload_len = 100;
+        h.total_len = 104 + 100; // consistent: parses fine.
+        let bytes = h.to_le_bytes();
+        EventHeaderV2::from_le_bytes(&bytes).expect("consistent total_len must parse");
+
+        // Now corrupt total_len directly in the wire bytes (offset 9..13).
+        let mut corrupt = bytes;
+        corrupt[9..13].copy_from_slice(&9999u32.to_le_bytes());
+        let r = EventHeaderV2::from_le_bytes(&corrupt);
+        assert!(
+            matches!(
+                r,
+                Err(HeaderParseError::InconsistentTotalLen {
+                    total_len: 9999,
+                    payload_len: 100,
+                    reserved_len: 0,
+                    expected: 204,
+                })
+            ),
+            "expected InconsistentTotalLen, got {r:?}"
+        );
     }
 
     #[test]

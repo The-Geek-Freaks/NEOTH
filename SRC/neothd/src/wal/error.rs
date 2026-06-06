@@ -20,6 +20,16 @@ pub enum HeaderParseError {
     #[error("invalid header_len: expected 96, got {got}")]
     InvalidHeaderLen { got: u16 },
 
+    #[error(
+        "inconsistent total_len: header claims {total_len}, but 4+96+reserved({reserved_len})+payload({payload_len})+4 = {expected}"
+    )]
+    InconsistentTotalLen {
+        total_len: u32,
+        payload_len: u32,
+        reserved_len: u16,
+        expected: u64,
+    },
+
     #[error("non-zero reserved bytes: {0:?}")]
     NonzeroReserved([u8; 3]),
 

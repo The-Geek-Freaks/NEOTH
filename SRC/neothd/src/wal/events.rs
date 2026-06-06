@@ -2091,6 +2091,11 @@ const _: () = {
         || EVENT_TYPE_KANBAN_TASK_COMPLETED > 0x7F) as usize];
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_CLOSED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_CLOSED > 0x7F) as usize];
+    // GOLD-COR-06 / A-80: 0x77 KANBAN_TASK_PROGRESS was registered in the
+    // coding-workflow band but never added here, so the compile-time band guard
+    // silently did not cover it. Now it does.
+    let _ = [(); 1][(EVENT_TYPE_KANBAN_TASK_PROGRESS < 0x70
+        || EVENT_TYPE_KANBAN_TASK_PROGRESS > 0x7F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONFIG_RELOADED < 0xD0 || EVENT_TYPE_CONFIG_RELOADED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CONFIG_RELOAD_REJECTED < 0xD0
