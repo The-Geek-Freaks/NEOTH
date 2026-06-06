@@ -89,6 +89,10 @@ QUELLEN/
 # RECON/ contains operator-private recon dumps (jarvis_live_recon_*.txt,
 # OpenClaw upstream audits). Not for public consumption.
 RECON/
+# REVIEWS/ holds raw third-party security reviews + the _gold_audit exploit-detail
+# dumps + Gold-feature research files. Publishing them = an attack map against the
+# live beta. The distilled, public-safe plan lives in PLAN/ROAD_TO_1_0_GOLD.md.
+REVIEWS/
 # Stray Windows artefact when commands accidentally redirect to `nul`
 # inside Git Bash. Never tracked.
 nul
