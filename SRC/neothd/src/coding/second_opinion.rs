@@ -54,7 +54,13 @@ pub fn parse_classify_reply(reply: &str) -> Complexity {
     let scan = if reply.len() <= MAX_REPLY_LEN {
         reply
     } else {
-        &reply[..MAX_REPLY_LEN]
+        // GOLD-COR-02 / A-04: char-boundary-safe slice — `reply` is raw LLM
+        // output (multibyte), so a raw `[..MAX_REPLY_LEN]` could panic.
+        let mut end = MAX_REPLY_LEN;
+        while end > 0 && !reply.is_char_boundary(end) {
+            end -= 1;
+        }
+        &reply[..end]
     };
     let upper = scan.to_ascii_uppercase();
     // First-token-wins: FAST anywhere in the prefix wins unless DEEP

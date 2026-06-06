@@ -422,10 +422,10 @@ async fn handle_one_message(
         message_id: Some(msg.id.0.to_string()),
         edit_unix: None,
         mention_kind: None,
-        channel_ts_unix: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        // GOLD-COR-11 / A-38/E-08: use the PROVIDER timestamp (msg.date), not
+        // the daemon's local receive time, so retention/ordering consumers see
+        // a consistent time axis across channels (Slack/WhatsApp already do).
+        channel_ts_unix: msg.date.timestamp().max(0) as u64,
         raw_ts_ms: Some(msg.date.timestamp() * 1000),
         human_uuid: None,
     };
@@ -557,10 +557,10 @@ async fn handle_edited_message(
         message_id: Some(msg.id.0.to_string()),
         edit_unix: Some(edit_unix),
         mention_kind: None,
-        channel_ts_unix: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
+        // GOLD-COR-11 / A-38/E-08: use the PROVIDER timestamp (msg.date), not
+        // the daemon's local receive time, so retention/ordering consumers see
+        // a consistent time axis across channels (Slack/WhatsApp already do).
+        channel_ts_unix: msg.date.timestamp().max(0) as u64,
         raw_ts_ms: Some(msg.date.timestamp() * 1000),
         human_uuid: None,
     };

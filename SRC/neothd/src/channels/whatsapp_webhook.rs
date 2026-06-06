@@ -199,7 +199,10 @@ pub fn decode_payload(raw: &str) -> DecodedWebhook {
                     text: Some(text.body.clone()),
                     media: None,
                     reply_to: None,
-                    message_id: None,
+                    // GOLD-COR-10 / A-21: carry the wamid so Meta's reconnect-storm
+                    // re-deliveries dedupe downstream (was None → every redelivery
+                    // re-ran the pipeline + a duplicate LLM call).
+                    message_id: Some(m.id.clone()),
                     edit_unix: None,
                     mention_kind: None,
                     channel_ts_unix: ts_unix,

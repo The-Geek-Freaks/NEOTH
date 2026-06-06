@@ -318,7 +318,13 @@ fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..n.saturating_sub(1)])
+        // GOLD-COR-02 / A-04: cut on a char boundary so a multibyte job
+        // string never panics the truncation.
+        let mut end = n.saturating_sub(1);
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     }
 }
 

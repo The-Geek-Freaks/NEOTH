@@ -209,7 +209,13 @@ pub fn detect_coding_intent(prompt: &str) -> Option<CodingIntent> {
         return None;
     }
     let lower = trimmed.to_lowercase();
-    let front_window = &lower[..lower.len().min(VERB_FRONT_ANCHOR_BYTES)];
+    // GOLD-COR-02 / A-04: slice on a CHAR boundary — `lower` is lowercased
+    // (often German, multibyte ü/ö/ä), and a raw `[..N]` panics mid-char.
+    let mut front_end = lower.len().min(VERB_FRONT_ANCHOR_BYTES);
+    while front_end > 0 && !lower.is_char_boundary(front_end) {
+        front_end -= 1;
+    }
+    let front_window = &lower[..front_end];
 
     let matched_verb = CODING_VERBS
         .iter()
@@ -484,5 +490,17 @@ mod tests {
         assert!(banner.contains("build"));
         assert!(banner.contains("function"));
         assert!(banner.contains("NEOTH_NO_AUTO_CODE"));
+    }
+
+    #[test]
+    fn multibyte_prompt_does_not_panic_at_front_window() {
+        // GOLD-COR-02 / A-04: a German prompt whose multibyte char straddles
+        // the VERB_FRONT_ANCHOR_BYTES (30) boundary must not panic the slice.
+        // "ä" is 2 bytes; pad so a char lands across byte 30.
+        let prompt = "ääääääääääääääääääbaue mir eine funktion bitte";
+        let _ = detect_coding_intent(prompt); // must not panic
+        // An emoji (4-byte) straddling the boundary too.
+        let prompt2 = "🚀🚀🚀🚀🚀🚀🚀🚀fix the parser bug please";
+        let _ = detect_coding_intent(prompt2); // must not panic
     }
 }

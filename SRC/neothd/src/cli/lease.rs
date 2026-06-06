@@ -161,7 +161,13 @@ fn truncate(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
+        // GOLD-COR-02 / A-04: cut on a char boundary (operator/peer strings
+        // may be multibyte) so `[..end]` never panics mid-char.
+        let mut end = max.saturating_sub(1);
+        while end > 0 && !s.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &s[..end])
     }
 }
 
