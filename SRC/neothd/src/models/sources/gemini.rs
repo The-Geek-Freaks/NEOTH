@@ -1,7 +1,8 @@
 //! Google Gemini model-list source.
 //!
-//! Endpoint: `GET https://generativelanguage.googleapis.com/v1beta/models?key=<api_key>`.
-//! Key is passed as a query parameter (Google's auth scheme for the
+//! Endpoint: `GET https://generativelanguage.googleapis.com/v1beta/models`
+//! with the key in the `x-goog-api-key` header (NOT the query string, so it
+//! never leaks into logs/proxies — GOLD-SEC-22). Google's auth scheme for the
 //! Generative AI REST surface), NOT as a Bearer header. Returns
 //! `{ "models": [ { "name": "models/gemini-3.1-pro-preview",
 //! "supportedGenerationMethods": [...], ... }, ... ] }`.
@@ -111,14 +112,15 @@ fn bundled_gemini_entries() -> Vec<ModelEntry> {
 
 async fn fetch_models_via_rest(endpoint: &str, api_key: &str) -> Result<Vec<ModelEntry>> {
     let client = crate::providers::http_client::build_client()?;
-    let url = format!("{endpoint}?key={api_key}");
+    // GOLD-SEC-22 / A-60: key in the `x-goog-api-key` header, not the
+    // `?key=` query param (URLs leak into logs/proxies; headers do not).
     let response = client
-        .get(&url)
+        .get(endpoint)
+        .header("x-goog-api-key", api_key)
         .timeout(Duration::from_secs(30))
         .send()
         .await
-        // The url contains the key — strip it from any context surface.
-        .with_context(|| format!("GET {endpoint} (key redacted)"))?;
+        .with_context(|| format!("GET {endpoint}"))?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();

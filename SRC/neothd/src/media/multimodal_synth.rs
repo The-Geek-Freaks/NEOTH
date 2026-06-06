@@ -252,7 +252,8 @@ pub fn parse_gemini_text(body: &[u8]) -> Result<String, String> {
     Ok(text)
 }
 
-/// Google Gemini vision client. The api key goes in the `?key=` query param.
+/// Google Gemini vision client. The api key goes in the `x-goog-api-key`
+/// header (not the URL query string — GOLD-SEC-22 / A-60).
 pub struct GeminiVisionClient {
     api_key: SecretString,
     base_url: String,
@@ -284,15 +285,18 @@ impl MultimodalSynthesizer for GeminiVisionClient {
         } else {
             &request.model_id
         };
+        // GOLD-SEC-22 / A-60: send the key in the `x-goog-api-key` header,
+        // not the `?key=` query param — URLs leak into request/proxy/tracing
+        // logs, headers do not.
         let url = format!(
-            "{}/v1beta/models/{}:generateContent?key={}",
+            "{}/v1beta/models/{}:generateContent",
             self.base_url.trim_end_matches('/'),
             model,
-            self.api_key.expose()
         );
         let client = http_client::build_client().map_err(|e| format!("http client: {e}"))?;
         let resp = client
             .post(url)
+            .header("x-goog-api-key", self.api_key.expose())
             .json(&gemini_body(request))
             .send()
             .await
