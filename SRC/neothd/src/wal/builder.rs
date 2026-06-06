@@ -188,6 +188,26 @@ mod tests {
     use super::*;
     use crate::wal::events::{EVENT_TYPE_BOOT, EVENT_TYPE_RAW_TEXT};
 
+    /// GOLD-COR-35: RAII guard that snapshots `GLOBAL_HLC` on construction and
+    /// restores it on drop (even on panic). The HLC tests below deliberately
+    /// saturate the *process-global* clock to `u64::MAX`; without restoring it,
+    /// every later `HeaderBuilder::build()` in the process stamps `u64::MAX`,
+    /// which made `cli::wal`'s `collect_proof` window-filter (`ts < u64::MAX`)
+    /// silently drop those frames — a cross-test failure under the broad
+    /// `wal::` filter. Paired with `crate::test_env::lock()` so a victim test
+    /// can never observe the saturated window.
+    struct HlcRestore(Hlc);
+    impl HlcRestore {
+        fn snapshot() -> Self {
+            Self(*crate::wal::GLOBAL_HLC.lock().unwrap_or_else(|p| p.into_inner()))
+        }
+    }
+    impl Drop for HlcRestore {
+        fn drop(&mut self) {
+            *crate::wal::GLOBAL_HLC.lock().unwrap_or_else(|p| p.into_inner()) = self.0;
+        }
+    }
+
     #[test]
     fn make_header_sets_defaults() {
         let payload = b"hello";
@@ -297,6 +317,10 @@ mod tests {
         // (year-3000-ish), drive a single tick to anchor the global
         // there, then call twice at the SAME injected now_ns. The
         // second call MUST be a tie → logical increments.
+        // GOLD-COR-35: serialize + snapshot-restore so saturating the global
+        // clock here cannot leak `u64::MAX` stamps into concurrent proof tests.
+        let _env = crate::test_env::lock();
+        let _hlc = HlcRestore::snapshot();
         let anchor: u64 = 100_000_000_000_000_000_000_u128 as u64; // saturates to u64::MAX
         let _anchor_tick = super::tick_global_hlc(anchor);
         let first = super::tick_global_hlc(anchor);
@@ -316,6 +340,10 @@ mod tests {
         // strictly-greater now_ns must advance physical_ns and reset
         // logical to 0. Use a very large base to outrun concurrent
         // tests' anchor values.
+        // GOLD-COR-35: serialize + snapshot-restore so saturating the global
+        // clock here cannot leak `u64::MAX` stamps into concurrent proof tests.
+        let _env = crate::test_env::lock();
+        let _hlc = HlcRestore::snapshot();
         let base: u64 = u64::MAX - 1_000_000_000; // ≈ 1 second below saturation
         let first = super::tick_global_hlc(base);
         let second = super::tick_global_hlc(u64::MAX);

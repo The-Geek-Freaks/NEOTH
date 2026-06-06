@@ -968,6 +968,10 @@ mod tests {
 
     #[test]
     fn collect_proof_picks_window_frames_and_markers() {
+        // GOLD-COR-35: hold the shared test lock so a concurrent `wal::builder`
+        // HLC-saturation test can't poison this test's `build()` stamps to
+        // u64::MAX (which the `ts < u64::MAX` window-filter would then drop).
+        let _env = crate::test_env::lock();
         let dir = tempdir().unwrap();
         write_segment_with_marker(dir.path(), 1, 3);
         // Wide-open window catches everything regardless of the now-stamped HLC.
@@ -990,6 +994,8 @@ mod tests {
 
     #[test]
     fn export_round_trip_writes_verifiable_envelope() {
+        // GOLD-COR-35: shared test lock — see collect_proof test above.
+        let _env = crate::test_env::lock();
         let waldir = tempdir().unwrap();
         write_segment_with_marker(waldir.path(), 1, 5);
         let outdir = tempdir().unwrap();
@@ -1009,6 +1015,8 @@ mod tests {
 
     #[test]
     fn export_tamper_in_envelope_is_detectable() {
+        // GOLD-COR-35: shared test lock — see collect_proof test above.
+        let _env = crate::test_env::lock();
         let waldir = tempdir().unwrap();
         write_segment_with_marker(waldir.path(), 1, 3);
         let outdir = tempdir().unwrap();

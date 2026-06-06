@@ -70,13 +70,13 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 |------------|-------------|------|------|
 | WS-A Security hardening | 35 | 3 | 32 |
 | WS-B Honesty / truth-in-advertising | 26 | 26 | 0 |
-| WS-C Correctness / reliability | 35 | 27 | 8 |
+| WS-C Correctness / reliability | 35 | 26 | 9 |
 | WS-D Feature wiring (unwired modules) | 12 | 12 | 0 |
 | WS-E Architecture debt | 22 | 22 | 0 |
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
 | WS-G Repo adoptions | 9 | 9 | 0 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **174** | **130** | **44** |
+| **TOTAL** | **174** | **129** | **45** |
 
 _WS-A remaining (3): SEC-16 + SEC-18 (Cargo feature-gates — dedicated dual-build `--no-default-features` pass) · SEC-30 (sudomode WAL events — builds with GOLD-FEAT-01). All remaining WS-A items are the two big feature-gate refactors + one that pairs with a Gold feature; every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -271,7 +271,7 @@ Doc/claim ≠ code fixes AND wiring the truthful behavior.
 - [ ] **GOLD-COR-32** Apply `clean_topic_en` fixpoint loop (same as `clean_topic_de`) to English path in `recall/conversational.rs` — *files:* `SRC/neothd/src/recall/conversational.rs` — *test:* English phrase "do you remember when we talked about" is correctly cleaned — *origin:* E-29
 - [ ] **GOLD-COR-33** Acquire DB lock only for synchronous DB ops in `serve.rs`; release before any `.await` in `ConnBorrow::Shared` pipeline path (CR-010) — *files:* `SRC/neothd/src/cli/serve.rs` — *test:* concurrent channel requests do not serialize on DB lock — *origin:* CR-010, A-15
 - [ ] **GOLD-COR-34** Wrap all 11 remaining detached `tokio::spawn` in `cli/serve.rs` in JoinSet for graceful shutdown and WAL drain — *files:* `SRC/neothd/src/cli/serve.rs` — *test:* `SIGTERM` allows WAL drain before exit — *origin:* CR-011
-- [ ] **GOLD-COR-35** Fix `GLOBAL_HLC` test-pollution: `wal/builder.rs` HLC tests (`hlc_logical_increments_within_same_physical_tick`, `hlc_physical_advances_when_clock_moves_forward`) saturate the process-global `GLOBAL_HLC` to `u64::MAX`, poisoning every later `HeaderBuilder::build()` so `collect_proof`'s `ts < end_ns` window-filter drops them — 3 `cli::wal` proof tests fail under the broad `wal::` filter (pass in isolation). Serialize these tests via `crate::test_env::lock` + save/restore `GLOBAL_HLC` so the saturation is contained — *files:* `SRC/neothd/src/wal/builder.rs`, `SRC/neothd/src/cli/wal.rs` — *test:* full `cargo test --lib wal::` is green (no isolation-dependent failures) — *origin:* discovered Session 40 during GOLD-COR-06
+- [x] **GOLD-COR-35** Fix `GLOBAL_HLC` test-pollution: `wal/builder.rs` HLC tests (`hlc_logical_increments_within_same_physical_tick`, `hlc_physical_advances_when_clock_moves_forward`) saturate the process-global `GLOBAL_HLC` to `u64::MAX`, poisoning every later `HeaderBuilder::build()` so `collect_proof`'s `ts < end_ns` window-filter drops them — 3 `cli::wal` proof tests fail under the broad `wal::` filter (pass in isolation). Serialize these tests via `crate::test_env::lock` + save/restore `GLOBAL_HLC` so the saturation is contained — *files:* `SRC/neothd/src/wal/builder.rs`, `SRC/neothd/src/cli/wal.rs` — *test:* full `cargo test --lib wal::` is green (no isolation-dependent failures) — *origin:* discovered Session 40 during GOLD-COR-06 — ✅ **DONE:** added an RAII `HlcRestore` guard (snapshots `GLOBAL_HLC` on construct, restores on drop — panic-safe) + `crate::test_env::lock()` to both saturating `builder.rs` tests; the guard drops (restores) BEFORE the lock guard releases, so a waiting test only ever observes a sane clock. The 3 victim `cli::wal` proof tests now also take the same lock so they never build frames during a saturation window. Both `<`-vs-`u64::MAX` semantics + production code left untouched (test-only isolation fix). Broad `wal::` filter: 307/0 across 3 consecutive runs (was deterministically 3-failed), clippy clean.
 
 ---
 
