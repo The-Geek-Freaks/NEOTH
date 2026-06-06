@@ -2773,11 +2773,46 @@ pub(crate) fn channel_skill_allowlist(
     skill.map(|s| s.manifest.tool_allowlist.clone())
 }
 
-/// ADV-09: best-effort `0x3C CHANNEL_PRIVILEGE_BLOCKED` audit frame for a
-/// destructive operator slash-action rejected by the channel privilege
-/// ceiling. Carries only the channel name + numeric sender id + the
-/// `SlashAction::as_str()` wire name — never message text. Never fails the
-/// caller: the rejection already happened, the audit frame is the nicety.
+/// GOLD-COR-04 / A-11: append a SECURITY-BEARING audit frame
+/// (CHANNEL_PRIVILEGE_BLOCKED, HOOK_BLOCKED, INGEST_EXTRACTED,
+/// EMBED_PERSISTED, CONFIG_RELOADED). Unlike a plain best-effort
+/// `writer.append`, a write failure here is NOT swallowed at `warn` level: it
+/// is logged at `error!` with a uniform, greppable `audit_loss = true` + the
+/// frame's `event` name, so `neoth monitor`'s rule engine can alert on a lost
+/// security record instead of it vanishing into the log noise.
+///
+/// This is deliberately NOT hard fail-closed (operator decision 2026-06-06,
+/// GOLD-COR-04): at every one of these call sites the guarded action — the
+/// block / reject / drop, or the embedding persist / config reload — has
+/// ALREADY completed by the time the frame is written, so aborting the
+/// operation could not undo it; it would only leave incoherent post-side-effect
+/// state. And because `append` fails on a full WAL quota, propagating the error
+/// would turn a disk-cap into a DoS amplifier on exactly the security-relevant
+/// paths. The durable fix is non-silent, monitorable audit loss — not a louder
+/// failure mode for the operation itself.
+async fn emit_required_audit(
+    writer: &WalWriterHandle,
+    event_type: u8,
+    event_name: &'static str,
+    payload: Vec<u8>,
+) {
+    let header = crate::wal::make_header(event_type, &payload);
+    if let Err(e) = writer.append(header, payload).await {
+        error!(
+            audit_loss = true,
+            event = event_name,
+            error = %e,
+            "security audit frame lost — durable WAL record could not be written"
+        );
+    }
+}
+
+/// ADV-09: `0x3C CHANNEL_PRIVILEGE_BLOCKED` audit frame for a destructive
+/// operator slash-action rejected by the channel privilege ceiling. Carries
+/// only the channel name + numeric sender id + the `SlashAction::as_str()` wire
+/// name — never message text. The rejection already happened; per GOLD-COR-04
+/// the audit write is routed through [`emit_required_audit`] so a lost frame is
+/// surfaced at error level rather than silently dropped.
 async fn emit_channel_privilege_blocked(
     writer: &WalWriterHandle,
     channel: &str,
@@ -2800,13 +2835,13 @@ async fn emit_channel_privilege_blocked(
             return;
         }
     };
-    let header = crate::wal::make_header(
+    emit_required_audit(
+        writer,
         crate::wal::events::EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED,
-        &payload,
-    );
-    if let Err(e) = writer.append(header, payload).await {
-        warn!(error = %e, "CHANNEL_PRIVILEGE_BLOCKED append failed (non-fatal)");
-    }
+        "CHANNEL_PRIVILEGE_BLOCKED",
+        payload,
+    )
+    .await;
 }
 
 /// Build the per-channel pipeline handler closure. Captured: provider trait
@@ -3020,14 +3055,13 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                             return Ok(::std::option::Option::None);
                         }
                     };
-                    let header = crate::wal::HeaderBuilder::new(
+                    emit_required_audit(
+                        &writer,
                         crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                        &payload,
+                        "HOOK_BLOCKED",
+                        payload,
                     )
-                    .build();
-                    if let Err(e) = writer.append(header, payload).await {
-                        warn!(error = %e, "WAL append PreChannelIngress block frame failed");
-                    }
+                    .await;
                     return Ok(::std::option::Option::None);
                 }
                 Err(e) => {
@@ -3486,13 +3520,13 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                             return Ok(::std::option::Option::None);
                         }
                     };
-                    let header = crate::wal::make_header(
+                    emit_required_audit(
+                        &writer,
                         crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                        &payload,
-                    );
-                    if let Err(e) = writer.append(header, payload).await {
-                        tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
-                    }
+                        "HOOK_BLOCKED",
+                        payload,
+                    )
+                    .await;
                     return Ok(::std::option::Option::None);
                 }
                 Err(e) => {
@@ -4244,14 +4278,13 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                             .map(|d| d.as_secs())
                             .unwrap_or(0),
                     })) {
-                        let header = crate::wal::HeaderBuilder::new(
+                        emit_required_audit(
+                            &writer,
                             crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                            &payload,
+                            "HOOK_BLOCKED",
+                            payload,
                         )
-                        .build();
-                        if let Err(e) = writer.append(header, payload).await {
-                            warn!(error = %e, "WAL append PreEgress block frame failed");
-                        }
+                        .await;
                     }
                     return Ok(::std::option::Option::None);
                 }
@@ -4389,14 +4422,13 @@ pub(crate) async fn handle_reload_sentinel(
                 "ts_unix": ts_unix,
             });
             if let Ok(bytes) = serde_json::to_vec(&payload) {
-                let header = crate::wal::HeaderBuilder::new(
+                emit_required_audit(
+                    writer,
                     crate::wal::events::EVENT_TYPE_CONFIG_RELOADED,
-                    &bytes,
+                    "CONFIG_RELOADED",
+                    bytes,
                 )
-                .build();
-                if let Err(e) = writer.append(header, bytes).await {
-                    warn!(error = %e, "CONFIG_RELOADED WAL append failed (best-effort audit)");
-                }
+                .await;
             }
         }
         crate::config::reload::ReloadResult::Rejected { reason } => {
@@ -4550,11 +4582,8 @@ pub(crate) async fn handle_media_attachment(
                 .unwrap_or(0),
         })) {
             Ok(payload) => {
-                let header =
-                    crate::wal::HeaderBuilder::new(EVENT_TYPE_INGEST_EXTRACTED, &payload).build();
-                if let Err(e) = w.append(header, payload).await {
-                    tracing::warn!(error = %e, "WAL append INGEST_EXTRACTED failed (best-effort)");
-                }
+                emit_required_audit(w, EVENT_TYPE_INGEST_EXTRACTED, "INGEST_EXTRACTED", payload)
+                    .await;
             }
             Err(e) => tracing::warn!(
                 error = %e,
@@ -4590,15 +4619,8 @@ pub(crate) async fn handle_media_attachment(
                         .unwrap_or(0),
                 })) {
                     Ok(payload) => {
-                        let header =
-                            crate::wal::HeaderBuilder::new(EVENT_TYPE_EMBED_PERSISTED, &payload)
-                                .build();
-                        if let Err(e) = w.append(header, payload).await {
-                            tracing::warn!(
-                                error = %e,
-                                "WAL append EMBED_PERSISTED failed (best-effort)"
-                            );
-                        }
+                        emit_required_audit(w, EVENT_TYPE_EMBED_PERSISTED, "EMBED_PERSISTED", payload)
+                            .await;
                     }
                     Err(e) => tracing::warn!(
                         error = %e,
@@ -5082,6 +5104,64 @@ mod tests {
         assert_eq!(
             found, 1,
             "expected exactly one 0x3C CHANNEL_PRIVILEGE_BLOCKED frame"
+        );
+    }
+
+    #[tokio::test]
+    async fn emit_required_audit_survives_append_failure_without_aborting() {
+        // GOLD-COR-04 / A-11: when a security audit frame CANNOT be written
+        // (here: an oversize payload makes `append` reject synchronously, the
+        // same failure class as a quota-full WAL), the helper must NOT panic
+        // and must NOT propagate — the guarded action already happened, so the
+        // operation continues; the loss is surfaced loud at error level
+        // (audit_loss=true) instead. We assert the no-panic + no-frame outcome;
+        // the error-level log is the documented side effect.
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("audit.wal");
+        let (writer, _join) = crate::wal::writer::spawn(seg.clone()).unwrap();
+
+        // First a VALID frame, so the segment + its header exist on disk and we
+        // have a known-good baseline of exactly one HOOK_BLOCKED frame.
+        emit_required_audit(
+            &writer,
+            crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+            "HOOK_BLOCKED",
+            b"{\"ok\":1}".to_vec(),
+        )
+        .await;
+
+        let oversize = vec![0u8; crate::wal::writer::MAX_PAYLOAD_BYTES + 1];
+        // Returns normally (no panic, no Err to unwrap) despite the failed write.
+        emit_required_audit(
+            &writer,
+            crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+            "HOOK_BLOCKED",
+            oversize,
+        )
+        .await;
+
+        // The rejected oversize frame must NOT have landed — only the valid one.
+        let bytes = std::fs::read(&seg).unwrap();
+        let hdr = crate::wal::segment_header::parse_segment_header(&bytes).unwrap();
+        let mut cursor = hdr.header_len();
+        let mut hook_frames = 0usize;
+        while cursor < bytes.len() {
+            let dec = match decode_frame(&bytes[cursor..]) {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_HOOK_BLOCKED {
+                hook_frames += 1;
+            }
+            let total = dec.header.total_len as usize;
+            if total == 0 {
+                break;
+            }
+            cursor = cursor.saturating_add(total);
+        }
+        assert_eq!(
+            hook_frames, 1,
+            "exactly the one valid frame must land; the oversize one must be dropped"
         );
     }
 }
