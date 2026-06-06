@@ -23,6 +23,13 @@ pub struct BackupArgs {
     /// to re-index from scratch).
     #[arg(long = "no-wal")]
     pub skip_wal: bool,
+    /// Exclude `credentials.yaml` (API keys, channel tokens) from the
+    /// tarball. By default it IS bundled — otherwise a restore is
+    /// missing every key — but the archive is plaintext, so backup
+    /// prints a warning and `--no-credentials` lets you opt out (e.g.
+    /// when the archive will live on untrusted storage).
+    #[arg(long = "no-credentials")]
+    pub skip_credentials: bool,
     /// Override the ~/.neoth source dir (mostly for tests).
     #[arg(long, value_name = "DIR")]
     pub home: Option<PathBuf>,
@@ -50,7 +57,8 @@ pub async fn run_backup(args: BackupArgs) -> Result<()> {
     let home = args.home.unwrap_or_else(FreedomConfig::default_neoth_home);
     let out = args.out.unwrap_or_else(backup::default_backup_path);
     let include_wal = !args.skip_wal;
-    let n = backup::write_backup(&home, &out, include_wal)
+    let include_credentials = !args.skip_credentials;
+    let outcome = backup::write_backup(&home, &out, include_wal, include_credentials)
         .with_context(|| format!("write backup to {}", out.display()))?;
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -58,19 +66,32 @@ pub async fn run_backup(args: BackupArgs) -> Result<()> {
                 "{}",
                 serde_json::json!({
                     "wrote": out.display().to_string(),
-                    "entries": n,
+                    "entries": outcome.included,
                     "include_wal": include_wal,
+                    "includes_plaintext_credentials": outcome.included_plaintext_credentials,
                 })
             );
         }
         OutputFormat::Table => {
-            println!("backup written: {} ({n} top-level entries)", out.display());
+            println!(
+                "backup written: {} ({} top-level entries)",
+                out.display(),
+                outcome.included
+            );
             if !include_wal {
                 println!("(WAL segments skipped per --no-wal; restored host will need re-index)");
             } else {
                 println!("(WAL segments bundled — full consistent restore)");
             }
         }
+    }
+    // Loud plaintext-secrets warning regardless of output format — the
+    // operator must know the archive carries unencrypted API keys/tokens.
+    if outcome.included_plaintext_credentials {
+        eprintln!(
+            "⚠  WARNING: this backup contains credentials.yaml in PLAINTEXT (API keys, channel tokens).\n\
+             ⚠  Store it on encrypted media. Re-run with --no-credentials to exclude them."
+        );
     }
     Ok(())
 }

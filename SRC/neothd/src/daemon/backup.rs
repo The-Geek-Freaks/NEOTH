@@ -28,6 +28,23 @@
 //! - `.initialized` marker    — re-init resets it cleanly anyway.
 //! - PID file, lock files     — runtime ephemera.
 //!
+//! ## Secrets in the tarball
+//!
+//! `credentials.yaml` (API keys, Telegram/Slack tokens) is bundled BY
+//! DEFAULT so a restore is not silently missing every key (Pick #34).
+//! The archive is **plaintext** until `age` encryption lands, so backup
+//! emits a loud warning when it includes credentials and the operator
+//! can pass `--no-credentials` to exclude them (GOLD-SEC-27). Store the
+//! archive on encrypted media regardless.
+//!
+//! ## Restore safety
+//!
+//! Archive entry paths are untrusted. `restore_backup` joins each entry
+//! through `safe_join`, which refuses absolute paths and any `..`
+//! component (zip-slip / CWE-22), and rejects symlink/hard-link entries
+//! outright — NEOTH backups only ever contain regular files + dirs
+//! (GOLD-SEC-02).
+//!
 //! ## Format
 //!
 //! `tar.gz` with paths relative to `~/.neoth/`. Restore unpacks straight
@@ -75,13 +92,31 @@ const DEFAULT_INCLUDES: &[&str] = &[
     "wizard",
 ];
 
+/// Outcome of [`write_backup`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackupOutcome {
+    /// Number of top-level paths included in the tarball.
+    pub included: usize,
+    /// True when the tarball contains the plaintext `credentials.yaml`
+    /// (API keys, channel tokens). The caller MUST warn the operator to
+    /// store the archive on encrypted media (GOLD-SEC-27).
+    pub included_plaintext_credentials: bool,
+}
+
 /// Write a `.tar.gz` backup of the operator's `~/.neoth/` state to `out`.
-/// Returns the number of paths included.
 ///
 /// Missing files are silently skipped — a fresh install has no
 /// `tweaks.toml` and that's fine. Caller passes `include_wal = true` to
-/// add raw WAL segments to the bundle.
-pub fn write_backup(home: &Path, out: &Path, include_wal: bool) -> Result<usize> {
+/// add raw WAL segments to the bundle, and `include_credentials = true`
+/// to bundle `credentials.yaml` (plaintext secrets — the returned
+/// [`BackupOutcome::included_plaintext_credentials`] is set so the caller
+/// can warn the operator).
+pub fn write_backup(
+    home: &Path,
+    out: &Path,
+    include_wal: bool,
+    include_credentials: bool,
+) -> Result<BackupOutcome> {
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create backup parent {}", parent.display()))?;
@@ -92,7 +127,13 @@ pub fn write_backup(home: &Path, out: &Path, include_wal: bool) -> Result<usize>
     let mut tar = tar::Builder::new(gz);
 
     let mut included = 0usize;
+    let mut included_plaintext_credentials = false;
     for rel in DEFAULT_INCLUDES {
+        // credentials.yaml is plaintext secrets — only bundle it when the
+        // operator opted in (default true), and flag it so the caller warns.
+        if *rel == "credentials.yaml" && !include_credentials {
+            continue;
+        }
         let path = home.join(rel);
         if !path.exists() {
             continue;
@@ -103,6 +144,9 @@ pub fn write_backup(home: &Path, out: &Path, include_wal: bool) -> Result<usize>
         } else {
             tar.append_path_with_name(&path, rel)
                 .with_context(|| format!("tar file {}", path.display()))?;
+        }
+        if *rel == "credentials.yaml" {
+            included_plaintext_credentials = true;
         }
         included += 1;
     }
@@ -129,7 +173,10 @@ pub fn write_backup(home: &Path, out: &Path, include_wal: bool) -> Result<usize>
         .into_inner()
         .map_err(|e| anyhow::anyhow!("unwrap BufWriter to fsync backup file: {e}"))?;
     file.sync_all().context("fsync backup archive to disk")?;
-    Ok(included)
+    Ok(BackupOutcome {
+        included,
+        included_plaintext_credentials,
+    })
 }
 
 /// Restore a `.tar.gz` backup into `target_home`. If `target_home` is
@@ -159,7 +206,21 @@ pub fn restore_backup(archive: &Path, target_home: &Path, force: bool) -> Result
     for entry in archive.entries().context("read tar entries")? {
         let mut entry = entry.context("tar entry")?;
         let rel = entry.path().context("tar entry path")?.into_owned();
-        let dest = target_home.join(&rel);
+        // Reject symlink/hard-link entries — a NEOTH backup only ever
+        // contains regular files + dirs, and a crafted link could be used
+        // to redirect a later entry's write outside the target tree.
+        let etype = entry.header().entry_type();
+        if etype.is_symlink() || etype.is_hard_link() {
+            anyhow::bail!(
+                "refusing {:?} archive entry {} — NEOTH backups contain only regular files and directories",
+                etype,
+                rel.display()
+            );
+        }
+        // Zip-slip guard (CWE-22): join through `safe_join` so an entry
+        // path with `..` or an absolute root cannot escape target_home.
+        let dest = safe_join(target_home, &rel)
+            .with_context(|| format!("reject unsafe archive entry {}", rel.display()))?;
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create restore parent {}", parent.display()))?;
@@ -170,6 +231,29 @@ pub fn restore_backup(archive: &Path, target_home: &Path, force: bool) -> Result
         count += 1;
     }
     Ok(count)
+}
+
+/// Join an untrusted archive-relative path onto `base`, rejecting any
+/// path that would escape `base` (zip-slip / CWE-22). Only normal path
+/// components are allowed: absolute paths, root/prefix, and `..` are
+/// refused; `.` is ignored. The result is therefore always contained
+/// within `base`.
+fn safe_join(base: &Path, rel: &Path) -> Result<PathBuf> {
+    use std::path::Component;
+    let mut out = base.to_path_buf();
+    for comp in rel.components() {
+        match comp {
+            Component::Normal(seg) => out.push(seg),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                anyhow::bail!("path traversal `..` in archive entry: {}", rel.display());
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!("absolute path in archive entry: {}", rel.display());
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Conventional default backup path: `<home>/backups/neoth-<ts>.tar.gz`.
@@ -189,6 +273,7 @@ mod tests {
         let home = dir.join("neoth");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(home.join("freedom.yaml"), "operator_id: sam\n").unwrap();
+        std::fs::write(home.join("credentials.yaml"), "anthropic_api_key: sk-secret\n").unwrap();
         std::fs::write(home.join("views.db"), b"\x00not really sqlite").unwrap();
         std::fs::write(home.join("tweaks.toml"), "banner = \"x\"\n").unwrap();
         let archive = home.join("archive").join("sessions").join("2026-05-14");
@@ -205,9 +290,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");
-        let n = write_backup(&home, &out, false).unwrap();
+        let n = write_backup(&home, &out, false, true).unwrap();
         assert!(out.exists());
-        assert!(n >= 4, "expected ≥4 entries, got {n}");
+        assert!(n.included >= 4, "expected ≥4 entries, got {}", n.included);
     }
 
     #[test]
@@ -215,7 +300,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");
-        write_backup(&home, &out, false).unwrap();
+        write_backup(&home, &out, false, true).unwrap();
         let target = dir.path().join("restored");
         restore_backup(&out, &target, false).unwrap();
         assert!(
@@ -231,7 +316,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");
-        write_backup(&home, &out, true).unwrap();
+        write_backup(&home, &out, true, true).unwrap();
         let target = dir.path().join("restored");
         restore_backup(&out, &target, false).unwrap();
         assert!(target.join("wal").join("000001.wal").exists());
@@ -242,7 +327,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");
-        write_backup(&home, &out, false).unwrap();
+        write_backup(&home, &out, false, true).unwrap();
         let target = dir.path().join("restored");
         restore_backup(&out, &target, false).unwrap();
         let body = std::fs::read_to_string(target.join("freedom.yaml")).unwrap();
@@ -258,7 +343,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");
-        write_backup(&home, &out, false).unwrap();
+        write_backup(&home, &out, false, true).unwrap();
         let target = dir.path().join("preexisting");
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("dont-clobber"), "important").unwrap();
@@ -273,7 +358,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let home = fake_home(dir.path());
         let out = dir.path().join("backup.tar.gz");
-        write_backup(&home, &out, false).unwrap();
+        write_backup(&home, &out, false, true).unwrap();
         let target = dir.path().join("preexisting");
         std::fs::create_dir_all(&target).unwrap();
         std::fs::write(target.join("dont-clobber"), "old").unwrap();
@@ -288,7 +373,88 @@ mod tests {
         std::fs::create_dir_all(&home).unwrap();
         std::fs::write(home.join("freedom.yaml"), "only this file").unwrap();
         let out = dir.path().join("backup.tar.gz");
-        let n = write_backup(&home, &out, false).unwrap();
-        assert_eq!(n, 1, "only freedom.yaml is present in this fixture");
+        let n = write_backup(&home, &out, false, true).unwrap();
+        assert_eq!(n.included, 1, "only freedom.yaml is present in this fixture");
+        assert!(!n.included_plaintext_credentials);
+    }
+
+    #[test]
+    fn backup_includes_credentials_by_default_and_flags_them() {
+        let dir = tempdir().unwrap();
+        let home = fake_home(dir.path());
+        let out = dir.path().join("backup.tar.gz");
+        let outcome = write_backup(&home, &out, false, true).unwrap();
+        assert!(
+            outcome.included_plaintext_credentials,
+            "credentials.yaml present + opted in → flag must be set so the caller warns"
+        );
+        let target = dir.path().join("restored");
+        restore_backup(&out, &target, false).unwrap();
+        assert!(target.join("credentials.yaml").exists());
+    }
+
+    #[test]
+    fn backup_excludes_credentials_when_opted_out() {
+        let dir = tempdir().unwrap();
+        let home = fake_home(dir.path());
+        let out = dir.path().join("backup.tar.gz");
+        let outcome = write_backup(&home, &out, false, false).unwrap();
+        assert!(!outcome.included_plaintext_credentials);
+        let target = dir.path().join("restored");
+        restore_backup(&out, &target, false).unwrap();
+        assert!(
+            !target.join("credentials.yaml").exists(),
+            "--no-credentials must exclude the secrets file"
+        );
+        // The rest of the backup is intact.
+        assert!(target.join("freedom.yaml").exists());
+    }
+
+    #[test]
+    fn safe_join_allows_normal_paths_and_rejects_escapes() {
+        let base = Path::new("/srv/neoth");
+        assert_eq!(
+            safe_join(base, Path::new("a/b.txt")).unwrap(),
+            Path::new("/srv/neoth/a/b.txt")
+        );
+        assert_eq!(
+            safe_join(base, Path::new("./a/./b")).unwrap(),
+            Path::new("/srv/neoth/a/b")
+        );
+        assert!(safe_join(base, Path::new("../escape")).is_err());
+        assert!(safe_join(base, Path::new("a/../../escape")).is_err());
+        assert!(safe_join(base, Path::new("/etc/passwd")).is_err());
+    }
+
+    #[test]
+    fn restore_rejects_symlink_entry() {
+        use std::io::Write as _;
+        // The high-level tar `Builder` refuses to even CREATE a `..`
+        // entry (`set_path` validates) — defense in depth on the write
+        // side — so the restore-side `..`/absolute guard is proven by
+        // `safe_join_allows_normal_paths_and_rejects_escapes`. Here we
+        // prove the restore-side ENTRY-TYPE guard end-to-end: a crafted
+        // symlink entry (the classic redirect-a-later-write vector) must
+        // be rejected outright.
+        let dir = tempdir().unwrap();
+        let archive_path = dir.path().join("evil.tar.gz");
+        {
+            let f = File::create(&archive_path).unwrap();
+            let gz = GzEncoder::new(BufWriter::new(f), Compression::default());
+            let mut tb = tar::Builder::new(gz);
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            header.set_mode(0o777);
+            tb.append_link(&mut header, "innocent.txt", "../../etc/escape")
+                .unwrap();
+            let gz = tb.into_inner().unwrap();
+            let mut w = gz.finish().unwrap();
+            w.flush().unwrap();
+        }
+        let target = dir.path().join("restore-target");
+        let r = restore_backup(&archive_path, &target, false);
+        assert!(r.is_err(), "symlink entry must be rejected");
+        assert!(!target.join("innocent.txt").exists());
     }
 }

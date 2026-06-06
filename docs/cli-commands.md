@@ -74,6 +74,7 @@ Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
 
 - `--out <PATH>` — Output path for the `.tar.gz`. Defaults to `~/.neoth/backups/neoth-<UTC-timestamp>.tar.gz`
 - `--no-wal <SKIP_WAL>` — Skip raw WAL segments. Default behaviour bundles them — the WAL is the source of truth + the operator-flow audit (2026-05-19) flagged "default-without-WAL produces inconsistent restores where views.db cursors reference segments that don't exist". Pass `--no-wal` to opt out (saves disk, but restored host needs to re-index from scratch)
+- `--no-credentials <SKIP_CREDENTIALS>` — Exclude `credentials.yaml` (API keys, channel tokens) from the tarball. By default it IS bundled — otherwise a restore is missing every key — but the archive is plaintext, so backup prints a warning and `--no-credentials` lets you opt out (e.g. when the archive will live on untrusted storage)
 - `--home <DIR>` — Override the ~/.neoth source dir (mostly for tests)
 
 ## `neoth calendar`
