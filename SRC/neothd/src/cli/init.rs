@@ -4027,17 +4027,11 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
     // error with no context, and don't know which command unblocks
     // them. The hint here connects wizard → consent → chat in one
     // operator-visible breath.
-    let cloud_provider = matches!(
-        state.provider_kind,
-        Some(
-            ProviderKind::ClaudeCli
-                | ProviderKind::OpenaiApi
-                | ProviderKind::GeminiApi
-                | ProviderKind::OpenaiCompat
-                | ProviderKind::AwsBedrock
-                | ProviderKind::AzureOpenAi
-        )
-    );
+    // Canonical cloud classifier (GOLD-SEC-09 / A-25) — the prior inline
+    // set MISSED AnthropicApi + Cohere, so operators picking those got no
+    // inline consent pre-grant and hit an opaque consent-failure on first
+    // `neoth chat`. Route through `consent::is_cloud` (the single source).
+    let cloud_provider = state.provider_kind.is_some_and(crate::consent::is_cloud);
     if cloud_provider {
         // V03-08 — don't just PRINT the consent command (a noob ignores
         // it, runs `neoth chat`, hits an opaque consent-failure, and

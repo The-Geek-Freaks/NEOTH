@@ -25,18 +25,25 @@ use crate::cli::init::ProviderKind;
 
 /// Cloud providers that ship operator text to a third-party. The operator
 /// must explicitly grant consent before NEOTH routes any traffic to them.
+///
+/// THE canonical cloud-egress classifier (GOLD-SEC-09 / A-25). Every gate
+/// that asks "is this provider cloud?" — the consent gate, the wizard
+/// pre-grant hint, the cost/quota job preview — MUST route through here,
+/// not maintain its own match set (those drifted and silently missed
+/// `AnthropicApi`/`Cohere`). The match is EXHAUSTIVE on purpose: adding a
+/// `ProviderKind` variant fails to compile until it is classified here.
 pub fn is_cloud(kind: ProviderKind) -> bool {
-    matches!(
-        kind,
+    match kind {
         ProviderKind::ClaudeCli
-            | ProviderKind::OpenaiApi
-            | ProviderKind::AnthropicApi
-            | ProviderKind::GeminiApi
-            | ProviderKind::Cohere
-            | ProviderKind::OpenaiCompat
-            | ProviderKind::AwsBedrock
-            | ProviderKind::AzureOpenAi
-    )
+        | ProviderKind::OpenaiApi
+        | ProviderKind::AnthropicApi
+        | ProviderKind::GeminiApi
+        | ProviderKind::Cohere
+        | ProviderKind::OpenaiCompat
+        | ProviderKind::AwsBedrock
+        | ProviderKind::AzureOpenAi => true,
+        ProviderKind::LocalQwen | ProviderKind::LocalOuro | ProviderKind::Skip => false,
+    }
 }
 
 /// Stable slug used in WAL events + marker filenames. Matches
@@ -431,13 +438,18 @@ mod tests {
 
     #[test]
     fn is_cloud_classifies_every_provider_kind() {
+        // Cloud-egress providers (all require consent).
         assert!(is_cloud(ProviderKind::ClaudeCli));
         assert!(is_cloud(ProviderKind::OpenaiApi));
+        assert!(is_cloud(ProviderKind::AnthropicApi)); // A-25: was missing downstream
         assert!(is_cloud(ProviderKind::GeminiApi));
+        assert!(is_cloud(ProviderKind::Cohere)); // A-25: was missing downstream
         assert!(is_cloud(ProviderKind::OpenaiCompat));
         assert!(is_cloud(ProviderKind::AwsBedrock));
         assert!(is_cloud(ProviderKind::AzureOpenAi));
+        // Local + skip never gate.
         assert!(!is_cloud(ProviderKind::LocalQwen));
+        assert!(!is_cloud(ProviderKind::LocalOuro));
         assert!(!is_cloud(ProviderKind::Skip));
     }
 

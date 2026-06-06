@@ -252,15 +252,13 @@ pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
     // because there's no spend on a local call and an unconfigured
     // job won't reach a real provider.
     use crate::permissions::AutonomyLevel;
-    let is_cloud = matches!(
-        provider.as_str(),
-        "openai_api"
-            | "gemini_api"
-            | "openai_compat"
-            | "aws_bedrock"
-            | "azure_openai"
-            | "claude_cli",
-    );
+    // Route through the canonical classifier (GOLD-SEC-09 / A-25) — the
+    // prior inline set silently MISSED anthropic_api + cohere_api, so jobs
+    // on those metered providers escaped the cost/consent verdict. An
+    // unknown/unconfigured slug maps to None → not cloud → allow (no spend).
+    let is_cloud = crate::consent::kind_from_slug(provider.as_str())
+        .map(crate::consent::is_cloud)
+        .unwrap_or(false);
     let verdict = match (cfg.autonomy, is_cloud, est.total_eur) {
         (_, false, _) => "allow",
         (AutonomyLevel::Strict, true, _) => "block",
