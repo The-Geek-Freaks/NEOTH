@@ -238,7 +238,9 @@ pub fn delete(conn: &Connection, source_kind: &str, source_ref: &str) -> Result<
 pub fn wipe_by_source_ref_pattern(conn: &Connection, pattern: &str) -> Result<i64> {
     let n = conn
         .execute(
-            "DELETE FROM idx_embedding WHERE source_ref LIKE ?1 COLLATE NOCASE",
+            // Caller passes an already-`escape_like`d pattern; honour the
+            // ESCAPE char so `%`/`_` match literally (GOLD-SEC-04).
+            "DELETE FROM idx_embedding WHERE source_ref COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
         )
         .context("wipe idx_embedding by source_ref pattern")?;

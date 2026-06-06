@@ -47,6 +47,11 @@ pub struct ForgetReport {
     pub longterm_rows: i64,
     pub groundtruth_revoked: i64,
     pub embedding_rows: i64,
+    /// Structured-profile claims deleted (GDPR cascade, GOLD-SEC-28 /
+    /// CR-007). Previously `forget` left `idx_profile` rows intact, so a
+    /// right-to-erasure request silently kept the operator's extracted
+    /// profile claims about the topic.
+    pub profile_rows: i64,
     pub topic: String,
 }
 
@@ -57,6 +62,7 @@ impl ForgetReport {
             + self.longterm_rows
             + self.groundtruth_revoked
             + self.embedding_rows
+            + self.profile_rows
     }
 }
 
@@ -78,28 +84,44 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
             "forget: topic must be non-empty (use `neoth memory purge` for a wholesale wipe)"
         );
     }
-    let pattern = format!("%{topic}%");
+    // Escape LIKE wildcards so a topic of `%`/`_` matches literally —
+    // otherwise `forget "%"` would wipe every row (GOLD-SEC-04 / A-08).
+    // Every LIKE below pairs the pattern with `ESCAPE '\'`.
+    let pattern = format!("%{}%", crate::memory::escape_like(topic));
 
     let episode_rows = conn
         .execute(
-            "DELETE FROM idx_episode WHERE text LIKE ?1 COLLATE NOCASE",
+            "DELETE FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
         )
         .context("delete from idx_episode")? as i64;
 
     let consolidated_rows = conn
         .execute(
-            "DELETE FROM idx_consolidated WHERE text LIKE ?1 COLLATE NOCASE",
+            "DELETE FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
         )
         .context("delete from idx_consolidated")? as i64;
 
     let longterm_rows = conn
         .execute(
-            "DELETE FROM idx_longterm WHERE text LIKE ?1 COLLATE NOCASE",
+            "DELETE FROM idx_longterm WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
             rusqlite::params![pattern],
         )
         .context("delete from idx_longterm")? as i64;
+
+    // Structured-profile claims: hard delete any claim whose field name OR
+    // value mentions the topic. GDPR right-to-erasure cascade (GOLD-SEC-28
+    // / CR-007) — `forget` previously skipped idx_profile, leaving the
+    // operator's extracted claims about the topic on disk.
+    let profile_rows = conn
+        .execute(
+            "DELETE FROM idx_profile \
+             WHERE field COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                OR value_json COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            rusqlite::params![pattern],
+        )
+        .context("delete from idx_profile")? as i64;
 
     // Ground-truth: revoke instead of delete. The row itself stays for
     // audit (operator can prove they didn't assert X after revocation),
@@ -109,7 +131,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         .execute(
             "UPDATE idx_groundtruth \
              SET revoked_at = ?1 \
-             WHERE revoked_at IS NULL AND statement LIKE ?2 COLLATE NOCASE",
+             WHERE revoked_at IS NULL AND statement COLLATE NOCASE LIKE ?2 ESCAPE '\\'",
             rusqlite::params![now_unix, pattern],
         )
         .context("revoke idx_groundtruth")? as i64;
@@ -125,6 +147,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         longterm_rows,
         groundtruth_revoked,
         embedding_rows,
+        profile_rows,
         topic: topic.to_string(),
     })
 }
@@ -207,6 +230,7 @@ pub async fn forget_by_topic_with_audit(
         "longterm_rows": report.longterm_rows,
         "groundtruth_revoked": report.groundtruth_revoked,
         "embedding_rows": report.embedding_rows,
+        "profile_rows": report.profile_rows,
         "ts_unix": now_unix,
         "source": source,
     }))
@@ -405,6 +429,55 @@ mod tests {
         let report = forget_by_topic(&conn, "NoSuchThing", 0).unwrap();
         assert_eq!(report.total(), 0);
         assert_eq!(report.topic, "NoSuchThing");
+    }
+
+    #[test]
+    fn forget_escapes_like_wildcards_no_mass_delete() {
+        // GOLD-SEC-04 / A-08: a topic of `%` must be a LITERAL, not a
+        // wildcard — otherwise it would wipe the entire memory store.
+        let conn = seed_db();
+        let report = forget_by_topic(&conn, "%", 0).unwrap();
+        assert_eq!(report.total(), 0, "`%` must match literally, not everything");
+        // The real rows are untouched.
+        let episodes: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_episode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(episodes, 2, "no episode may be deleted by a `%` topic");
+        // `_` is also escaped (would otherwise match any single char).
+        let report_underscore = forget_by_topic(&conn, "_", 0).unwrap();
+        assert_eq!(report_underscore.total(), 0);
+    }
+
+    #[test]
+    fn forget_cascades_to_idx_profile() {
+        // GOLD-SEC-28 / CR-007: structured profile claims about the topic
+        // must be erased too.
+        let conn = seed_db();
+        conn.execute(
+            "INSERT INTO idx_profile (extraction_id, event_id, field, value_json, confidence, applied_at) \
+             VALUES ('x1', 1, 'identity.employer', '\"AcmeCorp\"', 0.9, 0), \
+                    ('x2', 2, 'identity.food', '\"pizza\"', 0.9, 0)",
+            [],
+        )
+        .unwrap();
+        let report = forget_by_topic(&conn, "AcmeCorp", 0).unwrap();
+        assert_eq!(report.profile_rows, 1, "the AcmeCorp profile claim is deleted");
+        let acme: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_profile WHERE value_json LIKE '%AcmeCorp%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(acme, 0, "no AcmeCorp profile claim survives erasure");
+        let pizza: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_profile WHERE value_json LIKE '%pizza%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pizza, 1, "unrelated profile claim survives");
     }
 
     #[tokio::test]

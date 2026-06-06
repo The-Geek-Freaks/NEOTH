@@ -337,21 +337,34 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
 
     if !args.confirm {
         // Dry-run preview: COUNT matches per tier instead of DELETE.
-        let pattern = format!("%{topic}%");
+        // Escape LIKE wildcards + ESCAPE so the preview matches the real
+        // delete exactly (GOLD-SEC-04) — a `%` topic counts literal-`%`
+        // rows, not the whole store.
+        let pattern = format!("%{}%", crate::memory::escape_like(topic));
         let count = |sql: &str| -> i64 {
             conn.query_row(sql, rusqlite::params![&pattern], |r| r.get(0))
                 .unwrap_or(0)
         };
-        let ep = count("SELECT COUNT(*) FROM idx_episode WHERE text LIKE ?1 COLLATE NOCASE");
-        let co = count("SELECT COUNT(*) FROM idx_consolidated WHERE text LIKE ?1 COLLATE NOCASE");
-        let lt = count("SELECT COUNT(*) FROM idx_longterm WHERE text LIKE ?1 COLLATE NOCASE");
+        let ep =
+            count("SELECT COUNT(*) FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'");
+        let co = count(
+            "SELECT COUNT(*) FROM idx_consolidated WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        );
+        let lt =
+            count("SELECT COUNT(*) FROM idx_longterm WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'");
+        let pr = count(
+            "SELECT COUNT(*) FROM idx_profile \
+             WHERE field COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
+                OR value_json COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        );
         let gt = count(
             "SELECT COUNT(*) FROM idx_groundtruth \
-             WHERE revoked_at IS NULL AND statement LIKE ?1 COLLATE NOCASE",
+             WHERE revoked_at IS NULL AND statement COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
         );
-        let emb =
-            count("SELECT COUNT(*) FROM idx_embedding WHERE source_ref LIKE ?1 COLLATE NOCASE");
-        let total = ep + co + lt + gt + emb;
+        let emb = count(
+            "SELECT COUNT(*) FROM idx_embedding WHERE source_ref COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+        );
+        let total = ep + co + lt + pr + gt + emb;
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
                 let body = serde_json::json!({
@@ -361,6 +374,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                         "idx_episode": ep,
                         "idx_consolidated": co,
                         "idx_longterm": lt,
+                        "idx_profile": pr,
                         "idx_groundtruth_revoke": gt,
                         "idx_embedding": emb,
                         "total": total,
@@ -374,6 +388,7 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 println!("  idx_episode      : {ep} rows");
                 println!("  idx_consolidated : {co} rows");
                 println!("  idx_longterm     : {lt} rows");
+                println!("  idx_profile      : {pr} claims");
                 println!("  idx_groundtruth  : {gt} would be revoked");
                 println!("  idx_embedding    : {emb} vectors");
                 println!("  total            : {total}");

@@ -43,3 +43,33 @@ pub mod tiers;
 pub mod transfer_bundle;
 pub mod vector_index;
 pub mod views;
+
+/// Escape SQLite `LIKE` wildcards (`\`, `%`, `_`) in an untrusted string
+/// so they match literally. ALWAYS pair the bound value with
+/// `... LIKE ?n ESCAPE '\'`. Without this, an operator-supplied topic of
+/// `%` matches every row — e.g. `neoth memory forget "%"` would wipe the
+/// entire memory store, and a `_` would over-match (GOLD-SEC-04 / A-08).
+pub(crate) fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    for c in s.chars() {
+        if matches!(c, '\\' | '%' | '_') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+#[cfg(test)]
+mod escape_like_tests {
+    use super::escape_like;
+
+    #[test]
+    fn escapes_wildcards_literally() {
+        assert_eq!(escape_like("50%"), "50\\%");
+        assert_eq!(escape_like("a_b"), "a\\_b");
+        assert_eq!(escape_like("c:\\path"), "c:\\\\path");
+        assert_eq!(escape_like("plain"), "plain");
+        assert_eq!(escape_like("%"), "\\%");
+    }
+}

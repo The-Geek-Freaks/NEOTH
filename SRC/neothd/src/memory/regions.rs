@@ -191,7 +191,9 @@ pub fn recall_from_region(
     query: &str,
     limit: usize,
 ) -> Result<Vec<EpisodeHit>> {
-    let pattern = format!("%{query}%");
+    // Escape LIKE wildcards so a query of `%`/`_` matches literally
+    // (GOLD-SEC-04 / A-08); each LIKE pairs the pattern with ESCAPE '\'.
+    let pattern = format!("%{}%", crate::memory::escape_like(query));
     let limit_i = limit as i64;
     let rows = match region {
         MemoryRegion::Amygdala => {
@@ -199,7 +201,7 @@ pub fn recall_from_region(
                 "SELECT event_id, event_type, ts_ns, text, text_hash, \
                         channel, sender_id, operator_id, importance \
                  FROM idx_episode \
-                 WHERE importance >= ?1 AND text LIKE ?2 COLLATE NOCASE \
+                 WHERE importance >= ?1 AND text COLLATE NOCASE LIKE ?2 ESCAPE '\\' \
                  ORDER BY importance DESC, ts_ns DESC \
                  LIMIT ?3",
             )?;
@@ -232,7 +234,7 @@ pub fn recall_from_region(
                 "SELECT event_id, event_type, ts_ns, text, text_hash, \
                         channel, sender_id, operator_id, importance \
                  FROM idx_episode \
-                 WHERE text LIKE ?1 COLLATE NOCASE \
+                 WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\' \
                    AND event_type IN ({}) \
                  ORDER BY importance DESC, ts_ns DESC \
                  LIMIT ?{}",
