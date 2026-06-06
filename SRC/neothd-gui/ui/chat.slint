@@ -23,7 +23,7 @@ import { NeothButton, Card } from "components.slint";
 /// One message in the scrollback. Owned by the Rust side; Slint
 /// renders the list reactively.
 export struct ChatMessage {
-    role: string,        // "operator" | "neoth" | "system"
+    role: string,        // "operator" | "neoth"/"assistant" | "system" | "error"
     text: string,
     /// Display timestamp, pre-formatted by the Rust side. Keeps
     /// Slint's expression layer free of date logic.
@@ -50,12 +50,20 @@ component ChatBubble inherits Rectangle {
         padding-right: Theme.space-base;
 
         Rectangle {
+            // GOLD-SEC-31 / E-16: `error` bubbles render in the destructive
+            // accent so a failed turn is visibly distinct — the Rust side
+            // emits role "error"/"assistant"; "assistant" falls through to
+            // the NEOTH card default, "error" now has its own red arm.
             background: root.message.role == "operator"
                 ? Theme.accent-green.with-alpha(0.18)
-                : (root.message.role == "system" ? transparent : Theme.bg-card);
+                : (root.message.role == "error"
+                    ? Theme.accent-pink.with-alpha(0.18)
+                    : (root.message.role == "system" ? transparent : Theme.bg-card));
             border-color: root.message.role == "operator"
                 ? Theme.accent-green.with-alpha(0.4)
-                : (root.message.role == "system" ? transparent : Theme.border-subtle);
+                : (root.message.role == "error"
+                    ? Theme.accent-pink.with-alpha(0.55)
+                    : (root.message.role == "system" ? transparent : Theme.border-subtle));
             border-width: root.message.role == "system" ? 0px : 1px;
             border-radius: Theme.radius-card;
             max-width: root.bubble-max-width;
@@ -70,7 +78,9 @@ component ChatBubble inherits Rectangle {
                     font-size: Theme.font-size-body;
                     font-weight: root.message.role == "system" ? Theme.weight-light : Theme.weight-regular;
                     letter-spacing: Theme.letter-spacing-body;
-                    color: root.message.role == "system" ? Theme.text-muted : Theme.text-primary;
+                    color: root.message.role == "error"
+                        ? Theme.accent-pink
+                        : (root.message.role == "system" ? Theme.text-muted : Theme.text-primary);
                     wrap: word-wrap;
                 }
 

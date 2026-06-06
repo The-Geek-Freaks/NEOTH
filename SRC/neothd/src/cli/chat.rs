@@ -1207,7 +1207,24 @@ pub async fn run_chat_with(
             // hardcoded policy exactly).
             crate::council::should_convene(&prompt, &ctx, &config.council.trigger.to_policy())
         };
-        let council_enable = trigger_decision.should_convene();
+        // GOLD-SEC-32 / B-19: hard rolling-24h convene cap, enforced before
+        // convening and independent of the EUR budget gate (which is None on
+        // the local/free path). Operator-forced council bypasses it.
+        let council_home = FreedomConfig::default_neoth_home();
+        let council_now = crate::council::last_ts::now_unix() as i64;
+        let council_cap_hit = !council_force
+            && trigger_decision.should_convene()
+            && crate::council::day_counter::cap_reached(&council_home, council_now);
+        if council_cap_hit {
+            tracing::warn!(
+                cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                "council daily convene cap reached — single-provider for this turn"
+            );
+        }
+        let council_enable = trigger_decision.should_convene() && !council_cap_hit;
+        if council_enable {
+            crate::council::day_counter::record_convene(&council_home, council_now);
+        }
         if !council_force && !council_disable {
             info!(
                 decision = ?trigger_decision,
@@ -1224,7 +1241,12 @@ pub async fn run_chat_with(
         // gate over time.
         if !council_enable {
             let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(prompt.as_bytes());
-            let _ = emit_council_skip(&writer, prompt_hash_skip, trigger_decision.reason()).await;
+            let reason = if council_cap_hit {
+                "daily convene cap (rolling 24h) reached"
+            } else {
+                trigger_decision.reason()
+            };
+            let _ = emit_council_skip(&writer, prompt_hash_skip, reason).await;
         }
         // A8 / Konsens-decision #8 — MCP autoroute is now AUTO by default
         // when `mcp_servers.yaml` has ≥1 enabled server. Tri-state:

@@ -29,6 +29,7 @@
 pub mod adaptive_thresholds;
 pub mod budget;
 pub mod callosum;
+pub mod day_counter;
 pub mod dissent;
 pub mod diversity;
 pub mod eval;

@@ -3596,19 +3596,36 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 council_disabled,
                 &council_policy,
             );
-            let council_enable = council_decision.should_convene();
+            // GOLD-SEC-32 / B-19: hard rolling-24h convene cap on the channel
+            // (autonomous) path — enforced before convening and independent of
+            // the EUR budget gate, so a runaway loop can't fan out council
+            // calls without bound.
+            let council_home = FreedomConfig::default_neoth_home();
+            let council_now = crate::council::last_ts::now_unix() as i64;
+            let council_cap_hit = council_decision.should_convene()
+                && crate::council::day_counter::cap_reached(&council_home, council_now);
+            if council_cap_hit {
+                warn!(
+                    cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                    "channel council daily convene cap reached — single-provider for this turn"
+                );
+            }
+            let council_enable = council_decision.should_convene() && !council_cap_hit;
+            if council_enable {
+                crate::council::day_counter::record_convene(&council_home, council_now);
+            }
             // B-1 (Session 13) — channel-side COUNCIL_SKIP audit. Same
             // contract as the CLI path: every Skip decision lands in
             // the WAL so the operator can reconstruct why a channel
             // message was answered by the single Left hemisphere.
             if !council_enable {
                 let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
-                let _ = crate::cli::chat::emit_council_skip(
-                    &writer,
-                    prompt_hash_skip,
-                    council_decision.reason(),
-                )
-                .await;
+                let reason = if council_cap_hit {
+                    "daily convene cap (rolling 24h) reached"
+                } else {
+                    council_decision.reason()
+                };
+                let _ = crate::cli::chat::emit_council_skip(&writer, prompt_hash_skip, reason).await;
             }
             // Finding 5 (Session 13) — runtime consent re-check per channel
             // message so a mid-run `neoth consent revoke <provider>` is
