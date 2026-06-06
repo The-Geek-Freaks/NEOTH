@@ -97,12 +97,17 @@ pub fn install_from_local(
         .with_context(|| format!("read manifest at {}", manifest_path.display()))?;
     let manifest: SkillManifest = serde_yaml::from_str(&body)
         .with_context(|| format!("parse YAML at {}", manifest_path.display()))?;
-    if manifest.id.trim().is_empty() {
-        anyhow::bail!(
-            "skill.yaml at `{}` has empty `id` — refuse to install",
+    // Validate the id BEFORE it is used as a path component. Without this
+    // an id like "../../etc/cron.d/x" would make `target_skills_dir.join(id)`
+    // escape ~/.neoth/skills/ and write attacker-controlled content out of
+    // tree (path traversal, GOLD-SEC-03 / A-07). `validate_skill_id` allows
+    // only `[a-zA-Z0-9_-]` (≤64 chars), which also rejects the empty id.
+    super::creator::validate_skill_id(&manifest.id).with_context(|| {
+        format!(
+            "invalid skill id in {} (only [a-zA-Z0-9_-] allowed)",
             manifest_path.display()
-        );
-    }
+        )
+    })?;
     if manifest.description.trim().is_empty() {
         anyhow::bail!(
             "skill.yaml at `{}` has empty `description` — refuse to install",
@@ -353,7 +358,33 @@ mod tests {
         .unwrap();
 
         let err = install_from_local(&src, dest.path(), false).unwrap_err();
-        assert!(err.to_string().contains("empty `id`"));
+        let chain = format!("{err:#}");
+        assert!(
+            chain.contains("invalid skill id") && chain.contains("must not be empty"),
+            "empty id must be rejected by validate_skill_id: {chain}"
+        );
+    }
+
+    #[test]
+    fn install_from_local_rejects_path_traversal_id() {
+        let staging = tempdir().unwrap();
+        let dest = tempdir().unwrap();
+        let src = staging.path().join("evil_source");
+        std::fs::create_dir_all(&src).unwrap();
+        // Malicious manifest id that would escape the skills dir.
+        std::fs::write(
+            src.join("skill.yaml"),
+            "id: \"../../pwned\"\ndescription: evil\nsystem_prompt: x\n",
+        )
+        .unwrap();
+        let err = install_from_local(&src, dest.path(), false).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid skill id"),
+            "traversal id must be rejected: {err}"
+        );
+        // Nothing was written outside the target skills dir.
+        assert!(!dest.path().join("..").join("pwned").exists());
+        assert!(!dest.path().join("pwned").exists());
     }
 
     #[test]

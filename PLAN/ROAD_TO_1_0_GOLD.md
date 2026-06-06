@@ -68,7 +68,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 
 | Workstream | Total tasks | OPEN | DONE |
 |------------|-------------|------|------|
-| WS-A Security hardening | 35 | 31 | 4 |
+| WS-A Security hardening | 35 | 30 | 5 |
 | WS-B Honesty / truth-in-advertising | 26 | 26 | 0 |
 | WS-C Correctness / reliability | 34 | 34 | 0 |
 | WS-D Feature wiring (unwired modules) | 12 | 12 | 0 |
@@ -76,9 +76,9 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
 | WS-G Repo adoptions | 9 | 9 | 0 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **173** | **165** | **8** |
+| **TOTAL** | **173** | **164** | **9** |
 
-_Progress log: 2026-06-06 — GOLD-SEC-01/17 (neoth-relay auth + connection cap) · GOLD-SEC-02/27 (backup zip-slip + plaintext-creds opt-out)._
+_Progress log: 2026-06-06 — GOLD-SEC-01/17 (relay auth + cap) · GOLD-SEC-02/27 (backup zip-slip + creds opt-out) · GOLD-SEC-03 (skills installer id traversal)._
 
 **Verdict:** NEOTH has a strong security/crypto core (ed25519-signed WAL, consent gates, GDPR forget, PII redaction), but the surface over-promises on several fronts: migration (`apply` is a `bail!`), device-sync (memory ingest silently dropped), GUI (6 of 10 settings tabs are stubs), local TTS (deferred). Real exploitable bugs exist on operator paths: zip-slip in backup restore, path traversal in skill installer, LIKE wildcard mass-delete in GDPR forget, blocking code on async executor, and self-reported test results auto-promoting tasks. Both reviews are folded in: beta @ `35c94d2` (all A-01..A-10 still true); Roman @ `3ef9771` (14 net-new findings, CR-002 HLC is fixed, all others stand).
 
@@ -162,7 +162,7 @@ External/unauthenticated exploits first, then operator-data-loss, then defense-i
 
 - [x] **GOLD-SEC-01** Add bearer-token check at the top of `route()` in neoth-relay before dispatching any POST/GET branch, or gate public-bind with mandatory `--token` flag — *files:* `SRC/neoth-relay/src/serve.rs`, `SRC/neoth-relay/src/main.rs` — *test:* unauthenticated request to public-bind returns 401 — *origin:* A-01 — ✅ **DONE:** `route()` auth-gate (constant-time compare, checked before dispatch incl. unknown paths) + `extract_bearer` + `public_bind_requires_token` predicate + fail-closed startup bail on non-loopback bind without `--token`/`NEOTH_RELAY_TOKEN`; token never logged. 49 tests / 0 fail, clippy `-D warnings` clean.
 - [x] **GOLD-SEC-02** Before `entry.unpack(&dest)` in backup restore, canonicalize `dest` and bail if it does not start with `target_home` to prevent zip-slip path traversal — *files:* `SRC/neothd/src/daemon/backup.rs` — *test:* tar with `../../../tmp/pwned` entry is rejected — *origin:* A-06 — ✅ **DONE:** added `safe_join` (rejects `..`/absolute/root components → always contained) used for every restore entry, PLUS reject symlink/hard-link entries outright (NEOTH backups are regular files+dirs only). Tests: `safe_join_allows_normal_paths_and_rejects_escapes` + `restore_rejects_symlink_entry` (tar-rs itself refuses to write a `..` entry — write-side defense in depth). 28 backup tests / 0 fail, clippy clean.
-- [ ] **GOLD-SEC-03** Call `crate::skills::creator::validate_skill_id(&manifest.id)?` before `target_skills_dir.join(&manifest.id)` in `install_from_local` — *files:* `SRC/neothd/src/skills/installer.rs` — *test:* id of `"../etc/cron.d/x"` returns `Err` — *origin:* A-07
+- [x] **GOLD-SEC-03** Call `crate::skills::creator::validate_skill_id(&manifest.id)?` before `target_skills_dir.join(&manifest.id)` in `install_from_local` — *files:* `SRC/neothd/src/skills/installer.rs` — *test:* id of `"../etc/cron.d/x"` returns `Err` — *origin:* A-07 — ✅ **DONE:** replaced the weak empty-only check with `super::creator::validate_skill_id` (allows only `[a-zA-Z0-9_-]`, ≤64 → rejects `..`/`/`/`\`/empty) before the id becomes a path component. Tests: `install_from_local_rejects_path_traversal_id` + updated empty-id test. 13 installer tests / 0 fail, clippy clean.
 - [ ] **GOLD-SEC-04** Create `escape_like(s: &str) -> String` escaping `\`, `%`, `_` and add `ESCAPE '\\'` to every LIKE clause in `forget.rs` and `regions.rs` — *files:* `SRC/neothd/src/memory/forget.rs`, `SRC/neothd/src/memory/regions.rs` — *test:* `--forget "%"` does not delete entire memory tier — *origin:* A-08, A-44
 - [ ] **GOLD-SEC-05** Wrap `apply_patch_via_worktree` (sync, calls `std::process::Command` + `std::thread::sleep`) in `tokio::task::spawn_blocking`; replace `std::thread::sleep` with `tokio::time::sleep` inside spawn_blocking — *files:* `SRC/neothd/src/coding/dispatcher.rs` — *test:* `cargo clippy -- -D clippy::await_holding_lock` passes; `tokio::time::timeout` in tests does not deadlock — *origin:* A-05
 - [ ] **GOLD-SEC-06** Move post-recall Hebbian writes in `cli/recall.rs:239` inside `spawn_blocking` so SQLite writes never execute on async task thread — *files:* `SRC/neothd/src/cli/recall.rs` — *test:* clippy no `await_holding_lock`; recall round-trip integration test — *origin:* A-05, A-66
