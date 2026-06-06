@@ -23,6 +23,20 @@ pub const DEFAULT_BURST: f64 = 20.0;
 /// Tokens added per second of wall-clock. Lower = stricter steady-state rate.
 pub const DEFAULT_REFILL_PER_SEC: f64 = 1.0;
 
+/// Drop buckets untouched for this long — a bucket idle this long has
+/// fully refilled, so recreating it yields the identical full-burst state.
+const IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+/// Absolute hard cap on the number of buckets. An attacker who can pick
+/// arbitrary `sender_id`s (so every message mints a fresh bucket) cannot
+/// grow the limiter's own memory past this — the DoS the limiter itself
+/// must not become (GOLD-SEC-08 / A-18). Eviction only fires when the map
+/// crosses this high-watermark.
+const MAX_BUCKETS: usize = 10_000;
+/// Low-watermark eviction trims down to here in one pass, so the next
+/// sweep is ~`MAX_BUCKETS - LOW_WATER` inserts away — eviction is O(n) but
+/// amortised O(1) per `allow`, keeping the hot path cheap under a flood.
+const LOW_WATER: usize = 7_500;
+
 /// One bucket per `(channel, sender_id)` pair. Cheap to look up; the map
 /// grows linearly with active senders but never above a few hundred for
 /// a personal agent.
@@ -92,8 +106,23 @@ impl RateLimiter {
             // rather than panic the channel pipeline.
             Err(p) => p.into_inner(),
         };
-        let bucket = guard.entry(key).or_insert_with(|| Bucket::new(self.burst));
-        bucket.try_consume(self.burst, self.rate_per_sec)
+        let allowed = {
+            let bucket = guard.entry(key).or_insert_with(|| Bucket::new(self.burst));
+            bucket.try_consume(self.burst, self.rate_per_sec)
+        };
+        // Keep the bucket map bounded (GOLD-SEC-08 / A-18). Cheap no-op
+        // under normal load; only sweeps once the map is large.
+        evict_if_needed(&mut guard);
+        allowed
+    }
+
+    /// Number of live buckets — bounded by `MAX_BUCKETS`. Surfaced for
+    /// `neoth status --rate-limit` and used by the eviction test.
+    pub fn bucket_count(&self) -> usize {
+        match self.buckets.lock() {
+            Ok(g) => g.len(),
+            Err(p) => p.into_inner().len(),
+        }
     }
 
     /// How many tokens does this bucket currently hold? Surfaced by
@@ -121,6 +150,41 @@ impl RateLimiter {
 impl Default for RateLimiter {
     fn default() -> Self {
         Self::default_config()
+    }
+}
+
+/// Bound the bucket map (GOLD-SEC-08 / A-18). Runs only when the map has
+/// grown past `EVICT_TRIGGER`: first drop every bucket idle for `IDLE_TTL`
+/// (those have fully refilled — recreating is identical), then, if still
+/// over `MAX_BUCKETS` (an active flood of unique sender_ids), keep the
+/// most-recently-active `MAX_BUCKETS` and drop the rest. Memory is thus
+/// hard-capped regardless of attacker behaviour.
+fn evict_if_needed(buckets: &mut HashMap<String, Bucket>) {
+    // Cheap fast-path: the common case is a small map (a personal agent
+    // sees a few hundred senders) — return immediately until we cross the
+    // high-watermark, so `allow` stays O(1).
+    if buckets.len() <= MAX_BUCKETS {
+        return;
+    }
+    let now = Instant::now();
+    // First reclaim genuinely-idle buckets (fully refilled — recreating is
+    // identical state).
+    buckets.retain(|_, b| now.duration_since(b.last_refill) < IDLE_TTL);
+    // If an active flood of unique sender_ids is still over the cap, trim
+    // down to the low-watermark keeping the most-recently-active buckets.
+    if buckets.len() > LOW_WATER {
+        let mut by_recency: Vec<(String, Instant)> = buckets
+            .iter()
+            .map(|(k, b)| (k.clone(), b.last_refill))
+            .collect();
+        // Most-recently-active first.
+        by_recency.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+        let keep: std::collections::HashSet<String> = by_recency
+            .into_iter()
+            .take(LOW_WATER)
+            .map(|(k, _)| k)
+            .collect();
+        buckets.retain(|k, _| keep.contains(k));
     }
 }
 
@@ -191,6 +255,31 @@ mod tests {
         assert!(!rl.allow("tg", "sam"));
         rl.reset();
         assert!(rl.allow("tg", "sam"), "post-reset must replenish");
+    }
+
+    #[test]
+    fn bucket_map_is_bounded_under_unique_sender_flood() {
+        // GOLD-SEC-08 / A-18: an attacker minting a fresh sender_id per
+        // message must not grow the limiter's memory without bound.
+        let rl = RateLimiter::new(1.0, 0.0);
+        for i in 0..(MAX_BUCKETS + 2_500) {
+            rl.allow("tg", &format!("attacker-{i}"));
+        }
+        let n = rl.bucket_count();
+        assert!(
+            n <= MAX_BUCKETS,
+            "bucket map must stay <= MAX_BUCKETS ({MAX_BUCKETS}); got {n}"
+        );
+    }
+
+    #[test]
+    fn small_load_keeps_all_buckets() {
+        // Below EVICT_TRIGGER nothing is swept — normal personal-agent load.
+        let rl = RateLimiter::new(5.0, 0.0);
+        for i in 0..50 {
+            rl.allow("tg", &format!("user-{i}"));
+        }
+        assert_eq!(rl.bucket_count(), 50);
     }
 
     #[test]

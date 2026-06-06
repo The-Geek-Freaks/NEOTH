@@ -187,6 +187,14 @@ fn emit_omi_promoted(writer: &WalWriterHandle, statement: &str, confidence: f32)
 /// `Connection` is opened + used + dropped inside a `block_in_place` per batch
 /// so it never crosses the network await.
 pub async fn run_omi_ingest_task(cfg: OmiConfig, db_path: PathBuf, writer: WalWriterHandle) {
+    // GOLD-SEC-07 / A-19: re-validate the endpoint at the ingest boundary,
+    // fail-closed. The wizard/config gate runs `is_local_endpoint` too, but
+    // a hand-edited freedom.yaml (or a future loader) could slip a public
+    // host past it — never poll-GET an arbitrary host with the daemon.
+    if let Err(reason) = crate::installers::omi::is_local_endpoint(&cfg.endpoint) {
+        tracing::error!(endpoint = %cfg.endpoint, %reason, "omi: endpoint failed SC-14 local-host check — ingest disabled");
+        return;
+    }
     let client = match crate::providers::http_client::build_client() {
         Ok(c) => c,
         Err(e) => {

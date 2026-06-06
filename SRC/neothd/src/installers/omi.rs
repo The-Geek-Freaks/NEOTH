@@ -41,11 +41,14 @@ pub fn is_local_endpoint(url: &str) -> Result<(), String> {
     if url.is_empty() {
         return Err("empty endpoint".to_string());
     }
-    // Conservative substring match — the SC-14 rule is "never let
-    // a config pointing at the cloud service through". An operator
-    // who genuinely wants a different cloud endpoint must edit
-    // this constant + re-justify in PROGRESS.
     let lower = url.to_lowercase();
+    // Surface obvious scheme mistakes first.
+    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+        return Err(format!(
+            "OMI endpoint {url:?} must start with http:// or https://",
+        ));
+    }
+    // Keep the explicit cloud-host denylist for a friendly, specific error.
     if lower.contains(FORBIDDEN_CLOUD_HOSTNAME) {
         return Err(format!(
             "OMI endpoint {url:?} resolves to the cloud-managed {FORBIDDEN_CLOUD_HOSTNAME} — \
@@ -53,13 +56,60 @@ pub fn is_local_endpoint(url: &str) -> Result<(), String> {
              for self-hosting.",
         ));
     }
-    // Surface other obvious mistakes the wizard catches early.
-    if !lower.starts_with("http://") && !lower.starts_with("https://") {
+    // SC-14 / GOLD-SEC-07: real allowlist. The host must be loopback,
+    // `localhost`, or an RFC-1918 / IPv6-ULA private address — NOT just
+    // "anything except api.omi.me". This is the SSRF guard: a config that
+    // bypasses the wizard (hand-edited YAML, future loader) still cannot
+    // point the daemon's polled GET at an arbitrary public host.
+    let host =
+        extract_host(url).ok_or_else(|| format!("OMI endpoint {url:?} has no parseable host"))?;
+    if !is_local_host(&host) {
         return Err(format!(
-            "OMI endpoint {url:?} must start with http:// or https://",
+            "OMI endpoint {url:?} host {host:?} is not loopback or a private address — SC-14 \
+             requires a self-hosted LOCAL backend. Use localhost, 127.0.0.1, ::1, or a private \
+             10./172.16-31./192.168./fc00:: address. See {OMI_SELF_HOST_DOCS_URL}.",
         ));
     }
     Ok(())
+}
+
+/// Extract the host (no scheme, userinfo, or port) from a URL. Handles
+/// `scheme://user@[ipv6]:port/path`. Returns `None` when there is no host.
+fn extract_host(url: &str) -> Option<String> {
+    let after_scheme = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = after_scheme.split(['/', '?', '#']).next().unwrap_or("");
+    if authority.is_empty() {
+        return None;
+    }
+    // Strip userinfo (everything up to and including the last '@').
+    let hostport = authority.rsplit_once('@').map(|(_, h)| h).unwrap_or(authority);
+    let host = if let Some(rest) = hostport.strip_prefix('[') {
+        // Bracketed IPv6: [::1]:443 → ::1
+        rest.split(']').next().unwrap_or("").to_string()
+    } else {
+        // Strip a trailing :port (only when it is all digits).
+        match hostport.rsplit_once(':') {
+            Some((h, p)) if !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()) => h.to_string(),
+            _ => hostport.to_string(),
+        }
+    };
+    if host.is_empty() { None } else { Some(host) }
+}
+
+/// True iff `host` is `localhost`, a loopback IP, or a private
+/// (RFC-1918 v4 / fc00::/7 ULA v6) address. Non-IP hostnames other than
+/// `localhost` are rejected — they could resolve (or DNS-rebind) to a
+/// public address, defeating the SSRF guard.
+fn is_local_host(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => v4.is_loopback() || v4.is_private(),
+        // Loopback ::1 or Unique-Local-Address fc00::/7.
+        Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
 }
 
 /// Outcome of a live OMI endpoint probe. Same shape as the
@@ -176,6 +226,45 @@ mod tests {
     }
 
     #[test]
+    fn validator_rejects_arbitrary_public_host() {
+        // GOLD-SEC-07 / A-19: the old denylist accepted any host except
+        // api.omi.me. The allowlist now rejects public hosts outright.
+        assert!(is_local_endpoint("http://evil.example.com/v1/memories").is_err());
+        assert!(is_local_endpoint("https://8.8.8.8/v1/memories").is_err());
+        assert!(is_local_endpoint("http://169.254.169.254/latest/meta-data").is_err());
+    }
+
+    #[test]
+    fn validator_rejects_userinfo_smuggling() {
+        // The real host is evil.com, not localhost — must be rejected.
+        let err = is_local_endpoint("http://localhost@evil.com/v1/memories").unwrap_err();
+        assert!(err.contains("evil.com") || err.contains("not loopback"));
+    }
+
+    #[test]
+    fn validator_accepts_ipv6_loopback_and_ula() {
+        assert!(is_local_endpoint("http://[::1]:8002/").is_ok());
+        assert!(is_local_endpoint("http://[fc00::1]:8002/").is_ok());
+        // Public IPv6 is rejected.
+        assert!(is_local_endpoint("http://[2001:4860:4860::8888]:8002/").is_err());
+    }
+
+    #[test]
+    fn validator_accepts_172_16_private_range() {
+        assert!(is_local_endpoint("http://172.16.0.1:8002").is_ok());
+        // 172.32 is NOT private.
+        assert!(is_local_endpoint("http://172.32.0.1:8002").is_err());
+    }
+
+    #[test]
+    fn extract_host_strips_scheme_userinfo_port() {
+        assert_eq!(extract_host("http://127.0.0.1:8002/v1").as_deref(), Some("127.0.0.1"));
+        assert_eq!(extract_host("https://u:p@host.tld/x").as_deref(), Some("host.tld"));
+        assert_eq!(extract_host("http://[::1]:443/").as_deref(), Some("::1"));
+        assert_eq!(extract_host("http://localhost").as_deref(), Some("localhost"));
+    }
+
+    #[test]
     fn validator_rejects_non_http_scheme() {
         let err = is_local_endpoint("ws://127.0.0.1:8002").unwrap_err();
         assert!(err.contains("http"));
@@ -195,7 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn probe_loopback_closed_port_returns_port_closed_or_timeout() {
-        let outcome = probe_endpoint("http://127.0.0.1:58_999").await;
+        let outcome = probe_endpoint("http://127.0.0.1:58999").await;
         assert!(matches!(
             outcome,
             ProbeOutcome::PortClosed | ProbeOutcome::Timeout
