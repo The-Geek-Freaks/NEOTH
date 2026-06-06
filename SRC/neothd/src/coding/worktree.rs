@@ -471,6 +471,12 @@ fn write_test_log(
         Some(s) => format!("exit_status: {}", s.code().unwrap_or(-1)),
         None => "exit_status: TIMEOUT".to_string(),
     };
+    // GOLD-SEC-14 / A-33: test tooling can print tokens / paths / env, so
+    // redact stdout+stderr before persisting them to disk.
+    let stdout_lossy = String::from_utf8_lossy(stdout);
+    let stderr_lossy = String::from_utf8_lossy(stderr);
+    let stdout_red = crate::security::redact::redact_text(&stdout_lossy);
+    let stderr_red = crate::security::redact::redact_text(&stderr_lossy);
     let body = format!(
         "# NEOTH Phase 4 test-output log\n\
          # cmd: {cmd}\n\
@@ -479,20 +485,20 @@ fn write_test_log(
          # written_unix_ms: {}\n\
          \n\
          ## stdout ({} bytes)\n\n\
-         {}\n\
+         {stdout_red}\n\
          ## stderr ({} bytes)\n\n\
-         {}\n",
+         {stderr_red}\n",
         worktree.display(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
             .unwrap_or(0),
         stdout.len(),
-        String::from_utf8_lossy(stdout),
         stderr.len(),
-        String::from_utf8_lossy(stderr),
     );
-    let _ = std::fs::write(&log_path, body);
+    // Write mode-0600 (A-33): the log may still hold redaction-missed
+    // sensitive fragments; keep it owner-only rather than world-readable.
+    let _ = crate::config::credentials::write_mode_0600(&log_path, body.as_bytes());
     log_path
 }
 

@@ -203,15 +203,21 @@ pub fn compose_dream(day: &str, theme_label: &str, events: &[EventRef]) -> Dream
         let last_ts = events.iter().map(|e| e.ts_unix).max().unwrap_or(0);
         // Surface the first 2 + last event previews to give the
         // operator a quick "what was this about" anchor. Truncate
-        // each preview at 120 chars char-boundary-safe.
+        // each preview at 120 chars char-boundary-safe. GOLD-SEC-14 /
+        // A-33: redact PII/secrets BEFORE the preview is persisted into
+        // the on-disk summary (JSONL + Obsidian) — SPEC-12 redaction was
+        // previously applied only to the cloud-LLM prompt, not here.
         let mut anchors: Vec<String> = events
             .iter()
             .take(2)
-            .map(|e| truncate_safe(&e.preview, 120))
+            .map(|e| truncate_safe(&crate::security::redact::redact_text(&e.preview), 120))
             .collect();
         if events.len() > 2 {
             let last = events.last().unwrap();
-            anchors.push(format!("… {}", truncate_safe(&last.preview, 120)));
+            anchors.push(format!(
+                "… {}",
+                truncate_safe(&crate::security::redact::redact_text(&last.preview), 120)
+            ));
         }
         format!(
             "Theme `{theme_label}`: {} events between ts={} and ts={}. Anchors: {}",
