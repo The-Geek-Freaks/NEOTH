@@ -154,7 +154,9 @@ async fn run_send_now(force: bool) -> Result<()> {
     println!("outcome : {}", outcome.summary());
     if !outcome.is_sent() {
         // Non-zero exit so CI / scripts catch a failed verification.
-        std::process::exit(1);
+        // GOLD-COR-01 / A-03: QuietExit instead of process::exit so the stack
+        // unwinds and any Drop-time flushes run before the code is applied.
+        return Err(crate::QuietExit(1).into());
     }
     Ok(())
 }

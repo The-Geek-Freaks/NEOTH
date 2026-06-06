@@ -39,7 +39,20 @@ fn main() -> Result<()> {
                 .block_on(neothd::run())
         })
         .context("spawn the neothd main worker thread")?;
-    worker
+    let outcome: Result<()> = worker
         .join()
-        .map_err(|_| anyhow::anyhow!("neothd main worker thread panicked"))?
+        .map_err(|_| anyhow::anyhow!("neothd main worker thread panicked"))?;
+
+    // GOLD-COR-01 / A-03: a subcommand that wants a non-zero status code
+    // returns `QuietExit(code)` instead of calling `std::process::exit` deep in
+    // the stack. By the time we get here the worker thread has fully returned —
+    // every Drop ran (WAL flush, DB close, tokio runtime drain) — so it is now
+    // safe to translate the marker into the requested exit code without the
+    // anyhow Debug crash dump that a plain `Err` would print.
+    if let Err(e) = &outcome {
+        if let Some(neothd::QuietExit(code)) = e.downcast_ref::<neothd::QuietExit>() {
+            std::process::exit(*code);
+        }
+    }
+    outcome
 }

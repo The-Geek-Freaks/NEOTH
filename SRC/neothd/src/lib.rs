@@ -141,6 +141,30 @@ pub mod wizard;
 
 pub const BANNER: &str = "Neoth ready. Sup.";
 
+/// A CLI subcommand wants the process to exit with a non-zero status WITHOUT
+/// being treated as a crash (e.g. `neoth monitor` found alerts, `neoth doctor`
+/// found a failing check, `neoth wal verify` saw a bad signature).
+///
+/// GOLD-COR-01 / A-03: previously these sites called `std::process::exit(1)`
+/// directly. `process::exit` terminates immediately and **skips every
+/// destructor on the stack** — including the WAL writer's flush-on-Drop and
+/// open DB handles — so a status-code exit could silently drop un-fsync'd audit
+/// frames. Returning this marker instead lets the stack unwind normally (all
+/// Drop impls run, the tokio runtime drains), and only the top-level `main`
+/// frame — where nothing important is left alive — translates it back into the
+/// requested exit code. Carries no operator-facing message: the subcommand has
+/// already printed its human-readable status before returning this.
+#[derive(Debug, Clone, Copy)]
+pub struct QuietExit(pub i32);
+
+impl std::fmt::Display for QuietExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "process exiting with status {}", self.0)
+    }
+}
+
+impl std::error::Error for QuietExit {}
+
 /// Daemon entrypoint. Called by `src/main.rs` inside `#[tokio::main]`.
 /// Split from the bin so the lib target carries every module the bench
 /// harness + downstream consumers need.

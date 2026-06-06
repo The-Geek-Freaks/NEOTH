@@ -263,7 +263,10 @@ pub async fn run(mut args: MonitorArgs) -> Result<()> {
     }
 
     if has_alerts {
-        std::process::exit(1);
+        // GOLD-COR-01 / A-03: non-zero status without skipping Drop (WAL flush,
+        // DB close). The status table above is already printed; QuietExit just
+        // carries the code up to `main`.
+        return Err(crate::QuietExit(1).into());
     }
     Ok(())
 }

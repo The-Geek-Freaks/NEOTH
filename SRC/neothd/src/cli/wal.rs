@@ -226,7 +226,9 @@ fn run_proof_key(action: ProofKeyAction, output: OutputFormat) -> Result<()> {
                 eprintln!(
                     "no proof signing key yet — run `neoth wal export --sign` once to create it."
                 );
-                std::process::exit(1);
+                // GOLD-COR-01 / A-03: QuietExit instead of process::exit so the
+                // stack unwinds (Drop-time flushes run) before the code lands.
+                return Err(crate::QuietExit(1).into());
             }
         },
     }
@@ -875,7 +877,9 @@ fn run_verify_proof(
     }
 
     if !ok {
-        std::process::exit(1);
+        // GOLD-COR-01 / A-03: verify-failure status via QuietExit so the WAL
+        // reader + any open handles Drop-flush before the exit code is applied.
+        return Err(crate::QuietExit(1).into());
     }
     Ok(())
 }
@@ -1044,6 +1048,36 @@ mod tests {
             .expect("pinned-key verify of a valid signed proof must succeed");
         run_verify_proof(&out, None, OutputFormat::Json)
             .expect("self-consistent verify of a valid signed proof must succeed");
+    }
+
+    #[test]
+    fn verify_proof_bad_signature_returns_quiet_exit_not_process_exit() {
+        // GOLD-COR-01 / A-03: a failed verify must surface as a recoverable
+        // `Err(QuietExit(1))` that unwinds the stack — NOT `std::process::exit`,
+        // which would skip Drop-time WAL flushes (and could never be exercised
+        // from a test, because it would kill the test runner). Sign with key A,
+        // then pin key B → BAD SIGNATURE → ok=false.
+        let waldir = tempdir().unwrap();
+        write_segment_with_marker(waldir.path(), 1, 3);
+        let outdir = tempdir().unwrap();
+        let out = outdir.path().join("p.neoth-proof");
+        run_wal_export("100d", Some(&out), waldir.path(), false, false, OutputFormat::Json)
+            .unwrap();
+        let mut env: ProofEnvelope =
+            serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        let key_a = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        env.sign(&key_a);
+        std::fs::write(&out, serde_json::to_string_pretty(&env).unwrap()).unwrap();
+        // Pin a DIFFERENT key — the signature can't verify against it.
+        let key_b = ed25519_dalek::SigningKey::from_bytes(&[99u8; 32]);
+        let wrong_pubkey = crate::wal::signing::pubkey_b64(&key_b);
+
+        let err = run_verify_proof(&out, Some(&wrong_pubkey), OutputFormat::Json)
+            .expect_err("verify against the wrong pinned key must fail");
+        let quiet = err
+            .downcast_ref::<crate::QuietExit>()
+            .expect("a verify failure must carry QuietExit, not a generic error");
+        assert_eq!(quiet.0, 1, "verify failure exits with status 1");
     }
 
     #[test]

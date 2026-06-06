@@ -709,7 +709,9 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
     }
 
     if any_fail {
-        std::process::exit(1);
+        // GOLD-COR-01 / A-03: non-zero status via QuietExit so the stack
+        // unwinds (Drop-time flushes run) before the code reaches `main`.
+        return Err(crate::QuietExit(1).into());
     }
     Ok(())
 }
