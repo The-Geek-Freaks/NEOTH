@@ -33,6 +33,11 @@ pub enum ReviewBlocker {
     NoTestSummary,
     /// `TestSummary::all_green()` is false: zero tests OR ≥1 failing.
     TestsNotGreen,
+    /// GOLD-COR-03 / A-10: the summary is green but `applied` is false — the
+    /// counts were self-reported by the worker and never verified by a real
+    /// apply+test run. Promote only after `neoth code --apply` lands the patch
+    /// in a worktree and the configured test command passes there.
+    NotApplied,
 }
 
 impl ReviewBlocker {
@@ -41,6 +46,9 @@ impl ReviewBlocker {
             ReviewBlocker::NotInReview => "task is not in REVIEW status",
             ReviewBlocker::NoTestSummary => "worker did not attach test summary",
             ReviewBlocker::TestsNotGreen => "tests are not green (zero or failing)",
+            ReviewBlocker::NotApplied => {
+                "test result is self-reported, not verified by an apply+test run"
+            }
         }
     }
 }
@@ -59,6 +67,12 @@ pub fn check_auto_promotable(task: &KanbanTask) -> Result<(), ReviewBlocker> {
     };
     if !summary.all_green() {
         return Err(ReviewBlocker::TestsNotGreen);
+    }
+    // GOLD-COR-03 / A-10: a green-but-self-reported summary must NOT auto-promote.
+    // Only the dispatcher's real apply+test path sets `applied`; the worker's own
+    // "tests: 5/5" claim (parsed from its reply) leaves it false.
+    if !summary.applied {
+        return Err(ReviewBlocker::NotApplied);
     }
     Ok(())
 }
@@ -251,6 +265,7 @@ mod tests {
                     passing: 5,
                     failing: 0,
                     skipped: 0,
+                    applied: true,
                 }),
             );
             assert_eq!(
@@ -297,6 +312,7 @@ mod tests {
                 passing: 3,
                 failing: 2,
                 skipped: 0,
+                applied: false,
             }),
         );
         assert_eq!(
@@ -316,9 +332,35 @@ mod tests {
                 passing: 5,
                 failing: 0,
                 skipped: 0,
+                applied: true,
             }),
         );
         assert!(check_auto_promotable(&task).is_ok());
+    }
+
+    #[test]
+    fn check_rejects_green_but_self_reported_summary() {
+        // GOLD-COR-03 / A-10: an all-green summary that was NOT produced by a
+        // real apply+test run (applied=false — the worker just *claimed* it)
+        // must NOT auto-promote. This is the gate that stops a model writing
+        // "tests: 5/5 passing" into its reply from bypassing operator review.
+        let task = task_with(
+            TaskStatus::Review,
+            Hemisphere::Left,
+            Some(TestSummary {
+                added: 5,
+                total: 5,
+                passing: 5,
+                failing: 0,
+                skipped: 0,
+                applied: false,
+            }),
+        );
+        assert_eq!(
+            check_auto_promotable(&task),
+            Err(ReviewBlocker::NotApplied),
+            "self-reported green (applied=false) must block auto-promote"
+        );
     }
 
     #[test]
@@ -334,6 +376,7 @@ mod tests {
                 passing: 4,
                 failing: 0,
                 skipped: 1,
+                applied: true,
             }),
         );
         assert!(check_auto_promotable(&task).is_ok());
@@ -354,6 +397,10 @@ mod tests {
         assert_eq!(
             ReviewBlocker::TestsNotGreen.as_str(),
             "tests are not green (zero or failing)"
+        );
+        assert_eq!(
+            ReviewBlocker::NotApplied.as_str(),
+            "test result is self-reported, not verified by an apply+test run"
         );
     }
 
@@ -376,6 +423,7 @@ mod tests {
                 passing: 3,
                 failing: 0,
                 skipped: 0,
+                applied: true,
             }),
         )
         .unwrap();
@@ -435,6 +483,7 @@ mod tests {
                 passing: 1,
                 failing: 0,
                 skipped: 0,
+                applied: true,
             }),
         )
         .unwrap();
@@ -449,6 +498,7 @@ mod tests {
                 passing: 1,
                 failing: 1,
                 skipped: 0,
+                applied: false,
             }),
         )
         .unwrap();
@@ -497,6 +547,7 @@ mod tests {
                 passing: 1,
                 failing: 0,
                 skipped: 0,
+                applied: true,
             }),
         )
         .unwrap();
@@ -537,6 +588,7 @@ diff --git a/x.rs b/x.rs
                 passing: 1,
                 failing: 0,
                 skipped: 0,
+                applied: true,
             }),
         )
         .unwrap();
@@ -568,6 +620,7 @@ diff --git a/x.rs b/x.rs
                 passing: 1,
                 failing: 0,
                 skipped: 0,
+                applied: true,
             }),
         )
         .unwrap();

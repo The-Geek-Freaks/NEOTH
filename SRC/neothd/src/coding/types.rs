@@ -148,6 +148,16 @@ pub struct TestSummary {
     pub passing: u32,
     pub failing: u32,
     pub skipped: u32,
+    /// GOLD-COR-03 / A-10: `true` only when these counts were produced by the
+    /// dispatcher's real apply+test path (patch landed in a git worktree AND a
+    /// configured `test_cmd` ran there). A worker's *self-reported* summary —
+    /// the one parsed out of its reply text without any verification — stays
+    /// `false`. `check_auto_promotable` requires `applied` so an unverified
+    /// "all green" claim can never bypass the operator-review gate into DONE.
+    /// `#[serde(default)]` keeps pre-existing JSON rows (no key) deserialising
+    /// to `false` — i.e. treated as unverified, the safe default.
+    #[serde(default)]
+    pub applied: bool,
 }
 
 impl TestSummary {
@@ -157,6 +167,7 @@ impl TestSummary {
         passing: 0,
         failing: 0,
         skipped: 0,
+        applied: false,
     };
 
     /// All declared tests pass + at least one ran. Used by the
@@ -343,6 +354,7 @@ mod tests {
                 passing: 5,
                 failing: 0,
                 skipped: 0,
+                applied: false,
             }
             .all_green()
         );
@@ -353,6 +365,7 @@ mod tests {
                 passing: 4,
                 failing: 1,
                 skipped: 0,
+                applied: false,
             }
             .all_green()
         );
@@ -364,6 +377,7 @@ mod tests {
                 passing: 4,
                 failing: 0,
                 skipped: 1,
+                applied: false,
             }
             .all_green()
         );

@@ -171,6 +171,7 @@ mod tests {
                 passing: 3,
                 failing: 0,
                 skipped: 0,
+                applied: false,
             },
             summary: "added 3 regression tests".into(),
         };

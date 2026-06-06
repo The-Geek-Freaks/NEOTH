@@ -26,7 +26,9 @@ use tracing::{info, warn};
 
 use crate::coding::retry::WorkerRetryPolicy;
 use crate::coding::store;
-use crate::coding::types::{Hemisphere, KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus};
+use crate::coding::types::{
+    Hemisphere, KanbanSessionId, KanbanTask, KanbanTaskId, TaskStatus, TestSummary,
+};
 use crate::coding::worker::{Worker, WorkerOutcome};
 use crate::security::redact::sanitize_tool_output;
 
@@ -446,6 +448,29 @@ pub async fn dispatch_session_with_apply(
                             outcome.tasks_completed += 1;
                             retry_policy.reset(task.task_id);
                             patch_spiral.record(task.task_id, true);
+                            // GOLD-COR-03 / A-10: the patch really landed in a
+                            // worktree and — when a test command was configured —
+                            // its suite ran green there. Re-attach the summary with
+                            // `applied = true` so `check_auto_promotable` will let
+                            // the operator promote REVIEW → DONE. Without a
+                            // `test_cmd` no suite ran, so the verified-claim stays
+                            // false (apply alone is not test evidence).
+                            let verified = TestSummary {
+                                applied: cfg.test_cmd.is_some(),
+                                ..o.tests
+                            };
+                            if let Err(e) = store::attach_task_artifact(
+                                conn,
+                                task.task_id,
+                                Some(&o.patch_path),
+                                Some(verified),
+                            ) {
+                                warn!(
+                                    task_id = task.task_id.raw(),
+                                    error = %e,
+                                    "could not mark task test summary as applied"
+                                );
+                            }
                         }
                         Err(diagnosis) => {
                             patch_spiral.record(task.task_id, false);
@@ -1238,7 +1263,6 @@ fn recent_output_refs(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::coding::types::TestSummary;
     use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -1312,6 +1336,7 @@ mod tests {
                 passing: 1,
                 failing: 0,
                 skipped: 0,
+                applied: false,
             },
             summary: "ok".into(),
         }
@@ -1659,6 +1684,7 @@ mod tests {
                 passing: 1,
                 failing: 0,
                 skipped: 0,
+                applied: false,
             },
             summary: "applied".into(),
         }

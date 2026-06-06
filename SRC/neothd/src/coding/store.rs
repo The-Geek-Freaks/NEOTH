@@ -824,6 +824,7 @@ mod tests {
             passing: 5,
             failing: 0,
             skipped: 0,
+            applied: false,
         };
 
         attach_task_artifact(&conn, t, Some(&patch), Some(summary)).expect("attach");

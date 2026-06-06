@@ -211,6 +211,7 @@ mod tests {
                     passing: 1,
                     failing: 0,
                     skipped: 0,
+                    applied: false,
                 },
                 summary: "mock worker did the work".into(),
             })
@@ -364,6 +365,7 @@ mod tests {
                     passing: 1,
                     failing: 0,
                     skipped: 0,
+                    applied: false,
                 },
                 summary: "probe".into(),
             })
