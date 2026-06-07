@@ -29,6 +29,46 @@ use chrono::{DateTime, Utc};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+/// Process-wide serialization of archive appends.
+///
+/// COR-29: appends used a `path.exists()` check followed by a *separate*
+/// `OpenOptions::create(true)` open — a TOCTOU window where two concurrent
+/// first-writers could each see "no file", both emit the YAML frontmatter, and
+/// duplicate it (or interleave a turn into the middle of another writer's
+/// block). Archive writes are tiny and infrequent (one per chat turn), so a
+/// single global async mutex held across the create-or-append + write + fsync
+/// makes the whole sequence atomic. Combined with `create_new(true)` below the
+/// first writer is unambiguous and its frontmatter+block lands before any
+/// other turn — frontmatter exactly once, at the top, no lost turns.
+static ARCHIVE_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// Sanitize a session id to the safe filesystem character set `[A-Za-z0-9_-]`.
+///
+/// COR-29: the session id flows straight into the archive filename. Without
+/// this a crafted id such as `../../../etc/cron.d/neoth` would escape the
+/// archive root (path traversal). Every character outside the allowlist becomes
+/// `_`; a fully stripped id falls back to `_` so the filename stem is never
+/// empty. Deterministic, so the same id always maps to the same file.
+fn sanitize_session_id(raw: &str) -> String {
+    // Strip optional UUID braces first (legacy: some callers stringify with them).
+    let trimmed = raw.trim_matches(|c| c == '{' || c == '}');
+    let cleaned: String = trimmed
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if cleaned.is_empty() {
+        "_".to_string()
+    } else {
+        cleaned
+    }
+}
+
 /// Default archive root under `~/.neoth/archive/`.
 pub fn default_archive_root() -> PathBuf {
     let home = std::env::var("HOME")
@@ -67,8 +107,9 @@ impl SessionArchive {
     pub fn file_path(&self) -> PathBuf {
         let day = self.opened_at.format("%Y-%m-%d").to_string();
         let time = self.opened_at.format("%H%M%S").to_string();
-        // Trim braces if a UUID was stringified with them (rare but cheap).
-        let id = self.session_id.trim_matches(|c| c == '{' || c == '}');
+        // Sanitize to [A-Za-z0-9_-] so a crafted session id cannot escape the
+        // archive root via path traversal (COR-29).
+        let id = sanitize_session_id(&self.session_id);
         let stem = format!("{time}-{id}.md");
         self.root.join("sessions").join(day).join(stem)
     }
@@ -92,15 +133,46 @@ impl SessionArchive {
                 .with_context(|| format!("create archive dir {}", parent.display()))?;
         }
 
-        let header_if_new = if path.exists() {
-            String::new()
-        } else {
+        // Serialize the create-or-append decision + write + fsync so concurrent
+        // first-writers can't duplicate the frontmatter or interleave turns
+        // (COR-29). The guard spans the whole sequence; archive writes are tiny.
+        let _write_guard = ARCHIVE_WRITE_LOCK.lock().await;
+
+        // `create_new(true)` atomically claims first-writer status (O_EXCL):
+        // exactly one open succeeds when the file is absent, closing the TOCTOU
+        // window the old `path.exists()` + `create(true)` pair left open. Both
+        // handles are append-mode so every write goes to EOF (no overwrite of a
+        // concurrent writer's bytes, no mid-file frontmatter).
+        let (mut f, is_new) = match fs::OpenOptions::new()
+            .create_new(true)
+            .append(true)
+            .open(&path)
+            .await
+        {
+            Ok(file) => (file, true),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let file = fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .await
+                    .with_context(|| format!("open archive file {}", path.display()))?;
+                (file, false)
+            }
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("create archive file {}", path.display()));
+            }
+        };
+
+        let header_if_new = if is_new {
             format!(
                 "---\nsession: {}\nopened: {}\n---\n\n# Session {}\n\n",
                 self.session_id,
                 self.opened_at.format("%Y-%m-%d %H:%M:%S UTC"),
                 self.session_id,
             )
+        } else {
+            String::new()
         };
 
         let block = format!(
@@ -111,12 +183,6 @@ impl SessionArchive {
             neoth_reply.trim_end(),
         );
 
-        let mut f = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-            .await
-            .with_context(|| format!("open archive file {}", path.display()))?;
         f.write_all(block.as_bytes())
             .await
             .with_context(|| format!("write turn to {}", path.display()))?;
@@ -228,5 +294,60 @@ mod tests {
         // Sort is alphabetical; "090000-a.md" < "100000-b.md".
         assert!(files[0].to_string_lossy().contains("090000-a.md"));
         assert!(files[1].to_string_lossy().contains("100000-b.md"));
+    }
+
+    #[test]
+    fn sanitize_session_id_strips_traversal_and_keeps_safe_chars() {
+        // COR-29: traversal + odd chars collapse to `_`; the result can never
+        // contain a path separator or `.`, so it cannot escape the archive root.
+        let s = sanitize_session_id("../../../etc/cron");
+        assert!(!s.contains('/'), "no path separator: {s}");
+        assert!(!s.contains('.'), "no dot (blocks ..): {s}");
+        assert!(s.ends_with("etc_cron"), "got: {s}");
+        // Safe ids (incl. brace-wrapped UUIDs) pass through unchanged.
+        assert_eq!(sanitize_session_id("{abc-123_XY}"), "abc-123_XY");
+        assert_eq!(sanitize_session_id("a b.c:d"), "a_b_c_d");
+        // Empty input falls back to a single `_`; non-empty all-illegal input
+        // maps char-for-char to `_` (still a valid, non-traversal stem).
+        assert_eq!(sanitize_session_id(""), "_");
+        assert_eq!(sanitize_session_id("///"), "___");
+    }
+
+    #[tokio::test]
+    async fn concurrent_archive_writes_do_not_race() {
+        // COR-29: many concurrent first-writers on the same archive must emit
+        // the frontmatter exactly once, keep it at the top, and lose no turn.
+        // The old exists()+create TOCTOU could duplicate the frontmatter.
+        let dir = tempdir().unwrap();
+        let opened = Utc.with_ymd_and_hms(2026, 5, 14, 9, 34, 12).unwrap();
+        let sa = SessionArchive::new(dir.path().to_path_buf(), "race-test", opened);
+
+        let mut handles = Vec::new();
+        for i in 0..8u32 {
+            let sa = sa.clone();
+            handles.push(tokio::spawn(async move {
+                sa.append_turn(&format!("op-{i}"), &format!("reply-{i}"), opened)
+                    .await
+                    .expect("concurrent append must succeed");
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        let body = fs::read_to_string(sa.file_path()).await.unwrap();
+        assert_eq!(
+            body.matches("---\nsession: race-test").count(),
+            1,
+            "frontmatter must appear exactly once:\n{body}"
+        );
+        assert!(
+            body.starts_with("---\nsession: race-test"),
+            "frontmatter must be at the top:\n{body}"
+        );
+        for i in 0..8u32 {
+            assert!(body.contains(&format!("op-{i}")), "missing turn op-{i}");
+            assert!(body.contains(&format!("reply-{i}")), "missing reply-{i}");
+        }
     }
 }
