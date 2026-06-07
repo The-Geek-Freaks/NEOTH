@@ -2417,6 +2417,21 @@ async fn resolve_prompt(args: &ChatArgs) -> Result<String> {
 /// `CouncilDebate` outcome whose `winning_text()` becomes the response
 /// when the verdict is `Consensus`; `Split` and `QuorumFailed` are
 /// rendered as operator-visible diagnostic text in the caller.
+/// GOLD-COR-09 / A-14: sum per-hemisphere token usage across a (sub-)council's
+/// responses. Returns `None` for a dimension when NO hemisphere reported it
+/// (preserving the "unknown" signal — never fabricating a 0), and `Some(sum)`
+/// when at least one did. Used so a council-backed hemisphere threads its
+/// sub-council's real burn upward instead of discarding it as `None`.
+fn sum_council_tokens(
+    responses: &[crate::council::types::HemisphereResponse],
+) -> (Option<u32>, Option<u32>) {
+    let any_in = responses.iter().any(|r| r.input_tokens.is_some());
+    let any_out = responses.iter().any(|r| r.output_tokens.is_some());
+    let input = any_in.then(|| responses.iter().filter_map(|r| r.input_tokens).sum());
+    let output = any_out.then(|| responses.iter().filter_map(|r| r.output_tokens).sum());
+    (input, output)
+}
+
 /// Wrapper that adapts a `Box<dyn Provider>` into the council's
 /// `HemisphereProvider` trait. Lifted out of `run_council_debate` so
 /// the Split-recovery path (A5 callosum::resolve) can reuse the same
@@ -2649,11 +2664,15 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         // Split → pick the first usable hemisphere's text (deterministic).
         // QuorumFailed → bubble up an error string the outer council
         //   sees as a hemisphere error (not panic).
+        // GOLD-COR-09 / A-14: carry the sub-council's aggregated token usage up
+        // instead of dropping it as None, so a council-backed hemisphere's burn
+        // surfaces in `neoth chat`'s token count + the usage log.
+        let (input_tokens, output_tokens) = sum_council_tokens(&inner.responses);
         if let Some(t) = inner.winning_text() {
             return Ok(crate::council::orchestrator::CompletionRecord {
                 text: t.to_string(),
-                input_tokens: None,
-                output_tokens: None,
+                input_tokens,
+                output_tokens,
             });
         }
         if let Some(usable) = inner.usable_responses().next()
@@ -2661,8 +2680,8 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         {
             return Ok(crate::council::orchestrator::CompletionRecord {
                 text: text.to_string(),
-                input_tokens: None,
-                output_tokens: None,
+                input_tokens,
+                output_tokens,
             });
         }
         Err(format!(
@@ -4980,6 +4999,29 @@ mod tests {
             output_tokens: None,
             refusal: None,
         }
+    }
+
+    #[test]
+    fn sum_council_tokens_aggregates_and_preserves_unknown() {
+        // GOLD-COR-09 / A-14: a council-backed hemisphere must thread the
+        // sub-council's real token burn up, summed across the hemispheres that
+        // reported, and stay None (never a fabricated 0) when none reported.
+        use crate::config::inference::HemisphereRole;
+        let mk = |inp: Option<u32>, out: Option<u32>| crate::council::HemisphereResponse {
+            role: HemisphereRole::Left,
+            provider: "p".into(),
+            text: Some("t".into()),
+            error: None,
+            latency_ms: 1,
+            input_tokens: inp,
+            output_tokens: out,
+            refusal: None,
+        };
+        let mixed = vec![mk(Some(10), Some(3)), mk(None, None), mk(Some(5), Some(2))];
+        assert_eq!(sum_council_tokens(&mixed), (Some(15), Some(5)));
+        let none = vec![mk(None, None), mk(None, None)];
+        assert_eq!(sum_council_tokens(&none), (None, None));
+        assert_eq!(sum_council_tokens(&[]), (None, None));
     }
 
     #[test]
