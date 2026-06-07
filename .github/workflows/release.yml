@@ -117,18 +117,26 @@ jobs:
       # time. `neoth release setup` sets this repo VARIABLE automatically via
       # `gh variable set` — nothing to edit here. Empty until setup runs (then
       # the self-updater simply has no pinned key yet, which is the safe default).
-      # PC-01 clipboard (feature `os-clipboard`) ships on the NATIVE desktop
-      # targets only — where `arboard`'s x11rb/wl-clipboard-rs (Linux) / native
-      # (macOS/Windows) backends build cleanly. The cross targets below (musl,
-      # aarch64-linux) deliberately OMIT it: those are headless server/embedded
-      # builds where a clipboard is moot and cross-compiling a display backend is
-      # fragile. Runtime is still gated by `tools.os.clipboard.*` (default off).
+      # Native desktop targets ship two extra features that the headless cross
+      # targets below (musl, aarch64-linux) deliberately OMIT — same native-only
+      # rationale for both:
+      #   * `os-clipboard` (PC-01) — `arboard`'s x11rb/wl-clipboard-rs (Linux) /
+      #     native (macOS/Windows) backends build cleanly on a native runner; a
+      #     clipboard is moot on a headless server and cross-compiling a display
+      #     backend is fragile. Runtime gated by `tools.os.clipboard.*` (off by default).
+      #   * `wasm-plugin-host` (V10-04, GOLD-HON-15) — bundles the wasmtime/cranelift
+      #     WASM runtime so the desktop release binaries carry the plugin sandbox
+      #     (per the "features default-ON in release binaries" rule). The cross
+      #     server/embedded targets omit it (wasmtime cross-compile is fragile +
+      #     plugins are a desktop surface). Runtime gated by `plugins.*` + the
+      #     default-inactive `neoth plugin enable` flow; source builds opt in via
+      #     `--features wasm-plugin-host`.
       - name: Build (native)
         if: "!matrix.use_cross"
         working-directory: SRC/neothd
         env:
           NEOTH_RELEASE_MINISIGN_PUBKEY: ${{ vars.NEOTH_RELEASE_MINISIGN_PUBKEY }}
-        run: cargo build --release --features os-clipboard --target ${{ matrix.target }}
+        run: cargo build --release --features os-clipboard,wasm-plugin-host --target ${{ matrix.target }}
 
       - name: Build (cross)
         if: matrix.use_cross

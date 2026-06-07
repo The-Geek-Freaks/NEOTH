@@ -19,9 +19,11 @@ wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
 # `.wasm` plugins with fuel + memory caps.
 #
 # Build-time default OFF here so contributor `cargo build` stays fast.
-# Shipped release binaries flip it ON via cargo-dist's release-args
-# (see `release.yml`) — operators downloading the tarball get the
-# feature. Per memory rule `neoth-features-default-on-runtime-toggle`,
+# Shipped release binaries flip it ON in the native build step of
+# `release.yml` (`cargo build --release --features os-clipboard,wasm-plugin-host`,
+# GOLD-HON-15) — operators downloading a desktop tarball get the feature;
+# the headless cross targets (musl / aarch64-linux) omit it. Per memory
+# rule `neoth-features-default-on-runtime-toggle`,
 # the actual runtime behaviour is gated by
 # `freedom.yaml::plugins.wasm.enabled` (default `true` on builds that
 # include the feature). Operator toggles via the wizard / GUI, never

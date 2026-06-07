@@ -301,10 +301,14 @@ system, private mesh, and inspectable operator runtime in one product.
 NEOTH is pre-1.0, so this table is honest about what is not finished: **Private mesh**
 is **Partial** — node discovery, Tailscale/mDNS pairing, the consent gate, and transport
 config ship today, but live cross-device memory sync (tracked as SL-01) is still in
-progress. **Built for DAUs and pros** is the explicit design **goal**, not a finished
-claim — it is the hard bet NEOTH is making, and the single thing most worth holding it
-accountable to. Everything marked **Yes** is implemented and exercised by tests; the live
-status of every line item is in [PLAN/PROGRESS_v1_0.md](PLAN/PROGRESS_v1_0.md).
+progress. The **WASM plugin capability sandbox** (V10-04) ships in the native desktop
+release binaries and is exercised by tests, but it is **feature-gated** (`wasm-plugin-host`)
+— source builds opt in, and the headless cross-compiled server targets (musl /
+aarch64-linux) omit it, the same native-only treatment as the OS clipboard. **Built for
+DAUs and pros** is the explicit design **goal**, not a finished claim — it is the hard bet
+NEOTH is making, and the single thing most worth holding it accountable to. Everything
+marked **Yes** is implemented and exercised by tests; the live status of every line item is
+in [PLAN/PROGRESS_v1_0.md](PLAN/PROGRESS_v1_0.md).
 
 Read the detailed migration pages:
 
