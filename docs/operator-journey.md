@@ -38,6 +38,14 @@ After the wizard, `neoth chat` is interactive. The first session prints a one-li
 **"I remember N things from last time"** signal so you know the memory layer is live, and a
 short first-tour banner.
 
+> **💶 Two cost paths — know which one you're on.** NEOTH runs at one of two price points.
+> **(A) Fully local:** `local_qwen` on your own hardware is **~0 EUR/month** — electricity
+> only, no key, no network, no per-token bill, council or not. **(B) Subscription / metered:**
+> `claude_cli` rides your existing Claude subscription (a **flat monthly floor**, no per-token
+> charge); the `*_api` providers (`anthropic_api`, `openai_api`, `gemini_api`, `cohere_api`)
+> bill **per token**. NEOTH never silently moves you from (A) to (B) — a metered call is
+> flagged ⚠ in the wizard and confirmed before each turn at `Standard`/`Strict` autonomy.
+
 > If anything looks off, `neoth doctor` runs a health sweep and `neoth status` shows what the
 > daemon is doing right now.
 
@@ -107,6 +115,14 @@ Everything NEOTH does is in the audit log from minute one: `neoth wal show` (and
 - **Tools.** `neoth fetch` (SSRF-guarded URL fetch), `neoth search`, `neoth arxiv`,
   `neoth todo` (Todoist), `neoth paperless` (document OCR → Obsidian ground-truth),
   `neoth models` (auto-discovers new model versions so you never hand-patch a model id).
+- **Mind the council multiplier** (ties back to the two cost paths in §1). A multi-provider
+  council fans each turn out to `3^depth` provider calls (depth 1 = 3, depth 2 = 9, …).
+  On **path (A) fully local** that is just more CPU/GPU time — still ~0 EUR. On a
+  **subscription** (`claude_cli`) it stays a flat monthly floor: depth costs latency and
+  rate-limit budget, not euros. On a **metered** provider (`*_api`) depth multiplies the
+  per-token bill in lockstep. `freedom.yaml::inference.council_depth` is the dial, and
+  `neoth cost` shows the running spend — deep councils on a metered provider are the one
+  setting most worth watching.
 
 ---
 
