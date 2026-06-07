@@ -1,17 +1,27 @@
 //! Q-01 (Session 24) — Anthropic claude-plugins-official `plugin.json`
 //! schema parser.
 //!
+//! **Status: parser-only — NOT active at runtime (GOLD-HON-07 / B-11).**
+//! This module is compiled and unit-tested, but the running daemon never
+//! calls into it: there is no boot path that discovers, parses, or
+//! registers Claude-Code `plugin.json` plugins yet. `lib.rs` is the only
+//! reference to it. It exists so the eventual discovery+registration
+//! slice (and any external tooling) has one typed parser to depend on
+//! instead of re-implementing the JSON shape — until that slice lands,
+//! dropping a Claude-Code plugin into `~/.neoth` has **no runtime effect**.
+//!
 //! NEOTH's `wasm_plugin` module handles the WASM sandbox manifest
 //! shipped in `plugin.toml`. THIS module handles the WIDER
 //! Claude-Code-ecosystem `plugin.json` format that bundles slash
 //! commands, sub-agent definitions, skills, MCP server configs, and
 //! TOML hooks in a single discoverable plugin directory.
 //!
-//! The two coexist: a NEOTH-native WASM plugin is `plugin.toml` →
-//! `wasm_plugin::manifest::PluginManifest`. A Claude Code plugin
+//! The two coexist by design: a NEOTH-native WASM plugin is `plugin.toml`
+//! → `wasm_plugin::manifest::PluginManifest`. A Claude Code plugin
 //! imported from the public ecosystem (e.g. anthropics/claude-code
-//! plugins repo) is `plugin.json` → [`ClaudePluginManifest`]. The
-//! ingest pipeline picks the right parser based on the filename.
+//! plugins repo) is `plugin.json` → [`ClaudePluginManifest`]. When the
+//! ingest slice ships it will pick the right parser by filename — today
+//! no such ingest path exists (see Status above).
 //!
 //! ## On-disk shape (Anthropic convention)
 //!
