@@ -267,16 +267,9 @@ pub fn audit_posture(cfg: &FreedomConfig, creds: &Credentials) -> Vec<PrivacyFin
     let mut out = Vec::new();
 
     // ── Provider ──────────────────────────────────────────────────────
-    // ProviderKind serialises snake_case via serde — pull the wire
-    // form by round-tripping. No `as_str()` impl, but serde gives
-    // us the canonical id.
-    let provider_owned = cfg
-        .provider_kind
-        .as_ref()
-        .and_then(|p| serde_json::to_string(p).ok())
-        .map(|s| s.trim_matches('"').to_string())
-        .unwrap_or_else(|| "local_qwen".to_string());
-    let provider = provider_owned.as_str();
+    // COR-13: ProviderKind::as_str() is the canonical wire slug (== serde),
+    // replacing the prior serde_json round-trip workaround.
+    let provider = cfg.provider_kind.map(|p| p.as_str()).unwrap_or("local_qwen");
     let cloud_provider = !crate::providers::is_local_provider(provider);
     out.push(PrivacyFinding {
         category: "provider",

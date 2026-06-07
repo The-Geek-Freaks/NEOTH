@@ -217,26 +217,13 @@ pub fn build_preview(job: &crate::cron::schema::Job) -> Result<JobPreview> {
     // for a freshly-installed operator who hasn't configured a
     // provider yet — keeps the preview informative instead of
     // erroring out.
+    // COR-13: canonical provider-id (Skip/None -> "none"); feeds
+    // cost::predict + the is_cloud verdict below identically to the old
+    // inline match (which had "unconfigured" for Skip).
     let provider = cfg
         .provider_kind
-        .map(|k| {
-            use crate::cli::init::ProviderKind;
-            match k {
-                ProviderKind::ClaudeCli => "claude_cli",
-                ProviderKind::OpenaiApi => "openai_api",
-                ProviderKind::AnthropicApi => "anthropic_api",
-                ProviderKind::GeminiApi => "gemini_api",
-                ProviderKind::Cohere => "cohere_api",
-                ProviderKind::OpenaiCompat => "openai_compat",
-                ProviderKind::LocalQwen => "local_qwen",
-                ProviderKind::LocalOuro => "local_ouro",
-                ProviderKind::AwsBedrock => "aws_bedrock",
-                ProviderKind::AzureOpenAi => "azure_openai",
-                ProviderKind::Skip => "unconfigured",
-            }
-            .to_string()
-        })
-        .unwrap_or_else(|| "unconfigured".to_string());
+        .map(|k| k.as_provider_id().to_string())
+        .unwrap_or_else(|| "none".to_string());
     let model = cfg
         .provider_model
         .clone()

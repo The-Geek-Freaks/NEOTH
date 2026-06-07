@@ -51,9 +51,107 @@ pub enum ProviderKind {
     /// Azure OpenAI Service (C-4 Session 13). Stub variant: Phase 1
     /// ships the surface + consent gate; Phase 2 ships the api-version
     /// + deployment-as-model adapter.
+    ///
+    /// COR-13: the variant is spelled `AzureOpenAi` (two Pascal words
+    /// `Open` + `Ai`), so the default `rename_all = "snake_case"` would
+    /// emit `azure_open_ai` — diverging from the canonical `azure_openai`
+    /// used by `consent::slug`, the cost price table, `InferenceProvider`,
+    /// and the `learn_provider` error message. Pin both the serde wire
+    /// form and the clap value to `azure_openai`; accept the legacy
+    /// `azure_open_ai` as an alias so any older config still loads.
+    #[serde(rename = "azure_openai", alias = "azure_open_ai")]
+    #[value(name = "azure_openai", alias = "azure_open_ai")]
     AzureOpenAi,
     /// No provider yet; configure later via `neoth provider add`.
     Skip,
+}
+
+impl ProviderKind {
+    /// Canonical machine slug — identical to the serde/clap wire form for
+    /// every variant (`#[serde(rename_all = "snake_case")]` plus the
+    /// `AzureOpenAi` override). Use this for display, logs, and any place
+    /// that needs the persisted provider id. `Skip => "skip"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ProviderKind::ClaudeCli => "claude_cli",
+            ProviderKind::OpenaiApi => "openai_api",
+            ProviderKind::AnthropicApi => "anthropic_api",
+            ProviderKind::GeminiApi => "gemini_api",
+            ProviderKind::Cohere => "cohere",
+            ProviderKind::OpenaiCompat => "openai_compat",
+            ProviderKind::LocalQwen => "local_qwen",
+            ProviderKind::LocalOuro => "local_ouro",
+            ProviderKind::AwsBedrock => "aws_bedrock",
+            ProviderKind::AzureOpenAi => "azure_openai",
+            ProviderKind::Skip => "skip",
+        }
+    }
+
+    /// Provider-id string for the status / cost-estimation surface
+    /// (`cost::predict` price-table key, `consent::kind_from_slug` lookup,
+    /// job/serve provider field). Differs from [`Self::as_str`] in two
+    /// spots: `Cohere => "cohere_api"` (the metered price-table + consent
+    /// slug key) and `Skip => "none"` — the single canonical token that
+    /// replaced the old three-way drift (`"unconfigured"` in jobs,
+    /// `"unknown"` in serve, `"(none)"` in the wizard summary). All three
+    /// fed `cost::predict` (returns the unknown-estimate for any
+    /// unrecognised key) or a tracing field, and `kind_from_slug("none")`
+    /// is `None` just like the old values — so cloud-gating is unchanged.
+    pub fn as_provider_id(self) -> &'static str {
+        match self {
+            ProviderKind::Cohere => "cohere_api",
+            ProviderKind::Skip => "none",
+            other => other.as_str(),
+        }
+    }
+
+    /// Models-catalog provider key (`crate::models::catalog`). `None` for
+    /// kinds with no model-discovery source today (Cohere, LocalQwen,
+    /// LocalOuro, AzureOpenAi, Skip) → caller falls back to bundled
+    /// defaults. `ClaudeCli` + `AnthropicApi` share the `anthropic_api`
+    /// catalog source.
+    pub fn catalog_key(self) -> Option<&'static str> {
+        Some(match self {
+            ProviderKind::ClaudeCli => "anthropic_api",
+            ProviderKind::AnthropicApi => "anthropic_api",
+            ProviderKind::OpenaiApi => "openai_api",
+            ProviderKind::OpenaiCompat => "openai_compat",
+            ProviderKind::GeminiApi => "gemini_api",
+            ProviderKind::AwsBedrock => "aws_bedrock",
+            ProviderKind::LocalQwen
+            | ProviderKind::LocalOuro
+            | ProviderKind::AzureOpenAi
+            | ProviderKind::Cohere
+            | ProviderKind::Skip => return None,
+        })
+    }
+
+    /// Translate the wizard step-5 choice into the typed
+    /// [`crate::config::inference::InferenceProvider`]. `Skip` maps to
+    /// `ClaudeCli` (unreachable in practice — a Skip config never reaches
+    /// inference dispatch).
+    pub fn to_inference(self) -> crate::config::inference::InferenceProvider {
+        use crate::config::inference::InferenceProvider as I;
+        match self {
+            ProviderKind::ClaudeCli => I::ClaudeCli,
+            ProviderKind::OpenaiApi => I::OpenAi,
+            ProviderKind::AnthropicApi => I::AnthropicApi,
+            ProviderKind::OpenaiCompat => I::OpenAiCompat,
+            ProviderKind::GeminiApi => I::Gemini,
+            ProviderKind::Cohere => I::Cohere,
+            ProviderKind::LocalQwen => I::LocalQwen,
+            ProviderKind::LocalOuro => I::LocalOuro,
+            ProviderKind::AwsBedrock => I::AwsBedrock,
+            ProviderKind::AzureOpenAi => I::AzureOpenAi,
+            ProviderKind::Skip => I::ClaudeCli, // unreachable in practice
+        }
+    }
+}
+
+impl std::fmt::Display for ProviderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Operator role. Free-form string fallback covered by `Custom(String)` is
@@ -1753,7 +1851,7 @@ fn step5b_inference_topology(
     // Mirror the operator's step-5 provider choice into default_slot so the
     // common single-mode case round-trips without re-asking the operator.
     state.inference.default_slot = HemisphereSlot {
-        provider: state.provider_kind.map(provider_kind_to_inference),
+        provider: state.provider_kind.map(|k| k.to_inference()),
         model: state.provider_model.clone(),
         key: state.provider_key.clone(),
         endpoint: state.provider_endpoint.clone(),
@@ -2286,26 +2384,6 @@ fn default_model_for(
     }
 }
 
-/// Map a wizard `ProviderKind` to the catalog key used by
-/// `crate::models::catalog`. Some kinds have no catalog source today
-/// (LocalQwen, AzureOpenAi, Skip) and return `None` → wizard falls
-/// back to bundled defaults.
-fn catalog_key_for_provider_kind(kind: ProviderKind) -> Option<&'static str> {
-    Some(match kind {
-        ProviderKind::ClaudeCli => "anthropic_api",
-        ProviderKind::AnthropicApi => "anthropic_api",
-        ProviderKind::OpenaiApi => "openai_api",
-        ProviderKind::OpenaiCompat => "openai_compat",
-        ProviderKind::GeminiApi => "gemini_api",
-        ProviderKind::AwsBedrock => "aws_bedrock",
-        ProviderKind::LocalQwen
-        | ProviderKind::LocalOuro
-        | ProviderKind::AzureOpenAi
-        | ProviderKind::Cohere
-        | ProviderKind::Skip => return None,
-    })
-}
-
 /// Catalog-first default model lookup keyed by the wizard's
 /// `ProviderKind` against an explicit catalog path. Production caller
 /// uses [`catalog_recommended_for_provider_kind`] which resolves to
@@ -2317,7 +2395,7 @@ pub(crate) fn catalog_recommended_for_provider_kind_at(
 ) -> Option<String> {
     use crate::models::catalog::ModelsCatalog;
 
-    let key = catalog_key_for_provider_kind(kind)?;
+    let key = kind.catalog_key()?;
     let catalog = ModelsCatalog::load_from(catalog_path);
     catalog
         .provider(key)
@@ -2490,28 +2568,6 @@ fn parse_topology_mode_arg(arg: Option<&str>) -> Result<crate::config::inference
         Some(s) => TopologyMode::from_str(s).ok_or_else(|| {
             anyhow::anyhow!("invalid --inference-mode '{s}'. Expected: single | triplet | custom")
         }),
-    }
-}
-
-/// Translate the legacy `ProviderKind` step-5 choice into the typed
-/// `InferenceProvider`.
-fn provider_kind_to_inference(
-    kind: crate::cli::init::ProviderKind,
-) -> crate::config::inference::InferenceProvider {
-    use crate::cli::init::ProviderKind;
-    use crate::config::inference::InferenceProvider as I;
-    match kind {
-        ProviderKind::ClaudeCli => I::ClaudeCli,
-        ProviderKind::OpenaiApi => I::OpenAi,
-        ProviderKind::AnthropicApi => I::AnthropicApi,
-        ProviderKind::OpenaiCompat => I::OpenAiCompat,
-        ProviderKind::GeminiApi => I::Gemini,
-        ProviderKind::Cohere => I::Cohere,
-        ProviderKind::LocalQwen => I::LocalQwen,
-        ProviderKind::LocalOuro => I::LocalOuro,
-        ProviderKind::AwsBedrock => I::AwsBedrock,
-        ProviderKind::AzureOpenAi => I::AzureOpenAi,
-        ProviderKind::Skip => I::ClaudeCli, // unreachable in practice
     }
 }
 
@@ -4018,19 +4074,13 @@ fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<()> {
         Some(OperatorRole::Writer) => "writer",
         Some(OperatorRole::None) | None => "none",
     };
-    let provider_display = match state.provider_kind {
-        Some(ProviderKind::ClaudeCli) => "claude_cli",
-        Some(ProviderKind::OpenaiApi) => "openai_api",
-        Some(ProviderKind::AnthropicApi) => "anthropic_api",
-        Some(ProviderKind::GeminiApi) => "gemini_api",
-        Some(ProviderKind::Cohere) => "cohere_api",
-        Some(ProviderKind::OpenaiCompat) => "openai_compat",
-        Some(ProviderKind::LocalQwen) => "local_qwen",
-        Some(ProviderKind::LocalOuro) => "local_ouro",
-        Some(ProviderKind::AwsBedrock) => "aws_bedrock",
-        Some(ProviderKind::AzureOpenAi) => "azure_openai",
-        Some(ProviderKind::Skip) | None => "(none)",
-    };
+    // COR-13: as_provider_id() canonicalises the status form; Skip/None
+    // both render "none" (was "(none)" here, "unconfigured" in jobs,
+    // "unknown" in serve).
+    let provider_display = state
+        .provider_kind
+        .map(|k| k.as_provider_id())
+        .unwrap_or("none");
     println!("\n[9/9] Setup Complete\n");
     println!(
         "  Operator:  {}",
@@ -5063,24 +5113,12 @@ mod tests {
 
     #[test]
     fn catalog_key_for_provider_kind_maps_all_real_providers() {
+        assert_eq!(ProviderKind::ClaudeCli.catalog_key(), Some("anthropic_api"));
+        assert_eq!(ProviderKind::OpenaiApi.catalog_key(), Some("openai_api"));
+        assert_eq!(ProviderKind::GeminiApi.catalog_key(), Some("gemini_api"));
+        assert_eq!(ProviderKind::AwsBedrock.catalog_key(), Some("aws_bedrock"));
         assert_eq!(
-            catalog_key_for_provider_kind(ProviderKind::ClaudeCli),
-            Some("anthropic_api")
-        );
-        assert_eq!(
-            catalog_key_for_provider_kind(ProviderKind::OpenaiApi),
-            Some("openai_api")
-        );
-        assert_eq!(
-            catalog_key_for_provider_kind(ProviderKind::GeminiApi),
-            Some("gemini_api")
-        );
-        assert_eq!(
-            catalog_key_for_provider_kind(ProviderKind::AwsBedrock),
-            Some("aws_bedrock")
-        );
-        assert_eq!(
-            catalog_key_for_provider_kind(ProviderKind::OpenaiCompat),
+            ProviderKind::OpenaiCompat.catalog_key(),
             Some("openai_compat")
         );
     }
@@ -5089,12 +5127,84 @@ mod tests {
     fn catalog_key_for_provider_kind_returns_none_for_kinds_without_catalog_source() {
         // No remote list-models endpoint for these — wizard falls back
         // to bundled defaults.
-        assert_eq!(catalog_key_for_provider_kind(ProviderKind::LocalQwen), None);
-        assert_eq!(
-            catalog_key_for_provider_kind(ProviderKind::AzureOpenAi),
-            None
-        );
-        assert_eq!(catalog_key_for_provider_kind(ProviderKind::Skip), None);
+        assert_eq!(ProviderKind::LocalQwen.catalog_key(), None);
+        assert_eq!(ProviderKind::AzureOpenAi.catalog_key(), None);
+        assert_eq!(ProviderKind::Skip.catalog_key(), None);
+    }
+
+    #[test]
+    fn provider_kind_as_str_matches_serde_wire_form_for_all_variants() {
+        // COR-13: as_str() must equal the serde-serialised slug for every
+        // variant (incl. the AzureOpenAi rename), so the manual stringifier
+        // and the persisted config form can never drift.
+        use clap::ValueEnum;
+        for kind in ProviderKind::value_variants() {
+            let serde_form = serde_json::to_string(kind)
+                .unwrap()
+                .trim_matches('"')
+                .to_string();
+            assert_eq!(
+                kind.as_str(),
+                serde_form,
+                "as_str() must match serde for {kind:?}"
+            );
+        }
+        // Pin the two surface differences as_provider_id() carries.
+        assert_eq!(ProviderKind::Cohere.as_str(), "cohere");
+        assert_eq!(ProviderKind::AzureOpenAi.as_str(), "azure_openai");
+        assert_eq!(ProviderKind::Skip.as_str(), "skip");
+    }
+
+    #[test]
+    fn provider_kind_as_provider_id_canonicalises_status_form() {
+        // Cohere + Skip diverge from as_str(); everything else matches.
+        assert_eq!(ProviderKind::Cohere.as_provider_id(), "cohere_api");
+        assert_eq!(ProviderKind::Skip.as_provider_id(), "none");
+        assert_eq!(ProviderKind::AzureOpenAi.as_provider_id(), "azure_openai");
+        assert_eq!(ProviderKind::OpenaiApi.as_provider_id(), "openai_api");
+        assert_eq!(ProviderKind::ClaudeCli.as_provider_id(), "claude_cli");
+        // The drift token: Skip resolves to "none", and kind_from_slug
+        // treats it as non-cloud (same as the old unconfigured/unknown).
+        assert!(crate::consent::kind_from_slug(ProviderKind::Skip.as_provider_id()).is_none());
+    }
+
+    #[test]
+    fn provider_kind_display_forwards_to_as_str() {
+        assert_eq!(format!("{}", ProviderKind::LocalOuro), "local_ouro");
+        assert_eq!(format!("{}", ProviderKind::AzureOpenAi), "azure_openai");
+    }
+
+    #[test]
+    fn provider_kind_to_inference_maps_every_variant() {
+        use crate::config::inference::InferenceProvider as I;
+        assert_eq!(ProviderKind::ClaudeCli.to_inference(), I::ClaudeCli);
+        assert_eq!(ProviderKind::OpenaiApi.to_inference(), I::OpenAi);
+        assert_eq!(ProviderKind::AnthropicApi.to_inference(), I::AnthropicApi);
+        assert_eq!(ProviderKind::OpenaiCompat.to_inference(), I::OpenAiCompat);
+        assert_eq!(ProviderKind::GeminiApi.to_inference(), I::Gemini);
+        assert_eq!(ProviderKind::Cohere.to_inference(), I::Cohere);
+        assert_eq!(ProviderKind::LocalQwen.to_inference(), I::LocalQwen);
+        assert_eq!(ProviderKind::LocalOuro.to_inference(), I::LocalOuro);
+        assert_eq!(ProviderKind::AwsBedrock.to_inference(), I::AwsBedrock);
+        assert_eq!(ProviderKind::AzureOpenAi.to_inference(), I::AzureOpenAi);
+        assert_eq!(ProviderKind::Skip.to_inference(), I::ClaudeCli);
+    }
+
+    #[test]
+    fn azure_openai_serde_uses_canonical_slug_with_legacy_alias() {
+        // COR-13: AzureOpenAi must serialise to the canonical "azure_openai"
+        // (not serde's default "azure_open_ai") so freedom.yaml round-trips
+        // against consent/cost/InferenceProvider, and the learn_provider
+        // error message that promises "azure_openai" actually parses.
+        let json = serde_json::to_string(&ProviderKind::AzureOpenAi).unwrap();
+        assert_eq!(json, "\"azure_openai\"");
+        // Canonical form round-trips.
+        let back: ProviderKind = serde_json::from_str("\"azure_openai\"").unwrap();
+        assert_eq!(back, ProviderKind::AzureOpenAi);
+        // Legacy form still loads via the alias (back-compat for any
+        // existing on-disk config).
+        let legacy: ProviderKind = serde_json::from_str("\"azure_open_ai\"").unwrap();
+        assert_eq!(legacy, ProviderKind::AzureOpenAi);
     }
 
     #[test]

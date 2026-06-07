@@ -377,7 +377,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     let req_payload = serde_json::to_vec(&serde_json::json!({
         "source": "n8n_api",
         "request_id": ctx.request_id,
-        "provider_kind": format!("{:?}", provider_kind),
+        "provider_kind": provider_kind.map(|k| k.as_str()).unwrap_or("none"),
         "model": req.model,
         "prompt_bytes": req.prompt.len(),
         "system_bytes": req.system.as_deref().map(|s| s.len()).unwrap_or(0),
@@ -424,7 +424,7 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
             let err_payload = serde_json::to_vec(&serde_json::json!({
                 "source": "n8n_api",
                 "request_id": ctx.request_id,
-                "provider_kind": format!("{:?}", provider_kind),
+                "provider_kind": provider_kind.map(|k| k.as_str()).unwrap_or("none"),
                 "model": req.model,
                 "error": e.to_string(),
             }))

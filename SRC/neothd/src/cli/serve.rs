@@ -3205,23 +3205,12 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 use crate::permissions::{Action, ConfirmStrategy, Gate};
                 use crate::providers::cost::predict as predict_cost;
                 use crate::providers::meter::Meter;
+                // COR-13: canonical provider-id (Skip/None -> "none");
+                // cost::predict treats it the same as the old "unknown".
                 let provider_id = config_for_handler
                     .provider_kind
-                    .as_ref()
-                    .map(|k| match k {
-                        crate::cli::init::ProviderKind::ClaudeCli => "claude_cli",
-                        crate::cli::init::ProviderKind::OpenaiApi => "openai_api",
-                        crate::cli::init::ProviderKind::AnthropicApi => "anthropic_api",
-                        crate::cli::init::ProviderKind::OpenaiCompat => "openai_compat",
-                        crate::cli::init::ProviderKind::GeminiApi => "gemini_api",
-                        crate::cli::init::ProviderKind::Cohere => "cohere_api",
-                        crate::cli::init::ProviderKind::LocalQwen => "local_qwen",
-                        crate::cli::init::ProviderKind::LocalOuro => "local_ouro",
-                        crate::cli::init::ProviderKind::AwsBedrock => "aws_bedrock",
-                        crate::cli::init::ProviderKind::AzureOpenAi => "azure_openai",
-                        crate::cli::init::ProviderKind::Skip => "unknown",
-                    })
-                    .unwrap_or("unknown");
+                    .map(|k| k.as_provider_id())
+                    .unwrap_or("none");
                 let model_str = config_for_handler
                     .provider_model
                     .as_deref()
