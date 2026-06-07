@@ -62,10 +62,16 @@ pub struct BudgetToken {
 }
 
 /// Returned by `BudgetToken::charge` when the cap is already exhausted.
-/// Carries the cap so callers can log a helpful "ran out at N/M"
-/// message without re-reading the token.
+/// Carries both the calls actually charged and the cap so callers can
+/// log a truthful "ran out at N/M" message without re-reading the token.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BudgetExhausted {
+    /// LLM calls actually charged against the cap at the point of
+    /// exhaustion (saturated at `cap` — the over-budget attempt that
+    /// produced this error is itself NOT counted as charged). Populated
+    /// from [`BudgetToken::used`] rather than reusing `cap` so the
+    /// Display message reports a real count, not a duplicated cap.
+    pub used: u32,
     pub cap: u32,
 }
 
@@ -74,7 +80,7 @@ impl std::fmt::Display for BudgetExhausted {
         write!(
             f,
             "budget exhausted: {} LLM calls already charged against cap of {}",
-            self.cap, self.cap,
+            self.used, self.cap,
         )
     }
 }
@@ -115,7 +121,13 @@ impl BudgetToken {
         let prior = self.used.fetch_add(1, Ordering::SeqCst);
         let used = prior.saturating_add(1);
         if used > self.cap {
-            return Err(BudgetExhausted { cap: self.cap });
+            // Report the saturated successful-charge count (== cap once
+            // exhausted, 0 for a cap of 0), NOT this over-budget attempt's
+            // 1-indexed position, so the message reads "N of M charged".
+            return Err(BudgetExhausted {
+                used: self.used(),
+                cap: self.cap,
+            });
         }
         Ok(used)
     }
@@ -298,10 +310,45 @@ mod tests {
 
     #[test]
     fn budget_exhausted_display_includes_cap() {
-        let err = BudgetExhausted { cap: 15 };
+        let err = BudgetExhausted { used: 15, cap: 15 };
         let msg = err.to_string();
         assert!(msg.contains("15"), "got: {msg}");
         assert!(msg.contains("exhausted"), "got: {msg}");
+    }
+
+    #[test]
+    fn budget_exhausted_reports_used_and_cap_from_charge() {
+        // COR-14: the error populated by an over-budget `charge` must
+        // report the calls actually charged (== cap) AND the cap, not a
+        // duplicated cap. Cap of 20 → "20 LLM calls charged against cap
+        // of 20".
+        let b = BudgetToken::new(20);
+        for _ in 0..20 {
+            b.charge().unwrap();
+        }
+        let err = b.charge().unwrap_err();
+        assert_eq!(err.used, 20, "used must report the cap-many charges");
+        assert_eq!(err.cap, 20);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("20 LLM calls already charged against cap of 20"),
+            "got: {msg}"
+        );
+    }
+
+    #[test]
+    fn budget_exhausted_zero_cap_reports_zero_used() {
+        // A cap of 0 grants nothing — the error must say "0 ... cap of 0",
+        // not reuse the cap for the used count.
+        let b = BudgetToken::new(0);
+        let err = b.charge().unwrap_err();
+        assert_eq!(err.used, 0);
+        assert_eq!(err.cap, 0);
+        assert!(
+            err.to_string()
+                .contains("0 LLM calls already charged against cap of 0"),
+            "got: {err}"
+        );
     }
 
     #[tokio::test]
