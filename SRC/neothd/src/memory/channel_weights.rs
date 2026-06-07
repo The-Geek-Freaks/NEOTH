@@ -13,9 +13,19 @@
 //! an adversarial flood of "thanks!" replies can't rapidly skew the weights.
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+
+/// Serializes the load→mutate→save of `channel_weights.json` so concurrent
+/// acceptance records can't lose updates (a read-modify-write race — COR-30,
+/// the same class as the cluster `REGISTRY_LOCK`). Only the read-modify-write
+/// path ([`record_channel_acceptance_scoped`]) takes it; pure readers
+/// ([`load_channel_weight`]) skip it because the atomic temp+rename in
+/// [`save_channel_weights`] hands them a torn-free snapshot. Poison-tolerant:
+/// a panic mid-update must not permanently brick this best-effort store.
+static CHANNEL_WEIGHTS_LOCK: Mutex<()> = Mutex::new(());
 
 pub const CHANNEL_WEIGHTS_FILE: &str = "channel_weights.json";
 pub const CHANNEL_WEIGHTS_SCHEMA_VERSION: u32 = 1;
@@ -213,6 +223,13 @@ pub fn record_channel_acceptance_scoped(
     factor: f32,
 ) -> Result<()> {
     let delta = MAX_CHANNEL_WEIGHT_DELTA * factor.clamp(0.0, 1.0);
+    // COR-30: hold the lock across the whole load→mutate→save so a concurrent
+    // record can't read the same pre-state, mutate, and clobber our write
+    // (lost update). Pure readers don't lock — the atomic rename in
+    // save_channel_weights gives them a consistent snapshot.
+    let _guard = CHANNEL_WEIGHTS_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut weights = load_channel_weights(home);
     match row_index(&weights, channel, topic_hash) {
         Some(idx) => {
@@ -463,5 +480,41 @@ mod tests {
         assert_eq!(ctx.sender_id.as_deref(), Some("user1"));
         assert_eq!(ctx.chat_id.as_deref(), Some("chat1"));
         assert_eq!(ctx.channel_key(), "telegram");
+    }
+
+    #[test]
+    fn concurrent_acceptance_increments_are_not_lost() {
+        // COR-30: N threads record an acceptance for the SAME (channel, topic)
+        // at once. Under the load→mutate→save lock every increment must land —
+        // the pre-lock code lost updates (two threads read the same pre-state,
+        // both wrote, one increment vanished) and could create duplicate rows.
+        use std::sync::Arc;
+        let dir = Arc::new(tempfile::tempdir().unwrap());
+        let n = 20u32;
+        let mut handles = Vec::new();
+        for _ in 0..n {
+            let dir = Arc::clone(&dir);
+            handles.push(std::thread::spawn(move || {
+                record_channel_acceptance(dir.path(), "telegram", 7, 1000).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        let w = load_channel_weights(dir.path());
+        // Exactly one (channel, topic) row — no duplicate inserts from racing.
+        assert_eq!(w.rows.len(), 1, "racing inserts must not duplicate the row");
+        let row = w
+            .rows
+            .iter()
+            .find(|r| r.channel == "telegram" && r.topic_hash == 7)
+            .unwrap();
+        // All N deltas accrued (same now_unix → no decay between them).
+        let expected = MAX_CHANNEL_WEIGHT_DELTA * n as f32;
+        assert!(
+            (row.success_count - expected).abs() < 1e-4,
+            "expected {expected} from {n} serialized increments, got {} (lost update)",
+            row.success_count
+        );
     }
 }
