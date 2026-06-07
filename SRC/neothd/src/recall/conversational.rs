@@ -186,8 +186,10 @@ fn clean_topic_de(s: &str) -> String {
 
 fn clean_topic_en(s: &str) -> String {
     let trimmed = s.trim_start_matches([',', ' ', ':']).trim_end_matches('?');
-    let mut out = trimmed.trim();
-    for particle in [
+    let mut out = trimmed.trim().to_string();
+    // Longest / most-specific first so "when we talked about" peels as
+    // "when we" then "talked about" rather than leaving a tail.
+    let leading = [
         "talked about",
         "discussed",
         "when i said",
@@ -203,9 +205,20 @@ fn clean_topic_en(s: &str) -> String {
         "we",
         "that",
         "when",
-    ] {
-        if let Some(stripped) = out.strip_prefix(particle) {
-            out = stripped.trim();
+    ];
+    // COR-32: fixpoint loop (mirror clean_topic_de) — a single pass over
+    // the list can't peel chained openers, because the `for` has already
+    // moved past an earlier particle ("talked about") by the time a later
+    // one ("when we") strips and exposes it. Loop until nothing matches.
+    loop {
+        let before = out.clone();
+        for particle in leading {
+            if let Some(stripped) = out.strip_prefix(particle) {
+                out = stripped.trim().to_string();
+            }
+        }
+        if out == before {
+            break;
         }
     }
     out.trim_end_matches([' ', ',', '?', '.', '!']).to_string()
@@ -332,6 +345,27 @@ mod tests {
         // Must not contain a trailing `?` / `!`.
         assert!(!r.topic.ends_with('?'));
         assert!(!r.topic.ends_with('!'));
+    }
+
+    #[test]
+    fn clean_topic_en_peels_chained_openers_via_fixpoint() {
+        // COR-32: a chained opener must strip FULLY. The old single pass
+        // left "talked about rust" because the `for` had already moved past
+        // "talked about" by the time "when we" peeled and exposed it.
+        assert_eq!(clean_topic_en("when we talked about rust"), "rust");
+        assert_eq!(clean_topic_en("that we discussed memory tiers"), "memory tiers");
+        // Single-particle cases still behave (no over-strip / no infinite loop).
+        assert_eq!(clean_topic_en("when i said rust"), "rust");
+        assert_eq!(clean_topic_en("about caching"), "caching");
+    }
+
+    #[test]
+    fn detects_english_chained_opener_peels_to_bare_topic() {
+        // End-to-end: opener + chained particles → bare topic. Pre-COR-32
+        // this yielded "talked about rust".
+        let r = detect_recall_intent("Do you remember when we talked about rust?").unwrap();
+        assert_eq!(r.language, RecallLanguage::English);
+        assert_eq!(r.topic, "rust", "chained opener must peel fully, got {:?}", r.topic);
     }
 
     #[test]
