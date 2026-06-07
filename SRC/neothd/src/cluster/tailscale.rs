@@ -143,6 +143,21 @@ pub async fn probe_candidate(addr: SocketAddr) -> bool {
     )
 }
 
+/// Map a probe task's join result to a reachability bool.
+///
+/// COR-21: the old call site did `h.await.unwrap_or(false)`, which
+/// silently swallowed BOTH a cancelled task and a *panicked* task as
+/// "not reachable" — hiding any bug in `probe_candidate`. A cancelled
+/// probe is genuinely "no answer" (false); a panic is surfaced as an
+/// error so enumeration fails loudly instead of under-reporting peers.
+fn probe_result(joined: std::result::Result<bool, tokio::task::JoinError>) -> Result<bool> {
+    match joined {
+        Ok(reachable) => Ok(reachable),
+        Err(e) if e.is_cancelled() => Ok(false),
+        Err(e) => Err(anyhow::anyhow!("tailscale probe task panicked: {e}")),
+    }
+}
+
 /// Top-level enumeration: fetch status, build candidate list,
 /// probe each one in parallel. Returns the candidates that
 /// answered. Missing-binary returns empty list.
@@ -163,7 +178,7 @@ pub async fn enumerate(port: u16) -> Result<Vec<TailscaleCandidate>> {
     }
     let mut answered = Vec::new();
     for (cand, h) in candidates.into_iter().zip(handles) {
-        if h.await.unwrap_or(false) {
+        if probe_result(h.await)? {
             answered.push(cand);
         }
     }
@@ -293,5 +308,35 @@ mod tests {
     #[test]
     fn via_returns_tailscale_tag() {
         assert_eq!(via(), super::super::discovery::DiscoveryVia::Tailscale);
+    }
+
+    #[tokio::test]
+    async fn probe_result_maps_cancel_to_false_and_surfaces_panic() {
+        // COR-21: a normal join passes the bool through; a cancelled probe is
+        // "no answer" (false); a panicked probe surfaces as Err instead of
+        // being silently swallowed as not-reachable (the old unwrap_or(false)).
+        assert!(probe_result(Ok(true)).unwrap());
+        assert!(!probe_result(Ok(false)).unwrap());
+
+        let h: tokio::task::JoinHandle<bool> =
+            tokio::spawn(async { panic!("intentional probe panic") });
+        let joined = h.await;
+        assert!(joined.as_ref().unwrap_err().is_panic());
+        assert!(
+            probe_result(joined).is_err(),
+            "a panicked probe must surface as Err"
+        );
+
+        let h2: tokio::task::JoinHandle<bool> = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            true
+        });
+        h2.abort();
+        let cancelled = h2.await;
+        assert!(cancelled.as_ref().unwrap_err().is_cancelled());
+        assert!(
+            !probe_result(cancelled).unwrap(),
+            "a cancelled probe maps to false"
+        );
     }
 }

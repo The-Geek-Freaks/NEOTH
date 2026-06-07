@@ -1473,13 +1473,20 @@ pub async fn run_inbound_loop<R: AsyncRead + Unpin>(
         let frame = match heartbeat::read_framed(source).await {
             Ok(f) => f,
             Err(e) => {
-                let msg = e.to_string();
-                // EOF on a clean peer disconnect surfaces as an
-                // io error; surface as Ok so the caller's
-                // accept-loop doesn't treat clean shutdown as
-                // a failure to retry against.
-                if msg.contains("read frame len-prefix") {
-                    info!(peer_id, "hyperswarm: peer disconnected");
+                // A clean peer disconnect surfaces as an io error whose
+                // kind is UnexpectedEof (read_exact hit end-of-stream).
+                // Match the typed kind by walking the anyhow cause chain
+                // instead of substring-matching the Display string — the
+                // old check keyed on the "read frame len-prefix" context
+                // and would mis-handle a renamed context or treat a
+                // non-EOF error at that read as a clean disconnect.
+                let is_eof = e
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+                    .map(|io| io.kind() == std::io::ErrorKind::UnexpectedEof)
+                    .unwrap_or(false);
+                if is_eof {
+                    info!(peer_id, "hyperswarm: peer disconnected (EOF)");
                     return Ok(());
                 }
                 return Err(e);
@@ -1825,6 +1832,32 @@ mod tests {
         .await
         .expect("must not hang");
         assert!(r.is_ok(), "EOF without Goodbye → Ok");
+    }
+
+    #[tokio::test]
+    async fn run_inbound_loop_non_eof_error_surfaces_as_err() {
+        // COR-21: a non-EOF transport error (connection reset) at the
+        // len-prefix read must surface as Err. The old Display-string match
+        // keyed on the "read frame len-prefix" context and would have wrongly
+        // treated this as a clean disconnect (Ok); the typed UnexpectedEof
+        // check correctly distinguishes EOF from a real transport failure.
+        struct ResetReader;
+        impl tokio::io::AsyncRead for ResetReader {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+                _buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "synthetic reset",
+                )))
+            }
+        }
+        let mut reader = ResetReader;
+        let registry = Arc::new(Mutex::new(PeerLoadRegistry::new()));
+        let r = run_inbound_loop(&mut reader, "peer-R", vec![], registry).await;
+        assert!(r.is_err(), "non-EOF transport error must surface as Err");
     }
 
     #[test]
