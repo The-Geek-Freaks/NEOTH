@@ -127,6 +127,12 @@ pub struct QuotaGuard {
     bytes_since_measure: std::sync::atomic::AtomicU64,
     last_measured: std::sync::atomic::AtomicU64,
     breached: std::sync::atomic::AtomicBool,
+    /// COR-23: single-flights the re-measure block. Without it, N concurrent
+    /// writers crossing the threshold together would each launch a redundant
+    /// disk walk AND race on the `bytes_since_measure` reset — a torn
+    /// read-modify-write that under-counts admitted bytes and weakens the
+    /// ceiling guarantee. The compare_exchange lets exactly one thread measure.
+    in_remeasure: std::sync::atomic::AtomicBool,
 }
 
 impl QuotaGuard {
@@ -138,6 +144,7 @@ impl QuotaGuard {
             bytes_since_measure: std::sync::atomic::AtomicU64::new(u64::MAX),
             last_measured: std::sync::atomic::AtomicU64::new(0),
             breached: std::sync::atomic::AtomicBool::new(false),
+            in_remeasure: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -159,12 +166,29 @@ impl QuotaGuard {
             .bytes_since_measure
             .fetch_add(payload_bytes, Ordering::AcqRel);
         let crossed = prior >= self.remeasure_threshold || prior == u64::MAX;
-        if crossed {
+        // COR-23: single-flight the re-measure. Concurrent crossers lose the
+        // compare_exchange and skip the walk — their bytes are already counted,
+        // and the winner's measure sets the sticky breach flag they (and every
+        // later caller) observe at the top of this fn. This keeps the disk walk
+        // single-flighted and the counter reset un-torn, so the ceiling holds
+        // under concurrent writers.
+        if crossed
+            && self
+                .in_remeasure
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
             let used = crate::daemon::quota::measure_dir(&self.home);
             self.last_measured.store(used, Ordering::Release);
             self.bytes_since_measure.store(0, Ordering::Release);
-            if used >= self.ceiling {
+            let over = used >= self.ceiling;
+            if over {
                 self.breached.store(true, Ordering::Release);
+            }
+            // Release the gate BEFORE any early return — returning while it is
+            // still held would latch it forever and stop all future measures.
+            self.in_remeasure.store(false, Ordering::Release);
+            if over {
                 return Err(WalError::QuotaExceeded {
                     used,
                     ceiling: self.ceiling,
@@ -180,6 +204,7 @@ impl QuotaGuard {
         use std::sync::atomic::Ordering;
         self.breached.store(false, Ordering::Release);
         self.bytes_since_measure.store(u64::MAX, Ordering::Release);
+        self.in_remeasure.store(false, Ordering::Release);
     }
 }
 
@@ -1491,6 +1516,46 @@ mod tests {
         let header = header_for(5, 3);
         let r = writer.append(header, b"hello".to_vec()).await;
         assert!(r.is_ok(), "1 GiB ceiling must let a 5-byte append through");
+    }
+
+    #[test]
+    fn quota_ceiling_holds_under_concurrent_writers() {
+        // COR-23: many threads cross the re-measure threshold at once. The
+        // in_remeasure compare_exchange single-flights the disk walk so the
+        // counter reset isn't torn and the breach is detected authoritatively.
+        // The home is seeded over the ceiling, so once any thread's crossing
+        // measures, the guard latches breached and refuses the rest — the
+        // ceiling is enforced, not blown open by the storm.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::sync::Arc;
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("seed.bin"), vec![0u8; 4096]).unwrap();
+        let guard = Arc::new(QuotaGuard::new(dir.path().to_path_buf(), 1024));
+
+        let admitted = Arc::new(AtomicU64::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let g = Arc::clone(&guard);
+            let a = Arc::clone(&admitted);
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    if g.try_admit(64).is_ok() {
+                        a.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        // 4 KiB seed over a 1 KiB ceiling: the breach must latch and stay
+        // sticky — far fewer than the 1600 attempts can be admitted.
+        let n = admitted.load(Ordering::Relaxed);
+        assert!(n < 1600, "breach must refuse the bulk of writes; admitted {n}");
+        assert!(
+            matches!(guard.try_admit(1), Err(WalError::QuotaExceeded { .. })),
+            "ceiling breach must be sticky after the concurrent storm"
+        );
     }
 
     // ── Pick #36 (Session 14) — WAL recovery writer integration ─────
