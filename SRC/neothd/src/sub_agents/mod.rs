@@ -6,9 +6,16 @@
 //! replaces the operator's, and only its allowlisted tools are reachable
 //! from the call.
 //!
-//! Sub-agents are declarative TOML; no Rust code per sub-agent. Built-ins
-//! (`code-reviewer`, `security-reviewer`, `planner`) ship in the binary
-//! and can be overridden by `~/.neoth/agents/<name>.toml` of the same name.
+//! Sub-agents are declarative TOML; no Rust code per sub-agent. The binary
+//! ships **18 built-ins** (defined in [`builtins::built_in_agents`] and
+//! pinned by the `built_ins_include_all_eighteen` test), each overridable
+//! by a `~/.neoth/agents/<name>.toml` of the same name:
+//! `code-reviewer`, `security-reviewer`, `planner`, `critic`,
+//! `session-summarizer`, `evidence-collector`, `reality-checker`,
+//! `backend-architect`, `incident-responder`, `minimal-change-reviewer`,
+//! `db-optimizer`, `onboarding-guide`, `sre-monitor`, `api-tester`,
+//! `test-results-analyzer`, `identity-graph-operator`, `mcp-server-builder`,
+//! `task-decomposer`.
 //!
 //! ## Dispatch
 //!
