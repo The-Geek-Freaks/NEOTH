@@ -1275,271 +1275,26 @@ pub async fn run_chat_with(
                 trigger = ?trigger_decision,
                 "council convened — running 3-hemisphere debate"
             );
-            // Pick #8 F8 (Session 14 Pick #20) — pre-flight diversity
-            // check. Best-effort: a failed audit emission must not
-            // block the debate, so the council still runs even on a
-            // misconfigured topology (with the warning recorded).
-            let prompt_hash_pre = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
-            let _ =
-                emit_council_diversity_warning_if_needed(&writer, prompt_hash_pre, &config).await;
-            let outcome = match run_council_debate(&config, &req).await {
-                Ok(o) => o,
-                Err(e) => {
-                    warn!(error = %e, "council debate failed; falling back to caller error");
-                    drop(writer);
-                    let _ = writer_join.await;
-                    return Err(e);
-                }
-            };
-            // KF-01 full: persist verbatim hemisphere transcripts (opt-in)
-            // so `neoth council replay` can show the actual prose. No-op
-            // unless freedom.yaml::council.persist_transcripts = true.
-            emit_council_transcripts(&writer, prompt_hash_pre, &outcome, &config).await;
-            // B-3 (Session 13) — record this debate's wall-clock so the
-            // NEXT prompt's trigger eval sees a real
-            // `seconds_since_last_council`. Best-effort: a failed write
-            // just keeps the gate open (current behaviour).
-            {
-                let home_b3 = FreedomConfig::default_neoth_home();
-                if let Err(e) =
-                    crate::council::last_ts::record(&home_b3, crate::council::last_ts::now_unix())
-                {
-                    warn!(error = %e, "could not persist council_last.json");
-                }
-            }
-            // B-2 (Session 13): use `response_for(role)` instead of direct
-            // index — `outcome.responses` can hold <3 entries when K-Perf-1
-            // early-exit cancels a slow hemisphere mid-debate. Direct
-            // indexing panics in that case; `response_for` returns Option.
-            let left_provider_str = outcome
-                .response_for(crate::config::inference::HemisphereRole::Left)
-                .map(|r| r.provider.as_str())
-                .unwrap_or("cancelled");
-            let right_provider_str = outcome
-                .response_for(crate::config::inference::HemisphereRole::Right)
-                .map(|r| r.provider.as_str())
-                .unwrap_or("cancelled");
-            let cere_provider_str = outcome
-                .response_for(crate::config::inference::HemisphereRole::Cerebellum)
-                .map(|r| r.provider.as_str())
-                .unwrap_or("cancelled");
-            info!(
-                dissent = outcome.dissent.0,
-                left_provider = left_provider_str,
-                right_provider = right_provider_str,
-                cere_provider = cere_provider_str,
-                refused_count = outcome.refused_count(),
-                is_partial_refusal = outcome.is_partial_refusal(),
-                total_latency_ms = outcome.total_latency_ms,
-                "council debate complete"
-            );
-            // ADV-10b (Session 28g+): surface degraded debates at the
-            // default log level. The orchestrator's FuturesUnordered +
-            // quorum check absorbs hemisphere failures naturally (2-of-3
-            // degrade is already there), but without a warn at this
-            // level a persistently rate-limited or unreachable hemisphere
-            // shows ONLY at debug. The degradation classifier
-            // distinguishes quota (best-effort substring sniff against
-            // QuotaError's Display phrasing) from other failures so the
-            // operator can tell "wait for the backoff window" apart from
-            // "something else is wrong".
-            let degradation = outcome.degradation();
-            if degradation.is_degraded() {
-                tracing::warn!(
-                    degradation = degradation.variant_name(),
-                    errored_count = degradation.errored_count(),
-                    left_provider = left_provider_str,
-                    right_provider = right_provider_str,
-                    cere_provider = cere_provider_str,
-                    "council debate degraded — fewer than 3 hemispheres contributed (ADV-10b)"
-                );
-            }
-            // A-1: emit COUNCIL_PARTIAL_REFUSAL audit frame whenever any
-            // hemisphere refused, regardless of which branch consumes the
-            // result. Operator MUST see refusals even when Consensus or
-            // Callosum absorbed them silently.
-            let prompt_hash_outer = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
-            if outcome.is_partial_refusal() {
-                let _ = emit_council_partial_refusal(&writer, prompt_hash_outer, &outcome).await;
-            }
-            // Pick #8 SP-2 (Session 14) CLI path — role-agnostic
-            // winner selection when operator configured non-Legacy
-            // selection_mode. Returns None for LegacyMajority so
-            // existing behaviour is preserved.
-            let rw_path_cli = crate::memory::routing_weights::RoutingWeights::default_path(
-                &FreedomConfig::default_neoth_home(),
-            );
-            let rw_read_cli =
-                crate::memory::routing_weights::RoutingWeights::load_from(&rw_path_cli);
-            let role_agnostic_cli = select_winner_role_agnostic(
-                &outcome,
-                config.council.selection_mode,
-                Some(&rw_read_cli),
-                prompt_hash_outer,
-            );
-            let response_text = if let Some(winner) = role_agnostic_cli {
-                let _ = emit_council_winner_selected(
-                    &writer,
-                    prompt_hash_outer,
-                    0,
-                    &winner,
-                    config.council.selection_mode,
-                )
-                .await;
-                // SP-5: self-reflect refinement pass — threshold +
-                // kill-switch gated, depth=0 only, fail-safe.
-                let final_text_cli = if crate::council::self_reflect::should_refine(
-                    &config,
-                    winner.score,
-                    0,
-                ) {
-                    match build_hemisphere(&config, winner.role, &req).await {
-                        Ok(reflect_h) => {
-                            let refined = crate::council::self_reflect::refine(
-                                &req.prompt,
-                                &winner.text,
-                                &reflect_h,
-                            )
-                            .await;
-                            refined.refined
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "self-reflect skipped (cli): could not rebuild winning hemisphere"
-                            );
-                            winner.text.clone()
-                        }
+            // COR-17: the full debate → recovery → winner-selection →
+            // self-reflect → partial-refusal-prefix pipeline lives in the
+            // shared `dispatch_council_with_recovery` (also driven by the
+            // channel path in serve.rs), so the CLI and daemon paths can
+            // never drift. CLI-specific bits stay here: the convened log
+            // above, the WAL-writer shutdown on failure, stdout print, and
+            // the cost-estimate tuple below.
+            let response_text =
+                match dispatch_council_with_recovery(&req, &config, &writer).await {
+                    Ok(text) => text,
+                    Err(e) => {
+                        // CLI returns the error to the caller (after a clean
+                        // WAL-writer shutdown) rather than falling back to a
+                        // single provider the way the channel path does.
+                        warn!(error = %e, "council debate failed; returning error");
+                        drop(writer);
+                        let _ = writer_join.await;
+                        return Err(e);
                     }
-                } else {
-                    winner.text.clone()
                 };
-                // SP-4: record acceptance for the winning hemisphere.
-                let mut rw_write_cli =
-                    crate::memory::routing_weights::RoutingWeights::load_from(&rw_path_cli);
-                rw_write_cli.record_acceptance(
-                    prompt_hash_outer,
-                    winner.role,
-                    crate::memory::routing_weights::now_unix(),
-                );
-                if let Err(e) = rw_write_cli.save() {
-                    tracing::warn!(error = %e, "could not persist routing_weights.json (cli)");
-                }
-                match partial_refusal_prefix(&outcome) {
-                    Some(prefix) => format!("{prefix}\n{final_text_cli}"),
-                    None => final_text_cli,
-                }
-            } else {
-                match outcome.winning_text() {
-                    Some(t) => {
-                        // A-1: prepend partial-refusal annotation when one
-                        // hemisphere refused but Consensus still produced a
-                        // winning text. Annotation goes to operator-visible
-                        // stdout; downstream profile/ADR/archive see the
-                        // unprefixed text via the original `t`.
-                        match partial_refusal_prefix(&outcome) {
-                            Some(prefix) => format!("{prefix}\n{t}"),
-                            None => t.to_string(),
-                        }
-                    }
-                    None => match &outcome.verdict {
-                        crate::council::Verdict::Split { summary } => {
-                            // B-2: callosum-on-partial-refusal recovery. Use
-                            // `usable_responses()` so the synthesis prompt
-                            // never sees the refused hemisphere's text — that
-                            // text is a refusal, not a usable answer.
-                            let usable: Vec<&crate::council::HemisphereResponse> =
-                                outcome.usable_responses().collect();
-                            // Audit 2026-05-19 Type #13 Phase 2: usable_responses
-                            // already guarantees the Usable variant, so
-                            // outcome().text() is Some for every entry.
-                            let left_text = usable
-                                .first()
-                                .and_then(|r| r.outcome().text())
-                                .unwrap_or("");
-                            let right_text =
-                                usable.get(1).and_then(|r| r.outcome().text()).unwrap_or("");
-                            let prompt_hash = prompt_hash_outer;
-                            // CH-11: pull top operator-profile claims for
-                            // the synthesis prompt. Best-effort — if the
-                            // views.db open / query fails, we proceed
-                            // without profile injection.
-                            let profile_block =
-                                profile_block_for_callosum().await.unwrap_or_default();
-                            let profile_opt = if profile_block.is_empty() {
-                                None
-                            } else {
-                                Some(profile_block.as_str())
-                            };
-                            match build_hemisphere(
-                                &config,
-                                crate::config::inference::HemisphereRole::Cerebellum,
-                                &req,
-                            )
-                            .await
-                            {
-                                Ok(cere) => {
-                                    let verdict = crate::council::callosum::resolve_with_profile(
-                                        &req.prompt,
-                                        left_text,
-                                        right_text,
-                                        profile_opt,
-                                        &cere,
-                                    )
-                                    .await;
-                                    match verdict {
-                                    crate::council::callosum::CorticalVerdict::Synthesis(s) => {
-                                        info!("callosum produced synthesis ({} chars)", s.len());
-                                        let _ = emit_council_synthesis_attempted(
-                                            &writer,
-                                            prompt_hash,
-                                            CouncilSynthesisOutcome::Synthesis {
-                                                chars: s.chars().count(),
-                                            },
-                                        )
-                                        .await;
-                                        s
-                                    }
-                                    crate::council::callosum::CorticalVerdict::IrreconcilableConflict { reason } => {
-                                        warn!(reason = %reason, "callosum could not synthesise — falling back to operator-decision-needed");
-                                        let _ = emit_council_synthesis_attempted(
-                                            &writer,
-                                            prompt_hash,
-                                            CouncilSynthesisOutcome::IrreconcilableConflict {
-                                                reason: reason.clone(),
-                                            },
-                                        )
-                                        .await;
-                                        format!("[council split — operator decision needed]\n{summary}")
-                                    }
-                                }
-                                }
-                                Err(e) => {
-                                    warn!(error = %e, "could not build callosum cerebellum — falling back");
-                                    let _ = emit_council_synthesis_attempted(
-                                        &writer,
-                                        prompt_hash,
-                                        CouncilSynthesisOutcome::IrreconcilableConflict {
-                                            reason: format!("provider build failed: {e}"),
-                                        },
-                                    )
-                                    .await;
-                                    format!("[council split — operator decision needed]\n{summary}")
-                                }
-                            }
-                        }
-                        crate::council::Verdict::QuorumFailed {
-                            responded,
-                            required,
-                        } => {
-                            format!(
-                                "[council quorum failed — {responded}/{required} hemispheres responded]"
-                            )
-                        }
-                        crate::council::Verdict::Consensus { .. } => unreachable!(),
-                    },
-                }
-            };
             println!("{response_text}");
             (
                 response_text,
@@ -3506,8 +3261,13 @@ pub(crate) async fn dispatch_council_with_recovery(
     let prompt_hash_pre = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
     let _ = emit_council_diversity_warning_if_needed(writer, prompt_hash_pre, config).await;
     let outcome = run_council_debate(config, req).await?;
-    // B-3 (Session 13) — record this channel-path debate's wall-clock so
-    // the NEXT inbound's trigger eval honours the rate cooldown.
+    // KF-01 (COR-17): persist verbatim hemisphere transcripts (opt-in) so
+    // `neoth council replay` can show the actual prose. No-op unless
+    // freedom.yaml::council.persist_transcripts = true. Emitted here so BOTH
+    // the CLI and channel paths record replayable transcripts identically.
+    emit_council_transcripts(writer, prompt_hash_pre, &outcome, config).await;
+    // B-3 (Session 13) — record this debate's wall-clock so the NEXT
+    // inbound's trigger eval honours the rate cooldown.
     {
         let home_b3 = FreedomConfig::default_neoth_home();
         if let Err(e) =
@@ -3516,14 +3276,45 @@ pub(crate) async fn dispatch_council_with_recovery(
             warn!(error = %e, "could not persist council_last.json (channel path)");
         }
     }
+    // B-2 (Session 13): role-keyed provider lookup — `outcome.responses` can
+    // hold <3 entries when K-Perf-1 early-exit cancels a slow hemisphere;
+    // `response_for` returns Option rather than panicking on a direct index.
+    let left_provider_str = outcome
+        .response_for(crate::config::inference::HemisphereRole::Left)
+        .map(|r| r.provider.as_str())
+        .unwrap_or("cancelled");
+    let right_provider_str = outcome
+        .response_for(crate::config::inference::HemisphereRole::Right)
+        .map(|r| r.provider.as_str())
+        .unwrap_or("cancelled");
+    let cere_provider_str = outcome
+        .response_for(crate::config::inference::HemisphereRole::Cerebellum)
+        .map(|r| r.provider.as_str())
+        .unwrap_or("cancelled");
     info!(
         dissent = outcome.dissent.0,
-        responses_len = outcome.responses.len(),
+        left_provider = left_provider_str,
+        right_provider = right_provider_str,
+        cere_provider = cere_provider_str,
         refused_count = outcome.refused_count(),
         is_partial_refusal = outcome.is_partial_refusal(),
         total_latency_ms = outcome.total_latency_ms,
         "council debate complete"
     );
+    // ADV-10b (COR-17): surface a degraded debate (fewer than 3 hemispheres
+    // contributed) at warn level on both paths so a persistently failing
+    // hemisphere isn't only visible at debug.
+    let degradation = outcome.degradation();
+    if degradation.is_degraded() {
+        warn!(
+            degradation = degradation.variant_name(),
+            errored_count = degradation.errored_count(),
+            left_provider = left_provider_str,
+            right_provider = right_provider_str,
+            cere_provider = cere_provider_str,
+            "council debate degraded — fewer than 3 hemispheres contributed (ADV-10b)"
+        );
+    }
     // A-1 (channel path): emit COUNCIL_PARTIAL_REFUSAL audit frame as
     // soon as any hemisphere refused. Same contract as the CLI path —
     // operator sees refusals via `neoth wal show` even when Consensus
