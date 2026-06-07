@@ -38,6 +38,12 @@ The wizard asks five things:
 
 You can change every answer later.
 
+> **Heads-up — security-research skills are on by default.** NEOTH bundles dual-use
+> registers (`lowkey_base`, `raskal`, `archon`) for authorised pentest / CTF / research
+> work. They ship **enabled** and are authorisation-scoped (they refuse mass-harm and
+> out-of-scope targets). Turn off any you don't want in `freedom.yaml` under
+> `skills.disabled:` (see the README Privacy section for the snippet).
+
 ## Your first useful commands
 
 ```bash

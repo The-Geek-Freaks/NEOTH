@@ -180,6 +180,23 @@ neoth privacy audit --last 30d
 
 Read the full privacy model in [docs/privacy.md](docs/privacy.md).
 
+> **Security-research skills ship enabled by default.** NEOTH bundles three dual-use
+> registers — `lowkey_base` (authorised security research / defensive analysis), `raskal`
+> (authorised red-team / offensive-tooling), and `archon` (meta-reasoning orchestrator).
+> They are operator-authorisation-scoped — they refuse mass-harm, untargeted destruction,
+> and out-of-scope targets — and ship **enabled** so an authorised pentester gets working
+> tooling instead of refusals. Don't want them? Disable any subset in `freedom.yaml`:
+>
+> ```yaml
+> skills:
+>   disabled:
+>     - raskal
+>     - archon
+> ```
+>
+> (Or suppress *all* skill injection for benchmark/eval runs with
+> `skills.disabled_for_eval_sessions: true`.)
+
 ## Why it holds up
 
 The differentiators are mechanisms you can inspect, not slogans.

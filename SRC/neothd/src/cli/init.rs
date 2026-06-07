@@ -2068,6 +2068,19 @@ fn step5b_inference_topology(
         state.inference.mode = modes[pick].0;
         let is_local_only_preset = matches!(modes[pick].1, "local-only");
         println!("  [5b/9] mode: {}", modes[pick].1);
+        // GOLD-HON-11 — explicit single-provider confirmation. `Single`
+        // means ONE provider answers every turn: no council cross-check,
+        // no hemisphere diversity, and that provider sees every prompt.
+        // Surface the trade-off so it's a deliberate choice, not a silent
+        // default. (The same label + note is shown by `neoth hemispheres
+        // show`.)
+        if matches!(state.inference.mode, TopologyMode::Single) {
+            println!(
+                "      → single-provider setup confirmed: one provider handles every \
+                 turn — no council cross-check or hemisphere diversity, and that provider \
+                 sees all prompts. Switch later with `neoth init` or `neoth hemispheres set`."
+            );
+        }
         // Apply the local-only preset BEFORE the per-hemisphere loop —
         // the loop's gate on `Triplet|Custom` would otherwise overwrite
         // these with the per-role prompts.

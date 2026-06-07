@@ -2707,6 +2707,22 @@ pub struct SkillsConfig {
     /// invocation. Set `false` to restore the keyword-miss-only fallback.
     #[serde(default = "default_skills_always_embed_route")]
     pub always_embed_route: bool,
+    /// GOLD-HON-11 (B-16) — operator blocklist of skill ids to disable,
+    /// applied at load time. The security-research registers
+    /// (`lowkey_base`, `raskal`, `archon`) ship bundled + ENABLED by
+    /// default; an operator who does not want them turns them off here
+    /// rather than editing the shipped `skill.yaml` (which an upgrade
+    /// overwrites). Case-insensitive id match; unknown ids are ignored.
+    ///
+    /// ```yaml
+    /// skills:
+    ///   disabled:
+    ///     - raskal
+    ///     - archon
+    /// ```
+    /// Empty (default) = every bundled skill stays enabled.
+    #[serde(default)]
+    pub disabled: Vec<String>,
 }
 
 fn default_skills_always_embed_route() -> bool {
@@ -2720,6 +2736,7 @@ impl Default for SkillsConfig {
             eval_session_active: false,
             pinned_hashes: std::collections::HashMap::new(),
             always_embed_route: default_skills_always_embed_route(),
+            disabled: Vec::new(),
         }
     }
 }

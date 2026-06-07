@@ -105,9 +105,57 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
         }
     }
 
+    // ── GOLD-HON-11 — freedom.yaml skills.disabled blocklist ────────────
+    // Operators turn off a bundled skill (e.g. the RASKAL offensive-tooling
+    // register, which ships ENABLED) via `freedom.yaml::skills.disabled`
+    // rather than editing the shipped `skill.yaml` an upgrade overwrites.
+    // Applied here at the single load chokepoint, so every downstream
+    // `is_enabled()` consumer honours it with no call-site changes.
+    let disabled = read_disabled_skill_ids(skills_dir);
+    if !disabled.is_empty() {
+        for skill in by_id.values_mut() {
+            if disabled.contains(&skill.manifest.id.to_lowercase()) {
+                skill.manifest.enabled = false;
+                debug!(id = %skill.manifest.id, "skill disabled via freedom.yaml::skills.disabled");
+            }
+        }
+    }
+
     let mut out: Vec<Skill> = by_id.into_values().collect();
     out.sort_by(|a, b| a.manifest.id.cmp(&b.manifest.id));
     Ok(out)
+}
+
+/// GOLD-HON-11 — read `skills.disabled: [<id>, …]` from the `freedom.yaml`
+/// that sits next to `<skills_dir>` (i.e. `<home>/freedom.yaml`). Returns
+/// lowercased ids. Missing / unreadable / unparseable freedom.yaml → empty
+/// list (no skills disabled) — identical to the pre-HON-11 behaviour, so a
+/// fresh install with no freedom.yaml is unaffected. Read as a raw
+/// `serde_yaml::Value` (house style, mirrors `cluster::policy::
+/// load_policy_from_freedom`) so the loader stays decoupled from the full
+/// `FreedomConfig` type.
+fn read_disabled_skill_ids(skills_dir: &Path) -> Vec<String> {
+    let Some(home) = skills_dir.parent() else {
+        return Vec::new();
+    };
+    let freedom_path = home.join("freedom.yaml");
+    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return Vec::new();
+    };
+    value
+        .get("skills")
+        .and_then(|s| s.get("disabled"))
+        .and_then(|d| d.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_lowercase()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Decode every entry in [`super::bundled::BUNDLED_SKILLS`] into a `Skill`.
@@ -465,6 +513,53 @@ system_prompt: |
                 s.id(),
                 path_str
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn freedom_yaml_disabled_blocklist_turns_off_bundled_skill() {
+        // GOLD-HON-11: a security-research register named in
+        // freedom.yaml::skills.disabled loads but is marked disabled
+        // (case-insensitive), while its siblings stay enabled.
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  disabled:\n    - RASKAL\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let raskal = skills
+            .iter()
+            .find(|s| s.id() == "raskal")
+            .expect("raskal is bundled");
+        let lowkey = skills
+            .iter()
+            .find(|s| s.id() == "lowkey_base")
+            .expect("lowkey_base is bundled");
+        assert!(
+            !raskal.is_enabled(),
+            "raskal must be disabled via freedom.yaml::skills.disabled"
+        );
+        assert!(
+            lowkey.is_enabled(),
+            "lowkey_base (not in the blocklist) must stay enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_freedom_yaml_leaves_security_skills_enabled() {
+        // The honesty premise: these registers ship ENABLED by default.
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        let skills = load_all(&skills_dir).await.unwrap();
+        for id in ["lowkey_base", "raskal", "archon"] {
+            let s = skills
+                .iter()
+                .find(|s| s.id() == id)
+                .unwrap_or_else(|| panic!("{id} is bundled"));
+            assert!(s.is_enabled(), "{id} must be enabled by default");
         }
     }
 }
