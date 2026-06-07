@@ -73,21 +73,61 @@ impl RequestedPermission {
     }
 }
 
-/// Pipeline stage a hook plugin observes. Keep the variant set in
-/// sync with `hooks::HookStage` in the daemon's hook dispatcher — the
-/// manifest parser validates membership at load time so a typo in the
-/// manifest surfaces as a clear error, not as a silently never-fired
-/// hook.
+/// Pipeline stage a hook plugin declares it observes (the `hook_stages`
+/// vocabulary in `plugin.toml`).
+///
+/// COR-27 (PAT-002): the stages that overlap with the daemon's
+/// [`crate::hooks::stages::HookStage`] MUST use the same serde wire form, or a
+/// plugin declaring a stage can never be matched to the dispatcher stage it
+/// means. The provider stages previously serialized as `pre_provider` /
+/// `post_provider` here but `pre_provider_call` / `post_provider_call` in the
+/// dispatcher — a silent divergence. They are now `PreProviderCall` /
+/// `PostProviderCall` (the canonical wire form), each with a `#[serde(alias)]`
+/// so manifests written against the old short form still parse. Use
+/// [`HookStage::to_hook_stage`] to bridge to the dispatcher enum; stages with
+/// no dispatcher counterpart map to `None`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum HookStage {
-    PreProvider,
-    PostProvider,
+    /// Before the provider request — dispatcher `PreProviderCall`. Old
+    /// manifests that wrote `pre_provider` still parse via the alias.
+    #[serde(alias = "pre_provider")]
+    PreProviderCall,
+    /// After the provider reply — dispatcher `PostProviderCall`. Old
+    /// manifests that wrote `post_provider` still parse via the alias.
+    #[serde(alias = "post_provider")]
+    PostProviderCall,
+    /// Before the reply is sent to the channel — dispatcher `PreEgress`.
     PreChannelSend,
+    /// After a channel message is received. No dispatcher counterpart yet.
     PostChannelReceive,
+    /// A recall query ran. No dispatcher counterpart (internal pass).
     OnRecallQuery,
+    /// A memory consolidation pass ran. No dispatcher counterpart.
     OnConsolidationPass,
+}
+
+impl HookStage {
+    /// Bridge a plugin-declared stage to the daemon dispatcher's
+    /// [`crate::hooks::stages::HookStage`]. Returns `None` for stages with no
+    /// dispatcher counterpart (`PostChannelReceive`, `OnRecallQuery`,
+    /// `OnConsolidationPass`) so a caller skips them rather than mis-firing.
+    ///
+    /// COR-27: this is the conversion the eventual manifest→`HookDef` dispatch
+    /// wiring uses to register a plugin's hooks at the correct stage; before
+    /// the wire forms were unified there was no way to map between the enums.
+    /// The match is exhaustive (the enum is only `#[non_exhaustive]` to
+    /// downstream crates) so a new variant forces an explicit decision here.
+    pub fn to_hook_stage(self) -> Option<crate::hooks::stages::HookStage> {
+        use crate::hooks::stages::HookStage as H;
+        match self {
+            Self::PreProviderCall => Some(H::PreProviderCall),
+            Self::PostProviderCall => Some(H::PostProviderCall),
+            Self::PreChannelSend => Some(H::PreEgress),
+            Self::PostChannelReceive | Self::OnRecallQuery | Self::OnConsolidationPass => None,
+        }
+    }
 }
 
 /// Parsed `plugin.toml`.
@@ -337,5 +377,51 @@ mod tests {
         let bytes = b"\xff\xfe not utf8";
         let err = parse_manifest(bytes).unwrap_err();
         assert!(matches!(err, ManifestError::Parse(_)));
+    }
+
+    #[test]
+    fn pre_provider_alias_parses_to_canonical_and_serialises_canonical() {
+        // COR-27: a manifest written against the OLD short wire form still
+        // parses (serde alias), and serialises back as the canonical form that
+        // matches the dispatcher's wire form.
+        let toml = br#"
+            id = "auditor"
+            name = "Auditor"
+            version = "0.1.0"
+            hook_stages = ["pre_provider", "post_provider"]
+        "#;
+        let m = parse_manifest(toml).expect("alias manifest must parse");
+        assert_eq!(
+            m.hook_stages,
+            vec![HookStage::PreProviderCall, HookStage::PostProviderCall]
+        );
+        let serialized = toml::to_string(&m).unwrap();
+        assert!(
+            serialized.contains("pre_provider_call"),
+            "must serialise canonical: {serialized}"
+        );
+        assert!(serialized.contains("post_provider_call"));
+        // The old short form must not be the OUTPUT wire form anymore.
+        assert!(!serialized.contains("\"pre_provider\""));
+    }
+
+    #[test]
+    fn to_hook_stage_bridges_overlapping_stages_to_the_dispatcher() {
+        use crate::hooks::stages::HookStage as H;
+        // The provider stages a plugin declares now resolve to the dispatcher
+        // stage they mean — impossible while the wire forms diverged (PAT-002).
+        assert_eq!(
+            HookStage::PreProviderCall.to_hook_stage(),
+            Some(H::PreProviderCall)
+        );
+        assert_eq!(
+            HookStage::PostProviderCall.to_hook_stage(),
+            Some(H::PostProviderCall)
+        );
+        assert_eq!(HookStage::PreChannelSend.to_hook_stage(), Some(H::PreEgress));
+        // Manifest-only vocabulary with no dispatcher counterpart → None.
+        assert_eq!(HookStage::PostChannelReceive.to_hook_stage(), None);
+        assert_eq!(HookStage::OnRecallQuery.to_hook_stage(), None);
+        assert_eq!(HookStage::OnConsolidationPass.to_hook_stage(), None);
     }
 }
