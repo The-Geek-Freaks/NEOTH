@@ -103,6 +103,13 @@ struct LoadedOuro {
     model: LoadedOuroModel,
     tokenizer: tokenizers::Tokenizer,
     eos_id: Option<u32>,
+    /// COR-12 — the candle device the weights were mmap'd onto, stored
+    /// at load time (mirrors `local_qwen::LoadedModel::device`). Input
+    /// tensors MUST be built on this exact device instance, not a fresh
+    /// `device_for(..)` re-derivation: candle's `Device::same_device`
+    /// compares a per-instance `DeviceId`, so two `device_for` calls
+    /// would yield non-interoperable devices on real CUDA/Metal.
+    device: candle_core::Device,
 }
 
 /// `LocalOuroAdapter` — operator-facing chat + embed provider
@@ -319,6 +326,16 @@ impl LocalOuroAdapter {
             .ok()
             .and_then(|slot| slot.as_ref().map(|l| l.model.loop_steps()))
     }
+
+    /// COR-12 — resolve the candle device from the operator's pinned
+    /// accelerator via the shared `device_for` mapping (same fallback
+    /// rules as `local_qwen`: a GPU request degrades to CPU when the
+    /// corresponding candle feature is off). `ensure_ouro_loaded` calls
+    /// this ONCE at load time and stores the result in `LoadedOuro` so
+    /// every inference tensor lands on the exact same device instance.
+    fn resolved_device(&self) -> candle_core::Device {
+        device_for(self.accelerator)
+    }
 }
 
 /// Clamp operator-supplied max_new_tokens to a safe range. `None`
@@ -369,7 +386,7 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         adapter.weights_path.display(),
         adapter.quant_mode.as_str()
     );
-    let device = device_for(adapter.accelerator);
+    let device = adapter.resolved_device();
     let dtype = DType::F32;
     let tokenizer = Tokenizer::from_file(&adapter.tokenizer_path)
         .map_err(|e| anyhow::anyhow!("load tokenizer.json: {e}"))?;
@@ -412,6 +429,7 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
         model,
         tokenizer,
         eos_id,
+        device,
     });
     Ok(())
 }
@@ -502,13 +520,13 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
 /// Small helper so `run_ouro_forward` can copy the Device without
 /// re-deriving from `accelerator` (cheap clone).
 impl LoadedOuro {
+    /// COR-12 — the candle device the model's weights live on, captured
+    /// at load time. Inference tensors are built on this exact device
+    /// instance; re-deriving via `device_for` would mint a fresh
+    /// `DeviceId` that candle treats as a different device on GPU,
+    /// causing a device-mismatch error on the first matmul.
     fn model_device(&self) -> candle_core::Device {
-        // Pull from the embed_tokens — the model owns its device
-        // copy internally but doesn't expose it publicly. Derive
-        // from a known tensor instead.
-        // OuroModel exposes hidden_size; we add a device() accessor
-        // in a follow-up. For now use the safe default: CPU.
-        candle_core::Device::Cpu
+        self.device.clone()
     }
 }
 
@@ -801,6 +819,42 @@ mod tests {
             .with_quant_mode(OuroQuantMode::Q8);
         assert_eq!(adapter.repo, "test/ouro");
         assert_eq!(adapter.quant_mode(), OuroQuantMode::Q8);
+    }
+
+    #[test]
+    fn resolved_device_derives_from_accelerator_field() {
+        // Regression for GOLD-COR-12: the inference device must derive
+        // from the adapter's `accelerator` (via the shared `device_for`
+        // mapping `local_qwen` uses), NOT a hardcoded Cpu like the old
+        // `LoadedOuro::model_device`. On a build without GPU candle
+        // features (CI default) every accelerator degrades to Cpu; real
+        // GPU dispatch — where the stored-vs-re-derived `DeviceId`
+        // distinction actually bites — is exercised by the
+        // NEOTH_OURO_TEST_REPO_PATH integration suite below.
+        use crate::daemon::accelerator::Accelerator;
+        let dir = tempdir().unwrap();
+        for accel in [
+            None,
+            Some(Accelerator::Cuda),
+            Some(Accelerator::Metal),
+            Some(Accelerator::OpenVino),
+            Some(Accelerator::Cpu),
+        ] {
+            let adapter = LocalOuroAdapter::new_with_paths(
+                "test/ouro",
+                dir.path().to_path_buf(),
+                accel,
+                SamplingConfig::default(),
+                None,
+            );
+            // Adapter resolution must match the shared device_for for the
+            // SAME accelerator — proves it consults its own field rather
+            // than ignoring it (the previous bug returned Cpu blindly).
+            assert!(
+                matches!(adapter.resolved_device(), candle_core::Device::Cpu),
+                "accelerator {accel:?} must degrade to Cpu on a non-GPU build"
+            );
+        }
     }
 
     // ── Ouro O-6: real-weights integration suite ─────────────────────
