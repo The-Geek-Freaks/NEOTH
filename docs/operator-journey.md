@@ -191,9 +191,11 @@ WAL where `neoth wal show` can find it.
   itself from your usage; you accept or decline — it never edits its own config behind your
   back. `neoth memory drift` flags beliefs fading toward the forget floor so you can reinforce
   them.
-- **Make it yours, permanently.** ADRs (`neoth adr`), a tweakable theme, the full
-  config-parity between CLI and GUI, and the model-version-agnostic provider layer mean NEOTH
-  keeps working as models and your needs evolve — without you hand-patching anything.
+- **Make it yours, permanently.** ADRs (`neoth adr`), a tweakable theme, settings parity
+  between the CLI and the GUI (GU-01 — all 10 post-onboarding settings tabs are real panels;
+  a few stay thin and defer live actions like channel connect/disconnect and the chat composer
+  to the CLI/wizard), and the model-version-agnostic provider layer mean NEOTH keeps working as
+  models and your needs evolve — without you hand-patching anything.
 
 By this stage the relationship is the point: NEOTH anticipates what you want, you can audit
 every move it makes, and you own the whole thing — binary, memory, and audit trail — end to

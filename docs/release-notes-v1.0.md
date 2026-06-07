@@ -14,9 +14,13 @@ operator-readable proof.
 
 These are the deltas between this beta and a final 1.0 — tracked, not hidden:
 
-- **GUI settings parity (GU-01):** 6 of 10 post-onboarding settings tabs are
-  still "use the CLI for now" stubs (see the GUI honest-status note below).
-  Everything those tabs will manage is fully operable via the CLI today.
+- **GUI settings depth (GU-01):** all 10 post-onboarding settings tabs are now real
+  panels (GU-01 closed in the Session-37 GUI batch — see the GUI honest-status note
+  below). A few stay intentionally thin — the Channels tab shows status and defers
+  connect/disconnect to the CLI/wizard, the Chat tab is a launch-point for the composer,
+  Hemispheres/Plugins/Memory are read-only views, and not every individual `freedom.yaml`
+  flag has its own toggle yet — but everything is fully operable via the CLI today.
+  (GUI rendering is compile-verified; visual QA is a manual step.)
 - **Migration shadow-run (ARCH-05):** the deterministic recall-parity GATE +
   runbook ship; the 14-day shadow-run, grading, and cutover are
   operator-operational steps you perform, not code that runs itself.
@@ -35,7 +39,7 @@ These are the deltas between this beta and a final 1.0 — tracked, not hidden:
 | Privacy | Fail-closed profile extraction, explicit destinations, provider audit, WAL verification, plugin hostcall audit. |
 | Local models | Qwen profile path, optional local thinking model path, model cache diagnostics. |
 | Providers | Configured cloud providers, provider status, usage caps, circuit breakers, flapping detection. |
-| Channels | CLI + onboarding GUI: Telegram, WhatsApp Business, Slack Socket Mode, Discord, Keet/private path. Post-onboarding the GUI surfaces status; connect/disconnect runs via the onboarding wizard (`neoth init --reconfigure`) + `freedom.yaml`/`credentials.yaml` (the `/connect` `/disconnect` chat commands print that flow) until the in-GUI Channels panel (GU-01) lands. |
+| Channels | CLI + onboarding GUI: Telegram, WhatsApp Business, Slack Socket Mode, Discord, Keet/private path. The post-onboarding GUI Channels tab (GU-01) shows per-channel status; live connect/disconnect remains a CLI/wizard action via `neoth init --reconfigure` + `freedom.yaml`/`credentials.yaml` (the `/connect` `/disconnect` chat commands print that flow). |
 | Coding buddy | Planning, canvas/Kanban, repo memory, cargo/check loop, review promotion, recall of decisions. |
 | Automation | Local cron and localhost n8n API under the same policy/audit surface. |
 | Plugins | Skills and WASM plugins with capabilities, signatures, revocation, hostcall WAL events. |
@@ -43,14 +47,15 @@ These are the deltas between this beta and a final 1.0 — tracked, not hidden:
 | Doctor | Setup diagnostics for config, secrets, models, channels, plugins, providers, disk, WAL, and cluster discovery. |
 | Docs | Quickstart, privacy proof, install, CLI, providers, local models, channels, plugins, compare pages, security policy. |
 
-> **GUI settings coverage (honest status):** the post-onboarding settings
-> window has 10 tabs; 4 are live (Privacy, Cluster, Code Sessions, Config)
-> and 6 (Chat, Hemispheres, Channels, Skills, Plugins, Memory) currently
-> mirror to the CLI — they show a "use the CLI for now" panel until GU-01
-> lands their in-GUI controls. Everything those tabs will manage is fully
-> operable today via the CLI + the onboarding wizard; GU-01 is closing the
-> in-GUI parity gap, tab by tab. This note exists so the GUI claim is never
-> read as more than it is.
+> **GUI settings coverage (honest status):** the post-onboarding settings window has
+> 10 tabs and — since the Session-37 GU-01 batch — all 10 are real panels (Privacy,
+> Cluster, Code Sessions, Config, Chat, Hemispheres, Channels, Skills, Plugins, Memory).
+> A few are intentionally thin: Channels shows status and defers connect/disconnect to
+> the CLI/wizard, Chat is a launch-point for the composer, and Hemispheres/Plugins/Memory
+> are read-only views (rebind/enable still flow through the CLI), and not every single
+> `freedom.yaml` flag has a dedicated toggle yet. Everything is fully operable via the
+> CLI; GUI rendering is compile-verified, not yet visually QA'd. This note exists so the
+> GUI claim is never read as more than it is.
 
 ## What is not yet done
 
