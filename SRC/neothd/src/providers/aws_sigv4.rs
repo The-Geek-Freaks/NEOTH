@@ -128,8 +128,15 @@ pub fn sign(
         .collect::<Vec<_>>()
         .join(";");
 
+    // SigV4 canonical URI = AWS UriEncode of the path (preserve '/').
+    // Bedrock model ids carry a ':' (`…-v2:0`); without encoding it the
+    // canonical request mismatches what AWS recomputes from the received
+    // path → SignatureDoesNotMatch (the wire keeps the raw ':' — the
+    // `url` crate doesn't encode it — and AWS UriEncodes the received
+    // path the same single way, matching this `%3A`).
+    let canonical_uri = uri_encode_path(path);
     let canonical_request = format!(
-        "{method}\n{path}\n{query}\n{canonical_headers}\n{signed_headers_str}\n{body_hash}"
+        "{method}\n{canonical_uri}\n{query}\n{canonical_headers}\n{signed_headers_str}\n{body_hash}"
     );
 
     let scope = format!("{date_str}/{region}/{service}/aws4_request");
@@ -174,6 +181,36 @@ fn derive_signing_key(
     let k_region = Zeroizing::new(hmac_sha256(&k_date, region.as_bytes()));
     let k_service = Zeroizing::new(hmac_sha256(&k_region, service.as_bytes()));
     Zeroizing::new(hmac_sha256(&k_service, b"aws4_request"))
+}
+
+/// AWS `UriEncode` for a path component, `encodeSlash = false`: keep the
+/// RFC 3986 unreserved set (`A-Za-z0-9-._~`) plus `/` verbatim, and
+/// percent-encode every other byte as uppercase hex. Operates on bytes so
+/// multibyte UTF-8 is encoded per-byte (matching the AWS SigV4 test-suite
+/// `get-utf8` vector `/ሴ` → `/%E1%88%B4`).
+fn uri_encode_path(path: &str) -> String {
+    let mut out = String::with_capacity(path.len());
+    for &b in path.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(b as char);
+            }
+            _ => {
+                out.push('%');
+                out.push(hex_upper(b >> 4));
+                out.push(hex_upper(b & 0x0f));
+            }
+        }
+    }
+    out
+}
+
+/// Map a 0..=15 nibble to its uppercase hex digit.
+fn hex_upper(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        _ => (b'A' + (nibble - 10)) as char,
+    }
 }
 
 fn hmac_sha256(key: &[u8], message: &[u8]) -> Vec<u8> {
@@ -489,6 +526,69 @@ mod tests {
             fixture_time(),
         );
         assert_ne!(s1.authorization, s2.authorization);
+    }
+
+    #[test]
+    fn uri_encode_path_percent_encodes_colon_preserves_slash() {
+        // COR-15 / A-37: a Bedrock model id carries a ':' (…-v2:0); the
+        // canonical URI must encode it to %3A while keeping the '/'
+        // segment separators, or the signature won't match AWS's recompute.
+        assert_eq!(
+            uri_encode_path("/model/anthropic.claude-3-5-sonnet-20241022-v2:0/converse"),
+            "/model/anthropic.claude-3-5-sonnet-20241022-v2%3A0/converse"
+        );
+        // Unreserved chars (`-._~`) + '/' pass through unchanged.
+        assert_eq!(uri_encode_path("/model/test-a_b.c~d/converse"), "/model/test-a_b.c~d/converse");
+        // Non-ASCII encodes per UTF-8 byte, uppercase hex (AWS get-utf8 vector).
+        assert_eq!(uri_encode_path("/\u{1234}"), "/%E1%88%B4");
+        // Other reserved chars also encode (space, '?', '#').
+        assert_eq!(uri_encode_path("/a b?c#d"), "/a%20b%3Fc%23d");
+    }
+
+    #[test]
+    fn signature_reflects_encoded_colon_path() {
+        // Signing a ':'-bearing model path must be DETERMINISTIC (the
+        // encoding is applied before hashing) and differ from a path that
+        // genuinely has no colon — proving the colon is in the signed
+        // canonical, not dropped.
+        let colon = sign(
+            "POST",
+            "bedrock-runtime.us-east-1.amazonaws.com",
+            "/model/anthropic.claude-v2:0/converse",
+            "",
+            b"{}",
+            "us-east-1",
+            "bedrock",
+            &fixture_creds(),
+            fixture_time(),
+        );
+        let colon2 = sign(
+            "POST",
+            "bedrock-runtime.us-east-1.amazonaws.com",
+            "/model/anthropic.claude-v2:0/converse",
+            "",
+            b"{}",
+            "us-east-1",
+            "bedrock",
+            &fixture_creds(),
+            fixture_time(),
+        );
+        let no_colon = sign(
+            "POST",
+            "bedrock-runtime.us-east-1.amazonaws.com",
+            "/model/anthropic.claude-v2X0/converse",
+            "",
+            b"{}",
+            "us-east-1",
+            "bedrock",
+            &fixture_creds(),
+            fixture_time(),
+        );
+        assert_eq!(colon.authorization, colon2.authorization, "must be deterministic");
+        assert_ne!(
+            colon.authorization, no_colon.authorization,
+            "encoded ':' path must sign differently from a ':'-free path"
+        );
     }
 
     #[test]

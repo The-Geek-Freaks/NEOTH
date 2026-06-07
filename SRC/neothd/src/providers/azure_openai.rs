@@ -89,13 +89,7 @@ impl AzureOpenAiAdapter {
             );
         }
         let deployment_name = deployment_name.into();
-        if deployment_name.is_empty() {
-            anyhow::bail!(
-                "azure_openai: empty deployment name — set `provider_model: <your-deployment-name>` \
-                 in freedom.yaml. Deployments are created in the Azure portal under \
-                 your OpenAI resource → Deployments."
-            );
-        }
+        validate_deployment_name(&deployment_name)?;
         let api_version = api_version
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| DEFAULT_API_VERSION.to_string());
@@ -118,6 +112,43 @@ impl AzureOpenAiAdapter {
     }
 }
 
+/// Validate an Azure deployment name. Azure routes by a deployment name
+/// embedded directly in the URL path
+/// (`/openai/deployments/<name>/chat/completions`), so restrict it to a
+/// conservative `[A-Za-z0-9._-]+` (COR-15 / A-37): a name carrying `/`,
+/// `?`, `#`, or `..` could otherwise inject extra path segments, a query
+/// string, or path traversal into the request URL. Real Azure deployment
+/// names are alphanumeric with dashes, so this rejects nothing legitimate.
+fn validate_deployment_name(name: &str) -> Result<()> {
+    if name.is_empty() {
+        anyhow::bail!(
+            "azure_openai: empty deployment name — set `provider_model: <your-deployment-name>` \
+             in freedom.yaml. Deployments are created in the Azure portal under \
+             your OpenAI resource → Deployments."
+        );
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+    {
+        anyhow::bail!(
+            "azure_openai: deployment name `{name}` contains characters outside [A-Za-z0-9._-]. \
+             A name with '/', '?', '#', or '..' could rewrite the request URL path; use the exact \
+             deployment name shown in the Azure portal (OpenAI resource → Deployments)."
+        );
+    }
+    // `..` is the one traversal sequence still expressible within the
+    // charset above (both bytes are '.'); a `..` segment in the URL path
+    // normalises UP a level. Reject it explicitly.
+    if name.contains("..") {
+        anyhow::bail!(
+            "azure_openai: deployment name `{name}` contains `..` (path traversal). Use the exact \
+             deployment name shown in the Azure portal (OpenAI resource → Deployments)."
+        );
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl Provider for AzureOpenAiAdapter {
     fn name(&self) -> &'static str {
@@ -136,6 +167,11 @@ impl Provider for AzureOpenAiAdapter {
                 .model
                 .clone()
                 .unwrap_or_else(|| self.deployment_name.clone());
+            // COR-15: the per-request override (req.model) bypasses the
+            // constructor's check and lands directly in the URL path —
+            // re-validate so a crafted model name can't inject path
+            // segments / query / traversal into the Azure endpoint URL.
+            validate_deployment_name(&deployment)?;
 
             let mut messages = Vec::new();
             if let Some(sys) = &req.system {
@@ -361,6 +397,47 @@ mod tests {
         )
         .expect_err("must reject");
         assert!(err.to_string().contains("empty deployment"));
+    }
+
+    #[test]
+    fn deployment_name_with_url_unsafe_chars_is_rejected_at_construction() {
+        // COR-15: names that could inject path segments / query / traversal
+        // into the Azure URL must be refused by new().
+        for bad in [
+            "../../admin",
+            "prod/chat/completions",
+            "prod?api-version=evil",
+            "prod#frag",
+            "prod name",
+            "prod%2e%2e",
+        ] {
+            let res = AzureOpenAiAdapter::new(
+                "https://my-resource.openai.azure.com",
+                dummy_key(),
+                bad,
+                None,
+            );
+            assert!(res.is_err(), "new() must reject deployment `{bad}`");
+        }
+    }
+
+    #[test]
+    fn deployment_name_charset_validator_accepts_real_and_rejects_unsafe() {
+        // Real Azure deployment names (alphanumeric + . _ -) pass.
+        for ok in ["gpt-5-prod", "gpt.4o", "my_deploy-1", "GPT5"] {
+            assert!(validate_deployment_name(ok).is_ok(), "should accept `{ok}`");
+        }
+        // Anything with path/query/traversal metacharacters is refused.
+        for bad in ["", "a/b", "a?b", "a#b", "a b", "..", "a:b"] {
+            let err = validate_deployment_name(bad).expect_err("must reject");
+            let msg = err.to_string();
+            assert!(
+                msg.contains("empty deployment")
+                    || msg.contains("outside [A-Za-z0-9._-]")
+                    || msg.contains("path traversal"),
+                "`{bad}` got: {msg}"
+            );
+        }
     }
 
     #[test]
