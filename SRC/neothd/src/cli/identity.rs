@@ -90,7 +90,24 @@ pub async fn run_identity(args: IdentityArgs, output: OutputFormat) -> Result<()
             // SPEC-11 (#4): audit the merge with the full before-state so it's
             // reversible — a future `identity split` reads the 0x9B frame. P0:
             // FORWARD over audit-RPC when a daemon owns the WAL (no silent skip).
-            emit_identity_merged(&home, daemon_live, &canonical, &victim, &aliases).await;
+            // A-27 / GOLD-HON-16: the merge is already committed above; the
+            // audit emit is the record of it. If the emit fails, the merge
+            // STANDS but is un-audited — surface that audit gap loudly (warn!
+            // + an operator-visible "audit forward FAILED" line) rather than
+            // swallowing it. We do not fail the command (the merge can't be
+            // un-done by returning an error), but the operator is told.
+            if let Err(e) =
+                emit_identity_merged(&home, daemon_live, &canonical, &victim, &aliases).await
+            {
+                tracing::warn!(
+                    error = %e,
+                    "identity merge: 0x9B audit forward FAILED — merge committed but NOT recorded"
+                );
+                eprintln!(
+                    "⚠ audit forward FAILED: the merge succeeded but was NOT recorded to the \
+                     audit log (0x9B IDENTITY_MERGED): {e:#}"
+                );
+            }
             match output {
                 OutputFormat::Json | OutputFormat::Jsonl => println!(
                     "{}",
@@ -123,7 +140,7 @@ async fn emit_identity_merged(
     canonical: &str,
     victim: &str,
     aliases: &[identity_store::Alias],
-) {
+) -> Result<()> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -147,36 +164,40 @@ async fn emit_identity_merged(
     }))
     .unwrap_or_default();
     if daemon_live {
-        if let Err(e) = crate::daemon::audit_rpc::try_post_audit_frame(
+        // A-27 / GOLD-HON-16: a daemon owns the WAL, so the 0x9B frame must
+        // forward over audit-RPC. A failure here is an AUDIT GAP, not a
+        // routine skip — surface it to the caller (`warn!`-logged + "audit
+        // forward FAILED" printed) instead of swallowing it at `debug!`.
+        crate::daemon::audit_rpc::try_post_audit_frame(
             home,
             crate::wal::events::EVENT_TYPE_IDENTITY_MERGED,
             &payload,
         )
         .await
-        {
-            tracing::debug!(error = %e, "identity: 0x9B forward skipped (daemon listener unreachable)");
-        }
-        return;
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "0x9B IDENTITY_MERGED audit-RPC forward failed (daemon owns the WAL but its \
+                 audit listener is unreachable): {e}"
+            )
+        })?;
+        return Ok(());
     }
     let segment = FreedomConfig::default_wal_dir().join("000001.wal");
     if let Some(p) = segment.parent() {
-        let _ = std::fs::create_dir_all(p);
+        std::fs::create_dir_all(p)
+            .with_context(|| format!("create WAL dir {}", p.display()))?;
     }
-    let (writer, _join) = match crate::wal::writer::spawn(segment) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(error = %e, "identity: WAL writer spawn failed; 0x9B not recorded");
-            return;
-        }
-    };
+    let (writer, _join) = crate::wal::writer::spawn(segment)
+        .context("0x9B IDENTITY_MERGED: WAL writer spawn failed; merge not recorded")?;
     let header = crate::wal::HeaderBuilder::new(
         crate::wal::events::EVENT_TYPE_IDENTITY_MERGED,
         &payload,
     )
     .build();
-    if let Err(e) = writer.try_append_sync(header, payload) {
-        tracing::warn!(error = %e, "identity: 0x9B frame append failed (audit gap)");
-    }
+    writer
+        .try_append_sync(header, payload)
+        .context("0x9B IDENTITY_MERGED: frame append failed (audit gap)")?;
+    Ok(())
 }
 
 fn render_list(ids: &[identity_store::Identity], output: OutputFormat) {
@@ -196,5 +217,25 @@ fn render_list(ids: &[identity_store::Identity], output: OutputFormat) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn emit_identity_merged_surfaces_audit_rpc_failure() {
+        // A-27 / GOLD-HON-16: daemon_live=true but no daemon audit-RPC
+        // sidecar in this temp home → the 0x9B forward must FAIL LOUDLY
+        // (return Err so the caller can warn! + print "audit forward
+        // FAILED"), never a silent debug-level skip.
+        let home = tempfile::tempdir().unwrap();
+        let aliases: Vec<identity_store::Alias> = Vec::new();
+        let r = emit_identity_merged(home.path(), true, "canon", "victim", &aliases).await;
+        assert!(
+            r.is_err(),
+            "a missing daemon audit listener must surface as Err, not a silent skip"
+        );
     }
 }
