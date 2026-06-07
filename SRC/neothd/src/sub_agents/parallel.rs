@@ -77,7 +77,7 @@ pub struct DispatchReport {
     /// Count of `Pass` verdicts.
     pub pass_count: usize,
     /// Count of `Fail` verdicts (retriable).
-    pub pub_fail_count: usize,
+    pub fail_count: usize,
     /// Count of `Blocked` verdicts (operator escalation).
     pub blocked_count: usize,
     /// Count of tasks that panicked or failed to join. Synthesized
@@ -95,18 +95,6 @@ impl DispatchReport {
     /// True when every request returned a `Pass` verdict.
     pub fn all_passed(&self) -> bool {
         !self.results.is_empty() && self.pass_count == self.results.len()
-    }
-}
-
-// Renamed manually to avoid the keyword `fail_count` masking; serde
-// expects a real ident so we expose it via a method.
-#[allow(dead_code)]
-impl DispatchReport {
-    /// Count of `Fail` verdicts. Manual accessor — the field is
-    /// named `pub_fail_count` to avoid shadowing of `fail` in
-    /// `DispatchReport { ... }` literal sites.
-    pub fn fail_count(&self) -> usize {
-        self.pub_fail_count
     }
 }
 
@@ -135,7 +123,7 @@ where
         return Ok(DispatchReport {
             results: Vec::new(),
             pass_count: 0,
-            pub_fail_count: 0,
+            fail_count: 0,
             blocked_count: 0,
             panicked_count: 0,
         });
@@ -241,7 +229,7 @@ where
     Ok(DispatchReport {
         results,
         pass_count,
-        pub_fail_count: fail_count,
+        fail_count,
         blocked_count,
         panicked_count,
     })
@@ -408,7 +396,7 @@ mod tests {
         let r = dispatch_parallel(w, reqs, None, None).await.unwrap();
         assert_eq!(r.total(), 3);
         assert_eq!(r.pass_count, 3);
-        assert_eq!(r.fail_count(), 0);
+        assert_eq!(r.fail_count, 0);
         assert_eq!(r.blocked_count, 0);
         assert!(r.all_passed());
     }
@@ -418,7 +406,7 @@ mod tests {
         let w = Arc::new(FailingWorker);
         let reqs = vec![make_request("t1"), make_request("t2")];
         let r = dispatch_parallel(w, reqs, None, None).await.unwrap();
-        assert_eq!(r.fail_count(), 2);
+        assert_eq!(r.fail_count, 2);
         assert_eq!(r.pass_count, 0);
         assert!(!r.all_passed());
     }
@@ -540,7 +528,7 @@ mod tests {
         ];
         let r = dispatch_parallel(w, reqs, None, None).await.unwrap();
         assert_eq!(r.pass_count, 1);
-        assert_eq!(r.fail_count(), 1);
+        assert_eq!(r.fail_count, 1);
         assert_eq!(r.blocked_count, 1);
         assert_eq!(r.panicked_count, 0);
     }
