@@ -69,14 +69,14 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | Workstream | Total tasks | OPEN | DONE |
 |------------|-------------|------|------|
 | WS-A Security hardening | 35 | 3 | 32 |
-| WS-B Honesty / truth-in-advertising | 26 | 25 | 1 |
+| WS-B Honesty / truth-in-advertising | 26 | 24 | 2 |
 | WS-C Correctness / reliability | 36 | 1 | 35 |
 | WS-D Feature wiring (unwired modules) | 12 | 12 | 0 |
 | WS-E Architecture debt | 22 | 22 | 0 |
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
 | WS-G Repo adoptions | 9 | 9 | 0 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **175** | **103** | **72** |
+| **TOTAL** | **175** | **102** | **73** |
 
 _WS-A remaining (3): SEC-16 + SEC-18 (Cargo feature-gates — dedicated dual-build `--no-default-features` pass) · SEC-30 (sudomode WAL events — builds with GOLD-FEAT-01). All remaining WS-A items are the two big feature-gate refactors + one that pairs with a Gold feature; every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -207,7 +207,8 @@ External/unauthenticated exploits first, then operator-data-loss, then defense-i
 Doc/claim ≠ code fixes AND wiring the truthful behavior.
 
 - [x] **GOLD-HON-01** Downgrade `neoth-migrate` README and `RUNBOOK_phase3_cutover.md` text to "dry-run/Preview only; apply is post-v1.0" — *files:* `SRC/neoth-migrate/src/main.rs` (clap help text), relevant docs — *test:* `neoth-migrate apply --help` says "preview only" — *origin:* B-01, A-02 — ✅ **DONE:** the code was already honest (`run_apply` bails "Memory import (apply) is not yet available"), but the help/doc text over-promised ("Actually migrate"). The `Apply` subcommand doc-comment (= clap `about`) now reads "**Preview only in this release — `apply` is post-v1.0** … validates the manifest then refuses and points you back at `dry-run`"; the module doc (`//!` header + the CLI usage block) is aligned to dry-run/preview-only + apply-post-v1.0. `PLAN/RUNBOOK_phase3_cutover.md` got a top-banner "v1.0 implementation status: only dry-run/preview is shippable; apply/import is post-v1.0 — read the apply steps below as planned design, not a shipped feature." Cargo.toml usage comment marks the `apply` line POST-v1.0. (No separate neoth-migrate README exists — the module doc is the equivalent.) Verified: `cargo run -p neoth-migrate -- apply --help` prints "Preview only in this release — apply is post-v1.0…". neoth-migrate builds + clippy `-D warnings` clean.
-- [ ] **GOLD-HON-02** Align `operator-journey.md` §5 + FAQ offline table to README's own "Partial" admission that memory-ingest is deferred; remove "Shared memory across devices is the goal here" without marking it as not yet functional — *files:* `docs/operator-journey.md` — *test:* doc review passes — *origin:* B-02
+- [x] **GOLD-HON-02** Align `operator-journey.md` §5 + FAQ offline table to README's own "Partial" admission that memory-ingest is deferred; remove "Shared memory across devices is the goal here" without marking it as not yet functional — *files:* `docs/operator-journey.md` — *test:* doc review passes — *origin:* B-02
+  - ✅ DONE: §5 "Multi-device" cluster bullet reworded — the over-promising "Shared memory across devices is the goal here" replaced with an explicit honest status that mirrors the README feature matrix verbatim: **"Cross-device memory sync is not shipped yet … the private mesh today is Partial — discovery, pairing, the consent gate, and transport config work, but live shared memory across devices (tracked as SL-01) is still in progress. Until it lands each node keeps its own local memory; the cluster shares the channel mesh + node health, not recall."** Line 115 already framed it as a "**Goal:**" (honest); the "one-line map" table row (`| Multi-device | neoth connect, neoth cluster |`) only lists commands, no capability claim — no over-promise there. No standalone "FAQ offline table" exists in the file; the README's `Private mesh = Partial / SL-01 in progress` admission (README.md:284-287) is the alignment source. Doc review passes.
 - [ ] **GOLD-HON-03** Derive `peer_count` from `registry::load(&home)?.peers.len()` in `cluster.rs::run_status` instead of hardcoded `0usize`; derive `mode`/`policy` from actual config — *files:* `SRC/neothd/src/cluster/cluster.rs` — *test:* `neoth cluster status` shows non-zero peers when paired — *origin:* A-13
 - [ ] **GOLD-HON-04** Fix `media/mod.rs` table: Audio = "STT local (whisper-rs) / TTS cloud-or-OS-native"; remove "full-stack local multimodal" phrasing where it implies local TTS is shipped — *files:* `SRC/neothd/src/media/mod.rs`, relevant docs — *test:* mod.rs doc-comment is accurate — *origin:* B-08
 - [ ] **GOLD-HON-05** Add two-path cost callout to `operator-journey.md` §1/§4 distinguishing fully-local (~0 EUR/month) from cloud-council subscription floor — *files:* `docs/operator-journey.md` — *test:* doc review passes — *origin:* B-09

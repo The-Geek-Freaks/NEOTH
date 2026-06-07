@@ -120,8 +120,12 @@ Everything NEOTH does is in the audit log from minute one: `neoth wal show` (and
   channel (raising autonomy, granting consent) is refused — those stay CLI + local-auth only.
 - **Cluster.** `neoth cluster discover` finds your other NEOTH nodes over mDNS / Tailscale
   magic-DNS; `neoth cluster confirm` pairs them behind a consent gate, and
-  `neoth cluster status` shows node health + the channel mesh. Shared memory across devices is
-  the goal here.
+  `neoth cluster status` shows node health + the channel mesh. **Cross-device memory sync
+  is not shipped yet:** matching the README's feature matrix, the private mesh today is
+  **Partial** — discovery, pairing, the consent gate, and transport config work, but live
+  shared memory across devices (tracked as SL-01) is still in progress. Until it lands each
+  node keeps its own local memory; the cluster shares the channel mesh + node health, not
+  recall.
 - **Transport.** Optional Hysteria2 / Tailscale tunnels keep cluster + channel traffic
   private (`neoth hysteria`, the wizard's VPN step).
 
