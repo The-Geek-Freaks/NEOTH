@@ -305,7 +305,7 @@ impl Service<HyperRequest<IncomingBody>> for WebhookService {
     fn call(&self, req: HyperRequest<IncomingBody>) -> Self::Future {
         let cfg = Arc::clone(&self.config);
         Box::pin(async move {
-            let response = match handle_request(&cfg, req).await {
+            let response = match handle_request(cfg, req).await {
                 Ok(r) => r,
                 Err(HandleError::BodyTooLarge { cap }) => {
                     // R2-P1-1: distinct 413 instead of generic 500 so
@@ -347,24 +347,39 @@ impl From<anyhow::Error> for HandleError {
 }
 
 async fn handle_request(
-    cfg: &WebhookListenerConfig,
+    cfg: Arc<WebhookListenerConfig>,
     req: HyperRequest<IncomingBody>,
 ) -> std::result::Result<HyperResponse<Full<Bytes>>, HandleError> {
     let path = req.uri().path().to_string();
     let webhook_req = translate(req).await?;
     match path.as_str() {
+        // GOLD-COR-08: handle_meta takes the Arc by value so it can clone it
+        // into the detached, bounded dispatch task.
         "/webhook" => handle_meta(cfg, webhook_req)
             .await
             .map_err(HandleError::Other),
-        "/slack/events" => handle_slack(cfg, webhook_req)
+        "/slack/events" => handle_slack(&cfg, webhook_req)
             .await
             .map_err(HandleError::Other),
         _ => Ok(plain_response(StatusCode::NOT_FOUND, "not found")),
     }
 }
 
+/// GOLD-COR-08 / A-12: upper bound on concurrently-running webhook pipeline
+/// dispatches. Now that `handle_meta` ACKs Meta with 200 BEFORE running the LLM
+/// pipeline (so a slow turn can't trip Meta's retry → duplicate processing),
+/// the dispatch runs in a detached task and no longer holds the connection
+/// semaphore permit. This gate restores the "no unbounded `tokio::spawn`"
+/// invariant the R2 reviewer added: a fan-out storm queues on this gate instead
+/// of spawning thousands of simultaneous provider calls. Generous default — far
+/// above any real inbound rate, well below resource exhaustion. (Graceful
+/// shutdown-drain of these detached tasks is tracked by GOLD-COR-34.)
+const DISPATCH_CONCURRENCY: usize = 64;
+static DISPATCH_GATE: tokio::sync::Semaphore =
+    tokio::sync::Semaphore::const_new(DISPATCH_CONCURRENCY);
+
 async fn handle_meta(
-    cfg: &WebhookListenerConfig,
+    cfg: Arc<WebhookListenerConfig>,
     req: WebhookRequest,
 ) -> Result<HyperResponse<Full<Bytes>>> {
     let (resp, outcome) = route_meta_webhook(&req, &cfg.meta_app_secret, &cfg.meta_verify_token);
@@ -390,7 +405,21 @@ async fn handle_meta(
             // pipeline owns its own outbound path.
             match decode_payload(raw_body) {
                 DecodedWebhook::Messages(msgs) => {
-                    dispatch_messages(cfg, msgs).await;
+                    // GOLD-COR-08 / A-12: do NOT await the pipeline here — that
+                    // would delay the 200 until the LLM turn finished, and Meta
+                    // retries a webhook it didn't see ACKed in time, re-running
+                    // the whole pipeline + double-sending the reply. Hand the
+                    // fan-out to a detached, DISPATCH_GATE-bounded task and let
+                    // `resp` (200) return immediately below.
+                    let cfg2 = Arc::clone(&cfg);
+                    tokio::spawn(async move {
+                        match DISPATCH_GATE.acquire().await {
+                            Ok(_permit) => dispatch_messages(&cfg2, msgs).await,
+                            Err(_) => {
+                                warn!("webhook dispatch gate closed — dropping fan-out")
+                            }
+                        }
+                    });
                 }
                 DecodedWebhook::NoMessages { reason } => {
                     debug!(reason = %reason, "Meta payload had no processable messages");
@@ -1033,6 +1062,83 @@ mod tests {
         )
         .await;
         assert_eq!(status, 403);
+
+        let _ = shutdown_tx.send(());
+        let _ = server.await;
+    }
+
+    #[tokio::test]
+    async fn meta_post_acks_200_before_pipeline_runs() {
+        // GOLD-COR-08 / A-12: the 200 must come back BEFORE the LLM pipeline
+        // finishes, or Meta retries the webhook (re-running the pipeline +
+        // double-sending the reply). Proof without timing flakiness: the
+        // pipeline blocks on a 0-permit semaphore. If dispatch were still
+        // synchronous (pre-fix), `handle_meta` would await it and the 200 would
+        // NEVER be sent — `http_post` would hang. A prompt 200 proves the
+        // dispatch is detached; releasing the permit afterwards proves it is
+        // fire-and-FORGET, not fire-and-drop (the turn still runs to completion).
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let completed = Arc::new(AtomicBool::new(false));
+        let release_h = Arc::clone(&release);
+        let completed_h = Arc::clone(&completed);
+        let pipeline: PipelineHandler = Box::new(move |_inbound| {
+            let release_h = Arc::clone(&release_h);
+            let completed_h = Arc::clone(&completed_h);
+            Box::pin(async move {
+                // Block until the test releases us — simulates a slow LLM turn.
+                let _ = release_h.acquire().await;
+                completed_h.store(true, Ordering::SeqCst);
+                Ok(None)
+            })
+        });
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let cfg = WebhookListenerConfig {
+            meta_app_secret: b"appsecret".to_vec(),
+            meta_verify_token: "v".to_string(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline,
+            whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
+            max_concurrent_connections: None,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let server = tokio::spawn(async move {
+            let _ = serve(addr, cfg, async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        let host = format!("{}", addr);
+
+        // A real WhatsApp text message → decode_payload yields Messages → the
+        // pipeline is invoked (and blocks on the semaphore).
+        let body = br#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.X","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
+        let sig = sign_meta(body, b"appsecret");
+        let (status, _) =
+            http_post(&host, "/webhook", body, &[("x-hub-signature-256", &sig)]).await;
+        assert_eq!(status, 200, "Meta POST must 200 even while the pipeline blocks");
+        assert!(
+            !completed.load(Ordering::SeqCst),
+            "pipeline must still be blocked when the 200 returns (fire-and-forget)"
+        );
+
+        // Release the blocked turn; the detached dispatch must run to completion.
+        release.add_permits(1);
+        for _ in 0..50 {
+            if completed.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            completed.load(Ordering::SeqCst),
+            "detached dispatch must still run to completion (not dropped)"
+        );
 
         let _ = shutdown_tx.send(());
         let _ = server.await;
