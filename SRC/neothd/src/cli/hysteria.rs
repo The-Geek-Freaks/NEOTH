@@ -150,8 +150,11 @@ mod tests {
             local_socks_port: 1080,
         };
         let body = render_yaml_config(&cfg);
-        assert!(body.contains("server: vps:443"));
-        assert!(body.contains("listen: 127.0.0.1:1080"));
+        // GOLD-SEC-35 / A-69: scalars are emitted as double-quoted YAML,
+        // so the server line is `server: "vps:443"` (the bare-form
+        // assertion this test shipped with went stale when quoting landed).
+        assert!(body.contains("server: \"vps:443\""), "got: {body}");
+        assert!(body.contains("listen: 127.0.0.1:1080"), "got: {body}");
     }
 
     #[test]
