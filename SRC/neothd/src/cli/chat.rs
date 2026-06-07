@@ -1812,7 +1812,7 @@ pub async fn run_chat_with(
                                 crate::profile::extension_registry::TypedExtensionRegistry::load()
                                     .unwrap_or_default();
                             match crate::profile::run_pipeline(
-                                &mut conn,
+                                crate::profile::PipelineConn::Owned(&mut conn),
                                 &writer,
                                 learn_provider_ref,
                                 raw_event_id,

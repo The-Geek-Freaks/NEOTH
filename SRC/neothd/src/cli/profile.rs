@@ -1460,7 +1460,7 @@ async fn run_pipeline_cli_batch(
     let mut runs: Vec<(i64, crate::profile::PipelineRun)> = Vec::with_capacity(triggers.len());
     for &trigger_event in triggers {
         let result = crate::profile::run_pipeline(
-            &mut conn,
+            crate::profile::PipelineConn::Owned(&mut conn),
             &writer,
             provider.as_ref(),
             trigger_event,

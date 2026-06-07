@@ -4114,49 +4114,16 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                         // `ConnBorrow` keeps both variants matchable
                         // through one local `as_mut()` interface so the
                         // rest of the inner async block stays unchanged.
-                        enum ConnBorrow<'a> {
-                            Shared(tokio::sync::MutexGuard<'a, rusqlite::Connection>),
-                            Owned(rusqlite::Connection),
-                        }
-                        impl<'a> ConnBorrow<'a> {
-                            fn as_mut(&mut self) -> &mut rusqlite::Connection {
-                                match self {
-                                    ConnBorrow::Shared(g) => g,
-                                    ConnBorrow::Owned(c) => c,
-                                }
-                            }
-                        }
-                        let mut conn_holder = if let Some(shared) = &views_conn_for_pipeline {
-                            ConnBorrow::Shared(shared.lock().await)
-                        } else {
-                            match crate::memory::store::open(&views_path) {
-                                Ok(c) => ConnBorrow::Owned(c),
-                                Err(e) => {
-                                    tracing::warn!(
-                                        error = %e,
-                                        path = %views_path.display(),
-                                        "open views.db failed for channel profile pipeline (non-fatal)"
-                                    );
-                                    return;
-                                }
-                            }
-                        };
-                        let conn = conn_holder.as_mut();
+                        // COR-33: do NOT hold the shared views.db lock across the
+                        // whole pipeline. The LLM extract inside run_pipeline does
+                        // not touch the connection, so run_pipeline (Shared) locks
+                        // the views.db mutex only for its brief sync DB stages and
+                        // releases it around the LLM call — concurrent channels'
+                        // post-reply profile pipelines no longer serialize on the
+                        // DB mutex. The owned fallback (per-call open) is used only
+                        // when startup couldn't open the shared connection.
                         let pipeline_fut = async {
-                            if let Err(e) = crate::memory::indexer::replay_once(
-                                conn,
-                                &segment_path_for_pipeline,
-                            )
-                            .await
-                            {
-                                tracing::warn!(
-                                    error = %e,
-                                    "indexer replay_once failed before channel profile pipeline"
-                                );
-                                return;
-                            }
-                            let guard =
-                                crate::profile::claim_guard::ProfileClaimGuard::default();
+                            let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
                             let extensions =
                                 crate::profile::extension_registry::TypedExtensionRegistry::load()
                                     .unwrap_or_default();
@@ -4164,31 +4131,77 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
-                            match crate::profile::run_pipeline(
-                                conn,
-                                &writer_for_pipeline,
-                                &*provider_for_pipeline,
-                                ingress_event_id,
-                                2,
-                                &guard,
-                                &extensions,
-                                now_unix,
-                                // ADV-03 Phase 5 (Session 24): None
-                                // preserves pre-gate behaviour for the
-                                // serve-mode channel ingress pipeline.
-                                // Phase 6+ wires the daemon-mode gate
-                                // context (autonomy + is_tty=false +
-                                // queue-pending closure) once the CLI
-                                // `neoth profile pending` surface is
-                                // shipped.
-                                None,
-                                derived_from_mirror_pipeline, // ADV-07
-                            )
-                            .await
-                            {
-                                Ok(crate::profile::PipelineRun::Applied {
-                                    outcome, ..
-                                }) => {
+                            let run = if let Some(shared) = &views_conn_for_pipeline {
+                                // replay needs the conn too — take a short lock
+                                // just for it; run_pipeline re-locks per DB stage.
+                                {
+                                    let mut g = shared.lock().await;
+                                    if let Err(e) = crate::memory::indexer::replay_once(
+                                        &mut g,
+                                        &segment_path_for_pipeline,
+                                    )
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "indexer replay_once failed before channel profile pipeline"
+                                        );
+                                        return;
+                                    }
+                                }
+                                crate::profile::run_pipeline(
+                                    crate::profile::PipelineConn::Shared(shared),
+                                    &writer_for_pipeline,
+                                    &*provider_for_pipeline,
+                                    ingress_event_id,
+                                    2,
+                                    &guard,
+                                    &extensions,
+                                    now_unix,
+                                    None, // ADV-03 Phase 5: no daemon-mode gate yet
+                                    derived_from_mirror_pipeline, // ADV-07
+                                )
+                                .await
+                            } else {
+                                let mut owned = match crate::memory::store::open(&views_path) {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            path = %views_path.display(),
+                                            "open views.db failed for channel profile pipeline (non-fatal)"
+                                        );
+                                        return;
+                                    }
+                                };
+                                if let Err(e) = crate::memory::indexer::replay_once(
+                                    &mut owned,
+                                    &segment_path_for_pipeline,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "indexer replay_once failed before channel profile pipeline"
+                                    );
+                                    return;
+                                }
+                                crate::profile::run_pipeline(
+                                    crate::profile::PipelineConn::Owned(&mut owned),
+                                    &writer_for_pipeline,
+                                    &*provider_for_pipeline,
+                                    ingress_event_id,
+                                    2,
+                                    &guard,
+                                    &extensions,
+                                    now_unix,
+                                    None,
+                                    derived_from_mirror_pipeline,
+                                )
+                                .await
+                            };
+                            match run {
+                                Ok(crate::profile::PipelineRun::Applied { outcome, .. }) => {
                                     tracing::info!(
                                         channel = %channel_str_for_pipeline,
                                         sender = %sender_id_for_pipeline,
@@ -4202,13 +4215,6 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                                 Ok(crate::profile::PipelineRun::Skipped(
                                     reason @ crate::profile::PipelineSkip::QuotaExceeded { .. },
                                 )) => {
-                                    // ADV-10 review follow-up: escalate
-                                    // quota-exceeded to warn so persistent
-                                    // 429 suppression on the channel post-
-                                    // reply path is visible at the default
-                                    // log level (see cli/chat.rs for the
-                                    // matching split on the interactive
-                                    // path).
                                     tracing::warn!(
                                         channel = %channel_str_for_pipeline,
                                         reason = %reason,

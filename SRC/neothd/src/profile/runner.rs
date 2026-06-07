@@ -37,6 +37,54 @@ use crate::profile::window_extract::extract_window;
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
 
+/// COR-33: how `run_pipeline` reaches its `views.db` connection.
+///
+/// The LLM extraction stage (`extract_delta`) does NOT touch the connection —
+/// it works on the in-memory attributed window — so for the daemon channel
+/// path the shared `views.db` lock must NOT be held across that `.await`
+/// (holding it serialized every channel's post-reply profile pipeline on the
+/// DB mutex while one was doing its seconds-long LLM call — CR-010 / A-15).
+/// `run_pipeline` therefore takes a `PipelineConn` and acquires the connection
+/// only for the brief synchronous DB stages (window read, redactions read,
+/// apply write), releasing it around the LLM call.
+///
+/// `Owned` callers (interactive chat / CLI / tests) hold an exclusive
+/// `&mut Connection`; `lock()` is a zero-cost reborrow. `Shared` (the daemon
+/// channel pipeline) locks the per-process `views.db` mutex per DB stage. A
+/// per-call connection is deliberately NOT used for the shared path:
+/// `replay_once` (WAL→views) runs first and concurrent connections would race
+/// on the replay offset — the shared connection serializes replay + writes.
+pub enum PipelineConn<'a> {
+    Owned(&'a mut Connection),
+    Shared(&'a std::sync::Arc<tokio::sync::Mutex<Connection>>),
+}
+
+/// Short-lived guard over the `views.db` connection for ONE synchronous DB
+/// stage of `run_pipeline`. Dropping it releases the shared mutex (a no-op for
+/// `Owned`). MUST be dropped before any non-DB `.await` (esp. the LLM extract).
+enum PipelineConnGuard<'a> {
+    Owned(&'a mut Connection),
+    Shared(tokio::sync::MutexGuard<'a, Connection>),
+}
+
+impl PipelineConn<'_> {
+    async fn lock(&mut self) -> PipelineConnGuard<'_> {
+        match self {
+            PipelineConn::Owned(c) => PipelineConnGuard::Owned(c),
+            PipelineConn::Shared(arc) => PipelineConnGuard::Shared(arc.lock().await),
+        }
+    }
+}
+
+impl PipelineConnGuard<'_> {
+    fn as_mut(&mut self) -> &mut Connection {
+        match self {
+            PipelineConnGuard::Owned(c) => c,
+            PipelineConnGuard::Shared(g) => g,
+        }
+    }
+}
+
 /// Why the pipeline aborted partway through.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PipelineSkip {
@@ -122,7 +170,7 @@ fn drop_mirror_categories(delta: &mut ProfileDelta) -> usize {
 // tracked as a separate cleanup, not worth churning every call site now.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_pipeline(
-    conn: &mut Connection,
+    mut conn: PipelineConn<'_>,
     writer: &WalWriterHandle,
     provider: &dyn Provider,
     trigger_event_id: i64,
@@ -170,9 +218,13 @@ pub async fn run_pipeline(
     // record.
     emit_extract_target_audit(writer, provider.name(), trigger_event_id, now_unix as i64).await;
 
-    // Stage 1 — window_extract.
-    let window = extract_window(conn, trigger_event_id, turns_back)
-        .context("pipeline stage 1: window_extract")?;
+    // Stage 1 — window_extract. COR-33: lock the shared conn only for this
+    // synchronous read, then release it before the LLM extract below.
+    let window = {
+        let mut g = conn.lock().await;
+        extract_window(g.as_mut(), trigger_event_id, turns_back)
+            .context("pipeline stage 1: window_extract")?
+    };
 
     // Stage 2 — window_attribute.
     let attributed = attribute_segments(&window);
@@ -283,7 +335,10 @@ pub async fn run_pipeline(
     // Stage 5 — claim_guard (H1+H2+H5+M1+M2). Pull live redactions
     // from idx_profile_redactions; derive the timestamp policy from the
     // window's anchor range.
-    let redactions = load_active_redactions(conn)?;
+    let redactions = {
+        let mut g = conn.lock().await;
+        load_active_redactions(g.as_mut())?
+    };
     let policy = TimestampPolicy::from_window(&attributed, 1)
         // Empty window fallback — already guarded by stage 2 check, but
         // be defensive.
@@ -334,16 +389,19 @@ pub async fn run_pipeline(
     // bypasses the gate and behaves exactly as before.
     if let Some(ctx) = gate_ctx {
         use crate::profile::approval_gate::{ApprovalOutcome, approval_gate};
-        let outcome = approval_gate(
-            &guarded,
-            ctx.config,
-            ctx.autonomy,
-            ctx.is_tty,
-            conn,
-            ctx.confirm_fn,
-            now_unix,
-        )
-        .context("pipeline stage 5b: approval_gate")?;
+        let outcome = {
+            let mut g = conn.lock().await;
+            approval_gate(
+                &guarded,
+                ctx.config,
+                ctx.autonomy,
+                ctx.is_tty,
+                g.as_mut(),
+                ctx.confirm_fn,
+                now_unix,
+            )
+            .context("pipeline stage 5b: approval_gate")?
+        };
         match outcome {
             ApprovalOutcome::Approved => {
                 // fall through to Stage 6
@@ -359,10 +417,14 @@ pub async fn run_pipeline(
         }
     }
 
-    // Stage 6 — apply. Idempotent on extraction_id.
-    let apply_outcome = apply_delta(conn, writer, &guarded, now_unix as i64)
-        .await
-        .context("pipeline stage 6: profile.apply")?;
+    // Stage 6 — apply. Idempotent on extraction_id. COR-33: re-lock for the
+    // write phase (the lock was released around the LLM extract above).
+    let apply_outcome = {
+        let mut g = conn.lock().await;
+        apply_delta(g.as_mut(), writer, &guarded, now_unix as i64)
+            .await
+            .context("pipeline stage 6: profile.apply")?
+    };
 
     Ok(PipelineRun::Applied {
         outcome: apply_outcome,
@@ -560,6 +622,33 @@ mod tests {
         }
     }
 
+    // COR-33: a provider whose `complete` (the LLM extract stage) signals it has
+    // entered, then blocks until released — used to prove run_pipeline does NOT
+    // hold the views.db lock across the LLM call.
+    struct BlockingLlmMock {
+        reply: String,
+        entered: std::sync::Arc<tokio::sync::Notify>,
+        release: std::sync::Arc<tokio::sync::Semaphore>,
+    }
+
+    #[async_trait]
+    impl Provider for BlockingLlmMock {
+        fn name(&self) -> &'static str {
+            "blocking-mock"
+        }
+        async fn complete(&self, _req: Request) -> anyhow::Result<Completion> {
+            self.entered.notify_one();
+            let _permit = self.release.acquire().await;
+            Ok(Completion {
+                text: self.reply.clone(),
+                model: "mock-1".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(10),
+                output_tokens: Some(20),
+            })
+        }
+    }
+
     fn insert_episode(conn: &Connection, event_id: i64, et: u8, text: &str, ts_ns: i64) {
         conn.execute(
             "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash) \
@@ -669,7 +758,7 @@ mod tests {
         let guard = ProfileClaimGuard::new(GuardConfig::default());
         let extensions = TypedExtensionRegistry::default();
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -704,6 +793,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cor33_shared_conn_lock_released_during_llm_extract() {
+        // COR-33: with a Shared views.db connection, run_pipeline must release the
+        // mutex around the LLM extract (which doesn't touch the conn) so
+        // concurrent channel pipelines don't serialize on the DB lock for the
+        // whole seconds-long turn. Proof: block the provider mid-extract and
+        // assert the shared lock is acquirable while the LLM is in flight. With
+        // the pre-fix code (lock held across run_pipeline) this lock would block
+        // until the LLM finished and the 2s timeout would trip.
+        let (_dir, conn, writer, join) = setup().await;
+        let ts_ns = 1_778_803_200 * 1_000_000_000;
+        insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
+        let shared = std::sync::Arc::new(tokio::sync::Mutex::new(conn));
+
+        let entered = std::sync::Arc::new(tokio::sync::Notify::new());
+        let release = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+        let provider = BlockingLlmMock {
+            reply: valid_llm_reply_with_today_date(),
+            entered: std::sync::Arc::clone(&entered),
+            release: std::sync::Arc::clone(&release),
+        };
+        let guard = ProfileClaimGuard::new(GuardConfig::default());
+        let extensions = TypedExtensionRegistry::default();
+
+        // run_pipeline's future is !Send (it holds the rusqlite connection
+        // across awaits — that's why the daemon runs it under block_in_place,
+        // not tokio::spawn), so drive it concurrently with the lock-probe on the
+        // SAME task via join! rather than spawning.
+        let pipeline_fut = run_pipeline(
+            PipelineConn::Shared(&shared),
+            &writer,
+            &provider,
+            10,
+            2,
+            &guard,
+            &extensions,
+            1_778_803_200,
+            None,
+            false,
+        );
+        let probe_fut = async {
+            // Block until the pipeline has entered the LLM extract.
+            entered.notified().await;
+            // The views.db lock MUST be free while the LLM call is in flight.
+            let acquired = tokio::time::timeout(Duration::from_secs(2), shared.lock()).await;
+            assert!(
+                acquired.is_ok(),
+                "COR-33: views.db lock must be released during the LLM extract"
+            );
+            drop(acquired);
+            // Release the LLM so the pipeline re-locks for apply and finishes.
+            release.add_permits(1);
+        };
+        let (out, ()) = tokio::join!(pipeline_fut, probe_fut);
+        assert!(
+            matches!(out.unwrap(), PipelineRun::Applied { .. }),
+            "COR-33: shared-conn pipeline must apply post-LLM"
+        );
+
+        drop(writer);
+        let _ = join.await;
+    }
+
+    #[tokio::test]
     async fn pipeline_skips_when_window_has_no_user_speech() {
         let (_dir, mut conn, writer, join) = setup().await;
         // Insert only PROVIDER_RESPONSE rows → all tool_output.
@@ -721,7 +873,7 @@ mod tests {
         let guard = ProfileClaimGuard::default();
         let extensions = TypedExtensionRegistry::default();
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -756,7 +908,7 @@ mod tests {
         let guard = ProfileClaimGuard::default();
         let extensions = TypedExtensionRegistry::default();
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -798,7 +950,7 @@ mod tests {
         let guard = ProfileClaimGuard::default();
         let extensions = TypedExtensionRegistry::default();
         let _ = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -812,7 +964,7 @@ mod tests {
         .await
         .unwrap();
         let out2 = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -907,7 +1059,7 @@ mod tests {
             confirm_fn: Box::new(|_| panic!("confirm must not fire without tty")),
         };
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -966,7 +1118,7 @@ mod tests {
             confirm_fn: Box::new(|_delta| true), // operator says yes
         };
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -1012,7 +1164,7 @@ mod tests {
             confirm_fn: Box::new(|_delta| false), // operator says no
         };
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -1064,7 +1216,7 @@ mod tests {
             confirm_fn: Box::new(|_| panic!("Full autonomy must skip confirm")),
         };
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -1118,7 +1270,7 @@ mod tests {
         let guard = ProfileClaimGuard::new(GuardConfig::default());
         let extensions = TypedExtensionRegistry::default();
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -1201,7 +1353,7 @@ mod tests {
         let guard = ProfileClaimGuard::new(GuardConfig::default());
         let extensions = TypedExtensionRegistry::default();
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,
@@ -1277,7 +1429,7 @@ mod tests {
         let guard = ProfileClaimGuard::new(GuardConfig::default());
         let extensions = TypedExtensionRegistry::default();
         let out = run_pipeline(
-            &mut conn,
+            PipelineConn::Owned(&mut conn),
             &writer,
             &provider,
             10,

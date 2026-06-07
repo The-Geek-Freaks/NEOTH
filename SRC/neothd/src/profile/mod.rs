@@ -61,7 +61,7 @@ pub mod window_attribute;
 pub mod window_extract;
 
 #[allow(unused_imports)]
-pub use runner::{PipelineRun, PipelineSkip, run_pipeline};
+pub use runner::{PipelineConn, PipelineRun, PipelineSkip, run_pipeline};
 
 #[allow(unused_imports)]
 pub use timestamp_check::TimestampPolicy;
