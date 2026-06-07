@@ -1,16 +1,35 @@
-//! PID file — Phase 33c BS-12.
+//! PID file — Phase 33c BS-12; TOCTOU-hardened in GOLD-COR-16.
 //!
-//! Single-instance lock. `neoth serve` writes `~/.neoth/neothd.pid` on
-//! start and removes it on clean shutdown. A second `neoth serve` checks
-//! for the file and refuses to start if the recorded PID is alive.
+//! Single-instance lock. `neoth serve` takes an **exclusive OS-level lock**
+//! on `~/.neoth/neothd.pid`, writes its PID into the file, and holds the
+//! lock for the daemon's lifetime. A second `neoth serve` fails to take the
+//! lock and refuses to start.
 //!
-//! Stale-PID handling: when the file exists but the process is gone (OS
-//! killed it, crash, reboot), the new daemon takes over and overwrites
-//! the file. We never refuse to start just because a stale file exists.
+//! ## Why a real lock (COR-16 / A-16)
 //!
-//! Pattern matches the canonical UNIX daemon convention without the
-//! `flock` syscall — Windows has no equivalent and we want one code path.
+//! The old design did check-`exists` → read-PID → `pid_is_alive` → **then**
+//! write — a TOCTOU window: two `neoth serve` started at the same instant
+//! both saw "no live PID" and both wrote their PID, ending up with two
+//! daemons writing the same WAL (frame corruption). The lock makes
+//! acquisition atomic: only one process can hold it. It also removes the
+//! PID-recycling false-positive (a stale PID reused by an unrelated live
+//! process no longer blocks startup) and the stale-file problem (the lock
+//! auto-releases when the holder dies, even on a crash).
+//!
+//! ## Cross-platform, dependency-free, readers stay un-blocked
+//!
+//! - **unix**: `flock(LOCK_EX | LOCK_NB)` on the open fd (advisory — does
+//!   not block `read_to_string`, so [`live_daemon_pid`] readers still work).
+//!   `libc` is already a dependency (see [`pid_is_alive`]).
+//! - **windows**: open with `share_mode(FILE_SHARE_READ)` — a second daemon
+//!   opening for WRITE hits `ERROR_SHARING_VIOLATION`, while read-only
+//!   openers (readers) are still permitted by the shared read.
+//!
+//! The PID content is now informational (readers + a friendly "already
+//! running" message); the lock, not the content, is the source of truth.
 
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -22,9 +41,15 @@ pub fn default_pidfile() -> PathBuf {
     FreedomConfig::default_neoth_home().join("neothd.pid")
 }
 
-/// Result of an [`acquire`] attempt.
+/// Result of an [`acquire`] attempt. Holds the locked file open for the
+/// daemon's lifetime — dropping the guard releases the OS lock (also
+/// automatic on process death, even a crash).
 pub struct PidGuard {
     path: PathBuf,
+    /// The locked PID file. `Option` so [`Drop`] can close the handle
+    /// (releasing the lock) BEFORE removing the file — Windows refuses to
+    /// delete a file that still has an open handle without share-delete.
+    lock: Option<File>,
 }
 
 impl PidGuard {
@@ -35,11 +60,72 @@ impl PidGuard {
 }
 
 impl Drop for PidGuard {
-    /// Remove the PID file on clean shutdown. Errors are swallowed — the
-    /// process is going away anyway, and a leftover file would only cause
-    /// a single warning at next start (stale-PID path).
+    /// Release the lock + remove the PID file on clean shutdown. The handle
+    /// is dropped first so the unlink succeeds on Windows. Errors are
+    /// swallowed — the process is going away anyway, and a leftover file is
+    /// harmless (the next start re-locks it and overwrites).
     fn drop(&mut self) {
+        self.lock.take();
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// Open `path` (creating it if absent) and take an exclusive, non-blocking
+/// lock. Returns `Ok(Some(file))` when WE acquired the lock, `Ok(None)`
+/// when another process already holds it, and `Err` on a real I/O failure.
+/// The returned handle must stay open for as long as the lock is wanted.
+fn open_exclusive(path: &Path) -> std::io::Result<Option<File>> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // FILE_SHARE_READ only: deny other writers (a second daemon's
+        // write-open fails) while still letting read-only openers in.
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .share_mode(FILE_SHARE_READ)
+            .open(path)
+        {
+            Ok(f) => Ok(Some(f)),
+            Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)?;
+        // Advisory flock: non-blocking exclusive. EWOULDBLOCK ⇒ held by
+        // another open file description (another daemon).
+        let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if rc == 0 {
+            Ok(Some(f))
+        } else {
+            let e = std::io::Error::last_os_error();
+            if e.raw_os_error() == Some(libc::EWOULDBLOCK) {
+                Ok(None)
+            } else {
+                Err(e)
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        // No lock primitive on this platform — plain create, no exclusion
+        // (operator risk, same posture as `pid_is_alive`'s fallback).
+        let f = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(path)?;
+        Ok(Some(f))
     }
 }
 
@@ -63,44 +149,50 @@ pub fn live_daemon_pid(path: &Path) -> Result<Option<u32>> {
     }
 }
 
-/// Acquire the daemon-singleton lock by writing the current PID to `path`.
+/// Acquire the daemon-singleton lock at `path`.
 ///
-/// Returns `Err` if a live PID is already recorded — the operator has a
-/// running daemon they probably didn't mean to start a second copy of.
-/// Stale-PID files (process gone) are overwritten silently.
+/// Takes an exclusive OS lock on the PID file (atomic — closes the
+/// check-then-write TOCTOU), then writes the current PID into it. Returns
+/// `Err` when another process already holds the lock (a daemon is running);
+/// a stale file from a crashed daemon is re-locked and overwritten silently
+/// because the OS released the dead process's lock.
 pub fn acquire(path: &Path) -> Result<PidGuard> {
-    if path.exists() {
-        match read_pid(path) {
-            Ok(other) => {
-                if pid_is_alive(other) {
-                    anyhow::bail!(
-                        "another neothd is already running (PID {other}, file {}). \
-                         Stop it first or remove the PID file if you're sure.",
-                        path.display(),
-                    );
-                }
-                tracing::warn!(
-                    stale_pid = other,
-                    path = %path.display(),
-                    "stale neothd.pid found; taking over the lock",
-                );
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "could not parse existing PID file; overwriting");
-            }
-        }
-    }
-
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create pidfile dir {}", parent.display()))?;
     }
 
+    let mut file = match open_exclusive(path)
+        .with_context(|| format!("open + lock pidfile {}", path.display()))?
+    {
+        Some(f) => f,
+        None => {
+            // Another daemon holds the lock. Best-effort read of the PID
+            // for a helpful message (the lock, not the content, is truth).
+            let who = read_pid(path)
+                .map(|p| p.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            anyhow::bail!(
+                "another neothd is already running (PID {who}, file {}). \
+                 Stop it first or remove the PID file if you're sure.",
+                path.display(),
+            );
+        }
+    };
+
+    // We hold the lock. Truncate any stale content from a prior owner and
+    // write our PID (informational — readers + the message above).
     let pid = std::process::id();
-    std::fs::write(path, format!("{pid}\n"))
+    file.set_len(0)
+        .with_context(|| format!("truncate pidfile {}", path.display()))?;
+    file.write_all(format!("{pid}\n").as_bytes())
         .with_context(|| format!("write pidfile {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("flush pidfile {}", path.display()))?;
+
     Ok(PidGuard {
         path: path.to_path_buf(),
+        lock: Some(file),
     })
 }
 
@@ -190,18 +282,89 @@ mod tests {
     }
 
     #[test]
-    fn acquire_rejects_when_live_pid_present() {
+    fn acquire_rejects_when_another_holds_the_lock() {
+        // COR-16: a real running daemon HOLDS the OS lock — that, not the
+        // PID content, is what a second acquire must trip over. (Within one
+        // process, two separate opens still contend: distinct open file
+        // descriptions on unix; a sharing violation on windows.)
         let dir = tempdir().unwrap();
         let path = dir.path().join("neothd.pid");
-        // Write the current process's PID — it's always alive.
-        std::fs::write(&path, format!("{}\n", std::process::id())).unwrap();
-        let r = acquire(&path);
-        assert!(r.is_err(), "must refuse when our own PID is recorded");
-        // File must NOT be removed when acquisition fails.
+        let _held = acquire(&path).expect("first acquire takes the lock");
+        let second = acquire(&path);
+        assert!(
+            second.is_err(),
+            "second acquire must be refused while the lock is held"
+        );
+        // The holder's pidfile must survive the failed second attempt.
         assert!(
             path.exists(),
-            "acquire failure must not delete the existing file"
+            "failed acquire must not delete the holder's file"
         );
+    }
+
+    #[test]
+    fn live_daemon_pid_reads_through_held_lock() {
+        // COR-16 invariant: the lock must NOT block readers. While a guard
+        // holds the file, `live_daemon_pid` (used by `neoth ingest` to avoid
+        // racing WAL writes) must still read the PID — unix flock is
+        // advisory; windows `share_mode(FILE_SHARE_READ)` permits read-only
+        // openers.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        let _held = acquire(&path).expect("acquire");
+        let live = live_daemon_pid(&path).expect("reader must not error on a locked file");
+        assert_eq!(
+            live,
+            Some(std::process::id()),
+            "reader must see the holder's PID through the lock"
+        );
+    }
+
+    #[test]
+    fn lock_releases_on_drop_so_next_acquire_succeeds() {
+        // Dropping the guard releases the OS lock; a fresh acquire then wins.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("neothd.pid");
+        {
+            let _g = acquire(&path).expect("first acquire");
+        } // guard dropped → lock released + file removed
+        let _g2 = acquire(&path).expect("re-acquire after release must succeed");
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn concurrent_acquire_only_one_holds_the_lock() {
+        // The TOCTOU regression (A-16): N daemons racing to start must yield
+        // exactly ONE lock holder, never two writing the same WAL.
+        use std::sync::{Arc, Barrier};
+        let dir = tempdir().unwrap();
+        let path = Arc::new(dir.path().join("neothd.pid"));
+        let n = 8;
+        let start = Arc::new(Barrier::new(n));
+        let attempted = Arc::new(Barrier::new(n));
+        let handles: Vec<_> = (0..n)
+            .map(|_| {
+                let path = Arc::clone(&path);
+                let start = Arc::clone(&start);
+                let attempted = Arc::clone(&attempted);
+                std::thread::spawn(move || {
+                    start.wait();
+                    let res = acquire(&path); // winner keeps its guard in `res`
+                    let won = res.is_ok();
+                    // Hold the winner's lock until EVERY thread has attempted
+                    // so contenders genuinely race a held lock.
+                    attempted.wait();
+                    drop(res);
+                    won
+                })
+            })
+            .collect();
+        let wins = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .filter(|&won| won)
+            .count();
+        assert_eq!(wins, 1, "exactly one concurrent acquire may hold the lock");
     }
 
     #[test]
