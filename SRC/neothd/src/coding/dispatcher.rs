@@ -605,15 +605,13 @@ fn pick_batch(
     workers: &HemisphereWorkerSet,
     outcome: &mut DispatchOutcome,
 ) -> Result<Vec<KanbanTask>> {
-    let tasks = store::list_tasks_for_session(conn, session_id)
-        .context("list_tasks_for_session for pick_batch")?;
+    // GOLD-HON-18: SQL filters to Backlog (no fetch-all + Rust status scan).
+    let tasks = store::list_backlog_tasks_for_session(conn, session_id)
+        .context("list_backlog_tasks_for_session for pick_batch")?;
     let mut claimed: std::collections::HashSet<Hemisphere> = std::collections::HashSet::new();
     let mut batch: Vec<KanbanTask> = Vec::new();
     let now_ns = now_unix_ns();
     for t in tasks {
-        if t.status != TaskStatus::Backlog {
-            continue;
-        }
         if workers.get(t.hemisphere).is_none() {
             // No worker bound for this hemisphere — Block it (mirrors the
             // pre-COR-19 serial path's no-worker arm).

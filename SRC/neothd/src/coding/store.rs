@@ -428,6 +428,33 @@ pub fn list_tasks_for_session(
         .context("collect kanban tasks")
 }
 
+/// GOLD-HON-18 (A-41 / C-33) — Backlog-only tasks for a session, ascending.
+/// The `status` filter is pushed into SQL so the dispatcher's batch picker
+/// reads only the rows it can act on, rather than fetching every task and
+/// discarding non-Backlog ones in Rust (the linear-scan concern carried
+/// forward from the deleted `pick_next_backlog_task`).
+pub fn list_backlog_tasks_for_session(
+    conn: &Connection,
+    session_id: KanbanSessionId,
+) -> Result<Vec<KanbanTask>> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT task_id, session_id, status, title, description, task_type, \
+                    hemisphere, worker, parent_task_id, created_ns, started_ns, \
+                    eta_ns, completed_ns, patch_path, test_summary \
+             FROM idx_kanban_task WHERE session_id = ?1 AND status = ?2 ORDER BY task_id ASC",
+        )
+        .context("prepare list_backlog_tasks_for_session")?;
+    let rows = stmt
+        .query_map(
+            params![session_id.raw(), TaskStatus::Backlog.as_str()],
+            row_to_task,
+        )
+        .context("query list_backlog_tasks_for_session")?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .context("collect backlog kanban tasks")
+}
+
 // ── Comment CRUD ───────────────────────────────────────────────────────────
 
 /// Append one comment to a task. Comments are append-only — there is
@@ -790,6 +817,24 @@ mod tests {
             result.is_err(),
             "patch of missing task must error, not silently no-op"
         );
+    }
+
+    #[test]
+    fn list_backlog_tasks_for_session_filters_in_sql() {
+        // GOLD-HON-18: the status filter lives in SQL, so only Backlog rows
+        // come back — never a fetch-all + Rust scan over every task.
+        let conn = prepared_db();
+        let s = insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let backlog = insert_task(&conn, s, 10, "backlog-task", None, "ui", None).unwrap();
+        let moved = insert_task(&conn, s, 20, "moved-task", None, "ui", None).unwrap();
+        patch_task_status(&conn, moved, TaskStatus::InProgress, 100).expect("move off backlog");
+
+        let only_backlog = list_backlog_tasks_for_session(&conn, s).unwrap();
+        assert_eq!(only_backlog.len(), 1, "only the Backlog task is returned");
+        assert_eq!(only_backlog[0].task_id, backlog);
+        assert_eq!(only_backlog[0].status, TaskStatus::Backlog);
+        // Sanity: the unfiltered list still has both rows.
+        assert_eq!(list_tasks_for_session(&conn, s).unwrap().len(), 2);
     }
 
     #[test]

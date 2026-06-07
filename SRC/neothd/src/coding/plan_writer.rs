@@ -10,8 +10,12 @@
 //!
 //! Plans never carry placeholder text. A plan with `TBD` looks like
 //! progress but ISN'T — implementers spend more time decoding the
-//! placeholder than executing the real task. [`validate_plan`]
-//! rejects placeholders before they land in the kanban store.
+//! placeholder than executing the real task. [`validate_plan`] is the
+//! pure check that enforces this — but note it is **not yet wired into
+//! the kanban write path**: it has no production caller today (only
+//! tests exercise it), so nothing currently runs it before a plan lands
+//! in SQLite. It is ready to gate `store::insert_tasks` the moment that
+//! chain lands (see "What this is NOT" below).
 //!
 //! ## What this module ships
 //!
