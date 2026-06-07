@@ -846,6 +846,41 @@ fn run_toggle(enabled: bool) -> Result<()> {
     Ok(())
 }
 
+/// Confirmed-peer count for `neoth cluster status`, factored out of
+/// [`run_status`] so the GOLD-HON-03 honesty fix (read the registry,
+/// never report a hardcoded `0`) is unit-testable without stdout
+/// capture. A malformed `cluster.yaml` propagates as an error.
+fn status_peer_count(home: &std::path::Path) -> Result<usize> {
+    Ok(crate::cluster::registry::load(home)?.peers.len())
+}
+
+/// Pure derivation of the `mode` / `policy` labels shown by
+/// `neoth cluster status` (GOLD-HON-03). Both follow live config:
+/// `mode` from the cluster activation gate, `policy` from the mDNS
+/// announce policy in `freedom.yaml`. When the cluster is off nothing
+/// is ever announced or contacted, so the honest label is `local-only`.
+fn status_mode_policy(
+    cluster_enabled: bool,
+    mdns_enabled: bool,
+    announce_on_untrusted_wifi: bool,
+) -> (&'static str, &'static str) {
+    let mode = if cluster_enabled {
+        "cluster"
+    } else {
+        "single-node"
+    };
+    let policy = if !cluster_enabled {
+        "local-only"
+    } else if !mdns_enabled {
+        "discovery-off"
+    } else if announce_on_untrusted_wifi {
+        "announce-any-network"
+    } else {
+        "announce-trusted-wifi-only"
+    };
+    (mode, policy)
+}
+
 fn run_status(output: &OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path().ok();
     let operator = cfg
@@ -879,11 +914,19 @@ fn run_status(output: &OutputFormat) -> Result<()> {
         "inactive (no cluster identity)"
     };
 
-    // v0.1.x always reports single-node; once Hyperswarm transport
-    // lands, this reads the peer registry instead.
-    let mode = "single-node";
-    let policy_name = "local-only";
-    let peer_count = 0usize;
+    // GOLD-HON-03: report the REAL cluster posture instead of the old
+    // hardcoded `single-node` / `local-only` / `0` placeholder, which
+    // lied about peers even after `neoth cluster confirm` had paired
+    // them (A-13).
+    let home = FreedomConfig::default_neoth_home();
+    // Confirmed-peer count from the on-disk registry. A malformed
+    // `cluster.yaml` surfaces as a hard error (load() never silently
+    // empties) rather than a false "0 peers".
+    let peer_count = status_peer_count(&home)?;
+    let (mdns_enabled, announce_policy) =
+        crate::cluster::policy::load_policy_from_freedom(&home.join("freedom.yaml"));
+    let (mode, policy_name) =
+        status_mode_policy(identity.enabled, mdns_enabled, announce_policy.announce_on_untrusted_wifi);
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -1469,5 +1512,66 @@ mod tests {
         assert_eq!(fmt_last_seen(Some(42)), "42s ago");
         assert_eq!(fmt_last_seen(Some(180)), "3m ago");
         assert_eq!(fmt_last_seen(Some(7200)), "2h ago");
+    }
+
+    // --- GOLD-HON-03: cluster status reports real peers/mode/policy ---
+
+    #[test]
+    fn status_peer_count_reflects_paired_registry_not_hardcoded_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        // Empty home: no registry yet → honest 0 (not an error).
+        assert_eq!(status_peer_count(dir.path()).unwrap(), 0);
+
+        for (i, hex) in ["aa", "bb"].iter().enumerate() {
+            let peer = crate::cluster::registry::PairedPeer {
+                pub_key_hex: hex.repeat(32),
+                instance_label: format!("node-{i}"),
+                addr: "192.0.2.1:4242".into(),
+                discovered_via: crate::cluster::discovery::DiscoveryVia::Mdns,
+                paired_at_unix: 1_700_000_000,
+                last_seen_unix: 1_700_000_000,
+                ..Default::default()
+            };
+            crate::cluster::registry::upsert(dir.path(), peer).unwrap();
+        }
+        // The A-13 regression: the old code returned a hardcoded 0 here.
+        assert_eq!(status_peer_count(dir.path()).unwrap(), 2);
+    }
+
+    #[test]
+    fn status_peer_count_propagates_malformed_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            crate::cluster::registry::default_path(dir.path()),
+            "peers: this-is-not-a-list\n",
+        )
+        .unwrap();
+        // A corrupt registry surfaces as an error, never a false "0 peers".
+        assert!(status_peer_count(dir.path()).is_err());
+    }
+
+    #[test]
+    fn status_mode_policy_derives_from_config_not_hardcoded() {
+        // Cluster off → the honest single-node / local-only posture,
+        // regardless of any stale announce settings.
+        assert_eq!(
+            status_mode_policy(false, true, true),
+            ("single-node", "local-only")
+        );
+        // Cluster on but mDNS announcer disabled.
+        assert_eq!(
+            status_mode_policy(true, false, false),
+            ("cluster", "discovery-off")
+        );
+        // Cluster on, announcing only on trusted Wi-Fi (the secure default).
+        assert_eq!(
+            status_mode_policy(true, true, false),
+            ("cluster", "announce-trusted-wifi-only")
+        );
+        // Cluster on, announcing on any network (operator opted in).
+        assert_eq!(
+            status_mode_policy(true, true, true),
+            ("cluster", "announce-any-network")
+        );
     }
 }
