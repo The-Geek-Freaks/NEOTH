@@ -9,9 +9,17 @@
 //!   4. Routes the message through the configured LLM provider.
 //!   5. Emits `CHANNEL_EGRESS` after the reply is sent.
 //!
+//! ## Self-contained guarantee (scope)
+//!
 //! Per the self-contained hard rule (`memory/neoth-hard-rule-self-contained.md`):
-//! all channel logic lives inside NEOTH. No external relays, webhooks, or
-//! shared services. Long-polling is the default transport.
+//! the **default single-node path needs no mandatory external relay or backend** —
+//! Memory, the WAL, and Inference all run inside the NEOTH binary, with no shared
+//! service to stand up. The messaging channels themselves vary: long-polling
+//! transports (Telegram) need nothing external, while the **webhook** listeners
+//! (`webhook_listener`, `whatsapp_webhook`, Slack), the **Pears HTTP bridge**
+//! (`pears_bridge`), and the **cluster / relay** surfaces are **opt-in,
+//! operator-deployed** — they run only when the operator configures and exposes
+//! them, and none is required for a working single-node install.
 
 pub mod discord;
 pub mod discord_gateway;
