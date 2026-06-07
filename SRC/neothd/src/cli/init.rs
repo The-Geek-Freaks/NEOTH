@@ -355,6 +355,10 @@ pub struct InitArgs {
 /// preserves push order — so the only invariant is uniqueness.
 pub(crate) mod step_markers {
     pub const STEP_1_LICENSE: u8 = 1;
+    /// GOLD-HON-10: new-vs-migration onboarding mode (step 1d), asked
+    /// before the identity step so a migrating operator sees the import
+    /// path up front.
+    pub const STEP_1D_ONBOARDING_MODE: u8 = 14;
     pub const STEP_2_OPERATOR_ID: u8 = 2;
     pub const STEP_3_LANGUAGE: u8 = 3;
     pub const STEP_4_ROLE: u8 = 4;
@@ -378,6 +382,7 @@ pub(crate) mod step_markers {
     /// Every marker, for the uniqueness guard. Adding a step MUST add it here.
     pub const ALL: &[u8] = &[
         STEP_1_LICENSE,
+        STEP_1D_ONBOARDING_MODE,
         STEP_2_OPERATOR_ID,
         STEP_3_LANGUAGE,
         STEP_4_ROLE,
@@ -399,6 +404,21 @@ pub(crate) mod step_markers {
     ];
 }
 
+/// GOLD-HON-10 — high-level onboarding intent, captured up front (step 1d,
+/// before the identity step) so a migrating operator knows from the start
+/// that NEOTH can import a prior assistant's memory. The detailed manifest
+/// is still collected later in step 6f; this enum is the early signpost,
+/// not the importer.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OnboardingMode {
+    /// Fresh install — start with an empty memory.
+    #[default]
+    New,
+    /// Migrating from a prior AI assistant — surface the import path.
+    Migration,
+}
+
 /// In-memory state accumulated across all 7 wizard steps.
 /// Written to disk atomically after step 7.
 ///
@@ -414,6 +434,11 @@ pub struct WizardState {
     /// flow pick `Advanced` at step 1c.
     #[serde(default)]
     pub experience_level: crate::wizard::recommend::ExperienceLevel,
+    /// GOLD-HON-10 (step 1d): fresh install vs migrating from a prior
+    /// assistant. Defaults to `New`; non-interactive runs infer
+    /// `Migration` from `--import-memory`.
+    #[serde(default)]
+    pub onboarding_mode: OnboardingMode,
     pub operator_id: Option<String>,
     pub language_primary: Option<String>,
     pub language_code: Option<String>,
@@ -559,6 +584,9 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step1b_detect_environment(&args, interactive, &neoth_dir).await;
     step1c_experience_level(&args, interactive, &mut state)?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
+    // GOLD-HON-10 — new-vs-migration question, before the identity step.
+    step1d_onboarding_mode(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step2_operator_id(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
@@ -1294,6 +1322,84 @@ fn step1c_experience_level(
             ExperienceLevel::Advanced => "appear without defaults",
         }
     );
+    Ok(())
+}
+
+/// GOLD-HON-10 — step 1d: new-vs-migration onboarding mode. Asked **before**
+/// the identity step (step 2) so a migrating operator is told up front that
+/// NEOTH can import a prior assistant's memory. The actual manifest is
+/// collected later (step 6f); this is only the early signpost. Honest about
+/// scope: v1.0 ships the preview/dry-run import path — the apply/import is
+/// post-v1.0 (see GOLD-HON-01 / `neoth-migrate`). Non-interactive runs infer
+/// the mode from `--import-memory` (a declared manifest ⇒ Migration).
+fn step1d_onboarding_mode(
+    args: &InitArgs,
+    interactive: bool,
+    state: &mut WizardState,
+) -> Result<()> {
+    debug!("wizard step 1d: onboarding mode (new vs migration)");
+
+    let mode = if !interactive {
+        // A declared import manifest is an unambiguous migration signal.
+        if args.import_memory.is_some() {
+            OnboardingMode::Migration
+        } else {
+            OnboardingMode::New
+        }
+    } else {
+        #[cfg(feature = "wizard")]
+        {
+            println!("\n[1d/9] Is this a fresh start, or are you moving in from another assistant?\n");
+            let options = [
+                "Fresh install — start with an empty memory",
+                "Migrate — import memory from a previous AI assistant",
+            ];
+            let picked =
+                dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                    .with_prompt("[1d/9] Onboarding mode")
+                    .items(&options)
+                    .default(usize::from(args.import_memory.is_some()))
+                    .interact()
+                    .context("onboarding-mode prompt")?;
+            if picked == 1 {
+                OnboardingMode::Migration
+            } else {
+                OnboardingMode::New
+            }
+        }
+        #[cfg(not(feature = "wizard"))]
+        {
+            if args.import_memory.is_some() {
+                OnboardingMode::Migration
+            } else {
+                OnboardingMode::New
+            }
+        }
+    };
+
+    state.onboarding_mode = mode;
+    state
+        .steps_completed
+        .push(step_markers::STEP_1D_ONBOARDING_MODE);
+
+    match (mode, interactive) {
+        (OnboardingMode::Migration, true) => {
+            println!(
+                "  [1d/9] Migration mode — the wizard collects your prior-assistant import \
+                 manifest later (step 6f). Preview it any time with `neoth-migrate dry-run \
+                 --manifest <path>`. Note: v1.0 ships the preview/dry-run path only; the \
+                 apply/import step is post-v1.0, so the wizard records your intent and never \
+                 auto-applies."
+            );
+        }
+        (OnboardingMode::Migration, false) => {
+            info!("onboarding mode: migration (import manifest declared via --import-memory)");
+        }
+        (OnboardingMode::New, true) => {
+            println!("  [1d/9] Fresh install — starting with an empty memory.");
+        }
+        (OnboardingMode::New, false) => {}
+    }
     Ok(())
 }
 
@@ -5331,6 +5437,7 @@ mod tests {
     fn fixture_state() -> WizardState {
         WizardState {
             experience_level: crate::wizard::recommend::ExperienceLevel::Beginner,
+            onboarding_mode: OnboardingMode::New,
             operator_id: Some("alice".to_string()),
             language_primary: Some("en".to_string()),
             language_code: Some("en".to_string()),
@@ -6276,6 +6383,57 @@ mod tests {
         step6f_import_memory(&args, false, &mut state).unwrap();
         assert_eq!(state.import_memory.as_ref(), Some(&memory_path));
         assert!(state.steps_completed.contains(&64));
+    }
+
+    // --- GOLD-HON-10: step 1d onboarding mode (new vs migration) ---
+
+    #[test]
+    fn step1d_non_interactive_defaults_to_new_without_import_flag() {
+        let mut state = WizardState::default();
+        let args = args_with_flag(|_| {});
+        step1d_onboarding_mode(&args, false, &mut state).unwrap();
+        assert_eq!(state.onboarding_mode, OnboardingMode::New);
+        assert!(state
+            .steps_completed
+            .contains(&step_markers::STEP_1D_ONBOARDING_MODE));
+    }
+
+    #[test]
+    fn step1d_non_interactive_infers_migration_from_import_flag() {
+        let mut state = WizardState::default();
+        let args = args_with_flag(|a| {
+            a.import_memory = Some(std::path::PathBuf::from("import-manifest.yaml"));
+        });
+        step1d_onboarding_mode(&args, false, &mut state).unwrap();
+        assert_eq!(state.onboarding_mode, OnboardingMode::Migration);
+        assert!(state
+            .steps_completed
+            .contains(&step_markers::STEP_1D_ONBOARDING_MODE));
+    }
+
+    #[test]
+    fn step1d_onboarding_mode_recorded_before_identity_step() {
+        // The HON-10 contract: the new-vs-migration question precedes the
+        // identity (operator-id) step. Run both on a fresh state and assert
+        // the 1d marker lands before the step-2 marker.
+        let mut state = WizardState::default();
+        let args = args_with_flag(|_| {});
+        step1d_onboarding_mode(&args, false, &mut state).unwrap();
+        step2_operator_id(&args, false, &mut state).unwrap();
+        let idx_1d = state
+            .steps_completed
+            .iter()
+            .position(|&m| m == step_markers::STEP_1D_ONBOARDING_MODE)
+            .expect("1d marker present");
+        let idx_2 = state
+            .steps_completed
+            .iter()
+            .position(|&m| m == step_markers::STEP_2_OPERATOR_ID)
+            .expect("step-2 marker present");
+        assert!(
+            idx_1d < idx_2,
+            "onboarding mode (1d) must be recorded before identity (step 2)"
+        );
     }
 
     #[test]
