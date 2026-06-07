@@ -124,7 +124,7 @@
 
 **Phase 3 (Day 61-90):** Multi-node WAL replication design, Migration (12 Jarvis stores), Eval-Goldset 100 queries, Shadow-Run 14d, full MMR.
 
-**Phase 4 (Day 91+):** Ecology-Schicht, MemPalace, Self-improvement loop, Council-adaptation, Tool-genealogy.
+**Phase 4 (Day 91+):** Ecology-Schicht, Hebbian memory graph (formerly "MemPalace" — renamed to avoid collision with Letta's MemPalace brand, SR-001), Self-improvement loop, Council-adaptation, Tool-genealogy.
 
 ## Section 5: Top-10 Must-Fix Issues (accumulated)
 
