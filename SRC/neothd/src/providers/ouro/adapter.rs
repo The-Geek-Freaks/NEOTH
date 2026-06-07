@@ -436,6 +436,21 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
 
 /// Blocking forward + sampling loop. Mirrors
 /// `local_qwen::run_forward` and reuses `sample_token` verbatim.
+/// COR-31: build the model input ids for a decode step — the FULL running
+/// sequence (prompt + every token generated so far). The Ouro looped model
+/// clears its KV cache per recurrent loop iteration, which also wipes any
+/// cross-call cache at the start of each decode `forward()`; a single-token
+/// incremental decode would therefore leave the new token context-blind. Until
+/// the two-tier last-step-reuse cache lands, the adapter re-feeds the whole
+/// sequence at `seqlen_offset=0` so attention sees the full context. Pure, so
+/// the decode strategy is unit-testable without a loaded model.
+fn decode_context_ids(prompt_ids: &[u32], generated: &[u32]) -> Vec<u32> {
+    let mut ids = Vec::with_capacity(prompt_ids.len() + generated.len());
+    ids.extend_from_slice(prompt_ids);
+    ids.extend_from_slice(generated);
+    ids
+}
+
 fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Completion> {
     use candle_core::Tensor;
 
@@ -481,27 +496,39 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
     let mut next = sample_token(&logits, sampling).context("Ouro: sample from prompt logits")?;
     new_tokens.push(next);
 
-    // Generation loop.
-    let mut seqlen_offset = prompt_ids.len();
+    // Generation loop. COR-31: the Ouro looped transformer clears every layer's
+    // KV cache at the START of each recurrent loop iteration inside forward()
+    // — required so the Universal-Transformer recurrence doesn't re-concat the
+    // same positions (see ouro/forward.rs::forward_loops; arXiv:2510.25741
+    // confirms prefill needs a fresh cache per recurrent step). That same clear
+    // fires at loop_idx=0 of EVERY decode step, so a true incremental
+    // (1-token + growing seqlen_offset) decode would leave the new token
+    // attending only to ITSELF — no prompt, no prior tokens — i.e. silently
+    // incoherent output. Until the paper's two-tier "last-step-reuse" persistent
+    // cache is implemented (the COR-31 perf follow-up), decode by re-feeding the
+    // FULL running sequence at seqlen_offset=0 each step. forward() narrows to
+    // the last token internally so the logits are correct over the full context;
+    // cost is O(n)/step on the local model, which the persistent-cache follow-up
+    // removes. (seqlen_offset is consequently always 0 here.)
     while new_tokens.len() < max_new as usize {
         if let Some(eos) = loaded.eos_id {
             if next == eos {
                 break;
             }
         }
-        let step_input = Tensor::new(&[next], &device)
-            .context("Ouro: build step input tensor")?
+        let context_ids = decode_context_ids(&prompt_ids, &new_tokens);
+        let full_input = Tensor::new(context_ids.as_slice(), &device)
+            .context("Ouro: build full-context input tensor")?
             .unsqueeze(0)
-            .context("Ouro: step input batch dim")?;
+            .context("Ouro: full-context batch dim")?;
         logits = loaded
             .model
-            .forward(&step_input, seqlen_offset)
-            .context("Ouro: step forward")?
+            .forward(&full_input, 0)
+            .context("Ouro: decode forward")?
             .squeeze(0)
-            .context("Ouro: drop batch from step logits")?;
+            .context("Ouro: drop batch from decode logits")?;
         next = sample_token(&logits, sampling).context("Ouro: sample step")?;
         new_tokens.push(next);
-        seqlen_offset += 1;
     }
 
     let text = loaded
@@ -745,6 +772,25 @@ mod tests {
     }
 
     #[test]
+    fn decode_context_ids_feeds_full_running_sequence_not_single_token() {
+        // COR-31: each decode step must feed prompt + ALL generated tokens so
+        // the looped model attends to the full context at offset 0 — NOT a lone
+        // token (which the per-loop KV-cache clear makes context-blind).
+        let prompt = [10u32, 11, 12];
+        assert_eq!(decode_context_ids(&prompt, &[]), vec![10, 11, 12]);
+        assert_eq!(decode_context_ids(&prompt, &[20]), vec![10, 11, 12, 20]);
+        assert_eq!(
+            decode_context_ids(&prompt, &[20, 21, 22]),
+            vec![10, 11, 12, 20, 21, 22]
+        );
+        // The running sequence grows by one each step and always ends with the
+        // most-recently generated token (whose last-token logits forward() uses).
+        let grown = decode_context_ids(&prompt, &[20, 21]);
+        assert_eq!(*grown.last().unwrap(), 21);
+        assert_eq!(grown.len(), prompt.len() + 2);
+    }
+
+    #[test]
     fn embed_dim_hint_falls_back_when_config_malformed() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("config.json"), "not json").unwrap();
@@ -916,6 +962,44 @@ mod tests {
         assert!(
             resp.output_tokens.unwrap_or(0) > 0,
             "output_tokens must be reported"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_decode_is_context_aware_not_degenerate_repetition() {
+        // COR-31 regression (real-weight). Before the full-resequence decode
+        // fix, every decode step attended ONLY to the new token — the per-loop
+        // KV-cache clear wiped the prompt + prior context at loop_idx=0 of each
+        // forward() — so generation collapsed into degenerate repetition /
+        // incoherence. With the fix the model sees the full running context and
+        // produces a varied, multi-token answer. This asserts the completion is
+        // not a single token spammed — a coarse but real signal the
+        // context-blindness is gone. Run: set NEOTH_OURO_TEST_REPO_PATH to a
+        // local Ouro repo (tokenizer.json + config.json + model.safetensors),
+        // then `cargo test -p neothd --lib providers::ouro -- --ignored`.
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let adapter = build_integration_adapter(cache);
+        let req = Request {
+            prompt: "List three different farm animals, one per line.".into(),
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: Some(7),
+            stop_sequences: Vec::new(),
+        };
+        let resp = adapter.complete(req).await.expect("Ouro completion");
+        let text = resp.text.trim();
+        assert!(!text.is_empty(), "completion must produce text");
+        // Degenerate context-blind output is typically one token spammed; a
+        // context-aware decode yields several distinct whitespace tokens.
+        let distinct: std::collections::HashSet<&str> = text.split_whitespace().collect();
+        assert!(
+            distinct.len() >= 3,
+            "context-aware decode should yield varied output, got: {text:?}"
         );
     }
 
