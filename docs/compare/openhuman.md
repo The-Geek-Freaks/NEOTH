@@ -7,7 +7,10 @@ and a broad integration story.
 NEOTH should win users who like that idea but want the trust boundary moved
 back to their machine.
 
-Baseline sources:
+Baseline sources — OpenHuman capabilities below were assessed **as of 2026-06-07** against
+the project's then-current `main` branch and live docs. No tagged release or pinned commit
+was published to anchor against, so treat every competitor claim as a point-in-time snapshot
+that may have moved since:
 
 - <https://github.com/tinyhumansai/openhuman>
 - <https://tinyhumans.gitbook.io/>
@@ -21,7 +24,7 @@ Baseline sources:
 
 ## Capability comparison
 
-| Area | NEOTH | OpenHuman |
+| Area | NEOTH | OpenHuman (as of 2026-06-07) |
 | :-- | :-- | :-- |
 | Product center | Private buddy plus operator runtime | Personal AI with UI-first managed convenience |
 | Normal-user onboarding | GUI wizard, no YAML happy path | Strong UI-first onboarding |

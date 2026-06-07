@@ -6,7 +6,10 @@ plane, live Canvas, voice, skills, and local always-on operation.
 NEOTH should win users who want that power, but with deeper memory semantics,
 privacy proof, coding planning, and a friendlier path for non-technical users.
 
-Baseline sources:
+Baseline sources — OpenClaw capabilities below were assessed **as of 2026-06-07** against
+the project's then-current `main` branch and live docs. No tagged release or pinned commit
+was published to anchor against, so treat every competitor claim as a point-in-time snapshot
+that may have moved since:
 
 - <https://github.com/openclaw/openclaw>
 - <https://docs.openclaw.ai/>
@@ -20,7 +23,7 @@ Baseline sources:
 
 ## Capability comparison
 
-| Area | NEOTH | OpenClaw |
+| Area | NEOTH | OpenClaw (as of 2026-06-07) |
 | :-- | :-- | :-- |
 | Product center | Buddy plus local operator runtime | Gateway plus channel-rich assistant |
 | Normal-user onboarding | GUI wizard and Doctor runbooks | Onboard CLI and docs-heavy setup |

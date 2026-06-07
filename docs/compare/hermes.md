@@ -8,7 +8,10 @@ NEOTH should win users who want that self-improving operator energy, but with a
 more approachable DAU path, local/fail-closed privacy posture, coding canvas,
 and a clearer personal buddy identity.
 
-Baseline sources:
+Baseline sources — Hermes Agent capabilities below were assessed **as of 2026-06-07**
+against the project's then-current `main` branch and live docs. No tagged release or pinned
+commit was published to anchor against, so treat every competitor claim as a point-in-time
+snapshot that may have moved since:
 
 - <https://github.com/NousResearch/hermes-agent>
 - <https://hermes-agent.nousresearch.com/docs>
@@ -22,7 +25,7 @@ Baseline sources:
 
 ## Capability comparison
 
-| Area | NEOTH | Hermes Agent |
+| Area | NEOTH | Hermes Agent (as of 2026-06-07) |
 | :-- | :-- | :-- |
 | Product center | Private buddy plus operator runtime | Agent workflow that grows with usage |
 | Normal-user onboarding | GUI wizard, plain privacy choices, no YAML happy path | CLI/TUI and docs-first |
