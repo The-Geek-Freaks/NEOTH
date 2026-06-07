@@ -19,9 +19,15 @@
 //!
 //! Security note (security-reviewer agent verdict): the HTTP surface is
 //! localhost-only — any binding to `0.0.0.0` is rejected at construction.
-//! Per-session bearer token defends against confused-deputy attacks from
-//! other local processes; the token is generated at NEOTH startup +
-//! handed to `pear` on launch (wired in the K-3 follow-up).
+//! A per-session bearer token to defend against confused-deputy attacks
+//! from other local processes is **designed but NOT yet active — K-3 TODO**
+//! (GOLD-HON-17 / A-39): `bearer_token` defaults to `None` and the only
+//! caller of `with_bearer_token` is a test, so in production the bridge
+//! currently accepts **unauthenticated** localhost requests. Until the K-3
+//! wiring generates a token at NEOTH startup + hands it to `pear` on launch,
+//! treat the bridge as trusted-local-process-only (it is opt-in + localhost-
+//! bound, so a process that can reach `127.0.0.1:<port>` is already inside
+//! the trust boundary).
 //!
 //! Why HTTP over JSON-RPC / gRPC: simplest possible surface, debug-able
 //! with `curl`, and the panel explicitly picked Path 3 for its zero
