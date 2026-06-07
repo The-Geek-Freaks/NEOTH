@@ -65,6 +65,9 @@ pub struct DialResult {
 pub enum DialOutcome {
     /// Bootstrap replied with `bytes` from `peer`.
     Reply { peer: SocketAddr, bytes: Vec<u8> },
+    /// The datagram was sent successfully; the reply (if any) is collected
+    /// separately via [`DhtUdpDialer::recv_one`].
+    Sent,
     /// Send timed out — bootstrap likely down or firewalled.
     SendTimeout,
     /// Send succeeded but no reply within `recv_timeout`.
@@ -112,7 +115,7 @@ impl DhtUdpDialer {
     /// round when one bootstrap is on a slow link.
     pub async fn send_to(&self, bytes: &[u8], peer: SocketAddr) -> Result<DialOutcome> {
         match tokio::time::timeout(self.dial_timeout, self.socket.send_to(bytes, peer)).await {
-            Ok(Ok(_n)) => Ok(DialOutcome::RecvTimeout), // placeholder; recv comes next
+            Ok(Ok(_n)) => Ok(DialOutcome::Sent),
             Ok(Err(e)) => Ok(DialOutcome::Io(e.to_string())),
             Err(_) => Ok(DialOutcome::SendTimeout),
         }
@@ -122,7 +125,12 @@ impl DhtUdpDialer {
     /// `MAX_DATAGRAM_BYTES` cap is enforced — larger datagrams are
     /// surfaced as `OversizedDatagram` and dropped.
     pub async fn recv_one(&self) -> Result<DialOutcome> {
-        let mut buf = vec![0u8; MAX_DATAGRAM_BYTES];
+        // Size one byte over the cap so a datagram of exactly MAX+1 fills the
+        // buffer and makes `n` exceed MAX_DATAGRAM_BYTES — otherwise the
+        // oversized guard below is unreachable (a buffer sized exactly at the
+        // cap can never yield `n > MAX_DATAGRAM_BYTES`). A datagram of exactly
+        // MAX bytes still fits and is accepted.
+        let mut buf = vec![0u8; MAX_DATAGRAM_BYTES + 1];
         match tokio::time::timeout(self.recv_timeout, self.socket.recv_from(&mut buf)).await {
             Ok(Ok((n, peer))) => {
                 if n > MAX_DATAGRAM_BYTES {
@@ -282,6 +290,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn recv_one_flags_oversized_datagram() {
+        // COR-25: with the buffer sized MAX+1, a datagram of exactly MAX+1
+        // bytes fills it (no truncation — important on Windows, where a
+        // datagram LARGER than the buffer errors with WSAEMSGSIZE instead of
+        // truncating) so `n` exceeds the cap and the oversized guard fires.
+        let dialer = DhtUdpDialer::bind_with_timeouts(
+            Duration::from_millis(200),
+            Duration::from_millis(500),
+        )
+        .await
+        .expect("bind");
+        let port = dialer.local_addr().expect("addr").port();
+        let target: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+
+        let sender = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let oversized = vec![0xABu8; MAX_DATAGRAM_BYTES + 1];
+        sender.send_to(&oversized, target).await.unwrap();
+
+        match dialer.recv_one().await.expect("recv result") {
+            DialOutcome::OversizedDatagram { size } => {
+                assert!(size > MAX_DATAGRAM_BYTES, "size {size} must exceed the cap");
+            }
+            other => panic!("expected OversizedDatagram, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn send_to_localhost_loopback_succeeds() {
         // Bind a listener on loopback so the send completes with
         // a real ACKable destination + we can recv the reply.
@@ -292,10 +327,9 @@ mod tests {
         // Send a 32-byte lookup payload to the loopback server.
         let payload = b"hello-dht-skeleton-test-payload!";
         let outcome = dialer.send_to(payload, server_addr).await.unwrap();
-        // The placeholder send returns RecvTimeout because we
-        // haven't dialed for a reply yet. Pin that exact shape so
-        // a future API change is visible.
-        assert!(matches!(outcome, DialOutcome::RecvTimeout));
+        // A successful send now reports `Sent`; the reply is collected in a
+        // separate `recv_one` step. Pin the shape so an API change is visible.
+        assert!(matches!(outcome, DialOutcome::Sent));
 
         // Server side: confirm the payload arrived.
         let mut buf = vec![0u8; MAX_DATAGRAM_BYTES];
