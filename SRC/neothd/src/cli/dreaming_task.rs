@@ -321,7 +321,7 @@ fn forge_and_stage_dreams(home: &Path, dreams: &[crate::daemon::dreaming::Dream]
     let mut queue = ProactiveQueue::load_from(&queue_path).unwrap_or_default();
     let mut staged = 0usize;
     for dream in dreams {
-        if let Some(proposal) = crate::daemon::skill_forge::forge_skill_from_dream(dream) {
+        if let Some(proposal) = crate::daemon::skill_forge::build_skill_proposal_from_dream(dream) {
             match stage_and_enqueue(home, proposal, &mut queue) {
                 Ok((_, true)) => staged += 1,
                 Ok((_, false)) => {} // already queued (dedup)

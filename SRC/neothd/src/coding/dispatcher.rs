@@ -420,8 +420,8 @@ pub async fn dispatch_session_with_apply(
             // a refusal as Review material.
             Ok(o)
                 if o.review_ready()
-                    && (crate::coding::early_stop::is_greeting_regression(&o.patch_text)
-                        || crate::coding::early_stop::is_greeting_regression(&o.summary)) =>
+                    && (crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.patch_text)
+                        || crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.summary)) =>
             {
                 patch_spiral.record(task.task_id, false);
                 record_recent_output(&mut recent_outputs, task.task_id, &worker_output_text(&o));
@@ -976,15 +976,15 @@ fn handle_retryable_failure(
     //    Past this point retry-strategy hints have already been
     //    rotated through, and continuing burns operator API quota
     //    for no net signal. Bail.
-    let greeting_regression = crate::coding::early_stop::is_greeting_regression(&diagnosis)
+    let greeting_regression = crate::coding::early_stop::is_refusal_or_capability_disclaimer(&diagnosis)
         || partial_outcome
             .map(|o| {
                 // Check both surfaces an LLM refusal could land on:
                 // the operator-facing summary (one-line) AND the patch
                 // body (where a refusal-as-prose ended up if the worker
                 // didn't even produce a diff header).
-                crate::coding::early_stop::is_greeting_regression(&o.summary)
-                    || crate::coding::early_stop::is_greeting_regression(&o.patch_text)
+                crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.summary)
+                    || crate::coding::early_stop::is_refusal_or_capability_disclaimer(&o.patch_text)
             })
             .unwrap_or(false);
     if greeting_regression {

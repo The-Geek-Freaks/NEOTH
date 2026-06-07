@@ -72,7 +72,7 @@ fn theme_keywords(theme: &str) -> Vec<String> {
 /// KF-04 — forge a candidate skill proposal from one dream. Pure;
 /// `None` when the dream can't yield a sensible skill (empty theme,
 /// empty summary, un-slugifiable theme, or the builder rejects the id).
-pub fn forge_skill_from_dream(dream: &Dream) -> Option<ProposedAction> {
+pub fn build_skill_proposal_from_dream(dream: &Dream) -> Option<ProposedAction> {
     let theme = dream.theme_label.trim();
     let summary = dream.summary.trim();
     if theme.is_empty() || summary.is_empty() {
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn forges_a_skill_from_a_normal_dream() {
         let d = dream_with("WiFi troubleshooting", "Operator repeatedly debugs router drops.");
-        let p = forge_skill_from_dream(&d).expect("normal dream forges a skill");
+        let p = build_skill_proposal_from_dream(&d).expect("normal dream forges a skill");
         assert_eq!(p.kind, ProposalKind::Skill);
         assert!(p.title.contains("WiFi troubleshooting"));
         // The draft YAML is a real, loader-shaped skill manifest.
@@ -153,15 +153,15 @@ mod tests {
 
     #[test]
     fn empty_theme_or_summary_forges_nothing() {
-        assert!(forge_skill_from_dream(&dream_with("", "has summary")).is_none());
-        assert!(forge_skill_from_dream(&dream_with("has theme", "")).is_none());
-        assert!(forge_skill_from_dream(&dream_with("   ", "  ")).is_none());
+        assert!(build_skill_proposal_from_dream(&dream_with("", "has summary")).is_none());
+        assert!(build_skill_proposal_from_dream(&dream_with("has theme", "")).is_none());
+        assert!(build_skill_proposal_from_dream(&dream_with("   ", "  ")).is_none());
     }
 
     #[test]
     fn un_slugifiable_theme_forges_nothing() {
         // A theme with no alphanumerics can't become a valid skill id.
-        assert!(forge_skill_from_dream(&dream_with("!!! ??? ...", "summary")).is_none());
+        assert!(build_skill_proposal_from_dream(&dream_with("!!! ??? ...", "summary")).is_none());
     }
 
     #[test]
@@ -187,8 +187,8 @@ mod tests {
     #[test]
     fn proposal_id_is_deterministic_for_same_dream() {
         let d = dream_with("topic", "summary text");
-        let a = forge_skill_from_dream(&d).unwrap();
-        let b = forge_skill_from_dream(&d).unwrap();
+        let a = build_skill_proposal_from_dream(&d).unwrap();
+        let b = build_skill_proposal_from_dream(&d).unwrap();
         assert_eq!(a.id, b.id, "same dream -> same proposal id (idempotent staging)");
     }
 }

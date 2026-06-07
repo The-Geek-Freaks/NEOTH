@@ -25,7 +25,7 @@
 //!
 //! ## Architecture
 //!
-//! Pure function: `karpathy_preamble() -> &'static str`
+//! Pure function: `code_discipline_preamble() -> &'static str`
 //! returns a fixed string. Callers prepend it to the
 //! `system` block of `providers::Request`. Adopter is the
 //! `cli::chat::run_chat_with` pipeline (any path that
@@ -62,7 +62,7 @@
 /// every code-leaning call gets these three sentences
 /// BEFORE the operator-supplied system block. For a 5k-
 /// token system prompt this adds ~120 tokens — negligible.
-pub fn karpathy_preamble() -> &'static str {
+pub fn code_discipline_preamble() -> &'static str {
     "## Core principles (always apply)\n\
      \n\
      - **Think before coding.** Surface the assumptions you are about to make. If the request is ambiguous, name the ambiguity instead of picking silently.\n\
@@ -77,8 +77,8 @@ pub fn karpathy_preamble() -> &'static str {
 /// when the preamble is already present (avoids double-
 /// injection if the chat pipeline calls this twice along a
 /// re-entry path).
-pub fn apply_karpathy_preamble(system: Option<&str>) -> String {
-    let preamble = karpathy_preamble();
+pub fn apply_code_discipline_preamble(system: Option<&str>) -> String {
+    let preamble = code_discipline_preamble();
     match system {
         None => preamble.to_string(),
         Some(s) if s.contains("## Core principles (always apply)") => s.to_string(),
@@ -97,7 +97,7 @@ mod tests {
         // karpathy report (3 tests: non-empty, principle
         // titles, no double-injection) — this covers the
         // first two.
-        let p = karpathy_preamble();
+        let p = code_discipline_preamble();
         assert!(!p.is_empty());
         assert!(p.contains("Think before coding"));
         assert!(p.contains("Simplicity first"));
@@ -111,21 +111,21 @@ mod tests {
         // with a stronger contract. Pin so a future
         // refactor doesn't silently re-add P-4 + create a
         // duplicate prompt with subtly different shape.
-        let p = karpathy_preamble();
+        let p = code_discipline_preamble();
         assert!(!p.contains("Goal-Driven"));
         assert!(!p.contains("goal-driven"));
     }
 
     #[test]
     fn apply_to_none_returns_bare_preamble() {
-        let result = apply_karpathy_preamble(None);
-        assert_eq!(result, karpathy_preamble());
+        let result = apply_code_discipline_preamble(None);
+        assert_eq!(result, code_discipline_preamble());
     }
 
     #[test]
     fn apply_to_some_prepends_with_separator() {
         let operator_sys = "You are NEOTH's coding assistant.";
-        let merged = apply_karpathy_preamble(Some(operator_sys));
+        let merged = apply_code_discipline_preamble(Some(operator_sys));
         assert!(merged.starts_with("## Core principles"));
         assert!(merged.contains(operator_sys));
         // The operator's block MUST appear AFTER the preamble.
@@ -143,8 +143,8 @@ mod tests {
         // a no-op. Prevents double-injection in re-entrant
         // chat paths (e.g. council debate hands back to
         // chat::run_chat_with which calls this again).
-        let once = apply_karpathy_preamble(Some("operator block"));
-        let twice = apply_karpathy_preamble(Some(once.as_str()));
+        let once = apply_code_discipline_preamble(Some("operator block"));
+        let twice = apply_code_discipline_preamble(Some(once.as_str()));
         assert_eq!(once, twice);
     }
 
@@ -154,7 +154,7 @@ mod tests {
         // should stay under 200 tokens (~800 chars) so it
         // remains a tiny fraction of any reasonable system
         // prompt budget.
-        let p = karpathy_preamble();
+        let p = code_discipline_preamble();
         assert!(
             p.len() < 800,
             "preamble crept above 800 chars ({}); trim before merging",

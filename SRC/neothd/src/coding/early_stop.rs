@@ -15,7 +15,7 @@
 //!
 //!   - [`is_repetition_loop`] — N most recent worker replies are
 //!     byte-identical (or near-identical after whitespace collapse).
-//!   - [`is_greeting_regression`] — single worker reply is just a
+//!   - [`is_refusal_or_capability_disclaimer`] — single worker reply is just a
 //!     greeting / refusal / clarifying-question fall-back, with no
 //!     `<patch>` block + no actual diff content. Bilingual EN/DE.
 //!   - [`PatchSpiralTracker`] — counts consecutive failed-or-empty
@@ -114,7 +114,7 @@ pub fn is_repetition_loop(recent_outputs: &[&str]) -> bool {
 ///
 /// The 200-char window keeps the check tight against long replies
 /// where a greeting on line 1 is just style, not regression.
-pub fn is_greeting_regression(output: &str) -> bool {
+pub fn is_refusal_or_capability_disclaimer(output: &str) -> bool {
     let trimmed = output.trim();
     if trimmed.is_empty() {
         return false;
@@ -246,18 +246,18 @@ mod tests {
         assert!(!is_repetition_loop(&outs));
     }
 
-    // ── is_greeting_regression ─────────────────────────────────────
+    // ── is_refusal_or_capability_disclaimer ─────────────────────────────────────
 
     #[test]
     fn greeting_regression_fires_on_bare_refusal_en() {
-        assert!(is_greeting_regression(
+        assert!(is_refusal_or_capability_disclaimer(
             "Sorry, I can't help with that request."
         ));
     }
 
     #[test]
     fn greeting_regression_fires_on_bare_refusal_de() {
-        assert!(is_greeting_regression(
+        assert!(is_refusal_or_capability_disclaimer(
             "Es tut mir leid, das kann ich nicht."
         ));
     }
@@ -267,18 +267,18 @@ mod tests {
         // Polite preamble + actual patch → not a regression.
         let out = "Sorry, I can't be terse — here's the patch:\n\
                    ```diff\n+ let x = 1;\n```";
-        assert!(!is_greeting_regression(out));
+        assert!(!is_refusal_or_capability_disclaimer(out));
     }
 
     #[test]
     fn greeting_regression_does_not_fire_on_empty_output() {
-        assert!(!is_greeting_regression(""));
+        assert!(!is_refusal_or_capability_disclaimer(""));
     }
 
     #[test]
     fn greeting_regression_ignores_unrelated_preamble() {
         // Output starts with productive content, not a greeting.
-        assert!(!is_greeting_regression(
+        assert!(!is_refusal_or_capability_disclaimer(
             "Looking at the diff, I think the issue is in line 42."
         ));
     }
@@ -289,7 +289,7 @@ mod tests {
         // (it's mid-stream apology, not a regression).
         let preamble = "Working on the implementation now. ".repeat(8);
         let out = format!("{preamble}Sorry, I can't continue.");
-        assert!(!is_greeting_regression(&out));
+        assert!(!is_refusal_or_capability_disclaimer(&out));
     }
 
     // ── PatchSpiralTracker ─────────────────────────────────────────

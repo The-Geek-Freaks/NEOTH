@@ -137,7 +137,7 @@ pub use retry::{DEFAULT_MAX_ATTEMPTS, RetryStrategy, WorkerRetryPolicy};
 #[allow(unused_imports)]
 pub use early_stop::{
     DEFAULT_PATCH_SPIRAL_CEILING, GREETING_REGRESSION_MARKERS, PatchSpiralTracker,
-    REPETITION_LOOP_MIN_SAMPLES, is_greeting_regression, is_repetition_loop,
+    REPETITION_LOOP_MIN_SAMPLES, is_refusal_or_capability_disclaimer, is_repetition_loop,
 };
 // QU-05 (Session 28): cargo-check JSON diagnostic parser + retry-hint
 // formatter. The dispatcher's Phase-4 test loop feeds the parser the
