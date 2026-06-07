@@ -115,13 +115,27 @@ pub async fn run_calendar(args: CalendarArgs) -> Result<()> {
             // P0: every external write goes through the unified gate.
             crate::cli::todo::gate_external_task_write(*yes, "caldav_calendar", "add")?;
             let uid = caldav_calendar::event_uid(&event);
-            let outcome = caldav_calendar::create_event_against(
+            let outcome = match caldav_calendar::create_event_against(
                 &cal_url,
                 &creds.username,
                 creds.password.expose(),
                 &event,
             )
-            .await?;
+            .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    // COR-20: the write passed the kill switch + autonomy gate
+                    // but the CalDAV network PUT failed. Emit CALENDAR_WRITE_FAILED
+                    // (0xCE) BEFORE propagating so a network failure leaves a
+                    // durable audit anchor instead of vanishing into the error
+                    // chain. `{e:#}` is the full chain (URL + HTTP status, never
+                    // credentials).
+                    emit_calendar_write_failed("caldav_calendar", "add", &uid, &format!("{e:#}"))
+                        .await;
+                    return Err(e);
+                }
+            };
             // Audit the write (its OWN event 0xCA — calendar is a distinct
             // domain from 0xC8 TODO_WRITE). Metadata only: provider/action/uid +
             // a HASH of the title + start/end. Never the raw summary, never
@@ -250,6 +264,42 @@ async fn emit_calendar_write_denied(provider: &str, action: &str, reason: &str) 
     .await;
 }
 
+/// `0xCE CALENDAR_WRITE_FAILED` audit payload. Metadata only — provider,
+/// action, uid, and the formatted error chain (`reason`). The CalDAV error
+/// carries the URL + HTTP status but never the basic-auth credentials, so this
+/// is safe to persist. Pure so it is unit-testable without a network.
+fn calendar_write_failed_payload(
+    provider: &str,
+    action: &str,
+    uid: &str,
+    reason: &str,
+    now: u64,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "provider": provider,
+        "action": action,
+        "uid": uid,
+        "reason": reason,
+        "ts_unix": now,
+    }))
+    .unwrap_or_default()
+}
+
+/// Emit `0xCE CALENDAR_WRITE_FAILED` — a calendar write was attempted (passed
+/// the kill switch + autonomy gate) but the CalDAV network PUT failed. COR-20:
+/// the Err arm emits this BEFORE the error propagates so a network failure
+/// leaves a durable audit anchor. Distinct from 0xCB DENIED (refused before any
+/// network).
+async fn emit_calendar_write_failed(provider: &str, action: &str, uid: &str, reason: &str) {
+    let payload = calendar_write_failed_payload(provider, action, uid, reason, now_unix());
+    crate::cli::todo::emit_oneshot_audit(
+        crate::wal::events::EVENT_TYPE_CALENDAR_WRITE_FAILED,
+        payload,
+        "CALENDAR_WRITE_FAILED",
+    )
+    .await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,5 +340,31 @@ mod tests {
         let a = calendar_write_payload("p", "add", "u", "Lunch", "s", "e", 1);
         let b = calendar_write_payload("p", "add", "u", "Lunch", "s", "e", 1);
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn calendar_write_failed_payload_captures_reason_without_credentials() {
+        // COR-20: a network failure leaves a durable 0xCE audit anchor with the
+        // provider/action/uid + the error reason — but never the credentials.
+        let p = calendar_write_failed_payload(
+            "caldav_calendar",
+            "add",
+            "neoth-evt-002",
+            "connect to https://dav.example.com: connection refused",
+            1_700_000_000,
+        );
+        let v: serde_json::Value = serde_json::from_slice(&p).unwrap();
+        assert_eq!(v["provider"], "caldav_calendar");
+        assert_eq!(v["action"], "add");
+        assert_eq!(v["uid"], "neoth-evt-002");
+        assert_eq!(v["ts_unix"], 1_700_000_000u64);
+        assert!(
+            v["reason"]
+                .as_str()
+                .is_some_and(|r| r.contains("connection refused")),
+            "the failure reason must be recorded for the audit trail"
+        );
+        // The frame distinguishes a network failure from a policy denial.
+        assert!(v.get("summary_hash").is_none());
     }
 }

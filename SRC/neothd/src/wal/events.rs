@@ -1254,6 +1254,17 @@ pub const EVENT_TYPE_CALENDAR_WRITE: u8 = 0xCA;
 /// silent. Payload (JSON): `{provider, action, reason, ts_unix}`.
 pub const EVENT_TYPE_CALENDAR_WRITE_DENIED: u8 = 0xCB;
 
+/// `0xCE CALENDAR_WRITE_FAILED` — EM-02b. A `neoth calendar add` was ATTEMPTED
+/// (it passed the `calendar.writes_enabled` kill switch AND the autonomy gate)
+/// but the CalDAV network PUT failed — transport error or non-success HTTP
+/// status. Distinct from `0xCB CALENDAR_WRITE_DENIED` (policy refusal BEFORE any
+/// network) and `0xCA CALENDAR_WRITE` (success). The Err arm emits this before
+/// the error propagates so a network failure on a calendar write leaves a
+/// durable audit anchor instead of vanishing silently. `reason` is the
+/// formatted error chain (URL + HTTP status, never credentials).
+/// Payload (JSON): `{provider, action, uid, reason, ts_unix}`.
+pub const EVENT_TYPE_CALENDAR_WRITE_FAILED: u8 = 0xCE;
+
 /// `0xC9 VIDEO_FRAME_SYNTHESIZED` — MM-02b. A multimodal video-analysis call
 /// completed: NEOTH decoded N frames from a clip + sent them to a vision
 /// provider (Anthropic/OpenAI/Gemini) for a prompt-guided synthesis. An
@@ -1688,6 +1699,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("todo_write", EVENT_TYPE_TODO_WRITE),
     ("calendar_write", EVENT_TYPE_CALENDAR_WRITE),
     ("calendar_write_denied", EVENT_TYPE_CALENDAR_WRITE_DENIED),
+    ("calendar_write_failed", EVENT_TYPE_CALENDAR_WRITE_FAILED),
     (
         "video_frame_synthesized",
         EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED,
@@ -2072,6 +2084,8 @@ const _: () = {
         [(EVENT_TYPE_CALENDAR_WRITE < 0xC0 || EVENT_TYPE_CALENDAR_WRITE > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_CALENDAR_WRITE_DENIED < 0xC0
         || EVENT_TYPE_CALENDAR_WRITE_DENIED > 0xCF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CALENDAR_WRITE_FAILED < 0xC0
+        || EVENT_TYPE_CALENDAR_WRITE_FAILED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED < 0xC0
         || EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_STT_TRANSCRIBED < 0xC0 || EVENT_TYPE_STT_TRANSCRIBED > 0xCF) as usize];
@@ -2347,6 +2361,10 @@ mod tests {
             (
                 "CALENDAR_WRITE_DENIED",
                 EVENT_TYPE_CALENDAR_WRITE_DENIED,
+            ),
+            (
+                "CALENDAR_WRITE_FAILED",
+                EVENT_TYPE_CALENDAR_WRITE_FAILED,
             ),
             (
                 "VIDEO_FRAME_SYNTHESIZED",
