@@ -188,6 +188,13 @@ pub fn render_yaml_config(cfg: &HysteriaConfig) -> String {
 /// Probe the local SOCKS5 port — returns Ok when something accepts a
 /// TCP connection, Err otherwise. Used in tests + the daemon's
 /// post-spawn health check.
+///
+/// **TCP-only LOCAL liveness, NOT end-to-end tunnel health (GOLD-HON-20 /
+/// A-17):** this verifies only that the local `hysteria` client's SOCKS5
+/// listener is up and accepting TCP — it does NOT prove the QUIC tunnel to
+/// the remote relay is established or that traffic actually egresses. A
+/// passing probe means "the client process bound its port", not "the tunnel
+/// works".
 pub async fn probe_socks_port(port: u16) -> Result<()> {
     use tokio::net::TcpStream;
     let addr = format!("127.0.0.1:{port}");

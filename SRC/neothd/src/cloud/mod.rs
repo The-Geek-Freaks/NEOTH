@@ -173,10 +173,16 @@ fn local_mirror_root(cfg: &CloudConfig) -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-/// Returns true when the provider has a real implementation
-/// reachable today. With OpenDAL services-fs live, every provider
-/// can run in local-mirror mode when the operator points NEOTH at
-/// the desktop client's synced folder.
+/// **v1.1 coarse capability gate — always `true` (GOLD-HON-20 / A-17).**
+/// Returns whether a provider has ANY reachable implementation path. Since
+/// OpenDAL `services-fs` landed (R-8) every provider can run in local-mirror
+/// mode when the operator points NEOTH at the desktop client's synced folder,
+/// so this is unconditionally `true`. It deliberately does NOT reflect a
+/// specific config's liveness — a provider configured WITHOUT a `local_root`
+/// is a [`ConnectorMode::StubFallback`] whose runtime calls bail. For the
+/// accurate **per-config** status use [`connector_mode_of`]; `is_live` only
+/// answers "is this provider buildable at all". (Future per-provider OAuth
+/// direct-API impls keep it `true`.)
 pub fn is_live(_provider: Provider) -> bool {
     true
 }
