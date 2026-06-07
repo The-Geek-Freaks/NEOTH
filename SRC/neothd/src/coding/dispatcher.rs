@@ -272,10 +272,12 @@ pub struct DispatchOutcome {
 /// (or `Blocked` on `WorkerOutcome.failed()`). Stops at the first
 /// budget breach. Returns the aggregated outcome.
 ///
-/// Concurrency: serial for now — one task at a time. The hemisphere
-/// loop is a single thread; if a future pick wants concurrent
-/// hemispheres, refactor to `spawn` per hemisphere with a shared
-/// budget gate.
+/// Concurrency (COR-19): each loop iteration picks a BATCH of up to one
+/// Backlog task per bound hemisphere and runs their `worker.execute()`
+/// calls concurrently via `join_all` on this task (no `spawn` — `conn` is
+/// !Sync but execute() is conn-free, so the connection never crosses a task
+/// boundary). All DB writes + the per-session early-stop state stay serial:
+/// task pick/transition before the batch, result processing after it.
 pub async fn dispatch_session(
     conn: &Connection,
     session_id: KanbanSessionId,
@@ -323,6 +325,9 @@ pub async fn dispatch_session_with_apply(
         return Ok(outcome);
     }
 
+    // SD-02 (Round-3 v0.4) — best-effort WAL progress writer; no-op when
+    // wal_writer is None (CLI one-shot without --apply). Computed once.
+    let writer_for_progress = apply_config.and_then(|cfg| cfg.wal_writer.as_deref());
     loop {
         // Cycle-prevention Q4 — time + count budget. Defense in depth:
         // either cap stops the loop. Bail out before touching DB to
@@ -346,35 +351,60 @@ pub async fn dispatch_session_with_apply(
             break;
         }
 
-        let Some(task) = pick_next_backlog_task(conn, session_id, workers)? else {
+        // COR-19: pick a BATCH of up to one Backlog task per bound
+        // hemisphere (unbound-hemisphere tasks are Blocked inline by
+        // pick_batch). The slow worker.execute() calls then run
+        // CONCURRENTLY across hemispheres while everything that touches
+        // `conn` or the per-session early-stop state stays serial.
+        // `conn` is !Sync but execute() is conn-free, so the connection
+        // never crosses a task boundary — no Arc<Mutex<Connection>> needed.
+        let batch = pick_batch(conn, session_id, workers, &mut outcome)?;
+        if batch.is_empty() {
             break;
-        };
-        outcome.tasks_attempted += 1;
+        }
 
-        let Some(worker) = workers.get(task.hemisphere) else {
-            // No worker bound for this task's hemisphere — Block it.
-            outcome.tasks_unassigned += 1;
-            let now_ns = now_unix_ns();
-            store::patch_task_status(conn, task.task_id, TaskStatus::Blocked, now_ns)
-                .context("transition Backlog → Blocked (no worker)")?;
-            continue;
-        };
+        // Trim to the remaining task budget so a multi-hemisphere batch
+        // can't overshoot max_tasks; untaken tasks stay Backlog and the
+        // next iteration's top-of-loop check then trips the cap.
+        let remaining = budget.max_tasks.saturating_sub(outcome.tasks_attempted);
+        let batch: Vec<KanbanTask> = batch.into_iter().take(remaining).collect();
+        if batch.is_empty() {
+            outcome.budget_exhausted = true;
+            break;
+        }
 
-        // Transition to InProgress before invoking the worker so the
-        // activity feed shows the task lifecycle correctly even if
-        // the worker crashes.
+        // Transition every batch task Backlog → InProgress + emit the
+        // 0x77 KANBAN_TASK_PROGRESS(0,"dispatched") frame BEFORE any
+        // execute() starts (serial DB; mirrors the per-task pre-fix
+        // behaviour even if a worker later crashes).
         let now_ns = now_unix_ns();
-        store::patch_task_status(conn, task.task_id, TaskStatus::InProgress, now_ns)
-            .context("transition Backlog → InProgress")?;
+        for task in &batch {
+            store::patch_task_status(conn, task.task_id, TaskStatus::InProgress, now_ns)
+                .context("transition Backlog → InProgress (batch)")?;
+            emit_kanban_task_progress_wal(writer_for_progress, task, 0, "dispatched");
+        }
+        outcome.tasks_attempted += batch.len();
 
-        // SD-02 (Round-3 v0.4) — emit 0x77 KANBAN_TASK_PROGRESS at
-        // pick-up. progress_pct=0, message="dispatched". Best-
-        // effort; no-op when wal_writer is None (CLI one-shot
-        // without --apply doesn't thread a writer through).
-        let writer_for_progress = apply_config.and_then(|cfg| cfg.wal_writer.as_deref());
-        emit_kanban_task_progress_wal(writer_for_progress, &task, 0, "dispatched");
+        // Run the batch's worker.execute() calls CONCURRENTLY on THIS
+        // task via join_all (no tokio::spawn → no Send/'static bound;
+        // `conn` stays put). pick_batch guarantees one task per
+        // hemisphere, so no worker is invoked concurrently with itself.
+        let exec_futures: Vec<_> = batch
+            .iter()
+            .map(|task| {
+                let worker = workers
+                    .get(task.hemisphere)
+                    .expect("pick_batch only returns tasks whose hemisphere has a bound worker");
+                worker.execute(task)
+            })
+            .collect();
+        let exec_results = futures_util::future::join_all(exec_futures).await;
 
-        let exec_result = worker.execute(&task).await;
+        // Process each (task, result) SERIALLY — the per-session
+        // early-stop state (retry_policy / patch_spiral / recent_outputs)
+        // and all `conn` writes happen here, one task at a time, so the
+        // match arms below are byte-identical to the pre-COR-19 serial loop.
+        for (task, exec_result) in batch.into_iter().zip(exec_results) {
         match exec_result {
             // QU-01 harte-Kritik fix (Session 28): a refusal can
             // arrive STRUCTURALLY review-ready — the worker emits
@@ -543,6 +573,7 @@ pub async fn dispatch_session_with_apply(
                 );
             }
         }
+        }
     }
 
     info!(
@@ -557,26 +588,47 @@ pub async fn dispatch_session_with_apply(
     Ok(outcome)
 }
 
-/// Pull the next Backlog task whose hemisphere has a bound worker.
-/// Tasks on un-bound hemispheres still surface — caller decides what
-/// to do (we Block them in the orchestrator). None means "no more
-/// Backlog tasks for this session".
-fn pick_next_backlog_task(
+/// COR-19: pick one Backlog task per BOUND hemisphere in a single pass.
+///
+/// Unbound-hemisphere Backlog tasks are transitioned Backlog → Blocked
+/// inline (serial DB) and counted in `outcome.tasks_unassigned` — the
+/// same action the pre-COR-19 serial loop took per task. For each
+/// hemisphere that HAS a bound worker, at most one Backlog task is
+/// selected (the first in `list_tasks_for_session` order); additional
+/// same-hemisphere tasks stay Backlog and are picked in a later batch.
+/// The returned batch therefore has at most one task per hemisphere, so
+/// the concurrent execute() phase never invokes a worker concurrently
+/// with itself. An empty return means no runnable Backlog tasks remain.
+fn pick_batch(
     conn: &Connection,
     session_id: KanbanSessionId,
-    _workers: &HemisphereWorkerSet,
-) -> Result<Option<KanbanTask>> {
-    // Newest-first within Backlog. The actual sort key is per
-    // store::list_tasks_for_session; we filter here to keep the
-    // dispatcher path testable in isolation.
+    workers: &HemisphereWorkerSet,
+    outcome: &mut DispatchOutcome,
+) -> Result<Vec<KanbanTask>> {
     let tasks = store::list_tasks_for_session(conn, session_id)
-        .context("list_tasks_for_session for dispatch")?;
+        .context("list_tasks_for_session for pick_batch")?;
+    let mut claimed: std::collections::HashSet<Hemisphere> = std::collections::HashSet::new();
+    let mut batch: Vec<KanbanTask> = Vec::new();
+    let now_ns = now_unix_ns();
     for t in tasks {
-        if t.status == TaskStatus::Backlog {
-            return Ok(Some(t));
+        if t.status != TaskStatus::Backlog {
+            continue;
+        }
+        if workers.get(t.hemisphere).is_none() {
+            // No worker bound for this hemisphere — Block it (mirrors the
+            // pre-COR-19 serial path's no-worker arm).
+            outcome.tasks_unassigned += 1;
+            store::patch_task_status(conn, t.task_id, TaskStatus::Blocked, now_ns)
+                .context("transition Backlog → Blocked (no worker)")?;
+            continue;
+        }
+        // `insert` returns false when the hemisphere is already claimed
+        // for this batch — leave that task Backlog for a future iteration.
+        if claimed.insert(t.hemisphere) {
+            batch.push(t);
         }
     }
-    Ok(None)
+    Ok(batch)
 }
 
 /// Persist the worker outcome to the task row + transition status.
@@ -1556,6 +1608,95 @@ mod tests {
             .filter(|t| t.status == TaskStatus::Backlog)
             .count();
         assert_eq!(backlog_count, 1);
+    }
+
+    #[tokio::test]
+    async fn dispatch_two_hemisphere_workers_run_concurrently() {
+        // COR-19: the Left and Right workers' execute() calls must OVERLAP.
+        // Each BarrierWorker bumps `entered` then blocks on a 2-party
+        // tokio::sync::Barrier — both must enter execute() before either is
+        // released. Under the pre-COR-19 serial loop, worker A blocks at the
+        // barrier forever (worker B is never executed) → the dispatch hangs
+        // and the timeout below makes that a clean FAIL. Under the concurrent
+        // batch loop both enter, the barrier releases, and both complete.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct BarrierWorker {
+            barrier: Arc<tokio::sync::Barrier>,
+            entered: Arc<AtomicUsize>,
+            name: &'static str,
+        }
+        #[async_trait]
+        impl Worker for BarrierWorker {
+            async fn execute(&self, _task: &KanbanTask) -> Result<WorkerOutcome> {
+                self.entered.fetch_add(1, Ordering::SeqCst);
+                self.barrier.wait().await;
+                Ok(green_outcome())
+            }
+            fn name(&self) -> &'static str {
+                self.name
+            }
+        }
+
+        let (_dir, conn) = fresh_db();
+        let session_id = store::insert_session(&conn, 1, "p", "h", "cli", None).unwrap();
+        let left = store::insert_task(&conn, session_id, 10, "left", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, left, Hemisphere::Left, None, None).unwrap();
+        let right = store::insert_task(&conn, session_id, 11, "right", None, "ui", None).unwrap();
+        store::patch_task_hemisphere(&conn, right, Hemisphere::Right, None, None).unwrap();
+
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let entered = Arc::new(AtomicUsize::new(0));
+        let mut workers = HemisphereWorkerSet::new();
+        workers.bind(
+            Hemisphere::Left,
+            Box::new(BarrierWorker {
+                barrier: Arc::clone(&barrier),
+                entered: Arc::clone(&entered),
+                name: "barrier-left",
+            }),
+        );
+        workers.bind(
+            Hemisphere::Right,
+            Box::new(BarrierWorker {
+                barrier: Arc::clone(&barrier),
+                entered: Arc::clone(&entered),
+                name: "barrier-right",
+            }),
+        );
+
+        let budget = DispatchBudget {
+            max_tasks: 2,
+            max_duration: Duration::from_secs(30),
+        };
+        // A serial dispatcher deadlocks here (worker B never runs while A
+        // blocks at the barrier); the timeout turns that into a clean FAIL
+        // instead of a hung CI job.
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            dispatch_session(&conn, session_id, &workers, budget),
+        )
+        .await;
+        let outcome = result
+            .expect("dispatch deadlocked — the two hemisphere workers were NOT run concurrently")
+            .expect("dispatch failed");
+
+        assert_eq!(
+            entered.load(Ordering::SeqCst),
+            2,
+            "both workers must have entered execute()"
+        );
+        assert_eq!(outcome.tasks_completed, 2, "both tasks must complete");
+        assert_eq!(outcome.tasks_blocked, 0);
+        let tasks = store::list_tasks_for_session(&conn, session_id).unwrap();
+        for t in &tasks {
+            assert_eq!(
+                t.status,
+                TaskStatus::Review,
+                "task {} must be Review after concurrent dispatch",
+                t.task_id.raw()
+            );
+        }
     }
 
     #[tokio::test]
