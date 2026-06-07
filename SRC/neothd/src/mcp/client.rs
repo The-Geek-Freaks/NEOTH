@@ -200,10 +200,42 @@ impl McpClient {
             .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
             .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
 
-        // Read framed response — buffered until parse_frame succeeds.
+        // Read framed responses until we see the one whose id matches our
+        // request. Notifications (no id) and responses for other in-flight
+        // ids are drained and skipped rather than killing the connection
+        // (COR-26: a server legitimately interleaves notifications/* frames
+        // while we wait). The inner loop drains every complete frame already
+        // in the buffer before blocking on another read, since multiple
+        // frames can arrive in a single read and our match may already be
+        // buffered — a plain `continue` to the read would then hang.
         let mut buf = Vec::with_capacity(4096);
         let mut chunk = [0u8; 4096];
         loop {
+            loop {
+                let (body, consumed) = match parse_frame(&buf) {
+                    Ok(None) => break,
+                    Ok(Some(frame)) => frame,
+                    Err(e) => {
+                        return Err(McpError::Protocol(self.server_id.clone(), e.to_string()));
+                    }
+                };
+                match classify_frame(&body, id, &self.server_id)? {
+                    FrameMatch::Response(resp) => {
+                        if let Some(err) = resp.error {
+                            return Err(McpError::RpcError {
+                                server: self.server_id.clone(),
+                                code: err.code,
+                                message: err.message,
+                            });
+                        }
+                        return Ok(resp.result.unwrap_or(serde_json::Value::Null));
+                    }
+                    FrameMatch::Skip => {
+                        buf.drain(..consumed);
+                    }
+                }
+            }
+
             let read_result = tokio::time::timeout(timeout, self.stdout.read(&mut chunk)).await;
             let n = match read_result {
                 Ok(Ok(0)) => {
@@ -219,32 +251,6 @@ impl McpClient {
                 Err(_) => return Err(McpError::Timeout(self.server_id.clone(), timeout)),
             };
             buf.extend_from_slice(&chunk[..n]);
-            match parse_frame(&buf) {
-                Ok(None) => continue,
-                Ok(Some((body, _consumed))) => {
-                    let resp: JsonRpcResponse = serde_json::from_slice(&body)
-                        .map_err(|e| McpError::Protocol(self.server_id.clone(), e.to_string()))?;
-                    if resp.id != id {
-                        // Out-of-order ids would indicate a server bug;
-                        // v0.1 stays strict.
-                        return Err(McpError::Protocol(
-                            self.server_id.clone(),
-                            format!("id mismatch: sent {id}, got {}", resp.id),
-                        ));
-                    }
-                    if let Some(err) = resp.error {
-                        return Err(McpError::RpcError {
-                            server: self.server_id.clone(),
-                            code: err.code,
-                            message: err.message,
-                        });
-                    }
-                    return Ok(resp.result.unwrap_or(serde_json::Value::Null));
-                }
-                Err(e) => {
-                    return Err(McpError::Protocol(self.server_id.clone(), e.to_string()));
-                }
-            }
         }
     }
 
@@ -295,6 +301,37 @@ impl Drop for McpClient {
         // drop, ensure it dies. start_kill is best-effort.
         let _ = self.child.start_kill();
     }
+}
+
+/// Outcome of inspecting one decoded JSON-RPC frame against the request id
+/// we are currently awaiting.
+enum FrameMatch {
+    /// The frame is the response to our request — parsed and ready.
+    Response(JsonRpcResponse),
+    /// Not our response (a notification, or a response for another in-flight
+    /// id) — the caller should drain it and keep reading.
+    Skip,
+}
+
+/// Classify a decoded frame body relative to the awaited request `id`.
+///
+/// COR-26: the old read loop deserialized every frame straight into
+/// `JsonRpcResponse` and `return`ed a hard `Protocol` error on any id
+/// mismatch — so a single server notification (which a well-behaved MCP
+/// server emits via `notifications/*`) tore down the whole connection.
+/// Parse leniently into a `Value` first: a frame whose `id` does not match
+/// ours — including a notification with no `id` at all — is `Skip`, not a
+/// failure. Only a body that is not valid JSON-RPC is a genuine protocol
+/// violation (`Err`).
+fn classify_frame(body: &[u8], id: u64, server_id: &str) -> Result<FrameMatch, McpError> {
+    let value: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|e| McpError::Protocol(server_id.to_string(), e.to_string()))?;
+    if value.get("id").and_then(serde_json::Value::as_u64) != Some(id) {
+        return Ok(FrameMatch::Skip);
+    }
+    let resp: JsonRpcResponse = serde_json::from_value(value)
+        .map_err(|e| McpError::Protocol(server_id.to_string(), e.to_string()))?;
+    Ok(FrameMatch::Response(resp))
 }
 
 #[cfg(test)]
@@ -350,5 +387,41 @@ mod tests {
         let body = r#"{"content":[{"type":"text","text":"failed"}],"isError":true}"#;
         let r: ToolCallResult = serde_json::from_str(body).unwrap();
         assert!(r.is_error);
+    }
+
+    #[test]
+    fn classify_frame_matches_our_id_and_skips_the_rest() {
+        // COR-26: the frame whose id matches the awaited request is a Response;
+        // a response for another id, or a notification with no id, is Skip
+        // (not a connection-killing error); only invalid JSON-RPC is an Err.
+        let ours = br#"{"jsonrpc":"2.0","id":7,"result":{"ok":true}}"#;
+        assert!(matches!(
+            classify_frame(ours, 7, "srv").unwrap(),
+            FrameMatch::Response(_)
+        ));
+
+        let other_id = br#"{"jsonrpc":"2.0","id":99,"result":{}}"#;
+        assert!(matches!(
+            classify_frame(other_id, 7, "srv").unwrap(),
+            FrameMatch::Skip
+        ));
+
+        // A real MCP notification carries a method and NO id.
+        let notification = br#"{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info"}}"#;
+        assert!(matches!(
+            classify_frame(notification, 7, "srv").unwrap(),
+            FrameMatch::Skip
+        ));
+
+        // A matching-id frame carrying a JSON-RPC error is still our Response
+        // (the caller maps the embedded error to RpcError).
+        let err_resp = br#"{"jsonrpc":"2.0","id":7,"error":{"code":-32601,"message":"no"}}"#;
+        assert!(matches!(
+            classify_frame(err_resp, 7, "srv").unwrap(),
+            FrameMatch::Response(_)
+        ));
+
+        // Garbage that isn't JSON at all is a genuine protocol violation.
+        assert!(classify_frame(b"not json", 7, "srv").is_err());
     }
 }
