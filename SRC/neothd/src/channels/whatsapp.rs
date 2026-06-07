@@ -1,25 +1,21 @@
-//! WhatsApp Business Cloud API channel — scaffold.
+//! WhatsApp Business Cloud API channel.
 //!
-//! v0.1.x ships the credential surface + the `Channel` trait wiring
-//! so operators can configure WhatsApp via `neoth init` and the
-//! daemon serialises the config without panicking. The actual
-//! webhook receiver / send pipeline is deferred — WhatsApp requires
-//! a public HTTPS endpoint (or an ngrok-style tunnel) for the
-//! webhook callback, which is a meaningful infra commitment that
-//! operators should opt into per deployment rather than have NEOTH
-//! bind a public port silently.
+//! **Outbound is LIVE:** [`WhatsAppChannel::send_text`] (and media) post to
+//! the `/messages` Graph API endpoint scoped to the operator's phone-number
+//! id — so cron jobs / proactive sends reach WhatsApp today.
 //!
-//! What lands later (Phase 2):
-//!   - hyper-based HTTP server bound to the operator's configured
-//!     interface + a TLS termination story (operator picks: terminate
-//!     inside NEOTH via rustls or front it with Caddy/nginx).
-//!   - `POST /webhook` handler that verifies Meta's `hub.verify_token`
-//!     and decodes message JSON into `InboundMessage`.
-//!   - `send_text` / `send_media` via the `/messages` Graph API
-//!     endpoint, scoped to the operator's phone-number id.
+//! **Inbound is LIVE via the shared webhook path, not this module's
+//! `run()`:** Meta delivers events by POSTing to the daemon's
+//! [`super::webhook_listener`] (hyper HTTP server), which runs
+//! [`super::webhook_verify`] signature checks and
+//! [`super::whatsapp_webhook::decode_payload`] to turn the nested JSON into
+//! `InboundMessage`s. Because WhatsApp pushes (there is no per-channel
+//! long-poll), this module's standalone `Channel::run()` deliberately bails
+//! with a pointer to that webhook flow — it is not the receive path.
 //!
-//! Until that lands `run()` bails fast with a clear message that
-//! points operators at the right setup steps.
+//! Operators still supply the public HTTPS endpoint (reverse proxy / tunnel)
+//! that fronts the webhook listener; NEOTH binds the listener on the
+//! operator's configured interface rather than a public port silently.
 
 use anyhow::Result;
 use async_trait::async_trait;

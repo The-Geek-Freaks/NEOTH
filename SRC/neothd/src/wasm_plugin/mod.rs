@@ -1,4 +1,4 @@
-//! WASM plugin host scaffold — V10-04 GA blocker reservation.
+//! WASM plugin host — V10-04 (shipped, feature-gated).
 //!
 //! NEOTH plugins ship in two flavours per `SPEC_skill_plugin_system.md`:
 //!
@@ -13,11 +13,14 @@
 //!      Each plugin runs in its own `wasmtime::Store` so a crash in
 //!      plugin A cannot corrupt plugin B's state.
 //!
-//! This module is the placeholder for flavour 2. It is intentionally
-//! empty until V10-04 wires the actual wasmtime runtime — but it owns
-//! the operator-visible names (config schema keys, WAL event codes,
-//! diagnostic strings) so the eventual implementation can land without
-//! a public-surface rename.
+//! This module owns flavour 2. The wasmtime runtime is **implemented**
+//! (behind the `wasm-plugin-host` Cargo feature): [`engine`] builds the
+//! fuel/memory-capped `wasmtime::Engine` + per-plugin `Store`, [`dispatch`]
+//! instantiates modules through a `Linker` and invokes their entry points,
+//! [`hostcalls`] gates the host surface, [`discovery`] + [`manifest`] load
+//! the on-disk plugin set. It also owns the operator-visible names (config
+//! schema keys, WAL event codes, diagnostic strings) shared with the
+//! feature-off build.
 //!
 //! ## Phase tracker
 //!
@@ -28,15 +31,14 @@
 //! transitions (Phase 3 inter-plugin IPC, Phase 4 cross-node plugin
 //! sync) don't break consumers that match on it today.
 //!
-//! ## Why a stub now
+//! ## Self-contained, in-binary
 //!
-//! Per the v1.1 hard rule "v1.1 is the norm" + the architecture
-//! extension memory `neoth_hard_rule_self_contained.md`, V10-04 must
-//! ship inside the neothd binary, not as a sidecar. Reserving the
-//! module path + config schema + Phase enum now means the wasmtime
-//! integration (10-15 LOC of dependency add + ~400 LOC of runtime
-//! plumbing) lands as a single coherent change instead of a multi-PR
-//! refactor — the public surface is pinned.
+//! Per the hard rules "v1.1 is the norm" + `neoth_hard_rule_self_contained.md`,
+//! V10-04 ships INSIDE the neothd binary, not as a sidecar. The public
+//! surface (module path + config schema + Phase enum) is stable across both
+//! feature configurations, so a feature-off ("compiled-in plugins only")
+//! build and a feature-on (full wasmtime host) build expose the same names —
+//! `Phase::current()` is what tells them apart at runtime.
 //!
 //! ## Cargo feature
 //!

@@ -1,4 +1,4 @@
-//! Discord Gateway WSS receive scaffold — v0.3+ scope per Codex feedback.
+//! Discord Gateway WSS receive — protocol data shapes.
 //!
 //! Discord's bot-receive path needs a long-lived WebSocket connection
 //! to `wss://gateway.discord.gg/?v=10&encoding=json`. The protocol is a
@@ -8,21 +8,21 @@
 //! same shape against Slack's Socket Mode (different op-codes + token
 //! contract; identical WSS-reconnect-with-backoff topology).
 //!
-//! ## Status: NOT YET LIVE
+//! ## Status: LIVE
 //!
-//! Per `channels/discord.rs` module-doc, receive lands in v0.3+. This
-//! file is the scaffold so when the implementation arrives it slots
-//! into a public surface that's already audit-stable:
+//! Discord receive is wired: the live `tokio_tungstenite` WSS dial +
+//! heartbeat + reconnect loop lives in the sibling
+//! [`super::discord_gateway_loop::run_gateway_loop`], and
+//! [`super::discord::DiscordChannel::run`] dials it. **This** module owns
+//! the protocol DATA SHAPES that loop (and the doctor / CLI) consume:
 //!   - opcode constants (lookup table operators can `--explain`)
 //!   - intent flag bitmask (the per-event subscription Discord requires)
 //!   - state-machine [`GatewayPhase`] every doctor / CLI consults
+//!   - the [`GatewayEnvelope`] deserialiser for real Gateway frames
 //!
-//! No `tokio_tungstenite` WSS client lives in this module yet — that
-//! lands behind a `discord-gateway` Cargo feature (analogous to
-//! `slack-socket`) when the implementation PR ships. Today the module
-//! exposes the data shapes so callers (`neoth doctor --explain
-//! discord-gateway`, `neoth events --grep discord`) can wire against
-//! stable names that won't drift.
+//! Keeping the shapes here (no WSS client in THIS file) lets them be
+//! unit-tested without a socket, and keeps `neoth doctor --explain
+//! discord-gateway` / `neoth events --grep discord` wired to stable names.
 //!
 //! ## References
 //!

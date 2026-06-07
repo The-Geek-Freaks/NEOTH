@@ -1,19 +1,19 @@
-//! Keet channel adapter — R-2 stub.
+//! Keet channel adapter — outbound-LIVE (via the Pears bridge), inbound deferred.
 //!
-//! Keet rides on Holepunch's Hyperswarm + Hypercore stack (JS / Node).
-//! A native-Rust port is multi-week work — see the research note
-//! `QUELLEN/research/` (Phase 11 R-A1, pending). v0.1.x ships this
-//! stub so the wizard's per-hemisphere picker + `freedom.yaml`
-//! configuration round-trip cleanly without a "dispatching to a
-//! nonexistent adapter" panic.
+//! Keet rides on Holepunch's Hyperswarm + Hypercore stack (JS / Node). A
+//! native-Rust port is multi-week work — see the research note
+//! `QUELLEN/research/` (Phase 11 R-A1) — so NEOTH bridges to a `pear`
+//! runtime over the [`super::pears_bridge`] HTTP transport instead.
 //!
-//! What the stub provides:
+//! What this adapter provides today:
 //!   - `KeetChannel::new(seed_phrase)` — accepts the 24-word seed the
 //!     operator paired with on their phone.
 //!   - `Channel::name()` → `"keet"`.
-//!   - `Channel::run(handler)` → returns a clear "deferred" error.
-//!   - `send_text` / `send_media` inherit the trait's `NotSupported`
-//!     default.
+//!   - **`send_text` is LIVE** when a Pears bridge is configured — it posts
+//!     through `pears_bridge` (so proactive / cron sends reach Keet).
+//!   - `Channel::run(handler)` still returns a clear "deferred" error: the
+//!     inbound receive loop (bridge subscribe + SSE/WebSocket) is K-3 work.
+//!   - `send_media` inherits the trait's `NotSupported` default.
 //!
 //! Why this shape: the channel adapter trait + dispatch path are already
 //! solid (`SP-5 C-prime`). What's missing is the Hyperswarm transport,

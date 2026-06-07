@@ -1,18 +1,13 @@
 //! Inbound-webhook signature verification + handshake helpers (A7).
 //!
-//! Pure-crypto + pure-string-parsing primitives that any future HTTP
-//! listener (hyper, axum, the operator's reverse-proxy bridge) MUST
-//! call before trusting a request. Today no HTTP server is wired in
-//! NEOTH — the operator-facing channel adapters either long-poll
-//! (Telegram) or use Socket Mode (Slack scaffold). When the inbound
-//! TLS path lands (Konsens-decision A7), these are the load-bearing
-//! security primitives.
-//!
-//! Why pure functions: keeping HMAC + handshake logic out of the
-//! transport layer means we can unit-test the security-critical bits
-//! exhaustively without spinning up hyper, and the transport layer
-//! can swap (hyper / axum / reverse-proxy bridge) without rewriting
-//! the verification.
+//! Pure-crypto + pure-string-parsing primitives that the HTTP listener
+//! MUST call before trusting a request. These are wired in today:
+//! [`super::webhook_listener`] (a hyper HTTP/1.1 server) calls them on every
+//! inbound Meta/WhatsApp request, and Slack uses Socket Mode + Telegram
+//! long-polls. Keeping the HMAC + handshake logic as pure functions means the
+//! security-critical bits are exhaustively unit-testable without spinning up
+//! hyper, and the transport layer can swap (hyper / axum / a reverse-proxy
+//! bridge) without rewriting the verification.
 //!
 //! ## Meta / WhatsApp Cloud API
 //!

@@ -1,20 +1,15 @@
-//! `neoth rollback list` — operator surface for the B-Rollback
-//! snapshot WAL frames (CDX-02).
+//! `neoth rollback` — operator surface for the B-Rollback snapshot WAL
+//! frames (CDX-02).
 //!
-//! Today: read-only listing. Walks every `*.wal` segment under
-//! `~/.neoth/wal/`, decodes `PRE_MUTATION_SNAPSHOT` (0xF2) frames,
-//! renders them as a table or JSON for the operator. Tells you which
-//! mutations were captured, when, and with what before-state byte
-//! count — enough to plan a manual restoration today.
-//!
-//! Deferred (intentional split — see PROGRESS.md "B-Rollback"
-//! foundation note):
-//!   - `preview --to <offset>` — show what restoring this snapshot
-//!     would do (decode `before_state`, diff against current state).
-//!   - `apply --to <offset>` — actually execute the restoration
-//!     dispatched on `MutationKind`. Per-kind dispatcher landing in a
-//!     follow-up once the design call settles which restoration paths
-//!     are safe to automate vs operator-confirmed.
+//! - **`list`** — read-only. Walks every `*.wal` segment under
+//!   `~/.neoth/wal/`, decodes `PRE_MUTATION_SNAPSHOT` (0xF2) frames, renders
+//!   them as a table or JSON: which mutations were captured, when, and the
+//!   before-state byte count.
+//! - **`apply --to <offset>`** — restoration (shipped). Without `--confirm`
+//!   it DRY-RUNS: decodes `before_state` and prints what restoring would do.
+//!   With `--confirm` it executes the per-`MutationKind` restoration via
+//!   `plan.execute()` and reports the bytes written. (The per-kind
+//!   dispatcher that the earlier "deferred" note referenced has landed.)
 
 use anyhow::{Context, Result};
 use clap::{Args, Subcommand};
@@ -161,7 +156,10 @@ async fn run_list(kind_filter: Option<&str>, limit: usize, output: &OutputFormat
                 shown.len(),
                 total
             );
-            println!("  Use `neoth rollback --to <offset>` once the dispatcher lands.\n");
+            println!(
+                "  Restore one with `neoth rollback apply --to <offset>` \
+                 (add `--confirm` to execute; without it you get a dry-run preview).\n"
+            );
             for e in &shown {
                 println!(
                     "  [{}]  offset={:>8}  kind={:<16}  target={}",

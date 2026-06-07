@@ -1,21 +1,19 @@
-//! Slack channel — scaffold (socket mode).
+//! Slack channel — LIVE via socket mode.
 //!
-//! v0.1.x ships the credential surface + `Channel` trait wiring;
-//! the actual socket-mode WebSocket client is Phase 2 work.
-//! Socket mode is the operator-friendly path because it does not
-//! require a public HTTPS endpoint — NEOTH opens a WebSocket to
-//! Slack's edge URL and receives events that way. The full
-//! integration needs:
+//! `run()` delegates to [`super::slack_socket::run_socket_loop`], which
+//! opens a WebSocket to Slack's edge URL (no public HTTPS endpoint
+//! required), ACKs each envelope, and dispatches inbound events into the
+//! pipeline. This module owns the credential surface + `Channel` trait
+//! wiring; `slack_socket` owns the live receive/send loop. The
+//! integration uses:
 //!   - `xapp-...` app-level token to call `apps.connections.open`
 //!   - `xoxb-...` bot user OAuth token for `chat.postMessage`,
 //!     `files.upload`, etc.
-//!   - reqwest + tokio-tungstenite + an event-routing layer that
-//!     decodes Slack's JSON-encoded `events_api` envelopes into
-//!     `InboundMessage`.
+//!   - tokio-tungstenite + an event-routing layer that decodes Slack's
+//!     JSON-encoded `events_api` envelopes into `InboundMessage`.
 //!
-//! Until that lands `run()` bails with a pointer to the setup
-//! documentation. The credential split (two tokens) is honoured at
-//! construction time so the wizard already collects them correctly.
+//! The credential split (two tokens) is honoured at construction time so
+//! the wizard collects them correctly before the socket loop runs.
 
 use anyhow::Result;
 use async_trait::async_trait;

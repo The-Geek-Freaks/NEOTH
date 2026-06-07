@@ -1,37 +1,29 @@
-//! R-02 Dreaming pipeline — scaffold.
+//! R-02 Dreaming pipeline.
 //!
-//! Vision: periodically (default: nightly) the daemon surveys the
-//! day's events, identifies thematic clusters, and writes a "dream"
-//! entry that compresses the day into a few semantic anchors. Future
-//! recall reads dreams BEFORE digging through individual events —
-//! same shape as a human brain reaching for "what happened
-//! yesterday?" before "what was the third sentence at 14:32?".
+//! Periodically (default: nightly) the daemon surveys the day's events,
+//! clusters them into thematic "dreams" that compress the day into a few
+//! semantic anchors, and `neoth recall` surfaces those dreams BEFORE digging
+//! through individual events — same shape as a human brain reaching for
+//! "what happened yesterday?" before "what was the third sentence at 14:32?".
 //!
-//! This module ships the storage + types + composer shape so future
-//! work (LLM-driven clustering, theme detection, embedding-based
-//! recall hook) snaps in without rewriting the surface. The
-//! ACTUAL clustering pass is multi-week — for now `compose_dream`
-//! produces a deterministic snapshot of the input events that
-//! operators can read + a Dream Day record that the pipeline can
-//! later refine.
+//! Storage: `~/.neoth/dreams/<YYYY-MM-DD>.jsonl`. One dream per line.
+//! Append-only — historical dreams stay readable as the schema evolves
+//! (any added field is `serde(default)`).
 //!
-//! Storage: `~/.neoth/dreams/<YYYY-MM-DD>.jsonl`. One dream per
-//! line. Append-only — historical dreams stay readable as the
-//! schema evolves (any added field is `serde(default)`).
+//! ## Pipeline shape (shipped)
 //!
-//! ## Pipeline shape (future Phase 2)
+//! 1. `gather_day_events(home, date)` — load every event from the WAL +
+//!    idx_episode for the target day.
+//! 2. [`embed_events`] + [`compose_dreams_with_embeddings`] — embedding-based
+//!    cluster grouping (uses the configured `EmbedProvider`).
+//! 3. [`summarise_or_fallback`] — LLM theme summary via the chat `Provider`,
+//!    with a deterministic fallback when no provider is configured / on error.
+//! 4. [`seed_with_dreams`] — surface the N latest matching dreams; wired into
+//!    `neoth recall` (`cli/recall.rs`) ahead of episode rows.
 //!
-//! 1. `gather_day_events(home, date)` — load every event from the
-//!    WAL + idx_episode for the target day
-//! 2. `cluster_themes(events)` — embedding-based + topic-modelling
-//!    grouping (Phase 2 — needs Day-14b local inference)
-//! 3. For each theme:
-//!    a. `summarise_theme(theme_events) -> String` (Phase 2 — LLM)
-//!    b. `compose_dream(theme_summary, events, motifs) -> Dream`
-//!    c. `append_dream(home, &dream)` — JSONL persist
-//! 4. `recall::seed_with_dreams(home, n)` — surface the N latest
-//!    dreams BEFORE episode rows (Phase 2 wiring into existing
-//!    recall composite score)
+//! [`compose_dream`] remains the deterministic base composer (no provider
+//! needed) used as the fallback + in tests; the embedding+LLM path above is
+//! the live pipeline when an embedding / chat provider is configured.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
