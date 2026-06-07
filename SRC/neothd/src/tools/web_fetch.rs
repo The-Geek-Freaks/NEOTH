@@ -502,13 +502,54 @@ fn collapse_whitespace(input: &str) -> String {
     out.trim().to_string()
 }
 
+/// Case-insensitive ASCII substring search returning the byte offset of
+/// the first match in `haystack`.
+///
+/// COR-28: the previous impl did `haystack.to_lowercase().find(...)`, which
+/// allocated a full lowercased copy of the haystack on *every* call. Inside
+/// the tag-rewrite loops (`drop_block`, `replace_block_open_close`,
+/// `rewrite_anchors`, `extract_attr`) that ran once per tag occurrence over
+/// the whole body — quadratic allocation + wall time on a multi-MiB page.
+/// This version compares bytes with `to_ascii_lowercase` in a single pass
+/// and allocates nothing. Every needle in this file is a pure-ASCII HTML
+/// tag/attribute name, so the ASCII fold is correct and complete. Unlike the
+/// old version it returns the offset into the *original* haystack (the old
+/// one returned an offset into the lowercased copy, identical for ASCII).
 fn find_ci(haystack: &str, needle: &str) -> Option<usize> {
-    haystack.to_lowercase().find(&needle.to_lowercase())
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let h = haystack.as_bytes();
+    let n = needle.as_bytes();
+    if n.len() > h.len() {
+        return None;
+    }
+    (0..=(h.len() - n.len())).find(|&i| h[i..i + n.len()].eq_ignore_ascii_case(n))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_ci_is_case_insensitive_single_pass() {
+        // COR-28: parity with the old to_lowercase().find() behaviour
+        // for ASCII content, plus the empty/overflow edge cases.
+        assert_eq!(find_ci("Hello World", "world"), Some(6));
+        assert_eq!(find_ci("<SCRIPT>", "<script"), Some(0));
+        assert_eq!(find_ci("abc", "xyz"), None);
+        assert_eq!(find_ci("", ""), Some(0));
+        assert_eq!(find_ci("anything", ""), Some(0));
+        assert_eq!(find_ci("x", "xx"), None);
+        // Offset is into the original haystack (matters once a caller
+        // slices haystack with the returned index).
+        assert_eq!(find_ci("aXbYc", "by"), Some(2));
+        // At scale: a many-tag body must still find / reject correctly
+        // without the old per-call full-body allocation.
+        let big = "<p>".repeat(100_000);
+        assert!(find_ci(&big, "<P>").is_some());
+        assert!(find_ci(&big, "<script>").is_none());
+    }
 
     #[test]
     fn strip_html_drops_script_blocks_entirely() {

@@ -70,13 +70,13 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 |------------|-------------|------|------|
 | WS-A Security hardening | 35 | 3 | 32 |
 | WS-B Honesty / truth-in-advertising | 26 | 26 | 0 |
-| WS-C Correctness / reliability | 35 | 14 | 21 |
+| WS-C Correctness / reliability | 35 | 13 | 22 |
 | WS-D Feature wiring (unwired modules) | 12 | 12 | 0 |
 | WS-E Architecture debt | 22 | 22 | 0 |
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
 | WS-G Repo adoptions | 9 | 9 | 0 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **174** | **117** | **57** |
+| **TOTAL** | **174** | **116** | **58** |
 
 _WS-A remaining (3): SEC-16 + SEC-18 (Cargo feature-gates — dedicated dual-build `--no-default-features` pass) · SEC-30 (sudomode WAL events — builds with GOLD-FEAT-01). All remaining WS-A items are the two big feature-gate refactors + one that pairs with a Gold feature; every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -264,7 +264,7 @@ Doc/claim ≠ code fixes AND wiring the truthful behavior.
 - [ ] **GOLD-COR-25** Replace `keet_udp.rs` placeholder `send_to` returning `RecvTimeout` with `DialOutcome::Sent`; size buffer at `MAX_DATAGRAM_BYTES + 1` so overflow check is reachable — *files:* `SRC/neothd/src/channels/keet_udp.rs` — *test:* `send_to` returns `Sent` on success; oversized datagram check fires — *origin:* A-30
 - [ ] **GOLD-COR-26** Skip non-matching IDs in `mcp/client.rs:222-234` instead of hard Protocol error; serialize tool result via `serde_json::json!` — *files:* `SRC/neothd/src/mcp/client.rs` — *test:* server notification with non-matching id does not kill client — *origin:* A-83
 - [ ] **GOLD-COR-27** Fix WASM hook stage enum divergence: `wasm_plugin/manifest.rs` uses `PreProvider`; `hooks/stages.rs` uses `PreProviderCall` — unify wire forms — *files:* `SRC/neothd/src/wasm_plugin/manifest.rs`, `SRC/neothd/src/hooks/stages.rs` — *test:* WASM plugin declaring `pre_provider` stage fires in dispatcher — *origin:* PAT-002
-- [ ] **GOLD-COR-28** Replace `Vec::remove(0)` in `event_ledger/mod.rs:124-127` with `VecDeque`; change `find_ci` in `tools/web_fetch.rs` to use `memchr` or single lowercase pass — *files:* `SRC/neothd/src/event_ledger/mod.rs`, `SRC/neothd/src/tools/web_fetch.rs` — *test:* 16 MiB HTML does not cause quadratic CPU usage — *origin:* A-79
+- [x] **GOLD-COR-28** Replace `Vec::remove(0)` in `event_ledger/mod.rs:124-127` with `VecDeque`; change `find_ci` in `tools/web_fetch.rs` to use `memchr` or single lowercase pass — *files:* `SRC/neothd/src/event_ledger/mod.rs`, `SRC/neothd/src/tools/web_fetch.rs` — *test:* 16 MiB HTML does not cause quadratic CPU usage — *origin:* A-79 — ✅ **DONE:** `Ledger.recent` is now a `VecDeque` so the at-capacity trim is `pop_front()` (O(1)) instead of `remove(0)` (O(n) shift on every append); `record` uses `push_back`/`pop_front`. All `.recent` access (len/is_empty/index/PartialEq) is VecDeque-compatible — no slicing/`&[T]` call sites. `find_ci` no longer allocates a lowercased copy of the whole haystack per call (was quadratic inside the per-tag rewrite loops); it windows with byte-slice `eq_ignore_ascii_case` (zero-alloc) and returns the offset into the original haystack. Tests: `record_ring_trim_preserves_fifo_order_past_capacity` + `find_ci_is_case_insensitive_single_pass` (incl. 100k-tag body). event_ledger 13/0, web_fetch 38/0, clippy `-D warnings` clean.
 - [ ] **GOLD-COR-29** Replace `memory/archive.rs` TOCTOU `path.exists()` with `create_new(true)`; sanitize session_id to `[A-Za-z0-9_-]` — *files:* `SRC/neothd/src/memory/archive.rs` — *test:* concurrent archive writes do not race — *origin:* A-62
 - [ ] **GOLD-COR-30** Serialize `memory/channel_weights.rs:208-232` load/mutate/write JSON with Mutex or move to SQLite — *files:* `SRC/neothd/src/memory/channel_weights.rs` — *test:* concurrent acceptance increments are not lost — *origin:* A-63
 - [ ] **GOLD-COR-31** Verify `clear_kv_cache()` placement in `ouro/forward.rs` and `ouro/quantized_forward.rs`; move to once-per-`forward` call if correct — *files:* `SRC/neothd/src/providers/ouro/forward.rs`, `SRC/neothd/src/providers/ouro/quantized_forward.rs` — *test:* real-weight inference test (mark `#[ignore]` + document in test) — *origin:* C-23

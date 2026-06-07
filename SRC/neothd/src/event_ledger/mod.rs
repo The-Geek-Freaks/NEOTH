@@ -42,7 +42,7 @@
 //!   DACL-restricted; the ledger inherits the same trust boundary
 //!   via [`crate::config::credentials::write_mode_0600`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -74,9 +74,12 @@ pub struct Ledger {
     #[serde(default)]
     pub counts_by_event_type: HashMap<String, u64>,
     /// Bounded ring of the most-recent events. Oldest entry is
-    /// trimmed when the buffer reaches capacity.
+    /// trimmed when the buffer reaches capacity. A `VecDeque` so the
+    /// at-capacity trim is an O(1) `pop_front` instead of `Vec::remove(0)`,
+    /// which shifted every surviving element on each append (quadratic
+    /// over a busy WAL).
     #[serde(default)]
-    pub recent: Vec<RecentEvent>,
+    pub recent: VecDeque<RecentEvent>,
     /// Capacity of the ring buffer. Defaults to
     /// [`DEFAULT_RECENT_CAPACITY`].
     #[serde(default = "default_capacity")]
@@ -96,7 +99,7 @@ impl Ledger {
     pub fn new() -> Self {
         Self {
             counts_by_event_type: HashMap::new(),
-            recent: Vec::new(),
+            recent: VecDeque::new(),
             recent_capacity: DEFAULT_RECENT_CAPACITY,
             last_updated_unix: 0,
         }
@@ -122,9 +125,9 @@ impl Ledger {
             self.recent_capacity = DEFAULT_RECENT_CAPACITY;
         }
         if self.recent.len() >= self.recent_capacity {
-            self.recent.remove(0);
+            self.recent.pop_front();
         }
-        self.recent.push(event);
+        self.recent.push_back(event);
         self.last_updated_unix = now_unix;
     }
 
@@ -239,6 +242,25 @@ mod tests {
         // Counters always cumulative regardless of ring trim.
         assert_eq!(l.counts_by_event_type["0x01"], 5);
         assert_eq!(l.total_events(), 5);
+    }
+
+    #[test]
+    fn record_ring_trim_preserves_fifo_order_past_capacity() {
+        // COR-28: the trim moved from `Vec::remove(0)` (O(n) shift) to
+        // `VecDeque::pop_front` (O(1)). Filling well past capacity must
+        // still leave exactly the last N events in insertion order —
+        // front = oldest survivor, back = newest.
+        let cap = 4;
+        let mut l = Ledger::with_capacity(cap);
+        for i in 1u64..=10 {
+            l.record(ev(i, 0x01, i * 100), i as i64);
+        }
+        assert_eq!(l.recent.len(), cap);
+        let ids: Vec<u64> = l.recent.iter().map(|e| e.event_id).collect();
+        assert_eq!(ids, vec![7, 8, 9, 10]);
+        // Index 0 is still the oldest survivor (front), matching the
+        // pre-VecDeque semantics relied on elsewhere in these tests.
+        assert_eq!(l.recent[0].event_id, 7);
     }
 
     #[test]
