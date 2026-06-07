@@ -1,19 +1,27 @@
-//! Multimodal pipeline scaffold — R-9 (PDF / Vision / Audio / Video).
+//! Multimodal pipeline — R-9 (PDF / Vision / Audio / Video).
 //!
-//! Per `memory/neoth-arch-v2.md` R-9 + the round-3 research synthesis pins:
+//! Per `memory/neoth-arch-v2.md` R-9 + the round-3 research synthesis pins.
+//! The status column reflects what actually ships today — not the original
+//! aspiration. In particular **the audio path is cloud-first**: local STT
+//! transcription and local TTS are NOT implemented yet, so any claim of a
+//! "full-stack local" audio pipeline would be untrue (GOLD-HON-04 / B-08).
 //!
-//! | Modality | Tech pin                              | Status v0.1.x          |
-//! |----------|---------------------------------------|------------------------|
-//! | PDF      | `pdfium-render` (text + form fields)  | scaffold + stubs       |
-//! | Vision   | local CLIP via candle → vendor fallback | scaffold + stubs     |
-//! | Audio    | `whisper-rs` in + `piper-rs` out      | scaffold + stubs       |
-//! | Video    | ffmpeg subprocess for transcript      | scaffold + stubs       |
+//! | Modality | Tech pin                                                                | Status                                                                                       |
+//! |----------|-------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+//! | PDF      | `pdf-extract` text · `pdfium-render` forms (feature `pdf-forms`)         | text extraction shipped (no OCR); form fields behind `pdf-forms`                              |
+//! | Vision   | `image` decode · local CLIP embed (candle) · cloud vision synth (MM-02b) | decode + cached-CLIP embed + cloud synth shipped                                              |
+//! | Audio    | `symphonia` decode · STT: `whisper-rs` local (Phase 2b) + cloud REST (MM-01b) · TTS: cloud REST (MM-03b) + planned `piper-rs`/OS-native | decode + **cloud** STT/TTS REST shipped; **local audio I/O NOT shipped** (no local transcript text, no local TTS) |
+//! | Video    | ffmpeg decode → vision synth (MM-02b)                                    | frame decode + vision synth shipped                                                           |
 //!
-//! This module ships the **trait surface only**. Concrete implementations
-//! land per-modality once the operator's first multimodal use case is
-//! concrete. The shape is intentional — no module-internal "later we'll
-//! generalise" pattern: every backend is its own typed `Asset` consumer +
-//! producer.
+//! This module started as a **trait surface**; the cloud paths are now real
+//! — cloud STT (MM-01b), cloud TTS (MM-03b), and video decode → vision-synth
+//! (MM-02b) ship working REST/ffmpeg backends, and PDF text + CLIP image
+//! embedding work locally. The remaining **local** paths (whisper-rs
+//! transcription, piper-rs / OS-native TTS, PDF OCR) are still scaffold:
+//! `audio.rs` decodes audio but emits no transcript text yet, and there is
+//! no local speech synthesis at all. The shape is intentional — no
+//! module-internal "later we'll generalise" pattern: every backend is its
+//! own typed `Asset` consumer + producer.
 
 pub mod audio;
 pub mod document;
