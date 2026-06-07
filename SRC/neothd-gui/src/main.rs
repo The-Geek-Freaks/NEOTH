@@ -1761,6 +1761,7 @@ fn apply_council_budget(window: &MainWindow, snap: panel_logic::CouncilBudgetPan
         .collect();
     window.set_council_cap(snap.configured_cap.into());
     window.set_council_daily_usd(snap.daily_usd_cap.into());
+    window.set_council_depth_warning(snap.depth_cost_warning.into());
     window.set_council_last_debate(ModelRc::new(VecModel::from(rows)));
 }
 

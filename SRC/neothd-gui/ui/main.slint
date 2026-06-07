@@ -312,6 +312,7 @@ export component MainWindow inherits Window {
     // KF-08 — Council budget meter (Config tab), forwarded to SettingsView.
     in property <string> council-cap: "";
     in property <string> council-daily-usd: "";
+    in property <string> council-depth-warning: "";
     in property <[TrustRow]> council-last-debate: [];
     // GU-01 — Hemispheres + Skills panels, forwarded to SettingsView.
     in property <[HemisphereRow]> hemisphere-bindings: [];
@@ -1455,6 +1456,7 @@ export component MainWindow inherits Window {
             hw-models: root.hw-models;
             council-cap: root.council-cap;
             council-daily-usd: root.council-daily-usd;
+            council-depth-warning: root.council-depth-warning;
             council-last-debate: root.council-last-debate;
             hemisphere-bindings: root.hemisphere-bindings;
             hemispheres-mode: root.hemispheres-mode;

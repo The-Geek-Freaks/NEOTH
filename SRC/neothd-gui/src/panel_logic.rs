@@ -437,6 +437,26 @@ pub struct CouncilBudgetPanel {
     pub configured_cap: String,
     pub daily_usd_cap: String,
     pub last_debate: Vec<TrustRow>,
+    /// GOLD-HON-13 — non-empty when the council recursion depth is > 1,
+    /// spelling out the `3^depth` per-prompt fan-out so a deep tree is a
+    /// visible cost on the Config tab, not a silent multiplier.
+    pub depth_cost_warning: String,
+}
+
+/// GOLD-HON-13 — GUI mirror of `neothd::config::inference::
+/// HemisphereCouncilDepth::cost_warning` (the GUI crate stays decoupled
+/// from `neothd`, so the tiny `3^depth` formula is replicated + tested
+/// here). Empty while flat (depth ≤ 1); a one-line ⚠ at depth ≥ 2.
+fn council_depth_cost_warning(depth: u64) -> String {
+    if depth <= 1 {
+        return String::new();
+    }
+    let calls = 3u64.saturating_pow(depth.min(8) as u32);
+    format!(
+        "⚠ council depth {depth} fans every prompt out to ~3^{depth} = {calls} provider \
+         calls — on a metered provider this multiplies the per-prompt bill in lockstep. \
+         Lower hemisphere_council_depth to reduce it."
+    )
 }
 
 /// PURE + robust: garbage/empty → default.
@@ -448,6 +468,11 @@ pub fn parse_council_budget(json: &str) -> CouncilBudgetPanel {
         Some(c) => format!("{c} calls / message"),
         None => String::new(),
     };
+    let depth_cost_warning = v
+        .get("max_recursion_depth")
+        .and_then(|x| x.as_u64())
+        .map(council_depth_cost_warning)
+        .unwrap_or_default();
     let daily_usd_cap = match v.get("daily_usd_cap").and_then(|x| x.as_f64()) {
         Some(u) => format!("${u:.2} / day"),
         None => "no daily USD cap".to_string(),
@@ -480,6 +505,7 @@ pub fn parse_council_budget(json: &str) -> CouncilBudgetPanel {
         configured_cap,
         daily_usd_cap,
         last_debate,
+        depth_cost_warning,
     }
 }
 
@@ -989,6 +1015,21 @@ mod tests {
     #[test]
     fn parse_council_budget_robust_to_garbage() {
         assert_eq!(parse_council_budget("nope"), CouncilBudgetPanel::default());
+    }
+
+    #[test]
+    fn parse_council_budget_surfaces_depth_cost_warning_above_flat() {
+        // GOLD-HON-13: flat depth → no warning; depth 4 → 3^4 = 81 callout.
+        let flat = parse_council_budget(r#"{"configured_cap":3,"max_recursion_depth":1}"#);
+        assert!(flat.depth_cost_warning.is_empty());
+
+        let deep = parse_council_budget(r#"{"configured_cap":3,"max_recursion_depth":4}"#);
+        assert!(deep.depth_cost_warning.contains("81"), "{}", deep.depth_cost_warning);
+        assert!(deep.depth_cost_warning.contains("council depth 4"));
+
+        // Missing field → no warning (robust default).
+        let none = parse_council_budget(r#"{"configured_cap":3}"#);
+        assert!(none.depth_cost_warning.is_empty());
     }
 
     // ── SPEC-05 step5c behavioural-profile selector parser ────────────────

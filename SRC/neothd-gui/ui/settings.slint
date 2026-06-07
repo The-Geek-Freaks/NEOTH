@@ -399,6 +399,7 @@ export component SettingsView inherits Rectangle {
     // --output json`: the per-message cap + last debate's live usage.
     in property <string> council-cap: "";
     in property <string> council-daily-usd: "";
+    in property <string> council-depth-warning: "";
     in property <[TrustRow]> council-last-debate: [];
 
     // GU-01 — Hemispheres + Skills panels. Rust populates these on startup from
@@ -1805,6 +1806,14 @@ export component SettingsView inherits Rectangle {
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
+                        }
+                        // GOLD-HON-13 — 3^depth cost warning (depth > 1).
+                        if root.council-depth-warning != "": Text {
+                            text: root.council-depth-warning;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.accent-amber;
+                            wrap: word-wrap;
                         }
                         if root.council-cap != "" && root.council-last-debate.length == 0: Text {
                             text: "(no council debate has run yet)";

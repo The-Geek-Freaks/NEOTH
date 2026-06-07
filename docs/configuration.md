@@ -111,6 +111,25 @@ max_usd_per_day = 2.00
 
 See [council.md](council.md).
 
+### Council depth and the `3^depth` cost curve
+
+`freedom.yaml`'s `inference.hemisphere_council_depth` controls how deeply the council
+recurses. **Each level fans every prompt out to 3 hemispheres**, so the per-prompt
+provider-call count grows as `3^depth`:
+
+| `hemisphere_council_depth` | Provider calls / prompt | Notes |
+| :-- | :-- | :-- |
+| `0` or `1` (default) | 3 | Flat — one council, no recursion (the v0.1 behaviour). |
+| `2` | 9 | Each hemisphere convenes a sub-council. |
+| `3` | 27 | |
+| `4` (hard cap) | 81 | `MAX_HEMISPHERE_COUNCIL_DEPTH`; higher values clamp to 4 with a warn-log. |
+
+Anything **above 1 multiplies cost**: on a metered provider it multiplies the per-prompt
+bill in lockstep; on a flat-rate subscription or a local model it multiplies latency and
+rate-limit budget instead. NEOTH surfaces this as a one-line warning — interactively in
+the wizard and the GUI Config tab, and as a stderr line in non-interactive runs — so a
+deep tree is a deliberate choice. Lower `hemisphere_council_depth` to bring it back down.
+
 ## Policy
 
 `policy.yaml` is the machine guardrail layer.

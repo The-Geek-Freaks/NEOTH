@@ -394,6 +394,35 @@ impl HemisphereCouncilDepth {
     pub fn is_flat(self) -> bool {
         self.0 <= 1
     }
+
+    /// Approximate per-prompt hemisphere-invocation count: the council
+    /// fans out to 3 hemispheres at each level, so a depth-N tree is
+    /// ~3^N invocations (1→3, 2→9, 3→27, 4→81). Saturating so it can
+    /// never overflow even on an unclamped value.
+    pub fn estimated_invocations(self) -> u32 {
+        3u32.saturating_pow(self.0 as u32)
+    }
+
+    /// GOLD-HON-13 — operator-facing cost warning for a recursive
+    /// council. `None` while flat (depth ≤ 1: a single 3-way council,
+    /// the default); `Some(msg)` once recursion is on (depth ≥ 2),
+    /// spelling out the `3^depth` fan-out so a deep tree is a deliberate
+    /// choice rather than a surprise bill on a metered provider. Shared
+    /// by the wizard, the GUI Config tab, and `freedom.yaml` docs.
+    pub fn cost_warning(self) -> Option<String> {
+        if self.is_flat() {
+            return None;
+        }
+        Some(format!(
+            "council depth {} fans every prompt out to ~3^{} = {} provider calls. On a \
+             metered provider that multiplies the per-prompt bill in lockstep; on a \
+             flat-rate subscription or a local model it multiplies latency + rate-limit \
+             budget instead. Lower `hemisphere_council_depth` to reduce it.",
+            self.0,
+            self.0,
+            self.estimated_invocations()
+        ))
+    }
 }
 
 impl Default for HemisphereCouncilDepth {
@@ -1295,6 +1324,32 @@ model: claude-opus-4-7
         assert!(HemisphereCouncilDepth::new_clamped(1).0.is_flat());
         assert!(!HemisphereCouncilDepth::new_clamped(2).0.is_flat());
         assert!(!HemisphereCouncilDepth::new_clamped(3).0.is_flat());
+    }
+
+    #[test]
+    fn council_depth_cost_warning_fires_above_flat_with_3_pow_depth() {
+        // GOLD-HON-13: silent while flat, then spells out the 3^depth
+        // fan-out once recursion is on.
+        assert!(HemisphereCouncilDepth::new_clamped(0)
+            .0
+            .cost_warning()
+            .is_none());
+        assert!(HemisphereCouncilDepth::new_clamped(1)
+            .0
+            .cost_warning()
+            .is_none());
+        let w2 = HemisphereCouncilDepth::new_clamped(2)
+            .0
+            .cost_warning()
+            .expect("depth 2 warns");
+        assert!(w2.contains("9"), "depth 2 → 3^2 = 9: {w2}");
+        let w4 = HemisphereCouncilDepth::new_clamped(4)
+            .0
+            .cost_warning()
+            .expect("depth 4 warns");
+        assert!(w4.contains("81"), "depth 4 → 3^4 = 81: {w4}");
+        assert!(w4.contains("hemisphere_council_depth"));
+        assert_eq!(HemisphereCouncilDepth::new_clamped(4).0.estimated_invocations(), 81);
     }
 
     #[test]
