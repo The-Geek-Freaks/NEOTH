@@ -3,8 +3,10 @@
 //! Imports memory from a previous AI assistant into the NEOTH WAL +
 //! tier views. The operator declares THEIR OWN stores in an
 //! `import-manifest.yaml` (see `examples/import-manifest.example.yaml`);
-//! nothing is hardcoded to any one machine. Emits a `dry-run` report
-//! or an `apply` migration.
+//! nothing is hardcoded to any one machine. Emits a `dry-run` report;
+//! the `apply` migration is **post-v1.0** — not yet implemented, so
+//! `apply` validates the manifest then refuses and points back to
+//! `dry-run`. This release is dry-run / preview only.
 //!
 //! Lives outside `neothd` so a daemon release doesn't carry the
 //! migration-only deps (pulldown-cmark today; future lance + git2).
@@ -19,9 +21,10 @@
 //!     row-count estimate, sample entries (first 3 rows / files).
 //!
 //! neoth-migrate apply --manifest <PATH> --confirm [--root <PATH>]
-//!     Actually migrate. Requires explicit `--confirm` because the
-//!     operation appends thousands of frames to the WAL + cannot be
-//!     undone (replay-only).
+//!     POST-v1.0 / preview only: the real import path is not yet
+//!     implemented. Today `apply` validates the manifest then refuses
+//!     and points back to `dry-run`. (When it ships it will append
+//!     frames to the WAL and be replay-only undoable, hence `--confirm`.)
 //! ```
 
 use anyhow::Result;
@@ -47,8 +50,11 @@ enum Command {
     /// Scan-only. Walks every known store, reports rows + sample
     /// entries. Never writes to the WAL.
     DryRun(DryRunArgs),
-    /// Actually migrate. Requires `--confirm` to avoid running by
-    /// accident from a shell script.
+    /// Preview only in this release — `apply` is post-v1.0. The real
+    /// import path (WAL writer + per-reader emitters) is not yet
+    /// implemented, so this subcommand validates the manifest then
+    /// refuses and points you back at `dry-run`. `--confirm` is reserved
+    /// for when apply ships.
     Apply(ApplyArgs),
 }
 

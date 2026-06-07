@@ -14,8 +14,9 @@ description = "Prior-AI memory import tool — migrates operator-declared memory
 #
 # Build/run (the operator declares their stores in import-manifest.yaml):
 #   cargo build -p neoth-migrate --release
-#   ./neoth-migrate dry-run --manifest import.yaml   # scan-only
-#   ./neoth-migrate apply --manifest import.yaml --confirm
+#   ./neoth-migrate dry-run --manifest import.yaml   # scan-only (shippable)
+#   ./neoth-migrate apply --manifest import.yaml --confirm   # POST-v1.0: not yet
+#       implemented — apply validates the manifest then refuses, pointing to dry-run.
 #
 # The source list is operator-supplied (see
 # `examples/import-manifest.example.yaml`); nothing is hardcoded to a

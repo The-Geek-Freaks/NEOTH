@@ -2,6 +2,13 @@
 
 > Status: Build-ready. No TBDs. Supersedes 6-bullet Phase 3 stub in 00_DESIGN_v0.7_FINAL.md Section 10.
 > All WAL event codes, Rust types, command names match v0.7 wire format.
+>
+> **v1.0 implementation status (GOLD-HON-01):** only the **dry-run / preview** path
+> (`neoth-migrate dry-run`) is implemented and shippable in v1.0. The **apply / import**
+> path (`neoth migrate import` / `neoth-migrate apply`, Day 62 onward below) is
+> **post-v1.0 — not yet implemented**: `neoth-migrate apply` today validates the
+> manifest then refuses, pointing the operator back to `dry-run`. Read the
+> apply/import steps below as the planned cutover design, not a shipped feature.
 
 ---
 
