@@ -70,13 +70,13 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 |------------|-------------|------|------|
 | WS-A Security hardening | 35 | 3 | 32 |
 | WS-B Honesty / truth-in-advertising | 26 | 26 | 0 |
-| WS-C Correctness / reliability | 35 | 21 | 14 |
+| WS-C Correctness / reliability | 35 | 20 | 15 |
 | WS-D Feature wiring (unwired modules) | 12 | 12 | 0 |
 | WS-E Architecture debt | 22 | 22 | 0 |
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
 | WS-G Repo adoptions | 9 | 9 | 0 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **174** | **124** | **50** |
+| **TOTAL** | **174** | **123** | **51** |
 
 _WS-A remaining (3): SEC-16 + SEC-18 (Cargo feature-gates — dedicated dual-build `--no-default-features` pass) · SEC-30 (sudomode WAL events — builds with GOLD-FEAT-01). All remaining WS-A items are the two big feature-gate refactors + one that pairs with a Gold feature; every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -260,7 +260,7 @@ Doc/claim ≠ code fixes AND wiring the truthful behavior.
 - [ ] **GOLD-COR-21** Replace EOF detection via Display string match in `cluster/hyperswarm.rs:1468`; match on `JoinError` variant separately in `tailscale::enumerate` instead of `unwrap_or(false)` — *files:* `SRC/neothd/src/cluster/hyperswarm.rs`, `SRC/neothd/src/cluster/tailscale.rs` — *test:* EOF is a typed variant; panic in JoinHandle surfaces as error — *origin:* A-47
 - [ ] **GOLD-COR-22** Read `segment_start_ts_ns` from parsed header at WAL reopen so 24h age-rotation fires correctly after daemon restart — *files:* `SRC/neothd/src/wal/writer.rs` — *test:* segment opened 25h ago rotates on next write after restart — *origin:* A-81
 - [ ] **GOLD-COR-23** Bind the WAL quota re-measure to a `compare_exchange` on a separate `in_remeasure` `AtomicBool` to make the ceiling guarantee strict — *files:* `SRC/neothd/src/wal/writer.rs` — *test:* quota ceiling is not exceeded under concurrent writers — *origin:* A-50
-- [ ] **GOLD-COR-24** Fix `firefox_pbes2.rs` PBKDF2 iteration count: before `.first()`, check `to_u32_digits().1.len() > 1` and return `KdfItersOutOfRange`; same fix for `kdf_key_length` — *files:* `SRC/neothd/src/credentials/firefox_pbes2.rs` — *test:* 2^33 iteration count returns error not truncated value — *origin:* A-31
+- [x] **GOLD-COR-24** Fix `firefox_pbes2.rs` PBKDF2 iteration count: before `.first()`, check `to_u32_digits().1.len() > 1` and return `KdfItersOutOfRange`; same fix for `kdf_key_length` — *files:* `SRC/neothd/src/credentials/firefox_pbes2.rs` — *test:* 2^33 iteration count returns error not truncated value — *origin:* A-31 — ✅ **DONE:** `kdf_iters`/`kdf_key_length` parsed via `big.to_u32_digits().1.first()`, which takes the LEAST-significant base-2³² word — so `2^33` (digits `[0,2]`) silently parsed as `0` and `2^32+N` as a plausible `N`, feeding a forged/garbage work factor into a credential KDF. New `u32_from_asn1_integer(big)` helper accepts a value only when its magnitude is exactly one base-2³² digit (`1..=u32::MAX`), rejecting `> u32::MAX` (multi-digit), zero (empty digit list — preserves the old "0 → OutOfRange" behavior), and negatives (sign-checked via `BigInt::from(0u32)` comparison — `num-bigint` isn't a direct dep so this uses the `simple_asn1` re-export + `From<u32>`/`PartialOrd`, no new import). Both call sites route through it. Regressions: `rejects_iter_count_above_u32_max` (2³³ → OutOfRange surfacing "8589934592", not 0), `rejects_iter_count_low_word_truncation` (2³²+10000 → reject, not 10000), `rejects_key_length_above_u32_max`; the valid-large-u32 path (`0x80000001`) still parses. Added a `push_integer_be` test encoder for >u32 magnitudes. 13 firefox_pbes2 tests / 0 fail, clippy `--tests` clean.
 - [ ] **GOLD-COR-25** Replace `keet_udp.rs` placeholder `send_to` returning `RecvTimeout` with `DialOutcome::Sent`; size buffer at `MAX_DATAGRAM_BYTES + 1` so overflow check is reachable — *files:* `SRC/neothd/src/channels/keet_udp.rs` — *test:* `send_to` returns `Sent` on success; oversized datagram check fires — *origin:* A-30
 - [ ] **GOLD-COR-26** Skip non-matching IDs in `mcp/client.rs:222-234` instead of hard Protocol error; serialize tool result via `serde_json::json!` — *files:* `SRC/neothd/src/mcp/client.rs` — *test:* server notification with non-matching id does not kill client — *origin:* A-83
 - [ ] **GOLD-COR-27** Fix WASM hook stage enum divergence: `wasm_plugin/manifest.rs` uses `PreProvider`; `hooks/stages.rs` uses `PreProviderCall` — unify wire forms — *files:* `SRC/neothd/src/wasm_plugin/manifest.rs`, `SRC/neothd/src/hooks/stages.rs` — *test:* WASM plugin declaring `pre_provider` stage fires in dispatcher — *origin:* PAT-002

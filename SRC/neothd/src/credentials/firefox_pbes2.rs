@@ -238,19 +238,19 @@ pub fn parse_pbes2_envelope(der: &[u8]) -> Result<Pbes2Envelope, Pbes2Error> {
         _ => return Err(Pbes2Error::KdfSaltNotOctetString),
     };
     let kdf_iters = match &kdf_params[1] {
-        ASN1Block::Integer(_, big) => big.to_u32_digits().1.first().copied().ok_or_else(|| {
-            Pbes2Error::KdfItersOutOfRange {
+        ASN1Block::Integer(_, big) => {
+            u32_from_asn1_integer(big).ok_or_else(|| Pbes2Error::KdfItersOutOfRange {
                 got: big.to_string(),
-            }
-        })?,
+            })?
+        }
         _ => return Err(Pbes2Error::KdfItersNotInteger),
     };
     let kdf_key_length = match &kdf_params[2] {
-        ASN1Block::Integer(_, big) => big.to_u32_digits().1.first().copied().ok_or_else(|| {
-            Pbes2Error::KdfKeyLengthOutOfRange {
+        ASN1Block::Integer(_, big) => {
+            u32_from_asn1_integer(big).ok_or_else(|| Pbes2Error::KdfKeyLengthOutOfRange {
                 got: big.to_string(),
-            }
-        })?,
+            })?
+        }
         _ => return Err(Pbes2Error::KdfKeyLengthNotInteger),
     };
     // PRF AlgorithmIdentifier — must be hmacWithSHA256
@@ -312,6 +312,28 @@ pub fn parse_pbes2_envelope(der: &[u8]) -> Result<Pbes2Envelope, Pbes2Error> {
         encryption_iv_inner: iv_inner,
         ciphertext,
     })
+}
+
+/// Convert an ASN.1 INTEGER to `u32`, returning `None` for negatives,
+/// zero, or values above `u32::MAX`.
+///
+/// COR-24: the previous `to_u32_digits().1.first()` took the LOW
+/// base-2^32 word of the magnitude, silently truncating any oversized
+/// value — `2^33` (digits `[0, 2]`) parsed as `0`, and `2^32 + N` parsed
+/// as `N`. For a credential KDF that means a forged/garbage iteration
+/// count or key length sails through as a plausible small number. Accept
+/// a value only when its magnitude is exactly one base-2^32 digit
+/// (`1..=u32::MAX`); an empty digit list (zero — never a valid KDF work
+/// factor) and any multi-digit magnitude both reject. Negatives are not
+/// NSS-emitted and are rejected up front.
+fn u32_from_asn1_integer(big: &simple_asn1::BigInt) -> Option<u32> {
+    if big < &simple_asn1::BigInt::from(0u32) {
+        return None;
+    }
+    match big.to_u32_digits().1.as_slice() {
+        [only] => Some(*only),
+        _ => None,
+    }
 }
 
 fn format_oid_dotted(oid: &simple_asn1::OID) -> String {
@@ -440,6 +462,24 @@ fn push_null(out: &mut Vec<u8>) {
 }
 
 #[cfg(test)]
+fn push_integer_be(out: &mut Vec<u8>, magnitude_be: &[u8]) {
+    // DER INTEGER from an arbitrary-width big-endian magnitude (no
+    // leading zeros expected). Used to encode values that don't fit a
+    // u32 so the parser's range guard can be exercised. Adds a single
+    // leading 0x00 when the top byte's MSB is set (keep it positive).
+    let mut bytes = magnitude_be.to_vec();
+    if bytes.is_empty() {
+        bytes.push(0);
+    }
+    if bytes[0] & 0x80 != 0 {
+        bytes.insert(0, 0);
+    }
+    out.push(0x02);
+    push_length(out, bytes.len());
+    out.extend_from_slice(&bytes);
+}
+
+#[cfg(test)]
 fn push_integer_u32(out: &mut Vec<u8>, value: u32) {
     // Minimal DER INTEGER: drop leading zero bytes, add one if MSB
     // of top byte is set (to keep the value positive).
@@ -464,6 +504,47 @@ mod tests {
         let iv_inner = vec![0xCD; 14];
         let ciphertext = vec![0xEF; 32];
         encode_pbes2_envelope_for_tests(&kdf_salt, 10_000, 32, &iv_inner, &ciphertext)
+    }
+
+    /// Build a canonical envelope but with the iterationCount + keyLength
+    /// INTEGERs supplied as raw big-endian magnitudes — lets a test
+    /// encode values that exceed `u32` to exercise the range guard.
+    fn envelope_with_int_magnitudes(iters_be: &[u8], keylen_be: &[u8]) -> Vec<u8> {
+        let mut pbkdf2_params = Vec::new();
+        push_octet_string(&mut pbkdf2_params, &[0xAB; 20]);
+        push_integer_be(&mut pbkdf2_params, iters_be);
+        push_integer_be(&mut pbkdf2_params, keylen_be);
+        let mut prf_alg = Vec::new();
+        push_oid_bytes(&mut prf_alg, &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x02, 0x09]);
+        push_null(&mut prf_alg);
+        push_sequence(&mut pbkdf2_params, &prf_alg);
+        let mut kdf_alg_id = Vec::new();
+        push_oid_bytes(
+            &mut kdf_alg_id,
+            &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x05, 0x0C],
+        );
+        push_sequence(&mut kdf_alg_id, &pbkdf2_params);
+        let mut enc_alg_id = Vec::new();
+        push_oid_bytes(
+            &mut enc_alg_id,
+            &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x01, 0x2A],
+        );
+        push_octet_string(&mut enc_alg_id, &[0xCD; 14]);
+        let mut params = Vec::new();
+        push_sequence(&mut params, &kdf_alg_id);
+        push_sequence(&mut params, &enc_alg_id);
+        let mut alg_id = Vec::new();
+        push_oid_bytes(
+            &mut alg_id,
+            &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x05, 0x0D],
+        );
+        push_sequence(&mut alg_id, &params);
+        let mut outer = Vec::new();
+        push_sequence(&mut outer, &alg_id);
+        push_octet_string(&mut outer, &[0xEF; 32]);
+        let mut der = Vec::new();
+        push_sequence(&mut der, &outer);
+        der
     }
 
     #[test]
@@ -705,6 +786,46 @@ mod tests {
             encode_pbes2_envelope_for_tests(&[0xAA; 16], 100_000, 32, &[0xBB; 14], &[0xCC; 16]);
         let env = parse_pbes2_envelope(&der).unwrap();
         assert_eq!(env.kdf_iters, 100_000);
+    }
+
+    #[test]
+    fn rejects_iter_count_above_u32_max() {
+        // COR-24: 2^33 = 0x2_0000_0000 needs a 5-byte magnitude. The old
+        // `.first()` took the low base-2^32 word (0) and accepted iters=0;
+        // the range guard must reject it as OutOfRange, surfacing the real
+        // value (8589934592) in the error.
+        let der = envelope_with_int_magnitudes(&[0x02, 0x00, 0x00, 0x00, 0x00], &[32]);
+        let err = parse_pbes2_envelope(&der).unwrap_err();
+        match err {
+            Pbes2Error::KdfItersOutOfRange { got } => {
+                assert_eq!(got, "8589934592", "must surface the true value, got: {got}");
+            }
+            other => panic!("expected KdfItersOutOfRange, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_iter_count_low_word_truncation() {
+        // 2^32 + 10000 = 0x1_0000_2710 — the low word is exactly 10000.
+        // Must NOT silently parse as a plausible iters=10000.
+        let der = envelope_with_int_magnitudes(&[0x01, 0x00, 0x00, 0x27, 0x10], &[32]);
+        let err = parse_pbes2_envelope(&der).unwrap_err();
+        assert!(
+            matches!(err, Pbes2Error::KdfItersOutOfRange { .. }),
+            "low-word collision must reject, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_key_length_above_u32_max() {
+        // Same overflow class on the keyLength field: valid iters but
+        // keyLength = 2^33 must reject, not truncate to 0.
+        let der = envelope_with_int_magnitudes(&[0x27, 0x10], &[0x02, 0x00, 0x00, 0x00, 0x00]);
+        let err = parse_pbes2_envelope(&der).unwrap_err();
+        assert!(
+            matches!(err, Pbes2Error::KdfKeyLengthOutOfRange { .. }),
+            "oversized keyLength must reject, got {err:?}"
+        );
     }
 
     #[test]
