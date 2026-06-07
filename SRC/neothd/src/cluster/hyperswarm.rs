@@ -571,8 +571,16 @@ async fn handle_peeroxide_connection(
     // `neoth cluster topology`. Per-heartbeat fidelity + a miss-on-disconnect
     // signal are a throttled-write follow-on slice.
     let handshake_rtt_ms = handshake_start.elapsed().as_millis() as u64;
-    let _ = crate::cluster::registry::refresh_rtt(&neoth_home, &remote_pk_hex, handshake_rtt_ms);
-    let _ = crate::cluster::registry::refresh_stability(&neoth_home, &remote_pk_hex, true);
+    // COR-16/A-43: best-effort, but a write failure (disk full, perms,
+    // serde) must not vanish — log it so a peer's RTT/stability silently
+    // freezing in `neoth cluster topology` is diagnosable.
+    if let Err(e) = crate::cluster::registry::refresh_rtt(&neoth_home, &remote_pk_hex, handshake_rtt_ms)
+    {
+        tracing::warn!(error = %e, peer = %remote_pk_hex, "cluster registry refresh_rtt failed (non-fatal)");
+    }
+    if let Err(e) = crate::cluster::registry::refresh_stability(&neoth_home, &remote_pk_hex, true) {
+        tracing::warn!(error = %e, peer = %remote_pk_hex, "cluster registry refresh_stability failed (non-fatal)");
+    }
 
     // ── Step 3: bidirectional session loop (SL-00(1c)) ──
     //

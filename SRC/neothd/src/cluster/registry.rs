@@ -14,6 +14,25 @@ use serde::{Deserialize, Serialize};
 
 use super::discovery::DiscoveryVia;
 
+/// Serialises every read-modify-write of the cluster registry within the
+/// process so concurrent refresh tasks (RTT, stability, last-seen, the
+/// pairing CLI) can't lose-update the whole-file load→mutate→save cycle
+/// (COR-16 / A-43). The on-disk write is already atomic (`.tmp` + rename),
+/// which prevents torn READS; this lock closes the read-modify-write race
+/// on top of it. One daemon per host (the pidfile lock, COR-16) makes a
+/// process-wide lock sufficient — there is no second writer process to
+/// contend with. Read-only accessors (`load`, `is_paired`,
+/// `find_by_hostname`) intentionally skip the lock: atomic rename means
+/// they always observe a complete file.
+static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Take the process-wide registry lock, tolerating poisoning (a panic in a
+/// prior critical section leaves the file consistent thanks to atomic
+/// rename, so the `()` payload is meaningless — recover and proceed).
+fn lock_registry() -> std::sync::MutexGuard<'static, ()> {
+    REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
 /// One paired peer — the operator confirmed this device + it's now
 /// part of the cluster.
 // `Eq` dropped in SL-02b — `stability_score: f64` only satisfies `PartialEq`.
@@ -143,6 +162,7 @@ pub fn save(home: &Path, reg: &ClusterRegistry) -> Result<()> {
 /// exists, the new entry replaces the old (preserves `paired_at_unix`
 /// from the original — re-confirm doesn't reset the timestamp).
 pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
+    let _guard = lock_registry();
     let mut reg = load(home)?;
     if let Some(existing) = reg.peers.iter().find(|p| p.pub_key_hex == peer.pub_key_hex) {
         peer.paired_at_unix = existing.paired_at_unix;
@@ -160,6 +180,7 @@ pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
 /// matches any peer whose `pub_key_hex` starts with it. Errors on
 /// ambiguous match (multiple peers with that prefix).
 pub fn remove(home: &Path, key_or_prefix: &str) -> Result<bool> {
+    let _guard = lock_registry();
     let mut reg = load(home)?;
     let matches: Vec<usize> = reg
         .peers
@@ -217,6 +238,7 @@ pub fn find_by_hostname(home: &Path, hostname: &str) -> Option<PairedPeer> {
 /// isn't paired yet — Phase 2 discovery passes every authenticated
 /// announce through this; only the paired ones update.
 pub fn refresh_last_seen(home: &Path, pub_key_hex: &str, ts_unix: i64) -> Result<bool> {
+    let _guard = lock_registry();
     let mut reg = load(home)?;
     let mut changed = false;
     for p in reg.peers.iter_mut() {
@@ -236,6 +258,7 @@ pub fn refresh_last_seen(home: &Path, pub_key_hex: &str, ts_unix: i64) -> Result
 /// when the peer isn't paired. Same load→mutate→save shape as
 /// [`refresh_last_seen`].
 pub fn refresh_rtt(home: &Path, pub_key_hex: &str, rtt_ms: u64) -> Result<bool> {
+    let _guard = lock_registry();
     let mut reg = load(home)?;
     let mut changed = false;
     for p in reg.peers.iter_mut() {
@@ -254,6 +277,7 @@ pub fn refresh_rtt(home: &Path, pub_key_hex: &str, rtt_ms: u64) -> Result<bool> 
 /// SL-02b: fold a heartbeat hit/miss into a paired peer's EWMA stability score
 /// via [`compute_stability`]. No-op + `false` when the peer isn't paired.
 pub fn refresh_stability(home: &Path, pub_key_hex: &str, success: bool) -> Result<bool> {
+    let _guard = lock_registry();
     let mut reg = load(home)?;
     let mut changed = false;
     for p in reg.peers.iter_mut() {
@@ -531,6 +555,91 @@ peers:
         let after_miss = load(dir.path()).unwrap().peers[0].stability_score;
         assert!(after_miss < after_hit);
         assert!(!refresh_stability(dir.path(), "ff", true).unwrap());
+    }
+
+    #[test]
+    fn concurrent_distinct_peer_upserts_do_not_lose_updates() {
+        // COR-16/A-43: each upsert is a whole-file load→add→save. Without
+        // the process-wide registry lock, concurrent upserts of DISTINCT
+        // peers each load a snapshot missing the others and save over them
+        // → lost peers. The lock serialises the cycle so all survive.
+        use std::sync::{Arc, Barrier};
+        let dir = tempdir().unwrap();
+        let home: Arc<std::path::PathBuf> = Arc::new(dir.path().to_path_buf());
+        let n = 8usize;
+        let barrier = Arc::new(Barrier::new(n));
+        let handles: Vec<_> = (0..n)
+            .map(|i| {
+                let home = Arc::clone(&home);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let peer = sample_peer(&format!("{i:02x}"), &format!("peer{i}"));
+                    barrier.wait();
+                    upsert(&home, peer).unwrap();
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        let reg = load(&home).unwrap();
+        assert_eq!(
+            reg.peers.len(),
+            n,
+            "every concurrent upsert must survive (no lost update)"
+        );
+    }
+
+    #[test]
+    fn concurrent_rtt_and_stability_refresh_both_persist() {
+        // COR-16/A-43: rtt and stability live in the SAME peer record.
+        // Without the lock a refresh_rtt racing a refresh_stability both
+        // load the same snapshot and the later save drops the earlier
+        // field. The lock serialises them so ALL stability folds apply and
+        // the rtt lands.
+        use std::sync::{Arc, Barrier};
+        let dir = tempdir().unwrap();
+        upsert(dir.path(), sample_peer("ab", "laptop")).unwrap();
+        let home: Arc<std::path::PathBuf> = Arc::new(dir.path().to_path_buf());
+        let key = Arc::new(format!("ab{}", "0".repeat(62)));
+        let rounds = 25u32;
+        let barrier = Arc::new(Barrier::new(2));
+        let h_rtt = {
+            let (home, key, barrier) = (Arc::clone(&home), Arc::clone(&key), Arc::clone(&barrier));
+            std::thread::spawn(move || {
+                barrier.wait();
+                for r in 0..rounds {
+                    refresh_rtt(&home, &key, 10 + r as u64).unwrap();
+                }
+            })
+        };
+        let h_stab = {
+            let (home, key, barrier) = (Arc::clone(&home), Arc::clone(&key), Arc::clone(&barrier));
+            std::thread::spawn(move || {
+                barrier.wait();
+                for _ in 0..rounds {
+                    refresh_stability(&home, &key, true).unwrap();
+                }
+            })
+        };
+        h_rtt.join().unwrap();
+        h_stab.join().unwrap();
+
+        let reg = load(&home).unwrap();
+        let peer = &reg.peers[0];
+        assert!(peer.rtt_ms.is_some(), "rtt update must persist");
+        // Every one of the `rounds` stability hits must have folded in — a
+        // lost update would leave the score below the fully-folded value.
+        let mut expected = NEUTRAL_STABILITY;
+        for _ in 0..rounds {
+            expected = compute_stability(expected, true);
+        }
+        assert!(
+            (peer.stability_score - expected).abs() < 1e-9,
+            "all {rounds} stability folds must apply (no lost update): got {} expected {}",
+            peer.stability_score,
+            expected
+        );
     }
 
     #[test]
