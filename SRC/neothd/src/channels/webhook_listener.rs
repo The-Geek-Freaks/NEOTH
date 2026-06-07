@@ -139,6 +139,14 @@ pub struct WebhookListenerConfig {
     /// fans out many concurrent webhook calls; localhost-only deploys
     /// rarely need to touch it.
     pub max_concurrent_connections: Option<usize>,
+    /// COR-34: shared JoinSet that tracks the detached, DISPATCH_GATE-bounded
+    /// Meta fan-out tasks (`handle_meta`). When `Some`, each dispatch is spawned
+    /// INTO this set instead of fire-and-forget, so the daemon's shutdown path
+    /// can drain in-flight pipeline turns (and their WAL writes) deterministically
+    /// before dropping the WAL writer — replacing the accidental, possibly-hanging
+    /// drain that relied on the dispatch task holding a `WalWriterHandle` clone.
+    /// `None` (tests / non-Meta listeners) keeps the legacy fire-and-forget spawn.
+    pub dispatch_join: Option<Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>>>,
 }
 
 /// GR-01 Pick B: WhatsApp credentials needed by the webhook listener
@@ -412,14 +420,26 @@ async fn handle_meta(
                     // fan-out to a detached, DISPATCH_GATE-bounded task and let
                     // `resp` (200) return immediately below.
                     let cfg2 = Arc::clone(&cfg);
-                    tokio::spawn(async move {
+                    let dispatch = async move {
                         match DISPATCH_GATE.acquire().await {
                             Ok(_permit) => dispatch_messages(&cfg2, msgs).await,
                             Err(_) => {
                                 warn!("webhook dispatch gate closed — dropping fan-out")
                             }
                         }
-                    });
+                    };
+                    // COR-34: when the daemon wired a shared JoinSet, track the
+                    // dispatch task in it so shutdown can drain in-flight pipeline
+                    // turns (+ their WAL frames) deterministically. Otherwise keep
+                    // the legacy detached spawn.
+                    match cfg.dispatch_join.as_ref() {
+                        Some(join) => {
+                            join.lock().await.spawn(dispatch);
+                        }
+                        None => {
+                            tokio::spawn(dispatch);
+                        }
+                    }
                 }
                 DecodedWebhook::NoMessages { reason } => {
                     debug!(reason = %reason, "Meta payload had no processable messages");
@@ -801,6 +821,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         // No panic, no network call — completes cleanly.
         dispatch_messages(&cfg, vec![inbound_fixture()]).await;
@@ -821,6 +842,7 @@ mod tests {
             }),
             send_governance: gov,
             max_concurrent_connections: None,
+            dispatch_join: None,
         }
     }
 
@@ -990,6 +1012,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1034,6 +1057,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1102,6 +1126,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1145,6 +1170,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cor34_dispatch_join_tracks_fanout_and_drain_completes_wal_write() {
+        // COR-34: when a shared dispatch_join is wired, handle_meta must spawn the
+        // detached Meta fan-out INTO that JoinSet (not fire-and-forget), so the
+        // daemon's shutdown can drain in-flight pipeline turns + their WAL writes
+        // before dropping the writer. Proof: post a WhatsApp message whose
+        // pipeline writes a unique marker frame; after the listener stops, drain
+        // the JoinSet — it must yield >=1 joined task (the dispatch was tracked,
+        // not detached) and the marker frame must be durable in the WAL.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+
+        let writer_for_pipeline = writer.clone();
+        let pipeline: PipelineHandler = Box::new(move |_inbound| {
+            let w = writer_for_pipeline.clone();
+            Box::pin(async move {
+                let payload = b"cor34-drain-marker".to_vec();
+                let header = crate::wal::HeaderBuilder::new(
+                    crate::wal::events::EVENT_TYPE_RAW_TEXT,
+                    &payload,
+                )
+                .build();
+                let _ = w.append(header, payload).await;
+                Ok(None)
+            })
+        });
+
+        let dispatch_join: Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>> =
+            Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let cfg = WebhookListenerConfig {
+            meta_app_secret: b"appsecret".to_vec(),
+            meta_verify_token: "v".to_string(),
+            slack_signing_secret: b"s".to_vec(),
+            pipeline,
+            whatsapp_send_creds: None,
+            send_governance: SendGovernance::default(),
+            max_concurrent_connections: None,
+            dispatch_join: Some(Arc::clone(&dispatch_join)),
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        let server = tokio::spawn(async move {
+            let _ = serve(addr, cfg, async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+        let host = format!("{}", addr);
+
+        let body = br#"{"object":"whatsapp_business_account","entry":[{"id":"W","changes":[{"field":"messages","value":{"metadata":{"phone_number_id":"PN","display_phone_number":"+49"},"contacts":[{"profile":{"name":"S"},"wa_id":"49"}],"messages":[{"from":"49","id":"wamid.X","timestamp":"1700000000","type":"text","text":{"body":"hi"}}]}}]}]}"#;
+        let sig = sign_meta(body, b"appsecret");
+        let (status, _) =
+            http_post(&host, "/webhook", body, &[("x-hub-signature-256", &sig)]).await;
+        assert_eq!(status, 200);
+
+        // Stop the listener (no more accepts). The dispatch task lives in the
+        // shared JoinSet, independent of the (now-finished) listener task.
+        let _ = shutdown_tx.send(());
+        let _ = server.await;
+
+        // Drain the shared JoinSet exactly as serve.rs's shutdown does. It must
+        // yield at least one task — proving handle_meta routed the fan-out into
+        // the provided JoinSet rather than detaching it.
+        let mut joined = 0usize;
+        {
+            let mut js = dispatch_join.lock().await;
+            while js.join_next().await.is_some() {
+                joined += 1;
+            }
+        }
+        assert!(
+            joined >= 1,
+            "COR-34: the Meta fan-out must be spawned into the shared dispatch_join (joined={joined})"
+        );
+
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap();
+        assert!(
+            bytes
+                .windows(b"cor34-drain-marker".len())
+                .any(|w| w == b"cor34-drain-marker"),
+            "COR-34: the in-flight dispatch's WAL frame must survive the drain"
+        );
+    }
+
+    #[tokio::test]
     async fn server_handles_slack_url_verification() {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let cfg = WebhookListenerConfig {
@@ -1155,6 +1271,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1203,6 +1320,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1240,6 +1358,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1295,6 +1414,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: Some(1),
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -1369,6 +1489,7 @@ mod tests {
             whatsapp_send_creds: None,
             send_governance: SendGovernance::default(),
             max_concurrent_connections: None,
+            dispatch_join: None,
         };
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

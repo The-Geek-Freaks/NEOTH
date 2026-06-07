@@ -780,6 +780,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // message: emit WAL CHANNEL_INGRESS → call provider → emit CHANNEL_EGRESS
     // → return reply for the channel to send.
     let mut channel_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new();
+    // COR-34: shared JoinSet tracking the detached, DISPATCH_GATE-bounded Meta
+    // webhook fan-out tasks. The WhatsApp listener spawns each dispatch into it
+    // (via WebhookListenerConfig::dispatch_join); the shutdown sequence drains it
+    // — with a bounded timeout, then abort — BEFORE drop(writer), so in-flight
+    // pipeline turns flush their WAL frames deterministically instead of relying
+    // on the dispatch task's accidental WalWriterHandle-clone refcount (which
+    // could otherwise hang shutdown on a slow turn).
+    let dispatch_join: std::sync::Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>> =
+        std::sync::Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
     if let (Some(telegram_token), Some(provider)) =
         (config.telegram_token.clone(), shared_provider.as_ref())
     {
@@ -950,6 +959,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                     dry_run: false,
                 },
                 max_concurrent_connections: None,
+                // COR-34: track this listener's detached Meta fan-out tasks so
+                // shutdown can drain their WAL writes before the writer closes.
+                dispatch_join: Some(std::sync::Arc::clone(&dispatch_join)),
             };
             let task = tokio::spawn(async move {
                 let shutdown = std::future::pending::<()>();
@@ -2441,6 +2453,31 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         let _ = task.await; // ignore JoinError on aborted tasks
     }
 
+    // COR-34: drain in-flight Meta webhook fan-out tasks (DISPATCH_GATE-bounded,
+    // <=64) BEFORE drop(writer) so their pipeline WAL frames (RAW_TEXT,
+    // CHANNEL_INGRESS/EGRESS, HOOK_FIRED) land. The channel tasks are already
+    // aborted above so no new dispatches are added; these tasks live in the
+    // shared JoinSet (not the listener task) so the abort above didn't cancel
+    // them. Bounded: a slow/stuck turn (e.g. a hung provider holding a
+    // WalWriterHandle clone) is abandoned via JoinSet::shutdown after the
+    // timeout so the daemon can't hang on exit — those tasks' in-flight frames
+    // are then dropped (same trade-off as the webhook HTTP drain).
+    {
+        const DISPATCH_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+        let drain = async {
+            let mut js = dispatch_join.lock().await;
+            while js.join_next().await.is_some() {}
+        };
+        if tokio::time::timeout(DISPATCH_DRAIN_TIMEOUT, drain).await.is_err() {
+            warn!(
+                timeout_s = DISPATCH_DRAIN_TIMEOUT.as_secs(),
+                "COR-34: webhook dispatch drain timed out — aborting remaining \
+                 fan-out tasks; their in-flight WAL frames may be lost"
+            );
+            dispatch_join.lock().await.shutdown().await;
+        }
+    }
+
     // Abort the cron scheduler — same reasoning as channels: stop emitting
     // new WAL frames before the writer drains.
     if let Some(task) = cron_task {
@@ -2573,6 +2610,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // freely. In-flight connections finish on their own.
     if let Some(task) = audit_rpc_task {
         task.abort();
+        let _ = task.await; // COR-34: await the abort so the handle isn't dropped mid-run
     }
     // _audit_rpc_guard drops here at fn end → removes the sidecar + token.
     if let Some(task) = healthz_task {
