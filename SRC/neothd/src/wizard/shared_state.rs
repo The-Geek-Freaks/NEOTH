@@ -179,9 +179,11 @@ impl WizardStateV2 {
         let body = serde_yaml::to_string(self).map_err(std::io::Error::other)?;
         let tmp = path.with_extension("yaml.tmp");
         std::fs::write(&tmp, body)?;
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
+        // GOLD-HON-22: `rename` replaces an existing file atomically on BOTH
+        // Unix and Windows (std uses MoveFileExW + MOVEFILE_REPLACE_EXISTING),
+        // so we do NOT remove the target first — a remove-then-rename would
+        // open a window where a concurrent reader observes NO file, which
+        // would contradict the "Atomic save" guarantee in the doc above.
         std::fs::rename(&tmp, path)?;
         Ok(())
     }

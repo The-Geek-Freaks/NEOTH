@@ -245,10 +245,11 @@ fn url_encode(input: &str) -> String {
 // ── Slot conflict ─────────────────────────────────────────────────
 
 /// Pure helper: does `[candidate_start, candidate_end)` overlap any
-/// event in `existing`? Sorts internally so caller can pass events
-/// in any order. Times compared as strings via the RFC 3339 lex
-/// property (sorted lexicographically == sorted chronologically when
-/// all timestamps use the same offset / zulu form).
+/// event in `existing`? Order-independent — each event is tested for
+/// overlap on its own, so `existing` may be in any order (no sort is
+/// performed or needed). Times are compared as strings via the RFC 3339
+/// lex property (lexicographic order == chronological order when all
+/// timestamps use the same offset / zulu form).
 pub fn has_conflict(
     candidate_start: &str,
     candidate_end: &str,

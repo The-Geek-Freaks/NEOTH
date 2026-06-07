@@ -29,8 +29,10 @@ pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(300);
 /// the convention. `idle_ttl` defaults to [`DEFAULT_IDLE_TTL`] (10 min).
 /// `interval` defaults to [`DEFAULT_INTERVAL`].
 ///
-/// The task runs forever; the returned handle aborts when dropped or
-/// when the daemon's shutdown signal lands.
+/// The task runs forever. The returned `JoinHandle` does NOT abort the
+/// task when dropped — a dropped tokio handle DETACHES the task, leaving
+/// it running. The daemon stops it explicitly by calling `.abort()` on the
+/// handle at shutdown (see `cli::serve`), not by dropping it.
 pub fn spawn(
     prefix: Option<String>,
     idle_ttl: Option<Duration>,
