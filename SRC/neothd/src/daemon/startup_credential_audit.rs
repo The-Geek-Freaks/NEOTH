@@ -47,9 +47,10 @@ use anyhow::{Context, Result};
 /// stable secret-kind label (mirrors the names in
 /// [`crate::security::redact`]'s PATTERNS table).
 ///
-/// `secret_excerpt` is the matched span TRIMMED to its first 8 chars
-/// — enough for the operator to recognise WHICH key without the
-/// finding itself becoming a leak in `neoth doctor` output.
+/// `secret_excerpt` is the matched span TRIMMED to its first
+/// `AUDIT_EXCERPT_CHARS` (12) chars — enough for the operator to recognise
+/// WHICH key without the finding itself becoming a leak in `neoth doctor`
+/// output.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CredentialFinding {
     pub path: PathBuf,
@@ -174,8 +175,9 @@ fn scan_git_remotes_inline_tokens() -> Vec<CredentialFinding> {
 }
 
 /// Match an HTTPS git URL with an inline `user:token@host` token.
-/// Returns the first 8 chars of the password portion when present,
-/// `None` otherwise. Strictly `https://`-scoped because ssh URLs
+/// Returns the first `AUDIT_EXCERPT_CHARS` (12) chars of the password
+/// portion when present, `None` otherwise — same excerpt cap as every
+/// other secret finding. Strictly `https://`-scoped because ssh URLs
 /// don't carry inline tokens (they use SSH key auth).
 fn inline_token_excerpt(url: &str) -> Option<String> {
     let stripped = url.strip_prefix("https://")?;
@@ -184,7 +186,7 @@ fn inline_token_excerpt(url: &str) -> Option<String> {
     if password.is_empty() {
         return None;
     }
-    Some(password.chars().take(8).collect::<String>() + "…")
+    Some(password.chars().take(AUDIT_EXCERPT_CHARS).collect::<String>() + "…")
 }
 
 /// One regex hit from [`match_secret_kinds`]. Kept private so the

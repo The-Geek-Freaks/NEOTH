@@ -10,9 +10,10 @@
 //! produced operator-accepted answers on the same topic.
 //!
 //! **JSON file rather than SQLite** — keeps SP-4 scope contained.
-//! The existing `views.db` schema is at version 8 with its own
-//! migration chain; bumping to 9 just for a Hebbian-decayed scalar
-//! table would invert the cost/benefit ratio. JSON file at
+//! The existing `views.db` schema is at version 11 (see
+//! `memory::store::SCHEMA_VERSION`) with its own migration chain; bumping
+//! it just for a Hebbian-decayed scalar table would invert the cost/benefit
+//! ratio. JSON file at
 //! `~/.neoth/routing_weights.json` follows the same atomic-temp-
 //! rename + mode-0600 pattern as `quota.json` and
 //! `models_catalog.json`. v0.4 follow-up can migrate to SQLite when

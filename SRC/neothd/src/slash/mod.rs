@@ -4,8 +4,12 @@
 //! the pipeline looks up the command name in the registry. Three sources
 //! feed the registry, evaluated in order:
 //!
-//!   1. **Built-ins** — `/help`, `/recall`, `/status`, `/jobs` — compiled
-//!      into the binary so a fresh install ships with a useful surface.
+//!   1. **Built-ins** — 21 commands compiled into the binary (`/help`,
+//!      `/recall`, `/status`, `/jobs`, `/rollback`, `/critic`, `/wizard`,
+//!      `/config`, `/provider`, `/connect`, `/disconnect`, `/skill`,
+//!      `/plugin`, `/memory`, `/consent`, `/reload`, `/autonomy`, `/quit`,
+//!      `/glossary`, `/privacy`, `/tour`) so a fresh install ships with a
+//!      useful surface. See `slash::builtins::built_in_commands`.
 //!   2. **Operator overrides** — `~/.neoth/commands/<name>.toml`. Takes
 //!      precedence over a built-in of the same name so operators can rebind.
 //!   3. **Operator-defined** — any additional `~/.neoth/commands/*.toml`.
