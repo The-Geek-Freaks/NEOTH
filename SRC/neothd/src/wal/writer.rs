@@ -636,10 +636,19 @@ async fn run_writer(
         // don't conflict. Failure to read is non-fatal: we fall back to
         // the metadata-length resume point (the prior shape), matching
         // the original behaviour.
-        let resume_offset = match tokio::fs::read(&segment_path).await {
+        let (resume_offset, resume_opened_at_ns) = match tokio::fs::read(&segment_path).await {
             Ok(bytes) => {
-                let scan = crate::wal::recovery::scan_tail(&bytes);
-                match scan {
+                // COR-22: recover the segment's real start timestamp from its
+                // header so the 24h age-rotation clock survives a daemon
+                // restart. Before this, opened_at_ns was reset to "now" on
+                // reopen, so a segment opened 25h ago would never age-rotate
+                // after a restart (only the size ceiling protected it).
+                let recovered_opened_at_ns = match parse_segment_header(&bytes) {
+                    Ok(ParsedSegmentHeader::V1(h)) => h.segment_start_ts_ns,
+                    Ok(ParsedSegmentHeader::V2(h)) => h.segment_start_ts_ns,
+                    Err(_) => current_ns(),
+                };
+                let resume_offset = match crate::wal::recovery::scan_tail(&bytes) {
                     crate::wal::recovery::ScanResult::Clean { through } => through,
                     crate::wal::recovery::ScanResult::TornAt {
                         good_through,
@@ -700,7 +709,8 @@ async fn run_writer(
                         });
                         good_through
                     }
-                }
+                };
+                (resume_offset, recovered_opened_at_ns)
             }
             Err(e) => {
                 tracing::warn!(
@@ -708,14 +718,10 @@ async fn run_writer(
                     path = %segment_path.display(),
                     "wal::recovery: read segment for scan failed; using metadata-len resume",
                 );
-                metadata_len
+                (metadata_len, current_ns())
             }
         };
-        // For an existing segment we can't recover the original opened_at_ns
-        // from the file (without re-parsing the SegmentHeader). Treat reopen
-        // as "fresh age clock starts now" — the size-based ceiling still
-        // protects us from runaway growth.
-        (resume_offset, current_ns())
+        (resume_offset, resume_opened_at_ns)
     };
 
     let mut state = WriterState {
@@ -1381,6 +1387,47 @@ mod tests {
         assert!(
             seg2.exists(),
             "age-triggered rotation must produce segment 2"
+        );
+        let bytes2 = read(&seg2).await.unwrap();
+        let first = decode_frame(&bytes2[SEGMENT_HEADER_LEN..]).expect("rollover decodes");
+        let v: serde_json::Value =
+            serde_json::from_slice(first.payload).expect("rollover payload is JSON");
+        assert_eq!(v["reason"], "age");
+    }
+
+    #[tokio::test]
+    async fn writer_age_rotation_survives_restart_via_header_start_ts() {
+        // COR-22: a segment opened 25h ago must age-rotate on the next write
+        // after a daemon restart. The reopen path now recovers opened_at_ns
+        // from the segment header's segment_start_ts_ns; before the fix it was
+        // reset to "now" on reopen, so a 25h-old segment never aged out after a
+        // restart (only the size ceiling could rotate it).
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+
+        // Craft a header-only segment whose start ts is 25h in the past — as if
+        // the daemon had opened it yesterday and then restarted.
+        let old_ts = current_ns().saturating_sub(25 * 60 * 60 * 1_000_000_000);
+        let header = SegmentHeader::new(0, 1, 0, old_ts, [0u8; 16]);
+        tokio::fs::write(&seg, header.to_le_bytes()).await.unwrap();
+
+        // Reopen with the production 24h age ceiling.
+        let policy = RotationPolicy {
+            max_bytes: RotationPolicy::DEFAULT_MAX_BYTES,
+            max_age_ns: 24 * 60 * 60 * 1_000_000_000,
+        };
+        let (handle, join) = spawn_with_policy(seg.clone(), policy).expect("spawn");
+        handle
+            .append(header_for(1, 1), b"x".to_vec())
+            .await
+            .expect("append");
+        drop(handle);
+        join.await.expect("join");
+
+        let seg2 = dir.path().join("000002.wal");
+        assert!(
+            seg2.exists(),
+            "a 25h-old segment must age-rotate on the first write after restart"
         );
         let bytes2 = read(&seg2).await.unwrap();
         let first = decode_frame(&bytes2[SEGMENT_HEADER_LEN..]).expect("rollover decodes");
