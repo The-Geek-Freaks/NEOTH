@@ -3228,6 +3228,17 @@ fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
                 .await
                 .context("write CHANNEL_INGRESS WAL frame")?;
 
+            // GOLD-WIRE-02 NOTE: the conversational-recall short-circuit is
+            // wired into the CLI path (`chat.rs::run_chat_with`) only. The
+            // channel path is a deliberate follow-up: a 4-lens adversarial
+            // review flagged that a naive short-circuit here (a) would query
+            // `idx_episode` UNSCOPED (no operator_id/channel filter), risking a
+            // cross-surface data disclosure to a channel sender, and (b) would
+            // bypass the PreEgress hooks + the ChannelSend autonomy gate below
+            // — a policy bypass at Strict. Wiring it correctly needs a
+            // channel/operator-scoped recall query routed through that same
+            // egress gate (+ spawn_blocking), tracked separately.
+
             // ── Permission gate (Phase 28b AU-4 + Pick #10 fix) ──────────
             // Daemon path has no TTY — use FailClosed strategy. Channel-driven
             // confirm (AU-4-part-2) wires here once the channel callback is

@@ -3,7 +3,7 @@
 //! Runs the indexer once before querying so freshly-written WAL frames are
 //! included. Output format follows the global `--output` flag.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Args;
@@ -347,6 +347,60 @@ fn recall_fts(conn: &Connection, query: &str, limit: usize) -> Result<Vec<Episod
         .query_map(params![query, limit as i64], hot_row_mapper)?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(rows)
+}
+
+/// GOLD-WIRE-02: answer a conversational-recall prompt
+/// ("Weißt du noch als wir über X geredet haben?" / "do you remember
+/// when we talked about X?") straight from the local `idx_episode`
+/// store — WITHOUT an LLM call.
+///
+/// Returns `Some(reply)` when the prompt matches a recall intent (the
+/// reply is the formatted hits, or a localized "nothing found" line when
+/// memory has no match); `None` when it's a normal prompt that should
+/// fall through to the provider. Best-effort on the DB: any open/query
+/// error → empty hits → "nothing found", never an `Err` — a recall miss
+/// must not break the chat turn.
+pub(crate) async fn answer_conversational_recall(prompt: &str, db_path: &Path) -> Option<String> {
+    let query = crate::recall::conversational::detect_recall_intent(prompt)?;
+    const RECALL_LIMIT: usize = 5;
+    // Run the synchronous rusqlite query off the async worker (mirrors the
+    // main recall path's spawn_blocking, K-Perf-3). A JoinError degrades to
+    // empty hits → the localized "nothing found" reply, preserving the
+    // best-effort contract.
+    let db_owned = db_path.to_path_buf();
+    let topic = query.topic.clone();
+    let hits = tokio::task::spawn_blocking(move || {
+        recall_episodes_best_effort(&db_owned, &topic, RECALL_LIMIT)
+    })
+    .await
+    .unwrap_or_default();
+    Some(crate::recall::conversational::format_recall_reply(
+        &hits,
+        query.language,
+        &query.topic,
+    ))
+}
+
+/// Hot-tier episode search for [`answer_conversational_recall`]: FTS5
+/// first, LIKE fallback (mirrors the main recall path's hot-tier query).
+/// Best-effort — a missing DB or any query error yields an empty Vec so
+/// the caller renders the localized "nothing found" reply instead of
+/// failing the chat turn.
+fn recall_episodes_best_effort(db_path: &Path, topic: &str, limit: usize) -> Vec<EpisodeHit> {
+    if !db_path.exists() {
+        return Vec::new();
+    }
+    let conn = match store::open(db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(error = %e, "conversational recall: views.db open failed; empty hits");
+            return Vec::new();
+        }
+    };
+    match recall_fts(&conn, topic, limit) {
+        Ok(hits) if !hits.is_empty() => hits,
+        _ => recall_like(&conn, topic, limit).unwrap_or_default(),
+    }
 }
 
 /// LIKE fallback (case-insensitive substring) over `idx_episode` (hot tier).
@@ -1124,6 +1178,61 @@ mod tests {
     // Pins the v0.2 acceptance criterion that `neoth recall` is not
     // silently dropping a tier (e.g. a future refactor that forgets
     // to merge `cold` into the final rank-by-composite-score pass).
+
+    #[tokio::test]
+    async fn answer_conversational_recall_finds_seeded_episode_and_ignores_non_recall() {
+        // GOLD-WIRE-02: a recall-intent prompt is answered from idx_episode;
+        // a normal prompt returns None (falls through to the provider).
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        {
+            let conn = store::open(&db).unwrap();
+            conn.execute(
+                "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+                 VALUES (10, 1, 1700000000000000000, 'rust ist gut und schnell', 'h1', 0.5, 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        // Recall intent → memory reply that quotes the seeded episode.
+        let reply =
+            answer_conversational_recall("Do you remember when we talked about rust?", &db)
+                .await
+                .expect("recall intent must produce a reply");
+        assert!(reply.starts_with("Yes — "), "english template: {reply}");
+        assert!(reply.contains("rust ist gut"), "reply must quote the episode: {reply}");
+
+        // Normal prompt → None → falls through to the provider unchanged.
+        assert!(
+            answer_conversational_recall("What is the capital of France?", &db)
+                .await
+                .is_none()
+        );
+
+        // Recall intent but no match → Some(localized "nothing found"), NOT None
+        // (the short-circuit still fires; the operator learns the recall ran).
+        let miss = answer_conversational_recall("Do you remember when we talked about zzzqqq?", &db)
+            .await
+            .expect("recall intent fires even with no hit");
+        assert!(miss.contains("Nothing found"), "empty match → localized miss: {miss}");
+    }
+
+    #[tokio::test]
+    async fn answer_conversational_recall_empty_db_returns_nothing_found_not_error() {
+        // GOLD-WIRE-02 best-effort: a missing/empty views.db must not error —
+        // the recall short-circuit still fires and renders "nothing found".
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist.db");
+        let reply =
+            answer_conversational_recall("weißt du noch als wir über rust geredet haben?", &missing)
+                .await
+                .expect("recall intent fires regardless of DB state");
+        assert!(
+            reply.starts_with("Ich finde keine Erinnerung"),
+            "german miss line: {reply}"
+        );
+    }
 
     #[test]
     fn recall_four_tier_acceptance_every_tier_shows_up_in_results() {

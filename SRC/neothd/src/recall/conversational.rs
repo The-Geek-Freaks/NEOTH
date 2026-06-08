@@ -57,19 +57,23 @@ const GERMAN_OPENERS: &[&str] = &[
     "erinnerst du dich",
     "erinnere dich",
     "kannst du dich erinnern",
-    "weißt du was",
-    "weisst du was",
-    "wann habe ich",
     "was hab ich",
     "was habe ich",
-    "was haben wir",
+    // GOLD-WIRE-02 review: REMOVED idiomatic-filler / diagnostic openers that
+    // were load-bearing false positives once the detector gates the chat path:
+    //   "weißt du was" / "weisst du was" — "you know what, [any request]"
+    //   "was haben wir"                  — "what do we have [bug/options/…]"
+    //   "wann habe ich"                  — also "when is my next meeting"
+    // Genuine recall is still covered by "weißt du noch" / "erinnerst du dich".
 ];
 
 /// English recall openers — same shape as the German list.
 const ENGLISH_OPENERS: &[&str] = &[
     "do you remember",
     "remember when",
-    "remember that",
+    // GOLD-WIRE-02 review: REMOVED "remember that" — it is a context-setter
+    // before an imperative ("remember that the build is broken, fix it"), not
+    // a recall query. "remember when" / "do you remember" cover genuine recall.
     "can you recall",
     "what did i",
     "when did i",
@@ -94,7 +98,7 @@ pub fn detect_recall_intent(prompt: &str) -> Option<RecallQuery> {
     for opener in GERMAN_OPENERS {
         if let Some(rest) = lower.strip_prefix(opener) {
             let topic = clean_topic_de(rest);
-            if !topic.is_empty() {
+            if !topic.is_empty() && !topic_is_compound(&topic) {
                 return Some(RecallQuery {
                     topic,
                     language: RecallLanguage::German,
@@ -105,7 +109,7 @@ pub fn detect_recall_intent(prompt: &str) -> Option<RecallQuery> {
     for opener in ENGLISH_OPENERS {
         if let Some(rest) = lower.strip_prefix(opener) {
             let topic = clean_topic_en(rest);
-            if !topic.is_empty() {
+            if !topic.is_empty() && !topic_is_compound(&topic) {
                 return Some(RecallQuery {
                     topic,
                     language: RecallLanguage::English,
@@ -114,6 +118,16 @@ pub fn detect_recall_intent(prompt: &str) -> Option<RecallQuery> {
         }
     }
     None
+}
+
+/// A cleaned topic that still carries mid-string sentence punctuation (a `?`
+/// or `!` — `clean_topic_*` already stripped any TRAILING one) is almost
+/// always a COMPOUND prompt where the recall opener was a rhetorical lead-in
+/// ("do you remember the API for X? write me code"). Reject it (GOLD-WIRE-02
+/// review) so the turn falls through to the LLM instead of being silently
+/// answered from memory.
+fn topic_is_compound(topic: &str) -> bool {
+    topic.contains('?') || topic.contains('!')
 }
 
 fn clean_topic_de(s: &str) -> String {
@@ -409,6 +423,37 @@ mod tests {
         // Operator probably meant a general question, not a search.
         assert!(detect_recall_intent("Do you remember?").is_none());
         assert!(detect_recall_intent("weißt du noch?").is_none());
+    }
+
+    #[test]
+    fn no_intent_on_idiomatic_filler_and_compound_prompts() {
+        // GOLD-WIRE-02 adversarial review: once the detector gates the chat
+        // path, these NORMAL prompts must NOT be hijacked into a memory lookup
+        // (they're build/diagnostic/imperative requests for the LLM).
+        // German idiomatic fillers / diagnostics (removed openers):
+        assert!(
+            detect_recall_intent("Weißt du was, lass uns einen Parser bauen").is_none(),
+            "'weißt du was' filler must not trigger recall"
+        );
+        assert!(
+            detect_recall_intent("Was haben wir hier für einen Bug?").is_none(),
+            "'was haben wir' diagnostic must not trigger recall"
+        );
+        assert!(
+            detect_recall_intent("Wann habe ich das nächste Meeting?").is_none(),
+            "'wann habe ich' schedule query must not trigger recall"
+        );
+        // English context-setter before an imperative (removed opener):
+        assert!(
+            detect_recall_intent("Remember that the build is broken, fix it").is_none(),
+            "'remember that' context-setter must not trigger recall"
+        );
+        // Compound prompt: recall opener used as a rhetorical lead-in before a
+        // real request (the mid-string `?` guard catches it).
+        assert!(
+            detect_recall_intent("Do you remember the API for X? Write me code").is_none(),
+            "compound prompt with a trailing imperative must fall through to the LLM"
+        );
     }
 
     // ── format_recall_reply ──────────────────────────────────────────

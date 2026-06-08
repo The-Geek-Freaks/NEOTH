@@ -291,6 +291,28 @@ pub async fn run_chat_with(
         now_unix() as i64,
     );
 
+    // ── GOLD-WIRE-02: conversational-recall short-circuit ─────────────────
+    // "Weißt du noch als wir über X geredet haben?" / "do you remember when
+    // we talked about X?" is answered straight from the local idx_episode
+    // store WITHOUT an LLM call — so NO PROVIDER_REQUEST / PROVIDER_RESPONSE
+    // frame is written for this turn. The RAW_TEXT frame above still records
+    // the question so it stays recallable later. The helper is best-effort on
+    // the DB (a recall miss yields a localized "nothing found" reply, never
+    // an error), and returns `None` for any non-recall prompt — which falls
+    // through to the normal provider path below unchanged.
+    if let Some(reply) = crate::cli::recall::answer_conversational_recall(
+        &prompt,
+        &crate::memory::store::default_path(),
+    )
+    .await
+    {
+        println!("{reply}");
+        // Same WAL-writer teardown every other early return in this fn uses.
+        drop(writer);
+        let _ = writer_join.await;
+        return Ok(());
+    }
+
     // ── PROVIDER_REQUEST (hashed metadata) ────────────────────────────────
     //
     // ARCH-07 / Round-3 v0.4 — `prompt_bundle_hash` field added.
@@ -3993,6 +4015,89 @@ mod tests {
                 output_tokens: Some(8),
             })
         }
+    }
+
+    /// GOLD-WIRE-02: a provider that records whether `complete` was ever
+    /// called. The conversational-recall short-circuit must answer from
+    /// memory WITHOUT touching it.
+    #[derive(Default)]
+    struct NeverCalledProvider {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Provider for NeverCalledProvider {
+        fn name(&self) -> &'static str {
+            "never-called"
+        }
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            self.calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Completion {
+                text: "SHOULD NOT BE CALLED".into(),
+                model: "x".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(0),
+                output_tokens: Some(0),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn recall_intent_short_circuits_without_provider_or_request_frame() {
+        // GOLD-WIRE-02: "do you remember when we talked about X?" is answered
+        // from local memory — the provider's complete() must NEVER fire, so
+        // no PROVIDER_REQUEST / PROVIDER_RESPONSE frame is written. The only
+        // WAL frame for the turn is the RAW_TEXT (the recall question itself).
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let config = FreedomConfig {
+            language_primary: Some("en".into()),
+            ..Default::default()
+        };
+        let provider = NeverCalledProvider::default();
+        let args = ChatArgs {
+            message: Some("Do you remember when we talked about rust?".into()),
+            model: None,
+            system: None,
+            config: None,
+            wal_segment: Some(seg.clone()),
+            stream: false,
+            temperature: None,
+            top_p: None,
+            sampling_seed: None,
+            resume_from: None,
+        };
+
+        run_chat_with(args, config, &provider)
+            .await
+            .expect("recall chat run succeeds");
+
+        assert_eq!(
+            provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "recall short-circuit must not call the provider"
+        );
+
+        // WAL: exactly one frame after the segment header — RAW_TEXT — and
+        // NOTHING after it (no PROVIDER_REQUEST).
+        let bytes = read(&seg).await.unwrap();
+        let frames = &bytes[SEGMENT_HEADER_LEN..];
+        let dec0 = decode_frame(frames).expect("decode RAW_TEXT frame");
+        assert_eq!(
+            dec0.header.event_type,
+            crate::wal::events::EVENT_TYPE_RAW_TEXT
+        );
+        assert_eq!(
+            dec0.payload, b"Do you remember when we talked about rust?",
+            "RAW_TEXT payload must be the verbatim recall prompt"
+        );
+        let rest = &frames[dec0.header.total_len as usize..];
+        assert!(
+            rest.is_empty(),
+            "no frame may follow RAW_TEXT on the recall path (no PROVIDER_REQUEST); got {} trailing bytes",
+            rest.len()
+        );
     }
 
     #[tokio::test]
