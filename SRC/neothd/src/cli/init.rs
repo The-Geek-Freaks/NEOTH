@@ -1744,8 +1744,16 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
             // key. Falls back to the bundled baseline when no fresh
             // anthropic_api entry exists (fresh install, pre-`catalog
             // refresh`).
-            let resolved_default = catalog_recommended_for_provider_kind(kind)
-                .unwrap_or_else(|| "claude-opus-4-7".to_string());
+            // GOLD-WIRE-03: the bundled fallback comes from the same SSOT as
+            // `providers::from_config` (`model_roles::default_table`), so the
+            // wizard + the runtime can't drift.
+            let resolved_default = catalog_recommended_for_provider_kind(kind).unwrap_or_else(|| {
+                crate::providers::default_model(
+                    "claude_cli",
+                    crate::providers::model_roles::ModelRole::Flagship,
+                    "claude-opus-4-7",
+                )
+            });
             state.provider_model = Some(args.provider_model.clone().unwrap_or(resolved_default));
         }
         ProviderKind::OpenaiApi
@@ -1830,16 +1838,37 @@ async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardSt
             // when present; falls back to the bundled hardcoded baseline
             // when the catalog is empty / stale / has no entry for the
             // chosen provider.
+            // GOLD-WIRE-03: bundled fallbacks come from the same SSOT as
+            // `providers::from_config` (`model_roles::default_table`) so the
+            // wizard's freedom.yaml write can't drift from the runtime default.
+            // anthropic_api uses BALANCED (sonnet) to match from_config's
+            // metered-API cost choice. `openai_compat` requires an operator
+            // model anyway (no table row) so it keeps its literal placeholder.
+            use crate::providers::model_roles::ModelRole;
             let bundled_default = match kind {
-                ProviderKind::OpenaiApi => "gpt-5.5",
-                ProviderKind::AnthropicApi => "claude-sonnet-4-6",
-                ProviderKind::GeminiApi => "gemini-3.1-pro-preview",
-                ProviderKind::Cohere => "command-a-plus-05-2026",
-                ProviderKind::OpenaiCompat => "opus-4.7",
-                _ => "",
+                ProviderKind::OpenaiApi => {
+                    crate::providers::default_model("openai_api", ModelRole::Flagship, "gpt-5.5")
+                }
+                ProviderKind::AnthropicApi => crate::providers::default_model(
+                    "anthropic_api",
+                    ModelRole::Balanced,
+                    "claude-sonnet-4-6",
+                ),
+                ProviderKind::GeminiApi => crate::providers::default_model(
+                    "gemini_api",
+                    ModelRole::Flagship,
+                    "gemini-3.1-pro-preview",
+                ),
+                ProviderKind::Cohere => crate::providers::default_model(
+                    "cohere_api",
+                    ModelRole::Flagship,
+                    "command-a-plus-05-2026",
+                ),
+                ProviderKind::OpenaiCompat => "opus-4.7".to_string(),
+                _ => String::new(),
             };
-            let resolved_default = catalog_recommended_for_provider_kind(kind)
-                .unwrap_or_else(|| bundled_default.to_string());
+            let resolved_default =
+                catalog_recommended_for_provider_kind(kind).unwrap_or(bundled_default);
             state.provider_model = Some(args.provider_model.clone().unwrap_or(resolved_default));
         }
         ProviderKind::AwsBedrock => {

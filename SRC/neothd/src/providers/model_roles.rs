@@ -222,7 +222,7 @@ pub fn default_table() -> ModelRoleTable {
         .with_provider(
             "gemini_api",
             ProviderRoles::default()
-                .with(ModelRole::Flagship, "gemini-3-pro")
+                .with(ModelRole::Flagship, "gemini-3.1-pro-preview")
                 .with(ModelRole::Balanced, "gemini-3-flash")
                 .with(ModelRole::Fast, "gemini-3-flash-lite")
                 .with(ModelRole::Vision, "gemini-3-pro")
@@ -246,6 +246,12 @@ pub fn default_table() -> ModelRoleTable {
                 .with(ModelRole::Flagship, "Qwen3-8B-Instruct-Q8")
                 .with(ModelRole::Balanced, "Qwen3-3B-Instruct-Q8")
                 .with(ModelRole::Fast, "Qwen3-3B-Instruct-Q4"),
+        )
+        // GOLD-WIRE-03: cohere completes the SSOT — `from_config` resolves its
+        // default model from here instead of a hardcoded string.
+        .with_provider(
+            "cohere_api",
+            ProviderRoles::default().with(ModelRole::Flagship, "command-a-plus-05-2026"),
         )
 }
 
@@ -330,16 +336,22 @@ mod tests {
     #[test]
     fn default_table_covers_every_shipped_provider() {
         // Pin the contract: every adapter NEOTH's `Provider::name()`
-        // returns has a row in `default_table`. A future adapter
-        // (e.g. cohere_api) without a row here resolves to None and
-        // the operator gets a "not configured" error — surface that
-        // at adapter-ship time, not at first chat.
+        // returns has a row in `default_table`. A future adapter without a
+        // row here resolves to None and `from_config` falls back to its
+        // per-arm hardcoded default — surface a missing default at
+        // adapter-ship time, not at first chat. (GOLD-WIRE-03 added the
+        // `cohere_api` row so its `from_config` default is table-sourced too.)
+        // Intentionally EXCLUDED (no ship-time default model needed):
+        // openai_compat / aws_bedrock / azure_openai require an explicit
+        // `provider_model` (from_config errors without one); local_ouro passes
+        // `None` to its adapter like local_qwen would for an unset repo.
         let t = default_table();
         for id in [
             "claude_cli",
             "anthropic_api",
             "openai_api",
             "gemini_api",
+            "cohere_api",
             "aws_bedrock",
             "azure_openai",
             "local_qwen",

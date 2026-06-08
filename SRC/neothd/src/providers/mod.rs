@@ -423,6 +423,23 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
 /// kind is `Skip` or absent). The caller — typically `cli::chat::run` — is
 /// expected to print a helpful "run `neoth provider add`" message in that
 /// case.
+/// GOLD-WIRE-03: the default model for a provider when the operator left
+/// `provider_model` unset. Resolves from [`model_roles::default_table`] (the
+/// single source of truth for ship-time model defaults) and falls back to
+/// `hardcoded` only when the provider has no row there. Wiring `from_config`
+/// through this means changing a `default_table` Flagship/Balanced entry now
+/// changes what the daemon selects — no scattered hardcoded strings to drift.
+pub(crate) fn default_model(
+    provider_id: &str,
+    role: model_roles::ModelRole,
+    hardcoded: &str,
+) -> String {
+    model_roles::default_table()
+        .resolve(provider_id, role)
+        .unwrap_or(hardcoded)
+        .to_string()
+}
+
 pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
     let kind = config
         .provider_kind
@@ -434,10 +451,9 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 .provider_binary
                 .clone()
                 .unwrap_or_else(|| "claude".to_string());
-            let model = config
-                .provider_model
-                .clone()
-                .unwrap_or_else(|| "claude-opus-4-7".to_string());
+            let model = config.provider_model.clone().unwrap_or_else(|| {
+                default_model("claude_cli", model_roles::ModelRole::Flagship, "claude-opus-4-7")
+            });
             // B-6 Item 2: thread freedom.yaml::claude_cli.* through.
             // `to_provider()` lowers the config-layer backend tag into
             // the adapter-layer enum. compaction_rotate_after is the
@@ -475,10 +491,9 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
                 .provider_endpoint
                 .clone()
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
-            let model = config
-                .provider_model
-                .clone()
-                .unwrap_or_else(|| "gpt-5.5".to_string());
+            let model = config.provider_model.clone().unwrap_or_else(|| {
+                default_model("openai_api", model_roles::ModelRole::Flagship, "gpt-5.5")
+            });
             Ok(Box::new(openai_api::OpenAiAdapter::new_openai(
                 endpoint, key, model,
             )?))
@@ -507,28 +522,41 @@ pub async fn from_config(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
             // other cloud adapters; default model is operator-overridable
             // via `provider_model`.
             let key = require_provider_key(config, "anthropic_api")?;
-            let model = config
-                .provider_model
-                .clone()
-                .unwrap_or_else(|| "claude-sonnet-4-6".to_string());
+            // GOLD-WIRE-03: anthropic_api defaults to BALANCED (sonnet), not
+            // Flagship (opus) — a deliberate cost choice on the metered native
+            // API (the subscription `claude_cli` path defaults to flagship
+            // opus). Operators override via `provider_model`.
+            let model = config.provider_model.clone().unwrap_or_else(|| {
+                default_model(
+                    "anthropic_api",
+                    model_roles::ModelRole::Balanced,
+                    "claude-sonnet-4-6",
+                )
+            });
             Ok(Box::new(anthropic_api::AnthropicAdapter::new(key, model)?))
         }
         ProviderKind::GeminiApi => {
             let key = require_provider_key(config, "gemini_api")?;
-            let model = config
-                .provider_model
-                .clone()
-                .unwrap_or_else(|| "gemini-3.1-pro-preview".to_string());
+            let model = config.provider_model.clone().unwrap_or_else(|| {
+                default_model(
+                    "gemini_api",
+                    model_roles::ModelRole::Flagship,
+                    "gemini-3.1-pro-preview",
+                )
+            });
             Ok(Box::new(gemini_api::GeminiAdapter::new(key, model)?))
         }
         ProviderKind::Cohere => {
             // PF-02 — native Cohere v2 Chat (Bearer key, metered). Same
             // single `provider_key` as the other cloud adapters.
             let key = require_provider_key(config, "cohere_api")?;
-            let model = config
-                .provider_model
-                .clone()
-                .unwrap_or_else(|| "command-a-plus-05-2026".to_string());
+            let model = config.provider_model.clone().unwrap_or_else(|| {
+                default_model(
+                    "cohere_api",
+                    model_roles::ModelRole::Flagship,
+                    "command-a-plus-05-2026",
+                )
+            });
             Ok(Box::new(cohere_api::CohereAdapter::new(key, model)?))
         }
         ProviderKind::LocalQwen => {
@@ -746,6 +774,43 @@ mod tests {
     use crate::config::inference::{
         HemisphereRole, HemisphereSlot, InferenceProvider, InferenceTopology, TopologyMode,
     };
+
+    #[test]
+    fn default_model_resolves_from_table_then_falls_back() {
+        // GOLD-WIRE-03: `default_model` is the from_config fallback path. For a
+        // provider present in `default_table` the TABLE value wins (so
+        // changing the table changes what the daemon selects); an absent
+        // provider falls back to the per-arm hardcoded string.
+        use model_roles::{default_table, ModelRole};
+
+        // Present provider → table value, NOT the hardcoded fallback.
+        assert_eq!(
+            default_model("claude_cli", ModelRole::Flagship, "IGNORED"),
+            "claude-opus-4-7"
+        );
+        // The link that makes "changing default_table changes selection" true.
+        assert_eq!(
+            default_model("claude_cli", ModelRole::Flagship, "IGNORED"),
+            default_table()
+                .resolve("claude_cli", ModelRole::Flagship)
+                .unwrap()
+        );
+        // anthropic_api defaults to Balanced (cost choice = sonnet).
+        assert_eq!(
+            default_model("anthropic_api", ModelRole::Balanced, "x"),
+            "claude-sonnet-4-6"
+        );
+        // cohere_api is now table-sourced (GOLD-WIRE-03 added its row).
+        assert_eq!(
+            default_model("cohere_api", ModelRole::Flagship, "x"),
+            "command-a-plus-05-2026"
+        );
+        // Absent provider → the hardcoded fallback is used verbatim.
+        assert_eq!(
+            default_model("not_in_table", ModelRole::Flagship, "FALLBACK"),
+            "FALLBACK"
+        );
+    }
 
     #[test]
     fn is_local_provider_recognises_both_local_backends_and_rejects_cloud() {
