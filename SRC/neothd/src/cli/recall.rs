@@ -615,6 +615,20 @@ async fn run_citation_check(arg: &str, output: crate::cli::OutputFormat) -> Resu
     Ok(())
 }
 
+/// GOLD-WIRE-07 — resolve the HNSW snapshot path when the operator opted into
+/// `memory.vector_index.backend: hnsw`, else `None` (brute-force). Best-effort:
+/// a missing/unparseable freedom.yaml falls back to brute-force (the safe
+/// default), so recall never errors on a config problem.
+fn configured_hnsw_path() -> Option<std::path::PathBuf> {
+    let cfg = crate::config::FreedomConfig::load_from_default_path().ok()?;
+    match cfg.memory.vector_index.backend {
+        crate::config::VectorBackend::Hnsw => Some(crate::memory::embeddings::hnsw_snapshot_path(
+            &crate::config::FreedomConfig::default_neoth_home(),
+        )),
+        crate::config::VectorBackend::BruteForce => None,
+    }
+}
+
 async fn run_similar_to_image(
     conn: &Connection,
     image_path: PathBuf,
@@ -636,8 +650,16 @@ async fn run_similar_to_image(
                 image_path.display()
             )
         })?;
-    let hits = embeddings::find_similar(conn, &query, kind_filter, args.limit)
-        .context("similarity search")?;
+    // GOLD-WIRE-07: dispatch to the HNSW index when the operator opted in, the
+    // snapshot exists, AND the corpus is past the brute-force ceiling (below it
+    // a per-query cold HNSW load is slower than the scan). Brute-force
+    // otherwise, and always for kind-scoped queries (HNSW is not kind-filterable).
+    let hnsw = configured_hnsw_path().filter(|_| {
+        embeddings::hnsw_beneficial_for_corpus(embeddings::count(conn).unwrap_or(0) as usize)
+    });
+    let hits =
+        embeddings::find_similar_dispatch(conn, &query, kind_filter, args.limit, hnsw.as_deref())
+            .context("similarity search")?;
     render_similarity(&hits, args.output, &image_path.display().to_string());
     Ok(())
 }
@@ -653,8 +675,16 @@ async fn run_similar_to_text(conn: &Connection, prompt: String, args: &RecallArg
          (did you `neoth models pull clip` first?)"
             .to_string()
     })?;
-    let hits = embeddings::find_similar(conn, &query, kind_filter, args.limit)
-        .context("similarity search")?;
+    // GOLD-WIRE-07: dispatch to the HNSW index when the operator opted in, the
+    // snapshot exists, AND the corpus is past the brute-force ceiling (below it
+    // a per-query cold HNSW load is slower than the scan). Brute-force
+    // otherwise, and always for kind-scoped queries (HNSW is not kind-filterable).
+    let hnsw = configured_hnsw_path().filter(|_| {
+        embeddings::hnsw_beneficial_for_corpus(embeddings::count(conn).unwrap_or(0) as usize)
+    });
+    let hits =
+        embeddings::find_similar_dispatch(conn, &query, kind_filter, args.limit, hnsw.as_deref())
+            .context("similarity search")?;
     render_similarity(&hits, args.output, &format!("\"{prompt}\""));
     Ok(())
 }

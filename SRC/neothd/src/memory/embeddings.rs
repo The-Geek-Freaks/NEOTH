@@ -28,7 +28,7 @@
 //!     bumping `created_at`.
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use hnsw_rs::anndists::dist::distances::DistCosine;
@@ -194,6 +194,89 @@ pub fn find_similar(
     });
     sorted.truncate(top_k);
     Ok(sorted)
+}
+
+/// GOLD-WIRE-07 — the canonical on-disk path for the HNSW snapshot,
+/// `<neoth_home>/embeddings.hnsw`. One source of truth so the recall
+/// dispatch, `neoth memory --rebuild-index`, and a future boot-load all
+/// resolve the same file.
+pub fn hnsw_snapshot_path(neoth_home: &Path) -> PathBuf {
+    neoth_home.join("embeddings.hnsw")
+}
+
+/// GOLD-WIRE-07 — similarity search with backend dispatch. When `hnsw_path`
+/// is `Some` (operator set `memory.vector_index.backend: hnsw`) AND the query
+/// is NOT kind-scoped, cold-load the HNSW snapshot and use approximate
+/// nearest-neighbour search. Every other case — kind-filtered query, no
+/// snapshot, empty/unreadable snapshot, or an empty HNSW result — falls back
+/// to the always-correct brute-force [`find_similar`].
+///
+/// Kind-filtered recall stays on brute-force on purpose: [`EmbeddingIndex::
+/// find_similar_hnsw`] searches the whole index with no `source_kind` filter,
+/// so returning its hits for a `--similar-kind`-scoped query would leak
+/// wrong-kind results. The brute-force SQL path is both correct AND already
+/// narrower (it scans only the matching `source_kind` rows).
+pub fn find_similar_dispatch(
+    conn: &Connection,
+    query: &[f32],
+    kind_filter: Option<&str>,
+    top_k: usize,
+    hnsw_path: Option<&Path>,
+) -> Result<Vec<SimilarHit>> {
+    if let Some(path) = hnsw_path {
+        if kind_filter.is_some() {
+            tracing::debug!(
+                "GOLD-WIRE-07: kind-filtered recall uses brute-force \
+                 (the HNSW index is not kind-scoped)"
+            );
+        } else {
+            // Cold load: O(N log N) deserialize + HNSW graph rebuild, paid per
+            // CLI query until the WIRE-07b warm daemon index lands. The caller
+            // (recall) only passes `Some(path)` once the corpus exceeds the
+            // brute-force ceiling, so this cost is only borne where brute-force
+            // would itself be slow.
+            match EmbeddingIndex::load(path) {
+                Ok(Some(idx)) if !idx.is_empty() => {
+                    let hits = idx.find_similar_hnsw(query, top_k);
+                    if !hits.is_empty() {
+                        return Ok(hits);
+                    }
+                    tracing::debug!("GOLD-WIRE-07: HNSW returned 0 hits; brute-force fallback");
+                }
+                Ok(None) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "GOLD-WIRE-07: backend=hnsw but no snapshot exists — \
+                         run `neoth memory --rebuild-index`. Using brute-force for this query."
+                    );
+                }
+                Ok(Some(_)) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        "GOLD-WIRE-07: the HNSW snapshot is empty (0 vectors) — rebuild it AFTER \
+                         embeddings exist via `neoth memory --rebuild-index`. Using brute-force."
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "GOLD-WIRE-07: HNSW snapshot load failed; brute-force fallback"
+                    );
+                }
+            }
+        }
+    }
+    find_similar(conn, query, kind_filter, top_k)
+}
+
+/// GOLD-WIRE-07 — true when the corpus is large enough that a per-query cold
+/// HNSW load+rebuild is worth it. Below [`BRUTE_FORCE_CEILING`] the O(N) cosine
+/// scan is FASTER than deserializing + rebuilding the graph, so recall stays on
+/// brute-force. (The WIRE-07b warm daemon index removes the cold-load cost and
+/// makes HNSW worthwhile at any size; until then this gate prevents a latency
+/// regression for mid-size corpora.)
+pub fn hnsw_beneficial_for_corpus(corpus: usize) -> bool {
+    corpus > BRUTE_FORCE_CEILING
 }
 
 /// Wire-shape tuple shared between the two `query_map` call sites in
@@ -814,6 +897,204 @@ mod tests {
     fn unit(v: Vec<f32>) -> Vec<f32> {
         let n = v.iter().map(|x| x * x).sum::<f32>().sqrt();
         v.into_iter().map(|x| x / n).collect()
+    }
+
+    // ── GOLD-WIRE-07: find_similar_dispatch backend routing ───────────────
+
+    fn seed_vectors(conn: &Connection, kind: &str, n: usize) {
+        for i in 0..n {
+            let mut v = vec![0.0f32; 8];
+            v[i % 8] = 1.0;
+            v[(i + 1) % 8] = 0.5;
+            let v = unit(v);
+            upsert(conn, kind, &format!("{kind}-{i}.png"), "clip", &v).unwrap();
+        }
+    }
+
+    fn q8(a: f32, b: f32) -> Vec<f32> {
+        let mut v = vec![0.0f32; 8];
+        v[0] = a;
+        v[1] = b;
+        unit(v)
+    }
+
+    #[test]
+    fn find_similar_dispatch_brute_force_when_hnsw_path_none() {
+        let conn = open_with_schema();
+        seed_vectors(&conn, "image", 5);
+        let q = q8(1.0, 0.0);
+        let direct = find_similar(&conn, &q, None, 3).unwrap();
+        let dispatched = find_similar_dispatch(&conn, &q, None, 3, None).unwrap();
+        assert_eq!(
+            direct.iter().map(|h| h.id).collect::<Vec<_>>(),
+            dispatched.iter().map(|h| h.id).collect::<Vec<_>>(),
+            "hnsw_path=None must be identical to brute-force find_similar"
+        );
+    }
+
+    #[test]
+    fn find_similar_dispatch_uses_hnsw_snapshot_not_the_conn() {
+        // Build a snapshot from a populated DB, then dispatch against an EMPTY
+        // conn: a non-empty result PROVES the HNSW snapshot was searched (a
+        // brute-force scan of the empty conn would return nothing).
+        let src = open_with_schema();
+        seed_vectors(&src, "image", 20);
+        let idx = EmbeddingIndex::build_from_sqlite(&src, None).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("embeddings.hnsw");
+        idx.save(&path).unwrap();
+
+        let empty = open_with_schema();
+        let q = q8(1.0, 0.5);
+        let hits = find_similar_dispatch(&empty, &q, None, 5, Some(path.as_path())).unwrap();
+        assert!(
+            !hits.is_empty(),
+            "HNSW snapshot must be searched even when the conn is empty"
+        );
+        for w in hits.windows(2) {
+            assert!(
+                w[0].similarity >= w[1].similarity,
+                "hits must be similarity-ordered descending"
+            );
+        }
+    }
+
+    #[test]
+    fn find_similar_dispatch_kind_filter_skips_hnsw() {
+        // A kind-scoped query must use brute-force (HNSW is not kind-filterable).
+        // Snapshot has vectors; the conn is empty → a kind-filtered dispatch
+        // returns empty (brute-force on empty conn), proving HNSW was skipped.
+        let src = open_with_schema();
+        seed_vectors(&src, "image", 20);
+        let idx = EmbeddingIndex::build_from_sqlite(&src, None).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("embeddings.hnsw");
+        idx.save(&path).unwrap();
+
+        let empty = open_with_schema();
+        let q = q8(1.0, 0.5);
+        let hits =
+            find_similar_dispatch(&empty, &q, Some("image"), 5, Some(path.as_path())).unwrap();
+        assert!(
+            hits.is_empty(),
+            "kind-filtered dispatch must brute-force the (empty) conn, NOT the HNSW snapshot"
+        );
+    }
+
+    #[test]
+    fn find_similar_dispatch_missing_snapshot_falls_back_to_brute_force() {
+        let conn = open_with_schema();
+        seed_vectors(&conn, "image", 5);
+        let q = q8(1.0, 0.0);
+        let missing = std::path::Path::new("definitely/no/such/embeddings.hnsw");
+        let hits = find_similar_dispatch(&conn, &q, None, 3, Some(missing)).unwrap();
+        let direct = find_similar(&conn, &q, None, 3).unwrap();
+        assert_eq!(
+            hits.iter().map(|h| h.id).collect::<Vec<_>>(),
+            direct.iter().map(|h| h.id).collect::<Vec<_>>(),
+            "missing snapshot must transparently brute-force the conn"
+        );
+    }
+
+    #[test]
+    fn find_similar_dispatch_corrupt_snapshot_falls_back_without_error() {
+        let conn = open_with_schema();
+        seed_vectors(&conn, "image", 5);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("embeddings.hnsw");
+        std::fs::write(&path, b"not a valid bincode snapshot").unwrap();
+        let q = q8(1.0, 0.0);
+        // Corrupt snapshot must degrade to brute-force, NOT return Err.
+        let hits = find_similar_dispatch(&conn, &q, None, 3, Some(path.as_path())).unwrap();
+        let direct = find_similar(&conn, &q, None, 3).unwrap();
+        assert_eq!(hits.len(), direct.len());
+    }
+
+    #[test]
+    fn hnsw_snapshot_path_is_canonical() {
+        let home = std::path::Path::new("/tmp/neoth-home");
+        assert_eq!(
+            hnsw_snapshot_path(home),
+            std::path::Path::new("/tmp/neoth-home/embeddings.hnsw")
+        );
+    }
+
+    #[test]
+    fn hnsw_beneficial_only_above_brute_force_ceiling() {
+        assert!(!hnsw_beneficial_for_corpus(0));
+        assert!(!hnsw_beneficial_for_corpus(BRUTE_FORCE_CEILING));
+        assert!(hnsw_beneficial_for_corpus(BRUTE_FORCE_CEILING + 1));
+    }
+
+    /// Varied (non-degenerate) unit vectors so the HNSW graph has real
+    /// connectivity — unlike `seed_vectors`' 8 repeating directions.
+    fn seed_varied(conn: &Connection, kind: &str, n: usize) {
+        for i in 0..n {
+            let v: Vec<f32> = (0..16)
+                .map(|j| (((i * 31 + j * 7 + 1) % 17) as f32) + 0.1)
+                .collect();
+            let v = unit(v);
+            upsert(conn, kind, &format!("{kind}-{i}.png"), "clip", &v).unwrap();
+        }
+    }
+
+    #[test]
+    fn find_similar_dispatch_real_hnsw_graph_above_hnsw_m() {
+        // 200 varied vectors is well above HNSW_M=16, so find_similar_hnsw
+        // exercises the REAL graph search (not its small-corpus brute-force
+        // fallback). Empty conn ⇒ a non-empty result proves the snapshot path.
+        let src = open_with_schema();
+        seed_varied(&src, "image", 200);
+        let idx = EmbeddingIndex::build_from_sqlite(&src, None).unwrap();
+        assert!(idx.len() > 16, "must exceed HNSW_M to hit the graph path");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("embeddings.hnsw");
+        idx.save(&path).unwrap();
+
+        let empty = open_with_schema();
+        let query = unit((0..16).map(|j| ((j * 7 + 1) % 17) as f32 + 0.1).collect());
+        let hits = find_similar_dispatch(&empty, &query, None, 10, Some(path.as_path())).unwrap();
+        assert!(!hits.is_empty(), "real HNSW graph search must return hits");
+        for w in hits.windows(2) {
+            assert!(w[0].similarity >= w[1].similarity);
+        }
+    }
+
+    #[test]
+    fn find_similar_dispatch_kind_filter_returns_conn_rows_via_brute_force() {
+        // Positive discriminator: with a populated conn + a present snapshot,
+        // a kind-filtered dispatch returns the CONN's matching rows (brute-
+        // force), proving the kind path bypasses HNSW rather than both paths
+        // being trivially empty.
+        let src = open_with_schema();
+        seed_vectors(&src, "image", 20);
+        let idx = EmbeddingIndex::build_from_sqlite(&src, None).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("embeddings.hnsw");
+        idx.save(&path).unwrap();
+
+        // A DIFFERENT conn with image rows of its own.
+        let conn = open_with_schema();
+        seed_vectors(&conn, "image", 4);
+        seed_vectors(&conn, "audio", 4);
+        let q = q8(1.0, 0.5);
+        let hits =
+            find_similar_dispatch(&conn, &q, Some("image"), 10, Some(path.as_path())).unwrap();
+        assert!(!hits.is_empty(), "kind-filtered brute-force must find conn rows");
+        assert!(
+            hits.iter().all(|h| h.source_kind == "image"),
+            "kind-filtered result must contain ONLY image hits (brute-force on conn), \
+             never the snapshot's unfiltered HNSW results"
+        );
+        assert_eq!(
+            hits.iter().map(|h| h.id).collect::<Vec<_>>(),
+            find_similar(&conn, &q, Some("image"), 10)
+                .unwrap()
+                .iter()
+                .map(|h| h.id)
+                .collect::<Vec<_>>(),
+            "kind-filtered dispatch must equal direct brute-force find_similar"
+        );
     }
 
     #[test]

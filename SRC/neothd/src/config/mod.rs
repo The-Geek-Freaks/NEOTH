@@ -459,6 +459,49 @@ pub struct FreedomConfig {
     /// turns it on so noob operators get audited one-shots automatically.
     #[serde(default)]
     pub audit_rpc: AuditRpcConfig,
+    /// GOLD-WIRE-07 — memory backend tuning. Today: the similarity-recall
+    /// vector-index backend (`brute_force` default | `hnsw`). Default keeps the
+    /// pre-WIRE-07 O(N) scan so existing installs see zero behaviour change.
+    #[serde(default)]
+    pub memory: MemoryConfig,
+}
+
+/// GOLD-WIRE-07 — memory subsystem tuning. One field today
+/// (`vector_index`); a natural home for future retention / decay knobs.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct MemoryConfig {
+    pub vector_index: VectorIndexConfig,
+}
+
+/// GOLD-WIRE-07 — similarity-recall vector-index backend selector.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct VectorIndexConfig {
+    /// `brute_force` (default) is the always-available O(N) cosine scan over
+    /// `idx_embedding`. `hnsw` activates the in-process HNSW index for
+    /// `neoth recall --similar-to*`: the CLI cold-loads `<neoth_home>/
+    /// embeddings.hnsw` per query, falling back to brute-force when the
+    /// snapshot is absent/empty/unreadable OR the corpus is still under the
+    /// brute-force ceiling (~50k) where the scan is faster than a cold load.
+    /// The snapshot is NOT built automatically — run `neoth memory
+    /// --rebuild-index` before HNSW recall returns results. `neoth doctor`
+    /// flags a missing/stale snapshot when `hnsw` is selected.
+    #[serde(default)]
+    pub backend: VectorBackend,
+}
+
+/// GOLD-WIRE-07 — operator-visible vector-index backend. Serialises as
+/// lowercase snake_case (`brute_force` / `hnsw`).
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VectorBackend {
+    /// O(N) cosine scan over `idx_embedding`. Always available. Default.
+    #[default]
+    BruteForce,
+    /// In-process approximate nearest-neighbour via `hnsw_rs`. Opt-in; needs
+    /// a built `embeddings.hnsw` snapshot to be useful (else falls back).
+    Hnsw,
 }
 
 /// AUDIT-RPC-01 — audit-RPC listener config. Default: disabled (the daemon
@@ -2866,6 +2909,42 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::tempdir;
+
+    // ── GOLD-WIRE-07: memory.vector_index.backend ─────────────────────────
+
+    #[test]
+    fn memory_config_defaults_to_brute_force() {
+        assert_eq!(
+            MemoryConfig::default().vector_index.backend,
+            VectorBackend::BruteForce,
+            "default must keep the pre-WIRE-07 brute-force path"
+        );
+        assert_eq!(
+            FreedomConfig::default().memory.vector_index.backend,
+            VectorBackend::BruteForce
+        );
+    }
+
+    #[test]
+    fn vector_backend_serialises_snake_case_and_roundtrips() {
+        let hnsw = serde_yaml::to_string(&VectorBackend::Hnsw).unwrap();
+        assert!(hnsw.contains("hnsw"), "got: {hnsw}");
+        let bf = serde_yaml::to_string(&VectorBackend::BruteForce).unwrap();
+        assert!(bf.contains("brute_force"), "got: {bf}");
+        let back: VectorBackend = serde_yaml::from_str(&hnsw).unwrap();
+        assert_eq!(back, VectorBackend::Hnsw);
+    }
+
+    #[test]
+    fn memory_config_parses_hnsw_from_freedom_yaml() {
+        let dir = tempdir().unwrap();
+        let path = write_yaml(
+            dir.path(),
+            "operator_id: alice\nmemory:\n  vector_index:\n    backend: hnsw\n",
+        );
+        let cfg = FreedomConfig::load_from_path(&path).unwrap();
+        assert_eq!(cfg.memory.vector_index.backend, VectorBackend::Hnsw);
+    }
 
     fn write_yaml(dir: &Path, contents: &str) -> PathBuf {
         let path = dir.join("freedom.yaml");

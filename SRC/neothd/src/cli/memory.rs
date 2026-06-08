@@ -643,8 +643,9 @@ async fn run_memory_rebuild_index(args: &MemoryArgs) -> Result<()> {
         .with_context(|| format!("open views.db for rebuild-index: {}", db_path.display()))?;
 
     // Snapshot lives one level up from the WAL dir, i.e. <neoth_home>/embeddings.hnsw.
+    // GOLD-WIRE-07: resolve via the canonical helper so recall + rebuild agree.
     let neoth_home = FreedomConfig::default_neoth_home();
-    let index_path = neoth_home.join("embeddings.hnsw");
+    let index_path = embeddings::hnsw_snapshot_path(&neoth_home);
 
     let n = tokio::task::spawn_blocking(move || embeddings::rebuild_index(&conn, &index_path))
         .await

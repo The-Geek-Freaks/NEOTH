@@ -502,6 +502,28 @@ const CHECK_DOCS: &[CheckDoc] = &[
               keeps tripping the check.",
     },
     CheckDoc {
+        name: "vector index snapshot",
+        purpose: "GOLD-WIRE-07 advisory. When `memory.vector_index.backend: \
+                  hnsw` is set, `neoth recall --similar-to*` cold-loads the \
+                  `<neoth_home>/embeddings.hnsw` snapshot. This check flags the \
+                  two states where HNSW recall silently degrades: the snapshot \
+                  is ABSENT (recall falls back to brute-force entirely) or STALE \
+                  (the newest `idx_embedding.created_at` is newer than the \
+                  snapshot's mtime, so HNSW recall silently misses every vector \
+                  upserted since the last rebuild). Read-only. Pass for the \
+                  brute-force default + for a present, fresh snapshot; Warn \
+                  otherwise; never Fail (recall always works via fallback).",
+        common_failures: "Operator set `backend: hnsw` but never ran \
+                         `neoth memory --rebuild-index` (absent snapshot); or \
+                         built it once, then ingested more images so the \
+                         snapshot lags the DB (stale).",
+        fix: "Run `neoth memory --rebuild-index` to (re)build the snapshot \
+              from `idx_embedding`. Re-run after any large ingest. Or set \
+              `memory.vector_index.backend: brute_force` to stay on the \
+              always-fresh O(N) scan. (Automatic snapshot freshness via a \
+              daemon warm index is GOLD-WIRE-07b.)",
+    },
+    CheckDoc {
         name: "refusal recovery",
         purpose: "SPEC-10 LOWKEY refusal-recovery health. When the model \
                   refuses a legitimate request, `try_recover` reframes the \
@@ -765,6 +787,7 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_node_toolchain(home),
         check_tmux_for_claude_cli(home),
         check_stuck_claude_processes(home),
+        check_vector_index_snapshot(home),
         check_usage_today(home),
         check_circuit_breakers(home),
         check_provider_flapping(home),
@@ -1483,6 +1506,85 @@ fn check_stuck_claude_processes(home: &Path) -> CheckOutcome {
         crate::providers::claude_pid_hunter::StuckThresholds::default(),
     );
     stuck_processes_outcome(&stuck)
+}
+
+/// True ⇔ `freedom.yaml::memory.vector_index.backend == "hnsw"`. Best-effort
+/// `serde_yaml::Value` walk so a partial/unparseable config (or a missing
+/// `memory` block) reads as "brute_force" rather than tripping the check.
+fn freedom_vector_backend_is_hnsw(home: &Path) -> bool {
+    let Ok(body) = std::fs::read_to_string(home.join("freedom.yaml")) else {
+        return false;
+    };
+    let Ok(val) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return false;
+    };
+    val.get("memory")
+        .and_then(|m| m.get("vector_index"))
+        .and_then(|vi| vi.get("backend"))
+        .and_then(|b| b.as_str())
+        == Some("hnsw")
+}
+
+/// GOLD-WIRE-07 advisory: when the operator selected `memory.vector_index.
+/// backend: hnsw`, surface a missing OR stale `embeddings.hnsw` snapshot —
+/// the two cases where HNSW recall silently falls back to brute-force and
+/// silently MISSES embeddings upserted since the last rebuild. PASS for the
+/// brute-force default (nothing to check) and for a present + fresh snapshot;
+/// WARN (never FAIL — recall still works via fallback) otherwise. Read-only.
+fn check_vector_index_snapshot(home: &Path) -> CheckOutcome {
+    const NAME: &str = "vector index snapshot";
+    if !freedom_vector_backend_is_hnsw(home) {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "backend=brute_force — no HNSW snapshot needed".to_string(),
+        };
+    }
+    let snap = crate::memory::embeddings::hnsw_snapshot_path(home);
+    if !snap.exists() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "backend=hnsw but no snapshot at {} — run `neoth memory --rebuild-index` \
+                 (recall falls back to brute-force until then)",
+                snap.display()
+            ),
+        };
+    }
+    // Freshness: snapshot mtime vs the newest idx_embedding.created_at. A
+    // best-effort read — if either side is unavailable we report present-OK
+    // rather than crying wolf.
+    let snap_mtime = std::fs::metadata(&snap)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
+    let newest_embedding = crate::memory::store::open(&home.join("views.db"))
+        .ok()
+        .and_then(|c| {
+            c.query_row("SELECT MAX(created_at) FROM idx_embedding", [], |r| {
+                r.get::<_, Option<i64>>(0)
+            })
+            .ok()
+            .flatten()
+        });
+    match (snap_mtime, newest_embedding) {
+        (Some(mtime), Some(latest)) if latest > mtime => CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Warn,
+            detail: format!(
+                "HNSW snapshot is STALE — the newest embedding (created_at {latest}) is newer \
+                 than the snapshot ({mtime}); HNSW recall is silently missing recent vectors. \
+                 Run `neoth memory --rebuild-index`."
+            ),
+        },
+        _ => CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "HNSW snapshot present and fresh".to_string(),
+        },
+    }
 }
 
 /// True when `freedom.yaml::provider_kind` is one of the Node-backed
@@ -2540,7 +2642,7 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_thirty() {
+    fn check_docs_listed_count_pinned_at_thirty_one() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
         // coverage) is caught. Bumped to 26 in Session 21 for
@@ -2548,8 +2650,9 @@ mod tests {
         // 27 in Session 28c for `refusal recovery` (SPEC-10);
         // 28 in Session 28c for `local_qwen weights` (SPEC-04);
         // 29 in Session 28c for `n8n_api_token` (SC-08);
-        // 30 in Session 44 for `stuck claude processes` (GOLD-WIRE-05).
-        assert_eq!(CHECK_DOCS.len(), 30);
+        // 30 in Session 44 for `stuck claude processes` (GOLD-WIRE-05);
+        // 31 in Session 44 for `vector index snapshot` (GOLD-WIRE-07).
+        assert_eq!(CHECK_DOCS.len(), 31);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -2595,6 +2698,34 @@ mod tests {
         assert_eq!(out.status, CheckStatus::Pass);
         assert!(
             out.detail.contains("not your provider") || out.detail.contains("skipped"),
+            "got: {}",
+            out.detail
+        );
+    }
+
+    // ── GOLD-WIRE-07: vector index snapshot advisory ──────────────────────
+
+    #[test]
+    fn vector_index_passes_for_brute_force_default() {
+        // No freedom.yaml → backend reads as brute_force → PASS, no snapshot check.
+        let dir = tempdir().unwrap();
+        let out = check_vector_index_snapshot(dir.path());
+        assert_eq!(out.status, CheckStatus::Pass);
+        assert!(out.detail.contains("brute_force"), "got: {}", out.detail);
+    }
+
+    #[test]
+    fn vector_index_warns_when_hnsw_and_no_snapshot() {
+        let dir = tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "operator_id: alice\nmemory:\n  vector_index:\n    backend: hnsw\n",
+        )
+        .unwrap();
+        let out = check_vector_index_snapshot(dir.path());
+        assert_eq!(out.status, CheckStatus::Warn);
+        assert!(
+            out.detail.contains("no snapshot") && out.detail.contains("rebuild-index"),
             "got: {}",
             out.detail
         );
@@ -3258,8 +3389,9 @@ mod tests {
         // mDNS announcer (Session 21 bite #2) + refusal recovery
         // (Session 28c, SPEC-10) + local_qwen weights (Session 28c, SPEC-04)
         // + n8n_api_token (Session 28c, SC-08) + stuck claude processes
-        // (Session 44, GOLD-WIRE-05).
-        assert_eq!(outs.len(), 30);
+        // (Session 44, GOLD-WIRE-05) + vector index snapshot (Session 44,
+        // GOLD-WIRE-07).
+        assert_eq!(outs.len(), 31);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }
