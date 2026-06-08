@@ -478,6 +478,30 @@ const CHECK_DOCS: &[CheckDoc] = &[
               `freedom.yaml::claude_cli.backend: subprocess`.",
     },
     CheckDoc {
+        name: "stuck claude processes",
+        purpose: "GOLD-WIRE-05 PID-hunter probe. A `claude` / `claude-cli` \
+                  process can hang mid tool-call, on a closed OAuth browser, \
+                  or on a stale WebSocket — the tmux session still looks live \
+                  (low idle_secs) but the pane is unresponsive, so only \
+                  PID-CPU monitoring catches it. Scans the process table for \
+                  processes past the runtime floor (15 min) at idle CPU \
+                  (< 1%). Gated on top-level `provider_kind == claude_cli` so \
+                  other providers skip the scan — a claude_cli pinned ONLY in \
+                  a per-hemisphere slot is not scanned yet (same scope as the \
+                  tmux check). Warn when one is found; never Fail (a hung \
+                  process is recoverable, not a broken install).",
+        common_failures: "claude-cli wedged after an interrupted tool-call or \
+                         an OAuth login where the browser tab was closed \
+                         before the callback; a build/test loop that spawned \
+                         a claude child which never exited.",
+        fix: "Confirm the flagged PID is NOT your active foreground claude \
+              session, then kill it — Unix: `kill <pid>` (then `kill -9 <pid>` \
+              if it ignores SIGTERM); Windows: `taskkill /PID <pid>` (add `/F` \
+              to force). Re-run `neoth doctor` to confirm it cleared. Raise \
+              the idle-CPU floor in code if a legitimate low-CPU long-runner \
+              keeps tripping the check.",
+    },
+    CheckDoc {
         name: "refusal recovery",
         purpose: "SPEC-10 LOWKEY refusal-recovery health. When the model \
                   refuses a legitimate request, `try_recover` reframes the \
@@ -740,6 +764,7 @@ pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
         check_channels_wiring(home),
         check_node_toolchain(home),
         check_tmux_for_claude_cli(home),
+        check_stuck_claude_processes(home),
         check_usage_today(home),
         check_circuit_breakers(home),
         check_provider_flapping(home),
@@ -1394,6 +1419,70 @@ fn check_tmux_for_claude_cli(home: &Path) -> CheckOutcome {
                 .to_string(),
         },
     }
+}
+
+/// GOLD-WIRE-05 — pure render: map the PID hunter's stuck-process list to a
+/// doctor `CheckOutcome`. Empty → PASS; any stuck process → WARN (never
+/// FAIL — a hung process is a recoverable runtime condition, not a broken
+/// install). Kept pure + separate from the scan so the WARN/PASS mapping is
+/// unit-testable without spawning processes. Deliberately does NOT echo
+/// `claude_pid_hunter::stuck_hint()`, whose copy points at the not-yet-built
+/// `neoth doctor stuck-clean` / `neoth chat reset` commands — operator
+/// guidance here references only real, available recovery actions.
+fn stuck_processes_outcome(
+    stuck: &[crate::providers::claude_pid_hunter::StuckProcess],
+) -> CheckOutcome {
+    const NAME: &str = "stuck claude processes";
+    if stuck.is_empty() {
+        return CheckOutcome {
+            name: NAME,
+            status: CheckStatus::Pass,
+            detail: "no stuck claude processes".to_string(),
+        };
+    }
+    let listed: Vec<String> = stuck
+        .iter()
+        .map(|s| {
+            format!(
+                "pid {} ({}, {}m idle)",
+                s.meta.pid,
+                s.meta.name,
+                s.meta.runtime.as_secs() / 60
+            )
+        })
+        .collect();
+    CheckOutcome {
+        name: NAME,
+        status: CheckStatus::Warn,
+        detail: format!(
+            "{} stuck claude process(es): {} — each past the runtime floor at idle CPU \
+             (likely hung mid tool-call or on a closed OAuth browser). Confirm it is \
+             not your active session, then kill the PID (Unix: `kill <pid>`; Windows: \
+             `taskkill /PID <pid>`).",
+            stuck.len(),
+            listed.join(", ")
+        ),
+    }
+}
+
+/// GOLD-WIRE-05 — flag `claude` processes the PID hunter classifies as
+/// stuck (past the runtime floor at idle CPU). Gated on claude_cli being the
+/// configured provider so operators on local_qwen / cloud APIs don't pay for
+/// a process-table scan that can never find a relevant process. PASS when
+/// claude_cli isn't configured or no stuck process is found; WARN listing
+/// the offending PIDs otherwise.
+fn check_stuck_claude_processes(home: &Path) -> CheckOutcome {
+    if !freedom_uses_claude_cli(home) {
+        return CheckOutcome {
+            name: "stuck claude processes",
+            status: CheckStatus::Pass,
+            detail: "claude_cli not your provider — process scan skipped".to_string(),
+        };
+    }
+    let stuck = crate::providers::claude_pid_hunter::scan_stuck_processes_blocking(
+        crate::providers::claude_pid_hunter::StuckThresholds::default(),
+    );
+    stuck_processes_outcome(&stuck)
 }
 
 /// True when `freedom.yaml::provider_kind` is one of the Node-backed
@@ -2451,15 +2540,64 @@ mod tests {
     }
 
     #[test]
-    fn check_docs_listed_count_pinned_at_twenty_nine() {
+    fn check_docs_listed_count_pinned_at_thirty() {
         // Pin the count so a future addition is a conscious update + a
         // future deletion (which would silently drop operator runbook
         // coverage) is caught. Bumped to 26 in Session 21 for
         // `cluster mDNS announcer` (Bite #2 announcer state surface);
         // 27 in Session 28c for `refusal recovery` (SPEC-10);
         // 28 in Session 28c for `local_qwen weights` (SPEC-04);
-        // 29 in Session 28c for `n8n_api_token` (SC-08).
-        assert_eq!(CHECK_DOCS.len(), 29);
+        // 29 in Session 28c for `n8n_api_token` (SC-08);
+        // 30 in Session 44 for `stuck claude processes` (GOLD-WIRE-05).
+        assert_eq!(CHECK_DOCS.len(), 30);
+    }
+
+    // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
+
+    #[test]
+    fn stuck_processes_outcome_passes_when_none() {
+        let out = stuck_processes_outcome(&[]);
+        assert_eq!(out.status, CheckStatus::Pass);
+        assert_eq!(out.name, "stuck claude processes");
+        assert!(out.detail.contains("no stuck"), "got: {}", out.detail);
+    }
+
+    #[test]
+    fn stuck_processes_outcome_warns_and_lists_pid() {
+        // Acceptance: a stuck claude process surfaces as WARN in doctor
+        // output, with its PID + idle minutes shown.
+        use crate::providers::claude_pid_hunter::{ProcessMeta, StuckProcess, StuckThresholds};
+        let stuck = vec![StuckProcess {
+            meta: ProcessMeta {
+                pid: 4242,
+                name: "claude".into(),
+                runtime: std::time::Duration::from_secs(18 * 60),
+                cpu_pct: 0.1,
+            },
+            thresholds: StuckThresholds::default(),
+            hint: "x",
+        }];
+        let out = stuck_processes_outcome(&stuck);
+        assert_eq!(out.status, CheckStatus::Warn);
+        assert!(out.detail.contains("pid 4242"), "must name the PID: {}", out.detail);
+        assert!(out.detail.contains("18m idle"), "must show idle minutes: {}", out.detail);
+        // Honesty: must NOT point at the not-yet-built stuck-clean / reset cmds.
+        assert!(!out.detail.contains("stuck-clean"));
+        assert!(!out.detail.contains("chat reset"));
+    }
+
+    #[test]
+    fn check_stuck_claude_processes_skips_when_not_claude_cli() {
+        // No freedom.yaml → freedom_uses_claude_cli is false → PASS skip,
+        // and crucially NO process-table scan runs.
+        let dir = tempdir().unwrap();
+        let out = check_stuck_claude_processes(dir.path());
+        assert_eq!(out.status, CheckStatus::Pass);
+        assert!(
+            out.detail.contains("not your provider") || out.detail.contains("skipped"),
+            "got: {}",
+            out.detail
+        );
     }
 
     #[test]
@@ -3114,13 +3252,14 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 29 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // 30 checks: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
         // flapping + cluster registry (Phase 4 follow-on) + cluster
         // mDNS announcer (Session 21 bite #2) + refusal recovery
         // (Session 28c, SPEC-10) + local_qwen weights (Session 28c, SPEC-04)
-        // + n8n_api_token (Session 28c, SC-08).
-        assert_eq!(outs.len(), 29);
+        // + n8n_api_token (Session 28c, SC-08) + stuck claude processes
+        // (Session 44, GOLD-WIRE-05).
+        assert_eq!(outs.len(), 30);
         for o in &outs {
             assert!(!o.detail.is_empty(), "{} has empty detail", o.name);
         }

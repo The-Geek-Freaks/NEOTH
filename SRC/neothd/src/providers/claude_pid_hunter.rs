@@ -14,12 +14,12 @@
 //!   2. For each, compute runtime + recent CPU usage.
 //!   3. Mark "stuck" any process with runtime > stuck_threshold
 //!      AND avg recent CPU < idle_cpu_threshold.
-//!   4. Operator-side: surface for `neoth doctor` first, then
-//!      kill-after-confirm via `neoth chat reset --force`. Auto-kill
-//!      lands later behind an explicit `freedom.yaml::claude_cli.
-//!      stuck_cleaner.auto_kill: true` opt-in (off by default per
-//!      the AGENTER hard rule "no destructive auto-action without
-//!      operator GO per command").
+//!   4. Operator-side: surface for `neoth doctor` first (shipped as a
+//!      WARN check, GOLD-WIRE-05), then kill-after-confirm MANUALLY
+//!      (`kill` / `taskkill`). Auto-kill lands later behind an explicit
+//!      `freedom.yaml::claude_cli.stuck_cleaner.auto_kill: true` opt-in
+//!      (off by default per the AGENTER hard rule "no destructive
+//!      auto-action without operator GO per command").
 //!
 //! Scope (this commit):
 //!   - Pure-fn `classify_process(meta, threshold)` so the policy is
@@ -31,9 +31,10 @@
 //!     idle_cpu=1% — drift-guarded so an upstream bridge tune
 //!     surfaces in test output.
 //!
-//! Wiring (deferred): `neoth doctor stuck-clean` CLI surface + the
-//! auto-kill opt-in. The primitive is the bounded ship; surfaces
-//! land when operator UX is locked in.
+//! Wiring: the `neoth doctor` WARN check shipped in GOLD-WIRE-05
+//! (`cli/doctor.rs::check_stuck_claude_processes`). Still deferred: a
+//! dedicated `neoth doctor stuck-clean` review/kill subcommand + the
+//! auto-kill opt-in — those land when the operator UX is locked in.
 
 use std::time::Duration;
 
@@ -76,8 +77,8 @@ pub struct ProcessMeta {
 
 /// Operator-facing summary of one process the hunter flagged as
 /// stuck. Carries the inputs that drove the classification so
-/// `neoth doctor stuck-clean` can show "why it's stuck" without
-/// re-running the scan.
+/// `neoth doctor` can show "why it's stuck" without re-running the
+/// scan.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StuckProcess {
     pub meta: ProcessMeta,
@@ -111,10 +112,16 @@ pub fn classify_stuck(meta: &ProcessMeta, thresholds: &StuckThresholds) -> bool 
 /// Returned as `&'static str` so the hint never allocates per
 /// process — useful when a scan finds dozens of stuck workers.
 pub fn stuck_hint() -> &'static str {
-    "claude process is past stuck threshold + idle CPU — likely \
-     hung mid tool-call or waiting on a closed OAuth browser. Run \
-     `neoth doctor stuck-clean` to review, or kill via `neoth chat \
-     reset --force` after confirming it's not your foreground claude."
+    // GOLD-WIRE-05: references only real, shipped recovery. `neoth doctor`
+    // now surfaces this as a WARN check (see cli/doctor.rs); the kill is
+    // manual. The earlier copy named `neoth doctor stuck-clean` + `neoth
+    // chat reset --force`, neither of which exists — removed so this string
+    // is safe to display anywhere.
+    "claude process is past the stuck threshold + idle CPU — likely \
+     hung mid tool-call or waiting on a closed OAuth browser. `neoth \
+     doctor` flags it as a WARN; after confirming it is not your active \
+     foreground claude, kill the PID (`kill <pid>` on Unix, \
+     `taskkill /PID <pid>` on Windows)."
 }
 
 /// Enumerate live processes via `sysinfo::System` + classify with
@@ -129,15 +136,33 @@ pub async fn scan_stuck_processes(thresholds: StuckThresholds) -> Vec<StuckProce
         .unwrap_or_default()
 }
 
+/// GOLD-WIRE-05 — synchronous entry point for the `neoth doctor` check
+/// registry. `run_all_checks` is a sync function (every diagnostic returns
+/// its `CheckOutcome` directly), so it cannot `.await` the async
+/// [`scan_stuck_processes`]. The `spawn_blocking` hop in the async variant
+/// exists to keep the daemon's tokio reactor free; the one-shot `neoth
+/// doctor` CLI has no such constraint, so it blocks its own calling thread
+/// for the single process-table scan. Same `scan_blocking` core, same
+/// classification — only the threading wrapper differs.
+pub fn scan_stuck_processes_blocking(thresholds: StuckThresholds) -> Vec<StuckProcess> {
+    scan_blocking(thresholds)
+}
+
 fn scan_blocking(thresholds: StuckThresholds) -> Vec<StuckProcess> {
     let mut sys = System::new_with_specifics(
         RefreshKind::new().with_processes(ProcessRefreshKind::everything()),
     );
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
-    // Second refresh gives a non-zero CPU% delta for processes that
-    // were stable across the two snapshots. Without this the first
-    // refresh always reports 0% which would false-flag every long
-    // runner as stuck.
+    // The second refresh gives a non-zero CPU% delta. sysinfo computes
+    // cpu_usage() as (busy time / wall time) BETWEEN two refreshes — and
+    // requires at least `MINIMUM_CPU_UPDATE_INTERVAL` (200ms on Win/Linux/
+    // macOS) to elapse, or it reports ~0% for every process. Without the
+    // sleep, two back-to-back refreshes leave a microsecond window → every
+    // long-running claude reads 0% CPU → false-flagged as stuck. Sleeping
+    // the platform minimum makes the reading real. This is off the tokio
+    // reactor: the async entry wraps `scan_blocking` in `spawn_blocking`,
+    // and the `neoth doctor` CLI blocks only its own (otherwise idle) thread.
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All, true);
     let mut out = Vec::new();
     for (pid, proc_) in sys.processes() {
@@ -258,12 +283,23 @@ mod tests {
     }
 
     #[test]
-    fn stuck_hint_mentions_recovery_command() {
+    fn stuck_hint_points_at_real_recovery_only() {
         let h = stuck_hint();
         // Operator must see WHERE to act. Pin so a future re-word
         // doesn't drop the recovery pointer.
         assert!(h.contains("neoth doctor"));
-        assert!(h.contains("neoth chat reset"));
+        assert!(h.to_ascii_lowercase().contains("kill"));
+        // GOLD-WIRE-05 honesty guard: the hint must NOT name commands that
+        // don't exist. This flips the old test (which PINNED the phantom
+        // `neoth chat reset`) into a guard against re-introducing them.
+        assert!(
+            !h.contains("stuck-clean"),
+            "stuck_hint references the unbuilt `neoth doctor stuck-clean`"
+        );
+        assert!(
+            !h.contains("chat reset"),
+            "stuck_hint references the unbuilt `neoth chat reset`"
+        );
     }
 
     #[tokio::test]
