@@ -41,16 +41,25 @@ pub mod bitwarden;
 /// AES-256-CBC + HMAC-SHA256 envelope. Returns the unencrypted JSON
 /// of vault items ready for `bitwarden::parse_export_str`.
 pub mod bitwarden_encrypted;
+// GOLD-SEC-18: the browser-credential-decrypt tree (Chrome + Firefox saved
+// passwords) is gated behind the `browser-import` feature — OFF by default,
+// including in shipped release binaries, so the stock binary cannot read
+// browser password stores. Opt in with `--features browser-import`.
+#[cfg(feature = "browser-import")]
 pub mod chrome;
-#[cfg(target_os = "linux")]
+#[cfg(all(feature = "browser-import", target_os = "linux"))]
 pub mod chrome_linux;
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "browser-import", target_os = "macos"))]
 pub mod chrome_macos;
-#[cfg(target_os = "windows")]
+#[cfg(all(feature = "browser-import", target_os = "windows"))]
 pub mod chrome_windows;
+#[cfg(feature = "browser-import")]
 pub mod firefox;
+#[cfg(feature = "browser-import")]
 pub mod firefox_envelope;
+#[cfg(feature = "browser-import")]
 pub mod firefox_key4db;
+#[cfg(feature = "browser-import")]
 pub mod firefox_pbes2;
 pub mod wizard_step;
 

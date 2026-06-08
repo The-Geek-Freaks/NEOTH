@@ -13,7 +13,10 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::credentials::bitwarden::BitwardenJsonImporter;
+// GOLD-SEC-18: browser importers only exist with the `browser-import` feature.
+#[cfg(feature = "browser-import")]
 use crate::credentials::chrome::ChromeImporter;
+#[cfg(feature = "browser-import")]
 use crate::credentials::firefox::FirefoxImporter;
 use crate::credentials::{CredentialImporter, ImportSession, ImporterOutcome, build_import_record};
 use crate::secret::SecretString;
@@ -105,17 +108,23 @@ pub fn build_wizard_importer_list(
         }
         out.push(Box::new(importer));
     }
-    out.push(Box::new(ChromeImporter));
-    // C-04b Phase 2 chunk 3 (Session 28) — the Firefox importer
-    // now carries the operator's primary password. The wizard's
-    // step-6 default path constructs with no-primary-password (the
-    // vast-majority install case); the interactive prompt branch
-    // calls `FirefoxImporter::new(SecretString::new(prompt))` when
-    // the operator has a primary password set. The non-interactive
-    // path always uses `with_no_primary_password()` — operators
-    // with a primary-password-protected profile must use the
-    // interactive wizard or rerun with a future SC-flagged env-var.
-    out.push(Box::new(FirefoxImporter::with_no_primary_password()));
+    // GOLD-SEC-18: the Chrome + Firefox importers are compiled in only with the
+    // `browser-import` feature (OFF by default + in release). Without it the
+    // wizard's credential-import step offers only the Bitwarden-export path.
+    #[cfg(feature = "browser-import")]
+    {
+        out.push(Box::new(ChromeImporter));
+        // C-04b Phase 2 chunk 3 (Session 28) — the Firefox importer
+        // now carries the operator's primary password. The wizard's
+        // step-6 default path constructs with no-primary-password (the
+        // vast-majority install case); the interactive prompt branch
+        // calls `FirefoxImporter::new(SecretString::new(prompt))` when
+        // the operator has a primary password set. The non-interactive
+        // path always uses `with_no_primary_password()` — operators
+        // with a primary-password-protected profile must use the
+        // interactive wizard or rerun with a future SC-flagged env-var.
+        out.push(Box::new(FirefoxImporter::with_no_primary_password()));
+    }
     out
 }
 
@@ -197,12 +206,19 @@ mod tests {
 
     // ── build_wizard_importer_list ────────────────────────────────
 
+    /// Number of browser importers (Chrome + Firefox) the list carries —
+    /// 2 with the `browser-import` feature, 0 without (GOLD-SEC-18).
+    #[cfg(feature = "browser-import")]
+    const BROWSER_IMPORTERS: usize = 2;
+    #[cfg(not(feature = "browser-import"))]
+    const BROWSER_IMPORTERS: usize = 0;
+
     #[test]
-    fn build_list_without_bitwarden_path_has_chrome_and_firefox() {
+    fn build_list_without_bitwarden_path_has_browser_importers_only_when_gated() {
         let list = build_wizard_importer_list(None, None);
-        assert_eq!(list.len(), 2);
-        // Both chrome + firefox importers are WizardPrompt source
-        // (their gated impls).
+        assert_eq!(list.len(), BROWSER_IMPORTERS);
+        // Both chrome + firefox importers are WizardPrompt source (their gated
+        // impls); with the feature off the list is simply empty.
         for imp in &list {
             assert_eq!(imp.source(), ImportSource::WizardPrompt);
         }
@@ -214,7 +230,7 @@ mod tests {
         let path = dir.path().join("export.json");
         std::fs::write(&path, "{}").unwrap();
         let list = build_wizard_importer_list(Some(&path), None);
-        assert_eq!(list.len(), 3);
+        assert_eq!(list.len(), 1 + BROWSER_IMPORTERS);
         // Bitwarden lands first.
         assert_eq!(list[0].source(), ImportSource::Bitwarden);
     }

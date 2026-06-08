@@ -54,6 +54,18 @@ imap_fetch = ["dep:async-imap", "dep:tokio-rustls", "dep:webpki-roots", "dep:mai
 # (pure data, no `arboard` dependency) so the autonomy mapping is always testable.
 os-clipboard = ["dep:arboard"]
 
+# GOLD-SEC-18 (B-06/B-13) — browser-credential-decrypt tree (Chrome + Firefox
+# saved-password import: `credentials::{chrome*,firefox*}`). This reads + AES/
+# DPAPI-decrypts the operator's locally-stored browser passwords — the single
+# most sensitive capability in the binary. UNLIKE the other features it is kept
+# OFF in shipped release binaries too (NOT flipped on in release.yml): a stock
+# `neoth` download cannot touch browser password stores at all, shrinking the
+# attack surface to zero for the common operator. Opt in by building with
+# `--features browser-import` (the wizard's credential-import step then offers
+# Chrome/Firefox alongside the always-available Bitwarden-export importer).
+# No extra crate deps — the crypto primitives (aes, pbkdf2, hmac) are shared.
+browser-import = []
+
 # D14b Phase 2c — GPU acceleration for local_qwen. Pin per-platform
 # so contributors building on a non-GPU laptop don't fight CUDA
 # toolkit setup. Default OFF; release binaries flip ON via cargo-dist
