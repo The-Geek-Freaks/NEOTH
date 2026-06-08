@@ -1,0 +1,1865 @@
+//! `neoth serve` inbound-message pipeline — extracted verbatim from
+//! `cli/serve.rs` (GOLD-ARCH-01 part 1, pure relocation, no behaviour change).
+//!
+//! Holds the channel-side inbound pipeline: [`build_pipeline_handler`] (the
+//! per-message closure the channel adapters drive), its captured-deps bundle
+//! [`PipelineHandlerDeps`], and the pipeline-only helpers
+//! `channel_skill_allowlist`, `emit_channel_privilege_blocked`, and
+//! `handle_media_attachment`.
+//!
+//! The shared security-audit helper `emit_required_audit` stays in `serve.rs`
+//! (it is also used by the daemon-side `handle_reload_sentinel`) and is reached
+//! here via `crate::cli::serve::emit_required_audit`.
+
+use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use anyhow::{Context, Result};
+use tracing::{info, warn};
+
+use crate::channels::{InboundMessage, OutboundMessage, PipelineHandler};
+use crate::cli::serve::emit_required_audit;
+use crate::config::FreedomConfig;
+use crate::memory::store;
+use crate::providers::{Provider, Request};
+use crate::wal::events::{
+    EVENT_TYPE_CHANNEL_EGRESS, EVENT_TYPE_CHANNEL_INGRESS, EVENT_TYPE_RAW_TEXT,
+};
+use crate::wal::writer::WalWriterHandle;
+
+/// Captured dependencies for `build_pipeline_handler`. K-Wire-3 v0
+/// (Session 13): replaces a 9-argument signature that previously needed
+/// `#[allow(clippy::too_many_arguments)]`. Construct at the call site,
+/// then pass once. Fields stay `pub(crate)` so future channel adapters
+/// (Slack, WhatsApp, Discord) can build the same closure without
+/// re-listing every captured value.
+pub(crate) struct PipelineHandlerDeps {
+    pub(crate) provider: Arc<dyn Provider>,
+    pub(crate) writer: WalWriterHandle,
+    pub(crate) operator_id: Option<String>,
+    pub(crate) autonomy: crate::permissions::AutonomyLevel,
+    /// GM-01 — operator-tunable MCP dispatch-loop iteration ceiling
+    /// (`freedom.yaml::goal.max_turns`).
+    pub(crate) goal_max_turns: u32,
+    pub(crate) meter: crate::providers::meter::Meter,
+    pub(crate) rate_limiter: Arc<crate::channels::rate_limit::RateLimiter>,
+    /// Segment path the channel-side profile pipeline replays before
+    /// reading idx_episode. Same path the daemon's tail-indexer uses;
+    /// `indexer::replay_once` is cursor-based + idempotent.
+    pub(crate) segment_path: std::path::PathBuf,
+    /// Opt-in profile-learning policy. When `learn_enabled: true`,
+    /// channels (Telegram / WhatsApp / Slack) grow the operator-profile
+    /// passively the same way `neoth chat` does. Default off — paid-
+    /// cloud operators don't get a surprise 2× token bill per inbound
+    /// message.
+    pub(crate) profile_config: crate::config::ProfileConfig,
+    /// Pick #39 (Session 14, hot-reload live-propagation): instead of
+    /// capturing a frozen `Arc<FreedomConfig>` at handler-build time,
+    /// the handler now carries the `ReloadController`. Every inbound
+    /// message calls `reload_controller.latest()` once at the top of
+    /// the closure body — that snapshot is then used for the whole
+    /// turn, so tunable fields (`council.selection_mode`,
+    /// `code_map.auto_context_max_files`, autonomy level, etc.)
+    /// reflect any operator-triggered `neoth reload` since the prior
+    /// message. Immutable fields stay rejected at validate-time per
+    /// Pick #37 (which is why the provider Arc + channel adapters
+    /// are still safe to use without rebuild).
+    pub(crate) reload_controller: Arc<crate::config::reload::ReloadController>,
+    /// Pick #38 (Session 14, Perf #11 fix): shared `views.db`
+    /// connection that survives across inbound messages, eliminating
+    /// the ~10ms per-message `store::open` overhead. `None` when
+    /// startup couldn't open or drain views.db — handler falls back
+    /// to per-call open so the channel path still works.
+    pub(crate) views_conn: Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+}
+
+/// SC-11 — derive the MCP `tool_allowlist` that scopes a single channel
+/// inbound from the routed skill. `None` (no skill matched this turn) lets
+/// the gate allow every tool; `Some(empty)` (the manifest default) also
+/// allows all; `Some(non-empty)` restricts the model to the listed tools.
+/// Extracted from the inline channel-handler derivation so the mapping is
+/// unit-testable in isolation — the handler closure itself is not directly
+/// callable. The same value flows into `run_mcp_dispatch_loop` exactly as
+/// on the `neoth chat` path, closing the channel-bypass gap.
+pub(crate) fn channel_skill_allowlist(
+    skill: Option<&crate::skills::schema::Skill>,
+) -> Option<Vec<String>> {
+    skill.map(|s| s.manifest.tool_allowlist.clone())
+}
+
+/// ADV-09: `0x3C CHANNEL_PRIVILEGE_BLOCKED` audit frame for a destructive
+/// operator slash-action rejected by the channel privilege ceiling. Carries
+/// only the channel name + numeric sender id + the `SlashAction::as_str()` wire
+/// name — never message text. The rejection already happened; per GOLD-COR-04
+/// the audit write is routed through [`emit_required_audit`] so a lost frame is
+/// surfaced at error level rather than silently dropped.
+pub(crate) async fn emit_channel_privilege_blocked(
+    writer: &WalWriterHandle,
+    channel: &str,
+    sender_id: &str,
+    action: &str,
+) {
+    let ts_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = match serde_json::to_vec(&serde_json::json!({
+        "channel": channel,
+        "sender_id": sender_id,
+        "action": action,
+        "ts_unix": ts_unix,
+    })) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(error = %e, "serialize CHANNEL_PRIVILEGE_BLOCKED failed");
+            return;
+        }
+    };
+    emit_required_audit(
+        writer,
+        crate::wal::events::EVENT_TYPE_CHANNEL_PRIVILEGE_BLOCKED,
+        "CHANNEL_PRIVILEGE_BLOCKED",
+        payload,
+    )
+    .await;
+}
+
+/// Build the per-channel pipeline handler closure. Captured: provider trait
+/// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
+/// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
+/// reply.
+pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandler {
+    let PipelineHandlerDeps {
+        provider,
+        writer,
+        operator_id,
+        autonomy,
+        goal_max_turns,
+        meter,
+        rate_limiter,
+        segment_path,
+        profile_config,
+        reload_controller,
+        views_conn,
+    } = deps;
+    Box::new(move |inbound: InboundMessage| {
+        let provider = Arc::clone(&provider);
+        let writer = writer.clone();
+        let operator_id = operator_id.clone();
+        let meter = meter.clone();
+        let rate_limiter = Arc::clone(&rate_limiter);
+        let segment_path = segment_path.clone();
+        let profile_config = profile_config.clone();
+        // Pick #39 (Session 14, hot-reload live-propagation): snapshot
+        // the live config ONCE at the top of the handler. Tunables
+        // reflect any `neoth reload` since the previous message;
+        // immutable fields are guaranteed stable by the validator at
+        // reload-time. Single `latest()` call per inbound means
+        // mid-message config-flip is impossible.
+        let config_for_handler = reload_controller.latest();
+        let views_conn = views_conn.clone();
+        Box::pin(async move {
+            let mut inbound = inbound;
+            // PII guard: the sender id is a phone number for WhatsApp. Hash it
+            // ONCE and use the hash in every WAL frame + tracing line on the
+            // inbound path — the plaintext id stays in-process only (rate
+            // limiter, permission gate, identity resolve), never on disk.
+            let sender_hash =
+                format!("{:016x}", xxhash_rust::xxh3::xxh3_64(inbound.sender_id.as_bytes()));
+            // ── SPEC-11: cross-channel identity resolve ────────────────────
+            // Stamp `human_uuid` from the `(channel, sender_id, chat_id)` triple
+            // so downstream + the WAL can attribute this message to a stable
+            // person, and `neoth identity list/merge` has rows to operate on.
+            // Best-effort: a DB/resolver error leaves `human_uuid = None`. The
+            // shared views_conn guard is dropped before any later await.
+            if let Some(vc) = &views_conn {
+                let conn = vc.lock().await;
+                match crate::channels::identity::resolve_or_create_human_uuid(
+                    &conn,
+                    inbound.channel.as_str(),
+                    &inbound.sender_id,
+                    &inbound.chat_id,
+                ) {
+                    Ok(uuid) => inbound.human_uuid = Some(uuid),
+                    Err(e) => {
+                        tracing::debug!(error = %e, "identity: human_uuid resolve failed (best-effort)")
+                    }
+                }
+            }
+            // ── SD-03: edited-message audit (WAL 0x38 CHANNEL_EDIT) ────────
+            // An inbound edit is observed-only: record a hashed audit frame
+            // and return WITHOUT re-running the provider pipeline (no reply,
+            // no cost, no permission gate). No raw text in the payload (PII) —
+            // mirror the CHANNEL_INGRESS hash contract (xxh3-64).
+            // `edit_unix.is_some()` is the edit signal set by the adapter.
+            // Schema note: `sender_display` is deliberately omitted (PII); only
+            // the numeric `sender_id` is recorded. Do not add it.
+            if let Some(edit_ts_unix) = inbound.edit_unix {
+                let new_text = inbound.text.as_deref().unwrap_or("");
+                match serde_json::to_vec(&serde_json::json!({
+                    "channel": inbound.channel,
+                    "chat_id": inbound.chat_id,
+                    "message_id": inbound.message_id,
+                    "sender_id_hash": sender_hash,
+                    "new_text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(new_text.as_bytes()),
+                    "new_text_bytes": new_text.len(),
+                    "edit_ts_unix": edit_ts_unix,
+                    "ts_unix": inbound.channel_ts_unix,
+                })) {
+                    Ok(edit_payload) => {
+                        let edit_header = crate::wal::make_header(
+                            crate::wal::events::EVENT_TYPE_CHANNEL_EDIT,
+                            &edit_payload,
+                        );
+                        if let Err(e) = writer.append(edit_header, edit_payload).await {
+                            warn!(error = %e, "WAL append CHANNEL_EDIT (0x38) frame failed");
+                        }
+                    }
+                    Err(e) => warn!(error = %e, "serialize CHANNEL_EDIT (0x38) frame failed"),
+                }
+                info!(
+                    channel = inbound.channel.as_str(),
+                    sender_hash = %sender_hash,
+                    "inbound message edit recorded (audit-only, no re-run)"
+                );
+                return Ok(::std::option::Option::None);
+            }
+
+            // R-9 multimodal: if the inbound message carries a media
+            // attachment, run it through the extraction pipeline first.
+            // The result either replaces `text` (audio → transcript) or
+            // surfaces as an operator-facing acknowledgement (image →
+            // "embedding cached"). Text-bearing messages with no media
+            // skip this branch entirely. Audit frames
+            // (INGEST_EXTRACTED + EMBED_PERSISTED) are emitted via the
+            // daemon's primary writer so the channel-side pipeline
+            // stays consistent with `neoth ingest`.
+            let effective_text: Option<String> = if let Some(media) = inbound.media.clone() {
+                match handle_media_attachment(&inbound, &media, Some(&writer))
+                    .await
+                {
+                    Ok(text) => Some(text),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "media attachment pipeline failed");
+                        Some(format!("[NEOTH] media pipeline error: {e}"))
+                    }
+                }
+            } else {
+                inbound.text.clone()
+            };
+
+            let Some(raw_text) = effective_text.as_deref() else {
+                info!(
+                    channel = inbound.channel.as_str(),
+                    sender_hash = %sender_hash,
+                    "inbound message has no text payload + no media; dropping silently"
+                );
+                return Ok(::std::option::Option::None);
+            };
+            let channel_str = inbound.channel.as_str();
+
+            // ── PreChannelIngress hooks (Phase 29 R-15) ───────────────────
+            // Fire operator-defined hooks before the sanitizer + WAL
+            // ingress frame. A Replace rewrites the inbound text (e.g.
+            // redact secrets that the operator typo'd into a channel);
+            // a Block silently drops the turn (no reply, no WAL ingress
+            // frame). Empty hook set → no-op.
+            let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
+            // Pick #34 (Session 14, silent-failure audit-fix): hook load
+            // failures now surface at warn level. Prior `unwrap_or_default()`
+            // silently disabled every hook on a single bad TOML file.
+            let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
+                warn!(
+                    error = %e,
+                    dir = %hook_dir.display(),
+                    "hook load failed — proceeding with empty hook set"
+                );
+                Default::default()
+            });
+            let hooked_text: String = match crate::hooks::run_stage(
+                crate::hooks::HookStage::PreChannelIngress,
+                raw_text,
+                &hooks,
+            ) {
+                Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
+                    for name in &hits {
+                        let payload = match serde_json::to_vec(&serde_json::json!({
+                            "name": name,
+                            "stage": "pre_channel_ingress",
+                            "channel": channel_str,
+                            "sender_id_hash": sender_hash,
+                            "ts_unix": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        })) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                warn!(error = %e, "serialize PreChannelIngress frame failed");
+                                continue;
+                            }
+                        };
+                        let header = crate::wal::HeaderBuilder::new(
+                            crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                            &payload,
+                        )
+                        .build();
+                        if let Err(e) = writer.append(header, payload).await {
+                            warn!(error = %e, "WAL append PreChannelIngress hook frame failed");
+                        }
+                    }
+                    body
+                }
+                Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+                    info!(
+                        channel = channel_str,
+                        sender_hash = %sender_hash,
+                        hook = %name,
+                        reason = %reason,
+                        "inbound dropped by pre_channel_ingress hook"
+                    );
+                    let payload = match serde_json::to_vec(&serde_json::json!({
+                        "name": name,
+                        "stage": "pre_channel_ingress",
+                        "channel": channel_str,
+                        "sender_id_hash": sender_hash,
+                        "reason": reason,
+                        "ts_unix": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    })) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            warn!(error = %e, "serialize PreChannelIngress block frame failed");
+                            return Ok(::std::option::Option::None);
+                        }
+                    };
+                    emit_required_audit(
+                        &writer,
+                        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                        "HOOK_BLOCKED",
+                        payload,
+                    )
+                    .await;
+                    return Ok(::std::option::Option::None);
+                }
+                Err(e) => {
+                    warn!(error = %e, "PreChannelIngress hook dispatch failed");
+                    raw_text.to_string()
+                }
+            };
+            let raw_text = hooked_text.as_str();
+
+            // BS-11: per-sender rate limit BEFORE any WAL write. Drops
+            // are silent (no reply) — a misbehaving upstream learns from
+            // its own retry backoff, not from NEOTH explaining itself.
+            // Hits are logged + a CHANNEL_ERROR WAL frame records the
+            // drop for the audit trail.
+            match rate_limiter.try_consume(channel_str, &inbound.sender_id) {
+                crate::channels::rate_limit::Decision::Allowed => {}
+                crate::channels::rate_limit::Decision::RateLimited { retry_after_ms } => {
+                    info!(
+                        channel = channel_str,
+                        sender_hash = %sender_hash,
+                        retry_after_ms,
+                        "inbound rate-limited; dropping",
+                    );
+                    // Never emit a zero-byte WAL frame — a corrupted
+                    // payload misparses the rest of the segment. If
+                    // serialisation fails (it cannot here — all fields
+                    // are primitives — but the pattern stays defensive)
+                    // drop the audit frame entirely.
+                    let payload = match serde_json::to_vec(&serde_json::json!({
+                        "channel": channel_str,
+                        "sender_id_hash": sender_hash,
+                        "reason": "rate_limited",
+                        "retry_after_ms": retry_after_ms,
+                    })) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "rate-limit audit payload serialisation failed; frame skipped"
+                            );
+                            return Ok(::std::option::Option::None);
+                        }
+                    };
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_CHANNEL_ERROR,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(e) = writer.append(header, payload).await {
+                        tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
+                    }
+                    return Ok(::std::option::Option::None);
+                }
+            }
+            // ── Phase 11a gate: sanitize before ANY downstream effect ─────
+            // Per memory/neoth-research-synthesis.md anti-pattern #4:
+            // skipping this gate = highest-risk shortcut. Quarantined
+            // messages are dropped silently (no reply, no provider call)
+            // and only logged to the JSONL audit trail.
+            let report = crate::security::ingress_sanitizer::sanitize(raw_text, channel_str);
+            let audit_dir = crate::config::FreedomConfig::default_neoth_home().join("audit");
+            if let Err(e) =
+                crate::security::ingress_sanitizer::audit_append(&report, &audit_dir).await
+            {
+                warn!(error = %e, "ingress audit append failed; continuing");
+            }
+            if report.quarantined {
+                info!(
+                    channel = channel_str,
+                    sender_hash = %sender_hash,
+                    findings = ?report.findings,
+                    input_hash = %report.input_hash,
+                    "inbound message quarantined; dropping silently"
+                );
+                return Ok(::std::option::Option::None);
+            }
+            // Use the sanitized text from here on. The raw input never
+            // touches the WAL or the provider.
+            let sanitized_text = report.text;
+
+            // ── Emit RAW_TEXT for the inbound message (recallable body) ───
+            let raw_header =
+                crate::wal::make_header(EVENT_TYPE_RAW_TEXT, sanitized_text.as_bytes());
+            writer
+                .append(raw_header, sanitized_text.as_bytes().to_vec())
+                .await
+                .context("write RAW_TEXT WAL frame for inbound")?;
+
+            // ── P-08 briefing-gate marker (Workstream C, Session 22) ──────
+            // Channel ingress is the operator engaging via any wired
+            // surface (Telegram / Discord / Keet / …). Refresh the
+            // last-active marker so the briefing-gate's inactivity check
+            // treats this as a real engagement signal. Best-effort: a
+            // permission failure on the marker file MUST NOT fail the
+            // inbound handler — recording is an audit signal, not an
+            // ingress-correctness invariant.
+            let _ = crate::profile::briefing_gate::record_last_active(
+                &crate::config::FreedomConfig::default_neoth_home(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0),
+            );
+
+            // ── Emit CHANNEL_INGRESS (hashed metadata) ────────────────────
+            let ingress_payload = serde_json::to_vec(&serde_json::json!({
+                "channel": inbound.channel,
+                "sender_id_hash": sender_hash,
+                "text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(sanitized_text.as_bytes()),
+                "text_bytes": sanitized_text.len(),
+                "operator_id": operator_id,
+                "channel_ts_unix": inbound.channel_ts_unix,
+                "sanitizer_input_hash": report.input_hash,
+                "sanitizer_findings": report.findings,
+            }))?;
+            let ingress_header =
+                crate::wal::make_header(EVENT_TYPE_CHANNEL_INGRESS, &ingress_payload);
+            // K-Wire-3 v3 2026-05-17: capture the event_id BEFORE the
+            // header moves into append. The post-reply profile pipeline
+            // (added below the SESSION_ARCHIVE block) uses this as the
+            // trigger anchor for `extract_window` — analog to chat.rs's
+            // `raw_event_id` capture on the RAW_TEXT frame.
+            let ingress_event_id = ingress_header.event_id.0 as i64;
+            writer
+                .append(ingress_header, ingress_payload)
+                .await
+                .context("write CHANNEL_INGRESS WAL frame")?;
+
+            // GOLD-WIRE-02 NOTE: the conversational-recall short-circuit is
+            // wired into the CLI path (`chat.rs::run_chat_with`) only. The
+            // channel path is a deliberate follow-up: a 4-lens adversarial
+            // review flagged that a naive short-circuit here (a) would query
+            // `idx_episode` UNSCOPED (no operator_id/channel filter), risking a
+            // cross-surface data disclosure to a channel sender, and (b) would
+            // bypass the PreEgress hooks + the ChannelSend autonomy gate below
+            // — a policy bypass at Strict. Wiring it correctly needs a
+            // channel/operator-scoped recall query routed through that same
+            // egress gate (+ spawn_blocking), tracked separately.
+
+            // ── Permission gate (Phase 28b AU-4 + Pick #10 fix) ──────────
+            // Daemon path has no TTY — use FailClosed strategy. Channel-driven
+            // confirm (AU-4-part-2) wires here once the channel callback is
+            // ready: switch to `ConfirmStrategy::Channel` and provide the
+            // adapter hook.
+            //
+            // Pick #10 (Session 14, 2026-05-18 Codex feedback): the prior
+            // `eur_estimate: 0.0` hardcode silently bypassed Standard +
+            // Elevated cost thresholds (€0.50 / €5.00). Now uses
+            // `cost::predict` over the configured provider+model so the
+            // channel path enforces the same cost contract as `chat.rs`.
+            {
+                use crate::permissions::{Action, ConfirmStrategy, Gate};
+                use crate::providers::cost::predict as predict_cost;
+                use crate::providers::meter::Meter;
+                // COR-13: canonical provider-id (Skip/None -> "none");
+                // cost::predict treats it the same as the old "unknown".
+                let provider_id = config_for_handler
+                    .provider_kind
+                    .map(|k| k.as_provider_id())
+                    .unwrap_or("none");
+                let model_str = config_for_handler
+                    .provider_model
+                    .as_deref()
+                    .unwrap_or("unknown");
+                let meter = Meter::with_default_window();
+                let cost = predict_cost(provider_id, model_str, &sanitized_text, &meter);
+                let action = Action::PaidProviderCall {
+                    eur_estimate: cost.total_eur,
+                };
+                let gate = Gate::for_level(autonomy).with_confirm(ConfirmStrategy::FailClosed);
+                if let Err(e) = gate.check(&action, Some(&writer)).await {
+                    warn!(
+                        channel = channel_str,
+                        provider = provider_id,
+                        model = model_str,
+                        eur_estimate = cost.total_eur,
+                        error = %e,
+                        "channel pipeline blocked by autonomy gate (PaidProviderCall)"
+                    );
+                    return Ok(::std::option::Option::None);
+                }
+            }
+
+            // ── K-Wire-3 (Session 23) — channel-side enrichment via helper ─
+            // Channel inbounds now reach CLI parity on every layer the
+            // `pipeline::build_enriched_request` helper composes:
+            // operator_md + skills + MCP catalogue + persona + repo
+            // context. Prior channel path skipped all of these and sent
+            // the bare prompt to the provider. Slash command dispatch
+            // (below) overrides the enriched system when a `/cmd`
+            // matches — preserving the original slash semantics.
+            //
+            // Note: this adds 5 FS reads per inbound (operator_md +
+            // skills dir + mcp_servers.yaml + tweaks.toml + code_map
+            // sqlite probe). Matches `chat.rs::run_chat_with` cost; on
+            // a healthy filesystem the combined latency is sub-30ms.
+            let channel_home = crate::config::FreedomConfig::default_neoth_home();
+            let channel_cwd = std::env::current_dir().unwrap_or_else(|_| channel_home.clone());
+            let operator_blocks = crate::memory::operator_md::assemble(&channel_home, &channel_cwd)
+                .await
+                .unwrap_or_default();
+            let operator_context = if operator_blocks.is_empty() {
+                None
+            } else {
+                Some(crate::memory::operator_md::render(&operator_blocks))
+            };
+
+            // Prefer the daemon's global SkillRegistry (built once at
+            // startup + hot-reloaded by the file watcher); fall back to
+            // per-call load when the global wasn't initialised.
+            let installed_skills = match crate::skills::registry::global() {
+                Some(reg) => reg.snapshot_owned(),
+                None => {
+                    match crate::skills::SkillRegistry::load(&channel_home.join("skills")).await {
+                        Ok(reg) => reg.snapshot_owned(),
+                        Err(e) => {
+                            warn!(
+                                error = %e,
+                                "skill registry load failed on channel path; empty set"
+                            );
+                            std::sync::Arc::new(Vec::new())
+                        }
+                    }
+                }
+            };
+            let mode_registry =
+                crate::skills::mode_registry::ModeRegistry::from_skills(&installed_skills)
+                    .unwrap_or_default();
+            let mode_hit = mode_registry.match_trigger(&sanitized_text);
+            // SC-11 (Session 28d) — the channel path now threads the
+            // matched skill's `tool_allowlist` into the MCP dispatch loop
+            // exactly like `cli/chat.rs`. Previously the channel/daemon
+            // path matched a skill for the SYSTEM PROMPT but passed `None`
+            // for the allowlist, so Telegram/Slack/WhatsApp inbound got
+            // ZERO skill-scoped tool restriction — the primary production
+            // deployment model bypassed the gate `neoth chat` enforced.
+            // A mode is a behaviour variant of its parent skill, so the
+            // PARENT skill's allowlist still applies when a mode is active.
+            let (skill_layer, used_skill_id, channel_skill_allowlist): (
+                Option<String>,
+                Option<String>,
+                Option<Vec<String>>,
+            ) = if let Some(resolved) = mode_hit {
+                let parent = installed_skills
+                    .iter()
+                    .find(|s| s.id() == resolved.skill_id);
+                info!(
+                    channel = channel_str,
+                    mode = %resolved.mode.id,
+                    skill = %resolved.skill_id,
+                    "mode activated via ModeRegistry (channel path)"
+                );
+                let layer = match parent {
+                    Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
+                        "{}\n\n{}",
+                        p.system_prompt(),
+                        resolved.mode.system_prompt_delta
+                    )),
+                    Some(p) => Some(p.system_prompt().to_string()),
+                    None if !resolved.mode.system_prompt_delta.is_empty() => {
+                        Some(resolved.mode.system_prompt_delta.clone())
+                    }
+                    None => None,
+                };
+                let allowlist = channel_skill_allowlist(parent);
+                (layer, None, allowlist)
+            } else {
+                let skill_match = crate::skills::route(&sanitized_text, &installed_skills);
+                if let Some(m) = &skill_match {
+                    info!(
+                        channel = channel_str,
+                        skill = m.skill.id(),
+                        matched_keywords = ?m.matched_keywords,
+                        "skill activated (channel path)"
+                    );
+                }
+                let layer = skill_match
+                    .as_ref()
+                    .map(|m| m.skill.system_prompt().to_string());
+                let id = skill_match.as_ref().map(|m| m.skill.id().to_string());
+                let allowlist = channel_skill_allowlist(skill_match.as_ref().map(|m| m.skill));
+                (layer, id, allowlist)
+            };
+
+            let channel_mcp_servers = crate::mcp::McpServers::load().unwrap_or_else(|e| {
+                warn!(
+                    error = %e,
+                    "mcp_servers.yaml load failed on channel path — proceeding without MCP tools"
+                );
+                Default::default()
+            });
+            let channel_mcp_catalogue: Option<String> = if channel_mcp_servers.enabled().is_empty()
+            {
+                None
+            } else {
+                crate::mcp::catalogue::assemble_catalogue(&channel_mcp_servers).await
+            };
+
+            let channel_tweaks_path = crate::tweaks::Tweaks::default_path();
+            let channel_persona = crate::tweaks::Tweaks::load_or_default(&channel_tweaks_path)
+                .ok()
+                .and_then(|t| t.persona_override.clone());
+
+            // AR-01 (Session 24) — channel path must read the live
+            // active preset on every inbound so a mid-day
+            // `neoth profile preset apply` flips the channel-side
+            // system prompt without restarting the daemon.
+            let channel_preset_home = crate::config::FreedomConfig::default_neoth_home();
+            let channel_preset_addendum =
+                crate::cli::profile::load_active_preset(&channel_preset_home)
+                    .map(|p| crate::profile::presets::apply_preset(p).system_addendum)
+                    .filter(|s| !s.is_empty());
+
+            let channel_repo_context = crate::cli::chat::maybe_repo_context_block(
+                config_for_handler.as_ref(),
+                &sanitized_text,
+            );
+
+            let channel_enriched =
+                crate::pipeline::build_enriched_request(crate::pipeline::EnrichmentInputs {
+                    prompt: &sanitized_text,
+                    operator_context: operator_context.as_deref(),
+                    preset_addendum: channel_preset_addendum.as_deref(),
+                    explicit_system: None,
+                    repo_context_block: channel_repo_context.as_deref(),
+                    skill_system_prompt: skill_layer.as_deref(),
+                    used_skill_id: used_skill_id.as_deref(),
+                    mcp_catalogue: channel_mcp_catalogue.as_deref(),
+                    persona_override: channel_persona.as_deref(),
+                });
+            let channel_enriched_system = channel_enriched.system;
+            let _channel_used_skill_id = channel_enriched.used_skill_id;
+
+            // ── Slash command dispatch (Phase 28 R-17 SC-2) ───────────────
+            // If the operator opens with `/<name> args`, route through the
+            // slash registry. Built-ins (`/help`, `/recall`, `/status`,
+            // `/jobs`) + `~/.neoth/commands/*.toml` overrides. The matched
+            // command's prompt template REPLACES the enriched system
+            // prompt (slash semantics preserved); non-matches fall back
+            // to the layered enrichment from the helper above.
+            let (final_prompt, system_override) =
+                match crate::slash::parse_invocation(&sanitized_text) {
+                    crate::slash::Invocation::Command { name, args } => {
+                        let slash_dir =
+                            crate::config::FreedomConfig::default_neoth_home().join("commands");
+                        let commands = crate::slash::load_all(&slash_dir).await.unwrap_or_default();
+                        if let Some(cmd) = commands.iter().find(|c| c.name == name) {
+                            // ADV-09: a command carrying a typed ACTION is
+                            // dispatched here with `CommandSource::Channel`
+                            // (mirrors the CLI action short-circuit in
+                            // `cli/chat.rs`). The privilege ceiling rejects a
+                            // destructive action (`/autonomy`, `/config set`,
+                            // `/consent`, ...) — previously it fell through to
+                            // the render path below + reached the LLM with no
+                            // gate + no audit. Read-only / Pending actions
+                            // return their handler text directly. Either way
+                            // the provider call is skipped — return early.
+                            if let Some(action) = cmd.action {
+                                let outcome = crate::slash::dispatch_action(
+                                    action,
+                                    &args,
+                                    config_for_handler.as_ref(),
+                                    crate::slash::CommandSource::Channel,
+                                );
+                                if outcome.is_channel_blocked() {
+                                    emit_channel_privilege_blocked(
+                                        &writer,
+                                        channel_str,
+                                        &inbound.sender_id,
+                                        action.as_str(),
+                                    )
+                                    .await;
+                                    warn!(
+                                        channel = channel_str,
+                                        sender_hash = %sender_hash,
+                                        action = action.as_str(),
+                                        "ADV-09: destructive slash action rejected from channel"
+                                    );
+                                } else {
+                                    info!(
+                                        channel = channel_str,
+                                        action = action.as_str(),
+                                        "channel slash action dispatched (read-only / pending)"
+                                    );
+                                }
+                                // `/quit` (ActionOutcome::Exit) is a
+                                // local-CLI-only lifecycle command — the
+                                // channel handler deliberately never acts on
+                                // `should_exit()` (a channel must not kill the
+                                // daemon). Return a clarifying message instead
+                                // of the CLI-flavoured "Exiting chat session".
+                                let reply_text = if outcome.should_exit() {
+                                    "/quit applies only to the local CLI session — the daemon \
+                                     keeps serving this channel."
+                                        .to_string()
+                                } else {
+                                    outcome.text().to_string()
+                                };
+                                return Ok(::std::option::Option::Some(OutboundMessage {
+                                    recipient_id: inbound.sender_id.clone(),
+                                    text: reply_text,
+                                }));
+                            }
+                            let rendered = cmd.render(&args, operator_id.as_deref());
+                            info!(slash_command = %name, "slash dispatch");
+                            (args, Some(rendered))
+                        } else {
+                            // Unknown command — pass through with the
+                            // enriched system so the model can still
+                            // respond with "unknown command, try /help".
+                            (sanitized_text.clone(), channel_enriched_system)
+                        }
+                    }
+                    crate::slash::Invocation::Escaped { text } => (text, channel_enriched_system),
+                    crate::slash::Invocation::NotACommand => {
+                        (sanitized_text.clone(), channel_enriched_system)
+                    }
+                };
+
+            // ── Operator hooks at PreProviderCall (Phase 29 R-15 H-3) ─────
+            // Loaded fresh per turn so operator edits to `~/.neoth/hooks/`
+            // take effect without daemon restart. Block-action stops the
+            // turn (no provider call, no reply); replace mutates the
+            // outbound prompt. Empty hook set is the common case.
+            let hook_dir = crate::config::FreedomConfig::default_neoth_home().join("hooks");
+            // Pick #34 (Session 14, silent-failure audit-fix): hook load
+            // failures now surface at warn level. Prior `unwrap_or_default()`
+            // silently disabled every hook on a single bad TOML file.
+            let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
+                warn!(
+                    error = %e,
+                    dir = %hook_dir.display(),
+                    "hook load failed — proceeding with empty hook set"
+                );
+                Default::default()
+            });
+            let (final_prompt, hook_hits) = match crate::hooks::run_stage(
+                crate::hooks::HookStage::PreProviderCall,
+                &final_prompt,
+                &hooks,
+            ) {
+                Ok(crate::hooks::StageOutcome::Continue { body, hits }) => (body, hits),
+                Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+                    info!(hook = %name, reason = %reason, "PreProviderCall hook blocked turn");
+                    let payload = match serde_json::to_vec(&serde_json::json!({
+                        "name": name,
+                        "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
+                        "reason": reason,
+                    })) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "HOOK_BLOCKED audit payload serialisation failed; frame skipped"
+                            );
+                            return Ok(::std::option::Option::None);
+                        }
+                    };
+                    emit_required_audit(
+                        &writer,
+                        crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                        "HOOK_BLOCKED",
+                        payload,
+                    )
+                    .await;
+                    return Ok(::std::option::Option::None);
+                }
+                Err(e) => {
+                    warn!(error = %e, "hook dispatcher errored — continuing without hooks");
+                    (final_prompt, Vec::new())
+                }
+            };
+            for name in &hook_hits {
+                let payload = match serde_json::to_vec(&serde_json::json!({
+                    "name": name,
+                    "stage": crate::hooks::HookStage::PreProviderCall.as_str(),
+                })) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            hook = %name,
+                            "HOOK_FIRED audit payload serialisation failed; frame skipped"
+                        );
+                        continue;
+                    }
+                };
+                let header =
+                    crate::wal::make_header(crate::wal::events::EVENT_TYPE_HOOK_FIRED, &payload);
+                if let Err(e) = writer.append(header, payload).await {
+                    tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
+                }
+            }
+
+            // ── Provider call (with MCP autoroute — K-Wire-3 v1) ──────────
+            //
+            // 2026-05-17: channels now share the same MCP-autoroute path
+            // as `neoth chat`. Tri-state env override per A8:
+            //   `NEOTH_MCP_AUTOROUTE=1` → forced ON
+            //   `NEOTH_MCP_AUTOROUTE=0` → forced OFF
+            //   unset / any other value → AUTO (on when `mcp_servers.yaml`
+            //                                   has ≥1 enabled server)
+            // Operators with no MCP servers configured see zero behaviour
+            // change. Operators who pinned `mcp_servers.yaml` get tool-use
+            // on every Telegram / WhatsApp / Slack inbound the same way
+            // they get it on `neoth chat`.
+            //
+            // Failure mode: an MCP loop error falls back to the direct
+            // provider.complete path with a WARN log — channels are
+            // async-delivery (no operator-retry surface), so silent
+            // fallback is the right UX trade-off vs CLI's fail-loud.
+            // Operators grep logs to detect MCP-loop regressions.
+            //
+            // Council debate for channels is K-Wire-3 v2 (deferred —
+            // callosum-recovery branch is 130+ LOC of complex logic
+            // intertwined with CLI-specific paths).
+            let started = Instant::now();
+            // R-04 2026-05-17: clone final_prompt + system_override so
+            // the LOWKEY refusal-recovery path post-reply can reissue
+            // the same (prompt, system) pair under a reframing. See
+            // `cli/chat.rs` for the matching pattern.
+            let req = Request {
+                prompt: final_prompt.clone(),
+                system: system_override.clone(),
+                model: None,
+                ..Default::default()
+            };
+            // K-Wire-3 v2 2026-05-17: council smart-trigger for channels.
+            // Same evaluation logic as `cli/chat.rs::run_chat_with` —
+            // promoted via `chat::evaluate_council_trigger`. Operators
+            // on `inference.mode = triplet` or `custom` get a
+            // 3-hemisphere debate on every substantive Telegram /
+            // WhatsApp / Slack message; operators on `single` mode see
+            // no behaviour change because all three hemispheres resolve
+            // to the same provider via `from_config_for_role`.
+            //
+            // Mutually exclusive with MCP autoroute (council debates
+            // many providers, autoroute wraps one). Council wins when
+            // the trigger fires; otherwise the dispatch falls through
+            // to the existing MCP-autoroute / direct branches.
+            //
+            // Channels pass a flat 0.01 EUR estimate to the budget
+            // gate — they don't pre-compute a per-prompt cost like the
+            // CLI's `cost_estimate` path. Operators wanting tighter
+            // budget control raise `policy.budget_multiplier` in
+            // freedom.yaml.
+            // SPEC-03 suppress: read `freedom.yaml::council.disabled` fresh
+            // per message (best-effort — load failure ⇒ not disabled) so
+            // `neoth council suppress` gates the channel path too, without a
+            // daemon restart. Mirrors how the trigger already re-reads
+            // council_last.json per message.
+            // One fresh load yields both the suppress flag AND the SPEC-03b
+            // operator trigger thresholds (`council.trigger`); load failure ⇒
+            // not-disabled + default policy (prior behaviour).
+            let council_cfg = crate::config::FreedomConfig::load_from_default_path()
+                .map(|c| c.council)
+                .ok();
+            let council_disabled = council_cfg.as_ref().and_then(|c| c.disabled).unwrap_or(false);
+            let council_policy = council_cfg
+                .as_ref()
+                .map(|c| c.trigger.to_policy())
+                .unwrap_or_default();
+            let council_decision = crate::cli::chat::evaluate_council_trigger(
+                &req.prompt,
+                0.01,
+                council_disabled,
+                &council_policy,
+            );
+            // GOLD-SEC-32 / B-19: hard rolling-24h convene cap on the channel
+            // (autonomous) path — enforced before convening and independent of
+            // the EUR budget gate, so a runaway loop can't fan out council
+            // calls without bound.
+            let council_home = FreedomConfig::default_neoth_home();
+            let council_now = crate::council::last_ts::now_unix() as i64;
+            let council_cap_hit = council_decision.should_convene()
+                && crate::council::day_counter::cap_reached(&council_home, council_now);
+            if council_cap_hit {
+                warn!(
+                    cap = crate::council::day_counter::MAX_CONVENES_PER_24H,
+                    "channel council daily convene cap reached — single-provider for this turn"
+                );
+            }
+            let council_enable = council_decision.should_convene() && !council_cap_hit;
+            if council_enable {
+                crate::council::day_counter::record_convene(&council_home, council_now);
+            }
+            // B-1 (Session 13) — channel-side COUNCIL_SKIP audit. Same
+            // contract as the CLI path: every Skip decision lands in
+            // the WAL so the operator can reconstruct why a channel
+            // message was answered by the single Left hemisphere.
+            if !council_enable {
+                let prompt_hash_skip = xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes());
+                let reason = if council_cap_hit {
+                    "daily convene cap (rolling 24h) reached"
+                } else {
+                    council_decision.reason()
+                };
+                let _ = crate::cli::chat::emit_council_skip(&writer, prompt_hash_skip, reason).await;
+            }
+            // Finding 5 (Session 13) — runtime consent re-check per channel
+            // message so a mid-run `neoth consent revoke <provider>` is
+            // honoured WITHOUT daemon restart. Closes the TOCTOU gap
+            // where V03-08 + A-2 only gate at startup. Bail surfaces an
+            // operator-actionable error back through the channel adapter
+            // rather than silently fanning out to the no-longer-consented
+            // provider.
+            {
+                let home_revoke = crate::config::FreedomConfig::default_neoth_home();
+                if let Err(e) = crate::consent::ensure_all_still_granted(
+                    &home_revoke,
+                    config_for_handler.as_ref(),
+                ) {
+                    warn!(
+                        channel = channel_str,
+                        sender_hash = %sender_hash,
+                        error = %e,
+                        "consent revoked mid-run; dropping inbound"
+                    );
+                    return Ok(::std::option::Option::Some(OutboundMessage {
+                        recipient_id: inbound.sender_id.clone(),
+                        text: format!("[NEOTH] {e}"),
+                    }));
+                }
+            }
+            let autoroute_env = std::env::var("NEOTH_MCP_AUTOROUTE").ok();
+            let mcp_servers_for_loop = if council_enable {
+                crate::mcp::McpServers::default()
+            } else {
+                // Pick #34 (Session 14, silent-failure audit-fix):
+                // surface YAML parse errors so operators discover broken
+                // mcp_servers.yaml instead of silently losing tools on
+                // every channel message.
+                crate::mcp::McpServers::load().unwrap_or_else(|e| {
+                    warn!(error = %e, "mcp_servers.yaml load failed in channel autoroute — proceeding without MCP tools");
+                    Default::default()
+                })
+            };
+            let autoroute_decision =
+                mcp_servers_for_loop.autoroute_decision(autoroute_env.as_deref());
+            let use_loop = !council_enable && autoroute_decision.is_on();
+            let mut completion = if council_enable {
+                info!(
+                    channel = channel_str,
+                    decision = ?council_decision,
+                    "channel council convened — running 3-hemisphere debate",
+                );
+                match crate::cli::chat::dispatch_council_with_recovery(
+                    &req,
+                    config_for_handler.as_ref(),
+                    &writer,
+                )
+                .await
+                {
+                    Ok(text) => crate::providers::Completion {
+                        text,
+                        model: "council".to_string(),
+                        latency: started.elapsed(),
+                        input_tokens: None,
+                        output_tokens: None,
+                    },
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "channel council debate failed — falling back to direct provider call",
+                        );
+                        provider.complete(req).await?
+                    }
+                }
+            } else if use_loop {
+                info!(
+                    reason = %autoroute_decision.reason(),
+                    "channel MCP autoroute enabled — running dispatch loop",
+                );
+                let loop_req = req.clone();
+                match crate::cli::chat::run_mcp_dispatch_loop(
+                    &*provider,
+                    loop_req,
+                    &mcp_servers_for_loop,
+                    autonomy,
+                    &writer,
+                    None,
+                    // SC-11 (Session 28d) — the matched skill's
+                    // tool_allowlist now scopes the channel MCP gate the
+                    // same way it does on `neoth chat`. None only when no
+                    // skill matched this inbound (gate allows all);
+                    // Some(empty) also allows all; Some(non-empty)
+                    // enforces.
+                    channel_skill_allowlist.as_deref(),
+                    // GM-01 — operator-tunable dispatch-loop ceiling.
+                    goal_max_turns,
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        info!(
+                            iterations = outcome.iterations,
+                            successful_calls = outcome.successful_calls,
+                            failed_calls = outcome.failed_calls,
+                            hit_cap = outcome.hit_cap,
+                            "channel MCP dispatch loop complete",
+                        );
+                        crate::providers::Completion {
+                            text: outcome.final_text,
+                            model: String::new(),
+                            latency: started.elapsed(),
+                            input_tokens: None,
+                            output_tokens: None,
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            "channel MCP dispatch loop failed — falling back to direct provider call",
+                        );
+                        provider.complete(req).await?
+                    }
+                }
+            } else {
+                provider.complete(req).await?
+            };
+            let latency = started.elapsed();
+
+            // Q-3: record into the rolling-window meter so `/metrics` reflects
+            // the call's tokens + latency. Cheap: one mutex lock + a push.
+            meter.record(
+                completion.input_tokens.unwrap_or(0),
+                completion.output_tokens.unwrap_or(0),
+                latency,
+            );
+
+            // ── Mirror-refusal Schicht-0 detection + R-09 cause classifier ─
+            // Channels previously skipped both signals (only chat.rs ran
+            // them). R-09 wire 2026-05-17: emit `0x16 REFUSAL_OBSERVED`
+            // with the cause classification bundled so operator audit +
+            // future R-01 recovery state machine see the same signals on
+            // any ingress surface. Best-effort: serialise failure logs +
+            // continues; never blocks the channel reply.
+            {
+                let report = crate::security::refusal_detect::classify(&completion.text);
+                if report.is_refusal() {
+                    let cause = crate::security::refusal_cause::classify_cause(&completion.text);
+                    let payload = serde_json::to_vec(&serde_json::json!({
+                        "operator_id": operator_id,
+                        "channel": inbound.channel,
+                        "sender_id_hash": sender_hash,
+                        "provider": provider.name(),
+                        "model": completion.model,
+                        "refusal_class": report.class.as_str(),
+                        "confidence": report.confidence,
+                        "matched_patterns": report.matched_patterns,
+                        "cause": cause.cause.as_str(),
+                        "cause_confidence": cause.confidence,
+                        "cause_matched_patterns": cause.matched_patterns,
+                        "response_hash_xxh3": xxhash_rust::xxh3::xxh3_64(
+                            completion.text.as_bytes(),
+                        ),
+                        "ts_unix": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    }));
+                    match payload {
+                        Ok(bytes) => {
+                            let header = crate::wal::HeaderBuilder::new(
+                                crate::wal::events::EVENT_TYPE_REFUSAL_OBSERVED,
+                                &bytes,
+                            )
+                            .build();
+                            if let Err(e) = writer.append(header, bytes).await {
+                                tracing::warn!(error = %e,
+                                    "WAL append REFUSAL_OBSERVED failed (best-effort audit)");
+                            } else {
+                                info!(
+                                    channel = channel_str,
+                                    refusal_class = report.class.as_str(),
+                                    cause = cause.cause.as_str(),
+                                    cause_confidence = cause.confidence,
+                                    "channel mirror-refusal detector + cause classifier fired"
+                                );
+                            }
+                        }
+                        Err(e) => tracing::warn!(error = %e,
+                            "serialize channel REFUSAL_OBSERVED payload failed"),
+                    }
+                }
+            }
+
+            // ── R-04 LOWKEY refusal recovery (channel path) ──────────────
+            // Same shape as `cli/chat.rs::run_chat_with`'s recovery wire:
+            // when the Schicht-0 detector found a refusal + the operator
+            // opted in (default ON), call try_recover once, replace
+            // completion.text on success so downstream egress sees the
+            // recovered reply. Per-call escape via
+            // `NEOTH_REFUSAL_RECOVERY_DISABLE=1`.
+            // ADV-07: mark mirror-recovery turns so profile extraction
+            // skips the operator_preferences category for them.
+            let mut derived_from_mirror_pipeline = false;
+            if config_for_handler.refusal_recovery.enabled
+                && std::env::var("NEOTH_REFUSAL_RECOVERY_DISABLE")
+                    .map(|v| !(v == "1" || v.eq_ignore_ascii_case("true")))
+                    .unwrap_or(true)
+            {
+                let report = crate::security::refusal_detect::classify(&completion.text);
+                if report.is_refusal() {
+                    let recovery_req = crate::providers::Request {
+                        prompt: final_prompt.clone(),
+                        system: system_override.clone(),
+                        model: None,
+                        ..Default::default()
+                    };
+                    let now_unix = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    match crate::security::refusal_recovery::try_recover_multi(
+                        &*provider,
+                        &recovery_req,
+                        &completion.text,
+                        &config_for_handler.refusal_recovery.disabled_reframings,
+                        Some(&writer),
+                        now_unix,
+                        config_for_handler.refusal_recovery.max_attempts,
+                    )
+                    .await
+                    {
+                        Ok(crate::security::refusal_recovery::RecoveryOutcome::Recovered {
+                            completion: recovered,
+                            reframing_id,
+                        }) => {
+                            info!(
+                                channel = channel_str,
+                                reframing = reframing_id,
+                                original_bytes = completion.text.len(),
+                                recovered_bytes = recovered.text.len(),
+                                "channel refusal recovery succeeded — replacing completion.text",
+                            );
+                            completion.text = recovered.text;
+                            derived_from_mirror_pipeline = true; // ADV-07
+                        }
+                        Ok(crate::security::refusal_recovery::RecoveryOutcome::RefusedAgain {
+                            reframing_id,
+                            ..
+                        }) => {
+                            info!(
+                                channel = channel_str,
+                                reframing = reframing_id,
+                                "channel refusal recovery attempted but model refused again",
+                            );
+                        }
+                        Ok(
+                            crate::security::refusal_recovery::RecoveryOutcome::NotRecoverable {
+                                cause,
+                            },
+                        ) => {
+                            tracing::debug!(
+                                channel = channel_str,
+                                cause = cause.as_str(),
+                                "channel refusal not recoverable",
+                            );
+                        }
+                        Ok(crate::security::refusal_recovery::RecoveryOutcome::ProviderError {
+                            reframing_id,
+                            error,
+                        }) => {
+                            warn!(
+                                channel = channel_str,
+                                reframing = reframing_id,
+                                error = %error,
+                                "channel refusal recovery retry hit provider error",
+                            );
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "channel refusal recovery failed (non-fatal)");
+                        }
+                    }
+                }
+            }
+
+            // ── ADR auto-extraction (Phase 31 R-21 ADR-1) ─────────────────
+            // Scan the reply for `DECISION:` / `Beschluss:` / `ADR:` markers
+            // and write any detected blocks to ~/.neoth/adr/NNNN-<slug>.md.
+            // Best-effort: never blocks the egress on disk failure.
+            {
+                let decisions = crate::adr::extract_decisions(&completion.text);
+                if !decisions.is_empty() {
+                    let adr_dir = crate::adr::default_adr_dir();
+                    for d in &decisions {
+                        match crate::adr::write_adr(&adr_dir, d) {
+                            Ok(path) => {
+                                info!(adr = %path.display(), title = %d.title, "ADR captured")
+                            }
+                            Err(e) => warn!(error = %e, "failed to write ADR"),
+                        }
+                    }
+                }
+            }
+
+            // ── CHANNEL_EGRESS is emitted AFTER the PreEgress hooks + the
+            // ChannelSend autonomy gate (see below). Emitting it here — before
+            // a hook-Block or a gate-Deny can `return Ok(None)` — would record
+            // a reply as egressed that was actually suppressed: a false audit
+            // attestation. The frame now fires only on the path that genuinely
+            // releases the reply to the transport, and hashes the recipient.
+
+            // ── SESSION ARCHIVE (Phase 28a MT-4) ──────────────────────────
+            // Append the turn pair to the operator-readable MD archive.
+            // Session id = `<channel>-<sender>`: stable per-correspondent
+            // file per UTC day. Failure logs but never blocks egress —
+            // the WAL is the source of truth.
+            {
+                let session_id = format!("{}-{}", channel_str, inbound.sender_id);
+                let now = chrono::Utc::now();
+                let archive = crate::memory::archive::SessionArchive::new(
+                    crate::memory::archive::default_archive_root(),
+                    session_id,
+                    now,
+                );
+                if let Err(e) = archive
+                    .append_turn(&sanitized_text, &completion.text, now)
+                    .await
+                {
+                    warn!(error = %e, "session archive append failed");
+                }
+            }
+
+            // ── Profile pipeline post-reply (K-Wire-3 v3 2026-05-17) ──────
+            // Mirrors `cli/chat.rs::run_chat_with`'s post-reply learning
+            // block: when the operator opts in via
+            // `freedom.yaml::profile.learn_enabled: true`, channels grow
+            // the operator-profile passively from every Telegram /
+            // WhatsApp / Slack message. Same gate, same timeout cap,
+            // same env overrides (`NEOTH_PROFILE_LEARN_DISABLE` /
+            // `NEOTH_PROFILE_LEARN_FORCE`).
+            //
+            // Trigger anchor: `ingress_event_id` captured above from the
+            // CHANNEL_INGRESS frame. The indexer's `replay_once` pass
+            // ensures that frame is in idx_episode before the pipeline
+            // reads the conversation window.
+            //
+            // Best-effort: any failure (views.db open, indexer, extract,
+            // guard, timeout) logs at warn/debug and never blocks the
+            // channel reply. Channels are async-delivery — a hung
+            // extract LLM call would otherwise pin the entire ingress
+            // task and starve other channel messages.
+            // KF-05: a reply was produced for this channel message — record a
+            // best-effort Hebbian acceptance for (channel, topic) so the
+            // per-channel familiarity store accumulates. Fire-and-forget: a
+            // write error never blocks the reply. Read back via
+            // `neoth ecology channel-weights`.
+            {
+                // KF-05 operator-scope (P1): only learn from a sender the
+                // configured scope trusts, so a non-operator on a shared/open
+                // channel can't poison the recall ranking. `learn_factor`
+                // returns None (skip) or the weight factor (1.0 / tiny).
+                let cw_cfg = crate::config::FreedomConfig::load_from_default_path()
+                    .unwrap_or_default()
+                    .channel_weights;
+                let factor = crate::memory::channel_weights::learn_factor(
+                    cw_cfg.learn_scope,
+                    inbound.human_uuid.as_deref(),
+                    cw_cfg.operator_human_uuid.as_deref(),
+                    &cw_cfg.allowlisted_human_uuids,
+                );
+                if let Some(factor) = factor {
+                    let topic_hash = xxhash_rust::xxh3::xxh3_64(
+                        inbound.text.as_deref().unwrap_or("").as_bytes(),
+                    );
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let home = crate::config::FreedomConfig::default_neoth_home();
+                    if let Err(e) = crate::memory::channel_weights::record_channel_acceptance_scoped(
+                        &home,
+                        channel_str,
+                        topic_hash,
+                        now,
+                        factor,
+                    ) {
+                        tracing::debug!(error = %e, "channel_weights: acceptance record failed (non-fatal)");
+                    }
+                } else {
+                    tracing::debug!(
+                        channel = channel_str,
+                        "channel_weights: sender out of learn scope — not recorded"
+                    );
+                }
+            }
+
+            let env_disable = std::env::var("NEOTH_PROFILE_LEARN_DISABLE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            let env_force = std::env::var("NEOTH_PROFILE_LEARN_FORCE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            let learn_on = !env_disable && (env_force || profile_config.learn_enabled);
+            if learn_on {
+                let timeout = std::time::Duration::from_secs(profile_config.timeout_secs.max(1));
+                let views_path = crate::memory::store::default_path();
+                // K-Wire-3 v3 Send-escape: `rusqlite::Transaction` is
+                // !Send. The channel handler's outer future must be
+                // Send (PipelineHandler = Pin<Box<dyn Future + Send>>),
+                // so we cannot hold a Transaction across an await on
+                // the main task path. `block_in_place` moves the
+                // current task to a blocking-pool thread; we then
+                // `block_on` a !Send future on that same thread. The
+                // multi-threaded tokio runtime keeps making progress
+                // on other channel messages because the blocking task
+                // is moved off the worker pool.
+                let writer_for_pipeline = writer.clone();
+                let provider_for_pipeline = Arc::clone(&provider);
+                let segment_path_for_pipeline = segment_path.clone();
+                let channel_str_for_pipeline = channel_str.to_string();
+                let sender_id_for_pipeline = inbound.sender_id.clone();
+                let views_conn_for_pipeline = views_conn.clone();
+                tokio::task::block_in_place(|| {
+                    let handle = tokio::runtime::Handle::current();
+                    handle.block_on(async move {
+                        // Pick #38 (Session 14, Perf #11 fix): prefer the
+                        // shared `views.db` connection from startup; fall
+                        // back to per-call open if startup couldn't open
+                        // it (so the channel path stays functional).
+                        // `ConnBorrow` keeps both variants matchable
+                        // through one local `as_mut()` interface so the
+                        // rest of the inner async block stays unchanged.
+                        // COR-33: do NOT hold the shared views.db lock across the
+                        // whole pipeline. The LLM extract inside run_pipeline does
+                        // not touch the connection, so run_pipeline (Shared) locks
+                        // the views.db mutex only for its brief sync DB stages and
+                        // releases it around the LLM call — concurrent channels'
+                        // post-reply profile pipelines no longer serialize on the
+                        // DB mutex. The owned fallback (per-call open) is used only
+                        // when startup couldn't open the shared connection.
+                        let pipeline_fut = async {
+                            let guard = crate::profile::claim_guard::ProfileClaimGuard::default();
+                            let extensions =
+                                crate::profile::extension_registry::TypedExtensionRegistry::load()
+                                    .unwrap_or_default();
+                            let now_unix = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            let run = if let Some(shared) = &views_conn_for_pipeline {
+                                // replay needs the conn too — take a short lock
+                                // just for it; run_pipeline re-locks per DB stage.
+                                {
+                                    let mut g = shared.lock().await;
+                                    if let Err(e) = crate::memory::indexer::replay_once(
+                                        &mut g,
+                                        &segment_path_for_pipeline,
+                                    )
+                                    .await
+                                    {
+                                        tracing::warn!(
+                                            error = %e,
+                                            "indexer replay_once failed before channel profile pipeline"
+                                        );
+                                        return;
+                                    }
+                                }
+                                crate::profile::run_pipeline(
+                                    crate::profile::PipelineConn::Shared(shared),
+                                    &writer_for_pipeline,
+                                    &*provider_for_pipeline,
+                                    ingress_event_id,
+                                    2,
+                                    &guard,
+                                    &extensions,
+                                    now_unix,
+                                    None, // ADV-03 Phase 5: no daemon-mode gate yet
+                                    derived_from_mirror_pipeline, // ADV-07
+                                )
+                                .await
+                            } else {
+                                let mut owned = match crate::memory::store::open(&views_path) {
+                                    Ok(c) => c,
+                                    Err(e) => {
+                                        tracing::warn!(
+                                            error = %e,
+                                            path = %views_path.display(),
+                                            "open views.db failed for channel profile pipeline (non-fatal)"
+                                        );
+                                        return;
+                                    }
+                                };
+                                if let Err(e) = crate::memory::indexer::replay_once(
+                                    &mut owned,
+                                    &segment_path_for_pipeline,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "indexer replay_once failed before channel profile pipeline"
+                                    );
+                                    return;
+                                }
+                                crate::profile::run_pipeline(
+                                    crate::profile::PipelineConn::Owned(&mut owned),
+                                    &writer_for_pipeline,
+                                    &*provider_for_pipeline,
+                                    ingress_event_id,
+                                    2,
+                                    &guard,
+                                    &extensions,
+                                    now_unix,
+                                    None,
+                                    derived_from_mirror_pipeline,
+                                )
+                                .await
+                            };
+                            match run {
+                                Ok(crate::profile::PipelineRun::Applied { outcome, .. }) => {
+                                    tracing::info!(
+                                        channel = %channel_str_for_pipeline,
+                                        sender = %sender_id_for_pipeline,
+                                        claims_applied = outcome.claims_applied,
+                                        claims_reinforced = outcome.claims_reinforced,
+                                        claims_superseded = outcome.claims_superseded,
+                                        idempotent_skip = outcome.idempotent_skip,
+                                        "channel profile pipeline applied post-reply"
+                                    );
+                                }
+                                Ok(crate::profile::PipelineRun::Skipped(
+                                    reason @ crate::profile::PipelineSkip::QuotaExceeded { .. },
+                                )) => {
+                                    tracing::warn!(
+                                        channel = %channel_str_for_pipeline,
+                                        reason = %reason,
+                                        "channel profile pipeline quota-exceeded post-reply"
+                                    );
+                                }
+                                Ok(crate::profile::PipelineRun::Skipped(reason)) => {
+                                    tracing::debug!(
+                                        channel = %channel_str_for_pipeline,
+                                        reason = %reason,
+                                        "channel profile pipeline skipped post-reply"
+                                    );
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        error = %e,
+                                        "channel profile pipeline failed post-reply (non-fatal)"
+                                    );
+                                }
+                            }
+                        };
+                        match tokio::time::timeout(timeout, pipeline_fut).await {
+                            Ok(()) => {}
+                            Err(_elapsed) => {
+                                tracing::warn!(
+                                    channel = %channel_str_for_pipeline,
+                                    timeout_secs = timeout.as_secs(),
+                                    "channel profile pipeline timed out post-reply; learning abandoned"
+                                );
+                            }
+                        }
+                    });
+                });
+            }
+
+            // PII guard: for WhatsApp the sender id is an E.164 phone number.
+            // Hash it once and use the hash in every audit frame + log on the
+            // egress path below — never the number in the clear.
+            let sender_hash = format!(
+                "{:016x}",
+                xxhash_rust::xxh3::xxh3_64(inbound.sender_id.as_bytes())
+            );
+
+            // ── PreEgress hooks (Phase 29 R-15) ───────────────────────────
+            // Last filter before the channel adapter sends the reply. A
+            // Replace rewrites the outbound text (per-messenger formatting
+            // rules, link unfurling, profanity scrub); a Block silently
+            // drops the reply with a HOOK_BLOCKED audit frame.
+            let reply_text = match crate::hooks::run_stage(
+                crate::hooks::HookStage::PreEgress,
+                &completion.text,
+                &hooks,
+            ) {
+                Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
+                    for name in &hits {
+                        if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                            "name": name,
+                            "stage": "pre_egress",
+                            "channel": channel_str,
+                            "recipient_hash": sender_hash,
+                            "ts_unix": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0),
+                        })) {
+                            let header = crate::wal::HeaderBuilder::new(
+                                crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                                &payload,
+                            )
+                            .build();
+                            if let Err(e) = writer.append(header, payload).await {
+                                warn!(error = %e, "WAL append PreEgress hook frame failed");
+                            }
+                        }
+                    }
+                    body
+                }
+                Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+                    info!(
+                        channel = channel_str,
+                        recipient_hash = %sender_hash,
+                        hook = %name,
+                        reason = %reason,
+                        "outbound dropped by pre_egress hook"
+                    );
+                    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                        "name": name,
+                        "stage": "pre_egress",
+                        "channel": channel_str,
+                        "recipient_hash": sender_hash,
+                        "reason": reason,
+                        "ts_unix": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0),
+                    })) {
+                        emit_required_audit(
+                            &writer,
+                            crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                            "HOOK_BLOCKED",
+                            payload,
+                        )
+                        .await;
+                    }
+                    return Ok(::std::option::Option::None);
+                }
+                Err(e) => {
+                    warn!(error = %e, "PreEgress hook dispatch failed");
+                    completion.text.clone()
+                }
+            };
+
+            // ── Permission gate: ChannelSend (Pick #10, Session 14) ─────
+            // Codex feedback 2026-05-18: before the channel adapter
+            // ships the reply outbound, gate it through the autonomy
+            // ladder. Mirrors what `chat.rs` does for the CLI surface
+            // (no gate needed there — TTY local print, not network
+            // egress). Strict level: denies + emits WAL audit frame.
+            {
+                use crate::permissions::lease::LeaseStore;
+                use crate::permissions::{Action, ConfirmStrategy, Gate};
+                let action = Action::ChannelSend;
+                // SL-01a-b: honour an operator-granted capability lease for
+                // this sender. At Strict, ChannelSend evaluates to Confirm and
+                // the daemon has no TTY ⇒ the reply is blocked; a `channel_send`
+                // lease granted to the sender pre-authorises it (Confirm→Allow).
+                // The sender id is the channel-platform-verified identity, which
+                // satisfies the lease subject-authenticity contract. Loaded
+                // fresh per reply so `neoth lease revoke` takes effect at once;
+                // a missing/corrupt leases.json → empty store → fail-closed.
+                let lease_store = {
+                    let path = LeaseStore::default_path(
+                        &crate::config::FreedomConfig::default_neoth_home(),
+                    );
+                    // Blocking fs read off the async worker thread so a burst
+                    // of replies can't starve the Tokio pool; JoinError →
+                    // empty store (fail-closed).
+                    tokio::task::spawn_blocking(move || LeaseStore::load(&path).unwrap_or_default())
+                        .await
+                        .unwrap_or_default()
+                };
+                let now = ::std::time::SystemTime::now()
+                    .duration_since(::std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                let gate = Gate::for_level(autonomy)
+                    .with_confirm(ConfirmStrategy::FailClosed)
+                    .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
+                if let Err(e) = gate.check(&action, Some(&writer)).await {
+                    warn!(
+                        channel = channel_str,
+                        error = %e,
+                        "channel outbound blocked by autonomy gate (ChannelSend)"
+                    );
+                    return Ok(::std::option::Option::None);
+                }
+            }
+
+            // ── Emit CHANNEL_EGRESS (post-gate) ───────────────────────────
+            // The reply passed every PreEgress hook and the ChannelSend gate,
+            // so it is now genuinely released to the transport. The recipient
+            // (a phone number for WhatsApp) is HASHED — never stored in the
+            // clear — and we attest the hash of the *post-hook* outbound text,
+            // not the raw completion.
+            let egress_payload = serde_json::to_vec(&serde_json::json!({
+                "channel": inbound.channel,
+                "to_hash": sender_hash,
+                "reply_hash_xxh3": xxhash_rust::xxh3::xxh3_64(reply_text.as_bytes()),
+                "reply_bytes": reply_text.len(),
+                "provider": provider.name(),
+                "model": completion.model,
+                "latency_ns": u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX),
+                "input_tokens": completion.input_tokens,
+                "output_tokens": completion.output_tokens,
+            }))?;
+            let egress_header = crate::wal::make_header(EVENT_TYPE_CHANNEL_EGRESS, &egress_payload);
+            writer
+                .append(egress_header, egress_payload)
+                .await
+                .context("write CHANNEL_EGRESS WAL frame")?;
+
+            Ok(Some(OutboundMessage {
+                recipient_id: inbound.sender_id,
+                text: reply_text,
+            }))
+        })
+    })
+}
+
+/// Run an inbound media attachment through the multimodal extraction
+/// pipeline and synthesise the text payload the rest of the inbound
+/// flow expects. Behaviour by `MediaKind`:
+///
+/// - `Image`: extract via vision backend, persist 512-dim CLIP embedding
+///   into `idx_embedding`, return a short operator-facing acknowledgement.
+/// - `Audio`: extract via audio backend (decode → whisper transcript when
+///   the model is cached), return the transcript text. Caption (if any)
+///   prepends.
+/// - `Video`: extract via video backend (audio track → whisper), return
+///   the transcript.
+/// - `Document` / `Sticker`: bail with a "kind not supported" string.
+///
+/// Errors propagate to the caller, which logs + surfaces a generic
+/// "media pipeline error" reply to the operator.
+pub(crate) async fn handle_media_attachment(
+    inbound: &InboundMessage,
+    media: &crate::channels::MediaPayload,
+    writer: Option<&WalWriterHandle>,
+) -> Result<String> {
+    use crate::channels::MediaKind;
+    use crate::media::{Asset, AssetKind, route_to_first_match};
+    use crate::memory::embeddings;
+    use crate::providers::clip_engine;
+    use crate::wal::events::{EVENT_TYPE_EMBED_PERSISTED, EVENT_TYPE_INGEST_EXTRACTED};
+    use std::sync::Arc;
+
+    // Explicit exhaustive match — adding a new MediaKind variant
+    // becomes a compile error here instead of silently routing into
+    // the wrong extractor (the previous nested match would have hit
+    // an `_ => AssetKind::Audio` fallback).
+    let asset_kind = match media.kind {
+        MediaKind::Image => AssetKind::Image,
+        MediaKind::Audio => AssetKind::Audio,
+        MediaKind::Video => AssetKind::Video,
+        MediaKind::Document => AssetKind::Document,
+        MediaKind::Sticker => {
+            return Ok("[NEOTH] sticker received; v0.1.x ignores sticker payloads.".into());
+        }
+    };
+
+    let asset = Asset::Bytes {
+        kind: asset_kind,
+        mime: media.mime.clone(),
+        data: media.data.clone(),
+    };
+    let backends: Vec<Arc<dyn crate::media::MediaExtractor>> = vec![
+        Arc::new(crate::media::pdf::PdfExtractor),
+        Arc::new(crate::media::document::DocumentExtractor),
+        Arc::new(crate::media::vision::VisionExtractor),
+        Arc::new(crate::media::audio::AudioExtractor),
+        Arc::new(crate::media::video::VideoExtractor),
+    ];
+    let extraction = route_to_first_match(&backends, &asset)
+        .await
+        .map_err(|e| anyhow::anyhow!("extractor: {e}"))?;
+
+    // Persist embedding (image today; future audio/video variants).
+    let source_kind = match asset_kind {
+        AssetKind::Image => "image",
+        AssetKind::Audio => "audio_segment",
+        AssetKind::Video => "video_frame",
+        AssetKind::Pdf => "pdf_page",
+        AssetKind::Document => "document",
+        AssetKind::Other => "asset",
+    };
+    let source_ref = format!(
+        "{}:{}:{}:{}",
+        inbound.channel.as_str(),
+        inbound.chat_id,
+        inbound.sender_id,
+        inbound.channel_ts_unix,
+    );
+
+    // Always emit INGEST_EXTRACTED — mirrors `neoth ingest`'s audit
+    // shape so a `neoth wal show` operator sees the same frames for
+    // CLI-side and channel-side ingestion.
+    let model_name = extraction.metadata["extractor"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+    if let Some(w) = writer {
+        match serde_json::to_vec(&serde_json::json!({
+            "source_ref": source_ref,
+            "asset_kind": format!("{asset_kind:?}").to_lowercase(),
+            "text_bytes": extraction.text.len(),
+            "model": model_name,
+            "channel": inbound.channel.as_str(),
+            "ts_unix": SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        })) {
+            Ok(payload) => {
+                emit_required_audit(w, EVENT_TYPE_INGEST_EXTRACTED, "INGEST_EXTRACTED", payload)
+                    .await;
+            }
+            Err(e) => tracing::warn!(
+                error = %e,
+                "INGEST_EXTRACTED audit payload serialisation failed; frame skipped"
+            ),
+        }
+    }
+
+    let mut embed_msg = String::new();
+    if let Some(arr) = extraction.metadata["embedding"].as_array() {
+        let embedding: Vec<f32> = arr
+            .iter()
+            .filter_map(|v| v.as_f64().map(|f| f as f32))
+            .collect();
+        if !embedding.is_empty() {
+            let db_path = store::default_path();
+            let conn = store::open(&db_path).context("open views.db")?;
+            let model = clip_engine::DEFAULT_CLIP_REPO.to_string();
+            let dim = embedding.len();
+            embeddings::upsert(&conn, source_kind, &source_ref, &model, &embedding)
+                .context("persist channel-side embedding")?;
+            embed_msg = " 512-dim CLIP embedding cached.".to_string();
+            if let Some(w) = writer {
+                match serde_json::to_vec(&serde_json::json!({
+                    "source_kind": source_kind,
+                    "source_ref": source_ref,
+                    "model": model,
+                    "dim": dim,
+                    "channel": inbound.channel.as_str(),
+                    "ts_unix": SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                })) {
+                    Ok(payload) => {
+                        emit_required_audit(w, EVENT_TYPE_EMBED_PERSISTED, "EMBED_PERSISTED", payload)
+                            .await;
+                    }
+                    Err(e) => tracing::warn!(
+                        error = %e,
+                        "EMBED_PERSISTED audit payload serialisation failed; frame skipped"
+                    ),
+                }
+            }
+        }
+    }
+
+    // Synthesise the text payload to hand to the LLM pipeline.
+    let synthesised = match asset_kind {
+        AssetKind::Image => {
+            let caption = inbound.text.clone().unwrap_or_default();
+            if caption.trim().is_empty() {
+                format!(
+                    "[NEOTH] Image received ({}×{} px).{}",
+                    extraction.metadata["width"].as_u64().unwrap_or(0),
+                    extraction.metadata["height"].as_u64().unwrap_or(0),
+                    embed_msg,
+                )
+            } else {
+                format!(
+                    "{caption}\n\n[NEOTH] Image attached ({}×{} px).{}",
+                    extraction.metadata["width"].as_u64().unwrap_or(0),
+                    extraction.metadata["height"].as_u64().unwrap_or(0),
+                    embed_msg,
+                )
+            }
+        }
+        AssetKind::Audio | AssetKind::Video => {
+            let transcript = extraction.text.trim();
+            if transcript.is_empty() {
+                format!(
+                    "[NEOTH] {} received but transcription returned empty text. \
+                     Whisper model cached? Run `neoth models pull whisper`.",
+                    if matches!(asset_kind, AssetKind::Audio) {
+                        "Voice note"
+                    } else {
+                        "Video"
+                    }
+                )
+            } else {
+                let prefix = inbound.text.clone().unwrap_or_default();
+                if prefix.trim().is_empty() {
+                    transcript.to_string()
+                } else {
+                    format!("{prefix}\n\n[transcript]\n{transcript}")
+                }
+            }
+        }
+        AssetKind::Document => {
+            let body = extraction.text.trim();
+            let fmt = extraction.metadata["format"].as_str().unwrap_or("document");
+            if body.is_empty() {
+                format!(
+                    "[NEOTH] {} document received ({:?}) but no extractable text \
+                     was found (image-only or unsupported internals).",
+                    fmt, media.filename
+                )
+            } else {
+                let prefix = inbound.text.clone().unwrap_or_default();
+                if prefix.trim().is_empty() {
+                    body.to_string()
+                } else {
+                    format!("{prefix}\n\n[document:{fmt}]\n{body}")
+                }
+            }
+        }
+        AssetKind::Pdf | AssetKind::Other => extraction.text,
+    };
+    Ok(synthesised)
+}

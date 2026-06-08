@@ -101,6 +101,7 @@ pub mod security;
 pub mod self_dev;
 pub mod self_dev_outbox;
 pub mod serve;
+pub mod serve_pipeline;
 pub mod skills;
 pub mod slack;
 pub mod slash;
