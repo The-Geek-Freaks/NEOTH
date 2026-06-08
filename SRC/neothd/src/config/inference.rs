@@ -208,6 +208,15 @@ pub struct HemisphereSlot {
     /// default. Ignored by non-Azure providers.
     #[serde(default)]
     pub api_version: Option<String>,
+    /// GOLD-WIRE-04 — optional specialist [`CouncilVoice`] for this
+    /// hemisphere. When set, the hemisphere's provider adapter layers the
+    /// voice's `system_prompt_fragment()` onto the **system** prompt at the
+    /// leaf LLM call (after operator/persona/skill system content), so e.g.
+    /// the Left brain reasons as a `SecurityEngineer`. None → no voice
+    /// framing. Resolved per recursion tier via `slot_for_sub`, so inner
+    /// councils carry their own role's voice without leaking the parent's.
+    #[serde(default)]
+    pub voice: Option<crate::council::types::CouncilVoice>,
 }
 
 /// Top-level inference topology. v0.1 wizard fills `default_slot` only —

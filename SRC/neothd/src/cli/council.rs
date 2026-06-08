@@ -148,6 +148,11 @@ pub enum CouncilAction {
     /// live runtime usage from `~/.neoth/council_budget.json` (written
     /// by the chat-layer council wrapper after each debate).
     Budget,
+
+    /// GOLD-WIRE-04: list the available council voices — the specialist
+    /// framings a hemisphere can debate as (set per slot via
+    /// `freedom.yaml::inference.<slot>.voice`). Read-only.
+    Voices,
 }
 
 pub async fn run_council(args: CouncilArgs) -> Result<()> {
@@ -181,7 +186,35 @@ pub async fn run_council(args: CouncilArgs) -> Result<()> {
         CouncilAction::Replay { prompt_hash } => run_replay(&home, &prompt_hash, args.output),
         CouncilAction::Suppress { off } => run_suppress(&home, off, args.output),
         CouncilAction::Budget => run_budget(&home, args.output),
+        CouncilAction::Voices => run_voices(args.output),
     }
+}
+
+/// GOLD-WIRE-04: list every council voice + its description. Pure read of
+/// `CouncilVoice::ALL` — no config / WAL access.
+fn run_voices(output: OutputFormat) -> Result<()> {
+    use crate::council::types::CouncilVoice;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let rows: Vec<_> = CouncilVoice::ALL
+                .iter()
+                .map(|v| {
+                    serde_json::json!({
+                        "id": v.as_str(),
+                        "description": v.description(),
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&rows)?);
+        }
+        OutputFormat::Table => {
+            println!("# Council voices (set per slot via freedom.yaml::inference.<slot>.voice)");
+            for v in CouncilVoice::ALL {
+                println!("  {:<26}  {}", v.as_str(), v.description());
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_show(home: &std::path::Path, output: OutputFormat) -> Result<()> {

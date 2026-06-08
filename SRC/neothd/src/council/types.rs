@@ -395,6 +395,17 @@ pub enum CouncilVoice {
 }
 
 impl CouncilVoice {
+    /// Every voice, in stable display order. Drives `neoth council voices`
+    /// + the GUI picker; pinned by a test so a new variant must be added here.
+    pub const ALL: &'static [CouncilVoice] = &[
+        CouncilVoice::SecurityEngineer,
+        CouncilVoice::ThreatDetectionEngineer,
+        CouncilVoice::PerformanceBenchmarker,
+        CouncilVoice::AccessibilityAuditor,
+        CouncilVoice::IncidentResponder,
+        CouncilVoice::EvidenceCollector,
+    ];
+
     /// Stable wire id matching serde's `rename_all`.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -1232,15 +1243,18 @@ mod tests {
     fn qm_13_every_voice_has_nonempty_description_and_prompt() {
         // Pin the contract: every voice surfaces something operators
         // can read in `neoth council voices` AND something the
-        // orchestrator can layer onto the system prompt.
-        for v in [
-            CouncilVoice::SecurityEngineer,
-            CouncilVoice::ThreatDetectionEngineer,
-            CouncilVoice::PerformanceBenchmarker,
-            CouncilVoice::AccessibilityAuditor,
-            CouncilVoice::IncidentResponder,
-            CouncilVoice::EvidenceCollector,
-        ] {
+        // orchestrator can layer onto the system prompt. GOLD-WIRE-04:
+        // iterate `CouncilVoice::ALL` (the single source `neoth council
+        // voices` reads) so a new variant is auto-covered — and pin that
+        // ALL is complete + de-duplicated.
+        use std::collections::HashSet;
+        let unique: HashSet<_> = CouncilVoice::ALL.iter().collect();
+        assert_eq!(
+            unique.len(),
+            CouncilVoice::ALL.len(),
+            "CouncilVoice::ALL must have no duplicates"
+        );
+        for &v in CouncilVoice::ALL {
             assert!(!v.description().is_empty(), "{:?} missing description", v);
             assert!(
                 v.system_prompt_fragment().len() > 50,

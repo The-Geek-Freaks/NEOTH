@@ -118,6 +118,8 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                     "model": slot.model,
                     "endpoint": slot.endpoint,
                     "has_key": slot.key.is_some(),
+                    // GOLD-WIRE-04: surface the specialist voice bound to this slot.
+                    "voice": slot.voice.map(|v| v.as_str()),
                 })).collect::<Vec<_>>(),
             });
             println!("{}", serde_json::to_string_pretty(&body)?);
@@ -138,11 +140,14 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                 let provider = slot.provider.map(|p| p.as_str()).unwrap_or("(default)");
                 let model = slot.model.as_deref().unwrap_or("(default)");
                 let endpoint = slot.endpoint.as_deref().unwrap_or("");
+                // GOLD-WIRE-04: show the specialist voice bound to this slot.
+                let voice = slot.voice.map(|v| v.as_str()).unwrap_or("(none)");
                 println!(
-                    "  {:<10}  provider={:<16} model={:<28} endpoint={endpoint}",
+                    "  {:<10}  provider={:<16} model={:<28} voice={:<24} endpoint={endpoint}",
                     role.as_str(),
                     provider,
                     model,
+                    voice,
                 );
             }
         }
@@ -185,6 +190,9 @@ async fn run_set(
         endpoint,
         region: None,
         api_version: None,
+        // GOLD-WIRE-04: preserve any specialist voice already set on this slot
+        // — rebinding the provider/model must not silently drop the voice.
+        voice: cfg.inference.slot_for(role).voice,
     };
     match role {
         HemisphereRole::Left => cfg.inference.left = new_slot.clone(),
@@ -644,6 +652,7 @@ mod tests {
             endpoint: None,
             region: None,
             api_version: None,
+            voice: None,
         };
         let new_slot = HemisphereSlot {
             provider: Some(InferenceProvider::Gemini),
@@ -652,6 +661,7 @@ mod tests {
             endpoint: None,
             region: None,
             api_version: None,
+            voice: None,
         };
         let segment = emit_rebind_audit_to(
             dir.path(),
@@ -703,6 +713,7 @@ mod tests {
             endpoint: None,
             region: None,
             api_version: None,
+            voice: None,
         };
         let new_slot = HemisphereSlot {
             provider: Some(InferenceProvider::LocalQwen),
@@ -711,6 +722,7 @@ mod tests {
             endpoint: None,
             region: None,
             api_version: None,
+            voice: None,
         };
         let segment = emit_rebind_audit_to(
             dir.path(),

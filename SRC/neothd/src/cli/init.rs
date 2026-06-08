@@ -1992,6 +1992,8 @@ fn step5b_inference_topology(
         endpoint: state.provider_endpoint.clone(),
         region: None,
         api_version: None,
+        // GOLD-WIRE-04: the single-mode default slot carries no council voice.
+        voice: None,
     };
 
     // Non-interactive: honour CLI overrides, otherwise stay in single mode.
@@ -2225,6 +2227,9 @@ fn step5b_inference_topology(
                     endpoint: state.inference.default_slot.endpoint.clone(),
                     region: state.inference.default_slot.region.clone(),
                     api_version: state.inference.default_slot.api_version.clone(),
+                    // GOLD-WIRE-04: mirror the default slot's voice onto each
+                    // per-role slot so a wizard-set voice survives role split.
+                    voice: state.inference.default_slot.voice,
                 };
                 match role {
                     "left" => state.inference.left = slot,
@@ -2473,6 +2478,8 @@ pub(crate) fn apply_local_only_preset(topology: &mut crate::config::inference::I
         endpoint: None,
         region: None,
         api_version: None,
+        // GOLD-WIRE-04: local-only preset leaves voices unset.
+        voice: None,
     };
     topology.mode = TopologyMode::Triplet;
     topology.default_slot = local_slot.clone();
@@ -5168,6 +5175,7 @@ mod tests {
             endpoint: Some("https://api.openai.com/v1".into()),
             region: None,
             api_version: None,
+            voice: None,
         };
         let mut topo = InferenceTopology {
             left: dirty.clone(),

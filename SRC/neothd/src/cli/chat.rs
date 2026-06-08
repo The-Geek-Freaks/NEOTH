@@ -2232,6 +2232,14 @@ struct ProviderHemisphere {
     /// Phase 2 behaviour (reuse outer slots) — kept for the Split-
     /// recovery one-shot wrapper that never recurses.
     outer_role: Option<crate::config::inference::HemisphereRole>,
+    /// GOLD-WIRE-04 — this hemisphere's specialist voice, resolved from
+    /// its inference slot at build time. Applied as a **system**-prompt
+    /// layer inside `ask` (the leaf LLM call) via [`compose_voice_system`].
+    /// Deliberately NOT baked into `base_req` so it never leaks into the
+    /// sub-hemispheres that recursion builds from `base_req`: each inner
+    /// hemisphere resolves its OWN voice through `slot_for_sub`, so a
+    /// SecurityEngineer on outer-Left never contaminates inner-Right.
+    voice: Option<crate::council::types::CouncilVoice>,
 }
 
 #[async_trait::async_trait]
@@ -2256,6 +2264,11 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
         };
         let mut req = self.base_req.clone();
         req.prompt = prompt.to_string();
+        // GOLD-WIRE-04: layer this hemisphere's specialist voice onto the
+        // system prompt at the leaf LLM call — system-role authority, and
+        // applied here (not in base_req) so recursion's sub-hemispheres,
+        // built from base_req, stay voice-free until they apply their own.
+        req.system = compose_voice_system(req.system, self.voice);
         // QM-9 Phase 1.5 follow-on: council debate path now also
         // persists usage events. Each hemisphere call counts —
         // operators on a Pick #8 council see the per-hemisphere
@@ -2469,6 +2482,31 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
     }
 }
 
+/// GOLD-WIRE-04 — layer a [`CouncilVoice`]'s specialist framing onto a
+/// hemisphere's **system** prompt. The fragment is appended AFTER any
+/// existing system content (operator-md / persona / skill layers) so it
+/// adds specialist framing without overriding the operator's own system
+/// prompt. Injecting at the system layer — rather than prepending to the
+/// user turn — gives the voice the higher authority every adapter
+/// (Claude / Gemini / OpenAI) grants system-role content, and keeps the
+/// operator's question intact as the sole user message. `None` leaves the
+/// system prompt untouched.
+fn compose_voice_system(
+    base_system: Option<String>,
+    voice: Option<crate::council::types::CouncilVoice>,
+) -> Option<String> {
+    match voice {
+        None => base_system,
+        Some(v) => {
+            let fragment = v.system_prompt_fragment();
+            Some(match base_system {
+                Some(s) if !s.trim().is_empty() => format!("{s}\n\n{fragment}"),
+                _ => fragment.to_string(),
+            })
+        }
+    }
+}
+
 /// Build a fresh `ProviderHemisphere` for `role` using the configured
 /// per-role provider (defaults collapse to single-mode in Single
 /// topology). Used by `run_council_debate` to build all three plus by
@@ -2489,6 +2527,8 @@ async fn build_hemisphere(
         base_req: req.clone(),
         config: None,
         outer_role: None,
+        // GOLD-WIRE-04: this role's specialist voice, applied at leaf `ask`.
+        voice: config.inference.slot_for(role).voice,
     })
 }
 
@@ -2507,11 +2547,15 @@ async fn build_hemisphere_with_config(
     req: &crate::providers::Request,
 ) -> Result<ProviderHemisphere> {
     let provider = crate::providers::from_config_for_role(config.as_ref(), role).await?;
+    // GOLD-WIRE-04: outer-council hemisphere — voice from this role's slot,
+    // resolved before the `config` Arc is moved into the struct.
+    let voice = config.inference.slot_for(role).voice;
     Ok(ProviderHemisphere {
         provider,
         base_req: req.clone(),
         config: Some(config),
         outer_role: Some(role),
+        voice,
     })
 }
 
@@ -2534,11 +2578,18 @@ async fn build_sub_hemisphere_with_config(
 ) -> Result<ProviderHemisphere> {
     let provider =
         crate::providers::from_config_for_sub_role(config.as_ref(), outer_role, inner_role).await?;
+    // GOLD-WIRE-04: inner-council hemisphere — voice resolves through
+    // `slot_for_sub`, so an operator who pins a voice on
+    // `hemisphere_sub_slots[outer][inner]` gets that specialist framing at
+    // the recursion tier; otherwise it falls back to the inner role's own
+    // outer-level slot voice (never the parent hemisphere's — no leak).
+    let voice = config.inference.slot_for_sub(outer_role, inner_role).voice;
     Ok(ProviderHemisphere {
         provider,
         base_req: req.clone(),
         config: Some(config),
         outer_role: None,
+        voice,
     })
 }
 
@@ -4767,6 +4818,7 @@ mod tests {
             base_req: Request::default(),
             config: None,
             outer_role: None,
+            voice: None,
         };
         let result = ph.ask_with_depth("hi", 1).await.unwrap();
         assert_eq!(result.text, "ok");
@@ -4786,6 +4838,7 @@ mod tests {
             base_req: Request::default(),
             config: None,
             outer_role: None,
+            voice: None,
         };
         let result = ph.ask_with_depth("hi", 0).await.unwrap();
         assert_eq!(result.text, "ok");
@@ -4810,6 +4863,7 @@ mod tests {
             base_req: Request::default(),
             config: None,
             outer_role: None,
+            voice: None,
         };
         // depth=4 (MAX cap) + no config → still flat, one call.
         let result = ph.ask_with_depth("hi", 4).await.unwrap();
@@ -4837,6 +4891,7 @@ mod tests {
             base_req: Request::default(),
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(crate::config::inference::HemisphereRole::Left),
+            voice: None,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
         // Error msg names "build sub-" so operator sees which leg failed.
@@ -5165,6 +5220,7 @@ mod tests {
             base_req: Request::default(),
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: Some(HemisphereRole::Left),
+            voice: None,
         };
 
         let result = ph.ask_with_depth("hi", 2).await;
@@ -5205,6 +5261,7 @@ mod tests {
             base_req: Request::default(),
             config: Some(std::sync::Arc::new(cfg)),
             outer_role: None,
+            voice: None,
         };
         let err = ph.ask_with_depth("hi", 2).await.unwrap_err();
         // Skip provider → build_hemisphere_with_config (Phase 2 path)
@@ -5214,6 +5271,143 @@ mod tests {
             "expected Phase 2 sub-build skip error, got: {err}"
         );
         assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    // ── GOLD-WIRE-04: council voice → system prompt ───────────────────
+
+    #[test]
+    fn compose_voice_system_layers_after_existing_system_and_is_noop_when_none() {
+        use crate::council::types::CouncilVoice;
+        let frag = CouncilVoice::SecurityEngineer.system_prompt_fragment();
+
+        // None voice → system unchanged (both Some and None base).
+        assert_eq!(
+            super::compose_voice_system(Some("base".into()), None),
+            Some("base".into())
+        );
+        assert_eq!(super::compose_voice_system(None, None), None);
+
+        // Some voice + existing system → fragment appended AFTER the base
+        // (operator / persona / skill layers keep precedence).
+        let layered = super::compose_voice_system(
+            Some("BASE SYS".into()),
+            Some(CouncilVoice::SecurityEngineer),
+        )
+        .unwrap();
+        assert!(layered.starts_with("BASE SYS"), "operator system must lead");
+        assert!(layered.ends_with(frag), "voice fragment must trail");
+
+        // Some voice + no/blank system → fragment becomes the whole system.
+        assert_eq!(
+            super::compose_voice_system(None, Some(CouncilVoice::SecurityEngineer)),
+            Some(frag.to_string())
+        );
+        assert_eq!(
+            super::compose_voice_system(Some("   ".into()), Some(CouncilVoice::SecurityEngineer)),
+            Some(frag.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn build_hemisphere_sets_role_voice_on_field_not_base_req() {
+        // E2E wiring (the gap Lens-2 flagged): a slot voice configured in
+        // freedom.yaml must reach the hemisphere — on the `voice` field, and
+        // crucially NOT baked into `base_req.system` (so recursion's sub-
+        // hemispheres, cloned from base_req, stay voice-free → no cross-role
+        // leak). OpenaiCompat builds a provider object from endpoint + model
+        // with no network call, so the build path runs deterministically.
+        use crate::config::inference::HemisphereRole;
+        use crate::council::types::CouncilVoice;
+
+        let mut cfg = FreedomConfig::default();
+        cfg.provider_kind = Some(ProviderKind::OpenaiCompat);
+        cfg.provider_endpoint = Some("http://127.0.0.1:1/v1".into());
+        cfg.provider_model = Some("test-model".into());
+        // Single topology → slot_for(any role) resolves to default_slot.
+        cfg.inference.default_slot.voice = Some(CouncilVoice::SecurityEngineer);
+
+        let req = Request {
+            system: Some("OPERATOR SYSTEM".into()),
+            ..Default::default()
+        };
+        let ph = super::build_hemisphere(&cfg, HemisphereRole::Left, &req)
+            .await
+            .expect("openai_compat hemisphere builds without network");
+
+        assert_eq!(
+            ph.voice,
+            Some(CouncilVoice::SecurityEngineer),
+            "the configured slot voice must land on the hemisphere's voice field"
+        );
+        // The anti-leak invariant: base_req.system is the operator system
+        // UNCHANGED — the voice is applied later, at the leaf `ask`.
+        assert_eq!(
+            ph.base_req.system.as_deref(),
+            Some("OPERATOR SYSTEM"),
+            "voice must NOT be baked into base_req (else it leaks into recursion)"
+        );
+    }
+
+    /// Provider that records the `system` of the last request it received,
+    /// so a test can prove `ask` layers the voice into the system field.
+    struct SystemCapturingProvider {
+        seen_system: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    }
+
+    #[async_trait]
+    impl Provider for SystemCapturingProvider {
+        fn name(&self) -> &'static str {
+            "system-capture"
+        }
+        async fn complete(&self, req: Request) -> Result<Completion> {
+            *self.seen_system.lock().unwrap() = req.system.clone();
+            Ok(Completion {
+                text: "ok".into(),
+                model: "cap-1".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(1),
+                output_tokens: Some(1),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn ask_layers_voice_into_request_system() {
+        // The leaf-call contract: when a hemisphere carries a voice, the
+        // request that reaches the provider has the voice fragment layered
+        // onto its system field (operator system first, voice last).
+        use crate::council::orchestrator::HemisphereProvider;
+        use crate::council::types::CouncilVoice;
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let ph = super::ProviderHemisphere {
+            provider: Box::new(SystemCapturingProvider {
+                seen_system: seen.clone(),
+            }),
+            base_req: Request {
+                system: Some("OPERATOR SYSTEM".into()),
+                ..Default::default()
+            },
+            config: None,
+            outer_role: None,
+            voice: Some(CouncilVoice::SecurityEngineer),
+        };
+
+        ph.ask("operator question").await.unwrap();
+
+        let sys = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("request must carry system");
+        assert!(
+            sys.starts_with("OPERATOR SYSTEM"),
+            "operator system must lead: {sys}"
+        );
+        assert!(
+            sys.ends_with(CouncilVoice::SecurityEngineer.system_prompt_fragment()),
+            "voice fragment must be layered into the request system: {sys}"
+        );
     }
 
     // ── Finding 2 (Session 13) multi-cloud fan-out advisory ───────────
