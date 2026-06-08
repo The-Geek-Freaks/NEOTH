@@ -124,6 +124,81 @@ pub(crate) async fn emit_channel_privilege_blocked(
     .await;
 }
 
+/// GOLD-ARCH-01 phase 2: PII-hash a channel sender id ONCE. The plaintext id
+/// (a phone number for WhatsApp) stays in-process; only this xxh3-64 hash
+/// reaches the WAL + tracing lines.
+pub(crate) fn sender_hash_of(sender_id: &str) -> String {
+    format!("{:016x}", xxhash_rust::xxh3::xxh3_64(sender_id.as_bytes()))
+}
+
+/// GOLD-ARCH-01 phase 2 (inbound stage): SPEC-11 cross-channel identity
+/// resolve. Stamp `inbound.human_uuid` from the `(channel, sender_id, chat_id)`
+/// triple so the WAL + `neoth identity list/merge` can attribute the message to
+/// a stable person. Best-effort: a missing `views_conn` or a resolver error
+/// leaves `human_uuid = None`. The shared views_conn guard is dropped before
+/// return (no lock held across a later await).
+pub(crate) async fn resolve_inbound_identity(
+    inbound: &mut InboundMessage,
+    views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+) {
+    if let Some(vc) = views_conn {
+        let conn = vc.lock().await;
+        match crate::channels::identity::resolve_or_create_human_uuid(
+            &conn,
+            inbound.channel.as_str(),
+            &inbound.sender_id,
+            &inbound.chat_id,
+        ) {
+            Ok(uuid) => inbound.human_uuid = Some(uuid),
+            Err(e) => {
+                tracing::debug!(error = %e, "identity: human_uuid resolve failed (best-effort)")
+            }
+        }
+    }
+}
+
+/// GOLD-ARCH-01 phase 2 (inbound stage): SD-03 edited-message audit. An inbound
+/// edit is observed-only — record a hashed `0x38 CHANNEL_EDIT` frame and signal
+/// the caller to return WITHOUT re-running the provider pipeline (no reply, no
+/// cost, no permission gate). Returns `true` iff this was an edit (caller emits
+/// no reply); `false` for a normal message (caller continues). No raw text in
+/// the payload (PII) — mirrors the CHANNEL_INGRESS xxh3-64 hash contract.
+pub(crate) async fn audit_inbound_edit(
+    inbound: &InboundMessage,
+    sender_hash: &str,
+    writer: &WalWriterHandle,
+) -> bool {
+    let Some(edit_ts_unix) = inbound.edit_unix else {
+        return false;
+    };
+    let new_text = inbound.text.as_deref().unwrap_or("");
+    match serde_json::to_vec(&serde_json::json!({
+        "channel": inbound.channel,
+        "chat_id": inbound.chat_id,
+        "message_id": inbound.message_id,
+        "sender_id_hash": sender_hash,
+        "new_text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(new_text.as_bytes()),
+        "new_text_bytes": new_text.len(),
+        "edit_ts_unix": edit_ts_unix,
+        "ts_unix": inbound.channel_ts_unix,
+    })) {
+        Ok(edit_payload) => {
+            let edit_header =
+                crate::wal::make_header(crate::wal::events::EVENT_TYPE_CHANNEL_EDIT, &edit_payload);
+            if let Err(e) = writer.append(edit_header, edit_payload).await {
+                warn!(error = %e, "WAL append CHANNEL_EDIT (0x38) frame failed");
+            }
+        }
+        Err(e) => warn!(error = %e, "serialize CHANNEL_EDIT (0x38) frame failed"),
+    }
+    info!(
+        channel = inbound.channel.as_str(),
+        sender_hash = %sender_hash,
+        "inbound message edit recorded (audit-only, no re-run)"
+    );
+    true
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -164,64 +239,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             // ONCE and use the hash in every WAL frame + tracing line on the
             // inbound path — the plaintext id stays in-process only (rate
             // limiter, permission gate, identity resolve), never on disk.
-            let sender_hash =
-                format!("{:016x}", xxhash_rust::xxh3::xxh3_64(inbound.sender_id.as_bytes()));
-            // ── SPEC-11: cross-channel identity resolve ────────────────────
-            // Stamp `human_uuid` from the `(channel, sender_id, chat_id)` triple
-            // so downstream + the WAL can attribute this message to a stable
-            // person, and `neoth identity list/merge` has rows to operate on.
-            // Best-effort: a DB/resolver error leaves `human_uuid = None`. The
-            // shared views_conn guard is dropped before any later await.
-            if let Some(vc) = &views_conn {
-                let conn = vc.lock().await;
-                match crate::channels::identity::resolve_or_create_human_uuid(
-                    &conn,
-                    inbound.channel.as_str(),
-                    &inbound.sender_id,
-                    &inbound.chat_id,
-                ) {
-                    Ok(uuid) => inbound.human_uuid = Some(uuid),
-                    Err(e) => {
-                        tracing::debug!(error = %e, "identity: human_uuid resolve failed (best-effort)")
-                    }
-                }
-            }
-            // ── SD-03: edited-message audit (WAL 0x38 CHANNEL_EDIT) ────────
-            // An inbound edit is observed-only: record a hashed audit frame
-            // and return WITHOUT re-running the provider pipeline (no reply,
-            // no cost, no permission gate). No raw text in the payload (PII) —
-            // mirror the CHANNEL_INGRESS hash contract (xxh3-64).
-            // `edit_unix.is_some()` is the edit signal set by the adapter.
-            // Schema note: `sender_display` is deliberately omitted (PII); only
-            // the numeric `sender_id` is recorded. Do not add it.
-            if let Some(edit_ts_unix) = inbound.edit_unix {
-                let new_text = inbound.text.as_deref().unwrap_or("");
-                match serde_json::to_vec(&serde_json::json!({
-                    "channel": inbound.channel,
-                    "chat_id": inbound.chat_id,
-                    "message_id": inbound.message_id,
-                    "sender_id_hash": sender_hash,
-                    "new_text_hash_xxh3": xxhash_rust::xxh3::xxh3_64(new_text.as_bytes()),
-                    "new_text_bytes": new_text.len(),
-                    "edit_ts_unix": edit_ts_unix,
-                    "ts_unix": inbound.channel_ts_unix,
-                })) {
-                    Ok(edit_payload) => {
-                        let edit_header = crate::wal::make_header(
-                            crate::wal::events::EVENT_TYPE_CHANNEL_EDIT,
-                            &edit_payload,
-                        );
-                        if let Err(e) = writer.append(edit_header, edit_payload).await {
-                            warn!(error = %e, "WAL append CHANNEL_EDIT (0x38) frame failed");
-                        }
-                    }
-                    Err(e) => warn!(error = %e, "serialize CHANNEL_EDIT (0x38) frame failed"),
-                }
-                info!(
-                    channel = inbound.channel.as_str(),
-                    sender_hash = %sender_hash,
-                    "inbound message edit recorded (audit-only, no re-run)"
-                );
+            let sender_hash = sender_hash_of(&inbound.sender_id);
+            // GOLD-ARCH-01 phase 2: SPEC-11 identity resolve (stamps human_uuid).
+            resolve_inbound_identity(&mut inbound, &views_conn).await;
+            // GOLD-ARCH-01 phase 2: SD-03 edited-message audit. An edit is
+            // observed-only — audit it + return without re-running the pipeline.
+            if audit_inbound_edit(&inbound, &sender_hash, &writer).await {
                 return Ok(::std::option::Option::None);
             }
 
@@ -1862,4 +1885,82 @@ pub(crate) async fn handle_media_attachment(
         AssetKind::Pdf | AssetKind::Other => extraction.text,
     };
     Ok(synthesised)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channels::ChannelKind;
+
+    fn inbound(text: Option<&str>, edit_unix: Option<i64>) -> InboundMessage {
+        InboundMessage {
+            channel: ChannelKind::Telegram,
+            chat_id: "chat1".into(),
+            thread_id: None,
+            sender_id: "+15551234567".into(),
+            sender_display: None,
+            text: text.map(|s| s.to_string()),
+            media: None,
+            reply_to: None,
+            message_id: Some("m1".into()),
+            edit_unix,
+            mention_kind: None,
+            channel_ts_unix: 100,
+            raw_ts_ms: None,
+            human_uuid: None,
+        }
+    }
+
+    fn count_edit_frames(bytes: &[u8]) -> usize {
+        let mut n = 0usize;
+        let _ = crate::wal::scan::for_each_frame(bytes, |_, d| {
+            if d.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_EDIT {
+                n += 1;
+            }
+            Ok(())
+        });
+        n
+    }
+
+    #[test]
+    fn sender_hash_is_deterministic_16_hex_and_distinct_per_id() {
+        let a = sender_hash_of("+15551234567");
+        assert_eq!(a.len(), 16);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(a, sender_hash_of("+15551234567"), "deterministic");
+        assert_ne!(a, sender_hash_of("+15559999999"), "distinct ids → distinct hash");
+    }
+
+    #[tokio::test]
+    async fn resolve_identity_with_no_views_conn_is_a_noop() {
+        let mut msg = inbound(Some("hi"), None);
+        resolve_inbound_identity(&mut msg, &None).await;
+        assert!(msg.human_uuid.is_none(), "no conn → no uuid, no panic");
+    }
+
+    #[tokio::test]
+    async fn audit_edit_is_false_and_writes_nothing_for_a_normal_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let msg = inbound(Some("hello"), None);
+        assert!(!audit_inbound_edit(&msg, "deadbeefdeadbeef", &writer).await);
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap_or_default();
+        assert_eq!(count_edit_frames(&bytes), 0, "normal message writes no CHANNEL_EDIT");
+    }
+
+    #[tokio::test]
+    async fn audit_edit_is_true_and_writes_one_channel_edit_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let msg = inbound(Some("edited text"), Some(1_700_000_000));
+        assert!(audit_inbound_edit(&msg, "deadbeefdeadbeef", &writer).await);
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap();
+        assert_eq!(count_edit_frames(&bytes), 1, "an edit writes exactly one 0x38 frame");
+    }
 }
