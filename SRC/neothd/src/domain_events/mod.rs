@@ -40,6 +40,8 @@
 //! event second (best-effort notification to live consumers).
 
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -61,6 +63,15 @@ pub const DEFAULT_CAPACITY: usize = 256;
 /// row, the variant should carry the id + the consumer reads back
 /// from the canonical store (idx_episode / idx_profile / WAL). The
 /// bus must not become a substitute database.
+///
+/// **Producer status (GOLD-WIRE-10):** only [`DomainEvent::ProviderResponded`]
+/// currently has a producer — the council hemisphere path in `cli::chat`
+/// publishes it, and the [`UsageMeter`] consumes it. The other four variants
+/// are forward-infra with **no producer yet** (`CronJobFired` for the v0.5
+/// scheduler, `CouncilWinnerSelected` / `SubAgentDispatched` for self-
+/// correction, `WalFrameAppended` for live `wal tail`). The `#[non_exhaustive]`
+/// enum is designed for exactly this incremental producer wiring — they are NOT
+/// dead code to delete, but the bus is not a complete telemetry feed yet.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -177,6 +188,135 @@ impl EventBus {
     pub fn receiver_count(&self) -> usize {
         self.sender.receiver_count()
     }
+}
+
+// ── GOLD-WIRE-10: process-wide bus + the first real consumer (a meter) ────────
+
+/// GOLD-WIRE-10 — live aggregate the daemon's meter-drainer task folds every
+/// [`DomainEvent`] into. This is the KF-08 token-budget + activity meter: a
+/// running total of provider tokens (the budget signal) + per-event counts.
+/// Read it via [`global_meter`] (the `neoth gui-stream` budget poll + a future
+/// `neoth doctor`/GUI surface consume the snapshot; the GUI display is WIRE-10b).
+#[derive(Debug, Default)]
+pub struct UsageMeter {
+    events_total: AtomicU64,
+    provider_responses: AtomicU64,
+    input_tokens_total: AtomicU64,
+    output_tokens_total: AtomicU64,
+    /// Count of events the drainer DROPPED because it lagged > the bus
+    /// capacity during a burst. Makes the best-effort undercount visible so a
+    /// reader knows the token totals are a lower bound after `lagged_events > 0`.
+    lagged_events: AtomicU64,
+}
+
+/// Copy-able read-out of [`UsageMeter`] for the poll/RPC surfaces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageSnapshot {
+    pub events_total: u64,
+    pub provider_responses: u64,
+    pub input_tokens_total: u64,
+    pub output_tokens_total: u64,
+    /// Events dropped on drainer lag — when `> 0`, the token totals undercount.
+    pub lagged_events: u64,
+}
+
+impl UsageMeter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Fold one event into the running totals. Pure aside from the atomics, so
+    /// it is unit-testable without the bus or a runtime.
+    pub fn absorb(&self, ev: &DomainEvent) {
+        self.events_total.fetch_add(1, Ordering::Relaxed);
+        if let DomainEvent::ProviderResponded {
+            input_tokens,
+            output_tokens,
+            ..
+        } = ev
+        {
+            self.provider_responses.fetch_add(1, Ordering::Relaxed);
+            self.input_tokens_total
+                .fetch_add(u64::from(*input_tokens), Ordering::Relaxed);
+            self.output_tokens_total
+                .fetch_add(u64::from(*output_tokens), Ordering::Relaxed);
+        }
+    }
+
+    /// Record `n` events the drainer dropped because it lagged the producer.
+    pub fn record_lag(&self, n: u64) {
+        self.lagged_events.fetch_add(n, Ordering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> UsageSnapshot {
+        UsageSnapshot {
+            events_total: self.events_total.load(Ordering::Relaxed),
+            provider_responses: self.provider_responses.load(Ordering::Relaxed),
+            input_tokens_total: self.input_tokens_total.load(Ordering::Relaxed),
+            output_tokens_total: self.output_tokens_total.load(Ordering::Relaxed),
+            lagged_events: self.lagged_events.load(Ordering::Relaxed),
+        }
+    }
+}
+
+static GLOBAL_BUS: OnceLock<EventBus> = OnceLock::new();
+static GLOBAL_METER: OnceLock<Arc<UsageMeter>> = OnceLock::new();
+
+/// GOLD-WIRE-10 — install the process-wide [`EventBus`] and spawn the meter
+/// drainer task that folds every published event into the global [`UsageMeter`].
+/// Returns `true` iff THIS call installed it (`false` if already installed).
+/// Call at daemon boot (`run_serve`), inside a tokio runtime (it spawns the
+/// drainer). The whole install runs inside `OnceLock::get_or_init`, so even
+/// under concurrent callers the bus + meter + drainer are constructed EXACTLY
+/// once (no TOCTOU, no orphan drainer, and the meter is installed before the
+/// bus becomes visible). After this, producers fire [`publish`] and the meter
+/// is read via [`global_meter_snapshot`].
+pub fn init_global() -> bool {
+    let mut installed = false;
+    GLOBAL_BUS.get_or_init(|| {
+        installed = true;
+        let bus = EventBus::new();
+        let meter = Arc::new(UsageMeter::new());
+        let mut rx = bus.subscribe();
+        let meter_for_task = Arc::clone(&meter);
+        tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Ok(ev) => meter_for_task.absorb(&ev),
+                    // A drainer that lagged behind a burst counts the dropped
+                    // events (visible via `lagged_events`) and keeps going — the
+                    // meter is best-effort telemetry, not an audit log.
+                    Err(broadcast::error::RecvError::Lagged(n)) => meter_for_task.record_lag(n),
+                    // The sender lives in GLOBAL_BUS forever, so Closed only
+                    // happens at process teardown — end the task.
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
+        // Install the meter BEFORE returning the bus, so the moment GLOBAL_BUS is
+        // visible the meter is already readable (no asymmetric window).
+        let _ = GLOBAL_METER.set(meter);
+        bus
+    });
+    installed
+}
+
+/// Publish to the process-wide bus. No-op (returns `0`) when the bus has not
+/// been installed — one-shot CLIs that never call [`init_global`] still run.
+/// Best-effort: a producer fires this and never blocks on subscribers.
+pub fn publish(event: DomainEvent) -> usize {
+    match GLOBAL_BUS.get() {
+        Some(bus) => bus.publish(event),
+        None => 0,
+    }
+}
+
+/// The process-wide [`UsageMeter`] snapshot, when the bus is installed.
+/// Returns `None` in one-shot CLI processes that never called [`init_global`]
+/// (only `neoth serve` installs the bus). Callers MUST NOT treat `None` as a
+/// zero budget — it means the meter is not installed in this process.
+pub fn global_meter_snapshot() -> Option<UsageSnapshot> {
+    GLOBAL_METER.get().map(|m| m.snapshot())
 }
 
 #[cfg(test)]
@@ -396,5 +536,119 @@ mod tests {
         let dbg = format!("{:?}", bus);
         assert!(dbg.contains("receiver_count"), "got: {dbg}");
         assert!(dbg.contains("EventBus"), "got: {dbg}");
+    }
+
+    // ── GOLD-WIRE-10: UsageMeter consumer ─────────────────────────────────
+
+    fn provider_responded(input: u32, output: u32) -> DomainEvent {
+        DomainEvent::ProviderResponded {
+            provider: "claude_cli".into(),
+            model: "claude-opus-4-8".into(),
+            input_tokens: input,
+            output_tokens: output,
+            latency_ms: 1200,
+            ts_unix: 1,
+        }
+    }
+
+    #[test]
+    fn usage_meter_absorbs_provider_tokens_and_counts_all_events() {
+        let m = UsageMeter::new();
+        m.absorb(&provider_responded(10, 5));
+        m.absorb(&provider_responded(3, 7));
+        // A non-provider event still bumps events_total but not the token totals.
+        m.absorb(&evt(1));
+        // A drainer lag drops 4 events — recorded so the undercount is visible.
+        m.record_lag(4);
+        let s = m.snapshot();
+        assert_eq!(s.events_total, 3);
+        assert_eq!(s.provider_responses, 2);
+        assert_eq!(s.input_tokens_total, 13);
+        assert_eq!(s.output_tokens_total, 12);
+        assert_eq!(s.lagged_events, 4);
+    }
+
+    #[tokio::test]
+    async fn producer_to_meter_consumer_end_to_end() {
+        // The WIRE-10 contract: a producer publishes onto the bus, a subscribed
+        // consumer (the meter) receives it and the token budget advances.
+        // Driven with an explicit recv (no spawned task) so it is deterministic.
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe();
+        let meter = UsageMeter::new();
+
+        // Simulate a 3-hemisphere council call: 3 ProviderResponded events.
+        assert_eq!(bus.publish(provider_responded(100, 40)), 1);
+        bus.publish(provider_responded(80, 30));
+        bus.publish(provider_responded(120, 50));
+
+        for _ in 0..3 {
+            let ev = rx.recv().await.expect("event delivered to subscriber");
+            meter.absorb(&ev);
+        }
+        let s = meter.snapshot();
+        assert_eq!(s.provider_responses, 3, "meter received every council hemisphere event");
+        assert_eq!(s.input_tokens_total, 300);
+        assert_eq!(s.output_tokens_total, 120);
+    }
+
+    #[test]
+    fn publish_is_noop_without_a_global_bus_in_a_oneshot_cli() {
+        // A one-shot CLI never calls `init_global`; `publish` must not panic and
+        // returns 0. (If another test in this binary installed the global bus,
+        // the count may be >0 — so assert only the no-panic + non-negative
+        // contract, not a hard 0.)
+        let _ = publish(provider_responded(1, 1));
+    }
+
+    #[test]
+    fn usage_snapshot_serde_roundtrips_for_the_poll_surface() {
+        let s = UsageSnapshot {
+            events_total: 9,
+            provider_responses: 3,
+            input_tokens_total: 300,
+            output_tokens_total: 120,
+            lagged_events: 0,
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        let back: UsageSnapshot = serde_json::from_str(&json).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[tokio::test]
+    async fn global_drainer_folds_published_events_when_this_runtime_owns_it() {
+        // Proves the REAL global path: publish() → GLOBAL_BUS → spawned drainer
+        // → GLOBAL_METER. The drainer is tied to the runtime that FIRST called
+        // init_global, so only assert the full drain when THIS test installed it
+        // (idempotent return); otherwise just assert the bus is live. Whichever
+        // test runs first in the binary exercises the full path.
+        let we_installed = init_global();
+        assert!(
+            global_meter_snapshot().is_some(),
+            "the meter must be installed after init_global"
+        );
+        if we_installed {
+            let before = global_meter_snapshot().unwrap();
+            publish(provider_responded(50, 20));
+            publish(provider_responded(50, 20));
+            // Let the spawned drainer task run (current-thread test runtime).
+            for _ in 0..100 {
+                tokio::task::yield_now().await;
+                if global_meter_snapshot().unwrap().provider_responses
+                    >= before.provider_responses + 2
+                {
+                    break;
+                }
+            }
+            let after = global_meter_snapshot().unwrap();
+            assert!(
+                after.provider_responses >= before.provider_responses + 2,
+                "the global drainer must fold published events into the meter \
+                 (before={}, after={})",
+                before.provider_responses,
+                after.provider_responses
+            );
+            assert!(after.input_tokens_total >= before.input_tokens_total + 100);
+        }
     }
 }

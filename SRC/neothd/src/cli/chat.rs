@@ -2289,6 +2289,24 @@ impl crate::council::orchestrator::HemisphereProvider for ProviderHemisphere {
                     elapsed_ms,
                     true,
                 );
+                // GOLD-WIRE-10: the council's per-hemisphere provider response
+                // is the first real producer on the domain-event bus. Each
+                // council call fires one `ProviderResponded` per hemisphere; the
+                // daemon's UsageMeter drainer folds the token counts into the
+                // running KF-08 budget total. Best-effort — no-op off-daemon.
+                // SCOPE: only THIS council-hemisphere call site publishes today;
+                // the single-provider chat, streaming, and MCP-loop provider
+                // paths do NOT — so the meter currently counts council token
+                // burn only. Extend those call sites in WIRE-10b for a full
+                // token budget. `latency_ms` is clamped (a call can't take 49d).
+                crate::domain_events::publish(crate::domain_events::DomainEvent::ProviderResponded {
+                    provider: provider_name.to_string(),
+                    model: c.model.clone(),
+                    input_tokens: c.input_tokens.unwrap_or(0),
+                    output_tokens: c.output_tokens.unwrap_or(0),
+                    latency_ms: elapsed_ms.min(u64::from(u32::MAX)) as u32,
+                    ts_unix: now_unix() as i64,
+                });
                 Ok(crate::council::orchestrator::CompletionRecord {
                     text: c.text,
                     input_tokens: c.input_tokens,

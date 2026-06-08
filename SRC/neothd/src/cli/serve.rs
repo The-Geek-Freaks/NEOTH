@@ -196,6 +196,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     };
 
+    // GOLD-WIRE-10: install the process-wide domain-event bus + spawn its meter
+    // drainer BEFORE any request-handling task can produce events. Council
+    // hemisphere calls fire `ProviderResponded` into it; the UsageMeter folds the
+    // token counts into the running KF-08 budget total (read via
+    // `domain_events::global_meter_snapshot()`; the GUI display is WIRE-10b).
+    if !crate::domain_events::init_global() {
+        warn!("domain-event bus already installed earlier in this process");
+    }
+
     // ── 2. Prepare WAL directory + segment ──────────────────────────────────
     let wal_dir = FreedomConfig::default_wal_dir();
     let segment_path = args
