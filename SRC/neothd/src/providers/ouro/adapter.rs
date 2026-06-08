@@ -436,14 +436,14 @@ fn ensure_ouro_loaded(adapter: &LocalOuroAdapter) -> Result<()> {
 
 /// Blocking forward + sampling loop. Mirrors
 /// `local_qwen::run_forward` and reuses `sample_token` verbatim.
-/// COR-31: build the model input ids for a decode step — the FULL running
-/// sequence (prompt + every token generated so far). The Ouro looped model
-/// clears its KV cache per recurrent loop iteration, which also wipes any
-/// cross-call cache at the start of each decode `forward()`; a single-token
-/// incremental decode would therefore leave the new token context-blind. Until
-/// the two-tier last-step-reuse cache lands, the adapter re-feeds the whole
-/// sequence at `seqlen_offset=0` so attention sees the full context. Pure, so
-/// the decode strategy is unit-testable without a loaded model.
+/// COR-31: build the model input ids for a `full_resequence` decode step — the
+/// FULL running sequence (prompt + every token generated so far), re-fed at
+/// `seqlen_offset=0` so attention sees the full context. This is the DEFAULT
+/// decode path: correct but O(n²)/step. GOLD-COR-36 added the per-loop KV cache
+/// (`NEOTH_OURO_KV_CACHE_MODE=per_loop`) which decodes in O(n) by feeding only
+/// the new token at a growing offset — bit-identical logits (proven by the
+/// parity oracle), default-off until a real-weight run certifies it. Pure, so
+/// the full-resequence strategy stays unit-testable without a loaded model.
 fn decode_context_ids(prompt_ids: &[u32], generated: &[u32]) -> Vec<u32> {
     let mut ids = Vec::with_capacity(prompt_ids.len() + generated.len());
     ids.extend_from_slice(prompt_ids);
@@ -496,37 +496,61 @@ fn run_ouro_forward(adapter: &LocalOuroAdapter, req: &Request) -> Result<Complet
     let mut next = sample_token(&logits, sampling).context("Ouro: sample from prompt logits")?;
     new_tokens.push(next);
 
-    // Generation loop. COR-31: the Ouro looped transformer clears every layer's
-    // KV cache at the START of each recurrent loop iteration inside forward()
-    // — required so the Universal-Transformer recurrence doesn't re-concat the
-    // same positions (see ouro/forward.rs::forward_loops; arXiv:2510.25741
-    // confirms prefill needs a fresh cache per recurrent step). That same clear
-    // fires at loop_idx=0 of EVERY decode step, so a true incremental
-    // (1-token + growing seqlen_offset) decode would leave the new token
-    // attending only to ITSELF — no prompt, no prior tokens — i.e. silently
-    // incoherent output. Until the paper's two-tier "last-step-reuse" persistent
-    // cache is implemented (the COR-31 perf follow-up), decode by re-feeding the
-    // FULL running sequence at seqlen_offset=0 each step. forward() narrows to
-    // the last token internally so the logits are correct over the full context;
-    // cost is O(n)/step on the local model, which the persistent-cache follow-up
-    // removes. (seqlen_offset is consequently always 0 here.)
+    // Generation loop — two decode strategies, both feeding `forward()`:
+    //
+    // GOLD-COR-36 `per_loop` (opt-in via `NEOTH_OURO_KV_CACHE_MODE=per_loop`):
+    // a per-loop persistent KV cache (one slot per recurrent loop) lets us feed
+    // ONLY the new token at a growing `seqlen_offset` — O(n) decode that is
+    // bit-identical to the full-resequence baseline (proven by the
+    // `per_loop_cache_decode_matches_full_resequence_baseline` oracle in
+    // forward.rs / quantized_forward.rs). Default-off here until a real-weight
+    // run certifies the candle tensor-cat path on an actual checkpoint; the
+    // promotion to a `freedom.yaml::ouro.kv_cache_mode` flag + per_loop default
+    // is the GOLD-COR-36 follow-up.
+    //
+    // COR-31 `full_resequence` (default): re-feed the WHOLE running sequence at
+    // `seqlen_offset=0` each step. The per-loop caches reset every call (offset
+    // 0), so attention sees the full context; correct but O(n²)/step.
+    let per_loop = std::env::var("NEOTH_OURO_KV_CACHE_MODE")
+        .map(|v| v.eq_ignore_ascii_case("per_loop"))
+        .unwrap_or(false);
+    // For incremental decode: the absolute position of the NEXT token to feed.
+    // After the prompt pass the cache holds positions 0..prompt_len-1, so the
+    // first generated token (sampled from the prompt's last-token logits) is fed
+    // at position `prompt_len`.
+    let mut next_offset = prompt_ids.len();
     while new_tokens.len() < max_new as usize {
         if let Some(eos) = loaded.eos_id {
             if next == eos {
                 break;
             }
         }
-        let context_ids = decode_context_ids(&prompt_ids, &new_tokens);
-        let full_input = Tensor::new(context_ids.as_slice(), &device)
-            .context("Ouro: build full-context input tensor")?
-            .unsqueeze(0)
-            .context("Ouro: full-context batch dim")?;
-        logits = loaded
-            .model
-            .forward(&full_input, 0)
-            .context("Ouro: decode forward")?
-            .squeeze(0)
-            .context("Ouro: drop batch from decode logits")?;
+        logits = if per_loop {
+            let input = Tensor::new(&[next], &device)
+                .context("Ouro: build single-token input tensor")?
+                .unsqueeze(0)
+                .context("Ouro: single-token batch dim")?;
+            let l = loaded
+                .model
+                .forward(&input, next_offset)
+                .context("Ouro: incremental decode forward")?
+                .squeeze(0)
+                .context("Ouro: drop batch from decode logits")?;
+            next_offset += 1;
+            l
+        } else {
+            let context_ids = decode_context_ids(&prompt_ids, &new_tokens);
+            let full_input = Tensor::new(context_ids.as_slice(), &device)
+                .context("Ouro: build full-context input tensor")?
+                .unsqueeze(0)
+                .context("Ouro: full-context batch dim")?;
+            loaded
+                .model
+                .forward(&full_input, 0)
+                .context("Ouro: decode forward")?
+                .squeeze(0)
+                .context("Ouro: drop batch from decode logits")?
+        };
         next = sample_token(&logits, sampling).context("Ouro: sample step")?;
         new_tokens.push(next);
     }
@@ -1000,6 +1024,63 @@ mod tests {
         assert!(
             distinct.len() >= 3,
             "context-aware decode should yield varied output, got: {text:?}"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    async fn local_ouro_per_loop_decode_matches_full_resequence_on_real_weights() {
+        // GOLD-COR-36 real-weight CERT: the per-loop KV-cache O(n) decode
+        // (`NEOTH_OURO_KV_CACHE_MODE=per_loop`) must produce the SAME generated
+        // text as the full-resequence O(n²) baseline on ACTUAL Ouro weights —
+        // confirming the candle tensor-cat / device path holds where the
+        // synthetic parity oracle (zero-device-edge-cases) cannot. Sampling is
+        // seeded, and the two paths produce bit-identical logits, so the token
+        // sequences must match exactly. Run: set NEOTH_OURO_TEST_REPO_PATH, then
+        // `cargo test -p neothd --lib providers::ouro -- --ignored`.
+        let Some(cache) = ouro_weights_cache() else {
+            return;
+        };
+        let mkreq = || Request {
+            prompt: "List three different farm animals, one per line.".into(),
+            system: None,
+            model: None,
+            temperature: None,
+            top_p: None,
+            sampling_seed: Some(7),
+            stop_sequences: Vec::new(),
+        };
+        // Baseline — full_resequence (default; ensure the var is unset).
+        {
+            let _env = crate::test_env::lock();
+            // SAFETY: env mutation serialized by the crate-wide test_env lock.
+            unsafe { std::env::remove_var("NEOTH_OURO_KV_CACHE_MODE") };
+        }
+        let baseline = build_integration_adapter(cache.clone())
+            .complete(mkreq())
+            .await
+            .expect("baseline completion")
+            .text;
+        // per_loop incremental decode.
+        {
+            let _env = crate::test_env::lock();
+            // SAFETY: env mutation serialized by the crate-wide test_env lock.
+            unsafe { std::env::set_var("NEOTH_OURO_KV_CACHE_MODE", "per_loop") };
+        }
+        let per_loop = build_integration_adapter(cache)
+            .complete(mkreq())
+            .await
+            .expect("per_loop completion")
+            .text;
+        {
+            let _env = crate::test_env::lock();
+            // SAFETY: env mutation serialized by the crate-wide test_env lock.
+            unsafe { std::env::remove_var("NEOTH_OURO_KV_CACHE_MODE") };
+        }
+        assert_eq!(
+            baseline, per_loop,
+            "GOLD-COR-36: per-loop O(n) decode must produce identical text to the \
+             full-resequence baseline on real weights"
         );
     }
 
