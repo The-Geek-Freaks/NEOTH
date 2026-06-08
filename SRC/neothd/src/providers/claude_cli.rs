@@ -824,6 +824,60 @@ async fn complete_uncached(binary: &str, model_default: &str, req: Request) -> R
 ///     session was likely stuck in tool-call mode.
 ///   - **Compaction marker observed** → bump counter; rotate to a
 ///     fresh session when the cap is hit.
+/// GOLD-WIRE-06 — one concrete step the warm-tmux retry loop should take
+/// (the [`TmuxRetryPlan::Retry`] payload).
+#[derive(Clone, Copy, Debug)]
+struct TmuxRetryStep {
+    class: super::claude_retry::RetryClass,
+    sleep: std::time::Duration,
+    /// Drop + respawn the warm session before the next attempt (only
+    /// `SessionCollision` sets this).
+    reset_session: bool,
+    hint: &'static str,
+}
+
+/// GOLD-WIRE-06 — the retry policy's verdict for one attempt. Carries the
+/// classified `class` (+ its operator `hint`) in BOTH arms so the loop never
+/// has to re-run `classify_failure` (which allocates) to format the final
+/// surfaced error.
+#[derive(Clone, Copy, Debug)]
+enum TmuxRetryPlan {
+    /// Sleep, optionally reset the session, then retry.
+    Retry(TmuxRetryStep),
+    /// Attempts exhausted (or an `Auth` failure) — surface the error now.
+    Surface {
+        class: super::claude_retry::RetryClass,
+        hint: &'static str,
+    },
+}
+
+/// GOLD-WIRE-06 — pure retry policy for the warm-tmux send path. Classifies
+/// the observed failure via [`super::claude_retry::classify_failure`] (Auth /
+/// SessionCollision / EmptyStdout / Transient) and, for the 0-indexed
+/// `attempt`, returns the concrete step — or [`TmuxRetryPlan::Surface`] when
+/// that class's `max_attempts` is exhausted (Auth's `max_attempts` is 0, so it
+/// always surfaces: immediate, never retried). Kept pure so the loop's
+/// decision logic is unit-testable without spawning a tmux session.
+fn plan_tmux_retry(
+    signal: &super::claude_retry::FailureSignal<'_>,
+    attempt: u32,
+) -> TmuxRetryPlan {
+    let class = super::claude_retry::classify_failure(signal);
+    let decision = super::claude_retry::retry_decision(class);
+    if attempt >= decision.max_attempts {
+        return TmuxRetryPlan::Surface {
+            class,
+            hint: decision.hint,
+        };
+    }
+    TmuxRetryPlan::Retry(TmuxRetryStep {
+        class,
+        sleep: super::claude_retry::backoff_for_attempt(&decision, attempt),
+        reset_session: decision.reset_session,
+        hint: decision.hint,
+    })
+}
+
 async fn complete_tmux_uncached(
     tmux_slot: &TmuxSlot,
     binary: &str,
@@ -856,68 +910,154 @@ async fn complete_tmux_uncached(
 
     let mut guard = tmux_slot.inner.lock().await;
 
-    // Repair stale slot: tmux may have lost the session (operator
-    // killed it, OS OOM, server restart). Detect + clear so the
-    // create branch below spawns a fresh one.
-    if let Some(s) = guard.as_ref() {
-        if !s.exists().await {
-            warn!(name = s.name(), "claude tmux session vanished — recreating");
-            *guard = None;
+    // GOLD-WIRE-06: the send is wrapped in a classify-driven retry loop
+    // (`claude_retry`). Each iteration (re)ensures the warm session, sends,
+    // and on failure routes the signal through `plan_tmux_retry`: an Auth
+    // failure surfaces immediately, an empty pane / vanished pane retries
+    // once (the latter respawning the session), transient upstream errors
+    // retry with exponential backoff — every class bounded by its
+    // `max_attempts`. The slot lock is intentionally held across the retries:
+    // the warm pane is a single serial conversation, so concurrent callers
+    // already queue on this lock regardless of retry.
+    let mut attempt: u32 = 0;
+    let response = loop {
+        // Repair stale slot: tmux may have lost the session (operator
+        // killed it, OS OOM, server restart). Detect + clear so the
+        // session-start branch below spawns a fresh one.
+        if let Some(s) = guard.as_ref() {
+            if !s.exists().await {
+                warn!(name = s.name(), "claude tmux session vanished — recreating");
+                *guard = None;
+            }
         }
-    }
-    if guard.is_none() {
-        let rot = tmux_slot
-            .rotation_seq
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let name = format!("{}-{}", tmux_slot.session_name_root, rot);
-        // Interactive claude shares the `--model` flag with `--print`
-        // mode. Tmux runs the command through the system shell.
-        let cmd = format!("{binary} --model {model}");
-        let session = super::tmux_session::TmuxSession::new(&name, &cmd)
-            .await
-            .with_context(|| {
-                format!(
-                    "spawn warm `claude` tmux session `{name}`. \
-                     Is tmux installed and is `{binary}` on PATH?"
-                )
-            })?;
-        // B-6 Item 4: apply bridge.py-derived per-session tmux
-        // options. Best-effort: failures log at WARN and the rest
-        // still apply; quality-of-life only, not correctness.
-        super::claude_tmux::configure_session_for_claude(&session).await;
-        // Initial settle — interactive claude takes ~1s to render
-        // its splash + show the input prompt. Skipping this races
-        // the first send against the splash redraw.
-        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-        *guard = Some(session);
-    }
+        // Session-start branch: spawn a fresh warm session when none is held
+        // (first attempt, a vanished pane, or a retry that reset the session).
+        if guard.is_none() {
+            let rot = tmux_slot
+                .rotation_seq
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let name = format!("{}-{}", tmux_slot.session_name_root, rot);
+            // Interactive claude shares the `--model` flag with `--print`
+            // mode. Tmux runs the command through the system shell.
+            let cmd = format!("{binary} --model {model}");
+            let session = super::tmux_session::TmuxSession::new(&name, &cmd)
+                .await
+                .with_context(|| {
+                    format!(
+                        "spawn warm `claude` tmux session `{name}`. \
+                         Is tmux installed and is `{binary}` on PATH?"
+                    )
+                })?;
+            // B-6 Item 4: apply bridge.py-derived per-session tmux
+            // options. Best-effort: failures log at WARN and the rest
+            // still apply; quality-of-life only, not correctness.
+            super::claude_tmux::configure_session_for_claude(&session).await;
+            // Initial settle — interactive claude takes ~1s to render
+            // its splash + show the input prompt. Skipping this races
+            // the first send against the splash redraw.
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            *guard = Some(session);
+        }
 
-    let send_result = {
-        let session = guard.as_ref().expect("session populated above");
-        // Pick #35 (Session 14, B-6 gap-fix): use the operator-tunable
-        // timeouts threaded through from freedom.yaml::claude_cli.tmux,
-        // not the module-level constants. `send_and_wait` is now a
-        // legacy entry kept only for tests + callers that haven't
-        // adopted the timeout knobs.
-        super::claude_tmux::send_and_wait_with_timeouts(
-            session,
-            &payload,
-            std::time::Duration::from_secs(idle_timeout_secs),
-            std::time::Duration::from_secs(hard_timeout_secs),
-        )
-        .await
-    };
-    let response = match send_result {
-        Ok(r) => r,
-        Err(super::claude_tmux::ClaudeTmuxError::PaneDisappeared { session: name }) => {
-            *guard = None;
-            anyhow::bail!(
-                "claude tmux session `{name}` disappeared mid-conversation. \
-                 NEOTH dropped the dead session; rerun your message and a fresh \
-                 session will spawn. If this recurs, run `neoth doctor`."
-            );
+        let send_result = {
+            let session = guard.as_ref().expect("session populated above");
+            // Pick #35 (Session 14, B-6 gap-fix): use the operator-tunable
+            // timeouts threaded through from freedom.yaml::claude_cli.tmux,
+            // not the module-level constants. `send_and_wait` is now a
+            // legacy entry kept only for tests + callers that haven't
+            // adopted the timeout knobs.
+            super::claude_tmux::send_and_wait_with_timeouts(
+                session,
+                &payload,
+                std::time::Duration::from_secs(idle_timeout_secs),
+                std::time::Duration::from_secs(hard_timeout_secs),
+            )
+            .await
+        };
+
+        // Success: a non-empty pane reply ends the loop.
+        if let Ok(r) = &send_result {
+            if !r.trim().is_empty() {
+                break r.clone();
+            }
         }
-        Err(e) => return Err(anyhow::Error::new(e).context("claude tmux send_and_wait")),
+
+        // Failure path: model the outcome as a `claude_retry::FailureSignal`.
+        // `exit_code == Some(0)` + empty stdout is the EmptyStdout signature
+        // (empty pane reply / hard timeout with no output); a vanished pane
+        // carries the SessionCollision needle in its message; any other tmux
+        // error is classified from its text (Auth keywords vs transient).
+        // `exit_code == Some(0)` is the EmptyStdout signature (empty pane
+        // reply / hard timeout — pane mid tool-call); a vanished pane carries
+        // the SessionCollision needle in its Display; any other tmux error is
+        // classified from its text (Auth keywords vs transient). Error arms
+        // reuse the variant's own Display so operator + classifier see the
+        // same string.
+        let (exit_code, err_msg): (Option<i32>, String) = match &send_result {
+            Ok(_) => (Some(0), "claude pane returned empty output".to_string()),
+            Err(e @ super::claude_tmux::ClaudeTmuxError::PaneDisappeared { .. }) => {
+                (None, e.to_string())
+            }
+            Err(e @ super::claude_tmux::ClaudeTmuxError::HardTimeoutNoOutput) => {
+                (Some(0), e.to_string())
+            }
+            Err(e @ super::claude_tmux::ClaudeTmuxError::Tmux(_)) => (None, e.to_string()),
+        };
+        let signal = super::claude_retry::FailureSignal {
+            exit_code,
+            stdout: "",
+            stderr: "",
+            error_message: &err_msg,
+        };
+
+        match plan_tmux_retry(&signal, attempt) {
+            TmuxRetryPlan::Surface { class, hint } => {
+                // Surface. If the pane is dead (SessionCollision), drop +
+                // rotate so the next call respawns cleanly — preserves the
+                // prior PaneDisappeared contract.
+                if class == super::claude_retry::RetryClass::SessionCollision {
+                    if let Some(mut old) = guard.take() {
+                        let _ = old.kill().await;
+                    }
+                    // Bump the name suffix (mirrors the compaction-rotation
+                    // path below): tmux keeps a killed session's window
+                    // registered under `remain-on-exit`, so reusing the same
+                    // name would race a duplicate-session spawn failure.
+                    tmux_slot
+                        .rotation_seq
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Err(anyhow::anyhow!(
+                    "claude tmux send failed after {} attempt(s) [{}]: {} — {}. \
+                     If this recurs, run `neoth doctor`.",
+                    attempt + 1,
+                    class.as_str(),
+                    err_msg,
+                    hint
+                ));
+            }
+            TmuxRetryPlan::Retry(step) => {
+                warn!(
+                    class = step.class.as_str(),
+                    attempt = attempt + 1,
+                    backoff_ms = step.sleep.as_millis() as u64,
+                    hint = step.hint,
+                    "claude tmux send failed — retrying"
+                );
+                if step.reset_session {
+                    if let Some(mut old) = guard.take() {
+                        let _ = old.kill().await;
+                    }
+                    // Fresh name on respawn — see the rotation note above.
+                    tmux_slot
+                        .rotation_seq
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                tokio::time::sleep(step.sleep).await;
+                attempt += 1;
+                continue;
+            }
+        }
     };
 
     if response.contains(COMPACTION_MARKER) {
@@ -955,12 +1095,10 @@ async fn complete_tmux_uncached(
         "claude_cli tmux completion"
     );
 
-    if response.is_empty() {
-        anyhow::bail!(
-            "claude tmux returned empty response (idle-timer fired without output). \
-             Try again — the session may have been mid tool-call."
-        );
-    }
+    // No empty-response guard here: the GOLD-WIRE-06 retry loop only breaks on
+    // a non-empty reply (an empty pane reply is the EmptyStdout class, retried
+    // then surfaced as a classified error inside the loop), so `response` is
+    // guaranteed non-empty at this point.
 
     Ok(Completion {
         text: response,
@@ -1135,6 +1273,106 @@ use StreamExt as _;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── GOLD-WIRE-06: claude_retry-driven tmux retry policy ───────────────
+
+    /// Test helper: the `TmuxRetryStep` if the plan says retry, else None.
+    fn retry_step(plan: TmuxRetryPlan) -> Option<TmuxRetryStep> {
+        match plan {
+            TmuxRetryPlan::Retry(s) => Some(s),
+            TmuxRetryPlan::Surface { .. } => None,
+        }
+    }
+
+    #[test]
+    fn plan_tmux_retry_auth_surfaces_immediately() {
+        // Acceptance: an auth failure NEVER retries — `plan_tmux_retry`
+        // surfaces on the very first attempt, carrying the Auth class.
+        use crate::providers::claude_retry::RetryClass;
+        let sig = crate::providers::claude_retry::FailureSignal {
+            exit_code: None,
+            stdout: "",
+            stderr: "",
+            error_message: "OAuth token expired — please run `claude /login`",
+        };
+        assert!(
+            matches!(
+                plan_tmux_retry(&sig, 0),
+                TmuxRetryPlan::Surface {
+                    class: RetryClass::Auth,
+                    ..
+                }
+            ),
+            "auth failure must surface immediately as Auth, never retry"
+        );
+    }
+
+    #[test]
+    fn plan_tmux_retry_empty_stdout_retries_once_with_backoff() {
+        // Acceptance: an empty pane reply (exit 0 + blank stdout) retries
+        // once with the 2s idle-wait backoff, then is exhausted.
+        use crate::providers::claude_retry::{FailureSignal, RetryClass};
+        let sig = FailureSignal {
+            exit_code: Some(0),
+            stdout: "   ",
+            stderr: "",
+            error_message: "claude pane returned empty output",
+        };
+        let step = retry_step(plan_tmux_retry(&sig, 0)).expect("empty stdout retries once");
+        assert_eq!(step.class, RetryClass::EmptyStdout);
+        assert!(
+            step.sleep >= std::time::Duration::from_millis(2_000),
+            "empty-stdout backoff is the longer idle wait, got {:?}",
+            step.sleep
+        );
+        assert!(!step.reset_session, "empty stdout does not reset the session");
+        assert!(
+            retry_step(plan_tmux_retry(&sig, 1)).is_none(),
+            "empty stdout is max_attempts=1 — attempt 1 is exhausted"
+        );
+    }
+
+    #[test]
+    fn plan_tmux_retry_pane_disappeared_resets_and_retries_once() {
+        use crate::providers::claude_retry::{FailureSignal, RetryClass};
+        // The real `ClaudeTmuxError::PaneDisappeared` Display, which the loop
+        // feeds into the signal — must classify as SessionCollision.
+        let sig = FailureSignal {
+            exit_code: None,
+            stdout: "",
+            stderr: "",
+            error_message: "claude pane disappeared mid-conversation (session=neoth-cc-1-0) — restart needed",
+        };
+        let step = retry_step(plan_tmux_retry(&sig, 0)).expect("session collision retries once");
+        assert_eq!(step.class, RetryClass::SessionCollision);
+        assert!(
+            step.reset_session,
+            "a vanished pane must reset the warm session before the retry"
+        );
+        assert!(
+            retry_step(plan_tmux_retry(&sig, 1)).is_none(),
+            "session collision is max_attempts=1"
+        );
+    }
+
+    #[test]
+    fn plan_tmux_retry_transient_uses_growing_backoff_to_three() {
+        use crate::providers::claude_retry::{FailureSignal, RetryClass};
+        let sig = FailureSignal {
+            exit_code: None,
+            stdout: "",
+            stderr: "",
+            error_message: "connection refused",
+        };
+        let s0 = retry_step(plan_tmux_retry(&sig, 0)).expect("attempt 0 retries");
+        let s1 = retry_step(plan_tmux_retry(&sig, 1)).expect("attempt 1 retries");
+        assert_eq!(s0.class, RetryClass::Transient);
+        assert!(s1.sleep > s0.sleep, "transient backoff grows per attempt");
+        assert!(
+            retry_step(plan_tmux_retry(&sig, 3)).is_none(),
+            "transient exhausts at max_attempts=3"
+        );
+    }
 
     #[test]
     fn scrub_drops_operator_declared_prefixes_and_neoth_vars() {
