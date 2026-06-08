@@ -416,6 +416,10 @@ Atomically modify the `council` config block in freedom.yaml. Each flag is optio
 - `--daily-usd-cap <USD>` — Daily USD budget cap (set to 0 to disable)
 - `--dry-run <DRY_RUN>` — Print what would change without writing freedom.yaml
 
+### `neoth council voices`
+
+GOLD-WIRE-04: list the available council voices — the specialist framings a hemisphere can debate as (set per slot via `freedom.yaml::inference.<slot>.voice`). Read-only
+
 ### `neoth council weights`
 
 Inspect the memory-routing weights. Each row records a `(topic_hash, hemisphere_role)` pair's Hebbian-decayed acceptance count. Read-only
@@ -572,6 +576,12 @@ GDPR-style operator data export — JSONL or markdown dump of every row NEOTH st
 - `--since <DATE>` — Filter to events at-or-after this date. Format `YYYY-MM-DD`. Defaults to "everything ever recorded"
 - `--format <FORMAT>` — Output format. `jsonl` = one event per line (default, lossless). `md` = human-readable digest grouped by day
 - `--home <DIR>` — Override the `~/.neoth/` home dir (mostly for tests)
+
+## `neoth fact-check`
+
+GOLD-WIRE-11 — fact-check a claim. Decomposes the text into atomic propositions, classifies each (verifiable / plausible / opinion / suspect) with deterministic heuristics (no LLM call), and prints a `clean` / `needs_framing` / `needs_revision` verdict. `neoth fact-check "NEOTH was released in 2026."`
+
+- `<CLAIM>` — The claim / statement to fact-check. Multi-sentence input decomposes to one proposition per sentence; each is classified independently
 
 ## `neoth feedback`
 
