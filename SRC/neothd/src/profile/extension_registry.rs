@@ -100,15 +100,6 @@ impl TypedExtensionRegistry {
         field.split('.').next().unwrap_or(field)
     }
 
-    /// True iff every claim in `fields` has a known top-level category.
-    /// Returns the first offending field on failure so the guard can
-    /// surface a specific reason.
-    pub fn check_fields<'a>(&self, fields: impl IntoIterator<Item = &'a str>) -> Option<&'a str> {
-        fields
-            .into_iter()
-            .find(|f| !self.is_known(Self::category_of(f)))
-    }
-
     /// Number of operator-registered (non-base) categories. Telemetry-
     /// only; mostly useful for `neoth profile show`-style introspection.
     pub fn registered_count(&self) -> usize {
@@ -146,20 +137,6 @@ mod tests {
             "skills"
         );
         assert_eq!(TypedExtensionRegistry::category_of("flat"), "flat");
-    }
-
-    #[test]
-    fn check_fields_returns_none_when_all_base() {
-        let reg = TypedExtensionRegistry::default();
-        let bad = reg.check_fields(["identity.name", "skills.rust", "goals.q4"]);
-        assert!(bad.is_none());
-    }
-
-    #[test]
-    fn check_fields_returns_first_bad_path() {
-        let reg = TypedExtensionRegistry::default();
-        let bad = reg.check_fields(["identity.name", "pets.fluffy"]);
-        assert_eq!(bad, Some("pets.fluffy"));
     }
 
     #[test]

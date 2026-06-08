@@ -1,13 +1,13 @@
-//! Ouro LoopLM model — config + forward-pass scaffolding (O-1).
+//! Ouro LoopLM model — config surface.
 //!
-//! v0.1 scope: `OuroConfig` deserialiser for the published HF
-//! `config.json` shape, plus the `Ouro` model struct shell that
-//! holds the 24 shared layers + total_ut_steps loop count + the
-//! sub-modules (`OuroLayer`, `OuroAttention`, `OuroMLP`).
-//!
-//! Forward pass + sampling lands in O-1b once the candle nn
-//! plumbing is in place. This commit pins the data shape so the
-//! Provider impl (O-2) compiles against a stable surface.
+//! Holds the `OuroConfig` deserialiser for the published HF `config.json`
+//! shape (+ `validate`) and the `OuroQuantMode` selector. The real model —
+//! the `OuroLayer` decoder stack and the forward pass — lives in
+//! [`super::layers`] + [`super::forward`] (`OuroForward`), which every caller
+//! (`adapter.rs`, `forward.rs`, the quantized path) reaches through
+//! `OuroConfig`. The O-1 `Ouro`/`OuroLayer` scaffold that once lived here was
+//! removed in GOLD-WIRE-12 (dead: superseded by `OuroForward`, only ever
+//! built by its own tests).
 
 use serde::Deserialize;
 
@@ -166,70 +166,11 @@ impl OuroConfig {
     }
 }
 
-/// One Ouro decoder layer. Same weight tensor is applied
-/// `total_ut_steps` times per forward pass; we hold ONE copy
-/// here + the `Ouro::forward` impl loops over it.
-///
-/// Sandwich-norm topology: `norm_pre → attn → norm_mid → mlp →
-/// norm_post`. Three RMSNorm modules per layer (vs Qwen2's two).
-#[allow(dead_code)]
-pub struct OuroLayer {
-    // Field handles populated by O-1b — left typed as unit for
-    // the scaffolding commit so the struct shape pins without
-    // requiring the full candle nn weight-loading code yet.
-    _placeholder: (),
-}
-
-impl OuroLayer {
-    /// O-1b will wire this up to load attention + MLP + 3 RMSNorms
-    /// per layer from the `VarBuilder` path.
-    pub fn from_config(_cfg: &OuroConfig) -> anyhow::Result<Self> {
-        Ok(Self { _placeholder: () })
-    }
-}
-
-/// Top-level Ouro model. Holds the 24 shared layers + the loop
-/// count + a hidden_size cache. Operator-tweakable per-call
-/// loop count via `OuroForward::with_loop_steps(n)` (O-1b).
-#[allow(dead_code)]
-pub struct Ouro {
-    config: OuroConfig,
-    layers: Vec<OuroLayer>,
-}
-
-impl Ouro {
-    /// Build a scaffolded Ouro from a validated config. Weight
-    /// loading (embed_tokens + per-layer params + lm_head + norm)
-    /// is the next-bite step — this constructor takes only the
-    /// config so the surface compiles for O-2 (Provider impl).
-    pub fn new(config: OuroConfig) -> anyhow::Result<Self> {
-        let config = config.validate()?;
-        let mut layers = Vec::with_capacity(config.num_hidden_layers);
-        for _ in 0..config.num_hidden_layers {
-            layers.push(OuroLayer::from_config(&config)?);
-        }
-        Ok(Self { config, layers })
-    }
-
-    /// Read-only view of the validated config — operator tooling
-    /// (`neoth providers --output table`) reads via this.
-    pub fn config(&self) -> &OuroConfig {
-        &self.config
-    }
-
-    /// Number of unique layers (not loop-steps). Each layer runs
-    /// `total_ut_steps` times per token.
-    pub fn num_layers(&self) -> usize {
-        self.layers.len()
-    }
-
-    /// Effective compute multiplier — `total_ut_steps`. Operator
-    /// status surface uses this for "Ouro runs 4× compute per
-    /// token" cost-warning copy.
-    pub fn loop_steps(&self) -> usize {
-        self.config.total_ut_steps
-    }
-}
+// GOLD-WIRE-12: the O-1 scaffold `OuroLayer` (a `_placeholder: ()` stub) and
+// the `Ouro` model shell that lived here were dead — superseded by the real
+// forward pass in `forward.rs` (`OuroForward`) over `layers::OuroLayer`, and
+// never constructed outside their own tests. Removed; this module now holds
+// only the live config surface (`OuroConfig` / `OuroQuantMode` / `validate`).
 
 #[cfg(test)]
 mod tests {
@@ -349,22 +290,6 @@ mod tests {
         assert!(cfg.validate().is_err());
         cfg.early_exit_threshold = Some(-0.1);
         assert!(cfg.validate().is_err());
-    }
-
-    #[test]
-    fn ouro_construct_holds_validated_config_and_layer_count() {
-        let cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
-        let model = Ouro::new(cfg).unwrap();
-        assert_eq!(model.num_layers(), 24);
-        assert_eq!(model.loop_steps(), 4);
-        assert_eq!(model.config().hidden_size, 2048);
-    }
-
-    #[test]
-    fn ouro_construct_propagates_validation_failure() {
-        let mut cfg: OuroConfig = serde_json::from_str(&fixture_config(Some("4"))).unwrap();
-        cfg.vocab_size = 0;
-        assert!(Ouro::new(cfg).is_err());
     }
 
     #[test]

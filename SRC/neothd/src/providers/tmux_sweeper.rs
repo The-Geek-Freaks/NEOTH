@@ -103,14 +103,7 @@ pub async fn sweep_once_on_socket(
 
 /// `tmux ls -F '#{session_name} #{session_activity}'` — emits one line
 /// per session. `session_activity` is a unix-epoch-seconds value tmux
-/// updates whenever input/output happens in the pane. Backward-compat
-/// wrapper around [`list_neoth_sessions_on_socket`] using the shared
-/// socket.
-#[allow(dead_code)]
-async fn list_neoth_sessions(prefix: &str) -> Result<Vec<(String, u64)>> {
-    list_neoth_sessions_on_socket(prefix, &TmuxSocket::shared()).await
-}
-
+/// updates whenever input/output happens in the pane.
 async fn list_neoth_sessions_on_socket(
     prefix: &str,
     socket: &TmuxSocket,
@@ -165,11 +158,6 @@ fn parse_tmux_ls(stdout: &str, prefix: &str) -> Vec<(String, u64)> {
             }
         })
         .collect()
-}
-
-#[allow(dead_code)]
-async fn kill_session(name: &str) -> Result<()> {
-    kill_session_on_socket(name, &TmuxSocket::shared()).await
 }
 
 async fn kill_session_on_socket(name: &str, socket: &TmuxSocket) -> Result<()> {
