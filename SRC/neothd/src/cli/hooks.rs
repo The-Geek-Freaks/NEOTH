@@ -343,8 +343,9 @@ pub fn collect_hook_trace(
     floor_ns: i64,
     limit: usize,
 ) -> Result<Vec<serde_json::Value>> {
+    use crate::wal::compress::decompress_frames;
     use crate::wal::frame::decode_frame;
-    use crate::wal::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader};
+    use crate::wal::segment_header::{SEGMENT_HEADER_LEN, parse_segment_header};
 
     let bytes =
         std::fs::read(segment_path).with_context(|| format!("read {}", segment_path.display()))?;
@@ -353,13 +354,27 @@ pub fn collect_hook_trace(
         // tracer is safe to run against fresh installs with an empty WAL.
         return Ok(Vec::new());
     }
-    let _hdr = SegmentHeader::from_le_bytes(bytes[..SEGMENT_HEADER_LEN].try_into().unwrap())
-        .context("parse SegmentHeader")?;
+    // GOLD-ARCH-03: parse v1/v2 headers and decompress a v2/zstd body so a
+    // compressed segment's hook frames are traced, not silently skipped.
+    // The reported `offset` is `header_len + frame-stream cursor` — for a v1
+    // segment (the production case) this is byte-identical to the prior
+    // absolute file offset; for a v2 segment it is the logical offset.
+    let hdr = parse_segment_header(&bytes).context("parse SegmentHeader")?;
+    let header_len = hdr.header_len();
+    let body = bytes.get(header_len..).unwrap_or(&[]);
+    let decompressed;
+    let frames: &[u8] = if hdr.is_compressed() {
+        decompressed = decompress_frames(body)
+            .with_context(|| format!("decompress segment body {}", segment_path.display()))?;
+        &decompressed
+    } else {
+        body
+    };
 
-    let mut cursor = SEGMENT_HEADER_LEN;
+    let mut cursor = 0usize;
     let mut rows: Vec<serde_json::Value> = Vec::new();
-    while cursor < bytes.len() && rows.len() < limit {
-        let dec = match decode_frame(&bytes[cursor..]) {
+    while cursor < frames.len() && rows.len() < limit {
+        let dec = match decode_frame(&frames[cursor..]) {
             Ok(d) => d,
             // Stop at the first torn frame — same shape as `wal show`.
             Err(_) => break,
@@ -372,7 +387,7 @@ pub fn collect_hook_trace(
             let ts: i64 = i64::try_from(dec.header.hlc.physical_ns()).unwrap_or(i64::MAX);
             if ts >= floor_ns {
                 rows.push(serde_json::json!({
-                    "offset": cursor,
+                    "offset": header_len + cursor,
                     "event_type_code": dec.header.event_type,
                     "label": label,
                     "ts_ns": ts,
@@ -562,6 +577,50 @@ kind = "allow"
             out.extend_from_slice(&encode_frame(&header, payload));
         }
         std::fs::write(path, out).unwrap();
+    }
+
+    /// Write a sealed v2/zstd segment with the given frames (61-byte v2
+    /// header + a compressed frame blob), as the v1→v2 migration produces.
+    fn write_v2_segment_with_frames(path: &std::path::Path, frames: &[(u8, &[u8])]) {
+        use crate::wal::builder::make_header;
+        use crate::wal::compress::compress_frames;
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+
+        let mut raw_frames = Vec::new();
+        for (event_type, payload) in frames {
+            let header = make_header(*event_type, payload);
+            raw_frames.extend_from_slice(&encode_frame(&header, payload));
+        }
+        let blob = compress_frames(&raw_frames).unwrap();
+        let mut out = SegmentHeaderV2::new(0, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED)
+            .to_le_bytes()
+            .to_vec();
+        out.extend_from_slice(&blob);
+        std::fs::write(path, out).unwrap();
+    }
+
+    #[test]
+    fn collect_hook_trace_reads_frames_from_a_v2_compressed_segment() {
+        // GOLD-ARCH-03 regression: hook frames inside a sealed v2/zstd
+        // segment must be traced, not silently skipped.
+        use crate::wal::events::*;
+
+        let dir = tempdir().unwrap();
+        let segment = dir.path().join("000001.wal");
+        write_v2_segment_with_frames(
+            &segment,
+            &[
+                (EVENT_TYPE_RAW_TEXT, b"not-a-hook"),
+                (EVENT_TYPE_HOOK_FIRED, b"{}"),
+                (EVENT_TYPE_HOOK_REPLACED, b"{}"),
+            ],
+        );
+
+        let rows = super::collect_hook_trace(&segment, 0, 100).unwrap();
+        assert_eq!(rows.len(), 2, "two hook frames survive from the v2 segment");
+        assert_eq!(rows[0]["label"].as_str(), Some("HOOK_FIRED"));
+        assert_eq!(rows[1]["label"].as_str(), Some("HOOK_REPLACED"));
     }
 
     #[test]

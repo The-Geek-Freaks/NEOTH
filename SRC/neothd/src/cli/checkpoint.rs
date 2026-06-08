@@ -150,8 +150,6 @@ fn save_index(home: &Path, entries: &[CheckpointEntry]) -> Result<()> {
 /// `rollback apply --to` expects.
 fn find_latest_snapshot(wal_dir: &Path) -> Option<(PathBuf, u64)> {
     use crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
-    use crate::wal::frame::decode_frame;
-    use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
     let mut segments: Vec<PathBuf> = std::fs::read_dir(wal_dir)
         .ok()?
@@ -166,23 +164,15 @@ fn find_latest_snapshot(wal_dir: &Path) -> Option<(PathBuf, u64)> {
         let Ok(bytes) = std::fs::read(seg) else {
             continue;
         };
-        if bytes.len() < SEGMENT_HEADER_LEN {
-            continue;
-        }
-        let mut cursor = SEGMENT_HEADER_LEN;
-        while cursor < bytes.len() {
-            let Ok(dec) = decode_frame(&bytes[cursor..]) else {
-                break;
-            };
+        // GOLD-ARCH-03: for_each_frame so a PRE_MUTATION_SNAPSHOT inside a
+        // v2/zstd-compressed segment is found, not silently skipped. `cursor` is
+        // the frame's logical offset.
+        let _ = crate::wal::scan::for_each_frame(&bytes, |cursor, dec| {
             if dec.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
                 latest = Some((seg.clone(), cursor as u64));
             }
-            let total = dec.header.total_len as usize;
-            if total == 0 {
-                break;
-            }
-            cursor += total;
-        }
+            Ok(())
+        });
     }
     latest
 }

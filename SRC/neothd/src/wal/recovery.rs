@@ -17,7 +17,8 @@
 //!
 //! ## Algorithm
 //!
-//! Walk frames starting at `SEGMENT_HEADER_LEN` using `frame::decode_frame`.
+//! Walk frames starting at the segment's real header length (v1 = 60 B,
+//! v2 = 61 B, derived from the on-disk header) using `frame::decode_frame`.
 //! For each frame:
 //!   - parse-error → torn at current offset
 //!   - parsed but `total_len` out of sanity range (too small to be a
@@ -44,7 +45,7 @@
 
 use super::frame::decode_frame;
 use super::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
-use super::segment_header::SEGMENT_HEADER_LEN;
+use super::segment_header::{SEGMENT_HEADER_LEN, parse_segment_header};
 use super::writer::MAX_PAYLOAD_BYTES;
 
 /// Minimum plausible frame size: preamble + header body + 0-byte
@@ -103,8 +104,25 @@ pub fn scan_tail(segment_bytes: &[u8]) -> ScanResult {
             through: segment_bytes.len() as u64,
         };
     }
-    let mut offset: usize = SEGMENT_HEADER_LEN;
-    let mut last_good: usize = SEGMENT_HEADER_LEN;
+    // GOLD-ARCH-03: derive the header length from the on-disk segment header
+    // (v1 = 60 B, v2 = 61 B) instead of hardcoding SEGMENT_HEADER_LEN, so a
+    // v2 segment's first frame isn't scanned one byte early (which misaligns
+    // every subsequent frame and truncates the whole body as "torn").
+    //
+    // We deliberately walk RAW frames and return RAW-FILE offsets here — NOT
+    // logical/decompressed bytes — because the returned offset drives a
+    // physical `set_len` truncation (writer::prepare_writer). scan_tail only
+    // ever runs on the *live* (resumed-for-append) segment, whose body is raw
+    // frames even under the Zstd3 policy: the body is compressed only at clean
+    // finalize (writer::finalize_compressed_segment), after which the segment
+    // is rotated away and never resumed. A live v2 segment therefore carries
+    // the COMPRESSED flag with a RAW body — decompressing it (via
+    // logical_segment_bytes / for_each_frame) would error and is wrong here.
+    let header_len = parse_segment_header(segment_bytes)
+        .map(|h| h.header_len())
+        .unwrap_or(SEGMENT_HEADER_LEN);
+    let mut offset: usize = header_len;
+    let mut last_good: usize = header_len;
 
     while offset < segment_bytes.len() {
         let slice = &segment_bytes[offset..];
@@ -168,6 +186,16 @@ mod tests {
         // SegmentHeader::new(generation, segment_seq, first_event_id,
         //                    segment_start_ts_ns, node_id)
         let header = SegmentHeader::new(1, 1, 0, 0, [0u8; 16]);
+        header.to_le_bytes().to_vec()
+    }
+
+    /// Bytes of a *live* v2 segment header: 61 bytes, COMPRESSED flag set.
+    /// A live v2 segment carries the flag but a RAW (uncompressed) frame
+    /// body — compression only happens at clean finalize, after which the
+    /// segment is rotated away and never resumed by scan_tail.
+    fn fake_v2_segment_header_bytes() -> Vec<u8> {
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+        let header = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
         header.to_le_bytes().to_vec()
     }
 
@@ -259,6 +287,46 @@ mod tests {
                 assert_eq!(torn_at, intact_end as u64);
             }
             other => panic!("expected TornAt for corrupt CRC, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scan_v2_live_segment_with_two_good_frames_is_clean() {
+        // GOLD-ARCH-03 regression: a live v2 segment has a 61-byte header.
+        // The pre-fix hardcoded SEGMENT_HEADER_LEN (60) start offset landed
+        // one byte inside the header, misaligning frame 1 and reporting the
+        // whole body as torn. With the header-length fix the frames align.
+        let mut bytes = fake_v2_segment_header_bytes();
+        let header_len = bytes.len();
+        assert_eq!(header_len, SEGMENT_HEADER_LEN + 1, "v2 header is 61 bytes");
+        append_frame(&mut bytes, 0x10, b"first payload");
+        append_frame(&mut bytes, 0x11, b"second payload");
+        let total_len = bytes.len() as u64;
+        match scan_tail(&bytes) {
+            ScanResult::Clean { through } => assert_eq!(through, total_len),
+            other => panic!("expected Clean for aligned v2 frames, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scan_v2_live_segment_with_torn_tail_reports_correct_offset() {
+        // GOLD-ARCH-03 regression: torn-tail detection on a v2 segment must
+        // report the RAW-FILE offset of the last good frame (the truncation
+        // target), with the 61-byte header correctly accounted for.
+        let mut bytes = fake_v2_segment_header_bytes();
+        append_frame(&mut bytes, 0x10, b"intact frame");
+        let intact_end = bytes.len();
+        append_frame(&mut bytes, 0x11, b"this will be cut");
+        bytes.truncate(bytes.len() - 5);
+        match scan_tail(&bytes) {
+            ScanResult::TornAt {
+                good_through,
+                torn_at,
+            } => {
+                assert_eq!(good_through, intact_end as u64);
+                assert_eq!(torn_at, intact_end as u64);
+            }
+            other => panic!("expected TornAt for v2 torn tail, got {other:?}"),
         }
     }
 

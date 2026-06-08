@@ -29,8 +29,6 @@ use crate::wal::events::{
     EVENT_TYPE_JOB_FAILED, EVENT_TYPE_JOB_FIRED, EVENT_TYPE_JOB_SKIPPED_BY_GATE,
     EVENT_TYPE_JOB_SUCCESS, EVENT_TYPE_RAW_TEXT,
 };
-use crate::wal::frame::decode_frame;
-use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 use crate::wal::{EventFlags, writer::WalWriterHandle};
 
 pub struct RunOutcome {
@@ -332,20 +330,9 @@ pub async fn aggregate_profile_snapshot(home: &Path, wal_dir: &Path) -> Result<u
             warn!(segment = %path.display(), "could not read WAL segment; skipping");
             continue;
         };
-        if bytes.len() <= SEGMENT_HEADER_LEN {
-            continue;
-        }
-        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
-        while !cursor.is_empty() {
-            let Ok(frame) = decode_frame(cursor) else {
-                // First malformed frame ends segment walk — tail
-                // corruption is normal during an unclean shutdown.
-                break;
-            };
-            let total = frame.header.total_len as usize;
-            if total == 0 || total > cursor.len() {
-                break;
-            }
+        // GOLD-ARCH-03: for_each_frame so RAW_TEXT frames inside a v2/zstd-
+        // compressed segment feed the profile snapshot, not silently skipped.
+        let _ = crate::wal::scan::for_each_frame(&bytes, |_, frame| {
             if frame.header.event_type == EVENT_TYPE_RAW_TEXT {
                 let ts_unix = (frame.header.hlc.physical_ns() / 1_000_000_000) as i64;
                 if ts_unix >= cutoff
@@ -357,8 +344,8 @@ pub async fn aggregate_profile_snapshot(home: &Path, wal_dir: &Path) -> Result<u
                     });
                 }
             }
-            cursor = &cursor[total..];
-        }
+            Ok(())
+        });
     }
 
     let count = samples.len();
@@ -375,6 +362,7 @@ mod workstream_c_tests {
     use crate::providers::{Completion, Provider, Request};
     use crate::wal::events::{EVENT_TYPE_JOB_SKIPPED_BY_GATE, EVENT_TYPE_RAW_TEXT};
     use crate::wal::frame::decode_frame;
+    use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     use crate::wal::spawn as wal_spawn;
     use anyhow::Result;
     use async_trait::async_trait;

@@ -34,8 +34,6 @@ use crate::coding::types::{
 };
 use crate::config::FreedomConfig;
 use crate::memory::store as memstore;
-use crate::wal::frame::decode_frame;
-use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
 #[derive(Args, Debug, Clone)]
 pub struct KanbanArgs {
@@ -945,30 +943,17 @@ fn scan_wal_dir_for_kanban_feed(wal_dir: &PathBuf, limit: usize) -> Result<Vec<F
 /// stats <seg>` to surface corruption, the kanban feed prioritises
 /// readability.
 fn scan_segment_bytes(bytes: &[u8], out: &mut Vec<FeedEntry>) {
-    if bytes.len() < SEGMENT_HEADER_LEN {
-        return;
-    }
-    let mut cursor = SEGMENT_HEADER_LEN;
-    while cursor < bytes.len() {
-        match decode_frame(&bytes[cursor..]) {
-            Ok(dec) => {
-                let total = dec.header.total_len as usize;
-                if total == 0 {
-                    break;
-                }
-                if is_kanban_event(dec.header.event_type) {
-                    let ts = dec.header.hlc.physical_ns();
-                    if let Some(entry) =
-                        parse_kanban_payload(dec.header.event_type, ts, dec.payload)
-                    {
-                        out.push(entry);
-                    }
-                }
-                cursor += total;
+    // GOLD-ARCH-03: for_each_frame so kanban events inside a v2/zstd-compressed
+    // segment are listed, not silently skipped.
+    let _ = crate::wal::scan::for_each_frame(bytes, |_, dec| {
+        if is_kanban_event(dec.header.event_type) {
+            let ts = dec.header.hlc.physical_ns();
+            if let Some(entry) = parse_kanban_payload(dec.header.event_type, ts, dec.payload) {
+                out.push(entry);
             }
-            Err(_) => break,
         }
-    }
+        Ok(())
+    });
 }
 
 fn now_unix_ns() -> u64 {

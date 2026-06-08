@@ -19,10 +19,7 @@ use clap::{Args, Subcommand};
 
 use crate::config::FreedomConfig;
 use crate::wal::events::EVENT_TYPE_UPDATER_TASK_RESULT;
-use crate::wal::frame::decode_frame;
-use crate::wal::header::{CRC_LEN, HEADER_BODY_LEN, PREAMBLE_LEN};
 use crate::wal::payloads_u04::{UpdaterTaskResultPayload, render_updater_status};
-use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
 #[derive(Args, Debug, Clone)]
 pub struct UpdaterArgs {
@@ -98,36 +95,18 @@ pub fn load_results_from_wal(segment_path: &Path) -> Result<Vec<UpdaterTaskResul
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e.into()),
     };
-    if bytes.len() < SEGMENT_HEADER_LEN {
-        return Ok(Vec::new());
-    }
     let mut out = Vec::new();
-    let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
-    while !cursor.is_empty() {
-        match decode_frame(cursor) {
-            Ok(decoded) => {
-                if decoded.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
-                    if let Ok(payload) =
-                        serde_json::from_slice::<UpdaterTaskResultPayload>(decoded.payload)
-                    {
-                        out.push(payload);
-                    }
-                }
-                // Compute consumed length: preamble + header + reserved
-                // + payload + crc. The frame struct doesn't expose a
-                // single .frame_length() helper, so we compute it here.
-                let reserved_len = decoded.header.reserved_len as usize;
-                let payload_len = decoded.header.payload_len as usize;
-                let consumed =
-                    PREAMBLE_LEN + HEADER_BODY_LEN + reserved_len + payload_len + CRC_LEN;
-                if consumed == 0 || consumed > cursor.len() {
-                    break;
-                }
-                cursor = &cursor[consumed..];
+    // GOLD-ARCH-03: for_each_frame so UPDATER_TASK_RESULT frames inside a
+    // v2/zstd-compressed segment are read, not silently skipped.
+    let _ = crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+        if decoded.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
+            if let Ok(payload) = serde_json::from_slice::<UpdaterTaskResultPayload>(decoded.payload)
+            {
+                out.push(payload);
             }
-            Err(_) => break,
         }
-    }
+        Ok(())
+    });
     Ok(out)
 }
 

@@ -93,19 +93,13 @@ pub fn count_crc_frames_in_segment(
     now_unix: i64,
     window_secs: u64,
 ) -> (u32, u32) {
-    let Ok(hdr) = crate::wal::segment_header::parse_segment_header(seg_bytes) else {
-        return (0, 0);
-    };
     let cutoff = now_unix.saturating_sub(window_secs as i64);
-    let mut cursor = hdr.header_len();
     let mut truncated = 0u32;
     let mut auth_failed = 0u32;
-    while cursor < seg_bytes.len() {
-        let dec = match crate::wal::frame::decode_frame(&seg_bytes[cursor..]) {
-            Ok(d) => d,
-            Err(_) => break,
-        };
-        let total = dec.header.total_len as usize;
+    // GOLD-ARCH-03: for_each_frame so CRC-anomaly frames inside a v2/zstd-
+    // compressed segment are counted, not silently skipped (the prior walk
+    // parsed the header but ran decode_frame over the raw zstd blob).
+    let _ = crate::wal::scan::for_each_frame(seg_bytes, |_, dec| {
         if dec.header.event_type == EVENT_TYPE_RECOVERY_TRUNCATED
             || dec.header.event_type == EVENT_TYPE_COMPACTION_AUTH_FAILED
         {
@@ -122,11 +116,8 @@ pub fn count_crc_frames_in_segment(
                 }
             }
         }
-        if total == 0 {
-            break;
-        }
-        cursor = cursor.saturating_add(total);
-    }
+        Ok(())
+    });
     (truncated, auth_failed)
 }
 
@@ -228,17 +219,10 @@ pub fn check_crash_log(
 /// Scan WAL segment for the most recent CHANNEL_INGRESS / CHANNEL_EGRESS
 /// `ts_unix` field.
 pub fn latest_channel_activity_in_segment(seg_bytes: &[u8]) -> Option<i64> {
-    let Ok(hdr) = crate::wal::segment_header::parse_segment_header(seg_bytes) else {
-        return None;
-    };
-    let mut cursor = hdr.header_len();
     let mut latest: Option<i64> = None;
-    while cursor < seg_bytes.len() {
-        let dec = match crate::wal::frame::decode_frame(&seg_bytes[cursor..]) {
-            Ok(d) => d,
-            Err(_) => break,
-        };
-        let total = dec.header.total_len as usize;
+    // GOLD-ARCH-03: for_each_frame so channel activity inside a v2/zstd-
+    // compressed segment is seen, not silently skipped.
+    let _ = crate::wal::scan::for_each_frame(seg_bytes, |_, dec| {
         if dec.header.event_type == EVENT_TYPE_CHANNEL_INGRESS
             || dec.header.event_type == EVENT_TYPE_CHANNEL_EGRESS
         {
@@ -249,11 +233,8 @@ pub fn latest_channel_activity_in_segment(seg_bytes: &[u8]) -> Option<i64> {
                 latest = Some(latest.map_or(t, |prev| prev.max(t)));
             }
         }
-        if total == 0 {
-            break;
-        }
-        cursor = cursor.saturating_add(total);
-    }
+        Ok(())
+    });
     latest
 }
 

@@ -215,6 +215,12 @@ const WAL_HEADER_MIN: usize = 96;
 ///
 /// Pure — no IO. The send-tick reads the active segment file, strips the
 /// segment header, and calls this on the body.
+///
+/// GOLD-ARCH-03 audit: intentionally NOT migrated to `wal::scan::for_each_frame`.
+/// Gossip needs the RAW on-wire frame bytes + a resumable cursor, and the caller
+/// (`spawn_gossip_tick`) already derives the correct v1/v2 `header_len()` and
+/// skips compressed/finalised segments (whose body is a zstd blob, never walked
+/// raw). The format-awareness lives in the caller; this stays a pure body walk.
 pub fn collect_gossipable_frames(
     body: &[u8],
     from_offset: usize,

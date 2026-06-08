@@ -28,7 +28,7 @@ use crate::wal::frame::decode_frame;
 use crate::wal::proof_bundle::{
     PROOF_SCHEMA_VERSION, ProofBundle, ProofEnvelope, ProofFrame, ProofMarker,
 };
-use crate::wal::segment_header::{SEGMENT_HEADER_LEN, SegmentHeader, parse_segment_header};
+use crate::wal::segment_header::{SEGMENT_HEADER_LEN, parse_segment_header};
 
 #[derive(Args, Debug, Clone)]
 pub struct WalArgs {
@@ -269,18 +269,43 @@ pub fn collect_stats(segment: &std::path::Path) -> Result<SegmentStats> {
         ));
         return Ok(stats);
     }
-    match SegmentHeader::from_le_bytes(bytes[..SEGMENT_HEADER_LEN].try_into().unwrap()) {
-        Ok(hdr) => {
-            stats.header_ok = true;
-            stats.segment_seq = Some(hdr.segment_seq);
-        }
+    // GOLD-ARCH-03: parse v1/v2 headers and decompress a v2/zstd body so a
+    // compressed segment's frames are COUNTED rather than silently skipped
+    // (the old v1-only `SegmentHeader::from_le_bytes` + hardcoded-offset walk
+    // reported a valid compressed segment as header-BAD with zero frames).
+    // Mirrors the `show` / `collect_proof` scanners in this file.
+    let hdr = match parse_segment_header(&bytes) {
+        Ok(h) => h,
         Err(e) => {
             stats.header_error = Some(format!("{e}"));
+            return Ok(stats);
         }
-    }
-    let mut cursor = SEGMENT_HEADER_LEN;
-    while cursor < bytes.len() {
-        match decode_frame(&bytes[cursor..]) {
+    };
+    stats.header_ok = true;
+    stats.segment_seq = Some(hdr.segment_seq());
+    let header_len = hdr.header_len();
+    let body = bytes.get(header_len..).unwrap_or(&[]);
+    let decompressed;
+    let frames: &[u8] = if hdr.is_compressed() {
+        match decompress_frames(body) {
+            Ok(d) => {
+                decompressed = d;
+                &decompressed
+            }
+            Err(e) => {
+                // A flagged-compressed body that won't inflate is corrupt —
+                // surface it rather than report a misleading zero-frame count.
+                stats.header_error = Some(format!("decompress segment body: {e}"));
+                return Ok(stats);
+            }
+        }
+    } else {
+        body
+    };
+
+    let mut cursor = 0usize;
+    while cursor < frames.len() {
+        match decode_frame(&frames[cursor..]) {
             Ok(dec) => {
                 stats.frame_count += 1;
                 *stats.per_event.entry(dec.header.event_type).or_insert(0) += 1;
@@ -1136,6 +1161,36 @@ mod tests {
         assert!(!s.header_ok);
         assert!(s.header_error.is_some());
         assert_eq!(s.frame_count, 0);
+    }
+
+    #[test]
+    fn stats_counts_frames_in_a_v2_compressed_segment() {
+        // GOLD-ARCH-03 regression: a sealed v2/zstd segment must have its
+        // frames COUNTED, not silently skipped. The pre-fix v1-only header
+        // parse + hardcoded-offset walk reported header-BAD / zero frames.
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000009.wal");
+        let mut raw_frames: Vec<u8> = Vec::new();
+        for i in 0..4 {
+            let payload = format!("frame {i}").into_bytes();
+            let header: EventHeaderV2 = HeaderBuilder::new(EVENT_TYPE_RAW_TEXT, &payload).build();
+            raw_frames.extend_from_slice(&encode_frame(&header, &payload));
+        }
+        let blob = compress_frames(&raw_frames).unwrap();
+        let mut bytes = SegmentHeaderV2::new(0, 9, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED)
+            .to_le_bytes()
+            .to_vec();
+        bytes.extend_from_slice(&blob);
+        std::fs::write(&seg, &bytes).unwrap();
+
+        let s = collect_stats(&seg).unwrap();
+        assert!(s.header_ok, "v2 header must parse");
+        assert_eq!(s.segment_seq, Some(9));
+        assert_eq!(s.frame_count, 4, "all 4 compressed frames counted");
+        assert_eq!(s.bad_frames, 0);
+        assert_eq!(*s.per_event.get(&EVENT_TYPE_RAW_TEXT).unwrap(), 4);
     }
 
     #[test]

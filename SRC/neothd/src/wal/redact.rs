@@ -48,7 +48,7 @@ use std::path::Path;
 use anyhow::{Context, Result};
 
 use super::header::{CRC_LEN, EventHeaderV2, HEADER_BODY_LEN, MAGIC, PREAMBLE_LEN};
-use super::segment_header::SEGMENT_HEADER_LEN;
+use super::segment_header::{SEGMENT_HEADER_LEN, parse_segment_header};
 use super::types::EventFlags;
 
 /// Outcome of one redaction pass over one segment.
@@ -94,8 +94,52 @@ where
         .metadata()
         .with_context(|| format!("stat {}", segment_path.display()))?
         .len();
+
+    // GOLD-ARCH-03: derive the start cursor from the real segment header
+    // (v1 = 60 B, v2 = 61 B) instead of hardcoding SEGMENT_HEADER_LEN. With the
+    // old hardcoded offset, a v2 segment's first frame was scanned one byte
+    // early, the MAGIC check failed, the loop broke immediately, and redaction
+    // SILENTLY scrubbed nothing — a privacy hole, since the caller
+    // (`memory::forget`) reports success. We read the header from the bytes
+    // already on disk.
+    //
+    // A *sealed* compressed segment (zstd blob body) cannot be redacted by
+    // in-place seek+overwrite — the frames don't exist as raw bytes. A *live*
+    // v2 segment carries the same COMPRESSED flag but a RAW body (compression
+    // happens only at clean finalize), so the flag alone can't tell them
+    // apart: we peek the body for a frame MAGIC. Raw frames ⇒ redact; a zstd
+    // blob ⇒ refuse loudly rather than silently no-op (the caller,
+    // `memory::forget`, reports success, so a silent skip is a privacy hole).
+    // TODO(GOLD-ARCH-03b): decompress → redact → recompress → atomic-rewrite
+    // path for finalised compressed segments.
+    let header_len = {
+        let probe_len = (SEGMENT_HEADER_LEN + 1).min(file_len as usize);
+        let mut probe = vec![0u8; probe_len];
+        file.seek(SeekFrom::Start(0)).context("seek to segment head")?;
+        file.read_exact(&mut probe).context("read segment head")?;
+        match parse_segment_header(&probe) {
+            Ok(h) => {
+                let hl = h.header_len() as u64;
+                if h.is_compressed() && file_len > hl {
+                    let mut magic = [0u8; PREAMBLE_LEN];
+                    file.seek(SeekFrom::Start(hl)).context("seek to body")?;
+                    if file.read_exact(&mut magic).is_ok() && magic != MAGIC {
+                        anyhow::bail!(
+                            "refusing to redact compressed WAL segment {} in place \
+                             (sealed zstd body — see GOLD-ARCH-03b)",
+                            segment_path.display()
+                        );
+                    }
+                }
+                hl
+            }
+            // No parseable header (bare frame stream / pre-header artifact):
+            // preserve the prior behaviour and start at SEGMENT_HEADER_LEN.
+            Err(_) => SEGMENT_HEADER_LEN as u64,
+        }
+    };
     let mut report = RedactReport::default();
-    let mut cursor: u64 = SEGMENT_HEADER_LEN as u64;
+    let mut cursor: u64 = header_len;
 
     while cursor + (PREAMBLE_LEN + HEADER_BODY_LEN + CRC_LEN) as u64 <= file_len {
         // Read the preamble + header so we know the frame layout.
@@ -367,6 +411,64 @@ mod tests {
         }
         std::fs::write(tmp.path(), &bytes).unwrap();
         (tmp, offsets)
+    }
+
+    /// Write a *live* v2 segment file: 61-byte v2 header (COMPRESSED flag set)
+    /// followed by RAW frames — exactly what the writer produces before clean
+    /// finalize. Returns the file path + the raw-file offsets of each frame.
+    fn write_v2_live_segment_with_frames(payloads: &[&[u8]]) -> (tempfile::NamedTempFile, Vec<u64>) {
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let mut bytes = Vec::new();
+        let segment_header = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        bytes.extend_from_slice(&segment_header.to_le_bytes());
+        let mut offsets = Vec::with_capacity(payloads.len());
+        for (i, p) in payloads.iter().enumerate() {
+            offsets.push(bytes.len() as u64);
+            let h = make_header(p.len() as u32, (i + 1) as u64);
+            let frame = encode_frame(&h, p);
+            bytes.extend_from_slice(&frame);
+        }
+        std::fs::write(tmp.path(), &bytes).unwrap();
+        (tmp, offsets)
+    }
+
+    #[test]
+    fn scan_redacts_matching_frames_in_a_v2_live_segment() {
+        // GOLD-ARCH-03 regression: a live v2 segment has a 61-byte header. The
+        // pre-fix hardcoded SEGMENT_HEADER_LEN (60) start offset failed the
+        // MAGIC check on frame 1 and SILENTLY redacted nothing — a privacy
+        // hole. With the header-length fix the matching frame is scrubbed.
+        let (tmp, offsets) =
+            write_v2_live_segment_with_frames(&[b"hello world", b"AcmeCorp is a secret"]);
+        let report = scan_and_redact(tmp.path(), payload_contains_topic("acmecorp")).expect("redact");
+        assert_eq!(report.frames_redacted_count(), 1, "v2 frame must be found");
+        assert_eq!(report.frames_redacted, vec![offsets[1]]);
+        assert_eq!(report.frames_skipped, 1);
+    }
+
+    #[test]
+    fn scan_refuses_to_redact_a_sealed_compressed_segment() {
+        // GOLD-ARCH-03: a finalised compressed segment can't be redacted by
+        // in-place seek+overwrite. Refuse loudly rather than silently no-op.
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        let mut raw_frames = Vec::new();
+        let h = make_header(b"AcmeCorp secret".len() as u32, 1);
+        raw_frames.extend_from_slice(&encode_frame(&h, b"AcmeCorp secret"));
+        let blob = compress_frames(&raw_frames).expect("compress");
+        let mut bytes = SegmentHeaderV2::new(1, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED)
+            .to_le_bytes()
+            .to_vec();
+        bytes.extend_from_slice(&blob);
+        std::fs::write(tmp.path(), &bytes).unwrap();
+        let err = scan_and_redact(tmp.path(), payload_contains_topic("acme"))
+            .expect_err("must refuse compressed segment");
+        assert!(
+            err.to_string().contains("compressed"),
+            "error should name the compressed-segment refusal: {err}"
+        );
     }
 
     #[test]

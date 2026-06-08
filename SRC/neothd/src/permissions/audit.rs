@@ -41,7 +41,6 @@ use serde::Serialize;
 use crate::wal::events::{
     EVENT_TYPE_CONSENT_DECISION, EVENT_TYPE_PERMISSION_DENIED, EVENT_TYPE_PERMISSION_GRANTED,
 };
-use crate::wal::frame::decode_frame;
 use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
 /// One row in the audit report. Carries the decision verdict + a
@@ -139,16 +138,13 @@ pub fn audit_segment(
     // + consent frames in the window. Also collect EVERY frame's
     // (event_id, event_type) so the downstream-effect heuristic can
     // look up the next frame after a permission decision.
-    let mut cursor = SEGMENT_HEADER_LEN;
     let mut raw_decisions: Vec<(u64, u64, u8, Vec<u8>)> = Vec::new(); // (event_id, ts_ns, event_type, payload)
     let mut next_after: HashMap<u64, (u8, u64)> = HashMap::new(); // event_id → (event_type, ts_ns) of the NEXT frame
     let mut prev_event_id: Option<u64> = None;
-    while cursor < bytes.len() {
-        let dec = match decode_frame(&bytes[cursor..]) {
-            Ok(d) => d,
-            Err(_) => break, // torn tail
-        };
-        let total = dec.header.total_len as usize;
+    // GOLD-ARCH-03: for_each_frame so permission/consent frames inside a
+    // v2/zstd-compressed segment are audited, not silently skipped. Frame order
+    // is preserved, so the prev→next "downstream effect" wiring is unchanged.
+    let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
         let event_id = dec.header.event_id.0;
         let event_type = dec.header.event_type;
         let ts_ns = dec.header.hlc.physical_ns();
@@ -170,12 +166,8 @@ pub fn audit_segment(
         if in_window && is_audit_event {
             raw_decisions.push((event_id, ts_ns, event_type, dec.payload.to_vec()));
         }
-
-        if total == 0 {
-            break;
-        }
-        cursor = cursor.saturating_add(total);
-    }
+        Ok(())
+    });
 
     // Build entries + summary counts.
     let mut entries: Vec<AuditEntry> = Vec::with_capacity(raw_decisions.len());
