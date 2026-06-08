@@ -85,7 +85,15 @@ pub struct OuroAttention {
     head_dim: usize,
     hidden_size: usize,
     rotary_emb: Arc<OuroRoPE>,
-    kv_cache: Option<(Tensor, Tensor)>,
+    /// GOLD-COR-36: one KV-cache slot PER recurrent loop (length
+    /// `total_ut_steps`), indexed by `loop_idx`. The Universal-Transformer
+    /// recurrence refines a hidden state across loops; a past token's loop-`L`
+    /// K/V is causally independent of any later token, so caching it per-loop
+    /// lets incremental decode (feed one new token at a growing `seqlen_offset`)
+    /// produce BIT-IDENTICAL logits to the full-resequence baseline in O(n)
+    /// forward passes instead of O(n²). Each loop reads + appends ONLY its own
+    /// slot; a new sequence (`seqlen_offset == 0`) resets all slots.
+    kv_caches: Vec<Option<(Tensor, Tensor)>>,
 }
 
 impl OuroAttention {
@@ -112,7 +120,7 @@ impl OuroAttention {
             head_dim,
             hidden_size: hidden_sz,
             rotary_emb,
-            kv_cache: None,
+            kv_caches: vec![None; cfg.total_ut_steps],
         })
     }
 
@@ -121,6 +129,7 @@ impl OuroAttention {
         xs: &Tensor,
         attention_mask: Option<&Tensor>,
         seqlen_offset: usize,
+        loop_idx: usize,
     ) -> Result<Tensor> {
         let (b_sz, q_len, _) = xs
             .dims3()
@@ -160,10 +169,14 @@ impl OuroAttention {
             self.rotary_emb
                 .apply_rotary_emb_qkv(&query_states, &key_states, seqlen_offset)?;
 
-        // KV-cache append. Cache is cleared between recurrent loops
-        // by `OuroAttention::clear_kv_cache` (called from
-        // `OuroModel::forward`'s loop preamble).
-        let (key_states, value_states) = match &self.kv_cache {
+        // GOLD-COR-36: KV-cache append into THIS loop's slot. For the prompt /
+        // full-resequence pass (`seqlen_offset == 0`) `forward_loops` resets all
+        // slots first, so the slot starts empty and holds the whole sequence.
+        // For incremental decode (`seqlen_offset > 0`) the slot already holds the
+        // prefix's loop-`loop_idx` K/V (causally identical across decode steps),
+        // and we append the new token's K/V — yielding the same attention inputs
+        // the full-resequence baseline would compute at this (loop, position).
+        let (key_states, value_states) = match &self.kv_caches[loop_idx] {
             None => (key_states, value_states),
             Some((prev_k, prev_v)) => {
                 let k = Tensor::cat(&[prev_k, &key_states], 2)
@@ -173,7 +186,7 @@ impl OuroAttention {
                 (k, v)
             }
         };
-        self.kv_cache = Some((key_states.clone(), value_states.clone()));
+        self.kv_caches[loop_idx] = Some((key_states.clone(), value_states.clone()));
 
         // MHA: num_kv_groups == 1, so we skip the qwen2 `repeat_kv`
         // step entirely (it would be the identity for groups == 1
@@ -209,8 +222,11 @@ impl OuroAttention {
             .context("Attention: o_proj")
     }
 
+    /// Reset EVERY loop's KV-cache slot — a fresh sequence / completion.
     pub fn clear_kv_cache(&mut self) {
-        self.kv_cache = None
+        for slot in self.kv_caches.iter_mut() {
+            *slot = None;
+        }
     }
 }
 
@@ -262,6 +278,7 @@ impl OuroLayer {
         xs: &Tensor,
         attention_mask: Option<&Tensor>,
         seqlen_offset: usize,
+        loop_idx: usize,
     ) -> Result<Tensor> {
         let r1 = xs;
         let h1 = self
@@ -270,7 +287,7 @@ impl OuroLayer {
             .context("Layer: norm_pre forward")?;
         let attn = self
             .self_attn
-            .forward(&h1, attention_mask, seqlen_offset)
+            .forward(&h1, attention_mask, seqlen_offset, loop_idx)
             .context("Layer: attn forward")?;
         let r2 = (r1 + attn).context("Layer: residual_1 add")?;
         let h2 = self
@@ -387,7 +404,7 @@ mod tests {
         let vb = synthetic_vb(&dev);
         let mut attn = OuroAttention::new(rope, &cfg, vb.pp("self_attn")).expect("build attention");
         let xs = Tensor::zeros((1, 4, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let out = attn.forward(&xs, None, 0).expect("attention forward");
+        let out = attn.forward(&xs, None, 0, 0).expect("attention forward");
         assert_eq!(out.dims(), &[1, 4, cfg.hidden_size]);
     }
 
@@ -399,10 +416,10 @@ mod tests {
         let vb = synthetic_vb(&dev);
         let mut attn = OuroAttention::new(rope, &cfg, vb.pp("self_attn")).expect("build attention");
         let xs = Tensor::zeros((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let _ = attn.forward(&xs, None, 0).unwrap();
-        assert!(attn.kv_cache.is_some(), "first forward must populate cache");
+        let _ = attn.forward(&xs, None, 0, 0).unwrap();
+        assert!(attn.kv_caches[0].is_some(), "first forward must populate loop-0 cache");
         attn.clear_kv_cache();
-        assert!(attn.kv_cache.is_none(), "clear must reset to None");
+        assert!(attn.kv_caches[0].is_none(), "clear must reset to None");
     }
 
     #[test]
@@ -413,7 +430,7 @@ mod tests {
         let vb = synthetic_vb(&dev);
         let mut layer = OuroLayer::new(rope, &cfg, vb).expect("build layer");
         let xs = Tensor::zeros((1, 4, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let out = layer.forward(&xs, None, 0).expect("layer forward");
+        let out = layer.forward(&xs, None, 0, 0).expect("layer forward");
         assert_eq!(out.dims(), &[1, 4, cfg.hidden_size]);
     }
 
@@ -425,10 +442,10 @@ mod tests {
         let vb = synthetic_vb(&dev);
         let mut layer = OuroLayer::new(rope, &cfg, vb).expect("build layer");
         let xs = Tensor::zeros((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let _ = layer.forward(&xs, None, 0).unwrap();
-        assert!(layer.self_attn.kv_cache.is_some());
+        let _ = layer.forward(&xs, None, 0, 0).unwrap();
+        assert!(layer.self_attn.kv_caches[0].is_some());
         layer.clear_kv_cache();
-        assert!(layer.self_attn.kv_cache.is_none());
+        assert!(layer.self_attn.kv_caches[0].is_none());
     }
 
     #[test]
@@ -444,7 +461,7 @@ mod tests {
         let mut layer = OuroLayer::new(rope, &cfg, vb).expect("build layer");
         // Non-zero input — a constant +1.0 in every element.
         let xs = Tensor::ones((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let out = layer.forward(&xs, None, 0).expect("layer forward");
+        let out = layer.forward(&xs, None, 0, 0).expect("layer forward");
         let inp_vec: Vec<f32> = xs.flatten_all().unwrap().to_vec1().unwrap();
         let out_vec: Vec<f32> = out.flatten_all().unwrap().to_vec1().unwrap();
         // Zero-weight projections collapse attn + mlp to zero; the

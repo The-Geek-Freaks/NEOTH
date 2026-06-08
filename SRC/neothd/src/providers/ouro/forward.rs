@@ -180,16 +180,24 @@ impl OuroModel {
             .embed_tokens
             .forward(input_ids)
             .context("OuroModel: embed_tokens forward")?;
-        let mut h = xs;
-        for loop_idx in 0..self.total_ut_steps {
-            // Reset every layer's KV-cache at the start of each
-            // loop. Each loop is a complete fresh forward pass.
+        // GOLD-COR-36: the per-loop KV caches persist ACROSS forward() calls so
+        // incremental decode is O(n). Reset them only for a fresh sequence —
+        // `seqlen_offset == 0` is the prompt / full-resequence pass; a decode
+        // step (`offset > 0`) appends the single new token into each loop's
+        // existing slot. (Full-resequence decode always passes offset 0, so it
+        // clears every call and behaves exactly as before this change.)
+        if seqlen_offset == 0 {
             for layer in self.layers.iter_mut() {
                 layer.clear_kv_cache();
             }
+        }
+        let mut h = xs;
+        for loop_idx in 0..self.total_ut_steps {
+            // Each recurrent loop reads + appends ONLY its own KV slot; the
+            // hidden state `h` carries forward across loops.
             for layer in self.layers.iter_mut() {
                 h = layer
-                    .forward(&h, attention_mask.as_ref(), seqlen_offset)
+                    .forward(&h, attention_mask.as_ref(), seqlen_offset, loop_idx)
                     .with_context(|| format!("OuroModel: layer forward in loop {loop_idx}"))?;
             }
         }
@@ -330,6 +338,91 @@ mod tests {
 
     fn input_ids(dev: &Device, ids: &[u32]) -> Tensor {
         Tensor::new(ids, dev).unwrap().unsqueeze(0).unwrap()
+    }
+
+    /// Small deterministic NON-ZERO fill — `((k+salt) mod 13 - 6) * 0.03`,
+    /// range ≈ [-0.18, 0.18]. Varied + bounded so attention is genuinely
+    /// context-sensitive (zero weights would make any parity test vacuous) while
+    /// staying numerically stable (no softmax overflow / NaN).
+    fn det_tensor(rows: usize, cols: usize, dev: &Device, salt: usize) -> Tensor {
+        let data: Vec<f32> = (0..rows * cols)
+            .map(|k| (((k + salt) % 13) as f32 - 6.0) * 0.03)
+            .collect();
+        Tensor::from_vec(data, (rows, cols), dev).unwrap()
+    }
+
+    /// Full model VarBuilder with deterministic NON-ZERO projections +
+    /// embeddings (norms stay ones). Used by the GOLD-COR-36 parity oracle.
+    fn synthetic_nonzero_vb(dev: &Device, with_lm_head: bool) -> VarBuilder<'static> {
+        let cfg = tiny_cfg();
+        let (h, i) = (cfg.hidden_size, cfg.intermediate_size);
+        let mut map: HashMap<String, Tensor> = HashMap::new();
+        map.insert(
+            "model.embed_tokens.weight".into(),
+            det_tensor(cfg.vocab_size, h, dev, 1),
+        );
+        for l in 0..cfg.num_hidden_layers {
+            let p = format!("model.layers.{l}");
+            let mut salt = 2 + l * 10;
+            for proj in ["q_proj", "k_proj", "v_proj", "o_proj"] {
+                map.insert(format!("{p}.self_attn.{proj}.weight"), det_tensor(h, h, dev, salt));
+                salt += 1;
+            }
+            map.insert(format!("{p}.mlp.gate_proj.weight"), det_tensor(i, h, dev, salt));
+            map.insert(format!("{p}.mlp.up_proj.weight"), det_tensor(i, h, dev, salt + 1));
+            map.insert(format!("{p}.mlp.down_proj.weight"), det_tensor(h, i, dev, salt + 2));
+            for norm in ["norm_pre", "norm_mid", "norm_post"] {
+                map.insert(format!("{p}.{norm}.weight"), Tensor::ones((h,), DType::F32, dev).unwrap());
+            }
+        }
+        map.insert("model.norm.weight".into(), Tensor::ones((h,), DType::F32, dev).unwrap());
+        if with_lm_head {
+            map.insert("lm_head.weight".into(), det_tensor(cfg.vocab_size, h, dev, 99));
+        }
+        VarBuilderArgs::from_tensors(map, DType::F32, dev)
+    }
+
+    fn logits_vec(t: &Tensor) -> Vec<f32> {
+        t.flatten_all().unwrap().to_vec1().unwrap()
+    }
+
+    /// GOLD-COR-36 ORACLE: the per-loop KV cache (incremental decode — feed one
+    /// new token at a growing `seqlen_offset`) must produce BIT-IDENTICAL logits
+    /// to the COR-31 full-resequence baseline (feed the whole sequence at offset
+    /// 0). Run on NON-ZERO deterministic weights so the comparison is meaningful
+    /// — any mask-shape / RoPE-offset / cache bug makes the two paths diverge.
+    #[test]
+    fn per_loop_cache_decode_matches_full_resequence_baseline() {
+        let dev = Device::Cpu;
+        let cfg = tiny_cfg();
+        let mut model = OuroModel::new(&cfg, synthetic_nonzero_vb(&dev, true)).expect("build model");
+
+        // Baseline: full-resequence over [1,2,3,4] at offset 0.
+        model.clear_kv_cache();
+        let baseline = logits_vec(&model.forward(&input_ids(&dev, &[1, 2, 3, 4]), 0).unwrap());
+
+        // Context-sensitivity guard: a different prefix MUST yield different
+        // logits, else the weights are degenerate and this whole test is vacuous.
+        model.clear_kv_cache();
+        let other = logits_vec(&model.forward(&input_ids(&dev, &[4, 3, 2, 1]), 0).unwrap());
+        assert!(
+            baseline.iter().zip(&other).any(|(a, b)| (a - b).abs() > 1e-3),
+            "non-zero weights must make the model context-sensitive (else parity is vacuous)"
+        );
+
+        // Incremental decode via the per-loop cache: prompt [1,2,3] @0, then the
+        // single token [4] at offset 3 — must match the baseline's last-token logits.
+        model.clear_kv_cache();
+        let _ = model.forward(&input_ids(&dev, &[1, 2, 3]), 0).unwrap();
+        let incremental = logits_vec(&model.forward(&input_ids(&dev, &[4]), 3).unwrap());
+
+        assert_eq!(baseline.len(), incremental.len(), "logit vectors same length");
+        for (k, (b, inc)) in baseline.iter().zip(&incremental).enumerate() {
+            assert!(
+                (b - inc).abs() < 1e-4,
+                "per-loop-cache decode diverged from full-resequence at logit[{k}]: {b} vs {inc}"
+            );
+        }
     }
 
     #[test]
