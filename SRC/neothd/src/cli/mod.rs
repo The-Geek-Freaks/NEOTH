@@ -32,6 +32,7 @@ pub mod doctor;
 pub mod dreaming_task;
 pub mod events;
 pub mod export;
+pub mod fact_check;
 pub mod fetch;
 pub mod fs;
 pub mod github;
@@ -193,6 +194,14 @@ pub enum Commands {
     /// One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply.
     /// Both request and response are persisted as WAL events.
     Chat(chat::ChatArgs),
+
+    /// GOLD-WIRE-11 — fact-check a claim. Decomposes the text into atomic
+    /// propositions, classifies each (verifiable / plausible / opinion /
+    /// suspect) with deterministic heuristics (no LLM call), and prints a
+    /// `clean` / `needs_framing` / `needs_revision` verdict.
+    /// `neoth fact-check "NEOTH was released in 2026."`
+    #[command(name = "fact-check")]
+    FactCheck(fact_check::FactCheckArgs),
 
     /// Search the SQLite recall views for matching text.
     /// Runs the indexer once before querying.
@@ -873,6 +882,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Chat(mut args) => {
             args.stream = global_stream;
             chat::run_chat(args).await?;
+        }
+        Commands::FactCheck(mut args) => {
+            args.output = global_output;
+            fact_check::run_fact_check(args)?;
         }
         Commands::Recall(mut args) => {
             args.output = global_output;
