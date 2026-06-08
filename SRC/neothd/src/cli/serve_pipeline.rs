@@ -223,6 +223,58 @@ pub(crate) async fn resolve_inbound_effective_text(
     }
 }
 
+/// GOLD-ARCH-01 phase 2 (inbound stage): BS-11 per-sender rate limit, BEFORE any
+/// WAL write. Returns `true` if the message is rate-limited — the caller drops
+/// it SILENTLY (a misbehaving upstream learns from its own retry backoff, not
+/// from NEOTH explaining itself; a `CHANNEL_ERROR` audit frame records the drop)
+/// — and `false` to continue.
+pub(crate) async fn enforce_inbound_rate_limit(
+    rate_limiter: &crate::channels::rate_limit::RateLimiter,
+    channel_str: &str,
+    sender_id: &str,
+    sender_hash: &str,
+    writer: &WalWriterHandle,
+) -> bool {
+    match rate_limiter.try_consume(channel_str, sender_id) {
+        crate::channels::rate_limit::Decision::Allowed => false,
+        crate::channels::rate_limit::Decision::RateLimited { retry_after_ms } => {
+            info!(
+                channel = channel_str,
+                sender_hash = %sender_hash,
+                retry_after_ms,
+                "inbound rate-limited; dropping",
+            );
+            // Never emit a zero-byte WAL frame — a corrupted payload misparses
+            // the rest of the segment. Serialisation cannot fail here (all
+            // primitives) but the defensive pattern stays.
+            let payload = match serde_json::to_vec(&serde_json::json!({
+                "channel": channel_str,
+                "sender_id_hash": sender_hash,
+                "reason": "rate_limited",
+                "retry_after_ms": retry_after_ms,
+            })) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "rate-limit audit payload serialisation failed; frame skipped"
+                    );
+                    return true;
+                }
+            };
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_CHANNEL_ERROR,
+                &payload,
+            )
+            .build();
+            if let Err(e) = writer.append(header, payload).await {
+                tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
+            }
+            true
+        }
+    }
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -379,50 +431,17 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
             };
             let raw_text = hooked_text.as_str();
 
-            // BS-11: per-sender rate limit BEFORE any WAL write. Drops
-            // are silent (no reply) — a misbehaving upstream learns from
-            // its own retry backoff, not from NEOTH explaining itself.
-            // Hits are logged + a CHANNEL_ERROR WAL frame records the
-            // drop for the audit trail.
-            match rate_limiter.try_consume(channel_str, &inbound.sender_id) {
-                crate::channels::rate_limit::Decision::Allowed => {}
-                crate::channels::rate_limit::Decision::RateLimited { retry_after_ms } => {
-                    info!(
-                        channel = channel_str,
-                        sender_hash = %sender_hash,
-                        retry_after_ms,
-                        "inbound rate-limited; dropping",
-                    );
-                    // Never emit a zero-byte WAL frame — a corrupted
-                    // payload misparses the rest of the segment. If
-                    // serialisation fails (it cannot here — all fields
-                    // are primitives — but the pattern stays defensive)
-                    // drop the audit frame entirely.
-                    let payload = match serde_json::to_vec(&serde_json::json!({
-                        "channel": channel_str,
-                        "sender_id_hash": sender_hash,
-                        "reason": "rate_limited",
-                        "retry_after_ms": retry_after_ms,
-                    })) {
-                        Ok(p) => p,
-                        Err(e) => {
-                            tracing::warn!(
-                                error = %e,
-                                "rate-limit audit payload serialisation failed; frame skipped"
-                            );
-                            return Ok(::std::option::Option::None);
-                        }
-                    };
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_CHANNEL_ERROR,
-                        &payload,
-                    )
-                    .build();
-                    if let Err(e) = writer.append(header, payload).await {
-                        tracing::warn!(error = %e, "WAL append failed (best-effort audit frame)");
-                    }
-                    return Ok(::std::option::Option::None);
-                }
+            // GOLD-ARCH-01 phase 2: BS-11 per-sender rate limit (silent drop).
+            if enforce_inbound_rate_limit(
+                &rate_limiter,
+                channel_str,
+                &inbound.sender_id,
+                &sender_hash,
+                &writer,
+            )
+            .await
+            {
+                return Ok(::std::option::Option::None);
             }
             // ── Phase 11a gate: sanitize before ANY downstream effect ─────
             // Per memory/neoth-research-synthesis.md anti-pattern #4:
@@ -1982,5 +2001,29 @@ mod tests {
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap();
         assert_eq!(count_edit_frames(&bytes), 1, "an edit writes exactly one 0x38 frame");
+    }
+
+    #[tokio::test]
+    async fn rate_limit_allows_first_then_drops_with_audit_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        // 1 token/min, burst 1 → the bucket starts with a single token.
+        let rl = crate::channels::rate_limit::RateLimiter::new(1.0, 1);
+        // First message from this sender: allowed (no drop, no frame).
+        assert!(!enforce_inbound_rate_limit(&rl, "telegram", "s1", "hash1", &writer).await);
+        // Second, immediately: bucket empty → rate-limited (drop + audit frame).
+        assert!(enforce_inbound_rate_limit(&rl, "telegram", "s1", "hash1", &writer).await);
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap();
+        let mut n = 0usize;
+        let _ = crate::wal::scan::for_each_frame(&bytes, |_, d| {
+            if d.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_ERROR {
+                n += 1;
+            }
+            Ok(())
+        });
+        assert_eq!(n, 1, "exactly one CHANNEL_ERROR frame for the rate-limited drop");
     }
 }
