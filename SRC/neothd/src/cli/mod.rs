@@ -18,6 +18,8 @@ pub mod channel;
 pub mod chat;
 pub mod cloud;
 pub mod cloud_sync_task;
+// GOLD-SEC-16: `neoth cluster` CLI surface gated with the `cluster` feature.
+#[cfg(feature = "cluster")]
 pub mod cluster;
 pub mod code;
 pub mod code_map;
@@ -537,6 +539,7 @@ pub enum Commands {
     /// would discover peers is gated by R-A1. `status` shows what the
     /// daemon would report today, `plan` runs the `LocalOnly` /
     /// `LeastLoaded` policies against a synthetic peer table.
+    #[cfg(feature = "cluster")]
     Cluster(cluster::ClusterArgs),
 
     /// Inspect the Ouro thinking-models provider (O-3).
@@ -1034,6 +1037,7 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
             args.output = global_output;
             cloud::run_cloud(args).await?;
         }
+        #[cfg(feature = "cluster")]
         Commands::Cluster(mut args) => {
             args.output = global_output;
             cluster::run_cluster(args).await?;

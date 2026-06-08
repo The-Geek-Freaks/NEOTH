@@ -1039,6 +1039,8 @@ pub async fn run_chat_with(
     // local-load gauge. The RAII guard decrements on drop (covers both the
     // stream + non-stream branches, and any early `?`); we drop it explicitly
     // right after the call so the count reflects only the actual provider work.
+    // GOLD-SEC-16: the cluster local-load gauge only exists with the `cluster` feature.
+    #[cfg(feature = "cluster")]
     let inflight_guard = crate::cluster::local_load::inflight_guard();
 
     let (response_text, final_input_tokens, final_output_tokens, model_used) = if args.stream {
@@ -1441,11 +1443,14 @@ pub async fn run_chat_with(
     // SL-00(1c): the provider work is done — release the in-flight slot and
     // feed the cluster local-load gauge the REAL measured throughput so our
     // outbound heartbeats carry honest numbers (no faked metrics).
-    drop(inflight_guard);
-    crate::cluster::local_load::record_completion(
-        final_output_tokens.unwrap_or(0),
-        inference_started.elapsed(),
-    );
+    #[cfg(feature = "cluster")]
+    {
+        drop(inflight_guard);
+        crate::cluster::local_load::record_completion(
+            final_output_tokens.unwrap_or(0),
+            inference_started.elapsed(),
+        );
+    }
 
     // AP-2 END half: fires for stream + non-stream paths after the model
     // produced a reply. Reads the final accumulated text from the same

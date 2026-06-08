@@ -88,6 +88,10 @@ pub mod channels;
 pub mod claude_plugins;
 pub mod cli;
 pub mod cloud;
+// GOLD-SEC-16: the cluster subsystem is gated behind the `cluster` feature
+// (default-ON in release, opt-out via `--no-default-features` for a slimmer
+// solo-node binary).
+#[cfg(feature = "cluster")]
 pub mod cluster;
 pub mod code_map;
 pub mod coding;

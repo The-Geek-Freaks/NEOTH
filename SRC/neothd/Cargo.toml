@@ -10,7 +10,7 @@ repository = "private"
 # Per-deployment operator identity lives in ~/.neoth/freedom.yaml, not crate metadata.
 
 [features]
-default = ["wizard"]
+default = ["wizard", "cluster"]
 # Interactive TTY wizard for `neoth init`. Disable for slim daemon-only builds
 # (containers, embedded targets). When off, `neoth init --non-interactive` still works.
 wizard = ["dep:dialoguer", "dep:indicatif", "dep:console"]
@@ -65,6 +65,19 @@ os-clipboard = ["dep:arboard"]
 # Chrome/Firefox alongside the always-available Bitwarden-export importer).
 # No extra crate deps — the crypto primitives (aes, pbkdf2, hmac) are shared.
 browser-import = []
+
+# GOLD-SEC-16 (B-03) — the Borg-style cluster subsystem (`crate::cluster`:
+# Hyperswarm-DHT peer discovery + anti-entropy WAL gossip + the distributed
+# task executor, via the `peeroxide` transport crate). Default-ON in shipped
+# release binaries (it is the multi-node feature), but gated so a solo-node
+# operator can build a slimmer, smaller-attack-surface binary with
+# `--no-default-features` (or `--no-default-features --features wizard`). When
+# off, the `neoth cluster` command, the daemon's transport-activation +
+# gossip-tick + cluster-audit-sidecar tasks, and the cluster doctor checks are
+# all compiled out; `ClusterConfig` stays as inert serde data so an existing
+# freedom.yaml with a `cluster:` block still parses. The `peeroxide` dep is
+# pulled in only by this feature.
+cluster = ["dep:peeroxide"]
 
 # D14b Phase 2c — GPU acceleration for local_qwen. Pin per-platform
 # so contributors building on a non-GPU laptop don't fight CUDA
@@ -195,7 +208,7 @@ lzma-rs = "0.3"
 # state on crates.io; `peeroxide` 1.3.x is the maintained pure-Rust
 # replacement that exposes the same topic-based discovery + hole-
 # punching primitives.
-peeroxide = "1.3"
+peeroxide = { version = "1.3", optional = true }
 
 # R-7 heartbeat wire format (Session 19) — per Chorus
 # 019E4A48975F25C0BD9F8B96BC085C94 both reviewers picked CBOR.

@@ -1856,6 +1856,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // sidecars at `~/.neoth/pending_audit/cluster_*.json`. This
     // task polls every 5s, reads pending sidecars, appends WAL
     // 0xE6/0xE7 frames, removes the consumed file.
+    // GOLD-SEC-16: cluster transport + its sidecar/gossip tasks compile in only
+    // with the `cluster` feature.
+    #[cfg(feature = "cluster")]
     let cluster_audit_task: tokio::task::JoinHandle<()> = {
         let writer_for_audit = writer.clone();
         let home = FreedomConfig::default_neoth_home();
@@ -1903,6 +1906,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             }
         })
     };
+    #[cfg(feature = "cluster")]
     info!("cluster audit sidecar ingester spawned (5s tick)");
 
     // ── SL-00(1b) Cluster transport activation (Hyperswarm DHT) ────────────
@@ -1917,7 +1921,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // authenticated from the first byte.
     // SL-01b: gossip anti-entropy send-tick handle (spawned only when the
     // transport actually comes up), aborted on shutdown alongside the swarm.
+    #[cfg(feature = "cluster")]
     let mut cluster_gossip_task: Option<tokio::task::JoinHandle<()>> = None;
+    #[cfg(feature = "cluster")]
     let cluster_swarm: Option<crate::cluster::hyperswarm::SwarmHandle> =
         match crate::cluster::identity::cluster_transport_activation(&config, &creds) {
             Some(identity) => {
@@ -2554,23 +2560,27 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // on disk are retained — the next daemon start picks them up
     // on its first tick (at-least-once semantics are fine for an
     // audit frame, the WAL writer dedupes by frame hash).
-    cluster_audit_task.abort();
-    let _ = cluster_audit_task.await;
+    // GOLD-SEC-16: cluster task teardown only exists with the `cluster` feature.
+    #[cfg(feature = "cluster")]
+    {
+        cluster_audit_task.abort();
+        let _ = cluster_audit_task.await;
 
-    // SL-01b: stop the gossip send-tick before tearing the transport down.
-    if let Some(task) = cluster_gossip_task {
-        task.abort();
-        let _ = task.await;
-    }
+        // SL-01b: stop the gossip send-tick before tearing the transport down.
+        if let Some(task) = cluster_gossip_task {
+            task.abort();
+            let _ = task.await;
+        }
 
-    // SL-00(1b): tear down the cluster transport. `shutdown()` aborts the
-    // discovery task + awaits it so we leave the DHT cleanly (no lingering
-    // announce). `None` when the transport never came up — no-op.
-    if let Some(swarm) = cluster_swarm {
-        if let Err(e) = swarm.shutdown().await {
-            warn!(error = %e, "cluster transport shutdown error (non-fatal)");
-        } else {
-            info!("cluster transport shut down");
+        // SL-00(1b): tear down the cluster transport. `shutdown()` aborts the
+        // discovery task + awaits it so we leave the DHT cleanly (no lingering
+        // announce). `None` when the transport never came up — no-op.
+        if let Some(swarm) = cluster_swarm {
+            if let Err(e) = swarm.shutdown().await {
+                warn!(error = %e, "cluster transport shutdown error (non-fatal)");
+            } else {
+                info!("cluster transport shut down");
+            }
         }
     }
 

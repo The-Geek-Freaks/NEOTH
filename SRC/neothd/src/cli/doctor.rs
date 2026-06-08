@@ -1012,6 +1012,7 @@ fn check_refusal_recovery(home: &Path) -> CheckOutcome {
 /// count so the check stays quiet for single-instance operators
 /// and only warns when the operator HAS paired peers but the
 /// announcer is silenced by SSID gating.
+#[cfg(feature = "cluster")]
 fn check_cluster_mdns_announcer(home: &Path) -> CheckOutcome {
     let freedom_path = home.join("freedom.yaml");
     let (mdns_enabled, policy) = crate::cluster::policy::load_policy_from_freedom(&freedom_path);
@@ -1020,6 +1021,19 @@ fn check_cluster_mdns_announcer(home: &Path) -> CheckOutcome {
         .map(|r| r.peers.len())
         .unwrap_or(0);
     evaluate_announcer_state(mdns_enabled, &policy, ssid.as_deref(), peer_count)
+}
+
+/// GOLD-SEC-16: slim build (no `cluster` feature) — there is no announcer to
+/// inspect, so the check passes with an honest "not compiled" note. Keeping the
+/// stub means `run_all_checks` returns the same outcome count in both build
+/// configurations (the count-pins stay stable).
+#[cfg(not(feature = "cluster"))]
+fn check_cluster_mdns_announcer(_home: &Path) -> CheckOutcome {
+    CheckOutcome {
+        name: "cluster mDNS announcer",
+        status: CheckStatus::Pass,
+        detail: "cluster feature not compiled in this build".to_string(),
+    }
 }
 
 /// Pure decision matrix for [`check_cluster_mdns_announcer`].
@@ -1036,6 +1050,7 @@ fn check_cluster_mdns_announcer(home: &Path) -> CheckOutcome {
 ///
 /// Each WARN carries the actionable fix (add SSID to trusted list,
 /// flip `announce_on_untrusted_wifi`, or pair via Tailscale).
+#[cfg(feature = "cluster")]
 fn evaluate_announcer_state(
     mdns_enabled: bool,
     policy: &crate::cluster::policy::AnnouncePolicy,
@@ -1113,6 +1128,7 @@ fn evaluate_announcer_state(
 /// `~/.neoth/cluster.yaml` + reports peer count + stale-peer warning
 /// when any paired peer hasn't been seen in 14 days. Empty registry
 /// passes silently — single-instance operators don't see noise.
+#[cfg(feature = "cluster")]
 fn check_cluster_registry(home: &Path) -> CheckOutcome {
     let reg = match crate::cluster::registry::load(home) {
         Ok(r) => r,
@@ -1165,6 +1181,16 @@ fn check_cluster_registry(home: &Path) -> CheckOutcome {
         name: "cluster registry",
         status,
         detail,
+    }
+}
+
+/// GOLD-SEC-16: slim build (no `cluster` feature) — no cluster registry to read.
+#[cfg(not(feature = "cluster"))]
+fn check_cluster_registry(_home: &Path) -> CheckOutcome {
+    CheckOutcome {
+        name: "cluster registry",
+        status: CheckStatus::Pass,
+        detail: "cluster feature not compiled in this build".to_string(),
     }
 }
 
@@ -2833,6 +2859,14 @@ mod tests {
         assert!(outcome.detail.contains("off by operator"));
     }
 
+    // GOLD-SEC-16: the cluster doctor-check tests exercise the real
+    // cluster-feature code paths (registry + announcer); they compile only
+    // with the `cluster` feature. The stub checks in the no-cluster build are
+    // trivially correct (they return a fixed "not compiled" Pass).
+    #[cfg(feature = "cluster")]
+    mod cluster_doctor_tests {
+        use super::*;
+
     #[test]
     fn cluster_registry_pass_when_empty() {
         let dir = tempdir().unwrap();
@@ -2976,6 +3010,7 @@ mod tests {
         // Status is platform-dependent (host SSID may match nothing
         // in the default trusted list); we only pin that it ran.
     }
+    } // mod cluster_doctor_tests (GOLD-SEC-16)
 
     #[test]
     fn provider_flapping_pass_when_no_calls() {
