@@ -18,8 +18,6 @@ use std::path::Path;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
-use crate::wal::frame::decode_frame;
-use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 use crate::wal::snapshot::PreMutationSnapshot;
 
 #[derive(Args, Debug, Clone)]
@@ -255,36 +253,33 @@ async fn run_apply(
 fn find_snapshot_at(segment: &Path, target_offset: u64) -> Result<PreMutationSnapshot> {
     let bytes =
         std::fs::read(segment).with_context(|| format!("read segment {}", segment.display()))?;
-    if bytes.len() <= SEGMENT_HEADER_LEN {
-        anyhow::bail!(
-            "segment {} is too short to contain frames",
-            segment.display()
-        );
-    }
-    let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
-    let mut absolute_offset: u64 = SEGMENT_HEADER_LEN as u64;
-    while !cursor.is_empty() {
-        let frame = decode_frame(cursor)
-            .with_context(|| format!("decode frame at offset {absolute_offset}"))?;
-        if absolute_offset == target_offset {
-            if frame.header.event_type != EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
-                anyhow::bail!(
+    // GOLD-ARCH-03: walk via for_each_frame so the offset is resolved against
+    // the LOGICAL (decompressed) byte stream — a v2/zstd-compressed segment's
+    // snapshot frames are reachable, not silently skipped. `cursor` is the
+    // frame's logical offset, matching the `absolute_offset` collect_snapshots
+    // recorded.
+    let mut found: Option<Result<PreMutationSnapshot>> = None;
+    crate::wal::scan::for_each_frame(&bytes, |cursor, frame| {
+        if cursor as u64 == target_offset {
+            found = Some(if frame.header.event_type != EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
+                Err(anyhow::anyhow!(
                     "frame at offset {target_offset} is not a PRE_MUTATION_SNAPSHOT \
                      (event_type 0x{:02X}, expected 0xF2)",
                     frame.header.event_type
-                );
-            }
-            return serde_json::from_slice::<PreMutationSnapshot>(frame.payload)
-                .context("decode snapshot JSON payload");
+                ))
+            } else {
+                serde_json::from_slice::<PreMutationSnapshot>(frame.payload)
+                    .context("decode snapshot JSON payload")
+            });
         }
-        let total = frame.header.total_len as usize;
-        absolute_offset += total as u64;
-        cursor = &cursor[total..];
-    }
-    anyhow::bail!(
-        "no frame found at offset {target_offset} in {}",
-        segment.display()
-    )
+        Ok(())
+    })?;
+    found.unwrap_or_else(|| {
+        Err(anyhow::anyhow!(
+            "no frame found at offset {target_offset} in {}",
+            segment.display()
+        ))
+    })
 }
 
 /// Concrete restoration plan derived from a snapshot. Each
@@ -991,31 +986,25 @@ fn collect_snapshots(
             Ok(b) => b,
             Err(_) => continue,
         };
-        if bytes.len() <= SEGMENT_HEADER_LEN {
-            continue;
-        }
         let segment_display = path.display().to_string();
-        let mut cursor = &bytes[SEGMENT_HEADER_LEN..];
-        let mut absolute_offset: u64 = SEGMENT_HEADER_LEN as u64;
-        while !cursor.is_empty() {
-            let frame = match decode_frame(cursor) {
-                Ok(f) => f,
-                Err(_) => break, // partial / corrupt tail
-            };
+        // GOLD-ARCH-03: for_each_frame decompresses a v2/zstd segment so its
+        // PRE_MUTATION_SNAPSHOT frames are found (the raw-byte walk skipped
+        // them entirely). `cursor` is the frame's logical offset — the
+        // absolute_offset rollback records + later resolves in find_snapshot_at.
+        // A single unreconstructable segment is skipped, not fatal to the scan.
+        let _ = crate::wal::scan::for_each_frame(&bytes, |cursor, frame| {
             if frame.header.event_type == EVENT_TYPE_PRE_MUTATION_SNAPSHOT {
                 if let Ok(snap) = serde_json::from_slice::<PreMutationSnapshot>(frame.payload) {
                     let kind_matches = kind_filter
                         .map(|k| kind_to_string(&snap.mutation_kind).eq_ignore_ascii_case(k.trim()))
                         .unwrap_or(true);
                     if kind_matches {
-                        out.push(((segment_display.clone(), absolute_offset), snap));
+                        out.push(((segment_display.clone(), cursor as u64), snap));
                     }
                 }
             }
-            let total = frame.header.total_len as usize;
-            absolute_offset += total as u64;
-            cursor = &cursor[total..];
-        }
+            Ok(())
+        });
     }
     Ok(out)
 }
@@ -1133,6 +1122,55 @@ mod tests {
             .collect();
         assert!(kinds.contains(&"file_write".to_string()));
         assert!(kinds.contains(&"channel_send".to_string()));
+    }
+
+    #[tokio::test]
+    async fn collect_and_find_snapshots_in_a_v2_compressed_segment() {
+        // GOLD-ARCH-03 regression: PRE_MUTATION_SNAPSHOT frames inside a v2
+        // (zstd-compressed) segment must be found by collect_snapshots AND
+        // resolvable by find_snapshot_at. Before the fix both walked the raw
+        // zstd blob and found ZERO snapshots, so `neoth rollback` could not undo
+        // any mutation recorded in a compacted segment.
+        use crate::wal::HeaderBuilder;
+        use crate::wal::compress::compress_frames;
+        use crate::wal::events::EVENT_TYPE_PRE_MUTATION_SNAPSHOT;
+        use crate::wal::frame::encode_frame;
+        use crate::wal::segment_header::{
+            SEGMENT_FLAG_COMPRESSED, SEGMENT_HEADER_V2_LEN, SegmentHeaderV2,
+        };
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000003.wal");
+
+        let snap = crate::wal::snapshot::PreMutationSnapshot::new(
+            MutationKind::FileWrite,
+            "/tmp/compressed-target",
+            b"before-bytes",
+            1_700_000_300,
+        );
+        let payload = serde_json::to_vec(&snap).unwrap();
+        let h = HeaderBuilder::new(EVENT_TYPE_PRE_MUTATION_SNAPSHOT, &payload).build();
+        let frame = encode_frame(&h, &payload);
+
+        // Finalize as a v2 compressed segment: 61-byte header + zstd(frame).
+        let blob = compress_frames(&frame).unwrap();
+        let hdr = SegmentHeaderV2::new(0, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        let mut seg_bytes = hdr.to_le_bytes().to_vec();
+        seg_bytes.extend_from_slice(&blob);
+        std::fs::write(&seg, &seg_bytes).unwrap();
+
+        let entries = collect_snapshots(dir.path(), None).unwrap();
+        assert_eq!(entries.len(), 1, "snapshot inside the zstd blob must be found");
+        let ((_, offset), found) = &entries[0];
+        assert_eq!(
+            *offset, SEGMENT_HEADER_V2_LEN as u64,
+            "offset is the frame's logical offset (after the 61-byte v2 header)"
+        );
+        assert_eq!(kind_to_string(&found.mutation_kind), "file_write");
+
+        // find_snapshot_at resolves the same offset against the logical bytes.
+        let resolved = find_snapshot_at(&seg, *offset).unwrap();
+        assert_eq!(kind_to_string(&resolved.mutation_kind), "file_write");
     }
 
     #[tokio::test]

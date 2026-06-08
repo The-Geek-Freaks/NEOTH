@@ -27,8 +27,6 @@ use clap::Args;
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
 use crate::wal::events;
-use crate::wal::frame::decode_frame;
-use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
 #[derive(Args, Debug, Clone)]
 pub struct UndoArgs {
@@ -226,33 +224,22 @@ pub fn scan_wal_dir_for_undo(wal_dir: &PathBuf, limit: usize) -> Result<Vec<Undo
 }
 
 fn scan_segment_bytes(bytes: &[u8], out: &mut Vec<UndoEntry>) {
-    if bytes.len() < SEGMENT_HEADER_LEN {
-        return;
-    }
-    let mut cursor = SEGMENT_HEADER_LEN;
-    while cursor < bytes.len() {
-        match decode_frame(&bytes[cursor..]) {
-            Ok(dec) => {
-                let total = dec.header.total_len as usize;
-                if total == 0 {
-                    break;
-                }
-                if let Some((name, reversal, what, reverse_hint)) = classify(dec.header.event_type)
-                {
-                    out.push(UndoEntry {
-                        ts_ns: dec.header.hlc.physical_ns(),
-                        event_type: dec.header.event_type,
-                        name,
-                        reversal,
-                        what,
-                        reverse_hint,
-                    });
-                }
-                cursor += total;
-            }
-            Err(_) => break,
+    // GOLD-ARCH-03: for_each_frame so reversible events inside a v2/zstd-
+    // compressed segment are listed, not silently skipped. A single
+    // unreconstructable segment is skipped, not fatal to the scan.
+    let _ = crate::wal::scan::for_each_frame(bytes, |_, dec| {
+        if let Some((name, reversal, what, reverse_hint)) = classify(dec.header.event_type) {
+            out.push(UndoEntry {
+                ts_ns: dec.header.hlc.physical_ns(),
+                event_type: dec.header.event_type,
+                name,
+                reversal,
+                what,
+                reverse_hint,
+            });
         }
-    }
+        Ok(())
+    });
 }
 
 fn format_ts_short(ts_ns: u64) -> String {
@@ -436,27 +423,16 @@ fn scan_preset_frames(
         let Ok(bytes) = std::fs::read(seg) else {
             continue;
         };
-        if bytes.len() < SEGMENT_HEADER_LEN {
-            continue;
-        }
-        let mut cursor = SEGMENT_HEADER_LEN;
-        while cursor < bytes.len() {
-            match decode_frame(&bytes[cursor..]) {
-                Ok(dec) => {
-                    let total = dec.header.total_len as usize;
-                    if total == 0 {
-                        break;
-                    }
-                    if dec.header.event_type == events::EVENT_TYPE_PROFILE_PRESET_APPLIED {
-                        if let Some(p) = parse_preset_name(dec.payload) {
-                            out.push((dec.header.hlc.physical_ns(), p));
-                        }
-                    }
-                    cursor += total;
+        // GOLD-ARCH-03: for_each_frame so PROFILE_PRESET_APPLIED frames inside a
+        // v2/zstd-compressed segment are found, not silently skipped.
+        let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
+            if dec.header.event_type == events::EVENT_TYPE_PROFILE_PRESET_APPLIED {
+                if let Some(p) = parse_preset_name(dec.payload) {
+                    out.push((dec.header.hlc.physical_ns(), p));
                 }
-                Err(_) => break,
             }
-        }
+            Ok(())
+        });
     }
     out.sort_by_key(|(ts, _)| *ts);
     Ok(out)
