@@ -575,4 +575,58 @@ mod tests {
             "a payload in the permissions band must be dropped on receive"
         );
     }
+
+    #[test]
+    fn accepted_gossip_frame_advances_local_clock_past_peer_causal_frontier() {
+        // GOLD-WIRE-09: on Accept the receive path merges the WHOLE inbound
+        // frame's vector clock (the peer's causal frontier), not just the
+        // origin entry — so the local clock converges onto everything the peer
+        // had observed and, having its own prior events, causally dominates it.
+        use crate::cluster::gossip_wire::VcOrdering;
+        let policy = GossipPolicy::default();
+        let mut st = GossipState::new();
+        // Local progresses on its own first (under a DISTINCT id, not any
+        // frontier peer), so a correct merge leaves the local clock strictly
+        // AFTER (not merely Equal to) the peer frontier.
+        let local = PeerId::new("local99");
+        st.vc.tick(&local);
+        st.vc.tick(&local);
+
+        // A frame from peer-a carrying a multi-node frontier {a:3, b:2, c:1}.
+        let pa = PeerId::new("aa11");
+        let pb = PeerId::new("bb22");
+        let pc = PeerId::new("cc33");
+        let mut frontier = VectorClock::new();
+        for _ in 0..3 {
+            frontier.tick(&pa);
+        }
+        for _ in 0..2 {
+            frontier.tick(&pb);
+        }
+        frontier.tick(&pc);
+        let frame = GossipFrame {
+            vector_clock: frontier.clone(),
+            origin: pa.clone(),
+            event_seq: 7,
+            timestamp_unix: 2_000_000_000,
+            tag: GossipTag::Replicate,
+            payload: vec![0],
+        };
+        let now = 2_000_000_001;
+        assert_eq!(
+            st.accept_inbound(&frame, Some(0x90), &policy, now),
+            GossipAcceptance::Accept
+        );
+        // Every entry of the peer's frontier is now covered by the local clock.
+        assert!(st.vc.get(&pa) >= 3);
+        assert!(st.vc.get(&pb) >= 2);
+        assert!(st.vc.get(&pc) >= 1);
+        // And because the local node also had its own events, the local clock
+        // now causally dominates (advances PAST) the peer's frontier.
+        assert_eq!(
+            st.vc.compare(&frontier),
+            VcOrdering::After,
+            "after accept the local clock must advance past the peer's causal frontier"
+        );
+    }
 }
