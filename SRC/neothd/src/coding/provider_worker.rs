@@ -34,6 +34,7 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 
+use crate::coding::tool_router::{self, RoutingMode, ToolCategory};
 use crate::coding::types::{KanbanTask, TestSummary};
 use crate::coding::worker::{Worker, WorkerOutcome};
 use crate::providers::{Provider, Request};
@@ -43,6 +44,13 @@ use crate::providers::{Provider, Request};
 pub struct ProviderWorker {
     name: &'static str,
     provider: Arc<dyn Provider>,
+    /// Operator-configured model name for the bound provider (e.g.
+    /// `"deepseek-coder"`, `"qwen3"`). Drives the GOLD-WIRE-01 two-stage
+    /// tool-router decision: small-context models (`≤ 16 384`) get a
+    /// Stage-1 category-selector turn before the task. Empty when the
+    /// slot left the model unset — that resolves to the unknown-default
+    /// profile (32 k context → Direct, no extra call).
+    model_name: String,
     /// Where task patches land. `<wal_dir>/coding-sessions/<session-id>/
     /// task-<task-id>.patch`. The dispatcher provides the parent dir;
     /// this struct only knows the operator's home root.
@@ -53,26 +61,72 @@ impl ProviderWorker {
     /// Build a worker. `name` is operator-readable and surfaces in
     /// the WAL + activity feed; pin it to a stable string per
     /// hemisphere ("left/local_qwen", "right/claude_cli") so audit
-    /// chain readability survives renames. QU-10d: no longer takes a
-    /// `runtime` Handle — `execute` is async and awaits the provider on
-    /// the ambient runtime.
+    /// chain readability survives renames. `model_name` is the
+    /// operator-configured model for this provider — it selects the
+    /// tool-router profile (GOLD-WIRE-01); pass `""` when unknown.
+    /// QU-10d: no longer takes a `runtime` Handle — `execute` is async
+    /// and awaits the provider on the ambient runtime.
     pub fn new(
         name: &'static str,
         provider: Arc<dyn Provider>,
+        model_name: impl Into<String>,
         patch_root: impl Into<PathBuf>,
     ) -> Self {
         Self {
             name,
             provider,
+            model_name: model_name.into(),
             patch_root: patch_root.into(),
         }
     }
+
+    /// Stage 1 of the two-stage tool router (GOLD-WIRE-01): ask the model
+    /// which tool category its next action falls in, so Stage 2 can prime
+    /// the task prompt with just that category's vocabulary instead of the
+    /// full set. A failed call OR an unparseable reply yields `None` —
+    /// the caller then proceeds with the plain (Direct) task prompt.
+    async fn select_tool_category(&self) -> Option<ToolCategory> {
+        let selector = Request {
+            prompt: tool_router::build_selector_prompt(),
+            ..Default::default()
+        };
+        match self.provider.complete(selector).await {
+            Ok(c) => parse_category_reply(&c.text),
+            Err(e) => {
+                tracing::warn!(
+                    worker = self.name,
+                    error = %e,
+                    "tool-router Stage-1 selector failed; falling back to Direct"
+                );
+                None
+            }
+        }
+    }
+}
+
+/// Lenient parse of the Stage-1 selector reply. The prompt asks for the
+/// bare category name; tolerate surrounding whitespace + case + a short
+/// trailing clause by also trying the first whitespace token. `None`
+/// when nothing matches → the caller falls back to Direct (no hint).
+fn parse_category_reply(reply: &str) -> Option<ToolCategory> {
+    let lower = reply.trim().to_ascii_lowercase();
+    ToolCategory::from_str(&lower)
+        .or_else(|| lower.split_whitespace().next().and_then(ToolCategory::from_str))
 }
 
 #[async_trait]
 impl Worker for ProviderWorker {
     async fn execute(&self, task: &KanbanTask) -> Result<WorkerOutcome> {
-        let prompt = build_task_prompt(task);
+        // GOLD-WIRE-01: two-stage tool routing. Small-context models
+        // (≤ 16 384, e.g. local Qwen/deepseek) first pick ONE tool
+        // category so the task prompt can be primed with just that
+        // category's vocabulary; larger models skip the extra turn.
+        let profile = crate::coding::model_profile::get_profile(&self.model_name, 0);
+        let tool_hint = match tool_router::routing_mode_for_profile(&profile) {
+            RoutingMode::TwoStage => self.select_tool_category().await,
+            RoutingMode::Direct => None,
+        };
+        let prompt = build_task_prompt(task, tool_hint);
         let req = Request {
             prompt,
             ..Default::default()
@@ -130,7 +184,13 @@ pub fn patch_path_for(patch_root: &std::path::Path, task: &KanbanTask) -> PathBu
 /// Repo context (which files to read, project layout) lands in
 /// Phase 3 follow-up — the LLM gets a `repo_context: &str` parameter
 /// once the dispatcher decides how much to feed.
-fn build_task_prompt(task: &KanbanTask) -> String {
+///
+/// `tool_hint` is the GOLD-WIRE-01 Stage-1 result: when `Some`, the
+/// prompt is primed with that tool category's description + member
+/// vocabulary so a small-context model focuses its next action; `None`
+/// (Direct mode, or an unparseable Stage-1 reply) leaves the prompt
+/// plain.
+fn build_task_prompt(task: &KanbanTask, tool_hint: Option<ToolCategory>) -> String {
     let role_hint = match task.hemisphere {
         crate::coding::types::Hemisphere::Left => {
             "You are a fast, focused engineer. Make the smallest change \
@@ -151,6 +211,17 @@ fn build_task_prompt(task: &KanbanTask) -> String {
     };
     let mut out = String::with_capacity(512);
     out.push_str(role_hint);
+    if let Some(cat) = tool_hint {
+        // GOLD-WIRE-01 Stage-2 priming: focus the small model on the
+        // category it picked in Stage 1.
+        out.push_str("\n\nLikely tool category for this task: ");
+        out.push_str(cat.as_str());
+        out.push_str(" — ");
+        out.push_str(tool_router::category_description(cat));
+        out.push_str(".\nRelevant operations: ");
+        out.push_str(&tool_router::category_member_hint(cat).join(", "));
+        out.push('.');
+    }
     out.push_str("\n\n---\n");
     out.push_str("TASK\n");
     out.push_str("Title: ");
@@ -291,7 +362,7 @@ mod tests {
 
     #[test]
     fn build_prompt_includes_task_title_and_description() {
-        let p = build_task_prompt(&sample_task());
+        let p = build_task_prompt(&sample_task(), None);
         assert!(p.contains("Add dark-mode toggle"));
         assert!(p.contains("UI-only"));
         assert!(p.contains("Type: ui"));
@@ -302,15 +373,15 @@ mod tests {
     fn build_prompt_role_hint_matches_hemisphere() {
         // Left = fast/focused; Right = senior/design.
         let mut t = sample_task();
-        let l = build_task_prompt(&t);
+        let l = build_task_prompt(&t, None);
         assert!(l.contains("fast, focused"), "left role hint missing");
 
         t.hemisphere = Hemisphere::Right;
-        let r = build_task_prompt(&t);
+        let r = build_task_prompt(&t, None);
         assert!(r.contains("senior engineer"), "right role hint missing");
 
         t.hemisphere = Hemisphere::Cerebellum;
-        let c = build_task_prompt(&t);
+        let c = build_task_prompt(&t, None);
         assert!(c.contains("orchestrator"), "cerebellum role hint missing");
     }
 
@@ -412,5 +483,116 @@ mod tests {
 
         let raw2 = "```rust\nfn x() {}\n```\n";
         assert!(parse_completion_text(raw2).patch.is_empty());
+    }
+
+    // ── GOLD-WIRE-01: two-stage tool routing ────────────────────────────
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    use crate::providers::Completion;
+
+    /// Provider that counts `complete` calls + returns a scripted reply
+    /// per call (last reply repeats once the script runs out).
+    struct CountingProvider {
+        calls: AtomicUsize,
+        replies: Vec<String>,
+    }
+
+    impl CountingProvider {
+        fn new(replies: &[&str]) -> Self {
+            Self {
+                calls: AtomicUsize::new(0),
+                replies: replies.iter().map(|s| s.to_string()).collect(),
+            }
+        }
+        fn count(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for CountingProvider {
+        fn name(&self) -> &'static str {
+            "counting"
+        }
+        async fn complete(&self, _req: Request) -> Result<Completion> {
+            let i = self.calls.fetch_add(1, Ordering::SeqCst);
+            let text = self
+                .replies
+                .get(i)
+                .or_else(|| self.replies.last())
+                .cloned()
+                .unwrap_or_default();
+            Ok(Completion {
+                text,
+                model: "test".into(),
+                latency: Duration::from_millis(1),
+                input_tokens: Some(0),
+                output_tokens: Some(0),
+            })
+        }
+    }
+
+    fn worker_with(model: &str, provider: Arc<CountingProvider>) -> ProviderWorker {
+        ProviderWorker::new("test/counting", provider, model, std::env::temp_dir())
+    }
+
+    #[tokio::test]
+    async fn two_stage_model_fires_selector_then_task() {
+        // deepseek-coder = 16 384 ctx → TwoStage. Stage-1 selector reply
+        // "write" + Stage-2 task reply → exactly TWO complete calls.
+        let provider = Arc::new(CountingProvider::new(&[
+            "write",
+            "```diff\n+x\n```\nSUMMARY: done",
+        ]));
+        let worker = worker_with("deepseek-coder", provider.clone());
+        let out = worker.execute(&sample_task()).await.unwrap();
+        assert_eq!(provider.count(), 2, "TwoStage must fire selector + task");
+        assert_eq!(out.summary, "done");
+    }
+
+    #[tokio::test]
+    async fn direct_model_skips_selector() {
+        // Unknown model → unknown_default (32 768 ctx) → Direct → ONE call.
+        let provider = Arc::new(CountingProvider::new(&["```diff\n+x\n```\nSUMMARY: done"]));
+        let worker = worker_with("", provider.clone());
+        let _ = worker.execute(&sample_task()).await.unwrap();
+        assert_eq!(provider.count(), 1, "Direct must skip the selector call");
+    }
+
+    #[tokio::test]
+    async fn unknown_category_reply_falls_back_to_direct_task() {
+        // TwoStage model but Stage-1 returns garbage → still completes the
+        // task (selector + task = 2 calls); no category hint is injected.
+        let provider = Arc::new(CountingProvider::new(&[
+            "bananas",
+            "SUMMARY: no change required — nothing to do",
+        ]));
+        let worker = worker_with("deepseek-coder", provider.clone());
+        let out = worker.execute(&sample_task()).await.unwrap();
+        assert_eq!(provider.count(), 2);
+        assert!(out.summary.contains("no change required"));
+    }
+
+    #[test]
+    fn build_task_prompt_injects_category_hint_when_present() {
+        let t = sample_task();
+        let primed = build_task_prompt(&t, Some(ToolCategory::Write));
+        assert!(primed.contains("write"), "category name missing");
+        assert!(primed.contains("patch"), "member-hint vocabulary missing");
+        assert!(!build_task_prompt(&t, None).contains("Likely tool category"));
+    }
+
+    #[test]
+    fn parse_category_reply_handles_clean_firstword_and_unknown() {
+        assert_eq!(parse_category_reply("write"), Some(ToolCategory::Write));
+        assert_eq!(parse_category_reply("  READ \n"), Some(ToolCategory::Read));
+        assert_eq!(
+            parse_category_reply("search the codebase"),
+            Some(ToolCategory::Search)
+        );
+        assert_eq!(parse_category_reply("bananas"), None);
+        assert_eq!(parse_category_reply(""), None);
     }
 }

@@ -333,7 +333,17 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
                 // audit trail benefits from the hemisphere/provider pair.
                 let label: &'static str =
                     Box::leak(format!("{name}/{provider_name}").into_boxed_str());
-                let worker = ProviderWorker::new(label, Arc::from(p), patch_root.clone());
+                // GOLD-WIRE-01: hand the worker the operator-configured
+                // model so it can pick the tool-router profile. Empty when
+                // the slot left it unset → unknown-default (Direct).
+                let model_name = cfg
+                    .inference
+                    .slot_for(role)
+                    .model
+                    .clone()
+                    .unwrap_or_default();
+                let worker =
+                    ProviderWorker::new(label, Arc::from(p), model_name, patch_root.clone());
                 workers.bind(hemi, Box::new(worker));
                 println!("dispatch: {hemi:?} bound to {label}", hemi = hemi.as_str());
             }
