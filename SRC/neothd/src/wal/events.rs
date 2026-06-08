@@ -1424,6 +1424,30 @@ pub const EVENT_TYPE_HMAC_KEY_ROTATED: u8 = 0xD9;
 /// only the changed field NAMES).
 pub const EVENT_TYPE_PRESET_APPLIED: u8 = 0xDA;
 
+/// `0xDB CONSENT_GRANTED` — SR-017 / GOLD-SEC-30. `neoth consent grant
+/// <provider>` (or the equivalent in-wizard path) wrote a cloud-provider
+/// consent marker (`~/.neoth/consent/<kind>.granted`), authorising NEOTH to
+/// route operator text to that third-party provider. Granting consent is a
+/// security-relevant privilege change — like `neoth autonomy set`, the marker
+/// path previously mutated permission state with NO forensic WAL record
+/// (`EVENT_TYPE_CONSENT_DECISION 0x65` covers only the in-chat decision prompt,
+/// not the deliberate CLI grant/revoke). Config-lifecycle band. Payload (JSON):
+/// `{provider, source, ts_unix}` — the provider slug only, never a key/secret.
+///
+/// Naming: SR-017 is the consent-audit gap; the GOLD-SEC-30 task text borrowed
+/// the `SUDOMODE_*` names from the separate `neoth sudomode` CLI feature
+/// (gold-audit item #18, NOT this task), so these are named for what they
+/// actually record — the consent grant/revoke path.
+pub const EVENT_TYPE_CONSENT_GRANTED: u8 = 0xDB;
+
+/// `0xDC CONSENT_REVOKED` — SR-017 / GOLD-SEC-30. Companion to
+/// [`EVENT_TYPE_CONSENT_GRANTED`]: `neoth consent revoke <provider>` removed a
+/// cloud-provider consent marker, so the next cloud-bound call re-prompts (or
+/// bails in non-interactive contexts). Revocation is the security-positive
+/// direction and is equally worth a forensic record. Config-lifecycle band.
+/// Payload (JSON): `{provider, source, ts_unix}`.
+pub const EVENT_TYPE_CONSENT_REVOKED: u8 = 0xDC;
+
 // ---- 0xE0..=0xEF  Cluster lifecycle (R-7, Session 19; 0xE0..=0xEA assigned) ----
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
@@ -1707,6 +1731,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("stt_transcribed", EVENT_TYPE_STT_TRANSCRIBED),
     ("tts_synthesized", EVENT_TYPE_TTS_SYNTHESIZED),
     ("preset_applied", EVENT_TYPE_PRESET_APPLIED),
+    ("consent_granted", EVENT_TYPE_CONSENT_GRANTED),
+    ("consent_revoked", EVENT_TYPE_CONSENT_REVOKED),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -2127,6 +2153,10 @@ const _: () = {
     let _ = [(); 1]
         [(EVENT_TYPE_HMAC_KEY_ROTATED < 0xD0 || EVENT_TYPE_HMAC_KEY_ROTATED > 0xDF) as usize];
     let _ = [(); 1][(EVENT_TYPE_PRESET_APPLIED < 0xD0 || EVENT_TYPE_PRESET_APPLIED > 0xDF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_CONSENT_GRANTED < 0xD0 || EVENT_TYPE_CONSENT_GRANTED > 0xDF) as usize];
+    let _ =
+        [(); 1][(EVENT_TYPE_CONSENT_REVOKED < 0xD0 || EVENT_TYPE_CONSENT_REVOKED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xEF).
     // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
     // (0xEB..=0xEF) share one declared band. Every assertion uses the full
@@ -2392,6 +2422,8 @@ mod tests {
             ),
             ("HMAC_KEY_ROTATED", EVENT_TYPE_HMAC_KEY_ROTATED),
             ("PRESET_APPLIED", EVENT_TYPE_PRESET_APPLIED),
+            ("CONSENT_GRANTED", EVENT_TYPE_CONSENT_GRANTED),
+            ("CONSENT_REVOKED", EVENT_TYPE_CONSENT_REVOKED),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",

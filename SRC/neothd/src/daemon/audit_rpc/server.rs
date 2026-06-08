@@ -54,6 +54,8 @@ pub const ALLOWED_CLIENT_EVENT_TYPES: &[u8] = &[
     0xD8, // MODEL_DOWNLOAD_COMPLETE — `neoth model pull` finished a fetch
     0xD9, // HMAC_KEY_ROTATED       — `neoth security rewrap-hmac-key` replaced the key
     0xDA, // PRESET_APPLIED         — `neoth preset apply` merged a preset into freedom.yaml
+    0xDB, // CONSENT_GRANTED        — `neoth consent grant` wrote a cloud-provider consent marker
+    0xDC, // CONSENT_REVOKED        — `neoth consent revoke` removed a consent marker
     0xF5, // MEMORY_TRANSFER_EXPORTED — `neoth transfer export` sealed a bundle
 ];
 
