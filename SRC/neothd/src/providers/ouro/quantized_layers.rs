@@ -123,7 +123,10 @@ pub struct QuantizedOuroAttention {
     head_dim: usize,
     hidden_size: usize,
     rotary_emb: Arc<OuroRoPE>,
-    kv_cache: Option<(Tensor, Tensor)>,
+    /// GOLD-COR-36: one KV-cache slot per recurrent loop (see the native
+    /// `OuroAttention::kv_caches`). Enables O(n) incremental decode that is
+    /// bit-identical to the full-resequence baseline.
+    kv_caches: Vec<Option<(Tensor, Tensor)>>,
 }
 
 impl QuantizedOuroAttention {
@@ -149,7 +152,7 @@ impl QuantizedOuroAttention {
             head_dim,
             hidden_size: hidden_sz,
             rotary_emb,
-            kv_cache: None,
+            kv_caches: vec![None; cfg.total_ut_steps],
         })
     }
 
@@ -158,6 +161,7 @@ impl QuantizedOuroAttention {
         xs: &Tensor,
         attention_mask: Option<&Tensor>,
         seqlen_offset: usize,
+        loop_idx: usize,
     ) -> Result<Tensor> {
         let (b_sz, q_len, _) = xs
             .dims3()
@@ -187,7 +191,7 @@ impl QuantizedOuroAttention {
             .rotary_emb
             .apply_rotary_emb_qkv(&q, &k, seqlen_offset)?;
 
-        let (k, v) = match &self.kv_cache {
+        let (k, v) = match &self.kv_caches[loop_idx] {
             None => (k, v),
             Some((prev_k, prev_v)) => {
                 let k = Tensor::cat(&[prev_k, &k], 2).context("Attention: cat K")?;
@@ -195,7 +199,7 @@ impl QuantizedOuroAttention {
                 (k, v)
             }
         };
-        self.kv_cache = Some((k.clone(), v.clone()));
+        self.kv_caches[loop_idx] = Some((k.clone(), v.clone()));
 
         let k = k.contiguous().context("Attention: K contiguous")?;
         let v = v.contiguous().context("Attention: V contiguous")?;
@@ -219,7 +223,9 @@ impl QuantizedOuroAttention {
     }
 
     pub fn clear_kv_cache(&mut self) {
-        self.kv_cache = None;
+        for slot in self.kv_caches.iter_mut() {
+            *slot = None;
+        }
     }
 }
 
@@ -271,12 +277,13 @@ impl QuantizedOuroLayer {
         xs: &Tensor,
         attention_mask: Option<&Tensor>,
         seqlen_offset: usize,
+        loop_idx: usize,
     ) -> Result<Tensor> {
         let r1 = xs;
         let h1 = self.norm_pre.forward(xs).context("Layer: norm_pre")?;
         let attn = self
             .self_attn
-            .forward(&h1, attention_mask, seqlen_offset)
+            .forward(&h1, attention_mask, seqlen_offset, loop_idx)
             .context("Layer: attn")?;
         let r2 = (r1 + attn).context("Layer: residual_1")?;
         let h2 = self.norm_mid.forward(&r2).context("Layer: norm_mid")?;
@@ -451,7 +458,7 @@ mod tests {
         let mut attn = QuantizedOuroAttention::new(rope, &cfg, vb.pp("self_attn"))
             .expect("build quantized attention");
         let xs = Tensor::zeros((1, 4, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let out = attn.forward(&xs, None, 0).expect("attention forward");
+        let out = attn.forward(&xs, None, 0, 0).expect("attention forward");
         assert_eq!(out.dims(), &[1, 4, cfg.hidden_size]);
     }
 
@@ -464,10 +471,10 @@ mod tests {
         let mut attn = QuantizedOuroAttention::new(rope, &cfg, vb.pp("self_attn"))
             .expect("build quantized attention");
         let xs = Tensor::zeros((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let _ = attn.forward(&xs, None, 0).unwrap();
-        assert!(attn.kv_cache.is_some(), "cache populated by forward");
+        let _ = attn.forward(&xs, None, 0, 0).unwrap();
+        assert!(attn.kv_caches[0].is_some(), "cache populated by forward");
         attn.clear_kv_cache();
-        assert!(attn.kv_cache.is_none(), "clear resets cache");
+        assert!(attn.kv_caches[0].is_none(), "clear resets cache");
     }
 
     #[test]
@@ -478,7 +485,7 @@ mod tests {
         let vb = synthetic_layer_vb(&dev);
         let mut layer = QuantizedOuroLayer::new(rope, &cfg, vb).expect("build layer");
         let xs = Tensor::zeros((1, 4, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let out = layer.forward(&xs, None, 0).expect("layer forward");
+        let out = layer.forward(&xs, None, 0, 0).expect("layer forward");
         assert_eq!(out.dims(), &[1, 4, cfg.hidden_size]);
     }
 
@@ -494,7 +501,7 @@ mod tests {
         let vb = synthetic_layer_vb(&dev);
         let mut layer = QuantizedOuroLayer::new(rope, &cfg, vb).expect("build layer");
         let xs = Tensor::ones((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let out = layer.forward(&xs, None, 0).expect("forward");
+        let out = layer.forward(&xs, None, 0, 0).expect("forward");
         let inp: Vec<f32> = xs.flatten_all().unwrap().to_vec1().unwrap();
         let got: Vec<f32> = out.flatten_all().unwrap().to_vec1().unwrap();
         for (i, (a, b)) in inp.iter().zip(got.iter()).enumerate() {
@@ -513,9 +520,9 @@ mod tests {
         let vb = synthetic_layer_vb(&dev);
         let mut layer = QuantizedOuroLayer::new(rope, &cfg, vb).expect("build layer");
         let xs = Tensor::zeros((1, 2, cfg.hidden_size), DType::F32, &dev).unwrap();
-        let _ = layer.forward(&xs, None, 0).unwrap();
-        assert!(layer.self_attn.kv_cache.is_some());
+        let _ = layer.forward(&xs, None, 0, 0).unwrap();
+        assert!(layer.self_attn.kv_caches[0].is_some());
         layer.clear_kv_cache();
-        assert!(layer.self_attn.kv_cache.is_none());
+        assert!(layer.self_attn.kv_caches[0].is_none());
     }
 }
