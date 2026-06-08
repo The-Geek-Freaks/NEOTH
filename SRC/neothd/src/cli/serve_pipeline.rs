@@ -199,6 +199,30 @@ pub(crate) async fn audit_inbound_edit(
     true
 }
 
+/// GOLD-ARCH-01 phase 2 (inbound stage): R-9 multimodal — resolve the message's
+/// effective text. A media attachment runs through the extraction pipeline
+/// first (audio → transcript, image → "embedding cached" ack; `INGEST_EXTRACTED`
+/// + `EMBED_PERSISTED` audit frames go via the daemon writer, consistent with
+/// `neoth ingest`); a media error degrades to an operator-facing notice rather
+/// than dropping the turn. A text-only message returns its text verbatim.
+/// `None` ⇒ neither text nor media ⇒ the caller drops the turn silently.
+pub(crate) async fn resolve_inbound_effective_text(
+    inbound: &InboundMessage,
+    writer: &WalWriterHandle,
+) -> Option<String> {
+    if let Some(media) = inbound.media.clone() {
+        match handle_media_attachment(inbound, &media, Some(writer)).await {
+            Ok(text) => Some(text),
+            Err(e) => {
+                tracing::warn!(error = %e, "media attachment pipeline failed");
+                Some(format!("[NEOTH] media pipeline error: {e}"))
+            }
+        }
+    } else {
+        inbound.text.clone()
+    }
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -248,28 +272,9 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 return Ok(::std::option::Option::None);
             }
 
-            // R-9 multimodal: if the inbound message carries a media
-            // attachment, run it through the extraction pipeline first.
-            // The result either replaces `text` (audio → transcript) or
-            // surfaces as an operator-facing acknowledgement (image →
-            // "embedding cached"). Text-bearing messages with no media
-            // skip this branch entirely. Audit frames
-            // (INGEST_EXTRACTED + EMBED_PERSISTED) are emitted via the
-            // daemon's primary writer so the channel-side pipeline
-            // stays consistent with `neoth ingest`.
-            let effective_text: Option<String> = if let Some(media) = inbound.media.clone() {
-                match handle_media_attachment(&inbound, &media, Some(&writer))
-                    .await
-                {
-                    Ok(text) => Some(text),
-                    Err(e) => {
-                        tracing::warn!(error = %e, "media attachment pipeline failed");
-                        Some(format!("[NEOTH] media pipeline error: {e}"))
-                    }
-                }
-            } else {
-                inbound.text.clone()
-            };
+            // GOLD-ARCH-01 phase 2: R-9 multimodal — resolve the effective text
+            // (media → transcript/ack, else the plain text payload).
+            let effective_text = resolve_inbound_effective_text(&inbound, &writer).await;
 
             let Some(raw_text) = effective_text.as_deref() else {
                 info!(
@@ -1949,6 +1954,21 @@ mod tests {
         let _ = join.await;
         let bytes = std::fs::read(&seg).unwrap_or_default();
         assert_eq!(count_edit_frames(&bytes), 0, "normal message writes no CHANNEL_EDIT");
+    }
+
+    #[tokio::test]
+    async fn effective_text_is_the_plain_text_for_a_text_only_message() {
+        let dir = tempfile::tempdir().unwrap();
+        let (writer, join) = crate::wal::spawn(dir.path().join("000001.wal")).unwrap();
+        let with_text = inbound(Some("hello there"), None);
+        assert_eq!(
+            resolve_inbound_effective_text(&with_text, &writer).await,
+            Some("hello there".to_string())
+        );
+        let no_text = inbound(None, None); // no text, no media
+        assert_eq!(resolve_inbound_effective_text(&no_text, &writer).await, None);
+        drop(writer);
+        let _ = join.await;
     }
 
     #[tokio::test]
