@@ -28,7 +28,6 @@ use crate::wal::events::{
     EVENT_TYPE_PROVIDER_RESPONSE, EVENT_TYPE_RAW_TEXT,
 };
 use crate::wal::frame::decode_frame;
-use crate::wal::segment_header::SEGMENT_HEADER_LEN;
 
 /// Index every new frame in `segment_path` into `conn`. Returns the number of
 /// frames newly indexed.
@@ -45,23 +44,42 @@ pub async fn replay_once(conn: &mut Connection, segment_path: &Path) -> Result<u
         }
     };
 
-    if bytes.len() <= start_offset {
-        return Ok(0);
-    }
+    // GOLD-ARCH-03: reconstruct the LOGICAL (decompressed) segment bytes so a
+    // v2/zstd-compressed sealed segment's frames are INDEXED, not silently
+    // skipped. The prior code skipped a hard-coded 60-byte header and walked
+    // the RAW file — for a compressed segment that body is a single zstd blob,
+    // so every frame decoded as garbage and the recall views lost ALL events
+    // from compacted segments. For v1 this borrows the raw bytes. The saved
+    // cursor is a LOGICAL offset, so the resume path (start_offset > 0) indexes
+    // from it directly against the same logical byte stream.
+    let (header_len, logical) = match crate::wal::compaction::logical_segment_bytes(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            warn!(
+                error = %e,
+                segment = %segment_path.display(),
+                "indexer: unreconstructable (tamper-suspect) segment — skipping this pass"
+            );
+            return Ok(0);
+        }
+    };
 
-    // First-time index of this segment: skip the 60-byte SegmentHeader.
+    // First-time index of this segment starts after the header; a resume picks
+    // up from the saved logical cursor.
     let mut offset = if start_offset == 0 {
-        SEGMENT_HEADER_LEN
+        header_len
     } else {
         start_offset
     };
+    if offset >= logical.len() {
+        return Ok(0);
+    }
 
     let tx = conn.transaction().context("begin index transaction")?;
     let mut indexed = 0usize;
 
-    while offset < bytes.len() {
-        let slice = &bytes[offset..];
-        let dec = match decode_frame(slice) {
+    while offset < logical.len() {
+        let dec = match decode_frame(&logical[offset..]) {
             Ok(d) => d,
             Err(e) => {
                 // Partial frame at the tail (writer mid-append) — stop and
@@ -71,7 +89,7 @@ pub async fn replay_once(conn: &mut Connection, segment_path: &Path) -> Result<u
             }
         };
         let total_len = dec.header.total_len as usize;
-        if total_len == 0 || offset + total_len > bytes.len() {
+        if total_len == 0 || offset + total_len > logical.len() {
             break;
         }
         index_frame(&tx, &dec, &segment_key)?;
@@ -411,6 +429,55 @@ mod tests {
             .query_row("SELECT count(*) FROM idx_episode", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count2, 2);
+    }
+
+    #[tokio::test]
+    async fn replay_indexes_frames_from_a_v2_compressed_segment() {
+        // GOLD-ARCH-03 regression: a finalized v2 (zstd-compressed) segment
+        // must have its frames indexed. Before the fix, replay_once skipped a
+        // hard-coded 60-byte header and walked the raw zstd blob, indexing ZERO
+        // frames — the recall views silently lost every event in compacted
+        // segments. This test FAILS pre-fix (n == 0) and passes post-fix.
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000007.wal");
+        let db = dir.path().join("views.db");
+
+        // The frame stream (what a live v2 segment holds uncompressed).
+        let mut frames = Vec::new();
+        let p1 = b"compressed hello".to_vec();
+        frames.extend_from_slice(&encode_frame(
+            &header_for(EVENT_TYPE_RAW_TEXT, p1.len() as u32, 11, 1_700_000_000_000_000_011),
+            &p1,
+        ));
+        let p2 = b"compressed world".to_vec();
+        frames.extend_from_slice(&encode_frame(
+            &header_for(EVENT_TYPE_RAW_TEXT, p2.len() as u32, 12, 1_700_000_000_000_000_012),
+            &p2,
+        ));
+
+        // Finalize as a v2 compressed segment: 61-byte header + zstd(frames).
+        let blob = compress_frames(&frames).unwrap();
+        let hdr = SegmentHeaderV2::new(0, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        let mut seg_bytes = hdr.to_le_bytes().to_vec();
+        seg_bytes.extend_from_slice(&blob);
+        write(&seg, &seg_bytes).await.unwrap();
+
+        let mut conn = crate::memory::store::open(&db).unwrap();
+        let n = replay_once(&mut conn, &seg).await.unwrap();
+        assert_eq!(n, 2, "both frames inside the zstd blob must be indexed");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_episode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+        let text: String = conn
+            .query_row("SELECT text FROM idx_episode WHERE event_id = 12", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(text, "compressed world");
+        // Re-poll: a sealed compressed segment yields nothing new.
+        assert_eq!(replay_once(&mut conn, &seg).await.unwrap(), 0);
     }
 
     #[tokio::test]

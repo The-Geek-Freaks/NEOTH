@@ -28,6 +28,7 @@ pub mod recovery;
 /// KF-03 — operator proof-bundle signing key (ed25519, DAU-safe auto-managed).
 pub mod signing;
 pub mod redact;
+pub mod scan;
 pub mod segment_header;
 pub mod snapshot;
 pub mod types;
