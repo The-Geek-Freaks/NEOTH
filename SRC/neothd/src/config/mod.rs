@@ -324,6 +324,10 @@ pub struct FreedomConfig {
     #[serde(default)]
     pub goal: GoalConfig,
 
+    /// GOLD-ADOPT-18 — subdirectory-hint auto-injection toggle (default ON).
+    #[serde(default)]
+    pub hints: HintsConfig,
+
     /// OM-01 — local OMI transcript ingest. Off by default; the daemon REFUSES
     /// to start (SC-14) if enabled with a non-local endpoint.
     #[serde(default)]
@@ -1536,6 +1540,24 @@ impl Default for GoalConfig {
             goal: None,
             grind: None,
         }
+    }
+}
+
+/// GOLD-ADOPT-18 — subdirectory-hint injection knobs.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct HintsConfig {
+    /// Auto-inject a subdirectory's `.neothhints` / `AGENTS.md` into the agent's
+    /// context the first time it enters that dir via a tool-call path arg.
+    /// Default ON (per the features-default-on hard rule); the hint FILES are
+    /// the real opt-in, but this flag is the global kill switch operators can
+    /// flip in `freedom.yaml` without recompiling.
+    pub enabled: bool,
+}
+
+impl Default for HintsConfig {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }
 

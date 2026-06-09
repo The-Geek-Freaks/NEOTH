@@ -1337,6 +1337,7 @@ pub async fn run_chat_with(
                     goal: config.goal.goal.clone(),
                     grind: config.goal.grind.clone(),
                 },
+                config.hints.enabled,
             )
             .await
             {
@@ -3737,6 +3738,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
     security_policy: &crate::config::SecurityPolicy,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
     goal_context: crate::mcp::goal_tracker::GoalContext,
+    // GOLD-ADOPT-18 — subdirectory-hint injection toggle (freedom.yaml::hints.enabled).
+    hints_enabled: bool,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -3821,6 +3824,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         max_iterations.max(1),
         security_policy,
         goal_context,
+        hints_enabled,
     )
     .await
 }

@@ -36,6 +36,7 @@ pub mod config;
 pub mod dispatch_loop;
 pub mod gate;
 pub mod goal_tracker;
+pub mod hints;
 pub mod repetition_guard;
 pub mod sanitizer;
 pub mod smart_approve;

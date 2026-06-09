@@ -23,7 +23,7 @@
 //! | `0x2A..=0x2B`  | (reserved Phase 10 D14b) local Qwen3 inference trace   |
 //! | `0x30..=0x3F`  | Channels (ingress/egress/error + sanitizer)            |
 //! | `0x40..=0x4F`  | Cron / scheduled jobs                                  |
-//! | `0x50..=0x5F`  | (reserved) panic / recovery                            |
+//! | `0x50..=0x5F`  | Safety / recovery — panic-recovery, risk-gate, hints   |
 //! | `0x60..=0x6F`  | Council debate + callosum (CH-08)                      |
 //! | `0x70..=0x7F`  | (reserved)                                             |
 //! | `0x80..=0x8F`  | (reserved Phase 29) Hooks lifecycle                    |
@@ -492,6 +492,16 @@ pub const EVENT_TYPE_RISK_CONFIRM_EXPIRED: u8 = 0x56;
 /// Payload `{server, tool, reason:"readonly_hint", source:"smart_approve",
 /// ts_unix}` — args never stored.
 pub const EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE: u8 = 0x57;
+
+/// `0x58 HINT_LOADED` — GOLD-ADOPT-18. The MCP dispatch loop's
+/// [`crate::mcp::hints::SubdirHintTracker`] loaded a subdirectory's
+/// `.neothhints` / `AGENTS.md` into the agent's context after the agent entered
+/// that dir via a tool-call path arg. Payload `{dir, bytes, ts_unix}` — the dir
+/// path + injected size only, never the hint body. Safety/recovery band (the
+/// 0x40 cron band is full); a context-enrichment event sits fine next to the
+/// other advisory/safety frames. PRIVACY: `dir` is an absolute local path,
+/// subject to the same export/gossip considerations as `0xA8 OS_FILE_READ`.
+pub const EVENT_TYPE_HINT_LOADED: u8 = 0x58;
 
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
@@ -1721,6 +1731,10 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             // acceptable. WAL-CRC and crash-log alerts are immediate-sync by
             // the default-true rule (not listed here).
             | EVENT_TYPE_CHANNEL_SILENCE_ALERT
+            // GOLD-ADOPT-18: a subdirectory-hint injection is advisory +
+            // high-cadence (one per newly-entered dir); fsyncing each would
+            // harm latency on deep projects. Re-derivable, loss-tolerant.
+            | EVENT_TYPE_HINT_LOADED
     )
 }
 
@@ -1792,6 +1806,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "risk_gate_allowed_by_readonly_cache",
         EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
     ),
+    ("hint_loaded", EVENT_TYPE_HINT_LOADED),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2094,6 +2109,7 @@ const _: () = {
             as usize];
     let _ = [(); 1][(EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE < 0x50
         || EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE > 0x5F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_HINT_LOADED < 0x50 || EVENT_TYPE_HINT_LOADED > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
         || EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL < 0x60
@@ -2498,6 +2514,7 @@ mod tests {
                 "RISK_GATE_ALLOWED_BY_READONLY_CACHE",
                 EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
             ),
+            ("HINT_LOADED", EVENT_TYPE_HINT_LOADED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),

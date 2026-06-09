@@ -91,6 +91,7 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         DEFAULT_MAX_ITERATIONS,
         security_policy,
         crate::mcp::goal_tracker::GoalContext::empty(),
+        true, // GOLD-ADOPT-18 — hints default-on for the convenience wrapper.
     )
     .await
 }
@@ -111,6 +112,9 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     security_policy: &crate::config::SecurityPolicy,
     // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
     goal_context: crate::mcp::goal_tracker::GoalContext,
+    // GOLD-ADOPT-18 — subdirectory-hint injection toggle (`freedom.yaml::hints.enabled`,
+    // default true). `false` disables the tracker entirely (no FS reads).
+    hints_enabled: bool,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -134,6 +138,13 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     let mut smart_cache = security_policy
         .smart_approve
         .then(crate::mcp::smart_approve::ReadOnlyCache::new);
+    // GOLD-ADOPT-18 — subdirectory-hint tracker (session-scoped, like the
+    // guards above). As the agent issues tool calls with path args, the first
+    // time it enters a dir under cwd we inject that dir's .neothhints/AGENTS.md
+    // once. No-op when no hint files exist (e.g. the channel/daemon cwd).
+    let mut hint_tracker =
+        hints_enabled.then(crate::mcp::hints::SubdirHintTracker::new);
+    let hint_cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
 
     loop {
         iterations += 1;
@@ -170,6 +181,12 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         let mut iteration_had_success = false;
         let mut tool_result_blocks = Vec::new();
         for call in &extraction.calls {
+            // GOLD-ADOPT-18 — note the dirs this call touches (recorded for
+            // EVERY call, before any block/continue, so hints track intent even
+            // when a call is gated).
+            if let Some(t) = hint_tracker.as_mut() {
+                t.record_tool_arguments(&call.arguments, &hint_cwd);
+            }
             // GOLD-ADOPT-20 — block runaway repetition BEFORE spawning a server.
             let verdict = repetition_guard.check(call);
             if verdict.is_blocked() {
@@ -320,7 +337,22 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
             );
             break;
         }
-        prompt = build_next_prompt(&prompt, &current_text, &tool_result_blocks);
+        // GOLD-ADOPT-18 — load hints for any newly-entered subdir + audit each.
+        let mut hint_blocks: Vec<String> = Vec::new();
+        if let Some(t) = hint_tracker.as_mut() {
+            let new_hints = t.load_new_hints(&hint_cwd);
+            if !new_hints.is_empty() {
+                let now_unix = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                for h in new_hints {
+                    emit_hint_loaded(writer, &h, now_unix).await;
+                    hint_blocks.push(h.content);
+                }
+            }
+        }
+        prompt = build_next_prompt(&prompt, &current_text, &tool_result_blocks, &hint_blocks);
     }
 
     Ok(LoopOutcome {
@@ -549,11 +581,17 @@ fn format_parse_error(err: &ParseError) -> String {
     )
 }
 
-fn build_next_prompt(prior_prompt: &str, assistant_reply: &str, tool_blocks: &[String]) -> String {
+fn build_next_prompt(
+    prior_prompt: &str,
+    assistant_reply: &str,
+    tool_blocks: &[String],
+    hint_blocks: &[String],
+) -> String {
     let mut out = String::with_capacity(
         prior_prompt.len()
             + assistant_reply.len()
             + tool_blocks.iter().map(|b| b.len()).sum::<usize>()
+            + hint_blocks.iter().map(|b| b.len()).sum::<usize>()
             + 256,
     );
     out.push_str(prior_prompt);
@@ -564,10 +602,39 @@ fn build_next_prompt(prior_prompt: &str, assistant_reply: &str, tool_blocks: &[S
         out.push_str(b);
         out.push('\n');
     }
+    // GOLD-ADOPT-18 — per-directory conventions the agent just entered.
+    if !hint_blocks.is_empty() {
+        out.push_str("\n[subdirectory hints — directory-specific conventions]\n");
+        for b in hint_blocks {
+            out.push_str(b);
+            out.push('\n');
+        }
+    }
     out.push_str(
         "\nContinue. Emit more `mcp-tool-call` blocks if you need to, or finish your reply.",
     );
     out
+}
+
+/// GOLD-ADOPT-18 — audit a subdirectory-hint injection (`0x58 HINT_LOADED`).
+/// Records the dir + injected byte count only — never the hint body.
+async fn emit_hint_loaded(
+    writer: Option<&WalWriterHandle>,
+    hint: &crate::mcp::hints::LoadedHint,
+    now_unix: i64,
+) {
+    let Some(w) = writer else { return };
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "dir": hint.dir.display().to_string(),
+        "bytes": hint.content.len(),
+        "ts_unix": now_unix,
+    }))
+    .unwrap_or_default();
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_HINT_LOADED, &payload).build();
+    if let Err(e) = w.append(header, payload).await {
+        warn!(error = %e, "HINT_LOADED append failed");
+    }
 }
 
 fn list_enabled_ids(servers: &McpServers) -> String {
@@ -671,6 +738,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(), // dangerous_commands = Deny
             crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
         )
         .await
         .unwrap();
@@ -724,6 +792,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(), // dangerous = Deny
             crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
         )
         .await
         .unwrap();
@@ -785,6 +854,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
         )
         .await
         .unwrap();
@@ -836,6 +906,7 @@ mod tests {
                 goal: None,
                 grind: Some("ship the feature".into()),
             },
+            true,
         )
         .await
         .unwrap();
@@ -867,6 +938,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
         )
         .await
         .unwrap();
@@ -954,6 +1026,7 @@ mod tests {
             5,
             &crate::config::SecurityPolicy::default(),
             crate::mcp::goal_tracker::GoalContext::empty(),
+            true,
         )
         .await
         .unwrap();
@@ -1017,7 +1090,8 @@ mod tests {
         let prior = "Initial question.";
         let assistant = "Let me fetch that.";
         let blocks = vec!["```mcp-tool-result\n...result A...```".to_string()];
-        let out = build_next_prompt(prior, assistant, &blocks);
+        let hints = vec!["### Subdirectory hints (/p/sub)\nUse Foo here.".to_string()];
+        let out = build_next_prompt(prior, assistant, &blocks, &hints);
         // Prior prompt stays at the top so the LLM sees the full
         // conversation thread; assistant + tool blocks layer on.
         assert!(out.starts_with(prior));
@@ -1025,7 +1099,13 @@ mod tests {
         assert!(out.contains("Let me fetch that."));
         assert!(out.contains("[tool results]"));
         assert!(out.contains("...result A..."));
+        // GOLD-ADOPT-18 hint section present when hints are supplied.
+        assert!(out.contains("[subdirectory hints"));
+        assert!(out.contains("Use Foo here."));
         assert!(out.contains("Continue"));
+        // No hint section when none supplied.
+        let no_hints = build_next_prompt(prior, assistant, &blocks, &[]);
+        assert!(!no_hints.contains("[subdirectory hints"));
     }
 
     #[test]

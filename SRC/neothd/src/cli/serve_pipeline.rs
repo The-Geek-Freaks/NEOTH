@@ -1107,6 +1107,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         goal: config_for_handler.goal.goal.clone(),
                         grind: config_for_handler.goal.grind.clone(),
                     },
+                    // GOLD-ADOPT-18 — subdir-hint toggle (live config snapshot).
+                    config_for_handler.hints.enabled,
                 )
                 .await
                 {
