@@ -14,10 +14,13 @@
 //! that runs sysinfo-based hardware sizing before picking the repo.
 
 use anyhow::{Context, Result};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
+use crate::installers::{gpu, ollama};
+use crate::models::gguf_variants::{self, GgufVariant, VariantClass};
+use crate::models::selector::{self, Quant};
 use crate::providers::{clip_engine, whisper};
 use crate::wal::events::{EVENT_TYPE_MODEL_DOWNLOAD_COMPLETE, EVENT_TYPE_MODEL_DOWNLOAD_START};
 use crate::wal::{make_header, spawn as wal_spawn};
@@ -53,6 +56,41 @@ pub enum ModelsAction {
         /// Model id. Known: `clip`, `whisper`.
         name: String,
     },
+    /// Recommend the best LOCAL model(s) for this machine's VRAM and print
+    /// ready-to-run `ollama pull` commands (GOLD-ADOPT-10/11/13). Quantized
+    /// (Q4/Q8), abliterated-first, newest/best resolved live from HuggingFace.
+    Recommend {
+        /// Override detected VRAM (MiB) instead of probing the GPU. Useful on
+        /// headless boxes or to preview a different tier.
+        #[arg(long)]
+        vram: Option<u32>,
+        /// Lineage to prefer. `abliterated` (default — uncensored) or
+        /// `standard`.
+        #[arg(long, value_enum, default_value_t = RecClass::Abliterated)]
+        class: RecClass,
+        /// Skip the live HuggingFace lookup; use the verified curated repos
+        /// only (offline / air-gapped).
+        #[arg(long)]
+        offline: bool,
+    },
+}
+
+/// Operator-facing lineage choice for `models recommend`.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RecClass {
+    /// Refusal-ablated / uncensored fine-tune (operator default).
+    Abliterated,
+    /// Vanilla instruct GGUF.
+    Standard,
+}
+
+impl From<RecClass> for VariantClass {
+    fn from(c: RecClass) -> Self {
+        match c {
+            RecClass::Abliterated => VariantClass::Abliterated,
+            RecClass::Standard => VariantClass::Standard,
+        }
+    }
 }
 
 /// Static catalogue of models NEOTH knows. Adding a new entry to this
@@ -108,7 +146,130 @@ pub async fn run_models(args: ModelsArgs) -> Result<()> {
         ModelsAction::List => run_list(&args.output),
         ModelsAction::Pull { name, repo } => run_pull(&name, repo.as_deref()).await,
         ModelsAction::Prune { name } => run_prune(&name),
+        ModelsAction::Recommend {
+            vram,
+            class,
+            offline,
+        } => run_recommend(vram, class.into(), offline, &args.output).await,
     }
+}
+
+/// One recommended local-model choice: a size at a quant, resolved to a
+/// concrete GGUF repo with the exact `ollama pull` command to run it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct RecCandidate {
+    pub rank: usize,
+    pub param_b: f32,
+    pub quant: &'static str,
+    pub est_vram_gb: f32,
+    pub repo: String,
+    pub class: &'static str,
+    /// `hf.co/<repo>:<Q4_K_M|Q8_0>`.
+    pub pull_ref: String,
+    /// `["ollama", "pull", "<pull_ref>"]`.
+    pub pull_command: Vec<String>,
+}
+
+/// Pure, deterministic recommendation core (curated repos, NO network): the
+/// VRAM-fitting quantized shortlist, each resolved to its verified GGUF repo +
+/// `ollama pull` command. `run_recommend` upgrades each repo to the live
+/// newest/best unless `--offline`.
+fn build_recommendation(vram_mib: Option<u32>, class: VariantClass) -> Vec<RecCandidate> {
+    selector::quantized_shortlist(vram_mib)
+        .into_iter()
+        .enumerate()
+        .map(|(i, opt)| {
+            let variant = gguf_variants::curated_fallback(opt.param_b, class)
+                .or_else(|| gguf_variants::curated_fallback(7.0, VariantClass::Standard))
+                .expect("7B standard is always curated");
+            candidate_from(i + 1, &opt, variant)
+        })
+        .collect()
+}
+
+/// Assemble a [`RecCandidate`] from a shortlist option + resolved repo.
+fn candidate_from(
+    rank: usize,
+    opt: &selector::QuantOption,
+    variant: GgufVariant,
+) -> RecCandidate {
+    let pull_ref = variant.pull_ref(opt.quant);
+    RecCandidate {
+        rank,
+        param_b: opt.param_b,
+        quant: opt.quant.gguf_tag(),
+        est_vram_gb: opt.est_vram_gb,
+        class: variant.class.label(),
+        repo: variant.repo,
+        pull_command: ollama::pull_command(&pull_ref),
+        pull_ref,
+    }
+}
+
+async fn run_recommend(
+    vram_override: Option<u32>,
+    class: VariantClass,
+    offline: bool,
+    output: &OutputFormat,
+) -> Result<()> {
+    let vram_mib = vram_override.or_else(|| gpu::probe_gpu().vram_mib);
+    // Deterministic curated base; then upgrade each to the live newest/best
+    // unless offline.
+    let mut candidates = build_recommendation(vram_mib, class);
+    if !offline {
+        for c in &mut candidates {
+            let live = gguf_variants::resolve_gguf_repo(c.param_b, class).await;
+            // Only adopt a live hit that actually came from the network (curated
+            // fallback carries downloads == 0 and an empty timestamp); otherwise
+            // keep the already-set curated repo.
+            if live.downloads > 0 || !live.created_at.is_empty() {
+                let quant = if c.quant == Quant::Q8.gguf_tag() {
+                    Quant::Q8
+                } else {
+                    Quant::Q4
+                };
+                c.pull_ref = live.pull_ref(quant);
+                c.pull_command = ollama::pull_command(&c.pull_ref);
+                c.class = live.class.label();
+                c.repo = live.repo;
+            }
+        }
+    }
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!("{}", serde_json::to_string_pretty(&candidates)?);
+        }
+        OutputFormat::Table => print_recommendation(vram_mib, &candidates),
+    }
+    Ok(())
+}
+
+fn print_recommendation(vram_mib: Option<u32>, candidates: &[RecCandidate]) {
+    match vram_mib {
+        Some(mib) => println!("Detected VRAM: {:.1} GiB", mib as f32 / 1024.0),
+        None => println!("No GPU detected — sizing for a CPU/RAM operator."),
+    }
+    if candidates.is_empty() {
+        println!("(no local model fits — use a cloud provider)");
+        return;
+    }
+    println!(
+        "Local models run QUANTIZED (Q4/Q8), abliterated-first. Pick one and run its command:\n"
+    );
+    for c in candidates {
+        let star = if c.rank == 1 { "★" } else { " " };
+        println!(
+            "{star} #{}  {:>4.1}B {:<6} ~{:>4.1} GB VRAM  [{}]",
+            c.rank, c.param_b, c.quant, c.est_vram_gb, c.class
+        );
+        println!("     {}", c.repo);
+        println!("     $ {}", c.pull_command.join(" "));
+    }
+    println!(
+        "\nThen point a hemisphere at Ollama's OpenAI-compatible endpoint:\n  {}",
+        ollama::openai_compat_endpoint(ollama::DEFAULT_OLLAMA_PORT)
+    );
 }
 
 fn run_list(output: &OutputFormat) -> Result<()> {
@@ -373,6 +534,52 @@ mod tests {
     fn prune_unknown_name_errors() {
         let err = run_prune("nope").unwrap_err();
         assert!(err.to_string().contains("unknown model id"));
+    }
+
+    #[test]
+    fn rec_class_maps_to_variant_class() {
+        assert_eq!(
+            VariantClass::from(RecClass::Abliterated),
+            VariantClass::Abliterated
+        );
+        assert_eq!(
+            VariantClass::from(RecClass::Standard),
+            VariantClass::Standard
+        );
+    }
+
+    #[test]
+    fn recommendation_is_quantized_abliterated_with_pull_commands() {
+        // 24 GiB GPU → top pick is a big model at Q4 (operator mandate), as a
+        // verified abliterated GGUF, with a runnable `ollama pull` command.
+        let recs = build_recommendation(Some(24 * 1024), VariantClass::Abliterated);
+        assert!(!recs.is_empty());
+        let top = &recs[0];
+        assert_eq!(top.rank, 1);
+        assert_eq!(top.param_b, 32.0);
+        assert_eq!(top.quant, "Q4_K_M");
+        assert_eq!(top.class, "abliterated");
+        assert_eq!(top.repo, "mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF");
+        assert_eq!(
+            top.pull_ref,
+            "hf.co/mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF:Q4_K_M"
+        );
+        assert_eq!(top.pull_command[0], "ollama");
+        assert_eq!(top.pull_command[1], "pull");
+        assert_eq!(top.pull_command[2], top.pull_ref);
+        // Ranks are 1-based and contiguous.
+        for (i, c) in recs.iter().enumerate() {
+            assert_eq!(c.rank, i + 1);
+        }
+    }
+
+    #[test]
+    fn recommendation_standard_class_uses_bartowski() {
+        let recs = build_recommendation(Some(8 * 1024), VariantClass::Standard);
+        let top = &recs[0];
+        assert_eq!(top.class, "standard");
+        assert!(top.repo.starts_with("bartowski/"), "got {}", top.repo);
+        assert!(top.pull_ref.starts_with("hf.co/bartowski/"));
     }
 
     // The env lock is intentionally held across run_pull's await so no
