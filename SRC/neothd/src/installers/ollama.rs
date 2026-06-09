@@ -129,6 +129,29 @@ pub async fn probe_endpoint(port: u16) -> ProbeOutcome {
     }
 }
 
+/// The OpenAI-compatible base URL Ollama serves. Wire this into
+/// `freedom.yaml::provider_model` + the `OpenAiCompat` adapter (no new
+/// provider type needed) to run a pulled GGUF as a NEOTH hemisphere. Ollama
+/// exposes `/v1` for OpenAI compat. GOLD-ADOPT-13.
+pub fn openai_compat_endpoint(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/v1")
+}
+
+/// Ollama can pull a quantized GGUF DIRECTLY from a HuggingFace repo:
+/// `ollama pull hf.co/<owner>/<repo>:<QUANT>` (e.g. `Q4_K_M`, `Q8_0`). This is
+/// the bridge from a GOLD-ADOPT-11 abliterated/unsloth GGUF pick to a runnable
+/// local model — Ollama handles the GGUF + quant + VRAM offload; no manual
+/// safetensors download, no candle GGUF loader. GOLD-ADOPT-13.
+pub fn hf_gguf_ref(hf_repo: &str, quant_tag: &str) -> String {
+    format!("hf.co/{}:{quant_tag}", hf_repo.trim_start_matches('/'))
+}
+
+/// `ollama pull <model_ref>` — `model_ref` is either a library tag
+/// (`qwen2.5:7b-instruct-q4_K_M`) or an `hf.co/...` ref from [`hf_gguf_ref`].
+pub fn pull_command(model_ref: &str) -> Vec<String> {
+    vec!["ollama".into(), "pull".into(), model_ref.into()]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +159,31 @@ mod tests {
     #[test]
     fn default_port_pinned() {
         assert_eq!(DEFAULT_OLLAMA_PORT, 11_434);
+    }
+
+    #[test]
+    fn openai_compat_endpoint_is_v1() {
+        assert_eq!(openai_compat_endpoint(11434), "http://127.0.0.1:11434/v1");
+        assert_eq!(openai_compat_endpoint(DEFAULT_OLLAMA_PORT), "http://127.0.0.1:11434/v1");
+    }
+
+    #[test]
+    fn hf_gguf_ref_builds_ollama_direct_hf_pull() {
+        assert_eq!(
+            hf_gguf_ref("huihui-ai/Qwen2.5-7B-Instruct-abliterated-GGUF", "Q4_K_M"),
+            "hf.co/huihui-ai/Qwen2.5-7B-Instruct-abliterated-GGUF:Q4_K_M"
+        );
+        // A leading slash is tolerated.
+        assert_eq!(hf_gguf_ref("/unsloth/X-GGUF", "Q8_0"), "hf.co/unsloth/X-GGUF:Q8_0");
+    }
+
+    #[test]
+    fn pull_command_wraps_ollama_pull() {
+        let cmd = pull_command(&hf_gguf_ref("unsloth/Qwen2.5-14B-Instruct-GGUF", "Q8_0"));
+        assert_eq!(
+            cmd,
+            vec!["ollama", "pull", "hf.co/unsloth/Qwen2.5-14B-Instruct-GGUF:Q8_0"]
+        );
     }
 
     #[test]
