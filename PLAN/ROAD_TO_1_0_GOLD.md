@@ -78,9 +78,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** | **199** | **85** | **114** |
 
-_WS-A remaining (3): SEC-16 + SEC-18 (Cargo feature-gates — dedicated dual-build `--no-default-features` pass) · SEC-30 (sudomode WAL events — builds with GOLD-FEAT-01). All remaining WS-A items are the two big feature-gate refactors + one that pairs with a Gold feature; every exploitable/correctness/at-rest/DoS finding is closed._
-
-_Note: GOLD-SEC-16 (gate cluster behind a Cargo feature) + GOLD-SEC-18 (gate browser-import) are large build-level feature-gates (cluster alone = 83 refs across 8 files + a clap command + serde config); they need a dedicated dual-config (`--no-default-features`) build-verification pass and are sequenced as their own focused batch — NOT skipped._
+_WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
 
 _Progress log: 2026-06-06 — GOLD-SEC-01/17 (relay auth + cap) · GOLD-SEC-02/27 (backup zip-slip + creds opt-out) · GOLD-SEC-03 (skills installer id traversal) · GOLD-SEC-04/28/34 (LIKE-escape + GDPR idx_profile cascade) · GOLD-SEC-05/06 (blocking-async offload) · GOLD-SEC-07 (OMI SSRF allowlist) · GOLD-SEC-08 (rate-limit bounded map) · GOLD-SEC-09 (canonical cloud-egress classifier) · GOLD-SEC-10 (self-update signature default) · GOLD-SEC-11 (decompression-bomb caps) · GOLD-SEC-12/21 (browser-cred scrub-on-drop) · GOLD-SEC-13 (un-audited os fail-closed) · GOLD-SEC-14 (dream/test-log redact+0600) · GOLD-SEC-15 (atomic owner-only creds write) · GOLD-SEC-19 (MCP sanitizer replace-all, UTF-8-safe) · GOLD-SEC-22 (Gemini key → header)._
 
