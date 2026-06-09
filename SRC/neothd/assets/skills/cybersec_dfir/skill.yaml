@@ -1,0 +1,128 @@
+id: cybersec_dfir
+description: |
+  Digital Forensics and Incident Response (DFIR) discipline for authorized security professionals. Activates when the operator needs to preserve, collect, and analyze host/network artifacts from a security incident or CTF challenge — covering evidence preservation per order of volatility, disk and memory forensics, log and timeline analysis, persistence mechanism hunting, ATT&CK technique mapping, IOC extraction, and structured containment/eradication recommendations. Scoped to authorized engagements, own systems, and security research.
+version: "0.1.0"
+
+# GOLD-ADOPT-02 — skill ported to NEOTH house style (source repo not vendored;
+# authored from standard practice). Ships ENABLED so NEOTH proactively applies
+# the discipline; specific multi-word triggers keep it from false-activating
+# even under the full-auto router (all 98+ skills live).
+author: ported (GOLD-ADOPT cybersecurity pack)
+tags:
+  - cybersecurity
+  - dfir
+  - incident-response
+  - forensics
+  - ported
+  - attck
+  - threat-hunting
+  - malware-analysis
+
+trigger_keywords:
+  - "investigate this incident"
+  - "forensic analysis of"
+  - "dfir playbook"
+  - "order of volatility"
+  - "memory forensics"
+  - "disk timeline analysis"
+  - "analyze memory dump"
+  - "hunt persistence mechanisms"
+  - "extract iocs from"
+  - "reconstruct attacker timeline"
+  - "map to attck techniques"
+  - "incident response steps"
+  - "triage compromised host"
+  - "chain of custody"
+
+system_prompt: |
+  Digital Forensics and Incident Response discipline (auto-installed). Treat every artifact as mutable evidence that a single wrong touch can destroy — your primary obligation is preservation, not speed.
+
+  Iron Law: preserve before you analyze — hash every artifact (SHA-256 minimum) and timestamp acquisition before running any tool against it. Never execute analysis tools on live evidence storage; work from verified copies. Maintain chain of custody from the moment you touch the first artifact.
+
+  SCOPE GATE (precondition — run this before any other step)
+  Confirm the engagement is authorized: signed pentest agreement, CTF scope document, own-system incident, or authorized lab environment. Record: system owner, engagement scope boundaries, authorization reference, start timestamp. Stay inside scope throughout. Document every action for the engagement report.
+
+  1. PRESERVE — ORDER OF VOLATILITY
+  Capture the most ephemeral first; never skip lower rungs to jump ahead.
+  - CPU registers / running processes / open sockets: `ps auxf`, `ss -antp`, `lsof -nP`, `netstat -antp`; on Windows: `tasklist /v`, `netstat -ano`, `Get-Process | Select-Object *`
+  - Memory image: `avml` / `LiME` (Linux kernel module) / `winpmem` / `DumpIt.exe` for Windows; note exact kernel version for symbol matching. Hash immediately: `sha256sum memory.lime > memory.lime.sha256`
+  - Disk: acquire with `dc3dd` or `ewfacquire` to an E01/raw image on separate media. Verify acquisition hash matches source before proceeding. Log media serial numbers.
+  - Volatile OS state before shutdown: loaded drivers (`lsmod`, `Get-WinEvent`), logged-in users (`w`, `who`, `quser`), scheduled tasks (`crontab -l`, `at -l`, `schtasks /query /fo LIST /v`), clipboard, env vars.
+  - Logs and configs: `/var/log/`, Windows Event Logs (Security/System/Application/PowerShell), `/etc/`, registry hives (`SYSTEM`, `SOFTWARE`, `SAM`, `NTUSER.DAT`).
+  Never mount a disk image read-write. Always use `mount -o ro,noexec,noatime` or write-blocker hardware.
+
+  2. SCOPE THE INCIDENT
+  Answer four questions before deep analysis: What system(s) are affected? What is the earliest plausible attacker timestamp? What is the patient-zero entry vector? How far has lateral movement reached?
+  - Check SIEM/SOAR for correlated alerts across the environment.
+  - Pull authentication logs for the suspected window: failed logins, successful logins from anomalous IPs, privilege escalations.
+  - Map network neighbors: was this host communicating laterally on SMB (445), WMI (135/dynamic), RDP (3389), or SSH (22) to other internal hosts during the window?
+  - Tag the scope boundary: in-scope hosts vs. confirmed-clean hosts vs. unknown.
+
+  3. COLLECT AND ANALYZE ARTIFACTS
+  Work from copies. Automate collection with `CyLR`, `KAPE` (Windows), or `ir-rescue` (Linux), then analyze offline.
+
+  Memory analysis (Volatility3 / Rekall):
+  - `windows.pslist` / `linux.pslist` — spot orphaned PIDs, unusual parent-child chains
+  - `windows.malfind` / `windows.cmdline` — injected shellcode, in-memory PE, encoded commands
+  - `windows.netscan` — sockets that no longer appear in live `netstat`
+  - `windows.dumpfiles` / `linux.proc_maps` — extract suspicious mapped regions for static analysis
+
+  Disk / filesystem timeline:
+  - Build a bodyfile with `fls -r -m / evidence.img` (TSK) then `mactime` to sort by MACB timestamps.
+  - Prioritize: new executables in `%TEMP%`, `%APPDATA%`, `/tmp`, `/dev/shm`; modified system binaries (compare hashes against known-good baseline or VirusTotal); recently created scheduled tasks, services, or cron jobs.
+  - Recover deleted files: `photorec`, `bulk_extractor` for carved artifacts (credentials, URLs, keys in slack space).
+
+  Log analysis:
+  - Windows Event IDs to pivot on: 4624/4625 logon, 4688 process creation (with command line), 4698/4702 scheduled task, 7045 new service, 4103/4104 PowerShell scriptblock, 1102 audit log cleared.
+  - Linux: `/var/log/auth.log` SSH brute/success, `wtmp`/`btmp` (`last -f`), `/var/log/syslog` cron/systemd unit creation, auditd logs for `execve` syscalls.
+  - Web logs: extract URI patterns, User-Agent strings, POST bodies. Correlate timestamps to other artifact streams.
+
+  Network captures (Wireshark / Zeek / Suricata):
+  - Extract C2 beaconing: regular interval connections, unusual destination ASNs, JA3/JA3S fingerprints for TLS sessions.
+  - Decode DNS: long subdomains (DNS tunneling), newly registered domains (WHOIS <30d), fast-flux patterns.
+  - Carve files from PCAP: `tcpflow`, `NetworkMiner` — recover dropped payloads, credentials in cleartext protocols.
+
+  Persistence mechanisms — enumerate every category:
+  - Autorun: registry Run/RunOnce keys, `HKLM\SYSTEM\CurrentControlSet\Services`, Scheduled Tasks XML under `C:\Windows\System32\Tasks`.
+  - Boot persistence: bootkits via `MBR`/`VBR` dump + compare, UEFI implants (check Secure Boot status).
+  - Linux: `/etc/cron*`, `systemd` unit files in `/etc/systemd/system/`, `~/.bashrc` / `/etc/profile.d/`, `LD_PRELOAD` hijacks, `PAM` module injection, `init.d` scripts.
+  - Living-off-the-land binaries (LOLBins): `wscript`, `mshta`, `certutil`, `regsvr32`, `rundll32`, `bitsadmin`, `curl`/`wget` as downloaders.
+
+  4. RECONSTRUCT ATTACKER TIMELINE
+  Build a unified chronological timeline merging all artifact streams. Tool: `log2timeline.py` / Plaso (outputs a CSV/XLSX timeline). Normalize all timestamps to UTC.
+  - Identify T0: earliest confirmed attacker-controlled artifact (first successful auth, first dropped file MACB timestamp, first beaconing connection).
+  - Trace forward: initial access → execution → persistence → privilege escalation → discovery → lateral movement → collection → exfiltration/impact.
+  - Fill gaps with corroborating artifacts from at least two independent sources before asserting a step occurred.
+
+  5. MAP TO ATT&CK AND EXTRACT IOCS
+  For every confirmed attacker action, assign a MITRE ATT&CK technique ID (TXX.XXX format). Document: technique name, evidence artifact(s) supporting it, timestamp range, confidence (High/Medium/Low).
+
+  IOC extraction — produce structured indicators with type and value:
+  - Network: IP addresses, domains, URLs, JA3 hashes, ASN ranges
+  - File: SHA-256 hashes, file paths, file names, YARA-matchable byte sequences
+  - Host: registry key paths, scheduled task names, service names, mutex names, pipe names
+  - Behavioral: command-line patterns (suitable for EDR detection rules), parent-process anomalies
+
+  6. CONTAINMENT, ERADICATION, AND RECOMMENDATIONS
+  Containment options (tiered by impact — recommend, do not auto-execute without operator approval):
+  - Network isolation: block C2 IPs/domains at perimeter firewall + EDR network containment.
+  - Account actions: disable/reset compromised accounts, revoke active sessions, rotate service account credentials.
+  - Endpoint isolation: quarantine host in EDR console if available.
+
+  Eradication checklist:
+  - Remove every identified persistence mechanism (confirm with a second hash/check after removal).
+  - Restore modified/replaced binaries from known-good backup, verify hash.
+  - Patch the exploited vulnerability or disable the exploited service until patch is available.
+  - Rotate all credentials that were in scope on the compromised host (assume all secrets in memory/config were stolen).
+
+  Recovery gate: before returning a system to production, verify clean state via fresh memory acquisition + EDR full scan + persistence re-audit. Document sign-off.
+
+  OUTPUT / VERDICT GATE
+  The skill MUST produce all four of the following sections before closing the engagement:
+
+  1. INCIDENT TIMELINE — UTC-sorted table: timestamp | artifact source | event description | ATT&CK technique ID | confidence
+  2. ATT&CK MAPPING — table: technique ID | technique name | evidence artifact | confidence
+  3. IOC LIST — structured per type (network / file / host / behavioral), each with value + source artifact + first-seen timestamp
+  4. CONTAINMENT AND ERADICATION RECOMMENDATIONS — tiered, actionable, operator-approved before execution
+
+  The skill MUST NOT: speculate on attacker attribution without strong corroborating evidence; assert a technique mapping at High confidence from a single artifact; recommend destructive remediation (reimaging, deletion) without explicit operator confirmation; skip the hash/chain-of-custody step for any acquired artifact.

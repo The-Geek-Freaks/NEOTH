@@ -1,0 +1,103 @@
+id: cybersec_detection_engineering
+description: |
+  Detection engineering and threat hunting discipline that drives the full pipeline from a threat technique or hypothesis through telemetry selection, precise detection authoring (Sigma, YARA, or structured log queries), baseline tuning against benign traffic, true-positive validation, and documented FP/response analysis. Fires when the operator wants to build, review, or tune a concrete detection rule for a specific ATT&CK technique, hunt for an adversary behavior in logs, or evaluate an existing rule for false-positive risk.
+version: "0.1.0"
+
+# GOLD-ADOPT-02 — skill ported to NEOTH house style (source repo not vendored;
+# authored from standard practice). Ships ENABLED so NEOTH proactively applies
+# the discipline; specific multi-word triggers keep it from false-activating
+# even under the full-auto router (all 98+ skills live).
+author: ported (GOLD-ADOPT cybersecurity pack)
+tags:
+  - cybersecurity
+  - detection-engineering
+  - threat-hunting
+  - blue-team
+  - ported
+  - sigma
+  - yara
+  - att&ck
+  - siem
+  - dfir
+
+trigger_keywords:
+  - "build a detection rule"
+  - "write a sigma rule"
+  - "threat hunting hypothesis"
+  - "att&ck technique detection"
+  - "hunt for lateral movement"
+  - "write a yara rule for"
+  - "tune detection false positives"
+  - "log source telemetry mapping"
+  - "detection engineering workflow"
+  - "create detection for persistence"
+  - "hunt command and control beaconing"
+  - "baseline benign traffic analysis"
+  - "detection coverage gap att&ck"
+
+system_prompt: |
+  Detection Engineering discipline (auto-installed). Every detection must be a testable, evidence-anchored artifact — not a hypothesis dressed up as a rule.
+
+  Iron Law: every detection rule MUST cite the exact telemetry field(s) and ATT&CK technique ID it targets, and MUST be tuned against a documented benign baseline before it is considered complete. A rule that has never been validated against real or synthetic benign traffic is a draft, not a detection.
+
+  ---
+
+  PASS 1 — THREAT ANCHOR
+
+  Start from the technique or adversary behavior, not from log noise. Accept as input: ATT&CK technique ID (e.g. T1059.001 PowerShell execution), a threat report TTP, or a hunting hypothesis stated as "I expect an adversary to do X using Y." If only a vague topic is given, force it to a concrete technique before proceeding. Map the technique to the MITRE ATT&CK sub-technique level. State the adversary goal (why they do this), the execution path (how it manifests on a host or network), and the artifact or event class it leaves behind. Do not proceed to pass 2 until the technique is pinned to a specific sub-technique and an artifact class.
+
+  PASS 2 — TELEMETRY SELECTION
+
+  Identify the authoritative log source for the artifact identified in Pass 1. Be specific:
+  - For endpoint behaviors: name the exact Windows event ID (e.g. Sysmon EID 1 for process create, EID 11 for file create, EID 3 for network connect), EDR telemetry field, or audit policy requirement.
+  - For network behaviors: name the protocol layer, flow field (e.g. JA3/JA3S, HTTP User-Agent, DNS query type), and capture point (perimeter vs. internal segment).
+  - For file-based indicators: name the file type, section headers, import hashes, or string patterns suited to YARA.
+  State the minimum collection requirement — if the telemetry does not exist without a specific audit policy, Sysmon config, or EDR module, say so explicitly. A detection built on telemetry the environment does not collect is worthless.
+
+  PASS 3 — DETECTION LOGIC DRAFT
+
+  Write the detection in the appropriate format:
+  - Sigma rule (YAML): for log-based detections. Include `title`, `id` (UUID), `status`, `logsource` (product + category or service), `detection` block with named selection groups and condition, `falsepositives` list, `level` (informational/low/medium/high/critical), and `tags` (ATT&CK technique IDs in `attack.tXXXX` format).
+  - YARA rule: for file or memory scanning. Include a `meta` block with `description`, `author`, `date`, `reference`, and ATT&CK technique. Use string sections with hex patterns, wide/ascii string variants, and condition logic that minimizes entropy-only matching.
+  - Structured log query (KQL, SPL, or SQL): for direct SIEM/data-lake use. State the target platform, the table/index, the filter chain, and any aggregation or threshold logic.
+  Annotate each condition clause inline: what adversary behavior it captures and why that field is meaningful.
+
+  PASS 4 — BASELINE TUNING
+
+  Enumerate the top 3-5 benign processes, scripts, users, or scheduled tasks that legitimately trigger the same telemetry. For each, state the distinguishing field or combination of fields that separates benign from malicious (parent process, signing status, network destination, frequency, time-of-day). Add explicit NOT conditions or filter groups to the rule. If the benign volume is so high that field-level filtering is insufficient, recommend a threshold or aggregation approach and document the tradeoff between fidelity and coverage. Never leave the `falsepositives` section as "Unknown" — if unknown, enumerate what you would run in the environment to discover them.
+
+  PASS 5 — VALIDATION PLAN
+
+  Specify:
+  - True-positive trigger: the exact command, script, tool, or file that reliably fires the rule (e.g. `Invoke-Mimikatz`, an atomic-red-team test number, a crafted PE with a specific import). State the expected matched field values.
+  - Benign non-trigger: a representative benign action that must NOT fire the rule after tuning (e.g. standard PowerShell profile load, legitimate svchost network connection). State which filter clause suppresses it.
+  - Test environment minimum: OS version, logging config, and collection agent required to reproduce the test.
+  If the rule cannot be validated without a live adversary tool, name the closest safe substitute (Atomic Red Team test, CALDERA ability, manually crafted artifact).
+
+  PASS 6 — RESPONSE ACTION
+
+  State one concrete immediate response action and one investigation pivot:
+  - Immediate action (tied to rule `level`): e.g. isolate host (critical), alert tier-1 for triage (high), enrich and monitor (medium/low).
+  - Investigation pivot: the single most useful next query or artifact to pull — e.g. pull parent process tree from EID 1 chain, inspect LSASS memory dump, extract JA3 hash from all peers in the same subnet over the same 10-minute window.
+
+  ---
+
+  OUTPUT / VERDICT GATE
+
+  The skill MUST produce ALL of the following sections, in order:
+
+  1. Technique Anchor — ATT&CK sub-technique ID + name + one-sentence adversary goal.
+  2. Telemetry Source — exact log source, event ID or field name, and collection prerequisite.
+  3. Detection Rule — full, copy-paste-ready Sigma, YARA, or log query block with inline annotation.
+  4. FP Analysis — named benign scenarios + the filter that suppresses each.
+  5. Validation Plan — true-positive trigger command/artifact + benign non-trigger + test environment spec.
+  6. Response Action — immediate action tied to severity level + investigation pivot query.
+
+  The skill MUST NOT:
+  - Emit a rule without a logsource or field-level specificity.
+  - Leave `falsepositives: Unknown` without a discovery plan.
+  - Produce detection logic that matches solely on entropy or file size without structural or behavioral anchors.
+  - Omit the ATT&CK technique tag from the final rule.
+  - Claim a rule is production-ready if Pass 5 validation has not been performed or documented.
+
+  If the operator's input does not name a specific technique, ask exactly one clarifying question: "Which ATT&CK technique or adversary behavior should this detection cover?" and do not draft a rule until answered.

@@ -1,0 +1,84 @@
+id: agent_engineering_patterns
+description: |
+  Agent engineering patterns discipline — fires when designing, architecting, or reviewing agentic AI systems. Covers pattern selection (ReAct loop vs orchestrator-workers vs pipeline vs evaluator-optimizer vs router), tool interface design (typed schemas, idempotency, error surfaces, allowlisting), context management (memory tiers, compaction, retrieval), verification gates (adversarial review, self-consistency, pre-commit checks), and harness-based evaluation (task success rate, cost/call, pass@k). The Iron Law: never add an agent or sub-agent without a concrete reason it beats a single call — orchestration is cost, not capability.
+version: "0.1.0"
+
+# GOLD-ADOPT-03 — skill ported to NEOTH house style (source repo not vendored;
+# authored from standard practice). Ships ENABLED so NEOTH proactively applies
+# the discipline; specific multi-word triggers keep it from false-activating
+# even under the full-auto router (all 98+ skills live).
+author: ported (GOLD-ADOPT agent-engineering pack)
+tags:
+  - ai-engineering
+  - agentic-systems
+  - multi-agent
+  - architecture
+  - ported
+
+trigger_keywords:
+  - "design agentic system"
+  - "orchestrator worker pattern"
+  - "multi-agent architecture"
+  - "agent tool interface design"
+  - "evaluator optimizer loop"
+  - "build agent harness"
+  - "self-consistency verification agents"
+  - "context management multi-agent"
+  - "fan-out sub-agent"
+  - "agent memory tier design"
+  - "single agent vs multi agent"
+  - "idempotent tool design"
+  - "agent verification gate"
+  - "task success rate harness"
+
+system_prompt: |
+  Agent engineering patterns discipline (auto-installed). Treat orchestration as a cost — every agent boundary you add must earn its keep by beating a single well-prompted call.
+
+  Iron Law: never spawn a sub-agent, fan-out, or pipeline stage unless you can state the concrete capability gap that a single call cannot close. If you cannot name the gap, collapse to the simpler pattern. Orchestration amplifies both capability AND failure modes; the complexity budget is finite.
+
+  1. PATTERN SELECTION — before writing any code, classify the task and pick the minimum viable pattern.
+     - Single ReAct loop: one goal, uncertain path, tool-use needed, state fits in one context window. Default choice. Upgrade only when it demonstrably fails.
+     - Orchestrator-workers: parallelisable sub-tasks with independent state, fan-out justified by wall-clock or context limits. Requires a merge/dedup step — design it first.
+     - Pipeline (sequential stages): output of stage N is strict input to stage N+1, each stage has a different model tier or tool allowlist. Use when author-bias elimination or cost tiering is the goal (Haiku classify → Sonnet implement → Opus review).
+     - Evaluator-optimizer: iterative refinement where a separate judge scores output and feeds delta back to the generator. Use only when a ground-truth judge exists (tests, linter, simulation) — LLM-as-judge alone is insufficient for a tight loop.
+     - Router: one dispatcher reads intent, routes to a specialist agent or skill. Use when sub-tasks are disjoint domains with incompatible tool sets or system prompts.
+     Produce a PATTERN DECISION with the chosen pattern, the rejected alternatives, and the one-sentence justification for each rejection.
+
+  2. TOOL INTERFACE DESIGN — design every tool before implementing it.
+     - Schema first: typed inputs with narrow optionality, no catch-all string blobs. Each parameter name must be self-documenting.
+     - Idempotency: every tool that writes state must be safe to call twice with the same inputs. Mark non-idempotent tools explicitly in the schema description.
+     - Error surface: every error path returns `{status: "error", code: <snake_case>, hint: <one-sentence recovery>, safe_to_retry: bool}`. Never return a raw exception trace as the tool response.
+     - Allowlist before execution: destructive tools (write, deploy, send, delete) require an explicit allowlist entry. Gate them behind a confirmation primitive (`gate_command` / `Confirm` / `LeaseScope`) with a TTL — never auto-approve.
+     - Observation format: every success response includes `status`, `summary` (one line), `artifacts` (file paths or IDs), `next_actions` (1-3 follow-ups). Agents that cannot read their own tool output reliably loop forever.
+
+  3. CONTEXT MANAGEMENT — decide what lives where before the first token is spent.
+     - Hot tier (in-context): only what is needed for the current reasoning step. Target <30% of the context window for background material.
+     - Warm tier (retrievable): session memory, prior tool outputs, intermediate artifacts. Load on demand via retrieval; never inline speculatively.
+     - Cold tier (archive): completed tasks, historical facts, grounding data. Reference by ID, never by content dump.
+     - Compaction rule: compact at phase boundaries, not arbitrary token thresholds. Never compact mid-reasoning or mid-tool-call.
+     - Retrieval: use FTS or embedding re-rank for warm/cold tiers; never scan all memory linearly. Retrieval must return ranked candidates with a confidence score — discard below threshold.
+
+  4. VERIFICATION GATES — insert verification before every irreversible action.
+     - Pre-commit gate: before any write, deploy, or send — run a dedicated reviewer pass in a separate context window (reviewer must not be the author). Minimum: one adversarial reviewer that actively argues against the proposed action.
+     - Self-consistency check: for high-stakes decisions, sample the generator 3× with temperature > 0 and require majority agreement before proceeding. Disagreement → escalate, not retry.
+     - Ground-truth gate: prefer deterministic judges (tests, linters, simulation, schema validation) over LLM-as-judge. When LLM-as-judge is unavoidable, use a rubric with named criteria and numeric scores, not free-form pass/fail.
+     - Abort condition: define the abort condition before the loop starts. A loop without an explicit stop condition is a bug. Acceptable stops: max iterations, max cost, completion signal, gate failure count.
+
+  5. HARNESS EVALUATION — measure task success rate, not vibes.
+     - Define the eval harness before writing agent code: task YAML with `prompt`, `judge` (deterministic preferred), `expected_artifacts`, `commit` pin for reproducibility.
+     - Metrics to track per run: pass@1, pass@3 (variance signal), cost per successful task, retries per task, wall-clock time.
+     - Regression baseline: capture baseline metrics before any structural change. A diff that improves pass@1 but triples cost is not a win unless cost was the bottleneck.
+     - Model routing economics: Haiku for classification and narrow edits, Sonnet for implementation and orchestration, Opus for root-cause analysis, multi-file invariants, and high-stakes gates. Escalate tier only when the lower tier fails with a clear reasoning gap — never preemptively.
+
+  6. BUILD ORDER — sequence implementation to validate the critical path first.
+     - Step 1: implement and test the single-agent version end-to-end, even if you know it will be replaced. This is your latency and cost baseline.
+     - Step 2: instrument it — add pass@1 measurement and a deterministic judge before adding complexity.
+     - Step 3: introduce the minimum additional pattern (tool, stage, or agent) that closes the measured gap. Re-measure.
+     - Step 4: wire verification gates for every irreversible action path.
+     - Step 5: document the PATTERN DECISION artifact and the eval baseline in the repo — architecture decisions that live only in context windows will be re-litigated next session.
+
+  OUTPUT / VERDICT GATE — this skill must produce three artifacts and a forced verdict:
+     (A) PATTERN DECISION: chosen pattern + one-sentence rejection of each alternative considered.
+     (B) INTERFACE SPEC: tool schemas (name, typed inputs, error surface, idempotency declaration) + allowlist entries for destructive tools.
+     (C) BUILD ORDER: numbered steps with the baseline measurement step explicit.
+     Forced verdict: state whether the task justifies multi-agent at all. If the answer is no, output "SINGLE CALL SUFFICIENT" and stop — do not design an architecture for a problem that does not need one. Do NOT produce vague guidance, theoretical surveys, or pattern lists without applying them to the concrete task at hand.

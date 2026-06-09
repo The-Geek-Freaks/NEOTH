@@ -47,6 +47,10 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/academic_research/skill.yaml"),
     ),
     (
+        "agent_engineering_patterns",
+        include_str!("../../assets/skills/agent_engineering_patterns/skill.yaml"),
+    ),
+    (
         "archon",
         include_str!("../../assets/skills/archon/skill.yaml"),
     ),
@@ -57,6 +61,30 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
     (
         "conductor",
         include_str!("../../assets/skills/conductor/skill.yaml"),
+    ),
+    (
+        "cybersec_detection_engineering",
+        include_str!("../../assets/skills/cybersec_detection_engineering/skill.yaml"),
+    ),
+    (
+        "cybersec_dfir",
+        include_str!("../../assets/skills/cybersec_dfir/skill.yaml"),
+    ),
+    (
+        "cybersec_exploit_dev",
+        include_str!("../../assets/skills/cybersec_exploit_dev/skill.yaml"),
+    ),
+    (
+        "cybersec_malware_analysis",
+        include_str!("../../assets/skills/cybersec_malware_analysis/skill.yaml"),
+    ),
+    (
+        "cybersec_pentest_recon",
+        include_str!("../../assets/skills/cybersec_pentest_recon/skill.yaml"),
+    ),
+    (
+        "cybersec_threat_modeling",
+        include_str!("../../assets/skills/cybersec_threat_modeling/skill.yaml"),
     ),
     (
         "diagnose",
@@ -658,6 +686,58 @@ mod tests {
                     .iter()
                     .find(|(bid, _)| bid == id)
                     .unwrap_or_else(|| panic!("engineering skill `{id}` not bundled"));
+                let manifest: SkillManifest = serde_yaml::from_str(body)
+                    .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+                assert!(manifest.enabled, "`{id}` must ship enabled (proactive use)");
+                Skill {
+                    manifest,
+                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    content_hash: String::new(),
+                }
+            })
+            .collect();
+
+        for (id, phrase) in pack {
+            let m = route(phrase, &skills)
+                .unwrap_or_else(|| panic!("`{id}` trigger phrase {phrase:?} routed to nothing"));
+            assert_eq!(
+                m.skill.id(),
+                id,
+                "phrase {phrase:?} should route to `{id}`, got `{}`",
+                m.skill.id()
+            );
+        }
+    }
+
+    #[test]
+    fn cybersec_and_agent_pack_is_bundled_enabled_and_routes() {
+        // GOLD-ADOPT-02 (6 cybersec skills) + GOLD-ADOPT-03 (agent patterns):
+        // all present, shipped ENABLED, and each reachable via its own
+        // distinctive multi-word triggers with no cross-activation among them.
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+        use std::path::PathBuf;
+
+        let pack = [
+            (
+                "agent_engineering_patterns",
+                "help me design agentic system for this",
+            ),
+            ("cybersec_detection_engineering", "i need to write a sigma rule"),
+            ("cybersec_dfir", "follow the order of volatility here"),
+            ("cybersec_exploit_dev", "help me build a poc exploit"),
+            ("cybersec_malware_analysis", "triage this malware sample please"),
+            ("cybersec_pentest_recon", "walk me through the nmap scan phases"),
+            ("cybersec_threat_modeling", "run a stride analysis on this"),
+        ];
+
+        let skills: Vec<Skill> = pack
+            .iter()
+            .map(|(id, _)| {
+                let (_, body) = BUNDLED_SKILLS
+                    .iter()
+                    .find(|(bid, _)| bid == id)
+                    .unwrap_or_else(|| panic!("skill `{id}` not bundled"));
                 let manifest: SkillManifest = serde_yaml::from_str(body)
                     .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
                 assert!(manifest.enabled, "`{id}` must ship enabled (proactive use)");
