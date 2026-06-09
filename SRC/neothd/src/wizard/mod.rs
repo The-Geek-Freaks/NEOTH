@@ -5,6 +5,7 @@
 //!   - [`recommend`] — W-03 RecommendationEngine.
 
 pub mod detect_step;
+pub mod env_probe;
 pub mod install_step;
 pub mod ipc;
 pub mod recommend;

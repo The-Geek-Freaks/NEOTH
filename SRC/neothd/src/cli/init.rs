@@ -1162,6 +1162,13 @@ async fn step1b_detect_environment(
         return;
     }
     println!("\n[1b/9] Detecting installed tools...");
+    // GOLD-ADOPT-28 — classify the runtime environment (desktop / server / CI)
+    // so the operator sees it and a headless box knows GUI steps are optional.
+    let env_class = crate::wizard::env_probe::probe_and_classify();
+    println!("  environment: {env_class}");
+    if env_class.is_headless() {
+        println!("  (headless — GUI / browser-OAuth steps are optional here; `neoth init --cli` skips them)");
+    }
     let now_unix = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
