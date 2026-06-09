@@ -35,6 +35,7 @@
 pub mod catalog;
 pub mod cli_detect;
 pub mod discovery;
+pub mod gguf_variants;
 pub mod refresh_task;
 pub mod selector;
 pub mod sources;
