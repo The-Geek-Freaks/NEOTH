@@ -2766,6 +2766,24 @@ pub struct SkillsConfig {
     /// Empty (default) = every bundled skill stays enabled.
     #[serde(default)]
     pub disabled: Vec<String>,
+    /// GOLD-ADOPT-14 — operator allowlist of skill ids to force-ON, applied at
+    /// load time. The complement of [`disabled`]: it turns ON a skill that ships
+    /// `enabled: false` (e.g. the 68 imported `pm-*` product-management skills,
+    /// which ship DISABLED so a non-PM operator's routing stays clean). Set via
+    /// `neoth skill enable <id>`.
+    ///
+    /// ```yaml
+    /// skills:
+    ///   enabled:
+    ///     - pm-create-prd
+    ///     - pm-swot-analysis
+    /// ```
+    /// **`disabled` always wins** over `enabled` (a force-OFF can never be
+    /// silently re-enabled — preserves the GOLD-HON-11 security-register
+    /// guarantee). Case-insensitive id match; unknown ids ignored. Empty
+    /// (default) = no force-ON overrides; ships-disabled skills stay disabled.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub enabled: Vec<String>,
 }
 
 fn default_skills_always_embed_route() -> bool {
@@ -2780,6 +2798,7 @@ impl Default for SkillsConfig {
             pinned_hashes: std::collections::HashMap::new(),
             always_embed_route: default_skills_always_embed_route(),
             disabled: Vec::new(),
+            enabled: Vec::new(),
         }
     }
 }

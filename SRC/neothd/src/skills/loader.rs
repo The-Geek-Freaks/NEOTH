@@ -105,12 +105,28 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
         }
     }
 
+    // ── GOLD-ADOPT-14 — freedom.yaml skills.enabled allowlist (force-ON) ──
+    // The complement of the blocklist: turns ON a skill that ships
+    // `enabled: false` (the 68 imported `pm-*` skills ship DISABLED). Applied
+    // BEFORE the disabled block below so `disabled` ALWAYS wins — a force-OFF
+    // can never be silently re-enabled (preserves the GOLD-HON-11 guarantee).
+    let enabled_allow = read_enabled_skill_ids(skills_dir);
+    if !enabled_allow.is_empty() {
+        for skill in by_id.values_mut() {
+            if enabled_allow.contains(&skill.manifest.id.to_lowercase()) {
+                skill.manifest.enabled = true;
+                debug!(id = %skill.manifest.id, "skill force-enabled via freedom.yaml::skills.enabled");
+            }
+        }
+    }
+
     // ── GOLD-HON-11 — freedom.yaml skills.disabled blocklist ────────────
     // Operators turn off a bundled skill (e.g. the RASKAL offensive-tooling
     // register, which ships ENABLED) via `freedom.yaml::skills.disabled`
     // rather than editing the shipped `skill.yaml` an upgrade overwrites.
     // Applied here at the single load chokepoint, so every downstream
-    // `is_enabled()` consumer honours it with no call-site changes.
+    // `is_enabled()` consumer honours it with no call-site changes. Runs AFTER
+    // the enabled allowlist so disabled wins on a conflicting id.
     let disabled = read_disabled_skill_ids(skills_dir);
     if !disabled.is_empty() {
         for skill in by_id.values_mut() {
@@ -148,6 +164,33 @@ fn read_disabled_skill_ids(skills_dir: &Path) -> Vec<String> {
     value
         .get("skills")
         .and_then(|s| s.get("disabled"))
+        .and_then(|d| d.as_sequence())
+        .map(|seq| {
+            seq.iter()
+                .filter_map(|v| v.as_str().map(|s| s.trim().to_lowercase()))
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// GOLD-ADOPT-14 — read `skills.enabled: [<id>, …]` (the force-ON allowlist)
+/// from the `freedom.yaml` next to `<skills_dir>`. Same raw-`Value` walk +
+/// lowercasing + empty-on-missing semantics as [`read_disabled_skill_ids`].
+fn read_enabled_skill_ids(skills_dir: &Path) -> Vec<String> {
+    let Some(home) = skills_dir.parent() else {
+        return Vec::new();
+    };
+    let freedom_path = home.join("freedom.yaml");
+    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return Vec::new();
+    };
+    value
+        .get("skills")
+        .and_then(|s| s.get("enabled"))
         .and_then(|d| d.as_sequence())
         .map(|seq| {
             seq.iter()
@@ -545,6 +588,59 @@ system_prompt: |
         assert!(
             lowkey.is_enabled(),
             "lowkey_base (not in the blocklist) must stay enabled"
+        );
+    }
+
+    #[tokio::test]
+    async fn freedom_yaml_enabled_allowlist_force_ons_a_ships_disabled_skill() {
+        // GOLD-ADOPT-14: a skill shipping `enabled: false` is force-ON'd via
+        // freedom.yaml::skills.enabled (the pm-* skills' activation path).
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        write_manifest(
+            &skills_dir,
+            "pm-off-skill",
+            "id: pm-off-skill\ndescription: a ships-disabled skill\nversion: \"1.0.0\"\nsystem_prompt: hi\ntrigger_keywords: [\"x\"]\nenabled: false\n",
+        )
+        .await;
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  enabled:\n    - PM-OFF-SKILL\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let pm = skills
+            .iter()
+            .find(|s| s.id() == "pm-off-skill")
+            .expect("pm-off-skill loaded");
+        assert!(
+            pm.is_enabled(),
+            "pm-off-skill must be force-enabled via skills.enabled (case-insensitive)"
+        );
+    }
+
+    #[tokio::test]
+    async fn freedom_yaml_disabled_beats_enabled_no_hon11_bypass() {
+        // GOLD-ADOPT-14 security property: a skill in BOTH lists stays OFF —
+        // a freedom.yaml write can never silently re-enable a force-disabled
+        // security register (the HON-11 guarantee must hold).
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  enabled:\n    - raskal\n  disabled:\n    - raskal\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let raskal = skills
+            .iter()
+            .find(|s| s.id() == "raskal")
+            .expect("raskal is bundled");
+        assert!(
+            !raskal.is_enabled(),
+            "disabled must win over enabled — no HON-11 bypass"
         );
     }
 

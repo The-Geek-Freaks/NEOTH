@@ -84,9 +84,34 @@ pub struct SkillsArgs {
     #[arg(long = "non-interactive", requires = "create")]
     pub create_non_interactive: bool,
 
+    /// GOLD-ADOPT-14 — activate a skill that ships disabled (e.g. the imported
+    /// `pm-*` skills): adds it to `freedom.yaml::skills.enabled` (clearing any
+    /// disable). Persists across restarts + binary upgrades.
+    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "disable"])]
+    pub enable: Option<String>,
+
+    /// GOLD-ADOPT-14 — deactivate a bundled skill: adds it to
+    /// `freedom.yaml::skills.disabled` (clearing any enable). `disabled` always
+    /// wins, so this also overrides a prior `--enable`.
+    #[arg(long, value_name = "SKILL_ID", conflicts_with_all = ["list", "test", "run_tests", "install", "uninstall", "create", "enable"])]
+    pub disable: Option<String>,
+
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
+}
+
+/// GOLD-ADOPT-14 — pure enable/disable mutation on the skills config: lowercase
+/// the id, drop it from BOTH lists (dedup + idempotent), then add it to the
+/// chosen list. `disabled`-wins is enforced by the loader, not here.
+fn apply_skill_toggle(skills: &mut crate::config::SkillsConfig, id_lc: &str, turn_on: bool) {
+    skills.enabled.retain(|s| s.trim().to_lowercase() != id_lc);
+    skills.disabled.retain(|s| s.trim().to_lowercase() != id_lc);
+    if turn_on {
+        skills.enabled.push(id_lc.to_string());
+    } else {
+        skills.disabled.push(id_lc.to_string());
+    }
 }
 
 pub async fn run_skills(args: SkillsArgs) -> Result<()> {
@@ -174,6 +199,11 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
         count = skills.len(),
         "skills loaded"
     );
+
+    // GOLD-ADOPT-14 — enable/disable toggle, persisted to freedom.yaml.
+    if args.enable.is_some() || args.disable.is_some() {
+        return run_skill_toggle(&args, &skills).await;
+    }
 
     if let Some(skill_id) = &args.run_tests {
         let skill = skills.iter().find(|s| s.id() == skill_id).ok_or_else(|| {
@@ -318,10 +348,118 @@ pub async fn run_skills(args: SkillsArgs) -> Result<()> {
     Ok(())
 }
 
+/// GOLD-ADOPT-14 — `neoth skill {--enable,--disable} <id>`: validate the id is a
+/// real loaded skill, then persist the toggle to `freedom.yaml::skills.{enabled,
+/// disabled}` (atomic, secret-stripped). Mirrors the `neoth council suppress`
+/// load→mutate→write pattern. Bails when no freedom.yaml exists (init first).
+async fn run_skill_toggle(args: &SkillsArgs, skills: &[crate::skills::schema::Skill]) -> Result<()> {
+    let (id, turn_on) = match (&args.enable, &args.disable) {
+        (Some(id), _) => (id.as_str(), true),
+        (_, Some(id)) => (id.as_str(), false),
+        // The dispatcher only calls this when one of the two is Some.
+        _ => unreachable!("run_skill_toggle requires --enable or --disable"),
+    };
+    let id_lc = id.trim().to_lowercase();
+
+    // Validate against the loaded set so a typo'd id fails loudly instead of
+    // silently writing a no-op override.
+    if !skills.iter().any(|s| s.id().to_lowercase() == id_lc) {
+        anyhow::bail!(
+            "no skill with id '{id}' — run `neoth skills --list` to see installed ids"
+        );
+    }
+
+    let yaml = FreedomConfig::default_neoth_home().join("freedom.yaml");
+    if !yaml.exists() {
+        anyhow::bail!(
+            "freedom.yaml not found at {}. Run `neoth init` first.",
+            yaml.display()
+        );
+    }
+    let mut cfg = FreedomConfig::load_from_path(&yaml)
+        .map_err(|e| anyhow::anyhow!("load freedom.yaml: {e}"))?;
+    apply_skill_toggle(&mut cfg.skills, &id_lc, turn_on);
+    cfg.save_public_to_default_path()
+        .map_err(|e| anyhow::anyhow!("write freedom.yaml: {e}"))?;
+
+    let state = if turn_on { "enabled" } else { "disabled" };
+    match args.output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({ "id": id_lc, "state": state }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!("Skill `{id_lc}` {state} (freedom.yaml::skills.{state}).");
+            println!("  Applies on the next skill load (daemon reload / next CLI turn).");
+        }
+    }
+    Ok(())
+}
+
 fn truncate(s: &str, n: usize) -> String {
     if s.len() <= n {
         s.to_string()
     } else {
         format!("{}…", &s[..n.saturating_sub(1)])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::SkillsConfig;
+
+    #[test]
+    fn toggle_enable_moves_id_from_disabled_to_enabled() {
+        let mut s = SkillsConfig {
+            disabled: vec!["pm-create-prd".into(), "raskal".into()],
+            ..SkillsConfig::default()
+        };
+        apply_skill_toggle(&mut s, "pm-create-prd", true);
+        assert!(s.enabled.contains(&"pm-create-prd".to_string()));
+        assert!(
+            !s.disabled.contains(&"pm-create-prd".to_string()),
+            "enable must clear a prior disable"
+        );
+        // Unrelated entries are left untouched.
+        assert!(s.disabled.contains(&"raskal".to_string()));
+    }
+
+    #[test]
+    fn toggle_disable_moves_id_from_enabled_to_disabled() {
+        let mut s = SkillsConfig {
+            enabled: vec!["pm-swot-analysis".into()],
+            ..SkillsConfig::default()
+        };
+        apply_skill_toggle(&mut s, "pm-swot-analysis", false);
+        assert!(s.disabled.contains(&"pm-swot-analysis".to_string()));
+        assert!(!s.enabled.contains(&"pm-swot-analysis".to_string()));
+    }
+
+    #[test]
+    fn toggle_is_idempotent_no_duplicates() {
+        let mut s = SkillsConfig::default();
+        apply_skill_toggle(&mut s, "pm-lean-canvas", true);
+        apply_skill_toggle(&mut s, "pm-lean-canvas", true);
+        assert_eq!(
+            s.enabled.iter().filter(|x| *x == "pm-lean-canvas").count(),
+            1,
+            "re-enabling must not duplicate the id"
+        );
+        assert!(s.disabled.is_empty());
+    }
+
+    #[test]
+    fn toggle_dedups_case_insensitively() {
+        // A pre-existing mixed-case entry must not survive a re-toggle.
+        let mut s = SkillsConfig {
+            enabled: vec!["PM-Retro".into()],
+            ..SkillsConfig::default()
+        };
+        apply_skill_toggle(&mut s, "pm-retro", false);
+        assert!(s.enabled.is_empty(), "mixed-case enable entry must be cleared");
+        assert_eq!(s.disabled, vec!["pm-retro".to_string()]);
     }
 }
