@@ -2062,11 +2062,18 @@ fn step5b_inference_topology(
         } else {
             "one provider for everything (recommended)"
         };
+        // GOLD-ADOPT-12 — multi-local preset: run up to 3 QUANTIZED abliterated
+        // GGUFs (one per hemisphere) on the operator's own hardware via Ollama.
+        let local_multi_hint = if gpu_detected {
+            "1–3 local abliterated Q4/Q8 models across the hemispheres (Ollama — newest/best auto-picked)"
+        } else {
+            "1–3 small local abliterated models (CPU — slow; prefer cloud without a GPU)"
+        };
         // Topology preset table. `local-only` is a virtual preset — the
         // wizard expands it to Triplet mode + LocalQwen slots below so
         // freedom.yaml round-trips through the existing TopologyMode
         // enum without a new wire-format variant.
-        let modes: [(TopologyMode, &str, String); 4] = [
+        let modes: [(TopologyMode, &str, String); 5] = [
             (TopologyMode::Single, "single", single_hint.to_string()),
             (
                 TopologyMode::Triplet,
@@ -2083,6 +2090,13 @@ fn step5b_inference_topology(
                 TopologyMode::Triplet,
                 "local-only",
                 local_only_hint.to_string(),
+            ),
+            (
+                // local-multi expands to Triplet (all-local) or Custom (mixed)
+                // at apply time; the real slots are set by the preset below.
+                TopologyMode::Triplet,
+                "local-multi",
+                local_multi_hint.to_string(),
             ),
         ];
         let labels: Vec<String> = modes
@@ -2121,6 +2135,14 @@ fn step5b_inference_topology(
             println!("      left        provider=local_qwen  model=(adapter default)");
             println!("      right       provider=local_qwen  model=(adapter default)");
             println!("      cerebellum  provider=local_qwen  model=(adapter default)");
+        }
+        // GOLD-ADOPT-12 — multi-local abliterated preset: VRAM-size the local
+        // model(s), let the operator choose how many hemispheres run local, bind
+        // them to Ollama, and print the `ollama pull` commands. Same early-apply
+        // ordering as local-only (before the per-role loop's Triplet|Custom gate).
+        let is_local_multi_preset = matches!(modes[pick].1, "local-multi");
+        if is_local_multi_preset {
+            apply_local_multi_preset_interactive(&mut state.inference)?;
         }
 
         // ─── 2. Accelerator (only matters when local_qwen is in play) ──
@@ -2196,6 +2218,7 @@ fn step5b_inference_topology(
         // model so left=opus-4-7 + right=gemini-3.1-pro + cerebellum=Qwen3
         // can coexist without further CLI edits.
         if !is_local_only_preset
+            && !is_local_multi_preset
             && matches!(
                 state.inference.mode,
                 TopologyMode::Triplet | TopologyMode::Custom
@@ -2486,6 +2509,124 @@ pub(crate) fn apply_local_only_preset(topology: &mut crate::config::inference::I
     topology.left = local_slot.clone();
     topology.right = local_slot.clone();
     topology.cerebellum = local_slot;
+}
+
+/// GOLD-ADOPT-12 — apply a multi-local hemisphere preset: each local slot
+/// becomes an `OpenAiCompat` provider pointing at Ollama's `/v1` with the
+/// planned quantized GGUF as its model. All-local → Triplet; a local+cloud mix
+/// → Custom (roles past `preset.locals` keep their existing — typically cloud —
+/// slot). Ollama needs no key, so `key` stays `None`.
+pub(crate) fn apply_local_abliterated_preset(
+    topology: &mut crate::config::inference::InferenceTopology,
+    preset: &crate::models::hemisphere_preset::HemispherePreset,
+) {
+    use crate::config::inference::{HemisphereSlot, InferenceProvider, TopologyMode};
+    let make_slot = |model_ref: &str| HemisphereSlot {
+        provider: Some(InferenceProvider::OpenAiCompat),
+        model: Some(model_ref.to_string()),
+        key: None,
+        endpoint: Some(preset.endpoint.clone()),
+        region: None,
+        api_version: None,
+        voice: None,
+    };
+    topology.mode = if preset.is_all_local() {
+        TopologyMode::Triplet
+    } else {
+        TopologyMode::Custom
+    };
+    for local in &preset.locals {
+        let slot = make_slot(&local.ollama_model_ref);
+        match local.role {
+            "left" => topology.left = slot,
+            "right" => topology.right = slot,
+            "cerebellum" => topology.cerebellum = slot,
+            _ => {}
+        }
+    }
+    // Mirror the first local onto default_slot only when every hemisphere is
+    // local (matches apply_local_only_preset); a mixed setup keeps the cloud
+    // default so unspecified surfaces still reach a capable provider.
+    if preset.is_all_local() {
+        if let Some(first) = preset.locals.first() {
+            topology.default_slot = make_slot(&first.ollama_model_ref);
+        }
+    }
+}
+
+/// GOLD-ADOPT-12 — interactive multi-local preset: VRAM-size the local model(s),
+/// let the operator choose how many hemispheres run local (1..=max the hardware
+/// supports), bind them to Ollama, and print the `ollama pull` commands. Falls
+/// back to single-provider when no GPU/VRAM holds a usable local model.
+#[cfg(feature = "wizard")]
+fn apply_local_multi_preset_interactive(
+    topology: &mut crate::config::inference::InferenceTopology,
+) -> Result<()> {
+    use crate::installers::ollama::DEFAULT_OLLAMA_PORT;
+    use crate::models::gguf_variants::VariantClass;
+    use crate::models::hemisphere_preset::{build_local_preset, ROLES};
+    use crate::models::selector::recommended_local_count;
+
+    let vram_mib = crate::installers::gpu::probe_gpu().vram_mib;
+    let n_max = recommended_local_count(vram_mib);
+    if n_max == 0 {
+        println!(
+            "  [5b/9] local-multi: no GPU/VRAM holds a usable (≥3B) local model — \
+             staying single-provider. Add a GPU and re-run, or pick a cloud provider."
+        );
+        topology.mode = crate::config::inference::TopologyMode::Single;
+        return Ok(());
+    }
+    // Operator chooses 1..=n_max local hemispheres (default = the max the
+    // hardware supports): one local + cloud rest, or fully local.
+    let count_labels: Vec<String> = (1..=n_max)
+        .map(|n| {
+            if n == 1 {
+                "1 local hemisphere (biggest model; other 2 stay cloud)".to_string()
+            } else if (n as usize) == ROLES.len() {
+                format!("{n} local hemispheres (fully local, zero cloud)")
+            } else {
+                format!("{n} local hemispheres (rest stay cloud)")
+            }
+        })
+        .collect();
+    let pick = dialoguer::Select::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("    how many hemispheres run a LOCAL abliterated model?")
+        .items(&count_labels)
+        .default((n_max - 1) as usize)
+        .interact()
+        .context("local count select")?;
+    let n_local = (pick as u8) + 1;
+
+    let preset = build_local_preset(
+        vram_mib,
+        n_local,
+        VariantClass::Abliterated,
+        DEFAULT_OLLAMA_PORT,
+    );
+    apply_local_abliterated_preset(topology, &preset);
+
+    println!("  [5b/9] hemispheres (local-multi — abliterated Q4/Q8 via Ollama):");
+    for l in &preset.locals {
+        println!(
+            "      {:<10}  {:>4.1}B {:<7} {}",
+            l.role, l.param_b, l.quant_tag, l.repo
+        );
+    }
+    if !preset.is_all_local() {
+        println!("      (remaining hemispheres keep your cloud provider)");
+    }
+    if !preset.locals.is_empty() {
+        println!("\n      Ollama serves these — install it, then run:");
+        for l in &preset.locals {
+            println!("        $ {}", l.pull_command.join(" "));
+        }
+        println!(
+            "      Each local hemisphere is wired to {} (no API key).",
+            preset.endpoint
+        );
+    }
+    Ok(())
 }
 
 /// Finding 6 (Session 13) — pick the default topology-select index for
@@ -5196,6 +5337,73 @@ mod tests {
             assert!(slot.key.is_none(), "key should be cleared");
             assert!(slot.endpoint.is_none(), "endpoint should be cleared");
         }
+    }
+
+    #[test]
+    fn apply_local_abliterated_preset_all_local_is_triplet_ollama() {
+        use crate::config::inference::{InferenceProvider, InferenceTopology, TopologyMode};
+        use crate::installers::ollama::DEFAULT_OLLAMA_PORT;
+        use crate::models::gguf_variants::VariantClass;
+        use crate::models::hemisphere_preset::build_local_preset;
+        // 24 GiB → 3 local abliterated hemispheres.
+        let preset = build_local_preset(
+            Some(24 * 1024),
+            3,
+            VariantClass::Abliterated,
+            DEFAULT_OLLAMA_PORT,
+        );
+        let mut topo = InferenceTopology::default();
+        apply_local_abliterated_preset(&mut topo, &preset);
+        assert_eq!(topo.mode, TopologyMode::Triplet);
+        for slot in [&topo.left, &topo.right, &topo.cerebellum, &topo.default_slot] {
+            assert_eq!(slot.provider, Some(InferenceProvider::OpenAiCompat));
+            assert_eq!(slot.endpoint.as_deref(), Some("http://127.0.0.1:11434/v1"));
+            assert!(slot.key.is_none(), "Ollama needs no API key");
+            let m = slot.model.as_deref().unwrap_or("");
+            assert!(m.starts_with("hf.co/mradermacher/"), "got {m}");
+            assert!(m.contains("abliterated-GGUF"));
+        }
+    }
+
+    #[test]
+    fn apply_local_abliterated_preset_mixed_is_custom_keeps_cloud() {
+        use crate::config::inference::{
+            HemisphereSlot, InferenceProvider, InferenceTopology, TopologyMode,
+        };
+        use crate::installers::ollama::DEFAULT_OLLAMA_PORT;
+        use crate::models::gguf_variants::VariantClass;
+        use crate::models::hemisphere_preset::build_local_preset;
+        // Pre-seed cloud slots; a 1-local preset must leave right+cerebellum cloud.
+        let cloud = HemisphereSlot {
+            provider: Some(InferenceProvider::Gemini),
+            model: Some("gemini-3.1-pro-preview".into()),
+            key: Some(crate::secret::SecretString::from("k")),
+            endpoint: None,
+            region: None,
+            api_version: None,
+            voice: None,
+        };
+        let mut topo = InferenceTopology {
+            left: cloud.clone(),
+            right: cloud.clone(),
+            cerebellum: cloud.clone(),
+            default_slot: cloud,
+            ..InferenceTopology::default()
+        };
+        let preset = build_local_preset(
+            Some(24 * 1024),
+            1,
+            VariantClass::Abliterated,
+            DEFAULT_OLLAMA_PORT,
+        );
+        apply_local_abliterated_preset(&mut topo, &preset);
+        assert_eq!(topo.mode, TopologyMode::Custom);
+        // Left went local…
+        assert_eq!(topo.left.provider, Some(InferenceProvider::OpenAiCompat));
+        // …right + cerebellum + default stayed cloud (Gemini).
+        assert_eq!(topo.right.provider, Some(InferenceProvider::Gemini));
+        assert_eq!(topo.cerebellum.provider, Some(InferenceProvider::Gemini));
+        assert_eq!(topo.default_slot.provider, Some(InferenceProvider::Gemini));
     }
 
     #[test]
