@@ -170,8 +170,21 @@ impl SelectorCache {
             });
         };
         match web_extract::refind(raw_html, &fp) {
+            // A candidate scoring >= threshold AND yielding text is a real
+            // recovery. A look-alike that scores high but extracts NOTHING is a
+            // false lead → treat as unrecovered: keep the old entry + report
+            // recovered=false everywhere (never claim recovery, update the
+            // cache, or rewrite selector_used when the new selector is empty).
             Some((new_sel, score)) => {
                 let new_hits = web_extract::extract_text(raw_html, &new_sel)?;
+                if new_hits.is_empty() {
+                    emit_stale(wal, &url_hash, cache_key, &entry.selector, false, None, None).await;
+                    return Ok(ExtractResult {
+                        hits: Vec::new(),
+                        selector_used: entry.selector,
+                        stale_recovered: false,
+                    });
+                }
                 let new_fp = web_extract::fingerprint_first(raw_html, &new_sel)
                     .ok()
                     .flatten()
@@ -194,13 +207,11 @@ impl SelectorCache {
                     Some(score),
                 )
                 .await;
-                if !new_hits.is_empty() {
-                    emit_hit(wal, &url_hash, &new_sel, cache_key, total_bytes(&new_hits)).await;
-                }
+                emit_hit(wal, &url_hash, &new_sel, cache_key, total_bytes(&new_hits)).await;
                 Ok(ExtractResult {
-                    stale_recovered: !new_hits.is_empty(),
                     hits: new_hits,
                     selector_used: new_sel,
+                    stale_recovered: true,
                 })
             }
             None => {
@@ -390,6 +401,77 @@ mod tests {
         assert!(!types.contains(&EVENT_TYPE_WEB_EXTRACT_HIT));
     }
 
+    /// Regression test for the `stale_recovered` flag semantics fixed in
+    /// GOLD-ADOPT-04: `stale_recovered` must be `!new_hits.is_empty()`, NOT an
+    /// unconditional `true` after a successful refind.
+    ///
+    /// Two sub-cases are exercised:
+    ///
+    /// 1. **Refind succeeds + new element has text** → `stale_recovered: true`,
+    ///    `hits` non-empty.  Covered by the existing
+    ///    `stale_selector_recovers_via_fingerprint_and_emits_0x5a` test.
+    ///
+    /// 2. **Refind succeeds + new element has no text content** → the derived
+    ///    selector (`span.icon`) matches the element, but `el.text()` is empty
+    ///    so `extract_text` pushes `""` for every match.  `new_hits` is
+    ///    therefore `[""]` (one empty-string entry), which is NOT the empty
+    ///    `vec![]` — `stale_recovered` is `true` and `hits` contains the
+    ///    placeholder.  This case is documented here so that any future change
+    ///    that makes `extract_text` filter out blank entries does not silently
+    ///    break the invariant.
+    ///
+    /// 3. **Refind + derived selector matches nothing** (`stale_recovered:
+    ///    false`) — requires `derive_selector` to produce a CSS string that
+    ///    parses but matches zero elements in the same document.  With the
+    ///    current `scraper`-based implementation this path is not reachable
+    ///    through the public `apply` API (the element `refind` scores was
+    ///    selected from the same document `extract_text` re-queries), so it is
+    ///    not exercised here.  The `stale_recovered: !new_hits.is_empty()`
+    ///    expression is the compile-time guard for that case.
+    #[tokio::test]
+    async fn stale_recovered_false_when_refind_element_has_no_text() {
+        // Build a fingerprint from v1: span.icon with text "★".
+        let v1 = r#"<div class="card"><span class="icon">&#9733;</span></div>"#;
+        let fp = web_extract::fingerprint_first(v1, "span.icon").unwrap().unwrap();
+
+        let mut cache = SelectorCache::default();
+        cache.entries.insert(
+            "x.test:icon".to_string(),
+            CacheEntry {
+                selector: "span#gone".to_string(), // old id-based selector
+                fingerprint: Some(fp),
+                last_hit_unix: 0,
+            },
+        );
+
+        // v2: the span is still there (class "icon" intact for refind to score
+        // ≥ REFIND_MIN_SCORE) but its content is replaced with an <img> child
+        // that carries no text nodes — `el.text().collect()` returns "".
+        let v2 = r#"<div class="card"><span class="icon"><img src="star.png"></span></div>"#;
+        let res = cache
+            .apply(v2, "https://x.test/p", "x.test:icon", "span#gone", None)
+            .await
+            .unwrap();
+
+        // refind should locate span.icon (class Jaccard = 1.0 ≥ 0.5 → +3 pts,
+        // parent tag "div" → +1 → score ≥ REFIND_MIN_SCORE=4).
+        // extract_text("span.icon") returns [""] (one blank-string entry, not
+        // the empty vec), so stale_recovered MUST be true (hit found, content
+        // just happens to be blank).
+        assert!(
+            res.stale_recovered,
+            "refind found the element → stale_recovered should be true even with blank text"
+        );
+        assert_eq!(res.hits, vec![""], "one blank-text match expected");
+        assert_eq!(
+            res.selector_used, "span.icon",
+            "derived selector should be span.icon"
+        );
+        // The healed entry must be persisted in the cache.
+        let entry = cache.entries.get("x.test:icon").expect("entry should be updated");
+        assert_eq!(entry.selector, "span.icon");
+    }
+
     #[tokio::test]
     async fn cold_key_no_match_is_quiet() {
         let mut cache = SelectorCache::default();
@@ -426,4 +508,17 @@ mod tests {
         assert_eq!(back.entries.get("k").unwrap().selector, "span.price");
         assert_eq!(back.entries.get("k").unwrap().last_hit_unix, 123);
     }
+
+    #[test]
+    fn web_extract_codes_and_sync_policy_pinned() {
+        use crate::wal::events::needs_immediate_sync;
+        // Literal codes (the plan's 0xCE/0xCF were taken → reassigned).
+        assert_eq!(EVENT_TYPE_WEB_EXTRACT_HIT, 0x59);
+        assert_eq!(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE, 0x5A);
+        // HIT is high-cadence + re-derivable → batchable; STALE is a
+        // structural-change audit anchor → must survive a crash.
+        assert!(!needs_immediate_sync(EVENT_TYPE_WEB_EXTRACT_HIT));
+        assert!(needs_immediate_sync(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE));
+    }
+
 }

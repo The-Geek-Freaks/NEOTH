@@ -23,7 +23,7 @@
 //! | `0x2A..=0x2B`  | (reserved Phase 10 D14b) local Qwen3 inference trace   |
 //! | `0x30..=0x3F`  | Channels (ingress/egress/error + sanitizer)            |
 //! | `0x40..=0x4F`  | Cron / scheduled jobs                                  |
-//! | `0x50..=0x5F`  | Safety / recovery — panic-recovery, risk-gate, hints   |
+//! | `0x50..=0x5F`  | Safety / recovery — panic, risk-gate, hints, web-extract|
 //! | `0x60..=0x6F`  | Council debate + callosum (CH-08)                      |
 //! | `0x70..=0x7F`  | (reserved)                                             |
 //! | `0x80..=0x8F`  | (reserved Phase 29) Hooks lifecycle                    |
@@ -507,7 +507,8 @@ pub const EVENT_TYPE_HINT_LOADED: u8 = 0x58;
 /// cached) matched ≥1 element on a freshly-fetched page. Payload `{url_hash
 /// (xxh3-64 hex, NEVER the raw URL), selector, cache_key, extracted_bytes
 /// (count only), ts_unix}`. Batchable (high-cadence, re-derivable from the HTTP
-/// response).
+/// response). NOTE: `selector` + `cache_key` are stored PLAINTEXT (both
+/// operator-supplied; the WAL is operator-local) — only the URL is hashed.
 pub const EVENT_TYPE_WEB_EXTRACT_HIT: u8 = 0x59;
 
 /// `0x5A WEB_EXTRACT_SELECTOR_STALE` — GOLD-ADOPT-04. A cached selector matched

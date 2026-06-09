@@ -39,13 +39,24 @@ pub async fn run_fetch(args: FetchArgs) -> Result<()> {
     }
     // GOLD-ADOPT-04 — CSS-selector extraction path.
     if let Some(selector) = args.selector.clone() {
+        if selector.trim().is_empty() {
+            anyhow::bail!("--selector must not be empty");
+        }
         let home = crate::config::FreedomConfig::default_neoth_home();
         crate::tools::web_selector_cache::init(&home).await;
-        let host = url::Url::parse(&args.url)
+        // Cache key scopes the selector to the exact PAGE (host + path), so two
+        // different pages on the same host don't share a (possibly wrong) cached
+        // selector. (review F: host-only collided across pages.)
+        let (host, path) = url::Url::parse(&args.url)
             .ok()
-            .and_then(|u| u.host_str().map(|h| h.to_string()))
-            .unwrap_or_else(|| "unknown".to_string());
-        let cache_key = format!("{host}:{selector}");
+            .map(|u| {
+                (
+                    u.host_str().unwrap_or("unknown").to_string(),
+                    u.path().to_string(),
+                )
+            })
+            .unwrap_or_else(|| ("unknown".to_string(), String::new()));
+        let cache_key = format!("{host}{path}:{selector}");
         let result =
             crate::tools::web_selector_cache::extract_with_cache(&args.url, &cache_key, &selector, None)
                 .await?;

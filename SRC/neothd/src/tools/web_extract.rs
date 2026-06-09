@@ -42,12 +42,25 @@ pub fn extract_text(html: &str, css: &str) -> Result<Vec<String>> {
     let mut out = Vec::new();
     let mut total = 0usize;
     for el in doc.select(&sel) {
-        let text: String = el.text().collect::<String>().trim().to_string();
-        total += text.len();
-        out.push(text);
-        if total >= EXTRACT_OUTPUT_CEILING {
+        let remaining = EXTRACT_OUTPUT_CEILING.saturating_sub(total);
+        if remaining == 0 {
             break;
         }
+        let mut text: String = el.text().collect::<String>().trim().to_string();
+        // HARD ceiling (review F): truncate the element that would overflow to
+        // a char boundary within the remaining budget, then stop — `total`
+        // never exceeds EXTRACT_OUTPUT_CEILING.
+        if text.len() > remaining {
+            let mut end = remaining;
+            while end > 0 && !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            out.push(text);
+            break;
+        }
+        total += text.len();
+        out.push(text);
     }
     Ok(out)
 }
@@ -61,11 +74,13 @@ pub fn extract_attr(html: &str, css: &str, attr: &str) -> Result<Vec<String>> {
     let mut total = 0usize;
     for el in doc.select(&sel) {
         if let Some(v) = el.value().attr(attr) {
-            total += v.len();
-            out.push(v.to_string());
-            if total >= EXTRACT_OUTPUT_CEILING {
+            // Hard ceiling: a truncated attribute (e.g. a half URL) is useless,
+            // so drop the one that would overflow rather than emit garbage.
+            if total + v.len() > EXTRACT_OUTPUT_CEILING {
                 break;
             }
+            total += v.len();
+            out.push(v.to_string());
         }
     }
     Ok(out)
@@ -301,9 +316,9 @@ mod tests {
         let html = format!("<div>{body}</div>");
         let out = extract_text(&html, "p.x").unwrap();
         let total: usize = out.iter().map(|s| s.len()).sum();
-        // The loop stops once the ceiling is crossed (last push may exceed by
-        // one element's worth, bounded by 3000).
-        assert!(total <= EXTRACT_OUTPUT_CEILING + 3000, "total {total}");
+        // HARD ceiling: the overflowing element is truncated to fit, so the
+        // total NEVER exceeds the ceiling.
+        assert!(total <= EXTRACT_OUTPUT_CEILING, "total {total}");
     }
 
     #[test]
