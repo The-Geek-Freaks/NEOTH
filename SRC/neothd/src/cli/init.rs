@@ -4071,7 +4071,7 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
             (
                 "full",
                 AutonomyLevel::Full,
-                "trusts the operator. Only policy.yaml dangerous_targets prompt",
+                "FULL-AUTO gate: runs shell / sends / writes without asking (dangerous targets still prompt)",
             ),
             (
                 "custom",
@@ -4113,6 +4113,17 @@ fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut WizardState) -
                 state.autonomy = AutonomyLevel::Standard;
             } else {
                 state.autonomy = AutonomyLevel::Full;
+                // The `full` level is the GATE half of full-auto. To ALSO route
+                // the entire bundled skill library proactively (the other half),
+                // point the operator at the one-word headline switch — it sets
+                // skills.enable_all_bundled, which the wizard's flat picker does
+                // not. Honest pointer, no silent skill-library expansion here.
+                println!(
+                    "  [7/9] Tip: run `neoth sudomode` (or `neoth autonomy full-auto`) to also"
+                );
+                println!(
+                    "        route the WHOLE skill library proactively — that's the full-auto mode."
+                );
             }
         } else {
             state.autonomy = picked;

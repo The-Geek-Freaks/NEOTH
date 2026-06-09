@@ -58,6 +58,12 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
         return Ok(());
     }
 
+    // Headline operating mode (gated | full-auto | advanced) — derived from the
+    // (autonomy, skills.enable_all_bundled) pair. `None` when no config loaded.
+    let operating_mode = cfg
+        .as_ref()
+        .map(crate::cli::autonomy::operating_mode_label);
+
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
             // Merge the channel-health rows into the snapshot object so the
@@ -66,11 +72,20 @@ pub async fn run_status(args: StatusArgs) -> Result<()> {
                 .unwrap_or_else(|_| serde_json::json!({}));
             if let Some(obj) = v.as_object_mut() {
                 obj.insert("channels".into(), serde_json::to_value(&channel_health)?);
+                obj.insert("operating_mode".into(), serde_json::to_value(operating_mode)?);
             }
             println!("{}", serde_json::to_string_pretty(&v)?);
         }
         OutputFormat::Table => {
             print!("{}", snap.render_table());
+            if let Some(mode) = operating_mode {
+                let hint = match mode {
+                    "full-auto" => " (acts without asking; whole skill library routed — `neoth autonomy gated` to revert)",
+                    "gated" => " (asks before sensitive actions — `neoth autonomy full-auto` for hands-off)",
+                    _ => " (raw autonomy level set directly)",
+                };
+                println!("operating mode: {mode}{hint}");
+            }
             print!("{}", render_channel_health_table(&channel_health));
         }
     }

@@ -92,7 +92,7 @@ fn apply_mode(cfg: FreedomConfig, full_auto: bool) -> (FreedomConfig, AutonomyLe
 /// combination; a bare `autonomy: full` WITHOUT the skill-breadth flag reads as
 /// `advanced` (a power user chose Full but kept the curated set), so the label
 /// never overclaims.
-fn mode_label(cfg: &FreedomConfig) -> &'static str {
+pub(crate) fn operating_mode_label(cfg: &FreedomConfig) -> &'static str {
     match (cfg.autonomy, cfg.skills.enable_all_bundled) {
         (AutonomyLevel::Full, true) => "full-auto",
         (AutonomyLevel::Standard, false) => "gated",
@@ -192,7 +192,7 @@ fn run_show(output: OutputFormat) -> Result<()> {
     let cfg = FreedomConfig::load_from_default_path().context(
         "load freedom.yaml (run `neoth init` first if this is a fresh install)",
     )?;
-    let mode = mode_label(&cfg);
+    let mode = operating_mode_label(&cfg);
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -392,7 +392,7 @@ mod tests {
             next.skills.enable_all_bundled,
             "full-auto must force-enable the whole bundled library"
         );
-        assert_eq!(mode_label(&next), "full-auto");
+        assert_eq!(operating_mode_label(&next), "full-auto");
     }
 
     #[test]
@@ -404,23 +404,23 @@ mod tests {
         assert_eq!(prev, AutonomyLevel::Full);
         assert_eq!(next.autonomy, AutonomyLevel::Standard);
         assert!(!next.skills.enable_all_bundled, "gated curates the skill set");
-        assert_eq!(mode_label(&next), "gated");
+        assert_eq!(operating_mode_label(&next), "gated");
     }
 
     #[test]
     fn mode_label_reports_full_auto_gated_advanced() {
         let mut cfg = FreedomConfig::default();
-        assert_eq!(mode_label(&cfg), "gated");
+        assert_eq!(operating_mode_label(&cfg), "gated");
         cfg.autonomy = AutonomyLevel::Full;
         cfg.skills.enable_all_bundled = true;
-        assert_eq!(mode_label(&cfg), "full-auto");
+        assert_eq!(operating_mode_label(&cfg), "full-auto");
         // Power user: Full autonomy but curated skills → advanced, never overclaims.
         cfg.skills.enable_all_bundled = false;
-        assert_eq!(mode_label(&cfg), "advanced");
+        assert_eq!(operating_mode_label(&cfg), "advanced");
         // Elevated with all-skills is also advanced (not a headline mode).
         cfg.autonomy = AutonomyLevel::Elevated;
         cfg.skills.enable_all_bundled = true;
-        assert_eq!(mode_label(&cfg), "advanced");
+        assert_eq!(operating_mode_label(&cfg), "advanced");
     }
 
     #[test]
