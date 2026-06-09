@@ -102,7 +102,282 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         "omega_prime",
         include_str!("../../assets/skills/omega_prime/skill.yaml"),
     ),
-    ("pme", include_str!("../../assets/skills/pme/skill.yaml")),
+    (
+        "pm-ab-test-analysis",
+        include_str!("../../assets/skills/pm-ab-test-analysis/skill.yaml"),
+    ),
+    (
+        "pm-analyze-feature-requests",
+        include_str!("../../assets/skills/pm-analyze-feature-requests/skill.yaml"),
+    ),
+    (
+        "pm-ansoff-matrix",
+        include_str!("../../assets/skills/pm-ansoff-matrix/skill.yaml"),
+    ),
+    (
+        "pm-beachhead-segment",
+        include_str!("../../assets/skills/pm-beachhead-segment/skill.yaml"),
+    ),
+    (
+        "pm-brainstorm-experiments-existing",
+        include_str!("../../assets/skills/pm-brainstorm-experiments-existing/skill.yaml"),
+    ),
+    (
+        "pm-brainstorm-experiments-new",
+        include_str!("../../assets/skills/pm-brainstorm-experiments-new/skill.yaml"),
+    ),
+    (
+        "pm-brainstorm-ideas-existing",
+        include_str!("../../assets/skills/pm-brainstorm-ideas-existing/skill.yaml"),
+    ),
+    (
+        "pm-brainstorm-ideas-new",
+        include_str!("../../assets/skills/pm-brainstorm-ideas-new/skill.yaml"),
+    ),
+    (
+        "pm-brainstorm-okrs",
+        include_str!("../../assets/skills/pm-brainstorm-okrs/skill.yaml"),
+    ),
+    (
+        "pm-business-model",
+        include_str!("../../assets/skills/pm-business-model/skill.yaml"),
+    ),
+    (
+        "pm-cohort-analysis",
+        include_str!("../../assets/skills/pm-cohort-analysis/skill.yaml"),
+    ),
+    (
+        "pm-competitive-battlecard",
+        include_str!("../../assets/skills/pm-competitive-battlecard/skill.yaml"),
+    ),
+    (
+        "pm-competitor-analysis",
+        include_str!("../../assets/skills/pm-competitor-analysis/skill.yaml"),
+    ),
+    (
+        "pm-create-prd",
+        include_str!("../../assets/skills/pm-create-prd/skill.yaml"),
+    ),
+    (
+        "pm-customer-journey-map",
+        include_str!("../../assets/skills/pm-customer-journey-map/skill.yaml"),
+    ),
+    (
+        "pm-draft-nda",
+        include_str!("../../assets/skills/pm-draft-nda/skill.yaml"),
+    ),
+    (
+        "pm-dummy-dataset",
+        include_str!("../../assets/skills/pm-dummy-dataset/skill.yaml"),
+    ),
+    (
+        "pm-grammar-check",
+        include_str!("../../assets/skills/pm-grammar-check/skill.yaml"),
+    ),
+    (
+        "pm-growth-loops",
+        include_str!("../../assets/skills/pm-growth-loops/skill.yaml"),
+    ),
+    (
+        "pm-gtm-motions",
+        include_str!("../../assets/skills/pm-gtm-motions/skill.yaml"),
+    ),
+    (
+        "pm-gtm-strategy",
+        include_str!("../../assets/skills/pm-gtm-strategy/skill.yaml"),
+    ),
+    (
+        "pm-ideal-customer-profile",
+        include_str!("../../assets/skills/pm-ideal-customer-profile/skill.yaml"),
+    ),
+    (
+        "pm-identify-assumptions-existing",
+        include_str!("../../assets/skills/pm-identify-assumptions-existing/skill.yaml"),
+    ),
+    (
+        "pm-identify-assumptions-new",
+        include_str!("../../assets/skills/pm-identify-assumptions-new/skill.yaml"),
+    ),
+    (
+        "pm-intended-vs-implemented",
+        include_str!("../../assets/skills/pm-intended-vs-implemented/skill.yaml"),
+    ),
+    (
+        "pm-interview-script",
+        include_str!("../../assets/skills/pm-interview-script/skill.yaml"),
+    ),
+    (
+        "pm-job-stories",
+        include_str!("../../assets/skills/pm-job-stories/skill.yaml"),
+    ),
+    (
+        "pm-lean-canvas",
+        include_str!("../../assets/skills/pm-lean-canvas/skill.yaml"),
+    ),
+    (
+        "pm-market-segments",
+        include_str!("../../assets/skills/pm-market-segments/skill.yaml"),
+    ),
+    (
+        "pm-market-sizing",
+        include_str!("../../assets/skills/pm-market-sizing/skill.yaml"),
+    ),
+    (
+        "pm-marketing-ideas",
+        include_str!("../../assets/skills/pm-marketing-ideas/skill.yaml"),
+    ),
+    (
+        "pm-metrics-dashboard",
+        include_str!("../../assets/skills/pm-metrics-dashboard/skill.yaml"),
+    ),
+    (
+        "pm-monetization-strategy",
+        include_str!("../../assets/skills/pm-monetization-strategy/skill.yaml"),
+    ),
+    (
+        "pm-north-star-metric",
+        include_str!("../../assets/skills/pm-north-star-metric/skill.yaml"),
+    ),
+    (
+        "pm-opportunity-solution-tree",
+        include_str!("../../assets/skills/pm-opportunity-solution-tree/skill.yaml"),
+    ),
+    (
+        "pm-outcome-roadmap",
+        include_str!("../../assets/skills/pm-outcome-roadmap/skill.yaml"),
+    ),
+    (
+        "pm-pestle-analysis",
+        include_str!("../../assets/skills/pm-pestle-analysis/skill.yaml"),
+    ),
+    (
+        "pm-porters-five-forces",
+        include_str!("../../assets/skills/pm-porters-five-forces/skill.yaml"),
+    ),
+    (
+        "pm-positioning-ideas",
+        include_str!("../../assets/skills/pm-positioning-ideas/skill.yaml"),
+    ),
+    (
+        "pm-pre-mortem",
+        include_str!("../../assets/skills/pm-pre-mortem/skill.yaml"),
+    ),
+    (
+        "pm-pricing-strategy",
+        include_str!("../../assets/skills/pm-pricing-strategy/skill.yaml"),
+    ),
+    (
+        "pm-prioritization-frameworks",
+        include_str!("../../assets/skills/pm-prioritization-frameworks/skill.yaml"),
+    ),
+    (
+        "pm-prioritize-assumptions",
+        include_str!("../../assets/skills/pm-prioritize-assumptions/skill.yaml"),
+    ),
+    (
+        "pm-prioritize-features",
+        include_str!("../../assets/skills/pm-prioritize-features/skill.yaml"),
+    ),
+    (
+        "pm-privacy-policy",
+        include_str!("../../assets/skills/pm-privacy-policy/skill.yaml"),
+    ),
+    (
+        "pm-product-name",
+        include_str!("../../assets/skills/pm-product-name/skill.yaml"),
+    ),
+    (
+        "pm-product-strategy",
+        include_str!("../../assets/skills/pm-product-strategy/skill.yaml"),
+    ),
+    (
+        "pm-product-vision",
+        include_str!("../../assets/skills/pm-product-vision/skill.yaml"),
+    ),
+    (
+        "pm-release-notes",
+        include_str!("../../assets/skills/pm-release-notes/skill.yaml"),
+    ),
+    (
+        "pm-retro",
+        include_str!("../../assets/skills/pm-retro/skill.yaml"),
+    ),
+    (
+        "pm-review-resume",
+        include_str!("../../assets/skills/pm-review-resume/skill.yaml"),
+    ),
+    (
+        "pm-sentiment-analysis",
+        include_str!("../../assets/skills/pm-sentiment-analysis/skill.yaml"),
+    ),
+    (
+        "pm-shipping-artifacts",
+        include_str!("../../assets/skills/pm-shipping-artifacts/skill.yaml"),
+    ),
+    (
+        "pm-sprint-plan",
+        include_str!("../../assets/skills/pm-sprint-plan/skill.yaml"),
+    ),
+    (
+        "pm-sql-queries",
+        include_str!("../../assets/skills/pm-sql-queries/skill.yaml"),
+    ),
+    (
+        "pm-stakeholder-map",
+        include_str!("../../assets/skills/pm-stakeholder-map/skill.yaml"),
+    ),
+    (
+        "pm-startup-canvas",
+        include_str!("../../assets/skills/pm-startup-canvas/skill.yaml"),
+    ),
+    (
+        "pm-strategy-red-team",
+        include_str!("../../assets/skills/pm-strategy-red-team/skill.yaml"),
+    ),
+    (
+        "pm-summarize-interview",
+        include_str!("../../assets/skills/pm-summarize-interview/skill.yaml"),
+    ),
+    (
+        "pm-summarize-meeting",
+        include_str!("../../assets/skills/pm-summarize-meeting/skill.yaml"),
+    ),
+    (
+        "pm-swot-analysis",
+        include_str!("../../assets/skills/pm-swot-analysis/skill.yaml"),
+    ),
+    (
+        "pm-test-scenarios",
+        include_str!("../../assets/skills/pm-test-scenarios/skill.yaml"),
+    ),
+    (
+        "pm-user-personas",
+        include_str!("../../assets/skills/pm-user-personas/skill.yaml"),
+    ),
+    (
+        "pm-user-segmentation",
+        include_str!("../../assets/skills/pm-user-segmentation/skill.yaml"),
+    ),
+    (
+        "pm-user-stories",
+        include_str!("../../assets/skills/pm-user-stories/skill.yaml"),
+    ),
+    (
+        "pm-value-prop-statements",
+        include_str!("../../assets/skills/pm-value-prop-statements/skill.yaml"),
+    ),
+    (
+        "pm-value-proposition",
+        include_str!("../../assets/skills/pm-value-proposition/skill.yaml"),
+    ),
+    (
+        "pm-wwas",
+        include_str!("../../assets/skills/pm-wwas/skill.yaml"),
+    ),
+    (
+        "pme",
+        include_str!("../../assets/skills/pme/skill.yaml"),
+    ),
     (
         "prototype",
         include_str!("../../assets/skills/prototype/skill.yaml"),
@@ -175,6 +450,27 @@ mod tests {
                 "bundled skill {id} has empty body — include_str! failed at compile time?"
             );
         }
+    }
+
+    #[test]
+    fn pm_skills_ship_disabled_by_default() {
+        // GOLD-ADOPT-14 gremium decision (unanimous 3-lens): the imported
+        // `pm-*` product-management skills ship DISABLED so a non-PM operator's
+        // router stays clean (route() has no confidence floor — generic-keyword
+        // domain skills would false-activate). Operators turn them on with
+        // `neoth skill --enable pm-<id>`. Pin it so a re-import can't flip the
+        // default. Conversely every NON-pm bundled skill ships enabled.
+        let mut pm = 0;
+        for (id, body) in BUNDLED_SKILLS {
+            let m: SkillManifest = serde_yaml::from_str(body).unwrap();
+            if id.starts_with("pm-") {
+                pm += 1;
+                assert!(!m.enabled, "pm-* skill `{id}` must ship disabled");
+            } else {
+                assert!(m.enabled, "non-pm bundled skill `{id}` must ship enabled");
+            }
+        }
+        assert!(pm >= 60, "expected the ~68 pm-* imports; got {pm}");
     }
 
     #[test]
