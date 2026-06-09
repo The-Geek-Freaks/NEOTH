@@ -33,7 +33,7 @@ async fn raw_post(addr: SocketAddr, token: Option<&str>, body: &str) -> u16 {
 
 #[test]
 fn allowlist_contains_exactly_the_oneshot_codes() {
-    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 29);
+    assert_eq!(ALLOWED_CLIENT_EVENT_TYPES.len(), 30);
     // Autonomy-level changes (`neoth autonomy set`) + the lease/OS one-shots.
     for c in [0xA2u8, 0xA3] {
         assert!(is_allowed_client_event(c), "{c:#x} (autonomy) must be allowed");
@@ -46,6 +46,8 @@ fn allowlist_contains_exactly_the_oneshot_codes() {
     for c in [0xDBu8, 0xDC] {
         assert!(is_allowed_client_event(c), "{c:#x} (consent) must be allowed");
     }
+    // GOLD-ADOPT-23 point 3 — `neoth risk-confirm` grant audit.
+    assert!(is_allowed_client_event(0x54), "0x54 (risk_confirm_granted) must be allowed");
     for c in 0xA5u8..=0xADu8 {
         assert!(is_allowed_client_event(c), "{c:#x} must be allowed");
     }

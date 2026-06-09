@@ -37,6 +37,7 @@ pub mod dreaming_task;
 pub mod events;
 pub mod export;
 pub mod fact_check;
+pub mod risk_confirm;
 pub mod fetch;
 pub mod fs;
 pub mod github;
@@ -209,6 +210,13 @@ pub enum Commands {
     /// `neoth fact-check "NEOTH was released in 2026."`
     #[command(name = "fact-check")]
     FactCheck(fact_check::FactCheckArgs),
+
+    /// GOLD-ADOPT-23 — open a TTL-bounded risk-confirm window so the next
+    /// risk-gate-blocked tool call proceeds. Sugar over the `operator`
+    /// risk-override lease; auto-expires. `neoth risk-confirm --ttl 10m`
+    /// (add `--egress` to also lift an egress block).
+    #[command(name = "risk-confirm")]
+    RiskConfirm(risk_confirm::RiskConfirmArgs),
 
     /// Search the SQLite recall views for matching text.
     /// Runs the indexer once before querying.
@@ -906,6 +914,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Chat(mut args) => {
             args.stream = global_stream;
             chat::run_chat(args).await?;
+        }
+        Commands::RiskConfirm(mut args) => {
+            args.output = global_output;
+            risk_confirm::run_risk_confirm(args).await?;
         }
         Commands::FactCheck(mut args) => {
             args.output = global_output;

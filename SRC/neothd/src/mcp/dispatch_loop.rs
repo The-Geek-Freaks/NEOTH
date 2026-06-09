@@ -199,7 +199,8 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 // lifts the block for its TTL window. Checked only on a block
                 // (rare), so the lease file isn't read on every call.
                 if gate.is_blocked() {
-                    let (dangerous_leased, egress_leased, lease_id) = check_risk_leases(&risk);
+                    let (dangerous_leased, egress_leased, lease_id, expired_present) =
+                        check_risk_leases(&risk);
                     if dangerous_leased || egress_leased {
                         let lifted = crate::security::risk_gate::apply_risk_leases(
                             &risk,
@@ -211,17 +212,32 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                             warn!(
                                 server = %call.server, tool = %call.tool,
                                 lease = lease_id.as_deref().unwrap_or("?"),
-                                "risk-gate block LIFTED by active operator lease"
+                                "risk-gate block LIFTED by active operator risk-confirm lease"
                             );
+                            // GOLD-ADOPT-23 point 3 — the confirm window was spent.
                             emit_risk_gate_wal(
                                 writer,
                                 call,
+                                crate::wal::events::EVENT_TYPE_RISK_CONFIRM_USED,
                                 "lifted_by_lease",
                                 lease_id.as_deref().unwrap_or("egress"),
                             )
                             .await;
                             gate = lifted; // now Allow — fall through to dispatch.
                         }
+                    } else if expired_present {
+                        // GOLD-ADOPT-23 point 3 — a matching risk-confirm lease
+                        // existed but lapsed; surface it so the operator knows the
+                        // window closed (re-run `neoth risk-confirm`).
+                        let rule = risk.dangerous.first().map(|d| d.id).unwrap_or("egress");
+                        emit_risk_gate_wal(
+                            writer,
+                            call,
+                            crate::wal::events::EVENT_TYPE_RISK_CONFIRM_EXPIRED,
+                            "expired",
+                            rule,
+                        )
+                        .await;
                     }
                 }
                 if gate.is_blocked() {
@@ -237,14 +253,21 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         server = %call.server, tool = %call.tool, status,
                         "risk policy gate blocked tool call: {reason}"
                     );
-                    // GOLD-ADOPT-23 P1 — audit proof: 0xCF RISK_GATE_BLOCKED.
+                    // GOLD-ADOPT-23 point 4 — DISTINCT audit event per outcome
+                    // (RISK_GATE_DENIED / RISK_GATE_CONFIRM_REQUIRED), not the old
+                    // single 0xCF-with-verdict-field.
                     let rule = risk.dangerous.first().map(|d| d.id).unwrap_or("egress");
-                    let verdict = match &gate {
-                        crate::security::risk_gate::RiskGate::Deny(_) => "denied",
-                        crate::security::risk_gate::RiskGate::Confirm(_) => "confirm_required",
-                        crate::security::risk_gate::RiskGate::Allow => "",
+                    let (event_type, verdict) = match &gate {
+                        crate::security::risk_gate::RiskGate::Deny(_) => {
+                            (crate::wal::events::EVENT_TYPE_RISK_GATE_DENIED, "denied")
+                        }
+                        crate::security::risk_gate::RiskGate::Confirm(_) => (
+                            crate::wal::events::EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED,
+                            "confirm_required",
+                        ),
+                        crate::security::risk_gate::RiskGate::Allow => unreachable!(),
                     };
-                    emit_risk_gate_wal(writer, call, verdict, rule).await;
+                    emit_risk_gate_wal(writer, call, event_type, verdict, rule).await;
                     tool_result_blocks.push(format!(
                         "```mcp-tool-result\n{{\"server\": \"{}\", \"tool\": \"{}\", \"status\": \"{status}\"}}\n{reason}\n```",
                         call.server, call.tool,
@@ -392,12 +415,17 @@ fn format_failure(call: &ParsedToolCall, reason: &str) -> String {
     )
 }
 
-/// GOLD-ADOPT-23 P1 — append a `0xCF RISK_GATE_BLOCKED` audit frame. `verdict`
-/// is `denied` | `confirm_required` | `lifted_by_lease`; `rule` is the dangerous
-/// rule id, `egress`, or a lease id. The raw command is NEVER recorded.
+/// GOLD-ADOPT-23 (operator points 3+4) — append a DISTINCT-TYPE risk-gate audit
+/// frame. `event_type` is one of `RISK_GATE_DENIED` / `RISK_GATE_CONFIRM_REQUIRED`
+/// / `RISK_CONFIRM_USED` / `RISK_CONFIRM_EXPIRED`, so `neoth wal show --type
+/// risk_gate_denied` filters precisely (the operator's preference over the old
+/// single `0xCF`-with-verdict-field). `verdict` mirrors the outcome in the
+/// payload for human readers; `rule` is the dangerous rule id, `egress`, or a
+/// lease id. The raw command is NEVER recorded.
 async fn emit_risk_gate_wal(
     writer: Option<&WalWriterHandle>,
     call: &ParsedToolCall,
+    event_type: u8,
     verdict: &str,
     rule: &str,
 ) {
@@ -414,28 +442,30 @@ async fn emit_risk_gate_wal(
         "ts_unix": ts,
     }))
     .unwrap_or_default();
-    let header =
-        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED, &payload)
-            .build();
+    let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
     if let Err(e) = w.append(header, payload).await {
-        warn!(error = %e, "risk-gate 0xCF append failed (audit gap)");
+        warn!(error = %e, event_type, "risk-gate audit append failed (audit gap)");
     }
 }
 
-/// GOLD-ADOPT-23 P1 — check the operator's active risk-override leases for the
-/// blocking dimensions of `risk`. Returns `(dangerous_leased, egress_leased,
-/// first_lease_id)`. Best-effort: an unreadable lease store fails closed (no
-/// override). Only called on a block, so the file isn't read per call.
+/// GOLD-ADOPT-23 (P1 + operator point 3) — check the operator's risk-override
+/// leases for the blocking dimensions of `risk`. Returns `(dangerous_leased,
+/// egress_leased, first_lease_id, expired_present)` — `expired_present` is true
+/// when a matching-scope lease EXISTS but has lapsed (so the dispatch loop can
+/// emit `RISK_CONFIRM_EXPIRED` to tell the operator their confirm window closed
+/// rather than silently re-blocking). Best-effort: an unreadable lease store
+/// fails closed (no override). Only called on a block, so the file isn't read
+/// per call.
 fn check_risk_leases(
     risk: &crate::security::ToolCallRisk,
-) -> (bool, bool, Option<String>) {
+) -> (bool, bool, Option<String>, bool) {
     use crate::permissions::lease::{LeaseScope, LeaseStore};
     use crate::security::dangerous_command::Severity;
     use crate::security::risk_gate::RISK_LEASE_SUBJECT;
 
     let home = crate::config::FreedomConfig::default_neoth_home();
     let Ok(store) = LeaseStore::load(&LeaseStore::default_path(&home)) else {
-        return (false, false, None);
+        return (false, false, None, false);
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -463,7 +493,16 @@ fn check_risk_leases(
             }
             None => false,
         };
-    (dangerous_leased, egress_leased, lease_id)
+    // A lease for a needed scope that exists but is no longer active.
+    let scope_expired = |scope: &LeaseScope| {
+        store
+            .leases
+            .iter()
+            .any(|l| l.granted_to == RISK_LEASE_SUBJECT && &l.scope == scope && !l.is_active(now))
+    };
+    let expired_present = (needs_dangerous && !dangerous_leased && scope_expired(&LeaseScope::DangerousCommand))
+        || (needs_egress && !egress_leased && scope_expired(&LeaseScope::Egress));
+    (dangerous_leased, egress_leased, lease_id, expired_present)
 }
 
 /// GOLD-ADOPT-20 — render a repetition-guard block as an operator-visible
@@ -685,13 +724,14 @@ mod tests {
             unsafe { std::env::remove_var("NEOTH_HOME") };
         }
 
-        // The 0xCF frame must record the LIFT (not a denial).
+        // GOLD-ADOPT-23 point 3 — the lift must record a distinct
+        // RISK_CONFIRM_USED frame (not the generic block).
         let bytes = std::fs::read(&wal_path).unwrap();
         let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
         let mut verdict = String::new();
         while cur < bytes.len() {
             let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else { break };
-            if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED {
+            if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_CONFIRM_USED {
                 let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
                 verdict = p["verdict"].as_str().unwrap_or("").to_string();
             }
@@ -699,7 +739,7 @@ mod tests {
             if t == 0 { break; }
             cur += t;
         }
-        assert_eq!(verdict, "lifted_by_lease", "active lease must lift + audit the block");
+        assert_eq!(verdict, "lifted_by_lease", "active lease must lift + audit via RISK_CONFIRM_USED");
     }
 
     // Holds the env lock + points NEOTH_HOME at a CLEAN home (no leases) so the
@@ -707,10 +747,10 @@ mod tests {
     // it races the lease-lift test's NEOTH_HOME (which carries a live lease).
     #[allow(clippy::await_holding_lock)]
     #[tokio::test]
-    async fn risk_gate_block_emits_0xcf_wal_frame() {
-        // GOLD-ADOPT-23 P1: a blocked dangerous call appends a 0xCF
-        // RISK_GATE_BLOCKED audit frame carrying the rule id + verdict, NOT the
-        // raw command.
+    async fn risk_gate_block_emits_distinct_denied_wal_frame() {
+        // GOLD-ADOPT-23 point 4: a blocked dangerous call appends a DISTINCT
+        // RISK_GATE_DENIED audit frame carrying the rule id + verdict, NOT the
+        // raw command (operator preference over the old single 0xCF type).
         let dir = tempfile::tempdir().unwrap();
         let _env = crate::test_env::lock();
         let prev = std::env::var("NEOTH_HOME").ok();
@@ -749,7 +789,7 @@ mod tests {
         let mut found = false;
         while cur < bytes.len() {
             let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else { break };
-            if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED {
+            if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_GATE_DENIED {
                 found = true;
                 let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
                 assert_eq!(p["verdict"], "denied");
@@ -761,7 +801,7 @@ mod tests {
             if t == 0 { break; }
             cur += t;
         }
-        assert!(found, "a 0xCF RISK_GATE_BLOCKED frame must be present");
+        assert!(found, "a RISK_GATE_DENIED frame must be present");
     }
 
     #[tokio::test]

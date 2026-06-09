@@ -1723,6 +1723,14 @@ AI code review (GOLD-ADOPT-15) — wraps OpenCodeReview (`ocr`)
 - `--agent <AGENT>` — Agent mode: summary only, no human progress lines (for piping)
 - `--repo <DIR>` — Repository root (defaults to the current directory)
 
+## `neoth risk-confirm`
+
+GOLD-ADOPT-23 — open a TTL-bounded risk-confirm window so the next risk-gate-blocked tool call proceeds. Sugar over the `operator` risk-override lease; auto-expires. `neoth risk-confirm --ttl 10m` (add `--egress` to also lift an egress block)
+
+- `--ttl <TTL>` — How long the confirm window stays open — `10m`, `300s`, `1h`, or a bare number of seconds. Default `10m`
+- `--egress <EGRESS>` — Also lift the egress block (outbound to a non-allowlisted destination), in addition to the dangerous-command block
+- `--egress-only <EGRESS_ONLY>` — Lift ONLY the egress block (leave dangerous commands gated)
+
 ## `neoth rollback`
 
 B-Rollback / CDX-02: query pre-mutation snapshots captured in the WAL. `list` walks every `*.wal` segment and renders the `PRE_MUTATION_SNAPSHOT` (0xF2) frames so operators see which mutations were captured + when. Per-MutationKind restoration dispatcher ships in a follow-up

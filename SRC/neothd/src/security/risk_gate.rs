@@ -55,11 +55,28 @@ impl RiskGate {
 /// True when `domain` is covered by the allowlist — exact match or a suffix
 /// match on a dot boundary (`github.com` allows `api.github.com` but NOT
 /// `evilgithub.com` or `github.com.attacker.net`).
+///
+/// GOLD-ADOPT-23 F3 — an **IP literal** (`192.168.1.50`, `::1`) must match
+/// EXACTLY: dot-boundary suffix matching is meaningless for an IP and is a hole
+/// (an allowlist entry `"1"` would `ends_with(".1")`-match `10.0.0.1`). Only
+/// hostnames keep suffix matching.
 fn domain_allowed(domain: &str, allowlist: &[String]) -> bool {
     let d = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    // Accept a bracketed IPv6 host (`[::1]`) as well as a bare literal.
+    let d_ip = d.trim_start_matches('[').trim_end_matches(']');
+    let is_ip = d_ip.parse::<std::net::IpAddr>().is_ok();
     allowlist.iter().any(|a| {
         let a = a.trim().trim_end_matches('.').to_ascii_lowercase();
-        !a.is_empty() && (d == a || d.ends_with(&format!(".{a}")))
+        if a.is_empty() {
+            return false;
+        }
+        if is_ip {
+            // Exact only — compare both the raw and de-bracketed forms.
+            let a_ip = a.trim_start_matches('[').trim_end_matches(']');
+            d == a || d_ip == a_ip
+        } else {
+            d == a || d.ends_with(&format!(".{a}"))
+        }
     })
 }
 
@@ -321,6 +338,20 @@ mod tests {
         assert!(domain_allowed("api.github.com", &allow));
         assert!(!domain_allowed("evilgithub.com", &allow));
         assert!(!domain_allowed("github.com.attacker.net", &allow));
+    }
+
+    #[test]
+    fn ip_literal_requires_exact_match_no_suffix() {
+        // F3: an IP literal must match exactly — no dot-boundary suffix hole.
+        assert!(domain_allowed("192.168.1.50", &["192.168.1.50".to_string()]));
+        // An allowlist octet/suffix must NOT over-match a full IP.
+        assert!(!domain_allowed("10.0.0.1", &["1".to_string()]));
+        assert!(!domain_allowed("10.0.0.1", &["0.0.1".to_string()]));
+        // A different IP is rejected.
+        assert!(!domain_allowed("8.8.8.8", &["192.168.1.50".to_string()]));
+        // IPv6 literal, bracketed host vs bare allowlist entry.
+        assert!(domain_allowed("[::1]", &["::1".to_string()]));
+        assert!(!domain_allowed("[::1]", &["1".to_string()]));
     }
 
     #[test]

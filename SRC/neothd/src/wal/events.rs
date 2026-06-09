@@ -415,7 +415,7 @@ pub const EVENT_TYPE_EVAL_CRITICAL_DIVERGENCE: u8 = 0x3E;
 /// Payload (JSON): `{query, cosine, threshold, ts_unix}`.
 pub const EVENT_TYPE_REGRESSION_ALERT: u8 = 0x3F;
 
-// ---- 0x50..=0x5F  Panic / recovery (Pick #35 Session 14 WAL recovery) -----
+// ---- 0x50..=0x5F  Safety / recovery — panic-recovery + risk-gate audit -----
 
 /// `0x50 RECOVERY_TRUNCATED` — emitted by `wal::recovery::scan_tail` at
 /// daemon startup when a torn frame is detected in the tail of a WAL
@@ -446,6 +446,44 @@ pub const EVENT_TYPE_RECOVERY_TRUNCATED: u8 = 0x50;
 ///   - `ts_unix`: wall-clock seconds of the rejection event
 ///   - `quarantine_path`: where the offending `.cpt` was renamed to
 pub const EVENT_TYPE_COMPACTION_AUTH_FAILED: u8 = 0x51;
+
+// ── GOLD-ADOPT-23 (operator points 3 + 4) — distinct risk-gate audit types.
+// The earlier single `0xCF RISK_GATE_BLOCKED` (still registered for old WALs)
+// carried the outcome in a `verdict` field; the operator prefers DISTINCT event
+// TYPES so `neoth wal show --type risk_gate_denied` filters precisely. These
+// live in the safety/recovery band (a guard firing is a safety-boundary event,
+// adjacent to crash recovery) — 0xC0..=0xCF, the natural tool band, is full.
+
+/// `0x52 RISK_GATE_DENIED` — the dispatch-loop risk gate hard-blocked a tool
+/// call (Critical dangerous command under `dangerous_commands=deny`, or egress
+/// under `egress.mode=deny_unknown`). Payload `{server, tool, verdict:"denied",
+/// rule, ts_unix}` — the raw command is NEVER stored.
+pub const EVENT_TYPE_RISK_GATE_DENIED: u8 = 0x52;
+
+/// `0x53 RISK_GATE_CONFIRM_REQUIRED` — the risk gate blocked a call pending
+/// operator confirmation (`dangerous_commands=confirm`, `confirm_high`, or
+/// `egress.mode=confirm_unknown`). The operator lifts it for a TTL window with
+/// `neoth risk-confirm`. Payload `{server, tool, verdict:"confirm_required",
+/// rule, ts_unix}`.
+pub const EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED: u8 = 0x53;
+
+/// `0x54 RISK_CONFIRM_GRANTED` — `neoth risk-confirm --ttl N` granted an
+/// operator risk-override lease (the operationalised "confirm"). Payload
+/// `{subject:"operator", scopes:[…], ttl_secs, expires_unix, source:"cli",
+/// ts_unix}`. The companion lease lifecycle (`LEASE_GRANTED 0xA5` etc.) also
+/// fires; this is the risk-gate-specific marker.
+pub const EVENT_TYPE_RISK_CONFIRM_GRANTED: u8 = 0x54;
+
+/// `0x55 RISK_CONFIRM_USED` — a blocked tool call was LIFTED by an active
+/// operator risk-override lease (the confirm window was spent). Payload
+/// `{server, tool, verdict:"lifted_by_lease", rule:<lease_id>, ts_unix}`.
+pub const EVENT_TYPE_RISK_CONFIRM_USED: u8 = 0x55;
+
+/// `0x56 RISK_CONFIRM_EXPIRED` — a tool call was blocked while a matching
+/// risk-override lease existed but had already LAPSED, so the block stood. Tells
+/// the operator their `risk-confirm` window expired. Payload `{server, tool,
+/// verdict:"expired", rule, ts_unix}`.
+pub const EVENT_TYPE_RISK_CONFIRM_EXPIRED: u8 = 0x56;
 
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
@@ -1734,6 +1772,14 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("mcp_tool_called", EVENT_TYPE_MCP_TOOL_CALLED),
     ("mcp_tool_rejected", EVENT_TYPE_MCP_TOOL_REJECTED),
     ("risk_gate_blocked", EVENT_TYPE_RISK_GATE_BLOCKED),
+    ("risk_gate_denied", EVENT_TYPE_RISK_GATE_DENIED),
+    (
+        "risk_gate_confirm_required",
+        EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED,
+    ),
+    ("risk_confirm_granted", EVENT_TYPE_RISK_CONFIRM_GRANTED),
+    ("risk_confirm_used", EVENT_TYPE_RISK_CONFIRM_USED),
+    ("risk_confirm_expired", EVENT_TYPE_RISK_CONFIRM_EXPIRED),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2019,6 +2065,21 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_WORKER_DIED < 0x40 || EVENT_TYPE_WORKER_DIED > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_COMPACTION_AUTH_FAILED < 0x50 || EVENT_TYPE_COMPACTION_AUTH_FAILED > 0x5F)
+            as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_RISK_GATE_DENIED < 0x50 || EVENT_TYPE_RISK_GATE_DENIED > 0x5F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED < 0x50
+        || EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED > 0x5F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_RISK_CONFIRM_GRANTED < 0x50 || EVENT_TYPE_RISK_CONFIRM_GRANTED > 0x5F)
+            as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_RISK_CONFIRM_USED < 0x50 || EVENT_TYPE_RISK_CONFIRM_USED > 0x5F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_RISK_CONFIRM_EXPIRED < 0x50 || EVENT_TYPE_RISK_CONFIRM_EXPIRED > 0x5F)
+            as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
         || EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL < 0x60
@@ -2411,6 +2472,14 @@ mod tests {
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
             ("RISK_GATE_BLOCKED", EVENT_TYPE_RISK_GATE_BLOCKED),
+            ("RISK_GATE_DENIED", EVENT_TYPE_RISK_GATE_DENIED),
+            (
+                "RISK_GATE_CONFIRM_REQUIRED",
+                EVENT_TYPE_RISK_GATE_CONFIRM_REQUIRED,
+            ),
+            ("RISK_CONFIRM_GRANTED", EVENT_TYPE_RISK_CONFIRM_GRANTED),
+            ("RISK_CONFIRM_USED", EVENT_TYPE_RISK_CONFIRM_USED),
+            ("RISK_CONFIRM_EXPIRED", EVENT_TYPE_RISK_CONFIRM_EXPIRED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),
