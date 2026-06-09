@@ -142,6 +142,27 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 tool_result_blocks.push(format_guard_block(call, &verdict));
                 continue;
             }
+            // GOLD-ADOPT-23 — surface outbound egress + dangerous shell patterns
+            // in the call's arguments so the operator sees exfiltration- or
+            // destruction-shaped tool calls (the autonomy gate still decides
+            // execution; this is visibility, not a second block).
+            let risk = crate::security::inspect_tool_args(&call.arguments);
+            if !risk.is_empty() {
+                for d in &risk.dangerous {
+                    warn!(
+                        server = %call.server, tool = %call.tool,
+                        rule = d.id, severity = d.severity.as_str(),
+                        "dangerous-command pattern in tool call: {}", d.reason
+                    );
+                }
+                for e in &risk.egress {
+                    warn!(
+                        server = %call.server, tool = %call.tool,
+                        kind = %e.kind, domain = %e.domain,
+                        "outbound egress destination in tool call"
+                    );
+                }
+            }
             match dispatch_one(
                 call,
                 servers,
