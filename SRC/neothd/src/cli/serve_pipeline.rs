@@ -1108,6 +1108,8 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     channel_skill_allowlist.as_deref(),
                     // GM-01 — operator-tunable dispatch-loop ceiling.
                     goal_max_turns,
+                    // GOLD-ADOPT-23 P0 — risk policy gate (live config snapshot).
+                    &config_for_handler.security,
                 )
                 .await
                 {

@@ -84,12 +84,14 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         rollback_policy,
         skill_allowlist,
         DEFAULT_MAX_ITERATIONS,
+        &crate::config::SecurityPolicy::default(),
     )
     .await
 }
 
 /// Run the dispatch loop with an explicit iteration cap. Mostly for
 /// tests + operators who want to widen the chain.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     driver: &mut D,
     initial_prompt: String,
@@ -99,6 +101,8 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
     max_iterations: u32,
+    // GOLD-ADOPT-23 P0 — egress + dangerous-command policy gate.
+    security_policy: &crate::config::SecurityPolicy,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -142,10 +146,9 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 tool_result_blocks.push(format_guard_block(call, &verdict));
                 continue;
             }
-            // GOLD-ADOPT-23 — surface outbound egress + dangerous shell patterns
-            // in the call's arguments so the operator sees exfiltration- or
-            // destruction-shaped tool calls (the autonomy gate still decides
-            // execution; this is visibility, not a second block).
+            // GOLD-ADOPT-23 P0 — scan the call's arguments for outbound egress +
+            // dangerous shell patterns, ALWAYS surface them (tracing warn), then
+            // apply the operator's risk policy as a deny/confirm GATE.
             let risk = crate::security::inspect_tool_args(&call.arguments);
             if !risk.is_empty() {
                 for d in &risk.dangerous {
@@ -161,6 +164,26 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         kind = %e.kind, domain = %e.domain,
                         "outbound egress destination in tool call"
                     );
+                }
+                let gate = crate::security::risk_gate::evaluate_tool_risk(&risk, security_policy);
+                if gate.is_blocked() {
+                    failed_calls += 1;
+                    let (status, reason) = match &gate {
+                        crate::security::risk_gate::RiskGate::Deny(r) => ("DENIED", r.as_str()),
+                        crate::security::risk_gate::RiskGate::Confirm(r) => {
+                            ("CONFIRM_REQUIRED", r.as_str())
+                        }
+                        crate::security::risk_gate::RiskGate::Allow => unreachable!(),
+                    };
+                    warn!(
+                        server = %call.server, tool = %call.tool, status,
+                        "risk policy gate blocked tool call: {reason}"
+                    );
+                    tool_result_blocks.push(format!(
+                        "```mcp-tool-result\n{{\"server\": \"{}\", \"tool\": \"{}\", \"status\": \"{status}\"}}\n{reason}\n```",
+                        call.server, call.tool,
+                    ));
+                    continue;
                 }
             }
             match dispatch_one(
@@ -435,6 +458,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn risk_gate_denies_dangerous_call_before_dispatch() {
+        // GOLD-ADOPT-23 P0: a tool call carrying `rm -rf /` is blocked by the
+        // default deny policy — it never reaches dispatch (which would fail on
+        // the unknown server anyway), and the all-blocked round terminates.
+        let reply = r#"I'll clean up.
+```mcp-tool-call
+{"server": "shell", "tool": "exec", "arguments": {"command": "rm -rf /"}}
+```
+"#;
+        let mut driver = ScriptedDriver::new(vec![reply, "(unreached)"]);
+        let servers = McpServers::default();
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "clean up".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(), // dangerous_commands = Deny
+        )
+        .await
+        .unwrap();
+        // The dangerous call is counted as failed (blocked) and the loop stops
+        // after the single all-blocked round.
+        assert_eq!(outcome.iterations, 1);
+        assert_eq!(outcome.successful_calls, 0);
+        assert_eq!(outcome.failed_calls, 1);
+    }
+
+    #[tokio::test]
     async fn loop_terminates_immediately_when_no_tool_calls() {
         let mut driver = ScriptedDriver::new(vec!["plain text reply, no tool calls"]);
         let servers = McpServers::default();
@@ -511,6 +566,7 @@ mod tests {
             None,
             None,
             5,
+            &crate::config::SecurityPolicy::default(),
         )
         .await
         .unwrap();

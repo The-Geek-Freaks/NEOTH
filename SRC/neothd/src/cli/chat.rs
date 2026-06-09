@@ -1340,6 +1340,7 @@ pub async fn run_chat_with(
                 Some(&config.rollback),
                 skill_allowlist,
                 config.goal.max_turns,
+                &config.security,
             )
             .await
             {
@@ -3721,6 +3722,7 @@ async fn run_council_debate(
 /// daemon now share the autoroute path; channels (Telegram /
 /// WhatsApp / Slack) gain tool-use parity with `neoth chat` without
 /// duplicating the driver wiring.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_mcp_dispatch_loop(
     provider: &dyn crate::providers::Provider,
     base_req: crate::providers::Request,
@@ -3735,6 +3737,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
     // GM-01 — operator-tunable hard ceiling on dispatch-loop iterations
     // (`freedom.yaml::goal.max_turns`, default 5).
     max_iterations: u32,
+    // GOLD-ADOPT-23 P0 — egress + dangerous-command risk policy gate.
+    security_policy: &crate::config::SecurityPolicy,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -3817,6 +3821,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         rollback_policy,
         skill_allowlist,
         max_iterations.max(1),
+        security_policy,
     )
     .await
 }

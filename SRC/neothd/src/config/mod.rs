@@ -135,6 +135,10 @@ pub struct FreedomConfig {
     /// operator opts in with `feeds.enabled = true` + `feeds.entries`.
     #[serde(default)]
     pub feeds: FeedsConfig,
+    /// GOLD-ADOPT-23 P0 — tool-call risk policy gate (egress + dangerous-command
+    /// inspectors → deny/confirm, not just a warning).
+    #[serde(default)]
+    pub security: SecurityPolicy,
     /// Round-3 v0.4 ARCH-04 — operator-tunable token cap for the
     /// prompt-bundle pre-flight check. Default 100_000 covers Opus 4.7
     /// + Sonnet 4.6 + Gemini 3 with response headroom; operators on
@@ -2833,6 +2837,61 @@ pub struct FeedEntry {
     /// Max entries ingested per tick for this feed. `None` → the task default.
     #[serde(default)]
     pub max_entries: Option<usize>,
+}
+
+/// GOLD-ADOPT-23 P0 — what the MCP tool-loop risk gate does when an LLM-issued
+/// tool call carries a destructive shell pattern or an outbound egress target.
+/// Surfacing (a tracing warn) ALWAYS happens; this controls whether the call is
+/// additionally blocked.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct SecurityPolicy {
+    /// Policy for a Critical-severity dangerous-command finding (rm -rf /, dd
+    /// of=/dev, fork bomb, shutdown/reboot, …). Default `deny` — the LLM should
+    /// never autonomously run a host-destroying command; the operator widens to
+    /// `confirm`/`allow` to lift the block.
+    #[serde(default)]
+    pub dangerous_commands: DangerousPolicy,
+    /// Outbound-egress policy (data leaving the host via a tool's shell args).
+    #[serde(default)]
+    pub egress: EgressPolicy,
+}
+
+/// Action for a Critical dangerous-command finding.
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DangerousPolicy {
+    /// Block the call (default). The reason names the matched rule.
+    #[default]
+    Deny,
+    /// Block + tell the LLM the operator must confirm it.
+    Confirm,
+    /// Don't block — warn only (the pre-P0 behaviour).
+    Warn,
+}
+
+/// Outbound-egress gate policy.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct EgressPolicy {
+    /// How to treat a destination domain NOT in [`EgressPolicy::allowlist`].
+    #[serde(default)]
+    pub mode: EgressMode,
+    /// Known-good domains that always pass (exact or suffix match, e.g.
+    /// `github.com` matches `api.github.com`).
+    #[serde(default)]
+    pub allowlist: Vec<String>,
+}
+
+/// What the egress gate does about an UNKNOWN (non-allowlisted) destination.
+#[derive(Clone, Copy, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EgressMode {
+    /// Allow any destination — warn only (default; non-breaking).
+    #[default]
+    Allow,
+    /// Block an unknown destination + tell the LLM the operator must confirm.
+    ConfirmUnknown,
+    /// Block an unknown destination outright.
+    DenyUnknown,
 }
 
 impl SkillsConfig {
