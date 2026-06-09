@@ -113,6 +113,47 @@ pub fn recommend_quantized(vram_mib: Option<u32>) -> Option<QuantOption> {
     quantized_shortlist(vram_mib).into_iter().next()
 }
 
+/// GOLD-ADOPT-12 — plan `n_local` LOCAL hemispheres into the available VRAM.
+/// The operator wants to run 1, 2, or 3 local models across the left / right /
+/// cerebellum slots (the rest go cloud). Distinct models do NOT share VRAM, so
+/// the budget is split evenly across the local slots and each gets the biggest
+/// (size, quant) that fits its share. Returns one [`QuantOption`] per slot, or
+/// **empty** when `n_local` models can't all fit (caller steps `n_local` down).
+///
+/// The slots come back identical (same VRAM share → same best pick); the wizard
+/// lets the operator swap an individual slot to a different size or to cloud.
+pub fn plan_local_hemispheres(vram_mib: Option<u32>, n_local: u8) -> Vec<QuantOption> {
+    if n_local == 0 {
+        return Vec::new();
+    }
+    let total_gb = match vram_mib {
+        Some(m) => m as f32 / 1024.0,
+        None => 8.0, // a CPU operator's spare RAM
+    };
+    let per_slot_mib = ((total_gb / n_local as f32) * 1024.0) as u32;
+    let mut slots = Vec::with_capacity(n_local as usize);
+    for _ in 0..n_local {
+        match recommend_quantized(Some(per_slot_mib)) {
+            Some(pick) => slots.push(pick),
+            None => return Vec::new(), // a slot's share can't hold any model
+        }
+    }
+    slots
+}
+
+/// How many local hemispheres the hardware comfortably supports — the most
+/// slots (3 → 2 → 1) where EVERY slot still gets a usable (≥3B) model. `0` when
+/// not even one ≥3B local fits (operator should go cloud).
+pub fn recommended_local_count(vram_mib: Option<u32>) -> u8 {
+    for n in [3u8, 2, 1] {
+        let plan = plan_local_hemispheres(vram_mib, n);
+        if plan.len() == n as usize && plan.iter().all(|o| o.param_b >= 3.0) {
+            return n;
+        }
+    }
+    0
+}
+
 /// A chosen local model: the HF repo to download, an operator-facing tier
 /// label, and the sizing that drove the pick.
 #[derive(Debug, Clone, PartialEq)]
@@ -267,6 +308,46 @@ mod tests {
         // 4 GiB → a small model still fits (3B at Q8 ~3.9 GB).
         let small = recommend_quantized(Some(4 * 1024)).unwrap();
         assert!(small.param_b <= 7.0 && small.est_vram_gb <= 4.0);
+    }
+
+    #[test]
+    fn plan_local_hemispheres_splits_vram_across_slots() {
+        // 24 GiB GPU. 1 local slot → the full 32B-Q4. 3 local slots → 8 GiB
+        // each → still a usable 7B-Q4 per hemisphere (the operator's "3 lokale
+        // Modelle für die 3 Hemisphären").
+        let one = plan_local_hemispheres(Some(24 * 1024), 1);
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].param_b, 32.0);
+        let three = plan_local_hemispheres(Some(24 * 1024), 3);
+        assert_eq!(three.len(), 3);
+        assert!(three.iter().all(|o| o.param_b >= 7.0), "{three:?}");
+        // Smaller per-slot share → smaller-or-equal model than the single slot.
+        assert!(three[0].param_b <= one[0].param_b);
+    }
+
+    #[test]
+    fn plan_returns_empty_when_n_local_cannot_all_fit() {
+        // n_local = 0 is always empty.
+        assert!(plan_local_hemispheres(Some(24 * 1024), 0).is_empty());
+        // A 512 MiB GPU split 3 ways → ~170 MiB/slot, below even a 0.5B-Q4
+        // (~0.33 GB) → no slot fits → empty (caller steps n_local down).
+        assert!(plan_local_hemispheres(Some(512), 3).is_empty());
+    }
+
+    #[test]
+    fn recommended_local_count_scales_with_vram() {
+        // Big GPU comfortably runs 3 local ≥3B hemispheres.
+        assert_eq!(recommended_local_count(Some(48 * 1024)), 3);
+        // 24 GiB also supports 3 (8 GiB/slot → 7B each).
+        assert_eq!(recommended_local_count(Some(24 * 1024)), 3);
+        // 8 GiB → 3 too: 2.67 GiB/slot still holds a 3B-Q4 (~2 GB) each.
+        assert_eq!(recommended_local_count(Some(8 * 1024)), 3);
+        // 5 GiB: 3-way → 1.67 GiB → only sub-3B; 2-way → 2.5 GiB → 3B → 2 slots.
+        assert_eq!(recommended_local_count(Some(5 * 1024)), 2);
+        // 3.5 GiB: only a single 3B-Q4 slot clears the ≥3B bar.
+        assert_eq!(recommended_local_count(Some(3584)), 1);
+        // Tiny GPU → 0 (go cloud).
+        assert_eq!(recommended_local_count(Some(512)), 0);
     }
 
     #[test]
