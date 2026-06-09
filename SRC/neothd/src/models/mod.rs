@@ -36,6 +36,7 @@ pub mod catalog;
 pub mod cli_detect;
 pub mod discovery;
 pub mod refresh_task;
+pub mod selector;
 pub mod sources;
 
 // Public re-exports — surfaced for the CLI subcommand + wizard

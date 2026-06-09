@@ -337,25 +337,28 @@ mod tests {
 
     // ── model tier ────────────────────────────────────────────────
 
+    // GOLD-ADOPT-10: tiers are now F16-honest (a 72B is ~187 GB F16 → never
+    // fits a consumer GPU on the candle path).
     #[test]
-    fn recommend_72b_for_24gib_cuda() {
+    fn recommend_7b_for_24gib_cuda() {
         let r = recommend(
             &report_with_gpu(Some(gpu(GpuKind::Cuda, 24 * 1024))),
             ExperienceLevel::Intermediate,
             false,
         );
-        assert_eq!(r.model_tier, "qwen2.5-72b");
+        assert_eq!(r.model_tier, "qwen2.5-7b");
         assert!(r.offer_gpu_toggles);
     }
 
     #[test]
-    fn recommend_7b_for_16gib_cuda() {
+    fn recommend_3b_for_16gib_cuda() {
+        // A 7B needs ~18 GB F16, so 16 GiB lands on the 3B.
         let r = recommend(
             &report_with_gpu(Some(gpu(GpuKind::Cuda, 16 * 1024))),
             ExperienceLevel::Intermediate,
             false,
         );
-        assert_eq!(r.model_tier, "qwen2.5-7b");
+        assert_eq!(r.model_tier, "qwen2.5-3b");
     }
 
     #[test]

@@ -82,18 +82,15 @@ impl GpuReport {
         }
     }
 
-    /// Model-tier recommendation thresholds — keep consts together
-    /// so a future tier shift (qwen3 lands?) edits one location.
-    /// Returns the operator-facing tier name.
+    /// Operator-facing local-model tier for this GPU's VRAM.
+    ///
+    /// GOLD-ADOPT-10: routes through `models::selector::recommended_tier_label`,
+    /// the single source of truth, which sizes models against NEOTH's **F16
+    /// candle path**. The old hardcoded thresholds (≥24 GiB → 72B) assumed
+    /// quantized inference and recommended models that won't actually load
+    /// (a 72B is ~187 GB in F16; a 24 GiB GPU holds a 7B).
     pub fn recommended_model_tier(&self) -> &'static str {
-        match self.vram_mib {
-            Some(mib) if mib >= 24 * 1024 => "qwen2.5-72b",
-            Some(mib) if mib >= 8 * 1024 => "qwen2.5-7b",
-            // < 8 GiB OR unknown VRAM → cloud fallback. Unknown
-            // VRAM with `kind != Cpu` may still mean a real GPU
-            // (probe format change), but conservatively pick cloud.
-            _ => "cloud",
-        }
+        crate::models::selector::recommended_tier_label(self.vram_mib)
     }
 }
 
@@ -222,32 +219,37 @@ mod tests {
 
     // ── recommended tier ──────────────────────────────────────────
 
+    // GOLD-ADOPT-10: tiers are now F16-honest (a 72B is ~187 GB in F16 — it
+    // never fits a consumer GPU on the candle path). 24 GiB → 7B, not 72B.
     #[test]
-    fn recommends_72b_at_24gib_plus() {
+    fn recommends_7b_at_24gib() {
         let r = GpuReport {
             kind: GpuKind::Cuda,
             vram_mib: Some(24 * 1024),
             vendor: None,
             name: None,
         };
-        assert_eq!(r.recommended_model_tier(), "qwen2.5-72b");
+        assert_eq!(r.recommended_model_tier(), "qwen2.5-7b");
     }
 
     #[test]
-    fn recommends_7b_between_8_and_24gib() {
-        for mib in [8 * 1024, 16 * 1024, 24 * 1024 - 1] {
+    fn recommends_3b_between_8_and_18gib() {
+        // 7B needs ~18 GB F16, so 8..16 GiB lands on the 3B (~7.8 GB).
+        for mib in [8 * 1024, 16 * 1024] {
             let r = GpuReport {
                 kind: GpuKind::Cuda,
                 vram_mib: Some(mib),
                 vendor: None,
                 name: None,
             };
-            assert_eq!(r.recommended_model_tier(), "qwen2.5-7b");
+            assert_eq!(r.recommended_model_tier(), "qwen2.5-3b");
         }
     }
 
     #[test]
     fn recommends_cloud_below_8gib() {
+        // 6 GiB only fits a sub-3B local → the recommendation tier is cloud
+        // (the runnable local fit is still a 1.5B, surfaced separately).
         let r = GpuReport {
             kind: GpuKind::Cuda,
             vram_mib: Some(6 * 1024),
