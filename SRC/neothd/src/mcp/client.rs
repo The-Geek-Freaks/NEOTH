@@ -36,6 +36,28 @@ pub struct McpTool {
     /// generation.
     #[serde(default, rename = "inputSchema")]
     pub input_schema: serde_json::Value,
+    /// MCP tool behaviour annotations (spec `tools/list` → `annotations`).
+    /// The server's DECLARED EFFECT metadata — `readOnlyHint` /
+    /// `destructiveHint` — used by ADOPT-22 SmartApprove to auto-approve a
+    /// Confirm-gated call by its EFFECT, never by its name (the operator's
+    /// trust-creep guard). `None` when the server declares no annotations.
+    #[serde(default)]
+    pub annotations: Option<ToolAnnotations>,
+}
+
+/// MCP tool behaviour annotations (spec: `ToolAnnotations`). Only the two hints
+/// SmartApprove acts on are captured; unknown fields are ignored. Every hint is
+/// `Option` because a server may declare some, all, or none.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq, Default)]
+pub struct ToolAnnotations {
+    /// The tool performs no environment mutation (read-only). The PRIMARY
+    /// auto-approve signal.
+    #[serde(default, rename = "readOnlyHint")]
+    pub read_only_hint: Option<bool>,
+    /// The tool may perform destructive (irreversible) updates. When `true`,
+    /// SmartApprove NEVER auto-approves it regardless of any read-only hint.
+    #[serde(default, rename = "destructiveHint")]
+    pub destructive_hint: Option<bool>,
 }
 
 /// One content fragment returned by a `tools/call` invocation.

@@ -126,6 +126,14 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // one more nudge instead of stopping, until the goal is checked / the grind
     // is bounded by max_iterations.
     let mut goal_tracker = crate::mcp::goal_tracker::GoalTracker::new(goal_context);
+    // GOLD-ADOPT-22 — SmartApprove read-only cache, session-scoped (persists
+    // across loop iterations so a server's tool annotations are seeded once).
+    // `Some` only when the operator opted in via `security.smart_approve`; the
+    // gate auto-approves a Confirm-gated call iff the tool's DECLARED EFFECT
+    // metadata marks it read-only. Discarded when the loop returns.
+    let mut smart_cache = security_policy
+        .smart_approve
+        .then(crate::mcp::smart_approve::ReadOnlyCache::new);
 
     loop {
         iterations += 1;
@@ -282,6 +290,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 writer,
                 rollback_policy,
                 skill_allowlist,
+                smart_cache.as_mut(),
             )
             .await
             {
@@ -323,6 +332,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn dispatch_one(
     call: &ParsedToolCall,
     servers: &McpServers,
@@ -330,6 +340,7 @@ async fn dispatch_one(
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
+    smart_approve: Option<&mut crate::mcp::smart_approve::ReadOnlyCache>,
 ) -> std::result::Result<String, String> {
     let Some(cfg) = servers.get_enabled(&call.server) else {
         return Err(format!(
@@ -372,6 +383,7 @@ async fn dispatch_one(
         autonomy,
         writer,
         rollback_policy,
+        smart_approve,
         now_unix,
     )
     .await

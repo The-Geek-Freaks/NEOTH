@@ -168,9 +168,21 @@ async fn run_call(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let result =
-        match invoke_with_audit(&mut client, cfg, tool, args, autonomy, None, None, now_unix).await
-        {
+    // `neoth mcp call` is an explicit operator one-shot — no SmartApprove
+    // (the operator is invoking the tool deliberately), so pass `None`.
+    let result = match invoke_with_audit(
+        &mut client,
+        cfg,
+        tool,
+        args,
+        autonomy,
+        None,
+        None,
+        None,
+        now_unix,
+    )
+    .await
+    {
             Ok(r) => r,
             Err(GateError::NotInAllowlist { .. }) => {
                 anyhow::bail!(

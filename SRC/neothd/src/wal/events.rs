@@ -485,6 +485,14 @@ pub const EVENT_TYPE_RISK_CONFIRM_USED: u8 = 0x55;
 /// verdict:"expired", rule, ts_unix}`.
 pub const EVENT_TYPE_RISK_CONFIRM_EXPIRED: u8 = 0x56;
 
+/// `0x57 RISK_GATE_ALLOWED_BY_READONLY_CACHE` — GOLD-ADOPT-22 SmartApprove
+/// auto-approved a Confirm-gated tool call because the tool's server-DECLARED
+/// EFFECT metadata (`readOnlyHint`, not its name) marked it read-only. Opt-in
+/// (`security.smart_approve`); NEVER fires on a `Deny` (the hard floor stands).
+/// Payload `{server, tool, reason:"readonly_hint", source:"smart_approve",
+/// ts_unix}` — args never stored.
+pub const EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE: u8 = 0x57;
+
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
 /// Scheduled job fired by the cron scheduler.
@@ -1780,6 +1788,10 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("risk_confirm_granted", EVENT_TYPE_RISK_CONFIRM_GRANTED),
     ("risk_confirm_used", EVENT_TYPE_RISK_CONFIRM_USED),
     ("risk_confirm_expired", EVENT_TYPE_RISK_CONFIRM_EXPIRED),
+    (
+        "risk_gate_allowed_by_readonly_cache",
+        EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
+    ),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2080,6 +2092,8 @@ const _: () = {
     let _ = [(); 1]
         [(EVENT_TYPE_RISK_CONFIRM_EXPIRED < 0x50 || EVENT_TYPE_RISK_CONFIRM_EXPIRED > 0x5F)
             as usize];
+    let _ = [(); 1][(EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE < 0x50
+        || EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
         || EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL < 0x60
@@ -2480,6 +2494,10 @@ mod tests {
             ("RISK_CONFIRM_GRANTED", EVENT_TYPE_RISK_CONFIRM_GRANTED),
             ("RISK_CONFIRM_USED", EVENT_TYPE_RISK_CONFIRM_USED),
             ("RISK_CONFIRM_EXPIRED", EVENT_TYPE_RISK_CONFIRM_EXPIRED),
+            (
+                "RISK_GATE_ALLOWED_BY_READONLY_CACHE",
+                EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
+            ),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),

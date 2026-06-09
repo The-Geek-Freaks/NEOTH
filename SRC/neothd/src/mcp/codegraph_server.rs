@@ -36,7 +36,17 @@ use std::path::Path;
 use anyhow::{Context, Result};
 use serde::Deserialize;
 
-use crate::mcp::client::{McpContent, McpTool, ToolCallResult};
+use crate::mcp::client::{McpContent, McpTool, ToolAnnotations, ToolCallResult};
+
+/// All three codegraph tools are pure read-only queries over the local
+/// code-map (no mutation) — declare it so ADOPT-22 SmartApprove can
+/// auto-approve them by EFFECT.
+fn read_only_annotations() -> Option<ToolAnnotations> {
+    Some(ToolAnnotations {
+        read_only_hint: Some(true),
+        destructive_hint: Some(false),
+    })
+}
 
 /// Canonical tool list. Pure constant — no IO. Public so the GUI
 /// + the future stdio JSON-RPC wrapper consume the same definitions.
@@ -67,6 +77,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                 },
                 "required": ["prompt"]
             }),
+            annotations: read_only_annotations(),
         },
         McpTool {
             name: "codegraph_extract_identifiers".into(),
@@ -83,6 +94,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                 },
                 "required": ["text"]
             }),
+            annotations: read_only_annotations(),
         },
         McpTool {
             name: "codegraph_path_keywords".into(),
@@ -99,6 +111,7 @@ pub fn codegraph_tools() -> Vec<McpTool> {
                 },
                 "required": ["text"]
             }),
+            annotations: read_only_annotations(),
         },
     ]
 }
@@ -244,6 +257,21 @@ mod tests {
         assert!(names.contains(&"codegraph_relevant_files"));
         assert!(names.contains(&"codegraph_extract_identifiers"));
         assert!(names.contains(&"codegraph_path_keywords"));
+    }
+
+    #[test]
+    fn codegraph_tools_declare_read_only_effect_for_smart_approve() {
+        // GOLD-ADOPT-22: every codegraph tool is a pure query → readOnlyHint
+        // true + destructiveHint false, so SmartApprove classifies them
+        // read-only by EFFECT (the built-in consumer of the feature).
+        for t in codegraph_tools() {
+            assert_eq!(
+                crate::mcp::smart_approve::classify_from_annotations(&t),
+                Some(true),
+                "{} must declare a read-only effect",
+                t.name
+            );
+        }
     }
 
     #[test]

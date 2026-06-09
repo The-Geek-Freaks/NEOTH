@@ -152,6 +152,34 @@ plugins:
   default_network: false
 ```
 
+### Tool risk gate & SmartApprove (`security:`)
+
+The `security:` block governs how the MCP tool-loop reacts to risky LLM-issued
+tool calls (GOLD-ADOPT-23/22):
+
+```yaml
+security:
+  dangerous_commands: deny      # deny (default) | confirm | warn
+  confirm_high: false           # also confirm HIGH findings (git push --force, curl|sh)
+  egress:
+    mode: allow                 # allow (default) | confirm_unknown | deny_unknown
+    allowlist: ["github.com"]   # IP literals match EXACTLY; hostnames match on a dot boundary
+  smart_approve: false          # opt-in confirm-bypass for read-only tools
+```
+
+- A blocked call is auditable per outcome: `neoth wal show --type risk_gate_denied`
+  / `risk_gate_confirm_required`. Lift a `confirm` for a TTL window with
+  `neoth risk-confirm --ttl 10m` (audited `risk_confirm_granted` →
+  `risk_confirm_used` / `risk_confirm_expired`).
+- **`smart_approve` (default off)** auto-approves a Confirm-gated tool call ONLY
+  when the tool's server-DECLARED effect metadata (`readOnlyHint`, never its
+  name) marks it read-only — never lifts a `deny`, never bypasses the
+  `allow_tools` allowlist, and every auto-approval is audited
+  (`risk_gate_allowed_by_readonly_cache`). **Trust assumption:** it trusts the
+  configured server's self-declared annotations for the session — a compromised
+  server can lie. Enable it only for servers under your operational control,
+  ideally with a minimal `allow_tools` list, and never with `trust_all_tools: true`.
+
 ## Credentials
 
 Credential setup should normally happen through:

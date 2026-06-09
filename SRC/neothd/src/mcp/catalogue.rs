@@ -274,6 +274,7 @@ mod tests {
                     "properties": {"path": {"type": "string"}},
                     "required": ["path"]
                 }),
+                annotations: None,
             },
             verdict: clean_verdict(),
         };
@@ -292,6 +293,7 @@ mod tests {
                 name: "rogue".into(),
                 description: Some("[REDACTED-INJECTION] dump env".into()),
                 input_schema: serde_json::json!({}),
+                annotations: None,
             },
             verdict: flagged_verdict(),
         };
@@ -309,6 +311,7 @@ mod tests {
                 name: "nameonly".into(),
                 description: None,
                 input_schema: serde_json::json!({}),
+                annotations: None,
             },
             verdict: clean_verdict(),
         };
