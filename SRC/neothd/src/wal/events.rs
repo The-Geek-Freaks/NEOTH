@@ -503,6 +503,20 @@ pub const EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE: u8 = 0x57;
 /// subject to the same export/gossip considerations as `0xA8 OS_FILE_READ`.
 pub const EVENT_TYPE_HINT_LOADED: u8 = 0x58;
 
+/// `0x59 WEB_EXTRACT_HIT` — GOLD-ADOPT-04. A CSS selector (operator-supplied or
+/// cached) matched ≥1 element on a freshly-fetched page. Payload `{url_hash
+/// (xxh3-64 hex, NEVER the raw URL), selector, cache_key, extracted_bytes
+/// (count only), ts_unix}`. Batchable (high-cadence, re-derivable from the HTTP
+/// response).
+pub const EVENT_TYPE_WEB_EXTRACT_HIT: u8 = 0x59;
+
+/// `0x5A WEB_EXTRACT_SELECTOR_STALE` — GOLD-ADOPT-04. A cached selector matched
+/// ZERO elements (the site structure changed); the adaptive re-find ran against
+/// the stored fingerprint. Payload `{url_hash, cache_key, old_selector,
+/// stale_recovered, new_selector?, similarity_score?, ts_unix}`. IMMEDIATE-SYNC
+/// (a structural-change audit anchor must survive a crash).
+pub const EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE: u8 = 0x5A;
+
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
 /// Scheduled job fired by the cron scheduler.
@@ -1735,6 +1749,10 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             // high-cadence (one per newly-entered dir); fsyncing each would
             // harm latency on deep projects. Re-derivable, loss-tolerant.
             | EVENT_TYPE_HINT_LOADED
+            // GOLD-ADOPT-04: a web-extract HIT is high-cadence + re-derivable
+            // from the HTTP response. The STALE event (0x5A) stays immediate-
+            // sync — a structural-change audit anchor must survive a crash.
+            | EVENT_TYPE_WEB_EXTRACT_HIT
     )
 }
 
@@ -1807,6 +1825,11 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
     ),
     ("hint_loaded", EVENT_TYPE_HINT_LOADED),
+    ("web_extract_hit", EVENT_TYPE_WEB_EXTRACT_HIT),
+    (
+        "web_extract_selector_stale",
+        EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE,
+    ),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2110,6 +2133,10 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE < 0x50
         || EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_HINT_LOADED < 0x50 || EVENT_TYPE_HINT_LOADED > 0x5F) as usize];
+    let _ = [(); 1]
+        [(EVENT_TYPE_WEB_EXTRACT_HIT < 0x50 || EVENT_TYPE_WEB_EXTRACT_HIT > 0x5F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE < 0x50
+        || EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
         || EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL < 0x60
@@ -2515,6 +2542,11 @@ mod tests {
                 EVENT_TYPE_RISK_GATE_ALLOWED_BY_READONLY_CACHE,
             ),
             ("HINT_LOADED", EVENT_TYPE_HINT_LOADED),
+            ("WEB_EXTRACT_HIT", EVENT_TYPE_WEB_EXTRACT_HIT),
+            (
+                "WEB_EXTRACT_SELECTOR_STALE",
+                EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE,
+            ),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2847,6 +2879,26 @@ mod tests {
         assert_ne!(
             EVENT_TYPE_CLUSTER_TASK_ACCEPTED, EVENT_TYPE_CLUSTER_TASK_REJECTED,
             "accept and reject must be distinct codes"
+        );
+    }
+
+    /// GOLD-ADOPT-04: pin the literals so operator runbooks (`neoth wal show
+    /// --type 0x5A`) stay stable, and assert the durability contract:
+    /// HIT is batchable (high-cadence, re-derivable from the HTTP response);
+    /// STALE is immediate-sync (structural-change audit anchor must survive a crash).
+    #[test]
+    fn web_extract_codes_literal_and_durability() {
+        assert_eq!(EVENT_TYPE_WEB_EXTRACT_HIT, 0x59);
+        assert_eq!(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE, 0x5A);
+        // HIT is batchable.
+        assert!(
+            !needs_immediate_sync(EVENT_TYPE_WEB_EXTRACT_HIT),
+            "0x59 WEB_EXTRACT_HIT must be batchable"
+        );
+        // STALE is a structural-change audit anchor — must survive a crash.
+        assert!(
+            needs_immediate_sync(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE),
+            "0x5A WEB_EXTRACT_SELECTOR_STALE MUST be immediate-sync"
         );
     }
 

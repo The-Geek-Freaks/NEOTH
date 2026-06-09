@@ -28,3 +28,8 @@ pub mod web_search;
 /// GOLD-ADOPT-26 — zero-config web-to-Markdown via https://r.jina.ai/<url>.
 /// Last-resort URL fetcher for the ingest pipeline; no API key required.
 pub mod jina_reader;
+/// GOLD-ADOPT-04 — native CSS HTML extraction + adaptive fingerprint re-find.
+pub mod web_extract;
+/// GOLD-ADOPT-04 — persistent selector cache wrapping web_extract with
+/// adaptive recovery + WAL audit.
+pub mod web_selector_cache;

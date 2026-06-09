@@ -50,11 +50,46 @@ pub struct FetchResult {
     pub truncated: bool,
 }
 
+/// GOLD-ADOPT-04 — a fetch that ALSO exposes the raw HTML body, so the
+/// [`crate::tools::web_extract`] CSS layer can run selectors on the real markup
+/// (the `meta.text` field is already stripped/extracted, useless for CSS). The
+/// raw HTML is populated only for `text/html` / `application/xhtml+xml`
+/// content-types (empty otherwise). Inherits the SSRF guard + no-redirect
+/// client from the shared path.
+#[derive(Clone, Debug)]
+pub struct RawFetchResult {
+    /// The raw HTML body (empty for non-HTML content-types).
+    pub raw_html: String,
+    /// The same metadata + stripped text a plain `fetch()` returns.
+    pub meta: FetchResult,
+}
+
 /// Fetch the URL + return clean-text body. HTML pages run through the
 /// stripper; text/* responses pass through verbatim (within the
 /// `MAX_EXTRACTED_BYTES` ceiling); other content types return their
 /// raw bytes count + empty text + a status flag.
 pub async fn fetch(url: &str) -> Result<FetchResult> {
+    fetch_inner(url).await.map(|(_, meta)| meta)
+}
+
+/// GOLD-ADOPT-04 — like [`fetch`] but also surfaces the raw HTML body for the
+/// CSS-extract layer.
+pub async fn fetch_raw(url: &str) -> Result<RawFetchResult> {
+    let (raw, meta) = fetch_inner(url).await?;
+    let raw_html = if meta.content_type.starts_with("text/html")
+        || meta.content_type.contains("xhtml")
+    {
+        raw
+    } else {
+        String::new()
+    };
+    Ok(RawFetchResult { raw_html, meta })
+}
+
+/// Shared fetch core — returns the raw body string AND the extracted
+/// [`FetchResult`]. Both [`fetch`] and [`fetch_raw`] go through here so the
+/// SSRF guard + no-redirect client + byte ceiling live in ONE place.
+async fn fetch_inner(url: &str) -> Result<(String, FetchResult)> {
     // SX-01: SSRF guard — strict URL parsing + scheme filtering + DNS
     // pre-resolution to block private/loopback/link-local/cloud-metadata
     // targets BEFORE the HTTP client opens a socket.
@@ -101,14 +136,17 @@ pub async fn fetch(url: &str) -> Result<FetchResult> {
     } else {
         (String::new(), false)
     };
-    Ok(FetchResult {
-        url: url.to_string(),
-        status,
-        content_type,
-        bytes,
-        text,
-        truncated,
-    })
+    Ok((
+        raw,
+        FetchResult {
+            url: url.to_string(),
+            status,
+            content_type,
+            bytes,
+            text,
+            truncated,
+        },
+    ))
 }
 
 /// SX-01: parse + validate URL. Rejects non-http(s) schemes, hostnames

@@ -334,6 +334,10 @@ quick-xml = "0.38"
 # Pure-Rust (no C deps), handles RSS 0.9x/1.0/2.0 + Atom 0.3/1.0 + JSON Feed 1.x.
 feed-rs = "2"
 
+# GOLD-ADOPT-04 — CSS-selector HTML extraction (servo html5ever + selectors).
+# Pure-Rust, no C deps. The only CSS-capable DOM parser in the tree.
+scraper = { version = "0.27", default-features = false }
+
 # N-3 Workstream D (Session 23) — base64url-NOPAD encoding for the
 # localhost API bearer token. 32 random bytes → 43-char URL-safe
 # token stored at ~/.neoth/n8n_api_token.

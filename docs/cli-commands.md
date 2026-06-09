@@ -599,6 +599,7 @@ Fetch a URL + return its text content (A-21)
 
 - `<URL>` — URL to fetch. Only http(s) schemes accepted
 - `--jina <JINA>` — GOLD-ADOPT-26 — fetch via the Jina Reader proxy (https://r.jina.ai), which renders JS-heavy / bot-blocked pages to clean Markdown. The last-resort path when the plain fetch returns thin or empty content
+- `--selector <SELECTOR>` — GOLD-ADOPT-04 — extract the text of elements matching this CSS selector from the fetched page (e.g. `--selector "h1.title"`). The selector is cached per host; if the site later changes and the selector breaks, an adaptive fingerprint re-find heals it. Mutually exclusive with `--jina`
 
 ## `neoth fs`
 

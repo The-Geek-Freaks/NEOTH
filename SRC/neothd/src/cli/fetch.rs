@@ -21,12 +21,62 @@ pub struct FetchArgs {
     #[arg(long)]
     pub jina: bool,
 
+    /// GOLD-ADOPT-04 — extract the text of elements matching this CSS selector
+    /// from the fetched page (e.g. `--selector "h1.title"`). The selector is
+    /// cached per host; if the site later changes and the selector breaks, an
+    /// adaptive fingerprint re-find heals it. Mutually exclusive with `--jina`.
+    #[arg(long)]
+    pub selector: Option<String>,
+
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
 }
 
 pub async fn run_fetch(args: FetchArgs) -> Result<()> {
+    if args.jina && args.selector.is_some() {
+        anyhow::bail!("--jina and --selector are mutually exclusive");
+    }
+    // GOLD-ADOPT-04 — CSS-selector extraction path.
+    if let Some(selector) = args.selector.clone() {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        crate::tools::web_selector_cache::init(&home).await;
+        let host = url::Url::parse(&args.url)
+            .ok()
+            .and_then(|u| u.host_str().map(|h| h.to_string()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let cache_key = format!("{host}:{selector}");
+        let result =
+            crate::tools::web_selector_cache::extract_with_cache(&args.url, &cache_key, &selector, None)
+                .await?;
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "url": args.url,
+                        "selector": selector,
+                        "selector_used": result.selector_used,
+                        "stale_recovered": result.stale_recovered,
+                        "hits": result.hits,
+                    }))?
+                );
+            }
+            OutputFormat::Table => {
+                println!("url:       {}", args.url);
+                println!("selector:  {selector}");
+                if result.stale_recovered {
+                    println!("recovered: yes (selector healed to `{}`)", result.selector_used);
+                }
+                println!("matches:   {}", result.hits.len());
+                println!();
+                for h in &result.hits {
+                    println!("{h}");
+                }
+            }
+        }
+        return Ok(());
+    }
     if args.jina {
         // SSRF-guard the ORIGINAL URL (scheme + private-IP) before handing it
         // to the proxy; r.jina.ai itself is a fixed public host.
@@ -81,6 +131,7 @@ mod tests {
         let args = FetchArgs {
             url: "file:///etc/passwd".to_string(),
             jina: false,
+            selector: None,
             output: OutputFormat::Json,
         };
         let err = run_fetch(args).await.unwrap_err();
@@ -93,9 +144,35 @@ mod tests {
         let args = FetchArgs {
             url: "file:///etc/passwd".to_string(),
             jina: true,
+            selector: None,
             output: OutputFormat::Json,
         };
         let err = run_fetch(args).await.unwrap_err();
         assert!(err.to_string().contains("http(s)"));
+    }
+
+    #[tokio::test]
+    async fn selector_and_jina_are_mutually_exclusive() {
+        let args = FetchArgs {
+            url: "https://example.com".to_string(),
+            jina: true,
+            selector: Some("h1".to_string()),
+            output: OutputFormat::Json,
+        };
+        let err = run_fetch(args).await.unwrap_err();
+        assert!(err.to_string().contains("mutually exclusive"), "{err}");
+    }
+
+    #[test]
+    fn selector_flag_parses() {
+        use clap::Parser;
+        #[derive(Parser)]
+        struct Wrap {
+            #[command(flatten)]
+            args: FetchArgs,
+        }
+        let w = Wrap::parse_from(["x", "https://e.com", "--selector", "span.price"]);
+        assert_eq!(w.args.selector.as_deref(), Some("span.price"));
+        assert!(!w.args.jina);
     }
 }
