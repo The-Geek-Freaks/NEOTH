@@ -323,6 +323,7 @@ mod tests {
                 allowlist: vec![],
             },
             confirm_high: false,
+            smart_approve: false,
         };
         let v = evaluate_tool_risk(
             &risk(vec![dangerous("rm_rf_root", Severity::Critical)], vec![egress("x.com")]),
