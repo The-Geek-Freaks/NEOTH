@@ -478,6 +478,50 @@ pub fn verify_integrity(
     }
 }
 
+/// Full-auto operating mode — is this discovered, currently-`Pending` plugin
+/// eligible for AUTOMATIC activation without an explicit `neoth plugin enable`?
+///
+/// The bar is deliberately HIGHER than [`verify_integrity`] (which only gates
+/// what may run once Active): full-auto auto-activation requires TWO
+/// independent operator trust signals, so flipping into full-auto can never
+/// silently run untrusted third-party WASM. Eligible iff ALL hold:
+///
+///   1. Clears the full integrity gate (not revoked, pin matches if present,
+///      `require_all_pinned` honoured) — [`verify_integrity`] returns `Ok`.
+///   2. Has an EXPLICIT hash pin for its own id — `policy.pinned` contains it
+///      (merely "no pin and pins not required" is NOT enough; the operator must
+///      have pinned exactly this binary).
+///   3. Carries a signature that VERIFIES against the configured trusted author
+///      key — `verify_plugin_signature(.., require=true) == Ok(Verified)`. An
+///      unsigned plugin, a missing author key, or a soft "UnsignedAllowed"
+///      outcome all fail here.
+///
+/// Anything not eligible stays `Pending` even in full-auto — the operator
+/// activates it with `neoth plugin enable <id>`. Revoked / invalid-signature
+/// plugins are refused by the integrity gate as always.
+pub fn auto_activation_eligible(plugin: &DiscoveredPlugin, policy: &IntegrityPolicy<'_>) -> bool {
+    // 1. Must clear the standard integrity gate first.
+    if verify_integrity(plugin, policy).is_err() {
+        return false;
+    }
+    // 2. Trust signal #1 — an explicit pin for THIS plugin id.
+    if !policy.pinned.contains_key(&plugin.manifest.id) {
+        return false;
+    }
+    // 3. Trust signal #2 — a real, verified author signature. `require=true`
+    //    makes unsigned / no-key return Err (not a permissive Ok), so only a
+    //    genuine `Verified` passes.
+    matches!(
+        verify_plugin_signature(
+            &plugin.wasm_bytes,
+            plugin.signature.as_deref(),
+            policy.author_pubkey,
+            true,
+        ),
+        Ok(PluginSigOutcome::Verified)
+    )
+}
+
 /// SC-03 — outcome of a plugin signature check that did NOT hard-fail.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluginSigOutcome {
@@ -917,6 +961,89 @@ mod tests {
         // NOTE: the Verified path needs a real keypair + signature, which
         // a unit test can't mint without embedding a private key — same
         // documented limitation as updater::sig_verify.
+    }
+
+    #[test]
+    fn auto_activation_rejects_unsigned_even_when_pinned() {
+        // Full-auto floor: a pinned-but-UNSIGNED plugin is NOT auto-activated.
+        // A hash pin proves the bytes didn't change; it does NOT prove who
+        // produced them. Without a verified author signature it stays Pending.
+        let p = discovered("pinnedunsigned", MINIMAL_WASM);
+        let mut pinned = BTreeMap::new();
+        pinned.insert("pinnedunsigned".to_string(), p.content_hash.clone());
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+            author_pubkey: Some("RWQabc"), // key configured, but plugin is unsigned
+            require_signature: false,
+            revoked: &[],
+        };
+        assert!(
+            !auto_activation_eligible(&p, &policy),
+            "an unsigned plugin must never auto-activate, even pinned"
+        );
+    }
+
+    #[test]
+    fn auto_activation_rejects_unpinned_plugin() {
+        // Passes a permissive integrity gate (no pin required, no key) yet is
+        // NOT auto-activated: no explicit pin = no trust signal #1.
+        let p = discovered("loose", MINIMAL_WASM);
+        let empty = BTreeMap::new();
+        let policy = IntegrityPolicy {
+            pinned: &empty,
+            require_all_pinned: false,
+            author_pubkey: None,
+            require_signature: false,
+            revoked: &[],
+        };
+        assert!(
+            verify_integrity(&p, &policy).is_ok(),
+            "precondition: a loose plugin clears the standard integrity gate"
+        );
+        assert!(
+            !auto_activation_eligible(&p, &policy),
+            "an unpinned plugin must never auto-activate"
+        );
+    }
+
+    #[test]
+    fn auto_activation_rejects_revoked_plugin() {
+        let p = discovered("badactor", MINIMAL_WASM);
+        let mut pinned = BTreeMap::new();
+        pinned.insert("badactor".to_string(), p.content_hash.clone());
+        let revoked = vec!["badactor".to_string()];
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+            author_pubkey: Some("RWQabc"),
+            require_signature: false,
+            revoked: &revoked,
+        };
+        assert!(
+            !auto_activation_eligible(&p, &policy),
+            "a revoked plugin must never auto-activate (integrity gate refuses it)"
+        );
+    }
+
+    #[test]
+    fn auto_activation_rejects_when_no_author_key_configured() {
+        // Pinned but no author key to verify against → can't establish trust
+        // signal #2, so it stays Pending.
+        let p = discovered("pinnednokey", MINIMAL_WASM);
+        let mut pinned = BTreeMap::new();
+        pinned.insert("pinnednokey".to_string(), p.content_hash.clone());
+        let policy = IntegrityPolicy {
+            pinned: &pinned,
+            require_all_pinned: false,
+            author_pubkey: None,
+            require_signature: false,
+            revoked: &[],
+        };
+        assert!(
+            !auto_activation_eligible(&p, &policy),
+            "without a configured author key no plugin can auto-activate"
+        );
     }
 
     #[test]

@@ -2993,6 +2993,7 @@ fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle)
         author_pubkey,
         require_signature,
         revoked_ids,
+        full_auto,
     ): (
         std::collections::BTreeMap<String, crate::wasm_plugin::discovery::PluginActivation>,
         std::collections::BTreeMap<String, String>,
@@ -3000,6 +3001,7 @@ fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle)
         Option<String>,
         bool,
         Vec<String>,
+        bool,
     ) = match FreedomConfig::load_from_default_path() {
         Ok(cfg) => (
             cfg.plugins.wasm.activations.clone(),
@@ -3008,6 +3010,12 @@ fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle)
             cfg.plugins.wasm.author_pubkey.clone(),
             cfg.plugins.wasm.require_signature,
             cfg.plugins.wasm.revoked_ids.clone(),
+            // Full-auto mode (the same flag that opens autonomy to Full + routes
+            // the whole skill library) MAY auto-activate Pending plugins — but
+            // ONLY signed-by-trusted-author AND hash-pinned ones (see the
+            // `auto_activation_eligible` gate below). Unsigned/unpinned/revoked
+            // stay Pending exactly as in gated mode.
+            cfg.skills.enable_all_bundled,
         ),
         Err(e) => {
             warn!(
@@ -3022,6 +3030,7 @@ fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle)
                 None,
                 false,
                 Vec::new(),
+                false,
             )
         }
     };
@@ -3033,6 +3042,10 @@ fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle)
     let pre_filter = report.loaded.len();
     let mut skipped_pending: Vec<String> = Vec::new();
     let mut skipped_disabled: Vec<String> = Vec::new();
+    // Full-auto: Pending plugins promoted to Active because they passed the
+    // strict signed+pinned `auto_activation_eligible` gate. (id, content_hash)
+    // for the post-retain WAL audit.
+    let mut auto_activated: Vec<(String, String)> = Vec::new();
     // SC-03 — Active plugins that fail the integrity gate (pinned-hash
     // mismatch / unpinned-when-required) are refused before reaching the
     // engine. Collected separately so the operator sees a SECURITY skip,
@@ -3060,8 +3073,20 @@ fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle)
                 }
             }
             crate::wasm_plugin::discovery::PluginActivation::Pending => {
-                skipped_pending.push(p.manifest.id.clone());
-                false
+                // Full-auto auto-activation: a Pending plugin runs WITHOUT an
+                // explicit `neoth plugin enable` ONLY when it is signed by the
+                // operator's trusted author key AND hash-pinned (two independent
+                // trust signals). Everything else stays Pending — full-auto
+                // never silently runs untrusted WASM.
+                if full_auto
+                    && crate::wasm_plugin::discovery::auto_activation_eligible(p, &integrity_policy)
+                {
+                    auto_activated.push((p.manifest.id.clone(), p.content_hash.clone()));
+                    true
+                } else {
+                    skipped_pending.push(p.manifest.id.clone());
+                    false
+                }
             }
             crate::wasm_plugin::discovery::PluginActivation::Disabled => {
                 skipped_disabled.push(p.manifest.id.clone());
@@ -3086,6 +3111,35 @@ fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWriterHandle)
              Run `neoth plugin list` to read each plugin.wasm hash, then pin trusted \
              values in freedom.yaml::plugins.wasm.pinned_hashes"
         );
+    }
+    if !auto_activated.is_empty() {
+        warn!(
+            auto_activated = ?auto_activated.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            "full-auto mode AUTO-ACTIVATED signed+pinned plugins (no explicit \
+             `neoth plugin enable`) — each is signature-verified against \
+             plugins.wasm.author_pubkey AND hash-pinned"
+        );
+        // Forensic anchor: one 0xC2 PLUGIN_LOADED frame per auto-activation,
+        // marked source=full_auto, so WAL replay shows exactly which plugins
+        // ran without an explicit operator enable. Best-effort sync append —
+        // bootstrap is not async; a WAL failure must not block plugin loading.
+        for (id, content_hash) in &auto_activated {
+            let payload = serde_json::to_vec(&serde_json::json!({
+                "plugin": id,
+                "content_hash": content_hash,
+                "auto_activated": true,
+                "source": "full_auto",
+            }))
+            .unwrap_or_else(|_| b"{}".to_vec());
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_PLUGIN_LOADED,
+                &payload,
+            )
+            .build();
+            if let Err(e) = wal_writer.try_append_sync(header, payload) {
+                warn!(error = %e, plugin = %id, "full-auto plugin-activation WAL frame failed (best-effort)");
+            }
+        }
     }
     if !skipped_pending.is_empty() {
         info!(
