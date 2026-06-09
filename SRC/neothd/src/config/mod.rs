@@ -2830,6 +2830,20 @@ pub struct SkillsConfig {
     /// (default) = no force-ON overrides; ships-disabled skills stay disabled.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub enabled: Vec<String>,
+    /// Full-auto operating mode — when `true`, the loader force-enables EVERY
+    /// bundled skill (including the 68 `pm-*` skills that ship `enabled: false`)
+    /// so NEOTH proactively routes the entire library. The `disabled` blocklist
+    /// still wins over this (an operator force-OFF — e.g. the RASKAL offensive
+    /// register — is never silently re-enabled). Flipped together with
+    /// `autonomy: full` by `neoth autonomy full-auto` / `neoth sudomode`; cleared
+    /// by `neoth autonomy gated`.
+    ///
+    /// Routing-safety pairing: when this is `true` the chat + channel routers
+    /// raise their confidence floor to [`crate::skills::router::FULL_AUTO_MIN_WEIGHT`]
+    /// so a lone generic single-word trigger (now live across 98 skills) cannot
+    /// false-activate a turn. Default `false` = gated mode = curated skill set.
+    #[serde(default)]
+    pub enable_all_bundled: bool,
 }
 
 fn default_skills_always_embed_route() -> bool {
@@ -2845,6 +2859,7 @@ impl Default for SkillsConfig {
             always_embed_route: default_skills_always_embed_route(),
             disabled: Vec::new(),
             enabled: Vec::new(),
+            enable_all_bundled: false,
         }
     }
 }

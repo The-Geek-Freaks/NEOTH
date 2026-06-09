@@ -677,7 +677,24 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 let allowlist = channel_skill_allowlist(parent);
                 (layer, None, allowlist)
             } else {
-                let skill_match = crate::skills::route(&sanitized_text, &installed_skills);
+                // Full-auto mode raises the Stage-1 confidence floor so the
+                // now-fully-populated skill library can't false-activate on a
+                // lone generic single-word trigger. Read fresh per message
+                // (best-effort; mirrors the council.disabled fresh-read below)
+                // so `neoth autonomy full-auto` takes effect without a restart.
+                let stage1_floor = if crate::config::FreedomConfig::load_from_default_path()
+                    .map(|c| c.skills.enable_all_bundled)
+                    .unwrap_or(false)
+                {
+                    crate::skills::router::FULL_AUTO_MIN_WEIGHT
+                } else {
+                    crate::skills::router::DEFAULT_MIN_WEIGHT
+                };
+                let skill_match = crate::skills::router::route_with_min_weight(
+                    &sanitized_text,
+                    &installed_skills,
+                    stage1_floor,
+                );
                 if let Some(m) = &skill_match {
                     info!(
                         channel = channel_str,

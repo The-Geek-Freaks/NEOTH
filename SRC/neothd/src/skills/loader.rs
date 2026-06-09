@@ -105,6 +105,20 @@ pub async fn load_all(skills_dir: &Path) -> Result<Vec<Skill>> {
         }
     }
 
+    // ── full-auto operating mode — freedom.yaml skills.enable_all_bundled ──
+    // When the operator is in full-auto mode (`neoth autonomy full-auto` /
+    // `neoth sudomode`), force EVERY bundled skill enabled so NEOTH proactively
+    // routes the whole library — including the 68 `pm-*` skills that ship
+    // `enabled: false`. Applied FIRST so the `disabled` blocklist below still
+    // wins (an operator force-OFF, e.g. the RASKAL offensive register, is never
+    // silently re-enabled — the GOLD-HON-11 guarantee holds even in full-auto).
+    if read_enable_all_bundled(skills_dir) {
+        for skill in by_id.values_mut() {
+            skill.manifest.enabled = true;
+        }
+        debug!("full-auto mode: all bundled skills force-enabled (disabled blocklist still wins)");
+    }
+
     // ── GOLD-ADOPT-14 — freedom.yaml skills.enabled allowlist (force-ON) ──
     // The complement of the blocklist: turns ON a skill that ships
     // `enabled: false` (the 68 imported `pm-*` skills ship DISABLED). Applied
@@ -199,6 +213,28 @@ fn read_enabled_skill_ids(skills_dir: &Path) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Read `skills.enable_all_bundled: <bool>` (the full-auto force-ON-everything
+/// switch) from the `freedom.yaml` next to `<skills_dir>`. Same raw-`Value`
+/// walk + empty/missing-is-false semantics as [`read_disabled_skill_ids`], so a
+/// fresh install (no freedom.yaml, or the key absent) is gated mode by default.
+fn read_enable_all_bundled(skills_dir: &Path) -> bool {
+    let Some(home) = skills_dir.parent() else {
+        return false;
+    };
+    let freedom_path = home.join("freedom.yaml");
+    let Ok(body) = std::fs::read_to_string(&freedom_path) else {
+        return false;
+    };
+    let Ok(value) = serde_yaml::from_str::<serde_yaml::Value>(&body) else {
+        return false;
+    };
+    value
+        .get("skills")
+        .and_then(|s| s.get("enable_all_bundled"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }
 
 /// Decode every entry in [`super::bundled::BUNDLED_SKILLS`] into a `Skill`.
@@ -617,6 +653,57 @@ system_prompt: |
         assert!(
             pm.is_enabled(),
             "pm-off-skill must be force-enabled via skills.enabled (case-insensitive)"
+        );
+    }
+
+    #[tokio::test]
+    async fn enable_all_bundled_force_ons_pm_skill_but_blocklist_still_wins() {
+        // Full-auto mode (`skills.enable_all_bundled: true`) force-enables EVERY
+        // bundled skill — including a `pm-*` skill that ships `enabled: false` —
+        // yet a skill in `skills.disabled` stays OFF (the HON-11 guarantee must
+        // survive full-auto: an operator force-OFF is never silently re-enabled).
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        std::fs::write(
+            home.path().join("freedom.yaml"),
+            "skills:\n  enable_all_bundled: true\n  disabled:\n    - raskal\n",
+        )
+        .unwrap();
+
+        let skills = load_all(&skills_dir).await.unwrap();
+        let pm = skills
+            .iter()
+            .find(|s| s.id() == "pm-create-prd")
+            .expect("pm-create-prd is bundled");
+        assert!(
+            pm.is_enabled(),
+            "a ships-disabled pm-* skill must be force-enabled in full-auto mode"
+        );
+        let raskal = skills
+            .iter()
+            .find(|s| s.id() == "raskal")
+            .expect("raskal is bundled");
+        assert!(
+            !raskal.is_enabled(),
+            "the disabled blocklist must beat enable_all_bundled (no HON-11 bypass)"
+        );
+    }
+
+    #[tokio::test]
+    async fn enable_all_bundled_absent_keeps_pm_skill_disabled() {
+        // Gated mode (default / key absent) leaves a ships-disabled pm-* skill
+        // OFF — the curated set the keyword router stays clean against.
+        let home = tempdir().unwrap();
+        let skills_dir = home.path().join("skills");
+        std::fs::write(home.path().join("freedom.yaml"), "skills: {}\n").unwrap();
+        let skills = load_all(&skills_dir).await.unwrap();
+        let pm = skills
+            .iter()
+            .find(|s| s.id() == "pm-create-prd")
+            .expect("pm-create-prd is bundled");
+        assert!(
+            !pm.is_enabled(),
+            "without enable_all_bundled a pm-* skill must stay disabled (gated default)"
         );
     }
 

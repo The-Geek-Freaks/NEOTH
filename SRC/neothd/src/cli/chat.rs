@@ -654,7 +654,16 @@ pub async fn run_chat_with(
         // (nothing crosses the bar) the keyword Stage-1 result stands as
         // the fallback. Either way Stage-2 only fires when the operator
         // configured `inference.embedding_provider` (off by default).
-        let mut skill_match = crate::skills::route(&prompt, &installed_skills);
+        // Full-auto mode (the whole 98-skill library is live) raises the
+        // Stage-1 confidence floor so a lone generic single-word trigger can't
+        // false-activate; gated mode keeps the historical floor of 1.
+        let stage1_floor = if config.skills.enable_all_bundled {
+            crate::skills::router::FULL_AUTO_MIN_WEIGHT
+        } else {
+            crate::skills::router::DEFAULT_MIN_WEIGHT
+        };
+        let mut skill_match =
+            crate::skills::router::route_with_min_weight(&prompt, &installed_skills, stage1_floor);
         if skill_match.is_none() || config.skills.always_embed_route {
             if let Some(embed_provider) =
                 crate::providers::embed_provider_from_config(&config).await

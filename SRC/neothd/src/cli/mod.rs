@@ -275,9 +275,17 @@ pub enum Commands {
     Kanban(kanban::KanbanArgs),
 
     /// View or set the operator autonomy level (`strict | standard | elevated
-    /// | full | custom`) in freedom.yaml. `show` prints the current level;
-    /// `set <level>` persists a new one without re-running the wizard.
+    /// | full | custom`) in freedom.yaml. `show` prints the current level + the
+    /// operating mode; `set <level>` persists a raw level; `gated` / `full-auto`
+    /// are the headline operating-mode switches.
     Autonomy(autonomy::AutonomyArgs),
+
+    /// Shortcut for `neoth autonomy full-auto` (GOLD-FEAT-01): flip NEOTH into
+    /// FULL-AUTO mode in one word — autonomy `full` + the entire skill library
+    /// routed proactively. The irreducible security floor still holds
+    /// (self-replace / patch-apply / dangerous targets stay gated; revoked &
+    /// unsigned plugins stay blocked). Switch back with `neoth autonomy gated`.
+    Sudomode,
 
     /// Compose dreams now (SPEC-12 / R-02): `dream now` runs one dreaming pass
     /// over the recent window on-demand — embed + cosine-cluster the window's
@@ -957,6 +965,15 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Commands::Autonomy(args) => {
             autonomy::run_autonomy(args, global_output).await?;
+        }
+        Commands::Sudomode => {
+            autonomy::run_autonomy(
+                autonomy::AutonomyArgs {
+                    action: autonomy::AutonomyAction::FullAuto,
+                },
+                global_output,
+            )
+            .await?;
         }
         Commands::Cron(args) => {
             cron::run_cron(args, global_output).await?;
