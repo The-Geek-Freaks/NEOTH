@@ -493,6 +493,27 @@ pub async fn run_monitor_tick_live(
 
 /// Spawn the monitor cron loop. Returns `None` when `config.enabled ==
 /// false` (default) so opt-out operators carry no idle tokio task.
+/// GOLD-ADOPT-27 — at monitor start, probe every channel's config-completeness
+/// and `warn!` any that are actively misconfigured (e.g. one of a required
+/// token pair). Best-effort: a missing config/creds file → no warning. The full
+/// per-channel table lives in `neoth status`.
+fn warn_misconfigured_channels(home: &Path) {
+    let cfg = crate::config::FreedomConfig::load_from_path(&home.join("freedom.yaml")).ok();
+    let creds = crate::config::credentials::Credentials::load_or_default(
+        &home.join("credentials.yaml"),
+    )
+    .unwrap_or_default();
+    let view = crate::channels::probe::ChannelCredsView::from_config(cfg.as_ref(), &creds);
+    for h in crate::channels::probe::misconfigured(&view) {
+        tracing::warn!(
+            channel = h.channel,
+            status = h.status.as_str(),
+            "channel misconfigured: {} (see `neoth status`)",
+            h.message
+        );
+    }
+}
+
 pub fn spawn_monitor_cron_loop(
     config: MonitorConfig,
     home: PathBuf,
@@ -514,6 +535,10 @@ pub fn spawn_monitor_cron_loop(
             min_repeat_alert_secs = config.min_repeat_alert_secs,
             "monitor cron loop online (HO-07)",
         );
+        // GOLD-ADOPT-27 — channel health probe. A channel misconfig is STATIC
+        // config state (changes only on reload), so warn ONCE at monitor start
+        // rather than every tick. The rich per-channel table is `neoth status`.
+        warn_misconfigured_channels(&home);
         loop {
             ticker.tick().await;
             match run_monitor_tick_live(

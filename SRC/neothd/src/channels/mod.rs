@@ -37,6 +37,7 @@ pub mod keet_wal;
 /// corrections. First call sends, later calls edit-in-place + emit `0x38`.
 pub mod live_delivery;
 pub mod pears_bridge;
+pub mod probe;
 pub mod rate_limit;
 pub mod send_gate;
 pub mod slack;
