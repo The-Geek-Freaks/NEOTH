@@ -2759,6 +2759,29 @@ fn recommended_provider_for_role(role: &str) -> crate::config::inference::Infere
     }
 }
 
+/// GOLD-ADOPT-12 — the LOCAL mirror of [`recommended_provider_for_role`]: which
+/// LOCAL provider to recommend per hemisphere role for a fully-local brain. The
+/// analytic LEFT role gets **`LocalOuro`** (ByteDance's looped LoopLM — explicit
+/// multi-step reasoning, the local analog of the cloud default's `ClaudeCli`
+/// on left); the creative RIGHT and fast CEREBELLUM roles get `LocalQwen`.
+///
+/// NOTE: a `left=Ouro` + `right/cerebellum=Qwen` split loads TWO local model
+/// families, so the VRAM-shared [`apply_local_only_preset`] deliberately keeps a
+/// single shared Qwen by default (noob-VRAM-safe). This Ouro-on-left
+/// recommendation is applied only by the explicit `neoth hemispheres preset
+/// local-reasoning`, where the operator opts into the extra VRAM cost knowingly.
+pub(crate) fn recommended_local_provider_for_role(
+    role: &str,
+) -> crate::config::inference::InferenceProvider {
+    use crate::config::inference::InferenceProvider as I;
+    match role {
+        "left" => I::LocalOuro,       // explicit-reasoning LoopLM for the analytic role
+        "right" => I::LocalQwen,      // creative / freeform
+        "cerebellum" => I::LocalQwen, // fast routing
+        _ => I::LocalQwen,
+    }
+}
+
 /// Suggest a sensible default model per provider × role pair. Operators
 /// editing in Custom mode want a starting point; they can override.
 ///
@@ -5390,6 +5413,18 @@ mod tests {
         assert_eq!(recommended_provider_for_role("left"), I::ClaudeCli);
         assert_eq!(recommended_provider_for_role("right"), I::Gemini);
         assert_eq!(recommended_provider_for_role("cerebellum"), I::LocalQwen);
+    }
+
+    #[test]
+    fn recommended_local_provider_puts_ouro_on_analytic_left() {
+        // GOLD-ADOPT-12: the local mirror — Ouro (reasoning LoopLM) takes the
+        // analytic LEFT slot just as ClaudeCli does in the cloud default;
+        // right + cerebellum stay on local Qwen.
+        use crate::config::inference::InferenceProvider as I;
+        assert_eq!(recommended_local_provider_for_role("left"), I::LocalOuro);
+        assert_eq!(recommended_local_provider_for_role("right"), I::LocalQwen);
+        assert_eq!(recommended_local_provider_for_role("cerebellum"), I::LocalQwen);
+        assert_eq!(recommended_local_provider_for_role("hippocampus"), I::LocalQwen);
     }
 
     // ── Finding 6 (Session 13) wizard local-only preset ─────────────

@@ -598,6 +598,7 @@ Aggregate recent operator-correction (`0xBB`) signals into a report: count, top 
 Fetch a URL + return its text content (A-21)
 
 - `<URL>` — URL to fetch. Only http(s) schemes accepted
+- `--jina <JINA>` — GOLD-ADOPT-26 — fetch via the Jina Reader proxy (https://r.jina.ai), which renders JS-heavy / bot-blocked pages to clean Markdown. The last-resort path when the plain fetch returns thin or empty content
 
 ## `neoth fs`
 
@@ -665,6 +666,30 @@ List pull requests
 NOOB-UX-2 glossary screen. `neoth glossary` prints the operator-readable cheat sheet for NEOTH-specific terms (plugin / channel / council / provider / WAL / autonomy / hemisphere / skill / mode / groundtruth / profile)
 
 - `--term <TERM>` — Filter to a single term (case-insensitive substring match). `--term skill` shows all rows matching "skill"
+
+## `neoth goal`
+
+Goal/Grind dispatch-loop nudges (GOLD-ADOPT-22)
+
+### `neoth goal grind`
+
+Set the relentless grind objective (the model won't stop early until the dispatch-loop iteration cap)
+
+- `<TEXT>` — The grind text
+
+### `neoth goal off`
+
+Clear both goal and grind
+
+### `neoth goal set`
+
+Set the one-shot goal (replaces any existing goal)
+
+- `<TEXT>` — The goal text the model must verify before finishing
+
+### `neoth goal show`
+
+Show the active goal + grind (the default — also runs with no subcommand via the wrapper)
 
 ## `neoth groundtruth`
 
@@ -744,6 +769,14 @@ Consolidated hardware probe — CPU + RAM + accelerator (CUDA / Metal / OpenVINO
 ## `neoth hemispheres`
 
 Per-hemisphere provider configuration (Left/Right/Cerebellum). `show` displays the current binding; `set --role X --provider Y` mutates `freedom.yaml::inference.<role>` atomically; `test --role X` builds the adapter without making a live LLM call. See `PLAN/SPEC_hemisphere_provider_selection.md`
+
+### `neoth hemispheres preset`
+
+Apply a named hemisphere preset to `freedom.yaml` non-interactively (GOLD-ADOPT-12) — the same presets the `neoth init` wizard offers. Writes atomically + emits a 0x1F HEMISPHERE_REBOUND audit frame per changed role (with a pre-mutation rollback snapshot)
+
+- `<NAME>` — Preset to apply: `local` / `local-reasoning` / `local-abliterated` / `single`
+- `--vram <VRAM>` — (local-abliterated) override detected VRAM in MiB instead of probing
+- `--count <COUNT>` — (local-abliterated) how many hemispheres run local — default = the most the VRAM supports
 
 ### `neoth hemispheres set`
 
@@ -1128,6 +1161,14 @@ _Aliases:_ `neoth models fetch`
 
 - `<NAME>` — Model id. Known: `clip`, `whisper`
 - `--repo <REPO>` — Override the HF repo (otherwise the default for the chosen name is used)
+
+### `neoth models recommend`
+
+Recommend the best LOCAL model(s) for this machine's VRAM and print ready-to-run `ollama pull` commands (GOLD-ADOPT-10/11/13). Quantized (Q4/Q8), abliterated-first, newest/best resolved live from HuggingFace
+
+- `--vram <VRAM>` — Override detected VRAM (MiB) instead of probing the GPU. Useful on headless boxes or to preview a different tier
+- `--class <CLASS>` — Lineage to prefer. `abliterated` (default — uncensored) or `standard`
+- `--offline <OFFLINE>` — Skip the live HuggingFace lookup; use the verified curated repos only (offline / air-gapped)
 
 ## `neoth monitor`
 
@@ -1670,6 +1711,18 @@ Restore a previously-written backup into `~/.neoth/`
 - `--home <DIR>` — Target directory. Defaults to `~/.neoth/`
 - `--force <FORCE>` — Overwrite the target if it's non-empty
 
+## `neoth review`
+
+AI code review (GOLD-ADOPT-15) — wraps OpenCodeReview (`ocr`)
+
+- `--from <FROM>` — Source ref to diff from (branch/merge-base mode), e.g. `main`
+- `--to <TO>` — Target ref for the diff (defaults to the current branch when `--from` is set)
+- `-c, --commit <SHA>` — Review a single commit (or tag) against its parent
+- `-b, --background <TEXT>` — Optional requirement / business context to steer the review
+- `-p, --preview <PREVIEW>` — Preview which files would be reviewed — no LLM calls (free, fast)
+- `--agent <AGENT>` — Agent mode: summary only, no human progress lines (for piping)
+- `--repo <DIR>` — Repository root (defaults to the current directory)
+
 ## `neoth rollback`
 
 B-Rollback / CDX-02: query pre-mutation snapshots captured in the WAL. `list` walks every `*.wal` segment and renders the `PRE_MUTATION_SNAPSHOT` (0xF2) frames so operators see which mutations were captured + when. Per-MutationKind restoration dispatcher ships in a follow-up
@@ -1795,6 +1848,8 @@ _Aliases:_ `neoth skill`
 - `--create-keywords <KW,...>` — UX-06 non-interactive: comma-separated trigger keywords
 - `--create-system-prompt <PROMPT>` — UX-06 non-interactive: system prompt text
 - `--non-interactive <CREATE_NON_INTERACTIVE>` — UX-06: skip interactive prompts even on a TTY (drives `--create` from the `--create-*` flags only)
+- `--enable <SKILL_ID>` — GOLD-ADOPT-14 — activate a skill that ships disabled (e.g. the imported `pm-*` skills): adds it to `freedom.yaml::skills.enabled` (clearing any disable). Persists across restarts + binary upgrades
+- `--disable <SKILL_ID>` — GOLD-ADOPT-14 — deactivate a bundled skill: adds it to `freedom.yaml::skills.disabled` (clearing any enable). `disabled` always wins, so this also overrides a prior `--enable`
 
 ## `neoth slack`
 

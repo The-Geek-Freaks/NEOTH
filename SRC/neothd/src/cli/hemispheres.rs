@@ -10,7 +10,7 @@
 //! `cli::init`.
 
 use anyhow::{Context, Result};
-use clap::{Args, Subcommand};
+use clap::{Args, Subcommand, ValueEnum};
 
 use crate::cli::OutputFormat;
 use crate::config::FreedomConfig;
@@ -71,6 +71,40 @@ pub enum HemisphereAction {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Apply a named hemisphere preset to `freedom.yaml` non-interactively
+    /// (GOLD-ADOPT-12) — the same presets the `neoth init` wizard offers.
+    /// Writes atomically + emits a 0x1F HEMISPHERE_REBOUND audit frame per
+    /// changed role (with a pre-mutation rollback snapshot).
+    Preset {
+        /// Preset to apply: `local` / `local-reasoning` / `local-abliterated` /
+        /// `single`.
+        #[arg(value_enum)]
+        name: PresetName,
+        /// (local-abliterated) override detected VRAM in MiB instead of probing.
+        #[arg(long)]
+        vram: Option<u32>,
+        /// (local-abliterated) how many hemispheres run local — default = the
+        /// most the VRAM supports.
+        #[arg(long)]
+        count: Option<u8>,
+    },
+}
+
+/// Named hemisphere presets for `neoth hemispheres preset` (GOLD-ADOPT-12).
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresetName {
+    /// All three hemispheres → local Qwen via candle (Triplet, zero cloud, one
+    /// shared model — the VRAM-safe default).
+    Local,
+    /// Local reasoning split: LEFT → local Ouro (explicit-reasoning LoopLM),
+    /// RIGHT + CEREBELLUM → local Qwen. Loads TWO local model families — needs
+    /// the VRAM for both.
+    LocalReasoning,
+    /// VRAM-sized abliterated GGUFs via Ollama (1..=count local hemispheres,
+    /// rest stay on the existing slot).
+    LocalAbliterated,
+    /// Single-provider mode — all roles use `freedom.yaml::provider_kind`.
+    Single,
 }
 
 pub async fn run_hemispheres(args: HemispheresArgs) -> Result<()> {
@@ -90,7 +124,177 @@ pub async fn run_hemispheres(args: HemispheresArgs) -> Result<()> {
             question,
             dry_run,
         } => run_test(&cfg, &role, question.as_deref(), dry_run, &args.output).await,
+        HemisphereAction::Preset { name, vram, count } => {
+            run_preset(name, vram, count, &args.output).await
+        }
     }
+}
+
+/// Apply a named preset onto an existing topology (pure — VRAM is injected so
+/// the abliterated path is testable offline). `Local`/`Single` fully overwrite;
+/// `LocalReasoning` rebinds all three roles; `LocalAbliterated` rebinds only the
+/// local roles and PRESERVES the operator's existing (cloud) slots on the rest.
+/// Returns the new topology + a one-line operator summary, or `Err` when no
+/// local model fits the requested abliterated plan.
+pub(crate) fn build_preset_topology(
+    name: PresetName,
+    mut base: crate::config::inference::InferenceTopology,
+    vram_mib: Option<u32>,
+    count: Option<u8>,
+) -> Result<(crate::config::inference::InferenceTopology, String)> {
+    use crate::config::inference::{HemisphereSlot, TopologyMode};
+    let summary = match name {
+        PresetName::Local => {
+            crate::cli::init::apply_local_only_preset(&mut base);
+            "all hemispheres → local Qwen (candle, Triplet, one shared model)".to_string()
+        }
+        PresetName::LocalReasoning => {
+            let local_slot = |role: &str| HemisphereSlot {
+                provider: Some(crate::cli::init::recommended_local_provider_for_role(role)),
+                model: None,
+                key: None,
+                endpoint: None,
+                region: None,
+                api_version: None,
+                voice: None,
+            };
+            base.mode = TopologyMode::Triplet;
+            base.left = local_slot("left"); // LocalOuro — reasoning
+            base.right = local_slot("right"); // LocalQwen
+            base.cerebellum = local_slot("cerebellum"); // LocalQwen
+            base.default_slot = base.right.clone();
+            "left → local Ouro (reasoning), right + cerebellum → local Qwen".to_string()
+        }
+        PresetName::LocalAbliterated => {
+            let n = count.unwrap_or_else(|| {
+                crate::models::selector::recommended_local_count(vram_mib).max(1)
+            });
+            let preset = crate::models::hemisphere_preset::build_local_preset(
+                vram_mib,
+                n,
+                crate::models::gguf_variants::VariantClass::Abliterated,
+                crate::installers::ollama::DEFAULT_OLLAMA_PORT,
+            );
+            if preset.locals.is_empty() {
+                anyhow::bail!(
+                    "no local model fits {} — add a GPU, pass --vram, or pick a cloud provider",
+                    vram_mib
+                        .map(|m| format!("{:.1} GiB VRAM", m as f32 / 1024.0))
+                        .unwrap_or_else(|| "this machine".to_string())
+                );
+            }
+            let n_local = preset.locals.len();
+            crate::cli::init::apply_local_abliterated_preset(&mut base, &preset);
+            format!("{n_local} local abliterated hemisphere(s) via Ollama (Q4/Q8 GGUF)")
+        }
+        PresetName::Single => {
+            base.mode = TopologyMode::Single;
+            "single-provider mode — all roles use freedom.yaml::provider_kind".to_string()
+        }
+    };
+    Ok((base, summary))
+}
+
+async fn run_preset(
+    name: PresetName,
+    vram: Option<u32>,
+    count: Option<u8>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let mut cfg = FreedomConfig::load_from_default_path()
+        .context("load freedom.yaml — run `neoth init` first")?;
+
+    // VRAM is only consulted by the abliterated plan; probe lazily so the
+    // other presets stay offline-pure.
+    let vram_mib = if matches!(name, PresetName::LocalAbliterated) {
+        vram.or_else(|| crate::installers::gpu::probe_gpu().vram_mib)
+    } else {
+        vram
+    };
+
+    let prior = [
+        (HemisphereRole::Left, cfg.inference.left.clone()),
+        (HemisphereRole::Right, cfg.inference.right.clone()),
+        (HemisphereRole::Cerebellum, cfg.inference.cerebellum.clone()),
+    ];
+    let (new_topo, summary) =
+        build_preset_topology(name, std::mem::take(&mut cfg.inference), vram_mib, count)?;
+    cfg.inference = new_topo;
+
+    let path = FreedomConfig::default_path();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Pre-mutation rollback snapshot (mirrors run_set), so a mis-applied preset
+    // can be reverted via `neoth rollback apply`.
+    let prior_yaml_bytes = std::fs::read(&path).unwrap_or_default();
+    let wal_dir = FreedomConfig::default_wal_dir();
+    std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres preset audit")?;
+    let snapshot_segment = wal_dir.join(format!("hemispheres-preset-snapshot-{}.wal", now_unix));
+    let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment)
+        .context("spawn WAL writer for hemispheres preset rollback snapshot")?;
+    let _ = crate::wal::snapshot::emit_if_policy_allows(
+        &snap_writer,
+        &cfg.rollback,
+        crate::wal::snapshot::MutationKind::ConfigWrite,
+        path.display().to_string(),
+        &prior_yaml_bytes,
+        now_unix,
+        Some(format!("hemispheres preset {:?} via CLI", name)),
+    )
+    .await
+    .context("emit pre-mutation snapshot for freedom.yaml preset write")?;
+    drop(snap_writer);
+    let _ = snap_join.await;
+
+    cfg.save_public_to_default_path()
+        .with_context(|| format!("write {}", path.display()))?;
+
+    // Emit a HEMISPHERE_REBOUND frame for each role the preset actually changed.
+    let mut changed: Vec<&str> = Vec::new();
+    let mut audit_segment: Option<std::path::PathBuf> = None;
+    for (role, prior_slot) in &prior {
+        let new_slot = cfg.inference.slot_for(*role);
+        if new_slot.provider != prior_slot.provider || new_slot.model != prior_slot.model {
+            audit_segment =
+                Some(emit_rebind_audit(*role, prior_slot, new_slot, now_unix).await?);
+            changed.push(role.as_str());
+        }
+    }
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "preset": format!("{name:?}"),
+                    "mode": cfg.inference.mode.as_str(),
+                    "summary": summary,
+                    "changed_roles": changed,
+                    "audit_segment": audit_segment.map(|p| p.display().to_string()),
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!("# Hemisphere preset applied: {name:?}");
+            println!("  {summary}");
+            println!(
+                "  freedom.yaml::inference updated atomically (mode now {})",
+                cfg.inference.mode.as_str()
+            );
+            if changed.is_empty() {
+                println!("  (no role binding changed)");
+            } else {
+                println!(
+                    "  WAL 0x1F HEMISPHERE_REBOUND frames written for: {}",
+                    changed.join(", ")
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
@@ -546,6 +750,96 @@ mod tests {
         let err = parse_role("frontal").unwrap_err();
         assert!(err.to_string().contains("frontal"));
         assert!(err.to_string().contains("left"));
+    }
+
+    // ── GOLD-ADOPT-12 `neoth hemispheres preset` ──────────────────────────
+
+    #[test]
+    fn preset_local_binds_every_slot_to_local_qwen() {
+        use crate::config::inference::{InferenceProvider, InferenceTopology, TopologyMode};
+        let (topo, summary) =
+            build_preset_topology(PresetName::Local, InferenceTopology::default(), None, None)
+                .unwrap();
+        assert_eq!(topo.mode, TopologyMode::Triplet);
+        for slot in [&topo.left, &topo.right, &topo.cerebellum] {
+            assert_eq!(slot.provider, Some(InferenceProvider::LocalQwen));
+        }
+        assert!(summary.contains("local Qwen"));
+    }
+
+    #[test]
+    fn preset_local_reasoning_puts_ouro_on_left_qwen_elsewhere() {
+        use crate::config::inference::{InferenceProvider, InferenceTopology, TopologyMode};
+        let (topo, _) = build_preset_topology(
+            PresetName::LocalReasoning,
+            InferenceTopology::default(),
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(topo.mode, TopologyMode::Triplet);
+        assert_eq!(topo.left.provider, Some(InferenceProvider::LocalOuro));
+        assert_eq!(topo.right.provider, Some(InferenceProvider::LocalQwen));
+        assert_eq!(topo.cerebellum.provider, Some(InferenceProvider::LocalQwen));
+    }
+
+    #[test]
+    fn preset_single_sets_single_mode() {
+        use crate::config::inference::{InferenceTopology, TopologyMode};
+        let (topo, _) =
+            build_preset_topology(PresetName::Single, InferenceTopology::default(), None, None)
+                .unwrap();
+        assert_eq!(topo.mode, TopologyMode::Single);
+    }
+
+    #[test]
+    fn preset_local_abliterated_24gib_is_all_local_ollama() {
+        use crate::config::inference::{InferenceProvider, InferenceTopology, TopologyMode};
+        let (topo, summary) = build_preset_topology(
+            PresetName::LocalAbliterated,
+            InferenceTopology::default(),
+            Some(24 * 1024),
+            Some(3),
+        )
+        .unwrap();
+        assert_eq!(topo.mode, TopologyMode::Triplet);
+        // Every slot is an Ollama OpenAI-compat endpoint with an hf.co GGUF ref.
+        for slot in [&topo.left, &topo.right, &topo.cerebellum] {
+            assert_eq!(slot.provider, Some(InferenceProvider::OpenAiCompat));
+            assert!(slot.model.as_deref().unwrap_or("").starts_with("hf.co/"));
+        }
+        assert!(summary.contains("abliterated"));
+    }
+
+    #[test]
+    fn preset_local_abliterated_preserves_cloud_slots_when_mixed() {
+        use crate::config::inference::{HemisphereSlot, InferenceProvider, InferenceTopology};
+        // Operator already has Gemini on right; a 1-local preset must keep it.
+        let mut base = InferenceTopology::default();
+        base.right = HemisphereSlot {
+            provider: Some(InferenceProvider::Gemini),
+            model: Some("gemini-3.1-pro-preview".to_string()),
+            ..Default::default()
+        };
+        let (topo, _) =
+            build_preset_topology(PresetName::LocalAbliterated, base, Some(24 * 1024), Some(1))
+                .unwrap();
+        // Left went local; right kept its cloud binding.
+        assert_eq!(topo.left.provider, Some(InferenceProvider::OpenAiCompat));
+        assert_eq!(topo.right.provider, Some(InferenceProvider::Gemini));
+    }
+
+    #[test]
+    fn preset_local_abliterated_errors_when_nothing_fits() {
+        use crate::config::inference::InferenceTopology;
+        let err = build_preset_topology(
+            PresetName::LocalAbliterated,
+            InferenceTopology::default(),
+            Some(256), // 256 MiB holds no usable model
+            Some(3),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no local model fits"), "{err}");
     }
 
     // ── D-1 (Session 13) live-call path ───────────────────────────────
