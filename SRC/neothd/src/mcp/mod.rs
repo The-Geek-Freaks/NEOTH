@@ -35,6 +35,7 @@ pub mod codegraph_server;
 pub mod config;
 pub mod dispatch_loop;
 pub mod gate;
+pub mod repetition_guard;
 pub mod sanitizer;
 pub mod smart_loader;
 pub mod tool_call_parser;

@@ -106,6 +106,10 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     let mut successful_calls = 0u32;
     let mut failed_calls = 0u32;
     let mut current_text;
+    // GOLD-ADOPT-20 — stuck-loop guard, accumulated across all rounds of this
+    // loop invocation. A blocked call is not dispatched; the LLM sees a notice
+    // and (if every call in a round is blocked) the all-failed termination fires.
+    let mut repetition_guard = crate::mcp::repetition_guard::ToolRepetitionGuard::with_defaults();
 
     loop {
         iterations += 1;
@@ -126,6 +130,18 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         let mut iteration_had_success = false;
         let mut tool_result_blocks = Vec::new();
         for call in &extraction.calls {
+            // GOLD-ADOPT-20 — block runaway repetition BEFORE spawning a server.
+            let verdict = repetition_guard.check(call);
+            if verdict.is_blocked() {
+                failed_calls += 1;
+                warn!(
+                    server = %call.server,
+                    tool = %call.tool,
+                    "tool-repetition guard blocked a call (stuck-loop protection)"
+                );
+                tool_result_blocks.push(format_guard_block(call, &verdict));
+                continue;
+            }
             match dispatch_one(
                 call,
                 servers,
@@ -266,6 +282,30 @@ fn format_failure(call: &ParsedToolCall, reason: &str) -> String {
     )
 }
 
+/// GOLD-ADOPT-20 — render a repetition-guard block as an operator-visible
+/// tool-result so the LLM sees WHY the call didn't run and changes approach.
+fn format_guard_block(
+    call: &ParsedToolCall,
+    verdict: &crate::mcp::repetition_guard::GuardVerdict,
+) -> String {
+    use crate::mcp::repetition_guard::GuardVerdict;
+    let reason = match verdict {
+        GuardVerdict::BlockedConsecutive { count, .. } => format!(
+            "repetition guard: this identical call was issued {count} times in a row and was NOT \
+             executed. Change your approach — the repeated call is not making progress."
+        ),
+        GuardVerdict::BlockedCeiling { tool, count } => format!(
+            "repetition guard: `{tool}` has been called {count} times this turn (ceiling reached) \
+             and was NOT executed. Stop calling it and try a different strategy or finish."
+        ),
+        GuardVerdict::Allow => "repetition guard: allowed".to_string(),
+    };
+    format!(
+        "```mcp-tool-result\n{{\"server\": \"{}\", \"tool\": \"{}\", \"status\": \"BLOCKED\"}}\n{reason}\n```",
+        call.server, call.tool,
+    )
+}
+
 fn format_parse_error(err: &ParseError) -> String {
     format!(
         "```mcp-tool-result\n{{\"status\": \"PARSE_ERROR\"}}\n{}\nOriginal block: {}\n```",
@@ -343,6 +383,34 @@ mod tests {
                 .unwrap_or_else(|| "(no more scripted responses)".to_string());
             Box::pin(async move { Ok(resp) })
         }
+    }
+
+    #[test]
+    fn guard_block_renders_operator_visible_notice() {
+        use crate::mcp::repetition_guard::GuardVerdict;
+        let call = ParsedToolCall {
+            server: "fs".into(),
+            tool: "read".into(),
+            arguments: serde_json::json!({"path": "a"}),
+        };
+        let consec = format_guard_block(
+            &call,
+            &GuardVerdict::BlockedConsecutive {
+                tool: "fs::read".into(),
+                count: 4,
+            },
+        );
+        assert!(consec.contains("\"status\": \"BLOCKED\""));
+        assert!(consec.contains("4 times in a row"));
+        let ceil = format_guard_block(
+            &call,
+            &GuardVerdict::BlockedCeiling {
+                tool: "fs::read".into(),
+                count: 26,
+            },
+        );
+        assert!(ceil.contains("ceiling reached"));
+        assert!(ceil.contains("26 times"));
     }
 
     #[tokio::test]
