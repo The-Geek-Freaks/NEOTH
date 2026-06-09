@@ -670,18 +670,10 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     skill = %resolved.skill_id,
                     "mode activated via ModeRegistry (channel path)"
                 );
-                let layer = match parent {
-                    Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
-                        "{}\n\n{}",
-                        p.system_prompt(),
-                        resolved.mode.system_prompt_delta
-                    )),
-                    Some(p) => Some(p.system_prompt().to_string()),
-                    None if !resolved.mode.system_prompt_delta.is_empty() => {
-                        Some(resolved.mode.system_prompt_delta.clone())
-                    }
-                    None => None,
-                };
+                // GOLD-ADOPT-28 lazy routing: shared primitive — load ONLY the
+                // matched mode's sub-doc + thin parent base (same rule as the
+                // CLI path in cli/chat.rs, so the two can't drift).
+                let layer = crate::skills::router::compose_mode_skill_layer(parent, resolved);
                 let allowlist = channel_skill_allowlist(parent);
                 (layer, None, allowlist)
             } else {

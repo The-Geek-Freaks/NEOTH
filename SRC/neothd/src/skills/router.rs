@@ -13,9 +13,21 @@
 //! Activated from `cli::chat` when an `inference.embedding_provider` is
 //! configured; falls back to keyword-only Stage 1 otherwise.
 //!
+//! **Lazy routing (GOLD-ADOPT-28).** NEOTH keeps per-invocation context minimal
+//! by a two-level lazy selection rather than loading the whole skill library:
+//!   1. `route` / `route_stage2_embedding` pick AT MOST ONE skill — the others'
+//!      bodies never enter the prompt.
+//!   2. Within that skill, [`crate::skills::mode_registry::ModeRegistry`] picks
+//!      the matched MODE, and [`compose_mode_skill_layer`] loads ONLY that
+//!      mode's `system_prompt_delta` (its "reference sub-doc") on top of the
+//!      skill's thin base — the 14 sibling modes of a 15-mode skill like
+//!      `academic_research` never load. This is the
+//!      "intent → matched reference sub-doc, only that sub-doc loads" pattern.
+//!
 //! The router never mutates skills; cloning is fine because manifests are
 //! small (typically < 1 KiB).
 
+use super::mode_registry::ResolvedMode;
 use super::schema::Skill;
 
 /// The skill picked by the router for one message, plus the keywords that
@@ -74,6 +86,30 @@ pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
         matched_keywords,
         embedding_score: None,
     })
+}
+
+/// GOLD-ADOPT-28 lazy skill-routing — compose the system-prompt LAYER for an
+/// activated MODE, loading ONLY the matched mode's reference sub-doc
+/// (`system_prompt_delta`) on top of its parent skill's thin base. The parent
+/// skill's OTHER mode deltas never enter the prompt, so per-invocation context
+/// stays minimal even for a 15-mode skill.
+///
+/// This is the single source of truth shared by BOTH the CLI (`cli::chat`) and
+/// channel (`cli::serve_pipeline`) dispatch paths — previously each had its own
+/// copy of the rule, which drifted (the channel path once dropped the skill
+/// tool-allowlist entirely; see SC-11). Returns `None` only when there is
+/// neither a parent skill body nor a mode delta to inject.
+pub fn compose_mode_skill_layer(parent: Option<&Skill>, resolved: &ResolvedMode) -> Option<String> {
+    let delta = &resolved.mode.system_prompt_delta;
+    match parent {
+        // Thin base + ONLY the matched mode's reference sub-doc.
+        Some(p) if !delta.is_empty() => Some(format!("{}\n\n{}", p.system_prompt(), delta)),
+        Some(p) => Some(p.system_prompt().to_string()),
+        // Orphan mode (parent skill unloaded) — the delta alone still carries
+        // the behaviour.
+        None if !delta.is_empty() => Some(delta.clone()),
+        None => None,
+    }
 }
 
 /// Stage-2 cosine re-rank helper for callers that already hold a
@@ -246,6 +282,59 @@ mod tests {
     #[test]
     fn no_skills_no_match() {
         assert!(route("hello", &[]).is_none());
+    }
+
+    // ── GOLD-ADOPT-28 lazy mode-layer composition ──────────────────────────
+
+    fn resolved_mode(skill_id: &str, mode_id: &str, delta: &str) -> ResolvedMode {
+        use crate::skills::schema::{ModeEntry, OutputContract, Oversight, Spectrum};
+        ResolvedMode {
+            skill_id: skill_id.to_string(),
+            mode: ModeEntry {
+                id: mode_id.to_string(),
+                description: format!("mode {mode_id}"),
+                spectrum: Spectrum::Balanced,
+                oversight: Oversight::High,
+                output: OutputContract {
+                    format: "markdown".into(),
+                    length_hint: None,
+                },
+                trigger_phrases: vec![],
+                system_prompt_delta: delta.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn lazy_mode_layer_loads_only_matched_mode_sub_doc() {
+        // The lazy-routing invariant: a matched mode loads its OWN delta on top
+        // of the parent's thin base — a SIBLING mode's delta never enters.
+        let mut parent = skill("research", &[], true);
+        parent.manifest.system_prompt = "BASE-HEADER".to_string();
+        let matched = resolved_mode("research", "lit-review", "LIT-REVIEW-DELTA");
+        let layer = compose_mode_skill_layer(Some(&parent), &matched).unwrap();
+        assert!(layer.contains("BASE-HEADER"), "{layer}");
+        assert!(layer.contains("LIT-REVIEW-DELTA"), "{layer}");
+        // A different mode's reference sub-doc was NOT loaded.
+        assert!(!layer.contains("FACT-CHECK-DELTA"), "{layer}");
+    }
+
+    #[test]
+    fn lazy_mode_layer_handles_empty_delta_and_orphan_mode() {
+        let mut parent = skill("s", &[], true);
+        parent.manifest.system_prompt = "BASE".to_string();
+        // Empty delta → just the parent base.
+        assert_eq!(
+            compose_mode_skill_layer(Some(&parent), &resolved_mode("s", "m", "")).unwrap(),
+            "BASE"
+        );
+        // No parent + empty delta → None (nothing to inject).
+        assert!(compose_mode_skill_layer(None, &resolved_mode("s", "m", "")).is_none());
+        // No parent + a delta → the orphan mode's delta alone.
+        assert_eq!(
+            compose_mode_skill_layer(None, &resolved_mode("s", "m", "DELTA")).unwrap(),
+            "DELTA"
+        );
     }
 
     #[test]

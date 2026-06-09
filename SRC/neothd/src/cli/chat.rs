@@ -635,18 +635,10 @@ pub async fn run_chat_with(
             oversight = %resolved.mode.oversight.as_str(),
             "mode activated via ModeRegistry"
         );
-        let layer = match parent {
-            Some(p) if !resolved.mode.system_prompt_delta.is_empty() => Some(format!(
-                "{}\n\n{}",
-                p.system_prompt(),
-                resolved.mode.system_prompt_delta
-            )),
-            Some(p) => Some(p.system_prompt().to_string()),
-            None if !resolved.mode.system_prompt_delta.is_empty() => {
-                Some(resolved.mode.system_prompt_delta.clone())
-            }
-            None => None,
-        };
+        // GOLD-ADOPT-28 lazy routing: load ONLY the matched mode's sub-doc on
+        // top of the parent's thin base (shared primitive — same rule as the
+        // channel path in serve_pipeline.rs).
+        let layer = crate::skills::router::compose_mode_skill_layer(parent, resolved);
         // Mode activation is its own audit path — review-gate
         // dispatching via /agent is the explicit operator path,
         // so no used_skill_id surfaces here (mirrors the prior
