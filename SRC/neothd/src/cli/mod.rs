@@ -88,6 +88,7 @@ pub mod proactive;
 pub mod profile;
 pub mod providers;
 pub mod quota;
+pub mod goal;
 pub mod recall;
 pub mod review;
 pub mod recall_score;
@@ -520,6 +521,14 @@ pub enum Commands {
     /// json` emits machine-readable findings. OCR keeps its own LLM config
     /// (`ocr config`); NEOTH only invokes it.
     Review(review::ReviewArgs),
+
+    /// Goal/Grind dispatch-loop nudges (GOLD-ADOPT-22).
+    ///
+    /// `show` prints the active goal + grind (a live grind is loudly flagged);
+    /// `set <text>` / `grind <text>` arm them; `off` clears both. A grind makes
+    /// the model keep working every turn until the iteration cap — clear it when
+    /// the objective is done.
+    Goal(goal::GoalArgs),
 
     /// Multimodal asset ingest pipeline.
     ///
@@ -1039,6 +1048,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Review(mut args) => {
             args.output = global_output;
             review::run_review(args).await?;
+        }
+        Commands::Goal(mut args) => {
+            args.output = global_output;
+            goal::run_goal(args).await?;
         }
         Commands::Ingest(mut args) => {
             args.output = global_output;

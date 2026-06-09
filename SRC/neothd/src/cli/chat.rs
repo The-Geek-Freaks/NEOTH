@@ -1341,6 +1341,10 @@ pub async fn run_chat_with(
                 skill_allowlist,
                 config.goal.max_turns,
                 &config.security,
+                crate::mcp::goal_tracker::GoalContext {
+                    goal: config.goal.goal.clone(),
+                    grind: config.goal.grind.clone(),
+                },
             )
             .await
             {
@@ -3739,6 +3743,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
     max_iterations: u32,
     // GOLD-ADOPT-23 P0 — egress + dangerous-command risk policy gate.
     security_policy: &crate::config::SecurityPolicy,
+    // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
+    goal_context: crate::mcp::goal_tracker::GoalContext,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -3822,6 +3828,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         skill_allowlist,
         max_iterations.max(1),
         security_policy,
+        goal_context,
     )
     .await
 }

@@ -1514,12 +1514,28 @@ pub struct GoalConfig {
     /// hardcoded `dispatch_loop::DEFAULT_MAX_ITERATIONS`); raise it for deeper
     /// tool chains, lower it for a tighter leash.
     pub max_turns: u32,
+    /// GOLD-ADOPT-22 — a one-shot GOAL. When set, the dispatch loop injects ONE
+    /// invisible "before finishing, check this goal is met" nudge the first time
+    /// the model would stop, then lets the next clean exit end the loop. `None`
+    /// (default) = no goal nudge.
+    #[serde(default)]
+    pub goal: Option<String>,
+    /// GOLD-ADOPT-22 — a relentless GRIND objective. When set, EVERY clean exit
+    /// injects a "keep working, not done yet" nudge until `max_turns` is hit, so
+    /// the model can't stop early. `None` (default) = no grind. Clear it when the
+    /// objective is done — a persistent grind burns budget every turn.
+    #[serde(default)]
+    pub grind: Option<String>,
 }
 
 impl Default for GoalConfig {
     fn default() -> Self {
         // 5 = the prior hardcoded dispatch-loop cap (no behaviour change).
-        Self { max_turns: 5 }
+        Self {
+            max_turns: 5,
+            goal: None,
+            grind: None,
+        }
     }
 }
 

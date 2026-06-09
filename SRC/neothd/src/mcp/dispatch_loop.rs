@@ -90,6 +90,7 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         skill_allowlist,
         DEFAULT_MAX_ITERATIONS,
         security_policy,
+        crate::mcp::goal_tracker::GoalContext::empty(),
     )
     .await
 }
@@ -108,6 +109,8 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     max_iterations: u32,
     // GOLD-ADOPT-23 P0 — egress + dangerous-command policy gate.
     security_policy: &crate::config::SecurityPolicy,
+    // GOLD-ADOPT-22 — Goal/Grind nudge context (empty = no nudging).
+    goal_context: crate::mcp::goal_tracker::GoalContext,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -119,13 +122,33 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // loop invocation. A blocked call is not dispatched; the LLM sees a notice
     // and (if every call in a round is blocked) the all-failed termination fires.
     let mut repetition_guard = crate::mcp::repetition_guard::ToolRepetitionGuard::with_defaults();
+    // GOLD-ADOPT-22 — Goal/Grind tracker: on a clean exit (no tool calls), inject
+    // one more nudge instead of stopping, until the goal is checked / the grind
+    // is bounded by max_iterations.
+    let mut goal_tracker = crate::mcp::goal_tracker::GoalTracker::new(goal_context);
 
     loop {
         iterations += 1;
         current_text = driver.complete(&prompt).await?;
         let extraction = extract_tool_calls(&current_text);
         if extraction.is_empty() {
-            // No tool calls + no parse errors → model is done.
+            // No tool calls → the model thinks it's done. GOLD-ADOPT-22: if a
+            // goal/grind is active and we're under the cap, inject one nudge and
+            // keep going; otherwise stop.
+            if iterations < max_iterations {
+                if let Some(nudge) = goal_tracker.on_clean_exit() {
+                    // Visibility (GOLD-ADOPT-22): a grind keeps re-firing — make
+                    // sure the operator can see WHY the loop won't stop, and how
+                    // to stop it.
+                    warn!(
+                        iteration = iterations,
+                        "goal/grind ACTIVE — injecting a nudge instead of stopping \
+                         (clear with `neoth goal off`)"
+                    );
+                    prompt = format!("{prompt}\n\n{current_text}\n\n{nudge}");
+                    continue;
+                }
+            }
             break;
         }
         if iterations >= max_iterations {
@@ -596,6 +619,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(), // dangerous_commands = Deny
+            crate::mcp::goal_tracker::GoalContext::empty(),
         )
         .await
         .unwrap();
@@ -648,6 +672,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(), // dangerous = Deny
+            crate::mcp::goal_tracker::GoalContext::empty(),
         )
         .await
         .unwrap();
@@ -707,6 +732,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(),
+            crate::mcp::goal_tracker::GoalContext::empty(),
         )
         .await
         .unwrap();
@@ -736,6 +762,63 @@ mod tests {
             cur += t;
         }
         assert!(found, "a 0xCF RISK_GATE_BLOCKED frame must be present");
+    }
+
+    #[tokio::test]
+    async fn active_grind_keeps_loop_going_past_clean_exit() {
+        // GOLD-ADOPT-22: with a grind set, a no-tool-call response does NOT end
+        // the loop — a nudge is injected and it runs to the iteration cap.
+        let mut driver = ScriptedDriver::new(vec!["done?", "still done?", "really done?"]);
+        let servers = McpServers::default();
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "build it".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            3,
+            &crate::config::SecurityPolicy::default(),
+            crate::mcp::goal_tracker::GoalContext {
+                goal: None,
+                grind: Some("ship the feature".into()),
+            },
+        )
+        .await
+        .unwrap();
+        // Grind refuses to stop at the first clean exit → runs the full 3 turns
+        // (vs stopping at 1 without a grind). The last turn exits via the
+        // clean-exit branch once iterations == max, so hit_cap stays false.
+        assert_eq!(outcome.iterations, 3);
+        // The injected nudge is in the threaded-back prompt.
+        let prompts = driver.seen_prompts.lock().unwrap();
+        assert!(
+            prompts.iter().any(|p| p.contains("goal-nudge")),
+            "a grind nudge must be threaded into the prompt"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_goal_stops_at_clean_exit() {
+        // The default (no goal/grind) is unchanged: stop at the first clean exit.
+        let mut driver = ScriptedDriver::new(vec!["done.", "(unreached)"]);
+        let servers = McpServers::default();
+        let outcome = run_tool_loop_with_cap(
+            &mut driver,
+            "hi".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            None,
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+            crate::mcp::goal_tracker::GoalContext::empty(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.iterations, 1);
     }
 
     #[tokio::test]
@@ -818,6 +901,7 @@ mod tests {
             None,
             5,
             &crate::config::SecurityPolicy::default(),
+            crate::mcp::goal_tracker::GoalContext::empty(),
         )
         .await
         .unwrap();
