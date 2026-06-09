@@ -187,6 +187,44 @@ pub fn classify_from_subprocess(
     GpuReport::cpu()
 }
 
+/// Run a probe command with a hard timeout, returning its stdout on success.
+/// A hung tool (bad driver) leaks one short-lived thread but NEVER blocks the
+/// caller — onboarding must not stall on a wedged `nvidia-smi`.
+fn probe_cmd(cmd: &str, args: &[&str], timeout: std::time::Duration) -> Option<String> {
+    let cmd = cmd.to_string();
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let out = std::process::Command::new(&cmd)
+            .args(&args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        let _ = tx.send(out);
+    });
+    rx.recv_timeout(timeout).ok().flatten()
+}
+
+/// LIVE GPU probe (GOLD-ADOPT-10): run the platform vendor tools + classify
+/// into a `GpuReport` with VRAM. Best-effort — a missing/failed/hung tool just
+/// means that vendor isn't present; all-absent → CPU. The onboarding wizard
+/// calls this to size the local model to the operator's actual VRAM.
+pub fn probe_gpu() -> GpuReport {
+    const T: std::time::Duration = std::time::Duration::from_millis(1500);
+    let nvidia = probe_cmd(
+        "nvidia-smi",
+        &["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
+        T,
+    );
+    let rocm = probe_cmd("rocm-smi", &["--showmeminfo", "vram", "--csv"], T);
+    #[cfg(target_os = "macos")]
+    let sysprof = probe_cmd("system_profiler", &["SPDisplaysDataType"], T);
+    #[cfg(not(target_os = "macos"))]
+    let sysprof: Option<String> = None;
+    classify_from_subprocess(nvidia.as_deref(), rocm.as_deref(), sysprof.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
