@@ -25,3 +25,6 @@ pub mod todoist;
 pub mod tts;
 pub mod web_fetch;
 pub mod web_search;
+/// GOLD-ADOPT-26 — zero-config web-to-Markdown via https://r.jina.ai/<url>.
+/// Last-resort URL fetcher for the ingest pipeline; no API key required.
+pub mod jina_reader;

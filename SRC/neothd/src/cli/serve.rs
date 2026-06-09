@@ -1119,6 +1119,29 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             None
         };
 
+    // ── 5b-ter. RSS / Atom / JSON-Feed poller — GOLD-ADOPT-26 ──────────────
+    //
+    // Polls `config.feeds.entries` on a cadence (default 1h), SSRF-validates
+    // each URL, parses via feed-rs, lands new entries in the ctx store. Off
+    // unless the operator set `feeds.enabled = true` with non-empty entries.
+    // Same fail-soft cron discipline as the arXiv task; writes 0x4E/0x4F so it
+    // is aborted BEFORE the WAL writer drains (see shutdown below).
+    let rss_feed_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
+        if config.feeds.enabled && !config.feeds.entries.is_empty() {
+            info!(feeds = config.feeds.entries.len(), "rss feed poller enabled");
+            Some(crate::cli::rss_feed_task::spawn(
+                crate::config::FreedomConfig::default_neoth_home(),
+                config.feeds.entries.clone(),
+                config
+                    .feeds
+                    .interval_secs
+                    .map(std::time::Duration::from_secs),
+                writer.clone(),
+            ))
+        } else {
+            None
+        };
+
     // ── 5b-bis. Hebbian decay task — QUELLEN Q-8 adoption ──────────────────
     //
     // Runs `memory::consolidate::run_consolidation_pass` every 2h. Math
@@ -2719,6 +2742,14 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // EL-02 arXiv ingest task — abort on shutdown. Mid-pass abort at
     // worst drops one topic's fetch, which the next boot re-runs.
     if let Some(task) = arxiv_ingest_task {
+        task.abort();
+        let _ = task.await;
+    }
+
+    // GOLD-ADOPT-26 RSS feed poller — abort BEFORE the WAL writer drains
+    // (it emits 0x4E/0x4F). Mid-pass abort drops one feed's fetch, which the
+    // next tick re-runs.
+    if let Some(task) = rss_feed_task {
         task.abort();
         let _ = task.await;
     }

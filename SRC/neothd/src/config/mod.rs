@@ -131,6 +131,10 @@ pub struct FreedomConfig {
     /// running eval baselines that must not be biased by active skills.
     #[serde(default)]
     pub skills: SkillsConfig,
+    /// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller. Off by default; an
+    /// operator opts in with `feeds.enabled = true` + `feeds.entries`.
+    #[serde(default)]
+    pub feeds: FeedsConfig,
     /// Round-3 v0.4 ARCH-04 — operator-tunable token cap for the
     /// prompt-bundle pre-flight check. Default 100_000 covers Opus 4.7
     /// + Sonnet 4.6 + Gemini 3 with response headroom; operators on
@@ -2801,6 +2805,34 @@ impl Default for SkillsConfig {
             enabled: Vec::new(),
         }
     }
+}
+
+/// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller config. Off by default; a
+/// fresh install does zero network for feeds until the operator opts in.
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct FeedsConfig {
+    /// Master switch. `false` (default) → the poller never spawns.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Poll cadence in seconds. `None` → the task default (1 hour).
+    #[serde(default)]
+    pub interval_secs: Option<u64>,
+    /// The feeds to poll. Empty (default) → nothing to do.
+    #[serde(default)]
+    pub entries: Vec<FeedEntry>,
+}
+
+/// One configured feed: a short label + the feed URL + an optional per-feed
+/// entry cap. The label namespaces the ctx store keys (`rss:<label>:<hash>`).
+#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+pub struct FeedEntry {
+    /// Short operator-chosen label, e.g. `hn`, `rust_blog`.
+    pub label: String,
+    /// The feed URL (RSS / Atom / JSON Feed). SSRF-validated before each GET.
+    pub url: String,
+    /// Max entries ingested per tick for this feed. `None` → the task default.
+    #[serde(default)]
+    pub max_entries: Option<usize>,
 }
 
 impl SkillsConfig {

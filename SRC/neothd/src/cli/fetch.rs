@@ -15,12 +15,43 @@ pub struct FetchArgs {
     /// URL to fetch. Only http(s) schemes accepted.
     pub url: String,
 
+    /// GOLD-ADOPT-26 — fetch via the Jina Reader proxy (https://r.jina.ai),
+    /// which renders JS-heavy / bot-blocked pages to clean Markdown. The
+    /// last-resort path when the plain fetch returns thin or empty content.
+    #[arg(long)]
+    pub jina: bool,
+
     /// Output format. Inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
 }
 
 pub async fn run_fetch(args: FetchArgs) -> Result<()> {
+    if args.jina {
+        // SSRF-guard the ORIGINAL URL (scheme + private-IP) before handing it
+        // to the proxy; r.jina.ai itself is a fixed public host.
+        crate::tools::web_fetch::validate_url(&args.url).await?;
+        let markdown = crate::tools::jina_reader::fetch_via_jina(&args.url).await?;
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "url": args.url,
+                        "source": "jina_reader",
+                        "text": markdown,
+                    }))?
+                );
+            }
+            OutputFormat::Table => {
+                println!("url:    {}", args.url);
+                println!("source: jina_reader (r.jina.ai)");
+                println!();
+                println!("{markdown}");
+            }
+        }
+        return Ok(());
+    }
     let result = crate::tools::web_fetch::fetch(&args.url).await?;
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -49,6 +80,19 @@ mod tests {
     async fn run_fetch_rejects_non_http() {
         let args = FetchArgs {
             url: "file:///etc/passwd".to_string(),
+            jina: false,
+            output: OutputFormat::Json,
+        };
+        let err = run_fetch(args).await.unwrap_err();
+        assert!(err.to_string().contains("http(s)"));
+    }
+
+    #[tokio::test]
+    async fn run_fetch_jina_rejects_non_http() {
+        // The --jina path must still run the SSRF/scheme guard first.
+        let args = FetchArgs {
+            url: "file:///etc/passwd".to_string(),
+            jina: true,
             output: OutputFormat::Json,
         };
         let err = run_fetch(args).await.unwrap_err();

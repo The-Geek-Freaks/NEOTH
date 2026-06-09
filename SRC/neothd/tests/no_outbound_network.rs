@@ -134,6 +134,13 @@ const ALLOWED_PREFIXES: &[&str] = &[
     "src/transport/",
     "src/email/imap_fetch.rs",
     "src/daemon/omi_ingest_task.rs",
+    // GOLD-ADOPT-26 RSS feed poller — fetches operator-configured feed URLs
+    // (production routes through providers::http_client; test bodies build a
+    // plain client for the wiremock localhost server).
+    "src/cli/rss_feed_task.rs",
+    // GOLD-ADOPT-11 — live HuggingFace GGUF-variant lookup builds a
+    // timeout-bounded client for the HF model-search API.
+    "src/models/gguf_variants.rs",
 ];
 
 const FORBIDDEN_PATTERNS: &[&str] = &[

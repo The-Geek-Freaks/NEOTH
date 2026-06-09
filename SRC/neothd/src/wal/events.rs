@@ -580,6 +580,16 @@ pub const EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED: u8 = 0x4C;
 /// (e.g. `"monitor_cron"`, `"ecology_scheduler"`).
 pub const EVENT_TYPE_WORKER_DIED: u8 = 0x4D;
 
+/// `0x4E RSS_FEED_ITEM_INDEXED` — GOLD-ADOPT-26. The RSS feed poller wrote one
+/// feed entry into the ctx knowledge store. Payload: `{feed_label,
+/// entry_id_hash, title_hash, ctx_key, ts_unix}` — the title + entry id are
+/// xxh3-HASHED, never stored verbatim in the WAL frame (privacy).
+pub const EVENT_TYPE_RSS_FEED_ITEM_INDEXED: u8 = 0x4E;
+
+/// `0x4F RSS_FEED_PASS_COMPLETE` — GOLD-ADOPT-26. One full RSS sweep finished.
+/// Payload: `{feeds_checked, entries_indexed, entries_skipped, ts_unix}`.
+pub const EVENT_TYPE_RSS_FEED_PASS_COMPLETE: u8 = 0x4F;
+
 // ---- 0x60..=0x6F  Council debate + callosum (CH-08) ----------------------
 
 /// `0x60 COUNCIL_SYNTHESIS_ATTEMPTED` — chat dispatch hit
@@ -1774,6 +1784,8 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED,
     ),
     ("worker_died", EVENT_TYPE_WORKER_DIED),
+    ("rss_feed_item_indexed", EVENT_TYPE_RSS_FEED_ITEM_INDEXED),
+    ("rss_feed_pass_complete", EVENT_TYPE_RSS_FEED_PASS_COMPLETE),
 ];
 
 /// Resolve a `--type` filter token to an event code. Accepts (in order):
@@ -2294,6 +2306,14 @@ mod tests {
                 EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED,
             ),
             ("WORKER_DIED", EVENT_TYPE_WORKER_DIED),
+            (
+                "RSS_FEED_ITEM_INDEXED",
+                EVENT_TYPE_RSS_FEED_ITEM_INDEXED,
+            ),
+            (
+                "RSS_FEED_PASS_COMPLETE",
+                EVENT_TYPE_RSS_FEED_PASS_COMPLETE,
+            ),
             ("RECOVERY_TRUNCATED", EVENT_TYPE_RECOVERY_TRUNCATED),
             (
                 "COUNCIL_SYNTHESIS_ATTEMPTED",

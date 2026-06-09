@@ -12,6 +12,8 @@ pub mod adr;
 pub mod agents;
 pub mod arxiv;
 pub mod arxiv_ingest_task;
+/// GOLD-ADOPT-26 — RSS / Atom / JSON-Feed poller cron.
+pub mod rss_feed_task;
 pub mod backup;
 pub mod catalog;
 pub mod channel;

@@ -330,6 +330,10 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 # VTODO). Already resolved transitively in Cargo.lock; pure-Rust, no C deps.
 quick-xml = "0.38"
 
+# GOLD-ADOPT-26 — RSS / Atom / JSON-Feed parsing for the feed poller cron.
+# Pure-Rust (no C deps), handles RSS 0.9x/1.0/2.0 + Atom 0.3/1.0 + JSON Feed 1.x.
+feed-rs = "2"
+
 # N-3 Workstream D (Session 23) — base64url-NOPAD encoding for the
 # localhost API bearer token. 32 random bytes → 43-char URL-safe
 # token stored at ~/.neoth/n8n_api_token.

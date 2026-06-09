@@ -123,7 +123,7 @@ pub async fn fetch(url: &str) -> Result<FetchResult> {
 /// (classic TOCTOU). Mitigated by `redirect(Policy::none())` in
 /// `http_client::build_client` so an attacker cannot 302 us into a
 /// private network after the check.
-async fn validate_url(url_str: &str) -> Result<url::Url> {
+pub(crate) async fn validate_url(url_str: &str) -> Result<url::Url> {
     let parsed =
         url::Url::parse(url_str).with_context(|| format!("web_fetch: invalid URL: {url_str}"))?;
 
@@ -258,10 +258,12 @@ fn is_ipv4_mapped_private(ip: Ipv6Addr) -> bool {
 }
 
 #[cfg(test)]
-mod test_overrides {
+pub(crate) mod test_overrides {
     //! Thread-local SSRF overrides used by the test suite only. Never
     //! compiled into release binaries — production `validate_url` ALWAYS
-    //! rejects loopback targets.
+    //! rejects loopback targets. `pub(crate)` so other modules' wiremock
+    //! tests (e.g. `cli::rss_feed_task`, which calls `validate_url` before
+    //! every feed GET) can enable the loopback hatch too.
     use std::cell::Cell;
     thread_local! {
         static ALLOW_LOOPBACK: Cell<bool> = const { Cell::new(false) };
@@ -273,9 +275,9 @@ mod test_overrides {
     /// runtime thread, restores deny on drop. `#[tokio::test]` defaults
     /// to current-thread flavour, so the thread-local survives across
     /// awaits inside one test without leaking into parallel tests.
-    pub(super) struct LoopbackGuard;
+    pub(crate) struct LoopbackGuard;
     impl LoopbackGuard {
-        pub(super) fn enable() -> Self {
+        pub(crate) fn enable() -> Self {
             ALLOW_LOOPBACK.with(|c| c.set(true));
             Self
         }
