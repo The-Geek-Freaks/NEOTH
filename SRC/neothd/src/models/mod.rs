@@ -32,6 +32,7 @@
 //! shell out only to binaries the operator already installed for
 //! their LLM workflow.
 
+pub mod benchmark_scores;
 pub mod catalog;
 pub mod cli_detect;
 pub mod discovery;

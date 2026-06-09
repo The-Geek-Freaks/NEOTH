@@ -5,9 +5,12 @@
 //!
 //! Two layers:
 //!   1. **Live HF lookup** ([`resolve_live`]) — queries the HuggingFace model API
-//!      filtered to GGUF repos, ranks by downloads (proven/"best") with recency
-//!      as tiebreak ("newest"), so a fresh, popular abliterated release wins
-//!      automatically without code changes. This is the primary path.
+//!      filtered to GGUF repos, then ranks by FAMILY capability score
+//!      ([`crate::models::benchmark_scores`], GOLD-ADOPT-11(b)) first, downloads
+//!      (proven/"best") second, recency ("newest") last — so a fresh,
+//!      stronger-family abliterated release wins automatically without code
+//!      changes, and popularity never buries a better model. This is the
+//!      primary path.
 //!   2. **Verified curated fallback** ([`curated_fallback`]) — used offline / on
 //!      API failure. Every repo here was checked live (HF API `200`) on
 //!      2026-06-09: abliterated GGUFs ship from `mradermacher/*-abliterated-GGUF`
@@ -148,9 +151,15 @@ fn contains_size_token(id_lower: &str, token: &str) -> bool {
         .any(|seg| seg == token)
 }
 
-/// Filter HF hits to GGUF repos of the wanted size + lineage, then rank: most
-/// downloads first (proven), newest `createdAt` as tiebreak.
+/// Filter HF hits to GGUF repos of the wanted size + lineage, then rank.
+///
+/// GOLD-ADOPT-11(b): the PRIMARY key is the family CAPABILITY score
+/// ([`crate::models::benchmark_scores`]) — at the SAME size + lineage a
+/// genuinely-stronger family (e.g. Qwen3) outranks a more-downloaded weaker one
+/// (e.g. a legacy Qwen2), so popularity no longer buries quality. Downloads
+/// (proven adoption) is the within-family tiebreak, newest `createdAt` last.
 pub fn rank_variants(hits: Vec<HfModelHit>, size_b: f32, class: VariantClass) -> Vec<GgufVariant> {
+    use crate::models::benchmark_scores::family_score_for;
     let token = format!("{}b", fmt_size(size_b)).to_ascii_lowercase();
     let mut out: Vec<GgufVariant> = hits
         .into_iter()
@@ -168,8 +177,9 @@ pub fn rank_variants(hits: Vec<HfModelHit>, size_b: f32, class: VariantClass) ->
         })
         .collect();
     out.sort_by(|a, b| {
-        b.downloads
-            .cmp(&a.downloads)
+        family_score_for(&b.repo)
+            .cmp(&family_score_for(&a.repo))
+            .then_with(|| b.downloads.cmp(&a.downloads))
             .then_with(|| b.created_at.cmp(&a.created_at))
     });
     out
@@ -322,6 +332,21 @@ mod tests {
         assert_eq!(ranked[0].repo, "someone/Qwen2.5-7B-Instruct-abliterated-GGUF");
         assert_eq!(ranked[0].downloads, 9000);
         assert!(ranked.iter().all(|v| v.class == VariantClass::Abliterated));
+    }
+
+    #[test]
+    fn rank_prefers_stronger_family_over_more_downloads() {
+        // GOLD-ADOPT-11(b): a 7B abliterated search can return mixed bases. A
+        // newer-generation Qwen3 with FEWER downloads must outrank a legacy
+        // Qwen2 with MORE downloads — popularity no longer buries capability.
+        let json = r#"[
+            {"id":"legacy/Qwen2-7B-Instruct-abliterated-GGUF","downloads":50000,"createdAt":"2024-06-01T00:00:00.000Z"},
+            {"id":"fresh/Qwen3-7B-abliterated-GGUF","downloads":1200,"createdAt":"2025-09-01T00:00:00.000Z"}
+        ]"#;
+        let ranked = rank_variants(parse_hf_models(json), 7.0, VariantClass::Abliterated);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].repo, "fresh/Qwen3-7B-abliterated-GGUF");
+        // Within ONE family, downloads still decide (no regression).
     }
 
     #[test]
