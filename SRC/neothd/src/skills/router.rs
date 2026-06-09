@@ -46,8 +46,50 @@ pub struct RouteMatch<'a> {
 /// router that consumes it.
 pub const EMBEDDING_THRESHOLD: f32 = 0.72;
 
+/// Number of whitespace-separated words in a trigger keyword (min 1). A
+/// multi-word trigger like `"pay down tech debt"` (weight 4) is a far more
+/// intentional signal than a lone generic token like `"ideas"` (weight 1):
+/// the operator had to type the whole phrase. The router scores by SUMMED
+/// weight rather than raw hit-count so specific phrases dominate generic
+/// single tokens — and the [`route_with_min_weight`] floor can then suppress
+/// activations that rest on nothing but a single generic word.
+fn keyword_weight(kw: &str) -> usize {
+    kw.split_whitespace().count().max(1)
+}
+
+/// Minimum summed keyword weight a skill needs to activate under the default
+/// (gated) router. `1` preserves the historical floorless behaviour: any
+/// single keyword hit — even one generic token — activates. Full-auto mode,
+/// which enables the entire bundled library (incl. the 68 `pm-*` skills whose
+/// triggers include generic tokens like `"ideas"`/`"strategy"`), raises this
+/// to [`FULL_AUTO_MIN_WEIGHT`] so a lone generic token can no longer hijack a
+/// turn — a multi-word phrase (weight ≥ 2) or two distinct hits is required.
+pub const DEFAULT_MIN_WEIGHT: usize = 1;
+
+/// Confidence floor applied by the full-auto router (all skills enabled).
+/// Weight 2 = either one ≥2-word trigger phrase, or two distinct single-token
+/// hits. A single generic single-word keyword (weight 1) no longer activates.
+pub const FULL_AUTO_MIN_WEIGHT: usize = 2;
+
 /// Pick the best matching skill, if any. Stage-1 keyword scan only.
+///
+/// Uses [`DEFAULT_MIN_WEIGHT`] — see [`route_with_min_weight`] to raise the
+/// confidence floor (full-auto mode does, to keep a fully-populated skill
+/// library from false-activating on generic single tokens).
 pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
+    route_with_min_weight(message, skills, DEFAULT_MIN_WEIGHT)
+}
+
+/// Stage-1 keyword router with an explicit confidence floor. A skill activates
+/// only when the SUMMED [`keyword_weight`] of its matched triggers is
+/// `>= min_weight`. The winner is the highest summed weight, ties broken by
+/// skill id alphabetically (stable, deterministic). `embedding_score` is left
+/// `None` — Stage-2 cosine re-rank is a separate path.
+pub fn route_with_min_weight<'a>(
+    message: &str,
+    skills: &'a [Skill],
+    min_weight: usize,
+) -> Option<RouteMatch<'a>> {
     let haystack = lowercase_tokens(message);
     if haystack.is_empty() {
         return None;
@@ -59,25 +101,26 @@ pub fn route<'a>(message: &str, skills: &'a [Skill]) -> Option<RouteMatch<'a>> {
             continue;
         }
         let mut hits = Vec::new();
+        let mut weight = 0usize;
         for kw in skill.trigger_keywords() {
             let kw_norm = kw.trim().to_lowercase();
             if kw_norm.is_empty() {
                 continue;
             }
             if keyword_matches(&kw_norm, &haystack, message) && !hits.contains(&kw_norm) {
+                weight += keyword_weight(&kw_norm);
                 hits.push(kw_norm);
             }
         }
-        if hits.is_empty() {
+        if hits.is_empty() || weight < min_weight.max(1) {
             continue;
         }
-        let score = hits.len();
         let take = match &best {
             None => true,
-            Some((bs, b, _)) => score > *bs || (score == *bs && skill.id() < b.id()),
+            Some((bw, b, _)) => weight > *bw || (weight == *bw && skill.id() < b.id()),
         };
         if take {
-            best = Some((score, skill, hits));
+            best = Some((weight, skill, hits));
         }
     }
 
@@ -408,6 +451,65 @@ mod tests {
         let skills = vec![skill("news", &["news", "news"], true)];
         let m = route("news news news", &skills).unwrap();
         assert_eq!(m.matched_keywords.len(), 1);
+    }
+
+    // ── full-auto confidence floor (route_with_min_weight) ──────────────────
+
+    #[test]
+    fn single_generic_token_suppressed_by_full_auto_floor() {
+        // The exact false-activation full-auto must prevent: a lone generic
+        // single-word trigger (weight 1) activating on casual usage. Default
+        // floor (1) still matches it; the full-auto floor (2) suppresses it.
+        let skills = vec![skill("pm_ideas", &["ideas"], true)];
+        assert!(
+            route("got any ideas for dinner", &skills).is_some(),
+            "default floor must preserve historical single-token match"
+        );
+        assert!(
+            route_with_min_weight("got any ideas for dinner", &skills, FULL_AUTO_MIN_WEIGHT)
+                .is_none(),
+            "full-auto floor must suppress a lone generic single-word trigger"
+        );
+    }
+
+    #[test]
+    fn multi_word_trigger_survives_full_auto_floor() {
+        // A ≥2-word phrase is intentional enough to clear the floor on its own.
+        let skills = vec![skill("debt", &["pay down tech debt"], true)];
+        let m = route_with_min_weight(
+            "we should pay down tech debt this sprint",
+            &skills,
+            FULL_AUTO_MIN_WEIGHT,
+        )
+        .expect("a 4-word trigger (weight 4) must clear the full-auto floor");
+        assert_eq!(m.skill.id(), "debt");
+    }
+
+    #[test]
+    fn two_single_tokens_survive_full_auto_floor() {
+        // Two distinct single-word hits = summed weight 2 = intentional enough.
+        let skills = vec![skill("news", &["news", "headlines"], true)];
+        let m =
+            route_with_min_weight("the news and the headlines", &skills, FULL_AUTO_MIN_WEIGHT)
+                .expect("two distinct single-token hits (weight 2) must clear the floor");
+        assert_eq!(m.skill.id(), "news");
+    }
+
+    #[test]
+    fn specific_multi_word_beats_generic_single_token() {
+        // Specificity weighting: when a generic token and a specific phrase
+        // both match the same message, the heavier (more specific) phrase wins
+        // even though each is "one hit".
+        let skills = vec![
+            skill("generic", &["ideas"], true),
+            skill("specific", &["pay down tech debt"], true),
+        ];
+        let m = route("any ideas on how to pay down tech debt", &skills).unwrap();
+        assert_eq!(
+            m.skill.id(),
+            "specific",
+            "the 4-word trigger (weight 4) must outrank the 1-word trigger (weight 1)"
+        );
     }
 
     #[test]
