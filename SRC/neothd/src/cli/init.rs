@@ -600,6 +600,8 @@ pub async fn run_init(args: InitArgs) -> Result<()> {
     save_checkpoint_best_effort(&neoth_dir, &state);
     step5b_inference_topology(&args, interactive, &mut state)?;
     save_checkpoint_best_effort(&neoth_dir, &state);
+    step5b2_ollama_provision(interactive, &mut state).await?;
+    save_checkpoint_best_effort(&neoth_dir, &state);
     step5c_qwen_weights(&args, interactive, &mut state).await?;
     save_checkpoint_best_effort(&neoth_dir, &state);
     step5d_profile_approval_gate(interactive, &mut state)?;
@@ -2617,14 +2619,111 @@ fn apply_local_multi_preset_interactive(
         println!("      (remaining hemispheres keep your cloud provider)");
     }
     if !preset.locals.is_empty() {
-        println!("\n      Ollama serves these — install it, then run:");
-        for l in &preset.locals {
-            println!("        $ {}", l.pull_command.join(" "));
-        }
         println!(
             "      Each local hemisphere is wired to {} (no API key).",
             preset.endpoint
         );
+        println!("      The next step offers to install Ollama + pull these models.");
+    }
+    Ok(())
+}
+
+/// GOLD-ADOPT-13 — collect the distinct Ollama-served local model refs the
+/// applied topology points at (OpenAiCompat slots on the Ollama `/v1` endpoint
+/// with an `hf.co/...` model). Pure + order-preserving + deduplicated, so the
+/// provision step pulls each model exactly once.
+fn collect_ollama_model_refs(
+    topo: &crate::config::inference::InferenceTopology,
+) -> Vec<String> {
+    use crate::config::inference::InferenceProvider;
+    let endpoint = crate::installers::ollama::openai_compat_endpoint(
+        crate::installers::ollama::DEFAULT_OLLAMA_PORT,
+    );
+    let mut refs: Vec<String> = Vec::new();
+    for slot in [&topo.left, &topo.right, &topo.cerebellum] {
+        if slot.provider == Some(InferenceProvider::OpenAiCompat)
+            && slot.endpoint.as_deref() == Some(endpoint.as_str())
+        {
+            if let Some(m) = slot.model.as_deref() {
+                if m.starts_with("hf.co/") && !refs.iter().any(|r| r == m) {
+                    refs.push(m.to_string());
+                }
+            }
+        }
+    }
+    refs
+}
+
+/// GOLD-ADOPT-13 — wizard step 5b₂: provision the Ollama runtime for any
+/// local-multi hemispheres. Offers to install Ollama (if absent) and pull each
+/// model. Non-interactive just prints the commands (no surprise multi-GB network
+/// pulls in CI / scripted installs). No-op when no Ollama models are configured.
+async fn step5b2_ollama_provision(interactive: bool, state: &mut WizardState) -> Result<()> {
+    let refs = collect_ollama_model_refs(&state.inference);
+    if refs.is_empty() {
+        return Ok(());
+    }
+
+    if !interactive {
+        for r in &refs {
+            println!(
+                "[neoth init] local model configured — run: {}",
+                crate::installers::ollama::pull_command(r).join(" ")
+            );
+        }
+        return Ok(());
+    }
+
+    #[cfg(feature = "wizard")]
+    {
+        use crate::installers::ollama;
+        println!("\n[5b/9] Ollama runtime — serves your local abliterated model(s).");
+
+        // Install Ollama if it isn't already on PATH.
+        if ollama::check_ollama_available().await.is_none() {
+            let install = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+                .with_prompt(format!(
+                    "Ollama not found. Install it now ({})?",
+                    ollama::InstallPath::for_host().as_str()
+                ))
+                .default(true)
+                .interact()
+                .context("ollama install confirm")?;
+            if install {
+                match ollama::install_for_host().await {
+                    Ok(()) => println!("  ✓ Ollama installed"),
+                    Err(e) => println!(
+                        "  ! Ollama install failed: {e}\n    Install manually from {} then re-run the pulls below.",
+                        ollama::OLLAMA_DOWNLOAD_URL
+                    ),
+                }
+            } else {
+                println!("  → skipped Ollama install. Pull commands are printed below.");
+            }
+        } else {
+            println!("  ✓ Ollama already installed");
+        }
+
+        // Offer to pull each configured model.
+        let pull = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+            .with_prompt(format!(
+                "Pull the {} local model(s) now (multi-GB download)?",
+                refs.len()
+            ))
+            .default(true)
+            .interact()
+            .context("ollama pull confirm")?;
+        for r in &refs {
+            let cmd = ollama::pull_command(r);
+            if pull {
+                println!("  ⏬ {}", cmd.join(" "));
+                if let Err(e) = ollama::run_command(&cmd).await {
+                    println!("  ! pull failed: {e} (re-run `{}` later)", cmd.join(" "));
+                }
+            } else {
+                println!("  later: $ {}", cmd.join(" "));
+            }
+        }
     }
     Ok(())
 }
@@ -5404,6 +5503,40 @@ mod tests {
         assert_eq!(topo.right.provider, Some(InferenceProvider::Gemini));
         assert_eq!(topo.cerebellum.provider, Some(InferenceProvider::Gemini));
         assert_eq!(topo.default_slot.provider, Some(InferenceProvider::Gemini));
+    }
+
+    #[test]
+    fn collect_ollama_model_refs_dedups_local_hemispheres() {
+        use crate::config::inference::{InferenceProvider, InferenceTopology, TopologyMode};
+        use crate::installers::ollama::DEFAULT_OLLAMA_PORT;
+        use crate::models::gguf_variants::VariantClass;
+        use crate::models::hemisphere_preset::build_local_preset;
+        // 3 local hemispheres at the same VRAM-share → identical model on all 3.
+        let preset = build_local_preset(
+            Some(24 * 1024),
+            3,
+            VariantClass::Abliterated,
+            DEFAULT_OLLAMA_PORT,
+        );
+        let mut topo = InferenceTopology::default();
+        apply_local_abliterated_preset(&mut topo, &preset);
+        let refs = collect_ollama_model_refs(&topo);
+        // Same model across all 3 slots → pulled once.
+        assert_eq!(refs.len(), 1, "expected dedup, got {refs:?}");
+        assert!(refs[0].starts_with("hf.co/mradermacher/"));
+
+        // A non-Ollama (cloud) topology yields nothing to provision.
+        let cloud = InferenceTopology {
+            mode: TopologyMode::Single,
+            ..InferenceTopology::default()
+        };
+        assert!(collect_ollama_model_refs(&cloud).is_empty());
+        // A slot that's OpenAiCompat but NOT the Ollama endpoint is ignored.
+        let mut other = InferenceTopology::default();
+        other.left.provider = Some(InferenceProvider::OpenAiCompat);
+        other.left.endpoint = Some("https://openrouter.ai/api/v1".into());
+        other.left.model = Some("hf.co/x/y:Q4_K_M".into());
+        assert!(collect_ollama_model_refs(&other).is_empty());
     }
 
     #[test]

@@ -152,6 +152,38 @@ pub fn pull_command(model_ref: &str) -> Vec<String> {
     vec!["ollama".into(), "pull".into(), model_ref.into()]
 }
 
+/// Run an argv (install or pull), streaming the child's stdout/stderr to the
+/// operator's terminal. Errors on an empty argv or a non-zero exit. GOLD-ADOPT-13.
+pub async fn run_command(argv: &[String]) -> anyhow::Result<()> {
+    use anyhow::Context;
+    let (prog, rest) = argv.split_first().context("empty command")?;
+    let status = Command::new(prog)
+        .args(rest)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .status()
+        .await
+        .with_context(|| format!("spawn `{}`", argv.join(" ")))?;
+    if !status.success() {
+        anyhow::bail!("`{}` failed (exit {:?})", argv.join(" "), status.code());
+    }
+    Ok(())
+}
+
+/// Install Ollama for this host via the platform's [`InstallPath`]. The `Manual`
+/// platform has no automatic command → returns an error pointing at the download
+/// page. GOLD-ADOPT-13 (wizard-installed runtime).
+pub async fn install_for_host() -> anyhow::Result<()> {
+    let cmd = InstallPath::for_host().install_command();
+    if cmd.is_empty() {
+        anyhow::bail!(
+            "no automatic Ollama installer for this platform — download from {OLLAMA_DOWNLOAD_URL}"
+        );
+    }
+    run_command(&cmd).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +207,12 @@ mod tests {
         );
         // A leading slash is tolerated.
         assert_eq!(hf_gguf_ref("/unsloth/X-GGUF", "Q8_0"), "hf.co/unsloth/X-GGUF:Q8_0");
+    }
+
+    #[tokio::test]
+    async fn run_command_rejects_empty_argv() {
+        let err = run_command(&[]).await.unwrap_err();
+        assert!(err.to_string().contains("empty command"));
     }
 
     #[test]
