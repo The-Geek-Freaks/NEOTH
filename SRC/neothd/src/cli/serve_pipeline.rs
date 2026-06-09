@@ -1126,6 +1126,15 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                     },
                     // GOLD-ADOPT-18 — subdir-hint toggle (live config snapshot).
                     config_for_handler.hints.enabled,
+                    // GOLD-ADOPT-19 — auto context-compaction (live snapshot).
+                    // The channel agentic path accumulates the same growing
+                    // tool-loop prompt as `neoth chat`, so it compacts too.
+                    crate::context::compaction::CompactionPolicy::from_config(
+                        config_for_handler.compaction.enabled,
+                        config_for_handler.compaction.progressive,
+                        config_for_handler.tokens.max_per_request,
+                        config_for_handler.compaction.threshold_fraction,
+                    ),
                 )
                 .await
                 {

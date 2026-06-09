@@ -97,6 +97,7 @@ pub mod code_map;
 pub mod coding;
 pub mod config;
 pub mod consent;
+pub mod context;
 pub mod council;
 pub mod credentials;
 pub mod cron;

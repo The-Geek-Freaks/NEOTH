@@ -1347,6 +1347,12 @@ pub async fn run_chat_with(
                     grind: config.goal.grind.clone(),
                 },
                 config.hints.enabled,
+                crate::context::compaction::CompactionPolicy::from_config(
+                    config.compaction.enabled,
+                    config.compaction.progressive,
+                    config.tokens.max_per_request,
+                    config.compaction.threshold_fraction,
+                ),
             )
             .await
             {
@@ -3749,6 +3755,8 @@ pub(crate) async fn run_mcp_dispatch_loop(
     goal_context: crate::mcp::goal_tracker::GoalContext,
     // GOLD-ADOPT-18 — subdirectory-hint injection toggle (freedom.yaml::hints.enabled).
     hints_enabled: bool,
+    // GOLD-ADOPT-19 — auto context-compaction policy (freedom.yaml::compaction).
+    compaction: crate::context::compaction::CompactionPolicy,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -3834,6 +3842,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         security_policy,
         goal_context,
         hints_enabled,
+        compaction,
     )
     .await
 }

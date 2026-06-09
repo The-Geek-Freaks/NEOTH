@@ -146,6 +146,9 @@ pub struct FreedomConfig {
     /// lower this to match.
     #[serde(default)]
     pub tokens: TokensConfig,
+    /// GOLD-ADOPT-19 — auto context-compaction for the agentic tool-loop.
+    #[serde(default)]
+    pub compaction: CompactionConfig,
     /// R-5 Obsidian vault auto-sync: when set, the daemon mirrors
     /// `~/.neoth/archive/sessions/<day>/<file>.md` into the operator's
     /// vault on a schedule. `None` = task off (operator still runs
@@ -3002,6 +3005,49 @@ impl Default for TokensConfig {
 impl TokensConfig {
     pub fn default_max_per_request() -> u32 {
         100_000
+    }
+}
+
+/// GOLD-ADOPT-19 — auto context-compaction for the agentic tool-dispatch loop.
+/// When the loop's accumulated prompt crosses `threshold_fraction` of
+/// `tokens.max_per_request`, an LLM summarization pass replaces the older
+/// history with a dense `[CONTEXT SUMMARY]`. Default-on but high-threshold, so
+/// it only fires on genuinely long tool chains.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CompactionConfig {
+    /// Master switch. `false` → the loop never compacts (no extra LLM calls).
+    #[serde(default = "CompactionConfig::default_enabled")]
+    pub enabled: bool,
+    /// Compaction fires when the prompt's estimated tokens reach this fraction
+    /// of `tokens.max_per_request`. Clamped to (0.0, 1.0]; a bad value disables
+    /// compaction (fail-safe). NOTE: `max_per_request` is NEOTH's pre-flight
+    /// cap, NOT the model's real context window (the catalog stores no
+    /// per-model window). Operators on a large-context model should raise
+    /// `tokens.max_per_request` to match so compaction doesn't fire early.
+    #[serde(default = "CompactionConfig::default_threshold_fraction")]
+    pub threshold_fraction: f32,
+    /// Opt-in: also compact after every tool-pair once a lower threshold is
+    /// crossed (more aggressive, more LLM calls). Default off.
+    #[serde(default)]
+    pub progressive: bool,
+}
+
+impl CompactionConfig {
+    pub fn default_enabled() -> bool {
+        true
+    }
+    pub fn default_threshold_fraction() -> f32 {
+        0.8
+    }
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            threshold_fraction: Self::default_threshold_fraction(),
+            progressive: false,
+        }
     }
 }
 

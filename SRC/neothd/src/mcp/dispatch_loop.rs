@@ -92,6 +92,10 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         security_policy,
         crate::mcp::goal_tracker::GoalContext::empty(),
         true, // GOLD-ADOPT-18 — hints default-on for the convenience wrapper.
+        // GOLD-ADOPT-19 — compaction off in the bare wrapper; the chat path
+        // builds an explicit policy from freedom.yaml. Keeps the wrapper's
+        // (test-only) callers free of surprise summarization calls.
+        crate::context::compaction::CompactionPolicy::disabled(),
     )
     .await
 }
@@ -115,6 +119,10 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
     // GOLD-ADOPT-18 — subdirectory-hint injection toggle (`freedom.yaml::hints.enabled`,
     // default true). `false` disables the tracker entirely (no FS reads).
     hints_enabled: bool,
+    // GOLD-ADOPT-19 — auto context-compaction policy. When enabled, the
+    // accumulated prompt is LLM-summarized once it crosses the token threshold,
+    // before the next completion. `CompactionPolicy::disabled()` = off.
+    compaction: crate::context::compaction::CompactionPolicy,
 ) -> Result<LoopOutcome> {
     let mut prompt = initial_prompt;
     let mut iterations = 0u32;
@@ -148,6 +156,12 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
 
     loop {
         iterations += 1;
+        // GOLD-ADOPT-19 — compact the accumulated history before the next
+        // completion if it crossed the threshold. Iteration 1 is the operator's
+        // own prompt (never compact that); only the grown prompt (2+) qualifies.
+        if iterations > 1 {
+            prompt = compact_if_needed(driver, prompt, &compaction, writer, iterations).await;
+        }
         current_text = driver.complete(&prompt).await?;
         let extraction = extract_tool_calls(&current_text);
         if extraction.is_empty() {
@@ -362,6 +376,89 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         successful_calls,
         failed_calls,
     })
+}
+
+/// GOLD-ADOPT-19 — if `prompt` crossed the compaction threshold, summarize it
+/// via one extra `driver.complete` call and return the compacted replacement;
+/// otherwise return `prompt` unchanged. Best-effort: a failed summarization
+/// keeps the original prompt (the loop proceeds — compaction is an optimization,
+/// never a correctness gate). Emits 0x5B START + 0x5C DONE around a real pass.
+async fn compact_if_needed<D: CompletionDriver + Send>(
+    driver: &mut D,
+    prompt: String,
+    policy: &crate::context::compaction::CompactionPolicy,
+    writer: Option<&WalWriterHandle>,
+    iteration: u32,
+) -> String {
+    if !crate::context::compaction::needs_compaction(&prompt, policy) {
+        return prompt;
+    }
+    let before_tokens = crate::tokens::budget::count_tokens(&prompt);
+    emit_compaction_wal(
+        writer,
+        crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_START,
+        serde_json::json!({
+            "iteration": iteration,
+            "prompt_tokens": before_tokens,
+            "threshold_tokens": policy.threshold_tokens,
+            "ts_unix": now_unix_i64(),
+        }),
+    )
+    .await;
+
+    let summary_prompt = crate::context::compaction::build_compaction_prompt(&prompt);
+    match driver.complete(&summary_prompt).await {
+        Ok(summary) if !summary.trim().is_empty() => {
+            let compacted = crate::context::compaction::wrap_summary(&summary);
+            let after_tokens = crate::tokens::budget::count_tokens(&compacted);
+            info!(
+                iteration,
+                before_tokens, after_tokens, "context compacted (GOLD-ADOPT-19)"
+            );
+            emit_compaction_wal(
+                writer,
+                crate::wal::events::EVENT_TYPE_CONTEXT_COMPACTION_DONE,
+                serde_json::json!({
+                    "iteration": iteration,
+                    "before_tokens": before_tokens,
+                    "after_tokens": after_tokens,
+                    "ts_unix": now_unix_i64(),
+                }),
+            )
+            .await;
+            compacted
+        }
+        Ok(_) => {
+            warn!(iteration, "compaction returned empty summary — keeping original prompt");
+            prompt
+        }
+        Err(e) => {
+            warn!(iteration, error = %e, "compaction LLM call failed — keeping original prompt");
+            prompt
+        }
+    }
+}
+
+/// Append a compaction lifecycle frame (best-effort; a WAL failure must not
+/// derail the loop). Shared by START/DONE so the two stay shape-consistent.
+async fn emit_compaction_wal(
+    writer: Option<&WalWriterHandle>,
+    event_type: u8,
+    payload: serde_json::Value,
+) {
+    let Some(w) = writer else { return };
+    let bytes = serde_json::to_vec(&payload).unwrap_or_default();
+    let header = crate::wal::HeaderBuilder::new(event_type, &bytes).build();
+    if let Err(e) = w.append(header, bytes).await {
+        warn!(error = %e, event_type, "compaction WAL append failed");
+    }
+}
+
+fn now_unix_i64() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -687,6 +784,61 @@ mod tests {
         }
     }
 
+    // ── GOLD-ADOPT-19 context compaction ───────────────────────────────────
+
+    #[tokio::test]
+    async fn compact_if_needed_summarizes_over_threshold() {
+        use crate::context::compaction::{CompactionPolicy, SUMMARY_MARKER};
+        let mut driver = ScriptedDriver::new(vec!["did X; pending: fetch Y"]);
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1,
+            progressive: false,
+        };
+        let big = "history ".repeat(50);
+        let out = compact_if_needed(&mut driver, big, &policy, None, 2).await;
+        assert!(out.starts_with(SUMMARY_MARKER), "compacted prompt carries the marker");
+        assert!(out.contains("pending: fetch Y"), "summary content is preserved");
+        // The driver received the retention-instructed compaction prompt.
+        let seen = driver.seen_prompts.lock().unwrap();
+        assert_eq!(seen.len(), 1);
+        assert!(seen[0].contains("DENSE SUMMARY:"));
+    }
+
+    #[tokio::test]
+    async fn compact_if_needed_is_noop_under_threshold() {
+        use crate::context::compaction::CompactionPolicy;
+        let mut driver = ScriptedDriver::new(vec!["MUST NOT BE CALLED"]);
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1_000_000,
+            progressive: false,
+        };
+        let original = "a short prompt".to_string();
+        let out = compact_if_needed(&mut driver, original.clone(), &policy, None, 2).await;
+        assert_eq!(out, original, "under threshold the prompt is unchanged");
+        assert!(
+            driver.seen_prompts.lock().unwrap().is_empty(),
+            "no LLM call when under threshold"
+        );
+    }
+
+    #[tokio::test]
+    async fn compact_if_needed_keeps_original_on_empty_summary() {
+        use crate::context::compaction::CompactionPolicy;
+        // An empty/whitespace summary is a failed compaction — keep the original
+        // prompt rather than replacing the history with nothing.
+        let mut driver = ScriptedDriver::new(vec!["   \n  "]);
+        let policy = CompactionPolicy {
+            enabled: true,
+            threshold_tokens: 1,
+            progressive: false,
+        };
+        let original = "big history ".repeat(50);
+        let out = compact_if_needed(&mut driver, original.clone(), &policy, None, 2).await;
+        assert_eq!(out, original, "empty summary must not discard the prompt");
+    }
+
     #[test]
     fn guard_block_renders_operator_visible_notice() {
         use crate::mcp::repetition_guard::GuardVerdict;
@@ -739,6 +891,7 @@ mod tests {
             &crate::config::SecurityPolicy::default(), // dangerous_commands = Deny
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
+            crate::context::compaction::CompactionPolicy::disabled(),
         )
         .await
         .unwrap();
@@ -793,6 +946,7 @@ mod tests {
             &crate::config::SecurityPolicy::default(), // dangerous = Deny
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
+            crate::context::compaction::CompactionPolicy::disabled(),
         )
         .await
         .unwrap();
@@ -855,6 +1009,7 @@ mod tests {
             &crate::config::SecurityPolicy::default(),
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
+            crate::context::compaction::CompactionPolicy::disabled(),
         )
         .await
         .unwrap();
@@ -907,6 +1062,7 @@ mod tests {
                 grind: Some("ship the feature".into()),
             },
             true,
+            crate::context::compaction::CompactionPolicy::disabled(),
         )
         .await
         .unwrap();
@@ -939,6 +1095,7 @@ mod tests {
             &crate::config::SecurityPolicy::default(),
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
+            crate::context::compaction::CompactionPolicy::disabled(),
         )
         .await
         .unwrap();
@@ -1027,6 +1184,7 @@ mod tests {
             &crate::config::SecurityPolicy::default(),
             crate::mcp::goal_tracker::GoalContext::empty(),
             true,
+            crate::context::compaction::CompactionPolicy::disabled(),
         )
         .await
         .unwrap();

@@ -518,6 +518,19 @@ pub const EVENT_TYPE_WEB_EXTRACT_HIT: u8 = 0x59;
 /// (a structural-change audit anchor must survive a crash).
 pub const EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE: u8 = 0x5A;
 
+/// `0x5B CONTEXT_COMPACTION_START` — GOLD-ADOPT-19. The MCP dispatch loop's
+/// accumulated prompt crossed the compaction threshold (a fraction of
+/// `freedom.yaml::tokens.max_per_request`) and an LLM summarization pass is
+/// about to run. Payload `{iteration, prompt_tokens, threshold_tokens,
+/// ts_unix}`. Batchable (informational; the compaction either succeeds → DONE,
+/// or fails → the original prompt is kept, both observable downstream).
+pub const EVENT_TYPE_CONTEXT_COMPACTION_START: u8 = 0x5B;
+
+/// `0x5C CONTEXT_COMPACTION_DONE` — GOLD-ADOPT-19. The summarization pass
+/// finished and the loop prompt was replaced by the dense `[CONTEXT SUMMARY]`.
+/// Payload `{iteration, before_tokens, after_tokens, ts_unix}`. Batchable.
+pub const EVENT_TYPE_CONTEXT_COMPACTION_DONE: u8 = 0x5C;
+
 // ---- 0x40..=0x4F  Cron / scheduled jobs -----------------------------------
 
 /// Scheduled job fired by the cron scheduler.
@@ -1754,6 +1767,11 @@ pub fn needs_immediate_sync(event_type: u8) -> bool {
             // from the HTTP response. The STALE event (0x5A) stays immediate-
             // sync — a structural-change audit anchor must survive a crash.
             | EVENT_TYPE_WEB_EXTRACT_HIT
+            // GOLD-ADOPT-19: context-compaction START/DONE are informational
+            // (the outcome is observable from the loop result + the DONE frame).
+            // Batchable behind the next sync-on-write frame.
+            | EVENT_TYPE_CONTEXT_COMPACTION_START
+            | EVENT_TYPE_CONTEXT_COMPACTION_DONE
     )
 }
 
@@ -1831,6 +1849,11 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "web_extract_selector_stale",
         EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE,
     ),
+    (
+        "context_compaction_start",
+        EVENT_TYPE_CONTEXT_COMPACTION_START,
+    ),
+    ("context_compaction_done", EVENT_TYPE_CONTEXT_COMPACTION_DONE),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2138,6 +2161,10 @@ const _: () = {
         [(EVENT_TYPE_WEB_EXTRACT_HIT < 0x50 || EVENT_TYPE_WEB_EXTRACT_HIT > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE < 0x50
         || EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE > 0x5F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CONTEXT_COMPACTION_START < 0x50
+        || EVENT_TYPE_CONTEXT_COMPACTION_START > 0x5F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_CONTEXT_COMPACTION_DONE < 0x50
+        || EVENT_TYPE_CONTEXT_COMPACTION_DONE > 0x5F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED < 0x60
         || EVENT_TYPE_COUNCIL_SYNTHESIS_ATTEMPTED > 0x6F) as usize];
     let _ = [(); 1][(EVENT_TYPE_COUNCIL_PARTIAL_REFUSAL < 0x60
@@ -2548,6 +2575,11 @@ mod tests {
                 "WEB_EXTRACT_SELECTOR_STALE",
                 EVENT_TYPE_WEB_EXTRACT_SELECTOR_STALE,
             ),
+            (
+                "CONTEXT_COMPACTION_START",
+                EVENT_TYPE_CONTEXT_COMPACTION_START,
+            ),
+            ("CONTEXT_COMPACTION_DONE", EVENT_TYPE_CONTEXT_COMPACTION_DONE),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),
