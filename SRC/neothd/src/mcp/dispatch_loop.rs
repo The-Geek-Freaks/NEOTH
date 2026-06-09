@@ -170,7 +170,37 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         "outbound egress destination in tool call"
                     );
                 }
-                let gate = crate::security::risk_gate::evaluate_tool_risk(&risk, security_policy);
+                let mut gate = crate::security::risk_gate::evaluate_tool_risk(&risk, security_policy);
+                // GOLD-ADOPT-23 P1 — an active operator risk-override lease
+                // (`neoth lease grant operator dangerous_command|egress --ttl N`)
+                // lifts the block for its TTL window. Checked only on a block
+                // (rare), so the lease file isn't read on every call.
+                if gate.is_blocked() {
+                    let (dangerous_leased, egress_leased, lease_id) = check_risk_leases(&risk);
+                    if dangerous_leased || egress_leased {
+                        let lifted = crate::security::risk_gate::apply_risk_leases(
+                            &risk,
+                            security_policy,
+                            dangerous_leased,
+                            egress_leased,
+                        );
+                        if !lifted.is_blocked() {
+                            warn!(
+                                server = %call.server, tool = %call.tool,
+                                lease = lease_id.as_deref().unwrap_or("?"),
+                                "risk-gate block LIFTED by active operator lease"
+                            );
+                            emit_risk_gate_wal(
+                                writer,
+                                call,
+                                "lifted_by_lease",
+                                lease_id.as_deref().unwrap_or("egress"),
+                            )
+                            .await;
+                            gate = lifted; // now Allow — fall through to dispatch.
+                        }
+                    }
+                }
                 if gate.is_blocked() {
                     failed_calls += 1;
                     let (status, reason) = match &gate {
@@ -185,39 +215,13 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         "risk policy gate blocked tool call: {reason}"
                     );
                     // GOLD-ADOPT-23 P1 — audit proof: 0xCF RISK_GATE_BLOCKED.
-                    // Records only the rule id + verdict, never the raw command.
-                    if let Some(w) = writer {
-                        let rule = risk
-                            .dangerous
-                            .first()
-                            .map(|d| d.id)
-                            .unwrap_or("egress");
-                        let verdict = match &gate {
-                            crate::security::risk_gate::RiskGate::Deny(_) => "denied",
-                            crate::security::risk_gate::RiskGate::Confirm(_) => "confirm_required",
-                            crate::security::risk_gate::RiskGate::Allow => "",
-                        };
-                        let ts = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0);
-                        let payload = serde_json::to_vec(&serde_json::json!({
-                            "server": call.server,
-                            "tool": call.tool,
-                            "verdict": verdict,
-                            "rule": rule,
-                            "ts_unix": ts,
-                        }))
-                        .unwrap_or_default();
-                        let header = crate::wal::HeaderBuilder::new(
-                            crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED,
-                            &payload,
-                        )
-                        .build();
-                        if let Err(e) = w.append(header, payload).await {
-                            warn!(error = %e, "risk-gate 0xCF append failed (audit gap)");
-                        }
-                    }
+                    let rule = risk.dangerous.first().map(|d| d.id).unwrap_or("egress");
+                    let verdict = match &gate {
+                        crate::security::risk_gate::RiskGate::Deny(_) => "denied",
+                        crate::security::risk_gate::RiskGate::Confirm(_) => "confirm_required",
+                        crate::security::risk_gate::RiskGate::Allow => "",
+                    };
+                    emit_risk_gate_wal(writer, call, verdict, rule).await;
                     tool_result_blocks.push(format!(
                         "```mcp-tool-result\n{{\"server\": \"{}\", \"tool\": \"{}\", \"status\": \"{status}\"}}\n{reason}\n```",
                         call.server, call.tool,
@@ -363,6 +367,80 @@ fn format_failure(call: &ParsedToolCall, reason: &str) -> String {
         "```mcp-tool-result\n{{\"server\": \"{}\", \"tool\": \"{}\", \"status\": \"FAILED\"}}\n{reason}\n```",
         call.server, call.tool,
     )
+}
+
+/// GOLD-ADOPT-23 P1 — append a `0xCF RISK_GATE_BLOCKED` audit frame. `verdict`
+/// is `denied` | `confirm_required` | `lifted_by_lease`; `rule` is the dangerous
+/// rule id, `egress`, or a lease id. The raw command is NEVER recorded.
+async fn emit_risk_gate_wal(
+    writer: Option<&WalWriterHandle>,
+    call: &ParsedToolCall,
+    verdict: &str,
+    rule: &str,
+) {
+    let Some(w) = writer else { return };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "server": call.server,
+        "tool": call.tool,
+        "verdict": verdict,
+        "rule": rule,
+        "ts_unix": ts,
+    }))
+    .unwrap_or_default();
+    let header =
+        crate::wal::HeaderBuilder::new(crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED, &payload)
+            .build();
+    if let Err(e) = w.append(header, payload).await {
+        warn!(error = %e, "risk-gate 0xCF append failed (audit gap)");
+    }
+}
+
+/// GOLD-ADOPT-23 P1 — check the operator's active risk-override leases for the
+/// blocking dimensions of `risk`. Returns `(dangerous_leased, egress_leased,
+/// first_lease_id)`. Best-effort: an unreadable lease store fails closed (no
+/// override). Only called on a block, so the file isn't read per call.
+fn check_risk_leases(
+    risk: &crate::security::ToolCallRisk,
+) -> (bool, bool, Option<String>) {
+    use crate::permissions::lease::{LeaseScope, LeaseStore};
+    use crate::security::dangerous_command::Severity;
+    use crate::security::risk_gate::RISK_LEASE_SUBJECT;
+
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let Ok(store) = LeaseStore::load(&LeaseStore::default_path(&home)) else {
+        return (false, false, None);
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let needs_dangerous = risk.dangerous.iter().any(|d| d.severity == Severity::Critical);
+    let needs_egress = !risk.egress.is_empty();
+    let mut lease_id = None;
+    let dangerous_leased = needs_dangerous
+        && match store.find_covering(RISK_LEASE_SUBJECT, &LeaseScope::DangerousCommand, now) {
+            Some(l) => {
+                lease_id = Some(l.lease_id.clone());
+                true
+            }
+            None => false,
+        };
+    let egress_leased = needs_egress
+        && match store.find_covering(RISK_LEASE_SUBJECT, &LeaseScope::Egress, now) {
+            Some(l) => {
+                if lease_id.is_none() {
+                    lease_id = Some(l.lease_id.clone());
+                }
+                true
+            }
+            None => false,
+        };
+    (dangerous_leased, egress_leased, lease_id)
 }
 
 /// GOLD-ADOPT-20 — render a repetition-guard block as an operator-visible
@@ -528,12 +606,90 @@ mod tests {
         assert_eq!(outcome.failed_calls, 1);
     }
 
+    // The env lock is held across the await so no concurrent test mutates
+    // NEOTH_HOME mid-run (the lease store is read from default_neoth_home).
+    #[allow(clippy::await_holding_lock)]
+    #[tokio::test]
+    async fn active_lease_lifts_dangerous_block_and_audits() {
+        use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore};
+        let dir = tempfile::tempdir().unwrap();
+        let _env = crate::test_env::lock();
+        let prev = std::env::var("NEOTH_HOME").ok();
+        unsafe { std::env::set_var("NEOTH_HOME", dir.path()) };
+
+        // Grant an active `dangerous_command` lease to the operator subject.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let mut store = LeaseStore::default();
+        store.grant(CapabilityLease::new(
+            crate::security::risk_gate::RISK_LEASE_SUBJECT,
+            LeaseScope::DangerousCommand,
+            3600,
+            now,
+        ));
+        store.save(&LeaseStore::default_path(dir.path())).unwrap();
+
+        let wal_path = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let reply = r#"```mcp-tool-call
+{"server": "shell", "tool": "exec", "arguments": {"command": "rm -rf /"}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![reply]);
+        let servers = McpServers::default();
+        let _ = run_tool_loop_with_cap(
+            &mut driver,
+            "x".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            Some(&writer),
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(), // dangerous = Deny
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.ok();
+
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("NEOTH_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("NEOTH_HOME") };
+        }
+
+        // The 0xCF frame must record the LIFT (not a denial).
+        let bytes = std::fs::read(&wal_path).unwrap();
+        let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut verdict = String::new();
+        while cur < bytes.len() {
+            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else { break };
+            if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED {
+                let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
+                verdict = p["verdict"].as_str().unwrap_or("").to_string();
+            }
+            let t = f.header.total_len as usize;
+            if t == 0 { break; }
+            cur += t;
+        }
+        assert_eq!(verdict, "lifted_by_lease", "active lease must lift + audit the block");
+    }
+
+    // Holds the env lock + points NEOTH_HOME at a CLEAN home (no leases) so the
+    // lease check finds nothing and this test sees a true `denied` — otherwise
+    // it races the lease-lift test's NEOTH_HOME (which carries a live lease).
+    #[allow(clippy::await_holding_lock)]
     #[tokio::test]
     async fn risk_gate_block_emits_0xcf_wal_frame() {
         // GOLD-ADOPT-23 P1: a blocked dangerous call appends a 0xCF
         // RISK_GATE_BLOCKED audit frame carrying the rule id + verdict, NOT the
         // raw command.
         let dir = tempfile::tempdir().unwrap();
+        let _env = crate::test_env::lock();
+        let prev = std::env::var("NEOTH_HOME").ok();
+        unsafe { std::env::set_var("NEOTH_HOME", dir.path()) }; // clean — no leases.json
         let wal_path = dir.path().join("000001.wal");
         let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
         let reply = r#"```mcp-tool-call
@@ -556,6 +712,11 @@ mod tests {
         .unwrap();
         drop(writer);
         join.await.ok();
+        if let Some(v) = prev {
+            unsafe { std::env::set_var("NEOTH_HOME", v) };
+        } else {
+            unsafe { std::env::remove_var("NEOTH_HOME") };
+        }
 
         let bytes = std::fs::read(&wal_path).unwrap();
         let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;

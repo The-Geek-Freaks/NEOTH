@@ -42,6 +42,14 @@ pub enum LeaseScope {
     ClusterTaskAccept,
     /// Invoke a specific MCP tool (the inner string is the tool id).
     McpTool(String),
+    /// GOLD-ADOPT-23 P1 — lift the risk-gate block on a Critical dangerous
+    /// command (`rm -rf /`, …) for a TTL window. The operationalised "confirm":
+    /// `neoth lease grant operator dangerous_command --ttl 300`. Scoped +
+    /// auto-expiring, so it can't degenerate into a global policy=warn flip.
+    DangerousCommand,
+    /// GOLD-ADOPT-23 P1 — lift the risk-gate block on an outbound egress to a
+    /// non-allowlisted destination for a TTL window.
+    Egress,
 }
 
 impl LeaseScope {
@@ -53,6 +61,8 @@ impl LeaseScope {
             LeaseScope::ChannelSend => "channel_send",
             LeaseScope::ClusterTaskAccept => "cluster_task_accept",
             LeaseScope::McpTool(_) => "mcp_tool",
+            LeaseScope::DangerousCommand => "dangerous_command",
+            LeaseScope::Egress => "egress",
         }
     }
 
@@ -69,9 +79,12 @@ impl LeaseScope {
             "write_neoth_home" => Ok(LeaseScope::WriteNeothHome),
             "channel_send" => Ok(LeaseScope::ChannelSend),
             "cluster_task_accept" => Ok(LeaseScope::ClusterTaskAccept),
+            "dangerous_command" => Ok(LeaseScope::DangerousCommand),
+            "egress" => Ok(LeaseScope::Egress),
             other => anyhow::bail!(
                 "unknown lease scope `{other}` — use read / write_neoth_home / \
-                 channel_send / cluster_task_accept / mcp_tool:<id>"
+                 channel_send / cluster_task_accept / mcp_tool:<id> / \
+                 dangerous_command / egress"
             ),
         }
     }
@@ -268,6 +281,8 @@ mod tests {
             LeaseScope::WriteNeothHome,
             LeaseScope::ChannelSend,
             LeaseScope::ClusterTaskAccept,
+            LeaseScope::DangerousCommand,
+            LeaseScope::Egress,
         ] {
             // round-trip via the snake_case label (mcp_tool handled below)
             assert_eq!(LeaseScope::parse(s.as_str()).unwrap(), s);

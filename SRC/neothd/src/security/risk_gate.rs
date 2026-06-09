@@ -63,6 +63,38 @@ fn domain_allowed(domain: &str, allowlist: &[String]) -> bool {
     })
 }
 
+/// GOLD-ADOPT-23 P1 — the subject a local risk-override lease is granted to.
+/// The operator operationalises a Confirm/Deny with
+/// `neoth lease grant operator dangerous_command --ttl 300` (5 min). Scoped +
+/// TTL-bounded + WAL-audited on use, so it never degenerates into a global
+/// `policy=warn` flip.
+pub const RISK_LEASE_SUBJECT: &str = "operator";
+
+/// Re-evaluate a (possibly blocked) verdict with the operator's active
+/// risk-override leases applied FOR THIS CALL ONLY: a `dangerous_command` lease
+/// downgrades the dangerous policy to Warn; an `egress` lease opens egress. A
+/// block is lifted only when EVERY blocking dimension is leased. Pure — the
+/// caller supplies the coverage booleans from the `LeaseStore`.
+pub fn apply_risk_leases(
+    risk: &ToolCallRisk,
+    policy: &SecurityPolicy,
+    dangerous_leased: bool,
+    egress_leased: bool,
+) -> RiskGate {
+    if !dangerous_leased && !egress_leased {
+        return evaluate_tool_risk(risk, policy);
+    }
+    let mut effective = policy.clone();
+    if dangerous_leased {
+        effective.dangerous_commands = crate::config::DangerousPolicy::Warn;
+        effective.confirm_high = false;
+    }
+    if egress_leased {
+        effective.egress.mode = EgressMode::Allow;
+    }
+    evaluate_tool_risk(risk, &effective)
+}
+
 /// GOLD-ADOPT-23 P1 — gate a RAW shell command string against the policy.
 ///
 /// The MCP dispatch loop scans JSON tool-args via
@@ -297,6 +329,36 @@ mod tests {
             evaluate_tool_risk(&risk(vec![], vec![]), &SecurityPolicy::default()),
             RiskGate::Allow
         );
+    }
+
+    #[test]
+    fn risk_lease_lifts_dangerous_block() {
+        let p = SecurityPolicy::default(); // dangerous = Deny
+        let r = risk(vec![dangerous("rm_rf_root", Severity::Critical)], vec![]);
+        // No lease → still Deny.
+        assert!(matches!(apply_risk_leases(&r, &p, false, false), RiskGate::Deny(_)));
+        // dangerous_command lease → lifted to Allow.
+        assert_eq!(apply_risk_leases(&r, &p, true, false), RiskGate::Allow);
+    }
+
+    #[test]
+    fn risk_lease_lifts_only_its_dimension() {
+        // Blocked by BOTH dangerous AND egress: a dangerous-only lease leaves the
+        // egress block in place (Deny still wins).
+        let p = SecurityPolicy {
+            egress: EgressPolicy {
+                mode: EgressMode::DenyUnknown,
+                allowlist: vec![],
+            },
+            ..Default::default()
+        };
+        let r = risk(
+            vec![dangerous("rm_rf_root", Severity::Critical)],
+            vec![egress("evil.com")],
+        );
+        assert!(matches!(apply_risk_leases(&r, &p, true, false), RiskGate::Deny(_)));
+        // Both leased → fully lifted.
+        assert_eq!(apply_risk_leases(&r, &p, true, true), RiskGate::Allow);
     }
 
     #[test]
