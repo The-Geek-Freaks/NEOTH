@@ -86,6 +86,16 @@ pub fn evaluate_tool_risk(risk: &ToolCallRisk, policy: &SecurityPolicy) -> RiskG
             DangerousPolicy::Warn => RiskGate::Allow,
         });
     }
+    // GOLD-ADOPT-23 P1 — optionally gate HIGH-severity findings (git push
+    // --force, curl|sh). Off by default (warn-only); `confirm_high` → Confirm.
+    if policy.confirm_high {
+        if let Some(f) = risk.dangerous.iter().find(|f| f.severity == Severity::High) {
+            verdict = verdict.max(RiskGate::Confirm(format!(
+                "dangerous-command (high) `{}` ({}) needs operator approval (confirm_high).",
+                f.id, f.reason
+            )));
+        }
+    }
 
     // ── Egress findings ───────────────────────────────────────────────────
     if !matches!(policy.egress.mode, EgressMode::Allow) {
@@ -157,7 +167,25 @@ mod tests {
     fn high_severity_never_hard_blocks() {
         let p = SecurityPolicy::default();
         let v = evaluate_tool_risk(&risk(vec![dangerous("git_force_push", Severity::High)], vec![]), &p);
-        assert_eq!(v, RiskGate::Allow, "High findings warn-only, never gate");
+        assert_eq!(v, RiskGate::Allow, "High findings warn-only by default, never gate");
+    }
+
+    #[test]
+    fn confirm_high_gates_high_severity_findings() {
+        // P1: opt-in confirm_high → a High finding (git push --force) requires
+        // confirmation instead of warn-only.
+        let p = SecurityPolicy {
+            confirm_high: true,
+            ..Default::default()
+        };
+        let v = evaluate_tool_risk(&risk(vec![dangerous("git_force_push", Severity::High)], vec![]), &p);
+        assert!(matches!(v, RiskGate::Confirm(_)));
+        // A Critical still Denies (outranks the High confirm).
+        let v2 = evaluate_tool_risk(
+            &risk(vec![dangerous("rm_rf_root", Severity::Critical), dangerous("git_force_push", Severity::High)], vec![]),
+            &p,
+        );
+        assert!(matches!(v2, RiskGate::Deny(_)));
     }
 
     #[test]
@@ -227,6 +255,7 @@ mod tests {
                 mode: EgressMode::ConfirmUnknown,
                 allowlist: vec![],
             },
+            confirm_high: false,
         };
         let v = evaluate_tool_risk(
             &risk(vec![dangerous("rm_rf_root", Severity::Critical)], vec![egress("x.com")]),

@@ -56,8 +56,14 @@ fn rules() -> &'static [Rule] {
             id: "rm_rf_root",
             severity: Severity::Critical,
             reason: "recursive force-delete of a root/system path (rm -rf /…) — irreversible data loss",
-            // rm with -r and -f (any order/combination) targeting / or /* or ~ or $HOME
-            re: r"(?i)\brm\s+(?:-[a-z]*\b\s*)*-[a-z]*r[a-z]*f[a-z]*\s+(?:/|/\*|~|\$HOME)(?:\s|$)|(?i)\brm\s+(?:-[a-z]*\b\s*)*-[a-z]*f[a-z]*r[a-z]*\s+(?:/|/\*|~|\$HOME)(?:\s|$)",
+            // rm with BOTH a recursive flag (-r/-R/--recursive) AND a force flag
+            // (-f/--force), in any form/order, targeting / | /* | ~ | $HOME:
+            //   A/B = a single short cluster carrying both (`-rf`, `-fr`, `-Rf`)
+            //   C/D = two separate tokens, short OR long, either order
+            //         (`-r --force /`, `rm --recursive --force /`, `-f --recursive /`)
+            // The root target must be its own arg (`\s…(?:\s|$)`) so a specific
+            // path like `/home/x` or `./build` is NOT matched.
+            re: r"(?i)\brm\s+(?:-[a-z]*\b\s*)*-[a-z]*r[a-z]*f[a-z]*\s+(?:/|/\*|~|\$HOME)(?:\s|$)|(?i)\brm\s+(?:-[a-z]*\b\s*)*-[a-z]*f[a-z]*r[a-z]*\s+(?:/|/\*|~|\$HOME)(?:\s|$)|(?i)\brm\b[^\n]*?(?:--recursive\b|-[a-z]*r[a-z]*\b)[^\n]*?(?:--force\b|-[a-z]*f[a-z]*\b)[^\n]*?\s(?:/|/\*|~|\$HOME)(?:\s|$)|(?i)\brm\b[^\n]*?(?:--force\b|-[a-z]*f[a-z]*\b)[^\n]*?(?:--recursive\b|-[a-z]*r[a-z]*\b)[^\n]*?\s(?:/|/\*|~|\$HOME)(?:\s|$)",
         },
         Rule {
             id: "disk_overwrite",
@@ -164,6 +170,22 @@ mod tests {
         // A scoped delete is NOT flagged.
         assert!(ids("rm -rf ./build").is_empty());
         assert!(ids("rm -rf target/").is_empty());
+        assert!(ids("rm -rf /home/user/project").is_empty(), "specific path under / is fine");
+    }
+
+    #[test]
+    fn flags_rm_rf_long_and_mixed_flag_forms() {
+        // F2 (security review): long + mixed flag forms must also trip.
+        assert!(ids("rm --recursive --force /").contains(&"rm_rf_root"));
+        assert!(ids("rm --force --recursive /").contains(&"rm_rf_root"));
+        assert!(ids("rm -r --force /").contains(&"rm_rf_root"));
+        assert!(ids("rm -f --recursive /*").contains(&"rm_rf_root"));
+        assert!(ids("rm --recursive -f ~").contains(&"rm_rf_root"));
+        // Recursive-only or force-only (without the other) is NOT the rm -rf /
+        // pattern → not flagged (avoids false positives on ordinary deletes).
+        assert!(ids("rm --recursive /tmp/x").is_empty());
+        assert!(ids("rm --force notes.txt").is_empty());
+        assert!(ids("rm -r ./node_modules").is_empty());
     }
 
     #[test]

@@ -2854,6 +2854,12 @@ pub struct SecurityPolicy {
     /// Outbound-egress policy (data leaving the host via a tool's shell args).
     #[serde(default)]
     pub egress: EgressPolicy,
+    /// GOLD-ADOPT-23 P1 — when `true`, a HIGH-severity dangerous finding
+    /// (`git push --force`, `curl … | sh`, …) also requires confirmation rather
+    /// than warn-only. Default `false` (warn-only) to avoid false-positive
+    /// friction; operators working against precious repos opt in.
+    #[serde(default)]
+    pub confirm_high: bool,
 }
 
 /// Action for a Critical dangerous-command finding.

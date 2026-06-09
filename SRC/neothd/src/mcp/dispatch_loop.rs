@@ -66,6 +66,7 @@ pub trait CompletionDriver {
 }
 
 /// Run the dispatch loop with the default iteration cap.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_tool_loop<D: CompletionDriver + Send>(
     driver: &mut D,
     initial_prompt: String,
@@ -74,6 +75,10 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
     writer: Option<&WalWriterHandle>,
     rollback_policy: Option<&crate::config::RollbackConfig>,
     skill_allowlist: Option<&[String]>,
+    // GOLD-ADOPT-23 P0 — explicit so no caller silently inherits an Allow-only
+    // gate (security review Finding 4). Pass `&SecurityPolicy::default()` to
+    // accept the secure defaults (deny dangerous, warn egress).
+    security_policy: &crate::config::SecurityPolicy,
 ) -> Result<LoopOutcome> {
     run_tool_loop_with_cap(
         driver,
@@ -84,7 +89,7 @@ pub async fn run_tool_loop<D: CompletionDriver + Send>(
         rollback_policy,
         skill_allowlist,
         DEFAULT_MAX_ITERATIONS,
-        &crate::config::SecurityPolicy::default(),
+        security_policy,
     )
     .await
 }
@@ -179,6 +184,40 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                         server = %call.server, tool = %call.tool, status,
                         "risk policy gate blocked tool call: {reason}"
                     );
+                    // GOLD-ADOPT-23 P1 — audit proof: 0xCF RISK_GATE_BLOCKED.
+                    // Records only the rule id + verdict, never the raw command.
+                    if let Some(w) = writer {
+                        let rule = risk
+                            .dangerous
+                            .first()
+                            .map(|d| d.id)
+                            .unwrap_or("egress");
+                        let verdict = match &gate {
+                            crate::security::risk_gate::RiskGate::Deny(_) => "denied",
+                            crate::security::risk_gate::RiskGate::Confirm(_) => "confirm_required",
+                            crate::security::risk_gate::RiskGate::Allow => "",
+                        };
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let payload = serde_json::to_vec(&serde_json::json!({
+                            "server": call.server,
+                            "tool": call.tool,
+                            "verdict": verdict,
+                            "rule": rule,
+                            "ts_unix": ts,
+                        }))
+                        .unwrap_or_default();
+                        let header = crate::wal::HeaderBuilder::new(
+                            crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED,
+                            &payload,
+                        )
+                        .build();
+                        if let Err(e) = w.append(header, payload).await {
+                            warn!(error = %e, "risk-gate 0xCF append failed (audit gap)");
+                        }
+                    }
                     tool_result_blocks.push(format!(
                         "```mcp-tool-result\n{{\"server\": \"{}\", \"tool\": \"{}\", \"status\": \"{status}\"}}\n{reason}\n```",
                         call.server, call.tool,
@@ -490,6 +529,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn risk_gate_block_emits_0xcf_wal_frame() {
+        // GOLD-ADOPT-23 P1: a blocked dangerous call appends a 0xCF
+        // RISK_GATE_BLOCKED audit frame carrying the rule id + verdict, NOT the
+        // raw command.
+        let dir = tempfile::tempdir().unwrap();
+        let wal_path = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::writer::spawn(wal_path.clone()).unwrap();
+        let reply = r#"```mcp-tool-call
+{"server": "shell", "tool": "exec", "arguments": {"command": "rm -rf /"}}
+```"#;
+        let mut driver = ScriptedDriver::new(vec![reply]);
+        let servers = McpServers::default();
+        let _ = run_tool_loop_with_cap(
+            &mut driver,
+            "x".into(),
+            &servers,
+            AutonomyLevel::Standard,
+            Some(&writer),
+            None,
+            None,
+            5,
+            &crate::config::SecurityPolicy::default(),
+        )
+        .await
+        .unwrap();
+        drop(writer);
+        join.await.ok();
+
+        let bytes = std::fs::read(&wal_path).unwrap();
+        let mut cur = crate::wal::segment_header::SEGMENT_HEADER_LEN;
+        let mut found = false;
+        while cur < bytes.len() {
+            let Ok(f) = crate::wal::frame::decode_frame(&bytes[cur..]) else { break };
+            if f.header.event_type == crate::wal::events::EVENT_TYPE_RISK_GATE_BLOCKED {
+                found = true;
+                let p: serde_json::Value = serde_json::from_slice(f.payload).unwrap();
+                assert_eq!(p["verdict"], "denied");
+                assert_eq!(p["rule"], "rm_rf_root");
+                // The raw command must NOT be in the audit frame.
+                assert!(!p.to_string().contains("rm -rf"), "raw command must not be in WAL");
+            }
+            let t = f.header.total_len as usize;
+            if t == 0 { break; }
+            cur += t;
+        }
+        assert!(found, "a 0xCF RISK_GATE_BLOCKED frame must be present");
+    }
+
+    #[tokio::test]
     async fn loop_terminates_immediately_when_no_tool_calls() {
         let mut driver = ScriptedDriver::new(vec!["plain text reply, no tool calls"]);
         let servers = McpServers::default();
@@ -501,6 +589,7 @@ mod tests {
             None,
             None,
             None,
+            &crate::config::SecurityPolicy::default(),
         )
         .await
         .unwrap();
@@ -531,6 +620,7 @@ mod tests {
             None,
             None,
             None,
+            &crate::config::SecurityPolicy::default(),
         )
         .await
         .unwrap();
@@ -591,6 +681,7 @@ mod tests {
             None,
             None,
             None,
+            &crate::config::SecurityPolicy::default(),
         )
         .await
         .unwrap();

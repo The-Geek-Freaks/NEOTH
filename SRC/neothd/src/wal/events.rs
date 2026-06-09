@@ -1306,6 +1306,15 @@ pub const EVENT_TYPE_TTS_SYNTHESIZED: u8 = 0xCD;
 /// Payload: `{server_id, tool, reason, ts_unix}`. Owned by CDX-03.
 pub const EVENT_TYPE_MCP_TOOL_REJECTED: u8 = 0xC1;
 
+/// `0xCF RISK_GATE_BLOCKED` — GOLD-ADOPT-23 P0/P1. The dispatch-loop risk gate
+/// blocked an LLM-issued tool call because its arguments carried a Critical
+/// dangerous-command pattern or a non-allowlisted egress destination. Audit
+/// proof that the gate fired. Payload:
+/// `{server, tool, verdict, rule, ts_unix}` where `verdict` is `"denied"` or
+/// `"confirm_required"` and `rule` is the dangerous-rule id (e.g. `rm_rf_root`)
+/// or `"egress"`. The raw command is NEVER stored — only the rule id.
+pub const EVENT_TYPE_RISK_GATE_BLOCKED: u8 = 0xCF;
+
 // ---- 0xD0..=0xDF  Config lifecycle (Pick #37 Session 14 hot-reload) -------
 
 /// `0xD0 CONFIG_RELOADED` — emitted when an operator-triggered
@@ -1724,6 +1733,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("channel_send_denied", EVENT_TYPE_CHANNEL_SEND_DENIED),
     ("mcp_tool_called", EVENT_TYPE_MCP_TOOL_CALLED),
     ("mcp_tool_rejected", EVENT_TYPE_MCP_TOOL_REJECTED),
+    ("risk_gate_blocked", EVENT_TYPE_RISK_GATE_BLOCKED),
     ("plugin_loaded", EVENT_TYPE_PLUGIN_LOADED),
     ("plugin_rejected", EVENT_TYPE_PLUGIN_REJECTED),
     ("plugin_hostcall", EVENT_TYPE_PLUGIN_HOSTCALL),
@@ -2400,6 +2410,7 @@ mod tests {
             ("OS_CLIPBOARD_DENIED", EVENT_TYPE_OS_CLIPBOARD_DENIED),
             ("MCP_TOOL_CALLED", EVENT_TYPE_MCP_TOOL_CALLED),
             ("MCP_TOOL_REJECTED", EVENT_TYPE_MCP_TOOL_REJECTED),
+            ("RISK_GATE_BLOCKED", EVENT_TYPE_RISK_GATE_BLOCKED),
             ("PLUGIN_LOADED", EVENT_TYPE_PLUGIN_LOADED),
             ("PLUGIN_REJECTED", EVENT_TYPE_PLUGIN_REJECTED),
             ("PLUGIN_HOSTCALL", EVENT_TYPE_PLUGIN_HOSTCALL),
