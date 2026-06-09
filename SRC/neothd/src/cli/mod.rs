@@ -87,6 +87,7 @@ pub mod profile;
 pub mod providers;
 pub mod quota;
 pub mod recall;
+pub mod review;
 pub mod recall_score;
 pub mod recover;
 pub mod refusal;
@@ -509,6 +510,14 @@ pub enum Commands {
     /// multi-GiB HF download.
     #[command(visible_alias = "model")]
     Models(models::ModelsArgs),
+
+    /// AI code review (GOLD-ADOPT-15) — wraps OpenCodeReview (`ocr`).
+    ///
+    /// No flags reviews the working-tree changes; `--from/--to` reviews a
+    /// branch against its base; `--commit <sha>` a single commit. `--output
+    /// json` emits machine-readable findings. OCR keeps its own LLM config
+    /// (`ocr config`); NEOTH only invokes it.
+    Review(review::ReviewArgs),
 
     /// Multimodal asset ingest pipeline.
     ///
@@ -1024,6 +1033,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Models(mut args) => {
             args.output = global_output;
             models::run_models(args).await?;
+        }
+        Commands::Review(mut args) => {
+            args.output = global_output;
+            review::run_review(args).await?;
         }
         Commands::Ingest(mut args) => {
             args.output = global_output;

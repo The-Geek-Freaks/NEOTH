@@ -43,6 +43,7 @@ pub mod obs;
 pub mod obsidian;
 pub mod obsidian_vault;
 pub mod obsidian_vault_w02;
+pub mod ocr;
 pub mod ollama;
 pub mod omi;
 pub mod paperless;
