@@ -35,6 +35,14 @@ pub const DEFAULT_TTL_NS: i64 = 90 * 86_400 * 1_000_000_000;
 /// when indexing.
 pub const TRANSIENT_CATEGORIES: &[&str] = &["transient", "session", "scratch"];
 
+/// GOLD-ADOPT-26 — category PREFIXES treated as transient (TTL-bounded) in
+/// addition to [`TRANSIENT_CATEGORIES`]. RSS feed entries are indexed under
+/// `rss:<label>` (a per-feed dynamic category), so they can't be listed
+/// exhaustively; without this they'd be kept FOREVER and an active feed would
+/// grow the ctx store unbounded (`max_entries` only caps per-tick). With it,
+/// feed entries age out at the same 90-day boundary as other transient sources.
+pub const TRANSIENT_PREFIXES: &[&str] = &["rss:"];
+
 /// Result of one sweep pass.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GcReport {
@@ -61,9 +69,15 @@ pub fn run_pass(conn: &mut Connection, now_ns: i64, ttl_ns: i64) -> Result<GcRep
 
     // Materialise the ids first so we can cascade into the FTS5 tables
     // before the `sources` row vanishes.
+    // Transient = an exact category in TRANSIENT_CATEGORIES OR a category with a
+    // TRANSIENT_PREFIXES prefix (e.g. `rss:hn`). Both age out at the cutoff.
+    let like_clause = TRANSIENT_PREFIXES
+        .iter()
+        .map(|p| format!(" OR source_category LIKE '{p}%'"))
+        .collect::<String>();
     let select_sql = format!(
         "SELECT id FROM sources \
-         WHERE source_category IN ({placeholders}) AND indexed_ts < ?",
+         WHERE (source_category IN ({placeholders}){like_clause}) AND indexed_ts < ?",
     );
     let mut stmt = tx.prepare(&select_sql)?;
     // Bind categories first, then the cutoff.
@@ -177,6 +191,31 @@ mod tests {
             .query_row("SELECT count(*) FROM sources", [], |r| r.get(0))
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn old_rss_feed_entries_age_out_via_prefix() {
+        // GOLD-ADOPT-26 retention: `rss:<label>` is a TRANSIENT_PREFIXES match,
+        // so an old feed entry ages out while a fresh one + a non-transient one
+        // survive. Without the prefix rule, rss entries would be kept forever.
+        let (_dir, mut conn) = fresh_db();
+        let now = 1_700_000_000_000_000_000i64;
+        let old_ts = now - 91 * 86_400 * 1_000_000_000; // 91 days
+        let fresh_ts = now - 86_400 * 1_000_000_000; // 1 day
+        insert_source(&conn, "rss:hn:abc", "rss:hn", old_ts);
+        insert_source(&conn, "rss:hn:def", "rss:hn", fresh_ts);
+        insert_source(&conn, "rss:rust:xyz", "rss:rust_blog", old_ts);
+        insert_source(&conn, "authoritative", "operator", old_ts);
+        let r = run_pass(&mut conn, now, DEFAULT_TTL_NS).unwrap();
+        assert_eq!(r.sources_dropped, 2, "both old rss entries drop");
+        // The fresh rss entry + the operator doc survive.
+        let mut stmt = conn.prepare("SELECT label FROM sources ORDER BY label").unwrap();
+        let labels: Vec<String> = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .filter_map(|x| x.ok())
+            .collect();
+        assert_eq!(labels, vec!["authoritative".to_string(), "rss:hn:def".to_string()]);
     }
 
     #[test]

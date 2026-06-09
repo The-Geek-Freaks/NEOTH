@@ -163,14 +163,28 @@ pub async fn run_one_pass_against(
 
         let max = entry.max_entries.unwrap_or(DEFAULT_MAX_ENTRIES);
         for item in feed.entries.iter().take(max) {
-            // feed-rs v2: Entry.id is String (not Option<String>).
-            // Fall back to the first link href only if the id is empty.
+            // Stable per-entry key (becomes the `rss:<label>:<hash>` ctx label,
+            // which is the dedup key — index_document REPLACES by label).
+            // Preference: feed GUID → first link href → a CONTENT hash. The last
+            // fallback is load-bearing: a feed whose entries carry NEITHER a
+            // guid NOR a link would otherwise all hash `""` → collapse onto one
+            // label → every entry but the last is silently lost each pass.
             let entry_id_fallback;
             let entry_id: &str = if !item.id.is_empty() {
                 item.id.as_str()
+            } else if let Some(href) = item
+                .links
+                .first()
+                .map(|l| l.href.as_str())
+                .filter(|h| !h.is_empty())
+            {
+                href
             } else {
-                entry_id_fallback =
-                    item.links.first().map(|l| l.href.clone()).unwrap_or_default();
+                let t = item.title.as_ref().map(|t| t.content.as_str()).unwrap_or("");
+                let p = item.published.map(|d| d.to_rfc3339()).unwrap_or_default();
+                let s = item.summary.as_ref().map(|s| s.content.as_str()).unwrap_or("");
+                // `\u{1f}` (unit separator) keeps the three fields unambiguous.
+                entry_id_fallback = format!("content:{t}\u{1f}{p}\u{1f}{s}");
                 entry_id_fallback.as_str()
             };
             let title = item
@@ -477,6 +491,44 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1, "upsert must not duplicate source rows");
+        drop(writer);
+        join.await.ok();
+    }
+
+    #[tokio::test]
+    async fn entries_without_guid_or_link_do_not_collide() {
+        let _loopback = crate::tools::web_fetch::test_overrides::LoopbackGuard::enable();
+        // Two RSS items with NO <guid> and NO <link> — only title/description.
+        // Pre-fix both hashed `""` → one colliding ctx label → silent data loss.
+        // Post-fix each gets a distinct content-derived key → both indexed.
+        let feed = r#"<?xml version="1.0"?><rss version="2.0"><channel>
+            <title>No-ID Feed</title><link>https://example.com</link>
+            <description>items without guid or link</description>
+            <item><title>Alpha post</title><description>body alpha</description></item>
+            <item><title>Beta post</title><description>body beta</description></item>
+            </channel></rss>"#;
+        let dir = tempdir().unwrap();
+        let server = mock_feed(feed, 200).await;
+        let (writer, join) = make_wal(dir.path());
+        let client = reqwest::Client::new();
+        let entries = vec![FeedEntry {
+            label: "noid".to_string(),
+            url: server.uri(),
+            max_entries: None,
+        }];
+        let report = run_one_pass_against(dir.path(), &entries, &writer, &client)
+            .await
+            .unwrap();
+        assert_eq!(report.entries_indexed, 2, "both id-less entries must index distinctly");
+        let conn = store::open(&dir.path().join("views.db")).unwrap();
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sources WHERE label LIKE 'rss:noid:%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 2, "distinct content → distinct labels, no collision");
         drop(writer);
         join.await.ok();
     }
