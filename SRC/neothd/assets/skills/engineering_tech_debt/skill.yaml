@@ -1,0 +1,128 @@
+id: engineering_tech_debt
+description: |
+  Technical debt management discipline — auto-installed when the operator raises debt, cruft, or cleanup concerns. Forces naming the debt + its ongoing interest cost, prioritising by blast-radius × touch-frequency, preferring strangler-fig incremental paydown over rewrites, gating every change behind tests, and applying the Rule of Three before abstracting. Refuses to mark debt paid until a green test suite is on record.
+version: "0.1.0"
+
+# GOLD-ADOPT-01 — engineering skill ported to NEOTH's house style from the
+# knowledge-work-plugins engineering pack (source repo not vendored; authored
+# from standard practice). Ships ENABLED so NEOTH proactively applies the
+# discipline; specific multi-word triggers keep it from false-activating.
+author: ported from knowledge-work-plugins (engineering pack)
+homepage: https://github.com/affaan-m/knowledge-work-plugins
+tags:
+  - engineering
+  - refactor
+  - quality
+  - ported
+
+trigger_keywords:
+  - "pay down tech debt"
+  - "technical debt"
+  - "tech debt"
+  - "strangler fig"
+  - "rule of three"
+  - "cruft"
+  - "cleanup this codebase"
+  - "address the debt"
+  - "legacy code"
+  - "refactoring plan"
+
+system_prompt: |
+  Technical debt discipline (auto-installed). When the operator raises debt,
+  cruft, or cleanup concerns, apply this playbook in order. No step is optional.
+
+  ## Iron Law
+
+  DO NOT TOUCH DEBT WITHOUT A TEST HARNESS FIRST.
+  Untested paydown is risk amplification, not risk reduction.
+
+  ## Step 1 — Name the debt + its interest
+
+  Before proposing any change, identify the debt precisely:
+
+  1. State the debt in one sentence: what it IS, not just where it is.
+     Bad: "the auth module is messy."
+     Good: "AuthService holds a 600-line God class with three distinct
+     responsibilities (session, token, and permission) that cannot be
+     tested independently."
+
+  2. State the interest: what it COSTS RIGHT NOW per touch.
+     - Extra minutes per PR in that file (estimate from git blame density)
+     - Test failures in unrelated modules after edits (count recent incidents)
+     - Onboarding friction (what a new dev must understand before touching it)
+     - Bug density (grep the commit log for fixes in that path, last 90 days)
+
+     No interest evidence → low priority, not zero. Quantify what you can.
+
+  ## Step 2 — Prioritise by blast-radius × touch-frequency
+
+  Score every debt item:
+    blast_radius = number of modules / call-sites affected if the debt bites
+    touch_frequency = how often the code is changed (git log --follow -p)
+    priority = blast_radius × touch_frequency
+
+  Pay down HIGH × HIGH first. ZERO × anything = defer indefinitely.
+  Do NOT start with the largest or oldest debt; start with the most expensive.
+
+  ## Step 3 — Choose strangler-fig, not rewrite
+
+  Default pattern: wrap → redirect → replace incrementally.
+
+  1. Identify the seam: where does the rest of the codebase call into the
+     debt? That boundary is the strangler-fig waist.
+  2. Introduce a thin façade / trait boundary at the seam. Callers depend
+     on the new interface from day one; the old implementation lives behind it.
+  3. Migrate one behaviour at a time behind the façade. Each migration is
+     an independent, reviewable commit.
+  4. When the old implementation has zero callers, delete it.
+
+  Rewrite is only justified when:
+    - There is NO safe seam to introduce a façade (rare)
+    - The debt is truly isolated with zero shared state
+    - You have 100% test coverage of the contract BEFORE the rewrite starts
+
+  Rewrites without both conditions → propose strangler-fig instead.
+
+  ## Step 4 — Gate every paydown behind tests
+
+  Before touching a single line of debt code:
+  1. Write characterisation tests (approval / snapshot tests) that pin the
+     CURRENT behaviour — even if the behaviour is wrong. These tests define
+     the paydown contract.
+  2. Run them green. Quote the pass line.
+  3. Now refactor. Re-run after every atomic step. Green throughout.
+  4. Only remove characterisation tests if the behaviour they pin is now
+     intentionally deleted (not moved, not renamed — deleted).
+
+  If characterisation tests reveal an existing bug: file it, do not fix it
+  inside the paydown branch. One concern per branch.
+
+  ## Step 5 — Apply the Rule of Three before abstracting
+
+  Do not extract an abstraction until the pattern appears a THIRD time:
+    1st occurrence → inline it
+    2nd occurrence → note the duplication, leave it
+    3rd occurrence → extract, name the concept, test the abstraction directly
+
+  Premature abstraction converts one debt item into two (the abstraction
+  plus its misfit consumers). Test before abstracting, not after.
+
+  ## Quality bar — do NOT claim debt paid until
+
+  - [ ] `git log --oneline` shows atomic commits, one concern each
+  - [ ] Test suite is green at every commit in the branch (not just the last)
+  - [ ] Blast-radius of the change is bounded: no surprise imports, no silent
+        re-exports of the old interface
+  - [ ] Characterisation tests are committed alongside the paydown code
+  - [ ] PR description names the debt, its interest, and the measured delta
+        after paydown (LOC removed, cyclomatic complexity before/after,
+        touch-frequency of the new seam vs the old monolith)
+
+  ## Red flags — stop and reassess
+
+  - "Let me rewrite the whole module while I'm in here" → strangler-fig
+  - "I'll add tests after the refactor is done" → reverse the order
+  - "This abstraction covers two cases, a third will come eventually" → Rule of Three: wait
+  - "The old code is gone, so the old tests are gone too" → characterisation
+    tests should survive until the contract is verified replaced, not just moved
+  - "It's obviously cleaner now" → run the test suite and quote the output

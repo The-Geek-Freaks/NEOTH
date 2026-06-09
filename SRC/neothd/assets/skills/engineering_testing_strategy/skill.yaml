@@ -1,0 +1,104 @@
+id: engineering_testing_strategy
+description: |
+  Test strategy discipline (auto-installed). Fires when the operator asks about how to test something, where to invest coverage, what makes a good test suite, or wants to eliminate flaky tests. Enforces the pyramid hierarchy (unit > integration > e2e), behavior-over-implementation testing, coverage as a floor not a goal, and TDD red-green-refactor where it adds signal — blocking "done" claims until test evidence is on the table.
+version: "0.1.0"
+
+# GOLD-ADOPT-01 — engineering skill ported to NEOTH's house style from the
+# knowledge-work-plugins engineering pack (source repo not vendored; authored
+# from standard practice). Ships ENABLED so NEOTH proactively applies the
+# discipline; specific multi-word triggers keep it from false-activating.
+author: ported from knowledge-work-plugins (engineering pack)
+homepage: https://github.com/affaan-m/knowledge-work-plugins
+tags:
+  - testing
+  - quality
+  - engineering
+  - ported
+
+trigger_keywords:
+  - "test strategy"
+  - "test pyramid"
+  - "what to test"
+  - "coverage goal"
+  - "coverage target"
+  - "flaky test"
+  - "flaky tests"
+  - "killing flaky"
+  - "write tests for"
+  - "testing approach"
+  - "integration test vs unit test"
+  - "TDD red green refactor"
+
+system_prompt: |
+  Test strategy discipline (auto-installed). When the operator asks how to test something, what coverage to aim for, why tests are flaky, or whether TDD fits — apply this hierarchy before writing a single test line.
+
+  ## The Pyramid (non-negotiable ordering)
+
+  1. **Unit** — test one function / module in isolation. Fast, deterministic, no I/O. This is the majority of your suite.
+  2. **Integration** — test the wiring between two or more real components (database, queue, HTTP adapter). Slower; run fewer.
+  3. **E2E** — test a complete user-visible flow through the real stack. Slowest, most brittle; use sparingly for critical paths only.
+
+  Do NOT invert the pyramid. Heavy E2E suites with thin unit coverage are slow, fragile, and provide weak signal.
+
+  ## What is worth testing
+
+  Test BEHAVIOUR, not implementation:
+  - Public contracts: given input X, output must be Y.
+  - Edge cases: empty, nil/null, boundary values, overflow, concurrent writes, retry limits.
+  - Error paths: what the caller sees when a dependency fails.
+  - Regressions: every bug that ships earns a permanent test — name it after the ticket.
+
+  Do NOT test:
+  - Private implementation details (internal field layout, method call counts that aren't part of the contract).
+  - Framework glue that the framework already tests.
+  - Code you do not own (third-party library internals).
+
+  When you find yourself mocking five layers deep just to reach the assertion, the production code lacks a seam — fix the seam, then test at it.
+
+  ## Coverage: floor not a goal
+
+  Coverage is evidence that the test suite has no blind spots, not a quality metric.
+  - Floor: 80 % line coverage on shipped paths is the MINIMUM, not the target.
+  - A 95 % suite of assertions on internal state is worse than a 70 % suite of behavior assertions.
+  - Do not write tests purely to hit a number. Write tests that would catch a real defect.
+  - Untested paths must be either covered or explicitly accepted risk (document why).
+
+  ## Killing flaky tests
+
+  A flaky test is a broken test. It poisons CI signal and trains developers to ignore failures.
+
+  When a flaky test is identified:
+  1. Quarantine it immediately (skip with a dated comment, move to a separate slow/flaky suite). Do NOT leave it in the main run.
+  2. Reproduce the flakiness deterministically — if you cannot make it fail on demand, you cannot fix it.
+  3. Diagnose the root cause before touching the test body:
+     - Shared mutable state (global, process-level singleton, DB rows not cleaned up)
+     - Timing dependency (sleep, poll-until, wall clock)
+     - External I/O (network, filesystem with non-deterministic ordering)
+     - Test order dependency (test B breaks when test A runs first)
+  4. Fix the root cause. Acceptable fixes: seed isolation, deterministic time injection, proper teardown, stubbed I/O. Unacceptable fix: retry loop in the test body.
+  5. Remove the quarantine only after the fix has run green 20+ consecutive times in CI.
+
+  ## TDD red-green-refactor (when it fits)
+
+  TDD is mandatory for: new shipped features, bug fixes, any path that has no existing test.
+  TDD is optional for: pure exploration spikes (delete the code after), generated output, throwaway scripts.
+
+  RED: Write the test. Run it. Quote the failure line — the test must actually fail, not compile-error.
+  GREEN: Write the minimum code that makes it pass. Run it. Quote the pass line.
+  REFACTOR: Clean up. Re-run after every change. Never trade green for elegance.
+
+  Shortcut rationalisations — reject all of them:
+  | "I'll add the test after" | No. The test defines the contract; write it first. |
+  | "This is too simple to test" | Simple tests still catch regressions. Write it. |
+  | "It's hard to test" | The production code lacks a seam. Fix the seam. |
+  | "Manual QA will catch it" | Manual tests do not run in CI. Write the automated one. |
+
+  ## Quality bar — do NOT claim done until
+
+  - The new/changed behaviour has at least one test at the lowest appropriate pyramid level.
+  - That test was run and observed green (quote: command + pass line).
+  - Any edge cases identified during implementation each have a test.
+  - No existing passing test was deleted or weakened to accommodate the change.
+  - If coverage was previously tracked, coverage did not regress.
+
+  Failure to meet any item above means the task is not done — say so explicitly and go fix the gap.

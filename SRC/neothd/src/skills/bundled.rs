@@ -67,6 +67,30 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/dispatching_parallel_agents/skill.yaml"),
     ),
     (
+        "engineering_code_review",
+        include_str!("../../assets/skills/engineering_code_review/skill.yaml"),
+    ),
+    (
+        "engineering_documentation",
+        include_str!("../../assets/skills/engineering_documentation/skill.yaml"),
+    ),
+    (
+        "engineering_incident_response",
+        include_str!("../../assets/skills/engineering_incident_response/skill.yaml"),
+    ),
+    (
+        "engineering_system_design",
+        include_str!("../../assets/skills/engineering_system_design/skill.yaml"),
+    ),
+    (
+        "engineering_tech_debt",
+        include_str!("../../assets/skills/engineering_tech_debt/skill.yaml"),
+    ),
+    (
+        "engineering_testing_strategy",
+        include_str!("../../assets/skills/engineering_testing_strategy/skill.yaml"),
+    ),
+    (
         "executing_plans",
         include_str!("../../assets/skills/executing_plans/skill.yaml"),
     ),
@@ -586,6 +610,73 @@ mod tests {
             assert!(
                 !manifest.trigger_keywords.is_empty(),
                 "LOWKEY persona `{persona}` has no trigger_keywords — router can't reach it"
+            );
+        }
+    }
+
+    #[test]
+    fn engineering_pack_is_bundled_enabled_and_routes() {
+        // GOLD-ADOPT-01 — the ported engineering skill pack must be (a) all
+        // present, (b) shipped ENABLED (operator wants them used proactively),
+        // and (c) reachable through the Stage-1 keyword router via their own
+        // distinctive multi-word triggers. A phrase from each skill must route
+        // to THAT skill — proves the triggers are live, not just declared.
+        use crate::skills::router::route;
+        use crate::skills::schema::Skill;
+        use std::path::PathBuf;
+
+        let pack = [
+            ("engineering_code_review", "please review this pull request"),
+            (
+                "engineering_documentation",
+                "time to update the readme and write the docs",
+            ),
+            (
+                "engineering_incident_response",
+                "we have a production incident, the service is down",
+            ),
+            (
+                "engineering_system_design",
+                "help me with the system design for this new service",
+            ),
+            (
+                "engineering_tech_debt",
+                "we need to pay down some technical debt",
+            ),
+            (
+                "engineering_testing_strategy",
+                "what should our test strategy and coverage targets be",
+            ),
+        ];
+
+        // Build the full enabled engineering skill set once, so route() picks
+        // among real competitors (cross-activation would surface here).
+        let skills: Vec<Skill> = pack
+            .iter()
+            .map(|(id, _)| {
+                let (_, body) = BUNDLED_SKILLS
+                    .iter()
+                    .find(|(bid, _)| bid == id)
+                    .unwrap_or_else(|| panic!("engineering skill `{id}` not bundled"));
+                let manifest: SkillManifest = serde_yaml::from_str(body)
+                    .unwrap_or_else(|e| panic!("`{id}` failed to parse: {e}"));
+                assert!(manifest.enabled, "`{id}` must ship enabled (proactive use)");
+                Skill {
+                    manifest,
+                    path: PathBuf::from(format!("/bundled/{id}/skill.yaml")),
+                    content_hash: String::new(),
+                }
+            })
+            .collect();
+
+        for (id, phrase) in pack {
+            let m = route(phrase, &skills)
+                .unwrap_or_else(|| panic!("`{id}` trigger phrase {phrase:?} routed to nothing"));
+            assert_eq!(
+                m.skill.id(),
+                id,
+                "phrase {phrase:?} should route to `{id}`, got `{}`",
+                m.skill.id()
             );
         }
     }

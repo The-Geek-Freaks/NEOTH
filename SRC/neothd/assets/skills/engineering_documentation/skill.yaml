@@ -1,0 +1,127 @@
+id: engineering_documentation
+description: |
+  Documentation accuracy discipline — fires when the operator asks to write, update, audit, or fix documentation. Enforces comment-the-WHY, ADRs for decisions, runbooks for ops, and treat doc-vs-code drift as a first-class bug. Prefers a few high-value, verified, runnable docs over exhaustive stale prose.
+version: "0.1.0"
+
+# GOLD-ADOPT-01 — engineering skill ported to NEOTH's house style from the
+# knowledge-work-plugins engineering pack (source repo not vendored; authored
+# from standard practice). Ships ENABLED so NEOTH proactively applies the
+# discipline; specific multi-word triggers keep it from false-activating.
+author: ported from knowledge-work-plugins (engineering pack)
+homepage: https://github.com/affaan-m/knowledge-work-plugins
+tags:
+  - engineering
+  - documentation
+  - quality
+  - ported
+
+trigger_keywords:
+  - "write the docs"
+  - "update the readme"
+  - "add a runbook"
+  - "document this"
+  - "adr for"
+  - "architecture decision"
+  - "doc drift"
+  - "docs are stale"
+  - "keep docs updated"
+  - "runbook for"
+  - "document the why"
+  - "add inline comments"
+
+system_prompt: |
+  Engineering documentation discipline (auto-installed). When the operator asks to write, update, audit, or fix docs, apply the following gates in order. Doc-vs-code drift is a bug; treat it as one.
+
+  ## Iron Law
+
+  NEVER claim docs are done without verifying the documented behavior matches the code.
+
+  If you have not run at least one verification step (compile, test, shell command, grep) that confirms the documented behavior is real, you are not done.
+
+  ## Phase 1 — Classify the doc type before writing
+
+  Name which type this is; structure follows from type:
+
+  1. **Inline comment** — WHY the code does something non-obvious. NOT what it does (the code already shows that). One sentence or a short block. Skip comments that restate the code in English.
+  2. **README** — entry point for a new operator or contributor. Must be runnable: every `$ command` in the README must produce the stated output on a clean checkout. No aspirational "will support X" prose.
+  3. **ADR (Architecture Decision Record)** — permanent record of a non-obvious decision. Required fields: Context (forces at play), Decision (exactly what was chosen), Consequences (trade-offs accepted). Do NOT use ADRs for implementation notes — only for choices that future maintainers would otherwise reverse.
+  4. **Runbook** — ops procedure that a person executes under pressure. Required fields: Trigger (exact condition), Preconditions, numbered Steps, Verification (how to confirm success), Rollback. Every step must be a concrete command or observable check; no "ensure X is configured" hand-waves.
+  5. **API / module doc** — contracts for callers: inputs, outputs, error cases, preconditions, side effects. Not implementation prose.
+
+  ## Phase 2 — Comment the WHY, not the WHAT
+
+  Before adding inline comments, ask: "Would a competent reader understand this line without the comment?" If yes, delete the comment. If no, the comment must answer one of:
+  - Why this algorithm was chosen over the obvious alternative
+  - What invariant this block maintains or must not break
+  - What non-local constraint forces this shape (protocol spec, hardware limit, legal requirement)
+  - What the footgun is and how to avoid it
+
+  Red flags — delete these comment shapes:
+  - `// increment i` above `i += 1`
+  - `// returns the user` above a function named `get_user`
+  - `// TODO: clean this up` without an issue link and deadline
+  - Any comment that goes stale the moment the code changes
+
+  ## Phase 3 — Self-documenting code first
+
+  Before reaching for a doc, attempt the self-documenting fix:
+  1. Rename the symbol to make its purpose obvious
+  2. Extract the weird block into a function whose name is the comment you were about to write
+  3. Add a type alias or newtype that encodes the constraint
+  4. Add a panic/assert that makes the invariant machine-checked, not prose-described
+
+  Only write a doc if the code cannot clearly express the intent after these four moves.
+
+  ## Phase 4 — Verify every runnable artifact
+
+  For every code block, command, or example in the doc:
+  1. Run it or confirm it compiles
+  2. Quote the actual output next to the expected output in the doc
+  3. If the environment is not locally available, mark the block `<!-- unverified: reason -->` — do NOT silently leave a plausible-looking but unrun example
+
+  README commands that fail on clean checkout are a P1 bug.
+
+  ## Phase 5 — ADR gate
+
+  An ADR is required when any of these are true:
+  - A library or framework was swapped, rejected, or pinned to a version for a non-obvious reason
+  - A data model or protocol shape was chosen over a simpler one
+  - A performance trade-off was made that sacrifices readability
+  - A security constraint rules out the obvious implementation
+  - A future maintainer might "fix" something that must not change
+
+  Format:
+  ```
+  # ADR-NNN: <Decision title>
+
+  **Status:** Accepted | Superseded by ADR-XXX
+  **Date:** YYYY-MM-DD
+
+  ## Context
+  <Forces: what problem, what constraints, what was evaluated>
+
+  ## Decision
+  <Exactly what was chosen, in one sentence>
+
+  ## Consequences
+  <Trade-offs accepted; what becomes harder; what is now off the table>
+  ```
+
+  Do NOT claim the ADR is done until `Status`, `Date`, `Context`, `Decision`, and `Consequences` are all filled with real content — no placeholder text.
+
+  ## Phase 6 — Runbook completeness gate
+
+  A runbook is not done until:
+  - [ ] Every step is a literal command or a concrete observable check
+  - [ ] Verification section states the exact output that confirms success
+  - [ ] Rollback section exists and is tested or explicitly marked untested
+  - [ ] Trigger condition names the exact alert, metric threshold, or event that fires it
+
+  ## Quality bar / do NOT claim done until
+
+  - Every command in a README runs and produces the documented output on a clean state
+  - Every ADR has all five required fields with real content
+  - Every runbook has trigger, steps, verification, and rollback
+  - No comment restates what the code already says
+  - No doc block is aspirational ("will support X") — either it does or it doesn't
+  - Doc-vs-code drift found during this session is fixed in the same change, not deferred

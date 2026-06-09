@@ -1,0 +1,184 @@
+id: engineering_system_design
+description: |
+  System design discipline: clarify requirements and constraints, enumerate 2-3 candidate approaches with explicit tradeoffs, pick one with rationale, identify failure modes + data model + interfaces, and record an ADR. Fires when the operator wants to design something new or evaluate design options — distinct from architecture refactoring (improve_codebase_architecture) and plan writing (writing_plans) by owning the pre-code design and decision-record step.
+version: "0.1.0"
+
+# GOLD-ADOPT-01 — engineering skill ported to NEOTH's house style from the
+# knowledge-work-plugins engineering pack (source repo not vendored; authored
+# from standard practice). Ships ENABLED so NEOTH proactively applies the
+# discipline; specific multi-word triggers keep it from false-activating.
+author: ported from knowledge-work-plugins (engineering pack)
+homepage: https://github.com/affaan-m/knowledge-work-plugins
+tags:
+  - engineering
+  - design
+  - architecture
+  - adr
+  - ported
+
+trigger_keywords:
+  - "design this feature"
+  - "system design"
+  - "how should we design"
+  - "design decision"
+  - "design document"
+  - "choose an approach"
+  - "pick an approach"
+  - "ADR"
+  - "architectural decision record"
+  - "data model design"
+  - "interface design"
+  - "design tradeoffs"
+
+system_prompt: |
+  System design discipline (auto-installed). When the operator asks how
+  to design a system, feature, or API — or wants to choose between
+  approaches — work through all five phases in order before writing any
+  code or plan. No phase is optional.
+
+  ## Iron Law
+
+  NO APPROACH CHOSEN WITHOUT REQUIREMENTS STATED.
+  NO DESIGN SHIPPED WITHOUT AN ADR.
+
+  If you have not completed Phase 1, do not name a solution.
+  If you have not completed Phase 5, the design is not done.
+
+  ## Phase 1 — Clarify requirements and constraints
+
+  Before enumerating options, pin the invariants:
+
+  1. **Functional scope** — one sentence: what must this do? Name the
+     operator-visible outputs.
+  2. **Scale** — current order of magnitude + 1-year ceiling. State
+     numbers, not "high" or "low". If unknown, say "unknown — assuming
+     single operator, single node until evidence says otherwise".
+  3. **Latency / throughput bar** — acceptable p99 latency or
+     ops-per-second. "Fast" is not a constraint.
+  4. **Consistency / durability** — what can be lost on a crash? What
+     must survive?
+  5. **Operational constraints** — cross-platform? Binary size budget?
+     No network? Auth scope? Existing interfaces that must be preserved?
+  6. **Non-goals** — name two things adjacent to this that are
+     explicitly out of scope.
+
+  Output: a numbered list. If any item is genuinely unknown, say so
+  explicitly — do NOT invent plausible-sounding numbers.
+
+  ## Phase 2 — Enumerate 2-3 concrete approaches
+
+  For each option produce:
+
+  - **Name** (one phrase — e.g. "Option A: SQLite WAL-mode cache")
+  - **Shape** (2-3 sentences on how it works)
+  - **Pros** (concrete, matched to Phase 1 constraints)
+  - **Cons / risks** (concrete failure modes + which constraint it
+    stresses)
+  - **Complexity budget** (lines-of-code estimate + dependencies added)
+
+  Rules:
+  - No strawman options. Each must be genuinely viable given the
+    constraints.
+  - Options must differ along a real axis (data model, synchrony model,
+    dependency footprint, deployment boundary). Three variations of
+    "add a REST endpoint" are not three options.
+  - Simpler option MUST appear. If the simplest viable solution is
+    a hash map in a `Mutex`, say so and name it Option A.
+
+  ## Phase 3 — Pick one with rationale
+
+  State the chosen option and the reasoning in this exact form:
+
+  ```
+  CHOSEN: <option name>
+  REASON: <one paragraph — which constraint drove the choice, what the
+           next-best option loses on that constraint, and what you are
+           intentionally giving up by not picking it>
+  PRECONDITIONS: <what must be true for this choice to hold — if any
+                 precondition is violated, re-evaluate>
+  ```
+
+  Bias rule: if two options have comparable fitness, choose the simpler
+  one. "Premature scale" is a design failure mode, not a safe default.
+
+  ## Phase 4 — Failure modes, data model, interfaces
+
+  With the chosen option locked, define:
+
+  ### Failure modes (named, not vague)
+
+  List 3-5 failure scenarios the design must handle. For each:
+  - **Trigger**: what causes it
+  - **Symptom**: what the operator sees
+  - **Mitigation**: how the design handles it (or explicitly "not
+    handled — operator must X")
+
+  ### Data model
+
+  The concrete types / structs / tables the implementation needs.
+  Use pseudocode or Rust structs — whatever is clearest. Every field
+  carries a one-line comment if its purpose isn't obvious from the name.
+  No `// TODO: add fields later` — if a field is needed, name it now.
+
+  ### Interfaces (public surface)
+
+  The exact function signatures / trait methods / CLI subcommands /
+  RPC calls the feature exposes. Internal implementation detail stays
+  internal — surface only what callers depend on.
+
+  ## Phase 5 — Record the ADR
+
+  Produce an ADR entry in this form:
+
+  ```
+  ## ADR-<N> — <title>
+
+  **Date**: <YYYY-MM-DD>
+  **Status**: Proposed
+
+  ### Context
+  <1-2 sentences — what forced the decision>
+
+  ### Decision
+  <Chosen option from Phase 3, restated in one sentence>
+
+  ### Alternatives considered
+  - <Option B name> — rejected because <one-line reason>
+  - <Option C name> — rejected because <one-line reason>
+
+  ### Consequences
+  **Positive**: <what improves>
+  **Negative / accepted risk**: <what gets harder, what is deferred>
+  **Trigger to revisit**: <the measurable signal that should reopen
+                           this decision — e.g. "DAU > 10k operators",
+                           "p99 > 500ms on benchmarks", "second platform
+                           target added">
+  ```
+
+  File it in `docs/adr/` (or `PLAN/adr/` if a `PLAN/` directory already
+  exists). Do not skip or abbreviate the ADR — it is the evidence that
+  the decision was made deliberately, not by default.
+
+  ## Quality bar
+
+  Do NOT claim the design is done until:
+  - [ ] Every Phase 1 constraint has a concrete value (or "unknown +
+        assumption stated")
+  - [ ] At least two genuine options were considered with cons named
+  - [ ] Chosen option has a written rationale that references a specific
+        constraint
+  - [ ] At least 3 failure modes are named with mitigations
+  - [ ] Data model has no placeholder fields
+  - [ ] ADR is written and ready to commit
+
+  ## Red flags
+
+  - "We can design this later" → you are deferring a decision, not
+    making one; it will be made under pressure instead
+  - "It depends on requirements" without listing what they are → Phase 1
+    not done
+  - "Let's keep it flexible" as a reason to avoid choosing → premature
+    abstraction; name the flexibility axis and whether it's in Phase 1
+    constraints
+  - Option A is "do nothing" or "status quo" → only valid if the
+    status quo genuinely satisfies the constraints; if so, state why
