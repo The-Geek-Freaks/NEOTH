@@ -20,6 +20,8 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
+use crate::channels::PipelineHandler;
+use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
 use crate::config::FreedomConfig;
 use crate::providers::Provider;
 use crate::wal::writer::WalWriterHandle;
@@ -640,6 +642,39 @@ pub(crate) fn run_stale_planning_reaper_on_startup() {
             warn!(error = %e, "stale-planning reaper: cannot open views.db; skipping");
         }
     }
+}
+
+/// Build the per-message channel pipeline handler shared by every configured
+/// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
+/// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]
+/// literal; this is the single construction site so the field mapping lives in
+/// one place. `provider` is the adapter-specific provider clone; everything else
+/// is borrowed from the shared daemon locals and cloned into the deps exactly as
+/// before (behaviour-identical to the inline literals).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_channel_handler(
+    provider: Arc<dyn Provider>,
+    config: &FreedomConfig,
+    writer: &WalWriterHandle,
+    provider_meter: &crate::providers::meter::Meter,
+    rate_limiter: &Arc<crate::channels::rate_limit::RateLimiter>,
+    segment_path: &std::path::Path,
+    shared_views_conn: &Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>>,
+    reload_controller: &Arc<crate::config::reload::ReloadController>,
+) -> PipelineHandler {
+    build_pipeline_handler(PipelineHandlerDeps {
+        provider,
+        writer: writer.clone(),
+        operator_id: config.operator_id.clone(),
+        autonomy: config.autonomy,
+        goal_max_turns: config.goal.max_turns,
+        meter: provider_meter.clone(),
+        rate_limiter: Arc::clone(rate_limiter),
+        segment_path: segment_path.to_path_buf(),
+        profile_config: config.profile.clone(),
+        reload_controller: Arc::clone(reload_controller),
+        views_conn: shared_views_conn.clone(),
+    })
 }
 
 /// Abort an optional background task and await its termination, swallowing the

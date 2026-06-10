@@ -28,7 +28,6 @@ use crate::wal::writer::WalWriterHandle;
 use crate::wal::{EventFlags, spawn as wal_spawn};
 
 // GOLD-ARCH-01: the channel-side inbound pipeline now lives in `serve_pipeline`.
-use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
 
 #[derive(Args, Debug, Clone)]
 pub struct ServeArgs {
@@ -750,21 +749,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     if let (Some(telegram_token), Some(provider)) =
         (config.telegram_token.clone(), shared_provider.as_ref())
     {
-        let writer_for_handler = writer.clone();
-        let operator_id = config.operator_id.clone();
-        let handler: PipelineHandler = build_pipeline_handler(PipelineHandlerDeps {
-            provider: provider.clone(),
-            writer: writer_for_handler,
-            operator_id,
-            autonomy: config.autonomy,
-            goal_max_turns: config.goal.max_turns,
-            meter: provider_meter.clone(),
-            rate_limiter: Arc::clone(&rate_limiter),
-            segment_path: segment_path.clone(),
-            profile_config: config.profile.clone(),
-            reload_controller: Arc::clone(&reload_controller),
-            views_conn: shared_views_conn.clone(),
-        });
+        let handler: PipelineHandler = crate::cli::serve_tasks::build_channel_handler(
+            provider.clone(),
+            &config,
+            &writer,
+            &provider_meter,
+            &rate_limiter,
+            &segment_path,
+            &shared_views_conn,
+            &reload_controller,
+        );
         // SF-03: hand the adapter the daemon's WAL writer so allowlist-
         // rejected senders are audited via `0x3B CHANNEL_GATE_REJECTED`
         // (the daemon is the single writer; this is a cheap handle clone).
@@ -816,19 +810,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         shared_provider.as_ref(),
     ) {
         (Some(bot), Some(app), Some(provider)) => {
-            let handler: PipelineHandler = build_pipeline_handler(PipelineHandlerDeps {
-                provider: provider.clone(),
-                writer: writer.clone(),
-                operator_id: config.operator_id.clone(),
-                autonomy: config.autonomy,
-                goal_max_turns: config.goal.max_turns,
-                meter: provider_meter.clone(),
-                rate_limiter: Arc::clone(&rate_limiter),
-                segment_path: segment_path.clone(),
-                profile_config: config.profile.clone(),
-                reload_controller: Arc::clone(&reload_controller),
-                views_conn: shared_views_conn.clone(),
-            });
+            let handler: PipelineHandler = crate::cli::serve_tasks::build_channel_handler(
+                provider.clone(),
+                &config,
+                &writer,
+                &provider_meter,
+                &rate_limiter,
+                &segment_path,
+                &shared_views_conn,
+                &reload_controller,
+            );
             let channel = crate::channels::slack::SlackChannel::new(bot, app);
             let task = tokio::spawn(async move {
                 if let Err(e) = channel.run(handler).await {
@@ -872,19 +863,16 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         shared_provider.as_ref(),
     ) {
         (Some(token), Some(phone), Some(verify), Some(secret), Some(provider)) => {
-            let handler: PipelineHandler = build_pipeline_handler(PipelineHandlerDeps {
-                provider: provider.clone(),
-                writer: writer.clone(),
-                operator_id: config.operator_id.clone(),
-                autonomy: config.autonomy,
-                goal_max_turns: config.goal.max_turns,
-                meter: provider_meter.clone(),
-                rate_limiter: Arc::clone(&rate_limiter),
-                segment_path: segment_path.clone(),
-                profile_config: config.profile.clone(),
-                reload_controller: Arc::clone(&reload_controller),
-                views_conn: shared_views_conn.clone(),
-            });
+            let handler: PipelineHandler = crate::cli::serve_tasks::build_channel_handler(
+                provider.clone(),
+                &config,
+                &writer,
+                &provider_meter,
+                &rate_limiter,
+                &segment_path,
+                &shared_views_conn,
+                &reload_controller,
+            );
             let port = config.whatsapp_webhook_port.unwrap_or(8443);
             let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
                 .parse()
