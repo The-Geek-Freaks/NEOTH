@@ -18,7 +18,7 @@ use anyhow::{Context, Result};
 use clap::Args;
 use tracing::{debug, error, info, warn};
 
-use crate::channels::{Channel, PipelineHandler, telegram::TelegramChannel};
+use crate::channels::{PipelineHandler, telegram::TelegramChannel};
 use crate::config::FreedomConfig;
 use crate::memory::store;
 use crate::providers::{self, Provider};
@@ -732,12 +732,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         // (the daemon is the single writer; this is a cheap handle clone).
         let channel = TelegramChannel::new(telegram_token, config.telegram_user_id)
             .with_gate_writer(writer.clone());
-        let task = tokio::spawn(async move {
-            if let Err(e) = channel.run(handler).await {
-                tracing::error!(error = %e, "Telegram channel task exited with error");
-            }
-        });
-        channel_tasks.push(task);
+        // GOLD-ARCH-01: spawn relocated to serve_tasks (same handle into channel_tasks).
+        crate::cli::serve_tasks::spawn_channel_run(channel, handler, "Telegram", &mut channel_tasks);
         info!(
             channel = "telegram",
             status = "LIVE",
@@ -789,12 +785,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
                 &reload_controller,
             );
             let channel = crate::channels::slack::SlackChannel::new(bot, app);
-            let task = tokio::spawn(async move {
-                if let Err(e) = channel.run(handler).await {
-                    tracing::error!(error = %e, "Slack channel task exited with error");
-                }
-            });
-            channel_tasks.push(task);
+            // GOLD-ARCH-01: spawn relocated to serve_tasks (same handle into channel_tasks).
+            crate::cli::serve_tasks::spawn_channel_run(channel, handler, "Slack", &mut channel_tasks);
             info!(
                 channel = "slack",
                 status = "LIVE",

@@ -20,7 +20,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
-use crate::channels::PipelineHandler;
+use crate::channels::{Channel, PipelineHandler};
 use crate::cli::serve_pipeline::{PipelineHandlerDeps, build_pipeline_handler};
 use crate::config::FreedomConfig;
 use crate::providers::Provider;
@@ -1067,6 +1067,27 @@ pub(crate) fn spawn_self_dev_outbox(writer: &WalWriterHandle) -> JoinHandle<()> 
         "self-dev outbox drain task spawned"
     );
     handle
+}
+
+/// Spawn a `Channel::run` adapter loop into `channel_tasks` (Telegram / Slack
+/// socket-mode — every adapter whose receive loop is `Channel::run`, NOT the
+/// WhatsApp webhook listener which uses `webhook_listener::serve`). `label` is
+/// the channel name for the exit-error log. `Channel: Send + Sync` (the trait's
+/// `#[async_trait]` boxes a `Send` future), so the generic spawn is sound.
+/// Pure relocation of the identical `tokio::spawn(channel.run(handler))` +
+/// `channel_tasks.push(task)` block the adapters inlined.
+pub(crate) fn spawn_channel_run<C: Channel + 'static>(
+    channel: C,
+    handler: PipelineHandler,
+    label: &'static str,
+    channel_tasks: &mut Vec<JoinHandle<()>>,
+) {
+    let task = tokio::spawn(async move {
+        if let Err(e) = channel.run(handler).await {
+            tracing::error!(error = %e, "{label} channel task exited with error");
+        }
+    });
+    channel_tasks.push(task);
 }
 
 /// Build the per-message channel pipeline handler shared by every configured
