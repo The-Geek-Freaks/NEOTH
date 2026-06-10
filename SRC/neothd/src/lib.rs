@@ -123,6 +123,7 @@ pub mod proactive;
 pub mod profile;
 pub mod providers;
 pub mod recall;
+pub mod recipes;
 pub mod recovery;
 pub mod reflection;
 pub mod secret;

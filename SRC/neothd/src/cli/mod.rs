@@ -91,6 +91,7 @@ pub mod providers;
 pub mod quota;
 pub mod goal;
 pub mod recall;
+pub mod recipe;
 pub mod review;
 pub mod recall_score;
 pub mod recover;
@@ -286,6 +287,12 @@ pub enum Commands {
     /// (self-replace / patch-apply / dangerous targets stay gated; revoked &
     /// unsigned plugins stay blocked). Switch back with `neoth autonomy gated`.
     Sudomode,
+
+    /// GOLD-ADOPT-16 — declarative parametrized recipe templates. `recipe run
+    /// <file|deeplink> --param k=v` renders a typed-parameter prompt template +
+    /// runs it through the chat pipeline; `list` / `validate` / `share` (base64
+    /// `neoth://recipe/…` deeplink) round out the surface.
+    Recipe(recipe::RecipeArgs),
 
     /// Compose dreams now (SPEC-12 / R-02): `dream now` runs one dreaming pass
     /// over the recent window on-demand — embed + cosine-cluster the window's
@@ -974,6 +981,10 @@ pub async fn run(cli: Cli) -> anyhow::Result<()> {
                 global_output,
             )
             .await?;
+        }
+        Commands::Recipe(mut args) => {
+            args.output = global_output;
+            recipe::run_recipe(args).await?;
         }
         Commands::Cron(args) => {
             cron::run_cron(args, global_output).await?;
