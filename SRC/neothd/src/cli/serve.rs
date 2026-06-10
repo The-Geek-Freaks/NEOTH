@@ -1625,64 +1625,25 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Reads the `idx_recall_latency` window (samples recorded by each one-shot
     // `neoth recall`) + emits `0x4B RECALL_LATENCY_ALERT` when p95 exceeds
     // `recall_latency.p95_threshold_ms`. Off by default → no idle task.
-    let recall_latency_cron_handle: Option<tokio::task::JoinHandle<()>> = {
-        let handle = crate::daemon::recall_latency_cron::spawn_recall_latency_cron_loop(
-            config.recall_latency,
-            FreedomConfig::default_neoth_home(),
-            writer.clone(),
-        );
-        if handle.is_some() {
-            info!(
-                interval_secs = config.recall_latency.interval_secs,
-                p95_threshold_ms = config.recall_latency.p95_threshold_ms,
-                "recall-latency cron loop spawned (MONITOR-03)"
-            );
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let recall_latency_cron_handle =
+        crate::cli::serve_tasks::spawn_recall_latency_cron(&config, writer.clone());
 
     // ── SL-03 ResourcePressureWatcher cron ────────────────────────────────
     // Polls live GPU VRAM; emits `0x47 RESOURCE_PRESSURE_ALERT` on a breach
     // of `resource_watch.vram_threshold_pct`. Default OFF → no idle task; a
     // no-op on non-GPU / non-NVIDIA hosts even when enabled.
-    let resource_watch_handle: Option<tokio::task::JoinHandle<()>> = {
-        let writer_for_rw = writer.clone();
-        let handle = crate::daemon::resource_watch::spawn_resource_watch_loop(
-            config.resource_watch.clone(),
-            writer_for_rw,
-        );
-        if handle.is_some() {
-            info!(
-                interval_secs = config.resource_watch.interval_secs,
-                vram_threshold_pct = config.resource_watch.vram_threshold_pct,
-                "resource-watch cron loop spawned (SL-03)"
-            );
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let resource_watch_handle =
+        crate::cli::serve_tasks::spawn_resource_watch(&config, writer.clone());
 
     // ── HO-07 monitor alerting cron ──────────────────────────────────────────
     // Polls WAL integrity + crash.log + channel activity; emits
     // `0x48 WAL_CRC_ALERT` / `0x49 CRASH_LOG_ALERT` / `0x4A CHANNEL_SILENCE_ALERT`.
     // Default OFF → no idle task; opt-in via `monitor.enabled = true`.
-    let monitor_cron_handle: Option<tokio::task::JoinHandle<()>> = {
-        let home = FreedomConfig::default_neoth_home();
-        let wal_dir_for_monitor = wal_dir.clone();
-        let writer_for_monitor = writer.clone();
-        let handle = crate::daemon::monitor_cron::spawn_monitor_cron_loop(
-            config.monitor.clone(),
-            home,
-            wal_dir_for_monitor,
-            writer_for_monitor,
-        );
-        if handle.is_some() {
-            info!(
-                interval_secs = config.monitor.interval_secs,
-                "monitor cron loop spawned (HO-07)"
-            );
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let monitor_cron_handle =
+        crate::cli::serve_tasks::spawn_monitor_cron(&config, &wal_dir, writer.clone());
 
     // ── GOLD-WIRE-07b — daemon HNSW snapshot auto-freshness ────────────────────
     // WIRE-07 made `neoth recall` cold-load the on-disk HNSW snapshot, but it
@@ -1742,17 +1703,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Polls the operator's self-hosted OMI backend (SC-14 already confirmed the
     // endpoint is local above), promotes high-confidence items to ground-truth
     // (`0x9C`) + extracts action items to kanban. Default OFF → no task.
-    let omi_handle: Option<tokio::task::JoinHandle<()>> = if config.omi.enabled {
-        let handle = crate::daemon::omi_ingest_task::spawn_omi_ingest_task(
-            config.omi.clone(),
-            store::default_path(),
-            writer.clone(),
-        );
-        info!(endpoint = %config.omi.endpoint, "OMI ingest task spawned (OM-01)");
-        Some(handle)
-    } else {
-        None
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let omi_handle = crate::cli::serve_tasks::spawn_omi_ingest(&config, writer.clone());
 
     // ── Passive user-adaptation cron (SPEC-05) ────────────────────────────
     // Re-aggregates the behavioural snapshot from the WAL every
@@ -1760,49 +1712,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // adaptation PROPOSALS for operator review (nothing auto-applied). Off
     // by default — `spawn_*` returns None when `profile_adapt.enabled =
     // false` so opt-out operators carry no idle tokio task.
-    let profile_adapt_cron_handle: Option<tokio::task::JoinHandle<()>> = {
-        let home = FreedomConfig::default_neoth_home();
-        let wal_dir_for_adapt = wal_dir.clone();
-        let writer_for_adapt = writer.clone();
-        let handle = crate::daemon::profile_adapt_cron::spawn_profile_adapt_cron_loop(
-            config.profile_adapt,
-            home,
-            wal_dir_for_adapt,
-            writer_for_adapt,
-        );
-        if handle.is_some() {
-            info!(
-                interval_secs = config.profile_adapt.interval_secs,
-                "passive user-adaptation cron loop spawned (SPEC-05)"
-            );
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let profile_adapt_cron_handle =
+        crate::cli::serve_tasks::spawn_profile_adapt_cron(&config, &wal_dir, writer.clone());
 
     // ── Ecology auto-scheduler (F4-01 Phase 1) ────────────────────────────
     // Decides WHEN to adapt: on a low-dissent council regime (winner streak ≥
     // `ecology.correlation_min_streak`) it STAGES P-04 self-dev proposals for
     // `neoth self-dev review` and emits 0x4C. NEVER auto-applies — the
     // DESIGN_CH13 P2 review-gate. Off by default → `spawn_*` returns None.
-    let ecology_cron_handle: Option<tokio::task::JoinHandle<()>> = {
-        let home = FreedomConfig::default_neoth_home();
-        let wal_dir_for_ecology = wal_dir.clone();
-        let writer_for_ecology = writer.clone();
-        let handle = crate::ecology::scheduler::spawn_ecology_cron_loop(
-            home,
-            wal_dir_for_ecology,
-            config.ecology.clone(),
-            writer_for_ecology,
-        );
-        if handle.is_some() {
-            info!(
-                interval_secs = config.ecology.scheduler_interval_secs,
-                min_streak = config.ecology.correlation_min_streak,
-                "ecology auto-scheduler cron loop spawned (F4-01 — proposals review-gated)"
-            );
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let ecology_cron_handle =
+        crate::cli::serve_tasks::spawn_ecology_cron(&config, &wal_dir, writer.clone());
 
     // ── Behaviour-pattern cron (G-01 full detector suite) ─────────────────
     // Each tick runs the inactivity / query-repeat / topic-burst /

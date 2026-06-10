@@ -264,6 +264,132 @@ pub(crate) fn spawn_detect_complete_ingester(writer: WalWriterHandle) -> JoinHan
     handle
 }
 
+// ── Region-8 alerting/adaptation crons. Each is a thin delegate to its own
+// `crate::daemon::*::spawn_*_cron_loop` fn that returns `None` when the feature
+// is disabled (so opt-out operators carry no idle task). WAL-emitting, but the
+// per-site mechanism keeps each handle's name + shutdown-abort site (before
+// `drop(writer)`) UNCHANGED, so the WAL-ordering invariant holds. `&config`
+// works for every one: the `Copy` config slices (recall_latency / profile_adapt)
+// copy out of the borrow, the rest `.clone()`. ────────────────────────────────
+
+/// MONITOR-03 / RECALL-METER-01 — recall-latency p95 alert cron (`0x4B`).
+pub(crate) fn spawn_recall_latency_cron(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::recall_latency_cron::spawn_recall_latency_cron_loop(
+        config.recall_latency,
+        FreedomConfig::default_neoth_home(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.recall_latency.interval_secs,
+            p95_threshold_ms = config.recall_latency.p95_threshold_ms,
+            "recall-latency cron loop spawned (MONITOR-03)"
+        );
+    }
+    handle
+}
+
+/// SL-03 — ResourcePressureWatcher cron; emits `0x47 RESOURCE_PRESSURE_ALERT`.
+pub(crate) fn spawn_resource_watch(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle =
+        crate::daemon::resource_watch::spawn_resource_watch_loop(config.resource_watch.clone(), writer);
+    if handle.is_some() {
+        info!(
+            interval_secs = config.resource_watch.interval_secs,
+            vram_threshold_pct = config.resource_watch.vram_threshold_pct,
+            "resource-watch cron loop spawned (SL-03)"
+        );
+    }
+    handle
+}
+
+/// HO-07 — monitor alerting cron (`0x48`/`0x49`/`0x4A`).
+pub(crate) fn spawn_monitor_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::monitor_cron::spawn_monitor_cron_loop(
+        config.monitor.clone(),
+        FreedomConfig::default_neoth_home(),
+        wal_dir.to_path_buf(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.monitor.interval_secs,
+            "monitor cron loop spawned (HO-07)"
+        );
+    }
+    handle
+}
+
+/// OM-01 — local OMI transcript ingest. `None` when `omi.enabled = false`.
+pub(crate) fn spawn_omi_ingest(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    if !config.omi.enabled {
+        return None;
+    }
+    let handle = crate::daemon::omi_ingest_task::spawn_omi_ingest_task(
+        config.omi.clone(),
+        crate::memory::store::default_path(),
+        writer,
+    );
+    info!(endpoint = %config.omi.endpoint, "OMI ingest task spawned (OM-01)");
+    Some(handle)
+}
+
+/// SPEC-05 — passive user-adaptation cron (queues self-dev PROPOSALS, never auto-applies).
+pub(crate) fn spawn_profile_adapt_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::profile_adapt_cron::spawn_profile_adapt_cron_loop(
+        config.profile_adapt,
+        FreedomConfig::default_neoth_home(),
+        wal_dir.to_path_buf(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.profile_adapt.interval_secs,
+            "passive user-adaptation cron loop spawned (SPEC-05)"
+        );
+    }
+    handle
+}
+
+/// F4-01 — ecology auto-scheduler (STAGES review-gated self-dev proposals, emits `0x4C`).
+pub(crate) fn spawn_ecology_cron(
+    config: &FreedomConfig,
+    wal_dir: &std::path::Path,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::ecology::scheduler::spawn_ecology_cron_loop(
+        FreedomConfig::default_neoth_home(),
+        wal_dir.to_path_buf(),
+        config.ecology.clone(),
+        writer,
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.ecology.scheduler_interval_secs,
+            min_streak = config.ecology.correlation_min_streak,
+            "ecology auto-scheduler cron loop spawned (F4-01 — proposals review-gated)"
+        );
+    }
+    handle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
