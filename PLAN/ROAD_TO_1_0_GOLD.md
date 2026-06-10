@@ -462,6 +462,27 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 
 ---
 
+## WS-I — Repo-Adaptation Backlog (deep-read derived, GOLD-ADAPT-NN)
+
+> Concrete, agent-researched adaptation steps surfaced by deep-reading adopted repos
+> (per the global "Repo Evaluation" rule: a plan + repo-analysis ⇒ track the findings
+> as actionable steps + research HOW). Each item is grounded in BOTH repos' code with
+> the exact NEOTH integration point.
+
+**From odysseus** (GOLD-ADOPT-09 — GUI features whose data/logic already exist in NEOTH; only Slint presentation is missing. 3-agent adaptation research `wf_c808c121`):
+
+- [ ] **GOLD-ADAPT-ODY-01** Conversation-history sidebar in `neothd-gui` ChatView — odysseus `static/js/sessions.js` (`loadSessions`→`renderSessionList`→`selectSession`). NEOTH data = `memory/hindsight.rs::list_cards` (HindsightCard + ADOPT-21 `display_name`, newest-first). *Steps:* add `SessionRow` struct + `in property <[SessionRow]> session-history` + `callback session-selected(string)` to `ChatView` (chat.slint, into the existing 240px sidebar `VerticalLayout` ~L379, "SESSIONS" section); mirror struct `HindsightCardMini` (serde, GUI-decoupled pattern) + `load_session_history(home, 20)` in `panel_logic.rs`; `apply_session_history` ModelRc builder + worker-thread load + `on_session_selected` in `main.rs`. *Effort:* M (~2d). *test:* sidebar lists recent sessions by label; click sets active marker. — *origin:* odysseus
+- [ ] **GOLD-ADAPT-ODY-02** In-chat context-window meta chip — odysseus `chat-meta` overlay. NEOTH renderer ALREADY exists (`cli/chat_display.rs::render_context_bar`, ADOPT-24c). *Steps:* extend the `--stream` sentinel (chat.rs ~L1184) with `used_tokens`+`limit_tokens`; update `strip_stream_sentinel` (main.rs ~L2702) to return them; add `tokens-used`/`tokens-limit` to `ChatMessage` (chat.slint); add a `ContextChip` component (components.slint) wired into `ChatBubble`; unit-test the extended sentinel parse. *Effort:* M (~2-3h). *test:* `neothd chat --stream` sentinel carries token fields; chip renders. — *origin:* odysseus
+- [ ] **GOLD-ADAPT-ODY-03** Chat-composer attachment strip — odysseus attach-strip. NEOTH backing = `media/mod.rs` (`Asset`/`AssetKind` ingest pipeline) + clipboard (PC-01). *Steps:* add `rfd` to neothd-gui Cargo.toml (native picker); `AttachChip` struct + `AttachStrip` component + `pending-attachments`/`attach-clicked`/`remove-attachment` on `Composer` (chat.slint), propagated through `ChatView`; `Arc<Mutex<Vec<PathBuf>>>` + `on_chat_attach`/`on_chat_remove_attachment` + send-worker snapshot in main.rs; PARALLEL daemon slice: `#[arg(long)] attach: Vec<PathBuf>` on `ChatArgs` → media ingest in `run_chat`. *Effort:* M. *test:* file chips render; attachment threads into the prompt via media ingest. — *origin:* odysseus
+
+**From claudeclaw** (GOLD-ADOPT-07 deep-read; sibling daemon, NEOTH ahead — one real reliability steal):
+
+- [ ] **GOLD-ADAPT-CLAW-01** Crash-safe proactive-delivery idempotency — claudeclaw `src/pending-resume.ts` persists a pending wake-up send + **renames the file to `.consumed` BEFORE running**, so a crash mid-delivery never double-fires on restart. *Step:* audit NEOTH's proactive channel-delivery (`G-01` channel-delivery / `SPEC-11` LiveDelivery / `Action::ProactiveChannelSend` egress) for the double-fire window: can a crash between "decided to send" and "sent" re-fire the same proactive message on next daemon start? If yes, close it with a rename-before-consume / WAL-ack-gate guard (NEOTH already has the WAL — a `consumed` marker or an ACK-before-send frame suffices). *Effort:* S-M (an audit + a guard). *test:* a simulated crash between decide+send does not re-deliver on restart. — *origin:* claudeclaw
+
+**From ECC** (GOLD-ADOPT-05 deep-read — GROUND-TRUTH reference library, no discrete build step): mine individual skills/agents from ECC's 261-skill / 64-agent library ON DEMAND for future bundled-skill ports (the proven engineering/cybersec/pm path), when a genuine NEOTH gap appears. The framework/infra is redundant (NEOTH has its own). Not a tracked build item — a sourcing note.
+
+---
+
 ## 5. Definition of GOLD (Release Gate)
 
 All of the following must be `[x]` before tagging `v1.0-gold`:
