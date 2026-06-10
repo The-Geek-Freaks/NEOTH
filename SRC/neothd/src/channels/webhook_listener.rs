@@ -487,6 +487,29 @@ async fn handle_slack(
     Ok(webhook_to_hyper(resp))
 }
 
+/// GOLD-ARCH-12: append a channel-send audit frame + log on write failure.
+/// Centralises the `make_header` + `append` + failure-log shape that every
+/// send-gate verdict arm in [`dispatch_messages`] repeated. `critical = true`
+/// logs at `error!` (a broken audit chain for an action that ALREADY happened —
+/// e.g. a delivered send); `false` logs at `warn!`. The per-verdict payload is
+/// built by the caller; this owns only the emit + error handling.
+async fn append_audit(
+    w: &crate::wal::writer::WalWriterHandle,
+    event_type: u8,
+    payload: Vec<u8>,
+    critical: bool,
+    fail_msg: &str,
+) {
+    let h = crate::wal::make_header(event_type, &payload);
+    if let Err(e) = w.append(h, payload).await {
+        if critical {
+            error!(error = %e, "{fail_msg}");
+        } else {
+            warn!(error = %e, "{fail_msg}");
+        }
+    }
+}
+
 async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage>) {
     for msg in msgs {
         let chat_id = msg.chat_id.clone();
@@ -535,13 +558,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                     &reason,
                                     now,
                                 );
-                                let h = crate::wal::make_header(
+                                append_audit(
+                                    w,
                                     crate::wal::events::EVENT_TYPE_CHANNEL_SEND_DENIED,
-                                    &p,
-                                );
-                                if let Err(e) = w.append(h, p).await {
-                                    warn!(error = %e, "WAL write failed for channel-send denial audit frame");
-                                }
+                                    p,
+                                    false,
+                                    "WAL write failed for channel-send denial audit frame",
+                                )
+                                .await;
                             }
                             warn!(
                                 recipient_hash = %recipient_hash,
@@ -566,13 +590,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                     false,
                                     now,
                                 );
-                                let h = crate::wal::make_header(
+                                append_audit(
+                                    w,
                                     crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
-                                    &p,
-                                );
-                                if let Err(e) = w.append(h, p).await {
-                                    warn!(error = %e, "WAL write failed for dry-run channel-send audit frame");
-                                }
+                                    p,
+                                    false,
+                                    "WAL write failed for dry-run channel-send audit frame",
+                                )
+                                .await;
                             }
                             debug!(
                                 recipient_hash = %recipient_hash,
@@ -611,13 +636,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             matches!(gov.decision, crate::permissions::Decision::Confirm(_)),
                                             now,
                                         );
-                                        let h = crate::wal::make_header(
+                                        append_audit(
+                                            w,
                                             crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
-                                            &p,
-                                        );
-                                        if let Err(e) = w.append(h, p).await {
-                                            error!(error = %e, "required-audit WAL write failed AFTER send — audit chain broken for a delivered channel-send");
-                                        }
+                                            p,
+                                            true,
+                                            "required-audit WAL write failed AFTER send — audit chain broken for a delivered channel-send",
+                                        )
+                                        .await;
                                     }
                                     debug!(
                                         recipient_hash = %recipient_hash,
@@ -636,13 +662,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             "meta_api_error",
                                             now,
                                         );
-                                        let h = crate::wal::make_header(
+                                        append_audit(
+                                            w,
                                             crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
-                                            &p,
-                                        );
-                                        if let Err(e) = w.append(h, p).await {
-                                            warn!(error = %e, "WAL write failed for Meta-API-error channel-send audit frame");
-                                        }
+                                            p,
+                                            false,
+                                            "WAL write failed for Meta-API-error channel-send audit frame",
+                                        )
+                                        .await;
                                     }
                                     warn!(
                                         recipient_hash = %recipient_hash,
@@ -659,13 +686,14 @@ async fn dispatch_messages(cfg: &WebhookListenerConfig, msgs: Vec<InboundMessage
                                             "transport_error",
                                             now,
                                         );
-                                        let h = crate::wal::make_header(
+                                        append_audit(
+                                            w,
                                             crate::wal::events::EVENT_TYPE_CHANNEL_SEND,
-                                            &p,
-                                        );
-                                        if let Err(we) = w.append(h, p).await {
-                                            warn!(error = %we, "WAL write failed for transport-error channel-send audit frame");
-                                        }
+                                            p,
+                                            false,
+                                            "WAL write failed for transport-error channel-send audit frame",
+                                        )
+                                        .await;
                                     }
                                     warn!(
                                         recipient_hash = %recipient_hash,
