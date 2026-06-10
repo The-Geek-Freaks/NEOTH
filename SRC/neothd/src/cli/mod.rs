@@ -52,6 +52,7 @@ pub mod credential;
 pub mod cron;
 pub mod dream;
 pub mod ecology;
+pub mod editor;
 pub mod email;
 pub mod identity;
 pub mod transfer;

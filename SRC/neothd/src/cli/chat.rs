@@ -43,6 +43,12 @@ pub struct ChatArgs {
     #[arg(long, value_name = "TEXT")]
     pub system: Option<String>,
 
+    /// GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of
+    /// passing it inline. Any inline message/`--message` seeds the editor as
+    /// prefill. Aborts if the editor is left empty.
+    #[arg(long)]
+    pub edit: bool,
+
     /// Override the freedom.yaml path (mostly for tests).
     #[arg(long, value_name = "PATH")]
     pub config: Option<PathBuf>,
@@ -2289,6 +2295,19 @@ async fn emit_stream_chunk(
 }
 
 async fn resolve_prompt(args: &ChatArgs) -> Result<String> {
+    // GOLD-ADOPT-24 — `--edit`: compose the prompt in $EDITOR (inline message,
+    // if any, seeds the editor). Takes precedence over inline/stdin.
+    if args.edit {
+        let editor = crate::cli::editor::resolve_editor_command().context(
+            "no editor found for --edit. Set $VISUAL or $EDITOR (e.g. `export EDITOR=nano`).",
+        )?;
+        let (input, meaningful) =
+            crate::cli::editor::get_editor_input(&editor, args.message.as_deref())?;
+        if !meaningful {
+            anyhow::bail!("--edit: editor returned an empty prompt — nothing sent.");
+        }
+        return Ok(input);
+    }
     if let Some(m) = &args.message {
         if !m.trim().is_empty() {
             return Ok(m.clone());
@@ -4274,6 +4293,7 @@ mod tests {
             message: Some("Do you remember when we talked about rust?".into()),
             model: None,
             system: None,
+            edit: false,
             config: None,
             wal_segment: Some(seg.clone()),
             stream: false,
@@ -4374,6 +4394,7 @@ mod tests {
             message: Some("hi".into()),
             model: None,
             system: None,
+            edit: false,
             config: None,
             wal_segment: Some(seg.clone()),
             stream: false,
@@ -4529,6 +4550,7 @@ mod tests {
             message: Some("do the dangerous thing".into()),
             model: None,
             system: None,
+            edit: false,
             config: None,
             wal_segment: Some(seg.clone()),
             stream: false,
@@ -4639,6 +4661,7 @@ mod tests {
             message: Some("Capital of France?".into()),
             model: None,
             system: None,
+            edit: false,
             config: None,
             wal_segment: Some(seg.clone()),
             stream: false,
@@ -4773,6 +4796,7 @@ mod tests {
             message: Some("hi".into()),
             model: None,
             system: None,
+            edit: false,
             config: None,
             wal_segment: Some(seg.clone()),
             stream: true,
@@ -4915,6 +4939,7 @@ mod tests {
             message: Some("trigger".into()),
             model: None,
             system: None,
+            edit: false,
             config: None,
             wal_segment: Some(seg.clone()),
             stream: false,

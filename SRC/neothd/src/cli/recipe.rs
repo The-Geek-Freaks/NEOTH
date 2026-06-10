@@ -208,6 +208,7 @@ async fn run_one(source: &str, params: &[String], dry_run: bool, output: OutputF
         message: Some(rendered.prompt.clone()),
         model: rendered.settings.model.clone(),
         system: rendered.system.clone(),
+        edit: false,
         config: None,
         wal_segment: None,
         stream: matches!(output, OutputFormat::Jsonl),
