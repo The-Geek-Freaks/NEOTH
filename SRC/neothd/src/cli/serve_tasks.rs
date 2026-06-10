@@ -826,6 +826,52 @@ pub(crate) async fn spawn_dreaming(
     ))
 }
 
+/// Cron scheduler (Phase 33a AU-B5). Loads `~/.neoth/jobs.yaml` if present and
+/// spawns the tick loop; a missing jobs file is NOT an error (returns
+/// `Ok(None)`), but bad YAML IS — it propagates `Err` so the daemon fails loudly
+/// at startup rather than silently never firing. Requires a provider. Async
+/// (reads + parses jobs.yaml); WAL-emitting via the scheduler's writer clone.
+pub(crate) async fn spawn_cron_scheduler(
+    config: &FreedomConfig,
+    shared_provider: &Option<Arc<dyn Provider>>,
+    writer: &WalWriterHandle,
+) -> anyhow::Result<Option<JoinHandle<()>>> {
+    match (shared_provider.as_ref(), config.jobs_file_path()) {
+        (Some(provider), Some(jobs_path)) if jobs_path.exists() => {
+            match crate::cron::JobsFile::load_from_path(&jobs_path).await {
+                Ok(jobs) => {
+                    let writer_for_cron = writer.clone();
+                    let provider_for_cron = provider.clone();
+                    let count = jobs.jobs.len();
+                    let handle = tokio::spawn(async move {
+                        if let Err(e) = crate::cron::scheduler::run_scheduler(
+                            jobs,
+                            provider_for_cron,
+                            writer_for_cron,
+                        )
+                        .await
+                        {
+                            tracing::error!(error = %e, "cron scheduler exited with error");
+                        }
+                    });
+                    info!(jobs = count, path = %jobs_path.display(), "cron scheduler spawned");
+                    Ok(Some(handle))
+                }
+                Err(e) => Err(anyhow::anyhow!(
+                    "failed to load {}: {e:#}",
+                    jobs_path.display(),
+                )),
+            }
+        }
+        (Some(_), Some(jobs_path)) => {
+            info!(path = %jobs_path.display(), "no jobs.yaml; cron scheduler idle");
+            Ok(None)
+        }
+        (None, _) => Ok(None),
+        (_, None) => Ok(None),
+    }
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]

@@ -1095,43 +1095,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Missing jobs file is not an error — operators without recurring jobs
     // simply see no scheduler task. Bad YAML *is* an error: configuration
     // problems must fail loudly at startup, not silently never fire.
-    let cron_task: Option<tokio::task::JoinHandle<()>> =
-        match (shared_provider.as_ref(), config.jobs_file_path()) {
-            (Some(provider), Some(jobs_path)) if jobs_path.exists() => {
-                match crate::cron::JobsFile::load_from_path(&jobs_path).await {
-                    Ok(jobs) => {
-                        let writer_for_cron = writer.clone();
-                        let provider_for_cron = provider.clone();
-                        let count = jobs.jobs.len();
-                        let handle = tokio::spawn(async move {
-                            if let Err(e) = crate::cron::scheduler::run_scheduler(
-                                jobs,
-                                provider_for_cron,
-                                writer_for_cron,
-                            )
-                            .await
-                            {
-                                tracing::error!(error = %e, "cron scheduler exited with error");
-                            }
-                        });
-                        info!(jobs = count, path = %jobs_path.display(), "cron scheduler spawned");
-                        Some(handle)
-                    }
-                    Err(e) => {
-                        return Err(anyhow::anyhow!(
-                            "failed to load {}: {e:#}",
-                            jobs_path.display(),
-                        ));
-                    }
-                }
-            }
-            (Some(_), Some(jobs_path)) => {
-                info!(path = %jobs_path.display(), "no jobs.yaml; cron scheduler idle");
-                None
-            }
-            (None, _) => None,
-            (_, None) => None,
-        };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let cron_task =
+        crate::cli::serve_tasks::spawn_cron_scheduler(&config, &shared_provider, &writer).await?;
 
     // ── 5d.c. Updater cron loops — U-04 + probes (Session 25) ────────────
     //
