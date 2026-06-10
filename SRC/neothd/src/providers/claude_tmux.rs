@@ -612,23 +612,6 @@ fn strip_spinner_suffix(s: &str) -> String {
     s.to_string()
 }
 
-fn truncate_at_idle_prompt(text: &str) -> &str {
-    // The interactive `claude` CLI ends every response with a fresh
-    // `❯` prompt + `─` border. We cut at the first border we hit
-    // AFTER the response started.
-    let mut last_safe_end = text.len();
-    for (i, line) in text.lines().enumerate() {
-        if line.trim().chars().count() > 20 && line.trim().contains('─') {
-            // Found a border — truncate at its start.
-            let prefix_lines: Vec<&str> = text.lines().take(i).collect();
-            let prefix_len = prefix_lines.join("\n").len();
-            last_safe_end = prefix_len;
-            break;
-        }
-    }
-    &text[..last_safe_end]
-}
-
 /// B-6 Item 3i — strip ANSI escape sequences in-place (CSI + OSC +
 /// the bare ESC byte). `tmux capture-pane` without `-e` already
 /// drops most ANSI, but operator setups using `-e` for colour-aware

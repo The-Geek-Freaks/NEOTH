@@ -46,8 +46,6 @@ pub const JOURNAL_DIR: &str = "journals";
 pub struct TurnJournal {
     turn_id: String,
     path: PathBuf,
-    /// When true, [`Drop`] removes the file. Set by [`close`].
-    finished: bool,
 }
 
 impl TurnJournal {
@@ -77,7 +75,6 @@ impl TurnJournal {
         Ok(Self {
             turn_id,
             path,
-            finished: false,
         })
     }
 
@@ -110,23 +107,12 @@ impl TurnJournal {
     /// Mark the turn clean + delete the file. Idempotent — calling
     /// twice is a no-op on the second call. After `close` the
     /// journal can no longer accept appends.
-    pub fn close(mut self) -> Result<()> {
-        self.finished = true;
+    pub fn close(self) -> Result<()> {
         match std::fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(e) => Err(e).context(format!("remove {}", self.path.display())),
         }
-    }
-}
-
-impl Drop for TurnJournal {
-    fn drop(&mut self) {
-        // Crash path: leave the file on disk for the recovery scan to find.
-        // Clean path: close() already removed it — nothing to do.
-        // Either way, the file handle was already dropped at the end of
-        // the last `append` call so the bytes are on disk modulo OS cache.
-        let _finished = self.finished;
     }
 }
 

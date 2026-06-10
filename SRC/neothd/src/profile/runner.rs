@@ -29,7 +29,6 @@ use crate::profile::claim_guard::{GuardOutcome, GuardReason, ProfileClaimGuard};
 use crate::profile::delta::ProfileDelta;
 use crate::profile::extension_registry::TypedExtensionRegistry;
 use crate::profile::extract::extract as extract_delta;
-use crate::profile::redaction;
 use crate::profile::timestamp_check::TimestampPolicy;
 use crate::profile::validate::{DroppedClaim, validate};
 use crate::profile::window_attribute::attribute_segments;
@@ -580,15 +579,6 @@ fn reason_to_str(r: &GuardReason) -> String {
     r.to_string()
 }
 
-// Use `redaction::lookup_active` for single-field lookups in tooling
-// paths. The pipeline batch-loads via the dedicated query above so
-// each turn pays one round-trip, not N.
-#[allow(dead_code)]
-fn ensure_redaction_module_used(conn: &Connection) -> Result<()> {
-    let _ = redaction::lookup_active(conn, "identity.x")?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -900,7 +890,8 @@ mod tests {
         let ts_ns = 1_778_803_200 * 1_000_000_000;
         insert_episode(&conn, 10, EVENT_TYPE_RAW_TEXT, "I live in Berlin", ts_ns);
         // Pre-register a redaction for identity.location.
-        redaction::add(&conn, "identity.location", true, None, "operator", 1).unwrap();
+        crate::profile::redaction::add(&conn, "identity.location", true, None, "operator", 1)
+            .unwrap();
 
         let provider = LlmMock {
             reply: valid_llm_reply_with_today_date(),
