@@ -214,52 +214,39 @@ fn validate_reload(old: &FreedomConfig, new: &FreedomConfig) -> Option<String> {
     None
 }
 
-/// Compare two `FreedomConfig` instances field-by-field at the top
-/// level. Returns a list of field names where the YAML serialisation
-/// differs. Mostly an operator-visible diagnostic; the actual swap
-/// uses pointer-compare via ArcSwap, not this diff.
+/// Compare two `FreedomConfig` instances at the top level via their YAML
+/// serialisation. Returns the names of top-level keys whose value differs
+/// (sorted, deduplicated).
+///
+/// GOLD-ARCH-18: a `serde_yaml::Value` mapping diff rather than a
+/// hand-maintained per-field `check!` list — so a NEW `FreedomConfig` field is
+/// diffed automatically and adding one no longer requires editing this function
+/// (the old list silently missed any field a contributor forgot to add). A
+/// best-effort operator-visible diagnostic only; the actual swap uses ArcSwap
+/// pointer-store, not this diff. By the time this runs the caller has already
+/// established the two configs differ AND that no immutable field changed
+/// (`validate_reload` passed), so every reported key is a tunable.
 fn diff_top_level(old: &FreedomConfig, new: &FreedomConfig) -> Vec<String> {
-    macro_rules! check {
-        ($($field:ident),* $(,)?) => {{
-            let mut out: Vec<String> = Vec::new();
-            $(
-                let old_y = serde_yaml::to_string(&old.$field).unwrap_or_default();
-                let new_y = serde_yaml::to_string(&new.$field).unwrap_or_default();
-                if old_y != new_y {
-                    out.push(stringify!($field).into());
-                }
-            )*
-            out
-        }};
+    use serde_yaml::Value;
+    let old_v = serde_yaml::to_value(old).unwrap_or(Value::Null);
+    let new_v = serde_yaml::to_value(new).unwrap_or(Value::Null);
+    let (Value::Mapping(old_map), Value::Mapping(new_map)) = (&old_v, &new_v) else {
+        // Non-mapping serialisation (should never happen for a struct) — no
+        // field-level diff possible; the caller still swapped on the byte diff.
+        return Vec::new();
+    };
+    // Union of keys: a key whose value differs — or that exists in only one of
+    // the two configs — counts as changed. BTreeSet dedups the shared keys
+    // (each appears in both `keys()` iterators) and yields a stable sorted list.
+    let mut changed: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for key in old_map.keys().chain(new_map.keys()) {
+        if let Value::String(name) = key {
+            if old_map.get(key) != new_map.get(key) {
+                changed.insert(name.clone());
+            }
+        }
     }
-    check!(
-        language_primary,
-        language_code,
-        role,
-        role_custom,
-        provider_binary,
-        provider_endpoint,
-        provider_model,
-        provider_region,
-        provider_api_version,
-        autonomy,
-        observability_listen,
-        inference,
-        council,
-        review_gate_enabled,
-        obsidian_vault,
-        obsidian_subdir,
-        obsidian_auto_sync_secs,
-        hysteria,
-        cloud_archive_dest,
-        cloud_archive_subdir,
-        cloud_archive_auto_sync_secs,
-        rollback,
-        claude_cli,
-        profile,
-        refusal_recovery,
-        code_map,
-    )
+    changed.into_iter().collect()
 }
 
 /// Q-4 (hermes port, Session 19): compute the
