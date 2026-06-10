@@ -562,6 +562,39 @@ pub(crate) fn spawn_doctor_cron(
     handle
 }
 
+/// G-01 detector suite — behaviour-pattern cron (inactivity / query-repeat /
+/// topic-burst / time-of-day-shift detectors → proactive nudges). WAL-free,
+/// `config.pattern_cron` + home only. `None` when disabled.
+pub(crate) fn spawn_pattern_cron(config: &FreedomConfig) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::pattern_cron::spawn_pattern_cron_loop(
+        config.pattern_cron,
+        FreedomConfig::default_neoth_home(),
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.pattern_cron.interval_secs,
+            inactivity_gap_secs = config.pattern_cron.inactivity_gap_secs,
+            "pattern-detection cron loop spawned (G-01 detector suite)"
+        );
+    }
+    handle
+}
+
+/// K-Models-Discovery — daily `~/.neoth/models_catalog.json` refresh. WAL-free;
+/// ticks but does nothing when no cloud provider is configured (no outbound
+/// traffic). Bare `JoinHandle<()>` (always spawns).
+pub(crate) fn spawn_catalog_refresh(config: &FreedomConfig) -> JoinHandle<()> {
+    let handle = crate::models::refresh_task::spawn_periodic_refresh(
+        FreedomConfig::default_neoth_home(),
+        config.clone(),
+    );
+    info!(
+        tick_secs = crate::models::refresh_task::REFRESH_TICK_INTERVAL.as_secs(),
+        "models catalog refresh task spawned (K-Models-Discovery)"
+    );
+    handle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

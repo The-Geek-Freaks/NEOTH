@@ -1616,19 +1616,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // existing proactive_dispatcher drain loop. Off by default — a
     // proactive ping is intrusive — so `spawn_*` returns None when
     // `pattern_cron.enabled = false`.
-    let pattern_cron_handle: Option<tokio::task::JoinHandle<()>> = {
-        let home = FreedomConfig::default_neoth_home();
-        let handle =
-            crate::daemon::pattern_cron::spawn_pattern_cron_loop(config.pattern_cron, home);
-        if handle.is_some() {
-            info!(
-                interval_secs = config.pattern_cron.interval_secs,
-                inactivity_gap_secs = config.pattern_cron.inactivity_gap_secs,
-                "pattern-detection cron loop spawned (G-01 detector suite)"
-            );
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let pattern_cron_handle = crate::cli::serve_tasks::spawn_pattern_cron(&config);
 
     // ── MONITOR-02 worker-watch ───────────────────────────────────────────
     // Real-time death detection for the long-running cron/worker loops: hold a
@@ -1685,15 +1674,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Honours the operator's freedom.yaml: when no cloud provider is
     // configured (LocalQwen-only deployments), the task ticks but
     // does nothing — no outbound traffic.
-    let catalog_task: tokio::task::JoinHandle<()> = {
-        let home = FreedomConfig::default_neoth_home();
-        let config_for_catalog = config.clone();
-        crate::models::refresh_task::spawn_periodic_refresh(home, config_for_catalog)
-    };
-    info!(
-        tick_secs = crate::models::refresh_task::REFRESH_TICK_INTERVAL.as_secs(),
-        "models catalog refresh task spawned (K-Models-Discovery)"
-    );
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let catalog_task = crate::cli::serve_tasks::spawn_catalog_refresh(&config);
 
     // ── Cluster audit-sidecar ingester ─────────────────────────────────────
     // CLI commands (`neoth cluster confirm` / `revoke`) drop JSON
