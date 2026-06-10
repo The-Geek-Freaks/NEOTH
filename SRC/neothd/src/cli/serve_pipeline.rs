@@ -361,6 +361,166 @@ pub(crate) async fn emit_inbound_ingress(
     Ok(ingress_event_id)
 }
 
+/// GOLD-WIRE-02b — provenance stamped onto the `CHANNEL_EGRESS` audit frame.
+/// A model reply carries the real provider/model/latency/tokens; the
+/// conversational-recall short-circuit carries `provider = "local-recall"`,
+/// `model = "conversational-recall"`, no tokens — an honest attestation that
+/// the reply came from local memory, NOT a provider call.
+pub(crate) struct ReplyProvenance {
+    pub(crate) provider: String,
+    pub(crate) model: String,
+    pub(crate) latency: std::time::Duration,
+    pub(crate) input_tokens: Option<u32>,
+    pub(crate) output_tokens: Option<u32>,
+}
+
+/// GOLD-WIRE-02b — the shared outbound-release tail used by BOTH the normal
+/// provider reply and the conversational-recall short-circuit. Runs the
+/// `PreEgress` hooks, then the `ChannelSend` autonomy gate (lease-aware), then
+/// emits `CHANNEL_EGRESS`, and returns the [`OutboundMessage`]. Returns
+/// `Ok(None)` when a `PreEgress` hook Blocks or the gate Denies (reply
+/// suppressed: no egress frame written, nothing sent).
+///
+/// Extracted from the inline egress tail so neither path can drift from the
+/// egress policy — a no-provider recall reply is gated **identically** to a
+/// model reply. The `CHANNEL_EGRESS` frame is emitted only here (post-gate), so
+/// a suppressed reply is never falsely attested as egressed.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn release_channel_reply(
+    writer: &WalWriterHandle,
+    hooks: &[crate::hooks::schema::HookDef],
+    autonomy: crate::permissions::AutonomyLevel,
+    inbound: &InboundMessage,
+    channel_str: &str,
+    sender_hash: &str,
+    body: &str,
+    provenance: &ReplyProvenance,
+) -> Result<Option<OutboundMessage>> {
+    // ── PreEgress hooks ───────────────────────────────────────────────
+    // Last filter before the channel adapter sends the reply. A Replace
+    // rewrites the outbound text (per-messenger formatting, profanity
+    // scrub); a Block silently drops it with a HOOK_BLOCKED audit frame.
+    let reply_text = match crate::hooks::run_stage(crate::hooks::HookStage::PreEgress, body, hooks) {
+        Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
+            for name in &hits {
+                if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                    "name": name,
+                    "stage": "pre_egress",
+                    "channel": channel_str,
+                    "recipient_hash": sender_hash,
+                    "ts_unix": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0),
+                })) {
+                    let header = crate::wal::HeaderBuilder::new(
+                        crate::wal::events::EVENT_TYPE_HOOK_FIRED,
+                        &payload,
+                    )
+                    .build();
+                    if let Err(e) = writer.append(header, payload).await {
+                        warn!(error = %e, "WAL append PreEgress hook frame failed");
+                    }
+                }
+            }
+            body
+        }
+        Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
+            info!(
+                channel = channel_str,
+                recipient_hash = %sender_hash,
+                hook = %name,
+                reason = %reason,
+                "outbound dropped by pre_egress hook"
+            );
+            if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+                "name": name,
+                "stage": "pre_egress",
+                "channel": channel_str,
+                "recipient_hash": sender_hash,
+                "reason": reason,
+                "ts_unix": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            })) {
+                emit_required_audit(
+                    writer,
+                    crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
+                    "HOOK_BLOCKED",
+                    payload,
+                )
+                .await;
+            }
+            return Ok(::std::option::Option::None);
+        }
+        Err(e) => {
+            warn!(error = %e, "PreEgress hook dispatch failed");
+            body.to_string()
+        }
+    };
+
+    // ── Permission gate: ChannelSend ──────────────────────────────────
+    // Before the channel adapter ships the reply outbound, gate it through
+    // the autonomy ladder. Strict: denies + emits a WAL audit frame. An
+    // operator-granted `channel_send` lease for the sender pre-authorises it
+    // (Confirm→Allow). Loaded fresh per reply so `neoth lease revoke` takes
+    // effect at once; a missing/corrupt leases.json → empty store → fail-closed.
+    {
+        use crate::permissions::lease::LeaseStore;
+        use crate::permissions::{Action, ConfirmStrategy, Gate};
+        let action = Action::ChannelSend;
+        let lease_store = {
+            let path =
+                LeaseStore::default_path(&crate::config::FreedomConfig::default_neoth_home());
+            tokio::task::spawn_blocking(move || LeaseStore::load(&path).unwrap_or_default())
+                .await
+                .unwrap_or_default()
+        };
+        let now = ::std::time::SystemTime::now()
+            .duration_since(::std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        let gate = Gate::for_level(autonomy)
+            .with_confirm(ConfirmStrategy::FailClosed)
+            .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
+        if let Err(e) = gate.check(&action, Some(writer)).await {
+            warn!(
+                channel = channel_str,
+                error = %e,
+                "channel outbound blocked by autonomy gate (ChannelSend)"
+            );
+            return Ok(::std::option::Option::None);
+        }
+    }
+
+    // ── Emit CHANNEL_EGRESS (post-gate) ───────────────────────────────
+    // The reply passed every PreEgress hook + the ChannelSend gate, so it is
+    // now genuinely released to the transport. The recipient is HASHED — never
+    // stored in the clear — and we attest the hash of the *post-hook* text.
+    let egress_payload = serde_json::to_vec(&serde_json::json!({
+        "channel": inbound.channel,
+        "to_hash": sender_hash,
+        "reply_hash_xxh3": xxhash_rust::xxh3::xxh3_64(reply_text.as_bytes()),
+        "reply_bytes": reply_text.len(),
+        "provider": provenance.provider,
+        "model": provenance.model,
+        "latency_ns": u64::try_from(provenance.latency.as_nanos()).unwrap_or(u64::MAX),
+        "input_tokens": provenance.input_tokens,
+        "output_tokens": provenance.output_tokens,
+    }))?;
+    let egress_header = crate::wal::make_header(EVENT_TYPE_CHANNEL_EGRESS, &egress_payload);
+    writer
+        .append(egress_header, egress_payload)
+        .await
+        .context("write CHANNEL_EGRESS WAL frame")?;
+
+    Ok(Some(OutboundMessage {
+        recipient_id: inbound.sender_id.clone(),
+        text: reply_text,
+    }))
+}
+
 /// Build the per-channel pipeline handler closure. Captured: provider trait
 /// object (shared Arc) + WAL writer handle (cheap Clone of an mpsc sender).
 /// Each inbound message: WAL INGRESS → provider.complete → WAL EGRESS →
@@ -546,16 +706,84 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 emit_inbound_ingress(&writer, &report, &inbound, &sender_hash, &operator_id).await?;
             let sanitized_text = report.text;
 
-            // GOLD-WIRE-02 NOTE: the conversational-recall short-circuit is
-            // wired into the CLI path (`chat.rs::run_chat_with`) only. The
-            // channel path is a deliberate follow-up: a 4-lens adversarial
-            // review flagged that a naive short-circuit here (a) would query
-            // `idx_episode` UNSCOPED (no operator_id/channel filter), risking a
-            // cross-surface data disclosure to a channel sender, and (b) would
-            // bypass the PreEgress hooks + the ChannelSend autonomy gate below
-            // — a policy bypass at Strict. Wiring it correctly needs a
-            // channel/operator-scoped recall query routed through that same
-            // egress gate (+ spawn_blocking), tracked separately.
+            // ── GOLD-WIRE-02b: conversational-recall short-circuit ────────
+            // "Weißt du noch als wir über X geredet haben?" / "do you remember
+            // when we talked about X?" answered straight from local memory —
+            // NO provider call (mirrors the CLI path in `chat.rs`).
+            //
+            // SECURITY: recall reads stored memory OUT to the recipient, so on
+            // the autonomous channel surface it is served ONLY to the provable
+            // operator (`channel_recall_authorized`: sender human_uuid ==
+            // PINNED operator uuid). A non-operator sender — or an unpinned
+            // operator — falls through to the normal LLM turn, so no memory is
+            // disclosed. (The searchable RAW_TEXT idx_episode rows carry no
+            // per-sender scope columns — see `memory/indexer.rs` — so gating at
+            // the provable operator is the only correct boundary.) The reply is
+            // released through `release_channel_reply`, i.e. the SAME PreEgress
+            // hooks + ChannelSend gate as a model reply: no provider call does
+            // NOT mean no egress policy.
+            {
+                let operator_uuid = config_for_handler
+                    .channel_weights
+                    .operator_human_uuid
+                    .as_deref();
+                if crate::cli::recall::channel_recall_authorized(
+                    inbound.human_uuid.as_deref(),
+                    operator_uuid,
+                ) {
+                    let recall_started = Instant::now();
+                    let db_path = crate::memory::store::default_path();
+                    if let Some(recall_reply) =
+                        crate::cli::recall::answer_conversational_recall(&sanitized_text, &db_path)
+                            .await
+                    {
+                        info!(
+                            channel = channel_str,
+                            sender_hash = %sender_hash,
+                            "GOLD-WIRE-02b: conversational-recall short-circuit (operator) — no provider call",
+                        );
+                        // PreEgress hooks need the hook set; the normal path
+                        // loads it at PreProviderCall, which is BELOW this
+                        // short-circuit — so load it here.
+                        let hook_dir =
+                            crate::config::FreedomConfig::default_neoth_home().join("hooks");
+                        let hooks = crate::hooks::load_all(&hook_dir).await.unwrap_or_else(|e| {
+                            warn!(error = %e, "hook load failed for recall egress — empty set");
+                            Default::default()
+                        });
+                        let provenance = ReplyProvenance {
+                            provider: "local-recall".to_string(),
+                            model: "conversational-recall".to_string(),
+                            latency: recall_started.elapsed(),
+                            input_tokens: None,
+                            output_tokens: None,
+                        };
+                        return release_channel_reply(
+                            &writer,
+                            &hooks,
+                            autonomy,
+                            &inbound,
+                            channel_str,
+                            &sender_hash,
+                            &recall_reply,
+                            &provenance,
+                        )
+                        .await;
+                    }
+                } else if crate::recall::conversational::detect_recall_intent(&sanitized_text)
+                    .is_some()
+                {
+                    // Recall-shaped prompt from a non-operator (or unpinned
+                    // operator): do NOT read memory out — fall through to the
+                    // normal LLM turn (no behaviour change vs the pre-WIRE-02b
+                    // channel path for these senders).
+                    tracing::debug!(
+                        channel = channel_str,
+                        sender_hash = %sender_hash,
+                        "GOLD-WIRE-02b: recall intent from non-operator sender — not served, LLM fall-through",
+                    );
+                }
+            }
 
             // ── Permission gate (Phase 28b AU-4 + Pick #10 fix) ──────────
             // Daemon path has no TTY — use FailClosed strategy. Channel-driven
@@ -1606,156 +1834,30 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                 });
             }
 
-            // PII guard: for WhatsApp the sender id is an E.164 phone number.
-            // Hash it once and use the hash in every audit frame + log on the
-            // egress path below — never the number in the clear.
-            let sender_hash = format!(
-                "{:016x}",
-                xxhash_rust::xxh3::xxh3_64(inbound.sender_id.as_bytes())
-            );
-
-            // ── PreEgress hooks (Phase 29 R-15) ───────────────────────────
-            // Last filter before the channel adapter sends the reply. A
-            // Replace rewrites the outbound text (per-messenger formatting
-            // rules, link unfurling, profanity scrub); a Block silently
-            // drops the reply with a HOOK_BLOCKED audit frame.
-            let reply_text = match crate::hooks::run_stage(
-                crate::hooks::HookStage::PreEgress,
-                &completion.text,
-                &hooks,
-            ) {
-                Ok(crate::hooks::StageOutcome::Continue { body, hits }) => {
-                    for name in &hits {
-                        if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
-                            "name": name,
-                            "stage": "pre_egress",
-                            "channel": channel_str,
-                            "recipient_hash": sender_hash,
-                            "ts_unix": std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0),
-                        })) {
-                            let header = crate::wal::HeaderBuilder::new(
-                                crate::wal::events::EVENT_TYPE_HOOK_FIRED,
-                                &payload,
-                            )
-                            .build();
-                            if let Err(e) = writer.append(header, payload).await {
-                                warn!(error = %e, "WAL append PreEgress hook frame failed");
-                            }
-                        }
-                    }
-                    body
-                }
-                Ok(crate::hooks::StageOutcome::Block { name, reason }) => {
-                    info!(
-                        channel = channel_str,
-                        recipient_hash = %sender_hash,
-                        hook = %name,
-                        reason = %reason,
-                        "outbound dropped by pre_egress hook"
-                    );
-                    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
-                        "name": name,
-                        "stage": "pre_egress",
-                        "channel": channel_str,
-                        "recipient_hash": sender_hash,
-                        "reason": reason,
-                        "ts_unix": std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
-                            .unwrap_or(0),
-                    })) {
-                        emit_required_audit(
-                            &writer,
-                            crate::wal::events::EVENT_TYPE_HOOK_BLOCKED,
-                            "HOOK_BLOCKED",
-                            payload,
-                        )
-                        .await;
-                    }
-                    return Ok(::std::option::Option::None);
-                }
-                Err(e) => {
-                    warn!(error = %e, "PreEgress hook dispatch failed");
-                    completion.text.clone()
-                }
+            // ── GOLD-WIRE-02b: release the model reply via the shared tail ─
+            // PreEgress hooks → ChannelSend gate → CHANNEL_EGRESS. The recall
+            // short-circuit above uses the SAME `release_channel_reply` helper,
+            // so a no-provider reply is gated identically to a model reply
+            // (no policy drift). `sender_hash` is the closure-level binding
+            // computed once at the top of the handler.
+            let provenance = ReplyProvenance {
+                provider: provider.name().to_string(),
+                model: completion.model.clone(),
+                latency,
+                input_tokens: completion.input_tokens,
+                output_tokens: completion.output_tokens,
             };
-
-            // ── Permission gate: ChannelSend (Pick #10, Session 14) ─────
-            // Codex feedback 2026-05-18: before the channel adapter
-            // ships the reply outbound, gate it through the autonomy
-            // ladder. Mirrors what `chat.rs` does for the CLI surface
-            // (no gate needed there — TTY local print, not network
-            // egress). Strict level: denies + emits WAL audit frame.
-            {
-                use crate::permissions::lease::LeaseStore;
-                use crate::permissions::{Action, ConfirmStrategy, Gate};
-                let action = Action::ChannelSend;
-                // SL-01a-b: honour an operator-granted capability lease for
-                // this sender. At Strict, ChannelSend evaluates to Confirm and
-                // the daemon has no TTY ⇒ the reply is blocked; a `channel_send`
-                // lease granted to the sender pre-authorises it (Confirm→Allow).
-                // The sender id is the channel-platform-verified identity, which
-                // satisfies the lease subject-authenticity contract. Loaded
-                // fresh per reply so `neoth lease revoke` takes effect at once;
-                // a missing/corrupt leases.json → empty store → fail-closed.
-                let lease_store = {
-                    let path = LeaseStore::default_path(
-                        &crate::config::FreedomConfig::default_neoth_home(),
-                    );
-                    // Blocking fs read off the async worker thread so a burst
-                    // of replies can't starve the Tokio pool; JoinError →
-                    // empty store (fail-closed).
-                    tokio::task::spawn_blocking(move || LeaseStore::load(&path).unwrap_or_default())
-                        .await
-                        .unwrap_or_default()
-                };
-                let now = ::std::time::SystemTime::now()
-                    .duration_since(::std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
-                let gate = Gate::for_level(autonomy)
-                    .with_confirm(ConfirmStrategy::FailClosed)
-                    .with_lease_snapshot(&lease_store, &inbound.sender_id, now);
-                if let Err(e) = gate.check(&action, Some(&writer)).await {
-                    warn!(
-                        channel = channel_str,
-                        error = %e,
-                        "channel outbound blocked by autonomy gate (ChannelSend)"
-                    );
-                    return Ok(::std::option::Option::None);
-                }
-            }
-
-            // ── Emit CHANNEL_EGRESS (post-gate) ───────────────────────────
-            // The reply passed every PreEgress hook and the ChannelSend gate,
-            // so it is now genuinely released to the transport. The recipient
-            // (a phone number for WhatsApp) is HASHED — never stored in the
-            // clear — and we attest the hash of the *post-hook* outbound text,
-            // not the raw completion.
-            let egress_payload = serde_json::to_vec(&serde_json::json!({
-                "channel": inbound.channel,
-                "to_hash": sender_hash,
-                "reply_hash_xxh3": xxhash_rust::xxh3::xxh3_64(reply_text.as_bytes()),
-                "reply_bytes": reply_text.len(),
-                "provider": provider.name(),
-                "model": completion.model,
-                "latency_ns": u64::try_from(latency.as_nanos()).unwrap_or(u64::MAX),
-                "input_tokens": completion.input_tokens,
-                "output_tokens": completion.output_tokens,
-            }))?;
-            let egress_header = crate::wal::make_header(EVENT_TYPE_CHANNEL_EGRESS, &egress_payload);
-            writer
-                .append(egress_header, egress_payload)
-                .await
-                .context("write CHANNEL_EGRESS WAL frame")?;
-
-            Ok(Some(OutboundMessage {
-                recipient_id: inbound.sender_id,
-                text: reply_text,
-            }))
+            release_channel_reply(
+                &writer,
+                &hooks,
+                autonomy,
+                &inbound,
+                channel_str,
+                &sender_hash,
+                &completion.text,
+                &provenance,
+            )
+            .await
         })
     })
 }
@@ -2134,5 +2236,98 @@ mod tests {
         // The returned anchor MUST be the actual written frame's id (the
         // post-reply profile pipeline keys extract_window off it).
         assert_eq!(ingress_eid, eid, "returned event_id matches the CHANNEL_INGRESS frame");
+    }
+
+    fn count_egress_with_provider(bytes: &[u8], want_provider: &str) -> (usize, bool) {
+        let (mut egress, mut saw) = (0usize, false);
+        let _ = crate::wal::scan::for_each_frame(bytes, |_, d| {
+            if d.header.event_type == crate::wal::events::EVENT_TYPE_CHANNEL_EGRESS {
+                egress += 1;
+                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(d.payload) {
+                    if v.get("provider").and_then(|x| x.as_str()) == Some(want_provider) {
+                        saw = true;
+                    }
+                }
+            }
+            Ok(())
+        });
+        (egress, saw)
+    }
+
+    // GOLD-WIRE-02b — the shared egress helper releases a reply at Standard
+    // (ChannelSend = Allow) and attests the recall provenance on the frame.
+    // The lease store read is irrelevant to this outcome (Standard allows
+    // unconditionally), so the test is deterministic regardless of ~/.neoth.
+    #[tokio::test]
+    async fn release_channel_reply_allows_at_standard_and_emits_recall_egress() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let msg = inbound(Some("weißt du noch als wir über rust geredet haben?"), None);
+        let prov = ReplyProvenance {
+            provider: "local-recall".to_string(),
+            model: "conversational-recall".to_string(),
+            latency: std::time::Duration::from_millis(3),
+            input_tokens: None,
+            output_tokens: None,
+        };
+        let out = release_channel_reply(
+            &writer,
+            &[], // no hooks → Continue verbatim
+            crate::permissions::AutonomyLevel::Standard,
+            &msg,
+            "telegram",
+            "deadbeefdeadbeef",
+            "here is what I recall about rust",
+            &prov,
+        )
+        .await
+        .expect("release ok");
+        let out = out.expect("Standard ChannelSend must Allow → Some(reply)");
+        assert_eq!(out.recipient_id, msg.sender_id);
+        assert_eq!(out.text, "here is what I recall about rust");
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap();
+        let (egress, saw_recall) = count_egress_with_provider(&bytes, "local-recall");
+        assert_eq!(egress, 1, "exactly one CHANNEL_EGRESS on the allow path");
+        assert!(saw_recall, "egress frame attests the local-recall provenance (no provider call)");
+    }
+
+    // GOLD-WIRE-02b — at Strict, ChannelSend (FailClosed, no lease for this
+    // fake sender) Denies → the reply is suppressed and NO CHANNEL_EGRESS frame
+    // is written (no false attestation that a suppressed reply egressed). This
+    // proves the recall short-circuit cannot bypass the autonomy gate.
+    #[tokio::test]
+    async fn release_channel_reply_denies_at_strict_and_writes_no_egress() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let (writer, join) = crate::wal::spawn(seg.clone()).unwrap();
+        let msg = inbound(Some("recall something"), None);
+        let prov = ReplyProvenance {
+            provider: "local-recall".to_string(),
+            model: "conversational-recall".to_string(),
+            latency: std::time::Duration::ZERO,
+            input_tokens: None,
+            output_tokens: None,
+        };
+        let out = release_channel_reply(
+            &writer,
+            &[],
+            crate::permissions::AutonomyLevel::Strict,
+            &msg,
+            "telegram",
+            "deadbeefdeadbeef",
+            "secret operator memory",
+            &prov,
+        )
+        .await
+        .expect("release ok (gate Deny is Ok(None), not Err)");
+        assert!(out.is_none(), "Strict ChannelSend (FailClosed, no lease) must Deny → None");
+        drop(writer);
+        let _ = join.await;
+        let bytes = std::fs::read(&seg).unwrap_or_default();
+        let (egress, _) = count_egress_with_provider(&bytes, "local-recall");
+        assert_eq!(egress, 0, "a gate-denied reply must NOT emit a CHANNEL_EGRESS frame");
     }
 }

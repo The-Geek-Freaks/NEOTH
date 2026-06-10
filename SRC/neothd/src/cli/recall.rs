@@ -381,6 +381,34 @@ pub(crate) async fn answer_conversational_recall(prompt: &str, db_path: &Path) -
     ))
 }
 
+/// GOLD-WIRE-02b — channel-path recall authorization. Conversational recall
+/// reads stored memory back OUT to the recipient; on the autonomous channel
+/// surface (Telegram / WhatsApp / Slack) that is only safe to serve to the
+/// **provable operator** — the sender whose resolved cross-channel
+/// `human_uuid` equals the operator's PINNED uuid.
+///
+/// This is deliberately STRICTER than [`crate::memory::channel_weights::learn_factor`],
+/// which trusts an *unpinned* operator on a solo install (`(_, None) => true`).
+/// Learning silently weights a topic; recall DISCLOSES memory contents, so the
+/// bar is higher: an unpinned operator (`operator_uuid == None`) or a sender
+/// carrying no uuid yields `false`. A `false` result means the channel handler
+/// does NOT short-circuit — the message falls through to the normal LLM turn
+/// and no memory is read out. The CLI path (`run_chat_with`) needs no such gate:
+/// it's a local TTY the operator already owns.
+///
+/// The scope is enforced HERE (at the recipient) rather than in the recall SQL
+/// because the searchable conversational text lives in `RAW_TEXT`-derived
+/// `idx_episode` rows that carry NO per-sender columns (`channel/sender_id/
+/// operator_id` are NULL on those rows — see `memory/indexer.rs`). Gating at
+/// the provable operator is therefore the only correct boundary; once it
+/// passes, serving the operator their own memory is not a cross-surface leak.
+pub(crate) fn channel_recall_authorized(
+    sender_uuid: Option<&str>,
+    operator_uuid: Option<&str>,
+) -> bool {
+    matches!((sender_uuid, operator_uuid), (Some(s), Some(o)) if s == o)
+}
+
 /// Hot-tier episode search for [`answer_conversational_recall`]: FTS5
 /// first, LIKE fallback (mirrors the main recall path's hot-tier query).
 /// Best-effort — a missing DB or any query error yields an empty Vec so
@@ -1262,6 +1290,23 @@ mod tests {
             reply.starts_with("Ich finde keine Erinnerung"),
             "german miss line: {reply}"
         );
+    }
+
+    // GOLD-WIRE-02b — channel recall is served ONLY to the provable operator
+    // (sender uuid == pinned operator uuid). Stricter than learn_factor: an
+    // unpinned operator or a sender with no uuid never authorizes recall.
+    #[test]
+    fn channel_recall_authorized_only_for_provable_operator() {
+        // Sender's resolved uuid matches the pinned operator uuid → authorized.
+        assert!(channel_recall_authorized(Some("op-uuid-1"), Some("op-uuid-1")));
+        // A different sender on the same channel → never gets the operator's memory.
+        assert!(!channel_recall_authorized(Some("rando-uuid"), Some("op-uuid-1")));
+        // Operator uuid NOT pinned → recall is withheld from everyone on the
+        // channel surface (deliberately stricter than channel-weights learning).
+        assert!(!channel_recall_authorized(Some("op-uuid-1"), None));
+        assert!(!channel_recall_authorized(None, None));
+        // Sender carries no resolved uuid → cannot prove they're the operator.
+        assert!(!channel_recall_authorized(None, Some("op-uuid-1")));
     }
 
     #[test]
