@@ -894,6 +894,34 @@ pub(crate) fn spawn_indexer(segment_path: &std::path::Path) -> Option<JoinHandle
     }
 }
 
+/// Hot-reload sentinel poller (Pick #37). Polls `~/.neoth/.reload-requested`
+/// every 2s; on presence, re-reads freedom.yaml + swaps the ArcSwap (or rejects)
+/// via the shared `crate::cli::serve::handle_reload_sentinel`. Bare
+/// `JoinHandle<()>` (always spawns). WAL-emitting (the reload handler writes a
+/// CONFIG_RELOADED / CONFIG_RELOAD_REJECTED frame via the writer clone).
+pub(crate) fn spawn_reload_poller(
+    reload_controller: &Arc<crate::config::reload::ReloadController>,
+    writer: &WalWriterHandle,
+) -> JoinHandle<()> {
+    let ctrl = Arc::clone(reload_controller);
+    let writer_for_reload = writer.clone();
+    let home = FreedomConfig::default_neoth_home();
+    let sentinel = home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
+    tokio::spawn(async move {
+        // 2s polling interval — cheap stat call; the sentinel is usually absent.
+        // Tight enough that a manual `neoth reload` feels responsive (P95 ~1s).
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tick.tick().await;
+            if sentinel.exists() {
+                crate::cli::serve::handle_reload_sentinel(&ctrl, &sentinel, &writer_for_reload)
+                    .await;
+            }
+        }
+    })
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]

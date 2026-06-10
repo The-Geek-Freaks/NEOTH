@@ -520,25 +520,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             handle_reload_sentinel(&reload_controller, &sentinel, &writer).await;
         }
     }
-    let reload_task = {
-        let ctrl = std::sync::Arc::clone(&reload_controller);
-        let writer_for_reload = writer.clone();
-        let home = FreedomConfig::default_neoth_home();
-        let sentinel = home.join(crate::config::reload::RELOAD_SENTINEL_NAME);
-        tokio::spawn(async move {
-            // 2s polling interval — cheap stat call; the sentinel is
-            // usually absent. Tight enough that a manual `neoth reload`
-            // feels responsive (P95 latency ~1s).
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            loop {
-                tick.tick().await;
-                if sentinel.exists() {
-                    handle_reload_sentinel(&ctrl, &sentinel, &writer_for_reload).await;
-                }
-            }
-        })
-    };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let reload_task = crate::cli::serve_tasks::spawn_reload_poller(&reload_controller, &writer);
 
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let indexer_task = crate::cli::serve_tasks::spawn_indexer(&segment_path);
