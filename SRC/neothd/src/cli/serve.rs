@@ -1153,18 +1153,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Slack / Keet) consume the same sidecar for at-least-once
     // delivery semantics — the daemon-side drain stays channel-
     // agnostic.
-    let proactive_dispatcher_handle = {
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        crate::daemon::proactive_dispatcher::spawn_proactive_drain_loop(
-            home,
-            crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
-            writer.clone(),
-        )
-    };
-    info!(
-        interval_secs = crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
-        "proactive drain loop spawned (G-01 consumer half — Round-3 v0.4)"
-    );
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let proactive_dispatcher_handle =
+        crate::cli::serve_tasks::spawn_proactive_dispatcher(&writer);
 
     // ── 5d-quartus. G-02 surfacing cron — "Knows things about you you
     //               don't know" producer (Round-3 v0.4) ──
@@ -1187,65 +1178,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // profile drifts past `freedom.yaml::drift_alert.threshold`. Off by
     // default — `spawn_*` returns None when `drift_alert.enabled = false`
     // so opt-out operators carry no idle tokio task.
-    let drift_alert_cron_handle: Option<tokio::task::JoinHandle<()>> = {
-        let home = FreedomConfig::default_neoth_home();
-        let writer_for_drift = writer.clone();
-        let handle = crate::daemon::drift_alert_cron::spawn_drift_alert_cron_loop(
-            config.drift_alert,
-            home,
-            writer_for_drift,
-        );
-        if handle.is_some() {
-            info!(
-                interval_secs = config.drift_alert.interval_secs,
-                threshold = config.drift_alert.threshold,
-                "profile drift-alert cron loop spawned (HO-09b)"
-            );
-        }
-        handle
-    };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let drift_alert_cron_handle =
+        crate::cli::serve_tasks::spawn_drift_alert_cron(&config, &writer);
 
     // ── 5d-sextus. Regression-anchor cron — ADV-14. Weekly re-asks the
     // anchor queries, re-embeds the fresh answers, and emits `0x3F
     // REGRESSION_ALERT` when cosine to the cutover anchor drops below
     // `freedom.yaml::regression_anchor.threshold`. Off by default; needs BOTH a
     // chat provider AND a configured embed provider — only then is it built.
-    let regression_cron_handle: Option<tokio::task::JoinHandle<()>> = if config
-        .regression_anchor
-        .enabled
-    {
-        match (
-            shared_provider.as_ref(),
-            crate::providers::embed_provider_from_config(&config).await,
-        ) {
-            (Some(provider), Some(embed)) => {
-                let handle = crate::daemon::regression_cron::spawn_regression_cron_loop(
-                    config.regression_anchor,
-                    FreedomConfig::default_neoth_home(),
-                    Arc::clone(provider),
-                    embed,
-                    writer.clone(),
-                );
-                if handle.is_some() {
-                    info!(
-                        interval_secs = config.regression_anchor.interval_secs,
-                        threshold = config.regression_anchor.threshold,
-                        "regression-anchor cron loop spawned (ADV-14)"
-                    );
-                }
-                handle
-            }
-            _ => {
-                tracing::warn!(
-                    "regression_anchor.enabled but no chat/embed provider configured — \
-                     cron not started (set inference.embedding_provider + a provider)"
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let regression_cron_handle =
+        crate::cli::serve_tasks::spawn_regression_cron(&config, &shared_provider, &writer).await;
 
     // ── 5d-septimus. Recall-latency cron — MONITOR-03 / RECALL-METER-01.
     // Reads the `idx_recall_latency` window (samples recorded by each one-shot

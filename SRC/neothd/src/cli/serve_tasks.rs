@@ -922,6 +922,87 @@ pub(crate) fn spawn_reload_poller(
     })
 }
 
+/// G-01 consumer half — proactive drain loop (Round-3 v0.4). Drains the
+/// ProactiveQueue + appends to the JSONL sidecar on a cadence. Bare
+/// `JoinHandle<()>` (always spawns). WAL-emitting via the writer clone.
+pub(crate) fn spawn_proactive_dispatcher(writer: &WalWriterHandle) -> JoinHandle<()> {
+    let handle = crate::daemon::proactive_dispatcher::spawn_proactive_drain_loop(
+        FreedomConfig::default_neoth_home(),
+        crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
+        writer.clone(),
+    );
+    info!(
+        interval_secs = crate::daemon::proactive_dispatcher::PROACTIVE_DRAIN_INTERVAL_SECS,
+        "proactive drain loop spawned (G-01 consumer half — Round-3 v0.4)"
+    );
+    handle
+}
+
+/// HO-09b profile drift-alert cron. Emits `0xBA PROFILE_DRIFT_ALERT` on a 6h
+/// schedule when the profile drifts past `drift_alert.threshold`. Off by default
+/// (`None` when `drift_alert.enabled = false`). WAL-emitting via the writer clone.
+pub(crate) fn spawn_drift_alert_cron(
+    config: &FreedomConfig,
+    writer: &WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::drift_alert_cron::spawn_drift_alert_cron_loop(
+        config.drift_alert,
+        FreedomConfig::default_neoth_home(),
+        writer.clone(),
+    );
+    if handle.is_some() {
+        info!(
+            interval_secs = config.drift_alert.interval_secs,
+            threshold = config.drift_alert.threshold,
+            "profile drift-alert cron loop spawned (HO-09b)"
+        );
+    }
+    handle
+}
+
+/// ADV-14 regression-anchor cron. Weekly re-asks the anchor queries, re-embeds,
+/// emits `0x3F REGRESSION_ALERT` on a cosine drop. Off by default; needs BOTH a
+/// chat provider AND a configured embed provider — `None` (with a warn) when
+/// enabled-but-unconfigured. Async (builds the embed provider). WAL-emitting.
+pub(crate) async fn spawn_regression_cron(
+    config: &FreedomConfig,
+    shared_provider: &Option<Arc<dyn Provider>>,
+    writer: &WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    if !config.regression_anchor.enabled {
+        return None;
+    }
+    match (
+        shared_provider.as_ref(),
+        crate::providers::embed_provider_from_config(config).await,
+    ) {
+        (Some(provider), Some(embed)) => {
+            let handle = crate::daemon::regression_cron::spawn_regression_cron_loop(
+                config.regression_anchor,
+                FreedomConfig::default_neoth_home(),
+                Arc::clone(provider),
+                embed,
+                writer.clone(),
+            );
+            if handle.is_some() {
+                info!(
+                    interval_secs = config.regression_anchor.interval_secs,
+                    threshold = config.regression_anchor.threshold,
+                    "regression-anchor cron loop spawned (ADV-14)"
+                );
+            }
+            handle
+        }
+        _ => {
+            tracing::warn!(
+                "regression_anchor.enabled but no chat/embed provider configured — \
+                 cron not started (set inference.embedding_provider + a provider)"
+            );
+            None
+        }
+    }
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]
