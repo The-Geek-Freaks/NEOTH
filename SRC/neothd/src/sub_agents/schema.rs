@@ -10,7 +10,7 @@
 //! `PLAN/QUELLEN_ADOPT_agency_2026-05-21.md` §4: every transfer carries
 //! `from / to / phase / task_id / priority / context / success_criteria /
 //! deliverable / evidence_required`. Returns carry `verdict` (typed via
-//! [`crate::council::quality_score::QaVerdict`] from QM-6) + `evidence` +
+//! [`crate::council::qa_verdict::QaVerdict`] from QM-6) + `evidence` +
 //! `next_agent` so the dispatcher loop has structured pass/fail/blocked
 //! semantics instead of free-form prose.
 //!
@@ -33,7 +33,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::council::quality_score::QaVerdict;
+use crate::council::qa_verdict::QaVerdict;
 
 /// One sub-agent definition. Either operator-defined (TOML) or built-in
 /// (returned by [`super::builtins::built_in_agents`]).
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn nexus_result_with_fail_verdict_round_trips() {
-        use crate::council::quality_score::FailureItem;
+        use crate::council::qa_verdict::FailureItem;
         let res = SubAgentResult {
             from: "left".into(),
             to: "cerebellum".into(),

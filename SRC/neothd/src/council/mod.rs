@@ -43,6 +43,7 @@ pub mod eval;
 pub mod factual_check;
 pub mod last_ts;
 pub mod orchestrator;
+pub mod qa_verdict;
 pub mod quality_score;
 pub mod self_reflect;
 pub mod trigger;

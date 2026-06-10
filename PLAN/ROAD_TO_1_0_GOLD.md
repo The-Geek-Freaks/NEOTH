@@ -72,11 +72,11 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-B Honesty / truth-in-advertising | 26 | 0 | 26 |
 | WS-C Correctness / reliability | 36 | **0** | **36 ✅ COMPLETE** |
 | WS-D Feature wiring (unwired modules) | 16 | 2 | 14 |
-| WS-E Architecture debt | 23 | 22 | 1 |
+| WS-E Architecture debt | 23 | 21 | 2 |
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **199** | **57** | **142** |
+| **TOTAL** | **199** | **56** | **143** |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -344,7 +344,7 @@ Operator hard rule: unwired modules are FEATURES TO WIRE, never deletions.
 - [ ] **GOLD-ARCH-12** Extract `async fn append_audit(writer, event_type, payload, level)` helper; replace repeated WAL-emit arms in `webhook_listener.rs:481-627` — *files:* `SRC/neothd/src/channels/webhook_listener.rs` — *test:* all audit arms use same helper — *origin:* D-20, C-15
 - [ ] **GOLD-ARCH-13** Extract `run_pipeline` input struct `RunPipelineInputs` (currently 11 args); extract `DetectAssembleInputs` (10 args) — *files:* `SRC/neothd/src/profile/runner.rs`, `SRC/neothd/src/detect.rs` — *test:* clippy `too_many_arguments` passes — *origin:* D-16
 - [ ] **GOLD-ARCH-14** Extract shared `installers::probe::cli_version(binary, args, timeout)` helper; eliminate 8× duplicated `cli_version` in `n8n.rs`, `ollama.rs`, etc. — *files:* new `SRC/neothd/src/installers/probe.rs`, 8 callers — *test:* all installer version probes use shared helper — *origin:* D-35
-- [ ] **GOLD-ARCH-15** Move `QaVerdict`/`FailureItem` from `council/quality_score.rs` to `council/qa_verdict.rs` — *files:* `SRC/neothd/src/council/quality_score.rs`, new `council/qa_verdict.rs` — *test:* import sites updated; tests pass — *origin:* D-22, C-21
+- [x] **GOLD-ARCH-15** Move `QaVerdict`/`FailureItem` from `council/quality_score.rs` to `council/qa_verdict.rs` — *files:* `SRC/neothd/src/council/quality_score.rs`, new `council/qa_verdict.rs` — *test:* import sites updated; tests pass — *origin:* D-22, C-21 — ✅ **DONE:** new `council/qa_verdict.rs` (233 LOC) holds `FailureItem` + `QaVerdict` + its 4 constructors / 3 predicates + the 6 serde/round-trip/invariant tests (moved verbatim). Removed both types + their test block from `quality_score.rs` (which keeps the scoring logic + still derives serde for `QualityScore`); `pub mod qa_verdict;` registered in `council/mod.rs`. The two real import sites updated — `sub_agents::parallel` (prod `QaVerdict` + `#[cfg(test)]` `FailureItem`) and `sub_agents::schema` (prod import + inline-test import + the intra-doc link); `council/types.rs` only mentions QaVerdict in agent-prompt prose (no type path → untouched). council:: 264/0 (incl. qa_verdict 6), sub_agents:: 49/0; clippy `-D warnings` clean.
 - [ ] **GOLD-ARCH-16** Remove dead code: `recovery/turn_journal.rs` Drop no-op, dead `tmux_sweeper.rs` wrappers, `claude_tmux.rs::truncate_at_idle_prompt`, `runner.rs::ensure_redaction_module_used` — *files:* respective files — *test:* clippy `dead_code` passes — *origin:* D-29
 - [ ] **GOLD-ARCH-17** Extract `crate::util::url_encode`; replace hand-rolled hex `format!("{b:02x}")` with `hex::encode` everywhere; replace inline FNV with crate — *files:* new `SRC/neothd/src/util/url_encode.rs`, `SRC/neothd/src/media/gmail.rs`, `SRC/neothd/src/media/calendar.rs`, `SRC/neothd/src/profile/runner.rs` — *test:* URL encoding output is identical to stdlib behavior — *origin:* C-34, D-31
 - [ ] **GOLD-ARCH-18** Replace `config/reload.rs` field-enumeration diff with `serde_yaml::Value` diff over both configs — *files:* `SRC/neothd/src/config/reload.rs` — *test:* adding a new field to `FreedomConfig` does not require editing reload.rs — *origin:* C-19

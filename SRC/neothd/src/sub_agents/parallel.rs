@@ -52,8 +52,8 @@ use tracing::{info, warn};
 
 use super::schema::{SubAgentRequest, SubAgentResult};
 #[cfg(test)]
-use crate::council::quality_score::FailureItem;
-use crate::council::quality_score::QaVerdict;
+use crate::council::qa_verdict::FailureItem;
+use crate::council::qa_verdict::QaVerdict;
 
 /// QM-16: trait the caller implements so the dispatcher can run an
 /// arbitrary worker (coding worker, reviewer sub-agent, evidence
