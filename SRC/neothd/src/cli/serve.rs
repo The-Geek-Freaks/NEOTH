@@ -1713,236 +1713,63 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         }
     }
 
-    // MONITOR-02: abort the worker-watch FIRST — so the deliberate abort of the
-    // watched workers (below) is never mistaken for an unexpected death + alerted.
-    crate::cli::serve_tasks::abort_optional(worker_watch_handle).await;
-
-    // Abort channel tasks first so they stop generating new WAL frames.
-    for task in &channel_tasks {
-        task.abort();
-    }
-    for task in channel_tasks {
-        let _ = task.await; // ignore JoinError on aborted tasks
-    }
-
-    // COR-34: drain in-flight Meta webhook fan-out tasks (DISPATCH_GATE-bounded,
-    // <=64) BEFORE drop(writer) so their pipeline WAL frames (RAW_TEXT,
-    // CHANNEL_INGRESS/EGRESS, HOOK_FIRED) land. The channel tasks are already
-    // aborted above so no new dispatches are added; these tasks live in the
-    // shared JoinSet (not the listener task) so the abort above didn't cancel
-    // them. Bounded: a slow/stuck turn (e.g. a hung provider holding a
-    // WalWriterHandle clone) is abandoned via JoinSet::shutdown after the
-    // timeout so the daemon can't hang on exit — those tasks' in-flight frames
-    // are then dropped (same trade-off as the webhook HTTP drain).
-    {
-        const DISPATCH_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-        let drain = async {
-            let mut js = dispatch_join.lock().await;
-            while js.join_next().await.is_some() {}
-        };
-        if tokio::time::timeout(DISPATCH_DRAIN_TIMEOUT, drain).await.is_err() {
-            warn!(
-                timeout_s = DISPATCH_DRAIN_TIMEOUT.as_secs(),
-                "COR-34: webhook dispatch drain timed out — aborting remaining \
-                 fan-out tasks; their in-flight WAL frames may be lost"
-            );
-            dispatch_join.lock().await.shutdown().await;
-        }
-    }
-
-    // Abort the cron scheduler — same reasoning as channels: stop emitting
-    // new WAL frames before the writer drains.
-    crate::cli::serve_tasks::abort_optional(cron_task).await;
-
-    // Abort the EL-01 doctor cron loop. Same drain-before-writer-close
-    // discipline as the regular cron scheduler.
-    crate::cli::serve_tasks::abort_optional(doctor_cron_task).await;
-
-    // Abort the SL-03 resource-watch cron loop (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(resource_watch_handle).await;
-
-    // Abort the HO-07 monitor alerting cron loop (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(monitor_cron_handle).await;
-    // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
-    // frames (only SQLite reads + an atomic snapshot rename), so its ordering vs
-    // the writer drain is irrelevant — but abort it cleanly like the others.
-    crate::cli::serve_tasks::abort_optional(snapshot_refresh_handle).await;
-    crate::cli::serve_tasks::abort_optional(omi_handle).await;
-
-    // Abort the U-04 updater cron loops (neoth_self + cli_version).
-    // Drain before the WAL writer closes so any in-flight tick's
-    // result-frame doesn't get dropped mid-append.
-    crate::cli::serve_tasks::abort_optional(updater_self_task).await;
-    crate::cli::serve_tasks::abort_optional(updater_cli_task).await;
-    crate::cli::serve_tasks::abort_optional(updater_skill_task).await;
-    // MV-01b CLI auto-apply loop. A mid-pass abort at worst drops one
-    // component's UPDATE_RAN frame; the install itself already completed.
-    crate::cli::serve_tasks::abort_optional(cli_autoupdate_task).await;
-    // MV-01b #5 neoth-self staging loop. Mid-pass abort at worst drops a
-    // partial staged archive (re-staged next boot); never swaps.
-    crate::cli::serve_tasks::abort_optional(self_stage_task).await;
-
-    // Abort the catalog refresh task. May be in the middle of an HTTPS
-    // round-trip; aborting drops the connection, which is fine — the
-    // next daemon start will re-run discovery on its first tick.
-    crate::cli::serve_tasks::abort_join(catalog_task).await;
-
-    // Abort the cluster audit sidecar ingester. Pending sidecars
-    // on disk are retained — the next daemon start picks them up
-    // on its first tick (at-least-once semantics are fine for an
-    // audit frame, the WAL writer dedupes by frame hash).
-    // GOLD-SEC-16: cluster task teardown only exists with the `cluster` feature.
-    #[cfg(feature = "cluster")]
-    {
-        crate::cli::serve_tasks::abort_join(cluster_audit_task).await;
-
-        // SL-01b: stop the gossip send-tick before tearing the transport down.
-        crate::cli::serve_tasks::abort_optional(cluster_gossip_task).await;
-
-        // SL-00(1b): tear down the cluster transport. `shutdown()` aborts the
-        // discovery task + awaits it so we leave the DHT cleanly (no lingering
-        // announce). `None` when the transport never came up — no-op.
-        if let Some(swarm) = cluster_swarm {
-            if let Err(e) = swarm.shutdown().await {
-                warn!(error = %e, "cluster transport shutdown error (non-fatal)");
-            } else {
-                info!("cluster transport shut down");
-            }
-        }
-    }
-
-    // Abort the installer_ran + credentials_import sidecar ingesters.
-    // Same at-least-once contract — any sidecars still on disk get
-    // ingested on the next daemon start.
-    crate::cli::serve_tasks::abort_join(installer_audit_task).await;
-    crate::cli::serve_tasks::abort_join(credentials_import_task).await;
-    crate::cli::serve_tasks::abort_join(detect_complete_task).await;
-
-    // Final-drain the self-dev outbox BEFORE aborting the task so
-    // CLI events queued in the last 5s land in the WAL instead of
-    // waiting for the next daemon start.
-    {
-        let home = FreedomConfig::default_neoth_home();
-        match crate::cli::self_dev_outbox::drain_once(&home, &writer).await {
-            Ok(0) => {}
-            Ok(n) => info!(emitted = n, "self-dev outbox final-drained on shutdown"),
-            Err(e) => {
-                warn!(error = %e, "self-dev outbox final-drain failed (events retained for next start)")
-            }
-        }
-    }
-    crate::cli::serve_tasks::abort_join(self_dev_outbox_task).await;
-
-    // Abort the indexer next. It may have been mid-pass; the next `neoth serve`
-    // start picks up from `wal_cursor`.
-    crate::cli::serve_tasks::abort_optional(indexer_task).await;
-
-    // Pick #37 (Session 14): abort the hot-reload poll task. The
-    // controller is dropped along with `reload_controller`. A
-    // pending sentinel on disk survives + the next `neoth serve`
-    // boot picks it up via the at-boot one-shot check.
-    crate::cli::serve_tasks::abort_join(reload_task).await;
-
-    // Abort the /healthz listener — it never writes WAL so it can be cancelled
-    // freely. In-flight connections finish on their own.
-    // COR-34: await the abort so the handle isn't dropped mid-run.
-    crate::cli::serve_tasks::abort_optional(audit_rpc_task).await;
-    // _audit_rpc_guard drops here at fn end → removes the sidecar + token.
-    crate::cli::serve_tasks::abort_optional(healthz_task).await;
-
-    // Abort the Hebbian decay task. It runs against the SQLite views db, so
-    // aborting mid-pass leaves an open transaction at worst — SQLite rolls
-    // it back automatically on connection close.
-    crate::cli::serve_tasks::abort_optional(decay_task).await;
-
-    // Abort the sources GC task — same reasoning as decay above.
-    crate::cli::serve_tasks::abort_optional(gc_task).await;
-
-    // Round-3 v0.4 G-01 — reflection cron loop. Reads views.db +
-    // writes proactive_queue.json; mid-tick abort leaves the queue
-    // file untouched (writer is atomic .tmp + rename) so the next
-    // boot sees a consistent state.
-    crate::cli::serve_tasks::abort_join(reflection_cron_handle).await;
-
-    // Round-3 v0.4 G-01 consumer half — proactive drain loop.
-    // Drains queue + appends to JSONL sidecar; the JSONL sidecar
-    // is append-only so a mid-tick abort either landed the line
-    // (delivered) or didn't (next tick re-picks the item). Worst
-    // case: one item is dropped from a tick that aborted mid-flight
-    // — operator sees it on next drain cycle.
-    crate::cli::serve_tasks::abort_join(proactive_dispatcher_handle).await;
-
-    // Round-3 v0.4 G-02 — surfacing cron loop. Reads idx_profile +
-    // writes proactive_queue.json (atomic .tmp + rename). Mid-tick
-    // abort leaves the queue file untouched + per-claim dedup_key
-    // means the next boot's first tick re-finds the same novel
-    // claims + re-enqueues are no-ops.
-    crate::cli::serve_tasks::abort_join(g02_surfacing_cron_handle).await;
-
-    // Abort the HO-09b drift-alert cron. Same drain-before-writer-close
-    // discipline as the doctor cron: abort + await BEFORE the WAL writer
-    // is dropped so an in-flight 0xBA frame isn't lost.
-    crate::cli::serve_tasks::abort_optional(drift_alert_cron_handle).await;
-    // Abort the ADV-14 regression-anchor cron (same drain-before-close order
-    // so an in-flight 0x3F frame isn't lost).
-    crate::cli::serve_tasks::abort_optional(regression_cron_handle).await;
-    // Abort the MONITOR-03 recall-latency cron (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(recall_latency_cron_handle).await;
-    crate::cli::serve_tasks::abort_optional(profile_adapt_cron_handle).await;
-    // Abort the F4-01 ecology auto-scheduler (drain before writer close).
-    crate::cli::serve_tasks::abort_optional(ecology_cron_handle).await;
-    crate::cli::serve_tasks::abort_optional(pattern_cron_handle).await;
-
-    // Abort the R-02 Phase 4c dreaming task. Embed-path callers
-    // hit `spawn_blocking` for OuroModel/local_qwen forward;
-    // aborting cancels the JoinHandle but the blocking task
-    // may run to completion (acceptable — drains naturally,
-    // never strands the model load).
-    crate::cli::serve_tasks::abort_optional(dreaming_task).await;
-
-    // EL-02 arXiv ingest task — abort on shutdown. Mid-pass abort at
-    // worst drops one topic's fetch, which the next boot re-runs.
-    crate::cli::serve_tasks::abort_optional(arxiv_ingest_task).await;
-
-    // GOLD-ADOPT-26 RSS feed poller — abort BEFORE the WAL writer drains
-    // (it emits 0x4E/0x4F). Mid-pass abort drops one feed's fetch, which the
-    // next tick re-runs.
-    crate::cli::serve_tasks::abort_optional(rss_feed_task).await;
-
-    // Abort the tmux sweeper. Sweeper runs `tmux kill-session` calls;
-    // aborting mid-pass at worst leaves one session unkilled, which the
-    // next interval picks up — safe to drop.
-    crate::cli::serve_tasks::abort_optional(tmux_sweeper_task).await;
-
-    // Drain the n8n localhost API. Notify the accept loop first so it
-    // breaks cleanly between accepts (in-flight handler tasks finish
-    // their existing response), then drop the JoinHandle.
-    n8n_api_shutdown.notify_waiters();
-    if let Some(task) = n8n_api_task {
-        let _ = task.await;
-    }
-
-    // Abort the Obsidian auto-sync task. Pure file IO — aborting mid-copy
-    // is safe; the next start runs a fresh full sync from `wal_cursor=0`.
-    crate::cli::serve_tasks::abort_optional(obsidian_task).await;
-
-    // Same drill for the cloud auto-mirror task. The cloud client
-    // upstream gets the final delta on its own schedule once the
-    // file lands on disk.
-    crate::cli::serve_tasks::abort_optional(cloud_task).await;
-
-    // Tear down the Hysteria subprocess. `Drop` does the cleanup; the
-    // explicit drop here just makes the order obvious in shutdown logs.
-    if let Some(sup) = hysteria_supervisor {
-        info!("stopping Hysteria subprocess");
-        drop(sup);
-    }
-
-    drop(writer);
-    match writer_join.await {
-        Ok(()) => info!("WAL writer task drained cleanly"),
-        Err(e) => warn!(error = %e, "WAL writer task panicked during drain"),
-    }
+    // GOLD-ARCH-01: the full ordered shutdown sequence is now
+    // serve_tasks::shutdown_background_tasks. Gather every background handle into
+    // BackgroundHandles (the RAII guards _pid_guard / _skill_watcher /
+    // _audit_rpc_guard stay bound HERE so their Drop fires at fn-end AFTER the
+    // writer drain), then run the verbatim teardown + writer drain in the fn.
+    let bg = crate::cli::serve_tasks::BackgroundHandles {
+        worker_watch_handle,
+        channel_tasks,
+        dispatch_join,
+        cron_task,
+        doctor_cron_task,
+        resource_watch_handle,
+        monitor_cron_handle,
+        snapshot_refresh_handle,
+        omi_handle,
+        updater_self_task,
+        updater_cli_task,
+        updater_skill_task,
+        cli_autoupdate_task,
+        self_stage_task,
+        catalog_task,
+        #[cfg(feature = "cluster")]
+        cluster_audit_task,
+        #[cfg(feature = "cluster")]
+        cluster_gossip_task,
+        #[cfg(feature = "cluster")]
+        cluster_swarm,
+        installer_audit_task,
+        credentials_import_task,
+        detect_complete_task,
+        self_dev_outbox_task,
+        indexer_task,
+        reload_task,
+        audit_rpc_task,
+        healthz_task,
+        decay_task,
+        gc_task,
+        reflection_cron_handle,
+        proactive_dispatcher_handle,
+        g02_surfacing_cron_handle,
+        drift_alert_cron_handle,
+        regression_cron_handle,
+        recall_latency_cron_handle,
+        profile_adapt_cron_handle,
+        ecology_cron_handle,
+        pattern_cron_handle,
+        dreaming_task,
+        arxiv_ingest_task,
+        rss_feed_task,
+        tmux_sweeper_task,
+        n8n_api_shutdown,
+        n8n_api_task,
+        obsidian_task,
+        cloud_task,
+        hysteria_supervisor,
+    };
+    crate::cli::serve_tasks::shutdown_background_tasks(bg, writer, writer_join).await;
     Ok(())
 }
 
