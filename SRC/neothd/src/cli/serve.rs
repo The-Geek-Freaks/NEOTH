@@ -1323,54 +1323,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // 0xE6/0xE7 frames, removes the consumed file.
     // GOLD-SEC-16: cluster transport + its sidecar/gossip tasks compile in only
     // with the `cluster` feature.
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     #[cfg(feature = "cluster")]
-    let cluster_audit_task: tokio::task::JoinHandle<()> = {
-        let writer_for_audit = writer.clone();
-        let home = FreedomConfig::default_neoth_home();
-        tokio::spawn(async move {
-            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-            loop {
-                tokio::time::sleep(POLL_INTERVAL).await;
-                let pending = match crate::cluster::audit_sidecar::list_pending(&home) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(error = %e, "cluster audit sidecar list failed");
-                        continue;
-                    }
-                };
-                for (path, sidecar) in pending {
-                    let event_type = sidecar.kind.wal_event_type();
-                    let body = crate::cluster::audit_sidecar::build_wal_frame_body(&sidecar);
-                    let header = crate::wal::HeaderBuilder::new(event_type, &body).build();
-                    match writer_for_audit.append(header, body).await {
-                        Ok(_) => {
-                            if let Err(e) = crate::cluster::audit_sidecar::remove_sidecar(&path) {
-                                warn!(
-                                    error = %e,
-                                    path = %path.display(),
-                                    "cluster audit sidecar remove failed after WAL append"
-                                );
-                            } else {
-                                info!(
-                                    kind = sidecar.kind.as_str(),
-                                    pub_key_prefix =
-                                        &sidecar.pub_key_hex[..16.min(sidecar.pub_key_hex.len())],
-                                    "cluster audit frame appended to WAL"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                path = %path.display(),
-                                "cluster audit WAL append failed; sidecar retained for next tick"
-                            );
-                        }
-                    }
-                }
-            }
-        })
-    };
+    let cluster_audit_task = crate::cli::serve_tasks::spawn_cluster_audit_ingester(&writer);
     #[cfg(feature = "cluster")]
     info!("cluster audit sidecar ingester spawned (5s tick)");
 

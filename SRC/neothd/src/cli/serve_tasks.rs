@@ -1069,6 +1069,59 @@ pub(crate) fn spawn_self_dev_outbox(writer: &WalWriterHandle) -> JoinHandle<()> 
     handle
 }
 
+/// Cluster audit-sidecar ingester (cluster feature only). Polls
+/// `~/.neoth/pending_audit/cluster_*.json` every 5s, appends the WAL 0xE6/0xE7
+/// frame, removes the consumed file. Bare `JoinHandle<()>` (always spawns under
+/// the feature). WAL-emitting via the writer clone.
+#[cfg(feature = "cluster")]
+pub(crate) fn spawn_cluster_audit_ingester(writer: &WalWriterHandle) -> JoinHandle<()> {
+    let writer_for_audit = writer.clone();
+    let home = FreedomConfig::default_neoth_home();
+    tokio::spawn(async move {
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+        loop {
+            tokio::time::sleep(POLL_INTERVAL).await;
+            let pending = match crate::cluster::audit_sidecar::list_pending(&home) {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!(error = %e, "cluster audit sidecar list failed");
+                    continue;
+                }
+            };
+            for (path, sidecar) in pending {
+                let event_type = sidecar.kind.wal_event_type();
+                let body = crate::cluster::audit_sidecar::build_wal_frame_body(&sidecar);
+                let header = crate::wal::HeaderBuilder::new(event_type, &body).build();
+                match writer_for_audit.append(header, body).await {
+                    Ok(_) => {
+                        if let Err(e) = crate::cluster::audit_sidecar::remove_sidecar(&path) {
+                            warn!(
+                                error = %e,
+                                path = %path.display(),
+                                "cluster audit sidecar remove failed after WAL append"
+                            );
+                        } else {
+                            info!(
+                                kind = sidecar.kind.as_str(),
+                                pub_key_prefix =
+                                    &sidecar.pub_key_hex[..16.min(sidecar.pub_key_hex.len())],
+                                "cluster audit frame appended to WAL"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            path = %path.display(),
+                            "cluster audit WAL append failed; sidecar retained for next tick"
+                        );
+                    }
+                }
+            }
+        }
+    })
+}
+
 /// Spawn a `Channel::run` adapter loop into `channel_tasks` (Telegram / Slack
 /// socket-mode — every adapter whose receive loop is `Channel::run`, NOT the
 /// WhatsApp webhook listener which uses `webhook_listener::serve`). `label` is
