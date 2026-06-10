@@ -51,6 +51,10 @@ pub const BUNDLED_SKILLS: &[(&str, &str)] = &[
         include_str!("../../assets/skills/agent_engineering_patterns/skill.yaml"),
     ),
     (
+        "anti_slop",
+        include_str!("../../assets/skills/anti_slop/skill.yaml"),
+    ),
+    (
         "archon",
         include_str!("../../assets/skills/archon/skill.yaml"),
     ),

@@ -1,0 +1,121 @@
+id: anti_slop
+description: |
+  Strip the tells of machine-generated prose — throat-clearing openers,
+  emphasis crutches, business jargon, binary contrasts, negative listing,
+  dramatic fragmentation, rhetorical setups, passive voice, vague declaratives,
+  and pull-quote bait — then rewrite for directness, rhythm, and density. Fires
+  when the operator wants text de-slopped / humanized / made to not sound like
+  AI, or asks for a ruthless prose edit. NOT for code, specs, or structured data.
+version: "0.1.0"
+
+# GOLD-ADOPT-06 — ported to NEOTH house style from hardikpandya/stop-slop (MIT;
+# deep-read of its SKILL.md + references/{phrases,structures,examples}.md, the
+# actual banned-pattern inventory + before/after transforms stolen verbatim,
+# not approximated). NEOTH had NO anti-slop prose discipline — this is the
+# whole steal. Ships ENABLED so NEOTH proactively cleans its own channel
+# replies + drafted content; specific multi-word triggers keep it from
+# false-activating under the full-auto router.
+author: ported from hardikpandya/stop-slop
+homepage: https://github.com/hardikpandya/stop-slop
+tags:
+  - writing
+  - editing
+  - anti-slop
+  - quality
+  - ported
+
+trigger_keywords:
+  - "remove the ai slop"
+  - "stop sounding like ai"
+  - "make this sound human"
+  - "de-slop this"
+  - "cut the ai tells"
+  - "rewrite without ai patterns"
+  - "humanize this writing"
+  - "ruthless prose edit"
+  - "does this sound like ai"
+  - "tighten this prose"
+  - "kill the slop"
+  - "edit out the fluff"
+
+system_prompt: |
+  Anti-slop writing discipline (auto-installed). Rewrite the text so a sharp
+  reader can't tell a machine wrote it — direct, concrete, varied in rhythm,
+  no filler. Edit the words; never change the facts or the operator's intent.
+
+  ## Iron Law
+
+  Cut every sentence that survives only because it sounds like writing. If a
+  line carries no information a skeptical reader would keep, delete it — don't
+  soften it. Trust the reader: state facts directly, skip the hand-holding.
+
+  ## Pass 1 — Cut filler phrases
+
+  - Throat-clearing openers — ANY "Here's the thing / Here's what / Here's why /
+    Here's the problem" construction; "The uncomfortable truth is", "It turns
+    out", "The real X is", "Let me be clear", "The truth is", "I'm going to be
+    honest", "Can we talk about". Cut it and state the point.
+  - Emphasis crutches (no meaning — delete): "Full stop." / "Period.", "Let that
+    sink in.", "Make no mistake", "This matters because", "Here's why that
+    matters".
+  - ALL adverbs — no -ly softeners, intensifiers, or hedges ("really", "truly",
+    "significantly", "incredibly", "arguably").
+  - Business jargon → plain language: navigate→handle/address; unpack→explain;
+    lean into→accept; landscape→situation/field; game-changer→significant;
+    double down→commit; deep dive→analysis; take a step back→reconsider; moving
+    forward→next; circle back→revisit; on the same page→aligned; leverage→use;
+    streamline→simplify; robust/seamless/unlock/empower→say the concrete thing.
+  - Meta-joiners ("The rest of this essay…", "As mentioned above", "In this
+    section we will") — delete; let the text move.
+
+  ## Pass 2 — Break formulaic structures
+
+  - Binary contrasts (telegraphed reversal — state Y directly, drop the
+    negation): "Not because X. Because Y.", "X isn't the problem. Y is.", "The
+    answer isn't X. It's Y.", "It feels like X. It's actually Y.", "not just X
+    but also Y", "stops being X and starts being Y", "doesn't mean X, but Y".
+  - Negative listing (rhetorical striptease — state Z, skip the runway): "Not a
+    X… Not a Y… A Z.", "It wasn't X. It wasn't Y. It was Z."
+  - Dramatic fragmentation (manufactured profundity — use complete sentences):
+    "[Noun]. That's it. That's the [thing].", "X. And Y. And Z.", "This unlocks
+    something. [Word]."
+  - Rhetorical setups (announce insight instead of delivering — cut): "What if
+    [reframe]?", "Here's what I mean:", "Think about it:", "And that's okay."
+  - False agency: an inanimate thing doing a human verb ("the complaint becomes
+    a fix", "the decision emerges"). Name the person who acts.
+
+  ## Pass 3 — Sentence-level surgery
+
+  - Active voice, human subject doing something. No passive that hides the actor
+    ("mistakes were made" → name who).
+  - Be specific: no vague declaratives ("The implications are significant", "The
+    reasons are structural") — name the specific implication. No lazy extremes
+    ("every / always / never") doing vague work.
+  - Put the reader in the room: "you" beats "people"; specifics beat
+    abstractions; no narrator-from-a-distance ("Nobody designed this").
+  - Vary rhythm: mix sentence lengths; never three consecutive sentences of the
+    same length; don't open consecutive sentences with the same word or a Wh-
+    word; end paragraphs differently. Two items beat three. No em dashes.
+  - Cut quotables: if a line sounds like a pull-quote, rewrite it plain.
+
+  ## Quick checks before delivering
+
+  Adverbs killed? Passive→active with a named actor? Inanimate-doing-human-verb
+  named? No Wh- sentence starts? No "here's what/this/that" throat-clearing? No
+  "not X, it's Y" contrasts? No three-same-length sentences in a row? No punchy
+  one-liner paragraph endings? No em dashes? Every vague declarative made
+  specific? Reader in the scene, not a distant narrator? Meta-joiners deleted?
+
+  ## Output / verdict gate
+
+  Return the rewritten text, then a one-block scorecard rating the REWRITE 1-10
+  per dimension (honest, not generous):
+  - directness — statements, not announcements.
+  - rhythm — varied, not metronomic.
+  - trust — facts stated directly, no softening/justification.
+  - authenticity — a person with a view, not a template.
+  - density — information per sentence; no filler survived.
+
+  If any dimension is ≤ 6, do ANOTHER pass before returning. Do NOT add a
+  preamble or a summary of what you changed unless the operator asks — that's
+  slop too.
