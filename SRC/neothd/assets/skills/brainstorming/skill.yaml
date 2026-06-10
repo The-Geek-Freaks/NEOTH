@@ -8,11 +8,15 @@ description: |
 version: "0.1.0"
 
 # Ported from obra/superpowers `skills/brainstorming` (2026-05-22
-# Session 20 — QM-24). This is the YAML/skill-router layer; the CORE
-# Rust gate (SP-C1, ~2-3d) that ENFORCES brainstorming before
-# dispatching to hemispheres ships separately as
-# `src/workflows/brainstorm.rs`. Until that lands, this skill is the
-# operator-facing layer.
+# Session 20 — QM-24). This is the prompt-layer discipline. The companion
+# Rust CLASSIFIER (`src/coding/brainstorm.rs::evaluate`, QM-4/SP-C1) already
+# exists — it returns Skip / NeedsBrainstorm / SpecReady — but is intentionally
+# a SOFT signal (a recommendation), NOT a hard gate, and is currently UNWIRED
+# (no consumer). NEOTH does not hard-block code on a brainstorm: `neoth chat`
+# is one-shot (no multi-turn Socratic loop to enforce) and the operator is a
+# solo expert who legitimately skips brainstorming (see "When to skip" below).
+# Quality comes from this prompt discipline + the council/gremium on real
+# design decisions, not a forced gate.
 author: ported from obra/superpowers
 homepage: https://github.com/obra/superpowers
 tags:
@@ -117,9 +121,9 @@ system_prompt: |
   - `to_prd` writes the spec document this skill brainstorms toward
   - `to_issues` decomposes the resulting spec into kanban tasks
   - `triage` moves the tasks through the lifecycle
-  - The CORE Rust SP-C1 `BrainstormGate` (when it lands) ENFORCES
-    this gate at the request-classifier layer; until then, this
-    skill is the operator-facing layer
+  - `coding::brainstorm::evaluate` (SP-C1) is the companion Rust classifier:
+    a SOFT recommend (Skip / NeedsBrainstorm / SpecReady), not a hard block;
+    this skill is the prompt-layer discipline operators actually run
 
   ## When to skip
 
