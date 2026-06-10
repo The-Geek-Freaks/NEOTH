@@ -1015,19 +1015,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     //
     // Spawned only when freedom.yaml has `obsidian_vault` set. Mirrors the
     // archive into the operator's vault on a schedule. Off by default.
-    let obsidian_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
-        if let Some(vault_str) = config.obsidian_vault.as_deref() {
-            let vault = std::path::PathBuf::from(vault_str);
-            let subdir = config.obsidian_subdir.clone();
-            let interval = config
-                .obsidian_auto_sync_secs
-                .map(std::time::Duration::from_secs);
-            Some(crate::cli::obsidian_sync_task::spawn(
-                None, vault, subdir, interval,
-            ))
-        } else {
-            None
-        };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let obsidian_task = crate::cli::serve_tasks::spawn_obsidian_sync(&config);
 
     // ── 5b-quad. Cloud archive auto-mirror (R-8) ───────────────────────────
     //
@@ -1035,19 +1024,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // periodically mirror the session archive into a subdir of that
     // folder. The operator's cloud vendor desktop client picks the
     // delta up + uploads.
-    let cloud_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
-        if let Some(dest_str) = config.cloud_archive_dest.as_deref() {
-            let dest = std::path::PathBuf::from(dest_str);
-            let subdir = config.cloud_archive_subdir.clone();
-            let interval = config
-                .cloud_archive_auto_sync_secs
-                .map(std::time::Duration::from_secs);
-            Some(crate::cli::cloud_sync_task::spawn(
-                None, dest, subdir, interval,
-            ))
-        } else {
-            None
-        };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let cloud_task = crate::cli::serve_tasks::spawn_cloud_archive(&config);
 
     // ── 5b-pent. R-02 Phase 4c — dreaming nightly task ─────────────────────
     //
@@ -1098,26 +1076,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // shared provider, and lands the result in the ctx knowledge store.
     // A topic fetch failure logs + skips; a pass failure logs + retries
     // next tick — never crashes the daemon.
-    let arxiv_ingest_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
-        if config.arxiv.enabled && !config.arxiv.topics.is_empty() {
-            info!(
-                topics = config.arxiv.topics.len(),
-                "arxiv ingest task enabled"
-            );
-            Some(crate::cli::arxiv_ingest_task::spawn(
-                crate::config::FreedomConfig::default_neoth_home(),
-                config.arxiv.topics.clone(),
-                shared_provider.as_ref().map(Arc::clone),
-                config
-                    .arxiv
-                    .interval_secs
-                    .map(std::time::Duration::from_secs),
-                config.arxiv.max_per_topic,
-                config.arxiv.source_category.clone(),
-            ))
-        } else {
-            None
-        };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let arxiv_ingest_task =
+        crate::cli::serve_tasks::spawn_arxiv_ingest(&config, &shared_provider);
 
     // ── 5b-ter. RSS / Atom / JSON-Feed poller — GOLD-ADOPT-26 ──────────────
     //
