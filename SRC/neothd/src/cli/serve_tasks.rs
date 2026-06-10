@@ -1003,6 +1003,54 @@ pub(crate) async fn spawn_regression_cron(
     }
 }
 
+/// GOLD-WIRE-07b daemon HNSW snapshot auto-freshness. Every 30 min, rebuilds the
+/// on-disk HNSW snapshot FROM SQLite (the source of truth shared with the
+/// separate `neoth ingest` CLI) when stale — first tick at boot. Off entirely
+/// unless `memory.vector_index.backend == Hnsw` (`None`). WAL-free (only SQLite
+/// reads + an atomic snapshot rename), so order-independent at shutdown. The
+/// blocking rebuild runs via `spawn_blocking`.
+pub(crate) fn spawn_snapshot_refresh(config: &FreedomConfig) -> Option<JoinHandle<()>> {
+    if config.memory.vector_index.backend != crate::config::VectorBackend::Hnsw {
+        return None;
+    }
+    const REFRESH_INTERVAL_SECS: u64 = 1800; // 30 min
+    let home = FreedomConfig::default_neoth_home();
+    let handle = tokio::spawn(async move {
+        let mut tick =
+            tokio::time::interval(std::time::Duration::from_secs(REFRESH_INTERVAL_SECS));
+        // A slow rebuild must not bunch up missed ticks into a burst.
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            // First tick fires immediately → a boot-time freshness pass.
+            tick.tick().await;
+            let home = home.clone();
+            // Blocking SQLite + a full O(N log N) index rebuild → off the reactor.
+            match tokio::task::spawn_blocking(move || {
+                crate::memory::snapshot_refresh::refresh_snapshot_once(&home, true)
+            })
+            .await
+            {
+                Ok(Ok(Some(n))) => info!(
+                    vectors = n,
+                    "GOLD-WIRE-07b: HNSW snapshot refreshed from SQLite"
+                ),
+                Ok(Ok(None)) => {} // fresh / below-ceiling — nothing to do
+                Ok(Err(e)) => {
+                    warn!(error = %e, "GOLD-WIRE-07b snapshot refresh failed (non-fatal)")
+                }
+                Err(e) => {
+                    warn!(error = %e, "GOLD-WIRE-07b snapshot refresh task join error")
+                }
+            }
+        }
+    });
+    info!(
+        interval_secs = REFRESH_INTERVAL_SECS,
+        "HNSW snapshot auto-refresh cron spawned (GOLD-WIRE-07b)"
+    );
+    Some(handle)
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]

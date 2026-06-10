@@ -1227,47 +1227,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // ceiling; idempotent + best-effort; writes NO WAL frames (only SQLite reads
     // + an atomic snapshot rename) so it is order-independent at shutdown. Off
     // entirely when the backend is brute-force.
-    let snapshot_refresh_handle: Option<tokio::task::JoinHandle<()>> =
-        if config.memory.vector_index.backend == crate::config::VectorBackend::Hnsw {
-            const REFRESH_INTERVAL_SECS: u64 = 1800; // 30 min
-            let home = FreedomConfig::default_neoth_home();
-            let handle = tokio::spawn(async move {
-                let mut tick =
-                    tokio::time::interval(std::time::Duration::from_secs(REFRESH_INTERVAL_SECS));
-                // A slow rebuild must not bunch up missed ticks into a burst.
-                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-                loop {
-                    // First tick fires immediately → a boot-time freshness pass.
-                    tick.tick().await;
-                    let home = home.clone();
-                    // Blocking SQLite + a full O(N log N) index rebuild → off the reactor.
-                    match tokio::task::spawn_blocking(move || {
-                        crate::memory::snapshot_refresh::refresh_snapshot_once(&home, true)
-                    })
-                    .await
-                    {
-                        Ok(Ok(Some(n))) => info!(
-                            vectors = n,
-                            "GOLD-WIRE-07b: HNSW snapshot refreshed from SQLite"
-                        ),
-                        Ok(Ok(None)) => {} // fresh / below-ceiling — nothing to do
-                        Ok(Err(e)) => {
-                            warn!(error = %e, "GOLD-WIRE-07b snapshot refresh failed (non-fatal)")
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "GOLD-WIRE-07b snapshot refresh task join error")
-                        }
-                    }
-                }
-            });
-            info!(
-                interval_secs = REFRESH_INTERVAL_SECS,
-                "HNSW snapshot auto-refresh cron spawned (GOLD-WIRE-07b)"
-            );
-            Some(handle)
-        } else {
-            None
-        };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let snapshot_refresh_handle = crate::cli::serve_tasks::spawn_snapshot_refresh(&config);
 
     // ── OM-01 local OMI transcript ingest ─────────────────────────────────────
     // Polls the operator's self-hosted OMI backend (SC-14 already confirmed the
