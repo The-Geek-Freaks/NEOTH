@@ -1511,15 +1511,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // the WAL. Closes the public-blocker gap "CLI without writer
     // warns 'no WAL frame'" — the WAL frames now DO land,
     // asynchronously through the daemon.
-    let self_dev_outbox_task: tokio::task::JoinHandle<()> = {
-        let writer_for_self_dev = writer.clone();
-        let home = FreedomConfig::default_neoth_home();
-        crate::cli::self_dev_outbox::spawn_drain_task(home, writer_for_self_dev)
-    };
-    info!(
-        tick_secs = crate::cli::self_dev_outbox::DRAIN_INTERVAL.as_secs(),
-        "self-dev outbox drain task spawned"
-    );
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let self_dev_outbox_task = crate::cli::serve_tasks::spawn_self_dev_outbox(&writer);
 
     // ── QM-10 Phase 3 breaker state restore ────────────────────────────────
     // Replay the failure counters from the prior daemon run so a

@@ -1051,6 +1051,24 @@ pub(crate) fn spawn_snapshot_refresh(config: &FreedomConfig) -> Option<JoinHandl
     Some(handle)
 }
 
+/// Self-dev outbox drain (P-04 follow-on). The `neoth self-dev
+/// accept/decline/propose` CLI runs without a WAL writer (the daemon owns the
+/// segment), so it enqueues pending events in
+/// `~/.neoth/self_dev/pending_events.jsonl`; this task drains them every
+/// `DRAIN_INTERVAL` and emits the real SELF_DEV_* frames. Bare `JoinHandle<()>`
+/// (always spawns). WAL-emitting via the writer clone.
+pub(crate) fn spawn_self_dev_outbox(writer: &WalWriterHandle) -> JoinHandle<()> {
+    let handle = crate::cli::self_dev_outbox::spawn_drain_task(
+        FreedomConfig::default_neoth_home(),
+        writer.clone(),
+    );
+    info!(
+        tick_secs = crate::cli::self_dev_outbox::DRAIN_INTERVAL.as_secs(),
+        "self-dev outbox drain task spawned"
+    );
+    handle
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]
