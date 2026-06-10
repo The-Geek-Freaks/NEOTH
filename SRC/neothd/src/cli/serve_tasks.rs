@@ -1198,6 +1198,157 @@ pub(crate) async fn abort_join<T>(task: JoinHandle<T>) {
     let _ = task.await;
 }
 
+/// GOLD-ARCH-01: the WAL directory + writer, produced by [`prepare_wal`].
+/// `writer_join` is returned plain; `run_serve` rebinds it `mut` (the idle-wait
+/// `select!` borrows `&mut writer_join`).
+pub(crate) struct WalSetup {
+    pub wal_dir: std::path::PathBuf,
+    pub segment_path: std::path::PathBuf,
+    pub writer: WalWriterHandle,
+    pub writer_join: JoinHandle<()>,
+}
+
+/// GOLD-ARCH-01: WAL setup (steps 2/2b/3/3b/BS-4). Prepares the WAL dir (0700 on
+/// unix), runs the ADV-01 `.cpt` crash-recovery scan, spawns the writer task,
+/// flushes deferred quarantine-audit frames into the now-live chain, and
+/// attaches the BS-4 quota guard. Returns the dir + segment path + quota-guarded
+/// writer + join handle. The BOOT frame, the `--one-shot` early-return, the wasm
+/// plugin invoker bootstrap, and the council-depth warning STAY in `run_serve`
+/// (they run after the writer exists). Behaviour-identical to the prior inline
+/// WAL prelude.
+pub(crate) fn prepare_wal(wal_segment: Option<std::path::PathBuf>) -> anyhow::Result<WalSetup> {
+    let wal_dir = FreedomConfig::default_wal_dir();
+    let segment_path = wal_segment.unwrap_or_else(|| wal_dir.join("000001.wal"));
+
+    if let Some(parent) = segment_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create WAL dir {}", parent.display()))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            {
+                warn!(
+                    path = %parent.display(),
+                    error = %e,
+                    "could not chmod 0700 on WAL dir; continuing with inherited mode"
+                );
+            }
+        }
+    }
+
+    // ── 2b. ADV-01 — apply or quarantine any pre-existing `.cpt` files ─────
+    // Before the writer opens any segment, walk the WAL dir for crash-recovery
+    // compaction files. Valid pairs are renamed `.cpt → .bin`; tampered ones are
+    // quarantined + surfaced via a `COMPACTION_AUTH_FAILED` (0x51) frame once the
+    // writer is up below.
+    let pending_auth_failures: Vec<crate::wal::cpt_recovery::ScanReport> = {
+        let key_path = crate::wal::compaction::default_key_path();
+        match crate::wal::compaction::load_or_init_key(&key_path) {
+            Ok(master) => {
+                let auth = crate::wal::cpt_auth::CompactionAuthenticator::from_master_key(&master);
+                match crate::wal::cpt_recovery::scan_and_apply(&wal_dir, &auth, || {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0)
+                }) {
+                    Ok(report) => {
+                        if report.total() > 0 {
+                            info!(
+                                applied = report.applied.len(),
+                                quarantined = report.quarantined.len(),
+                                "ADV-01: WAL .cpt recovery scan complete"
+                            );
+                        }
+                        if report.quarantined.is_empty() {
+                            Vec::new()
+                        } else {
+                            vec![report]
+                        }
+                    }
+                    Err(e) => {
+                        warn!(
+                            error = %e,
+                            wal_dir = %wal_dir.display(),
+                            "ADV-01: .cpt recovery scan failed — continuing startup"
+                        );
+                        Vec::new()
+                    }
+                }
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "ADV-01: HMAC master key unavailable — skipping .cpt recovery scan. \
+                     Any pre-existing .cpt files are left in place and will be re-evaluated \
+                     on next startup once the key is recoverable."
+                );
+                Vec::new()
+            }
+        }
+    };
+
+    // ── 3. Spawn writer task ───────────────────────────────────────────────
+    let (writer, writer_join) =
+        crate::wal::spawn(segment_path.clone()).context("spawn WAL writer task")?;
+
+    // ── 3b. ADV-01 — emit deferred audit frames for quarantined `.cpt`s ────
+    for report in pending_auth_failures {
+        for quarantine_path in report.quarantined {
+            let now_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            // Reconstruct the original `.cpt` path from the quarantine
+            // suffix so the audit payload names the original file.
+            let cpt_path = quarantine_path
+                .to_string_lossy()
+                .rsplit_once(".rejected.")
+                .map(|(prefix, _)| std::path::PathBuf::from(prefix))
+                .unwrap_or_else(|| quarantine_path.clone());
+            let payload = crate::wal::cpt_recovery::auth_failed_payload(
+                &cpt_path,
+                "hmac verification failed at recovery scan",
+                now_unix,
+                &quarantine_path,
+            );
+            let header = crate::wal::HeaderBuilder::new(
+                crate::wal::events::EVENT_TYPE_COMPACTION_AUTH_FAILED,
+                &payload,
+            )
+            .build();
+            if let Err(e) = writer.try_append_sync(header, payload) {
+                warn!(
+                    error = %e,
+                    quarantine = %quarantine_path.display(),
+                    "ADV-01: failed to emit COMPACTION_AUTH_FAILED audit frame"
+                );
+            }
+        }
+    }
+    // Phase 33c BS-4 quota enforcement: attach a guard so the writer
+    // refuses appends once `~/.neoth/` crosses the configured ceiling.
+    let writer = {
+        let home = FreedomConfig::default_neoth_home();
+        let ceiling = std::env::var("NEOTH_QUOTA_CEILING_BYTES")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(crate::daemon::quota::DEFAULT_CEILING_BYTES);
+        writer.with_quota_guard(std::sync::Arc::new(crate::wal::writer::QuotaGuard::new(
+            home, ceiling,
+        )))
+    };
+    info!(path = %segment_path.display(), "WAL writer spawned");
+
+    Ok(WalSetup {
+        wal_dir,
+        segment_path,
+        writer,
+        writer_join,
+    })
+}
+
 /// GOLD-ARCH-01: post-config runtime-service priming, run after config load and
 /// before WAL setup. Enforces the OM-01 SC-14 OMI-local-endpoint hard rule
 /// (bail on a cloud OMI backend), runs the V03-08 + A-2 consent gate (bails with
