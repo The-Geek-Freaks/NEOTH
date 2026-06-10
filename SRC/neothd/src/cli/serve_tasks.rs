@@ -17,6 +17,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
 use tokio::task::JoinHandle;
 use tracing::{info, warn};
 
@@ -1195,6 +1196,84 @@ pub(crate) async fn abort_optional<T>(task: Option<JoinHandle<T>>) {
 pub(crate) async fn abort_join<T>(task: JoinHandle<T>) {
     task.abort();
     let _ = task.await;
+}
+
+/// GOLD-ARCH-01: post-config runtime-service priming, run after config load and
+/// before WAL setup. Enforces the OM-01 SC-14 OMI-local-endpoint hard rule
+/// (bail on a cloud OMI backend), runs the V03-08 + A-2 consent gate (bails with
+/// an actionable error if any cloud provider is unconsented), primes the
+/// process-wide `SkillRegistry` + its filesystem watcher, and installs the
+/// GOLD-WIRE-10 domain-event bus. Returns the `WatcherHandle` (bound by the
+/// caller for the daemon lifetime). Async (the skill registry loads off disk).
+pub(crate) async fn prime_runtime_services(
+    config: &FreedomConfig,
+) -> anyhow::Result<Option<crate::skills::registry::WatcherHandle>> {
+    // OM-01 SC-14 hard rule: if OMI ingest is enabled, the endpoint MUST be a
+    // self-hosted/local address — refuse to start against a cloud OMI backend
+    // (api.omi.me) so operator transcripts never leave the machine.
+    if config.omi.enabled {
+        if let Err(reason) = crate::installers::omi::is_local_endpoint(&config.omi.endpoint) {
+            anyhow::bail!(
+                "SC-14 OMI hard rule: {reason}. Set freedom.yaml::omi.endpoint to a local \
+                 address (e.g. http://127.0.0.1:8002) or disable it (omi.enabled: false)."
+            );
+        }
+    }
+
+    // V03-08 + A-2 preflight: daemon has no TTY so `ensure_all_granted_or_prompt`
+    // bails with an actionable error if any cloud provider in the operator's
+    // freedom.yaml is not yet consented (covers single-mode `provider_kind` AND
+    // the per-hemisphere providers). `NEOTH_CONSENT_BYPASS=1` skips it for CI.
+    {
+        let home = FreedomConfig::default_neoth_home();
+        crate::consent::ensure_all_granted_or_prompt(&home, config)
+            .context("consent gate (V03-08 + A-2)")?;
+    }
+
+    // E-22 chat-route: prime the process-wide SkillRegistry + start its
+    // filesystem watcher BEFORE any request-handling task spawns, so operator
+    // edits to `~/.neoth/skills/<id>/skill.yaml` propagate to the next chat turn
+    // (250ms debounce). The watcher handle is owned by the daemon lifetime.
+    let skill_watcher = {
+        let home = FreedomConfig::default_neoth_home();
+        let skills_dir = home.join("skills");
+        match crate::skills::SkillRegistry::load(&skills_dir).await {
+            Ok(reg) => {
+                let watcher = reg.watch();
+                let inited = crate::skills::registry::init_global(std::sync::Arc::clone(&reg));
+                if !inited {
+                    warn!(
+                        "global skill registry already initialised earlier in this process — \
+                         keeping the existing instance + spawning a redundant watcher (cheap)"
+                    );
+                }
+                info!(
+                    skill_count = reg.snapshot().len(),
+                    dir = %skills_dir.display(),
+                    watcher_active = watcher.is_some(),
+                    "skill registry primed for daemon"
+                );
+                watcher
+            }
+            Err(e) => {
+                warn!(
+                    error = %e,
+                    "skill registry load failed; chat paths will fall back to per-call load"
+                );
+                None
+            }
+        }
+    };
+
+    // GOLD-WIRE-10: install the process-wide domain-event bus + spawn its meter
+    // drainer BEFORE any request-handling task can produce events (council
+    // hemisphere calls fire `ProviderResponded`; the UsageMeter folds token
+    // counts into the running KF-08 budget total).
+    if !crate::domain_events::init_global() {
+        warn!("domain-event bus already installed earlier in this process");
+    }
+
+    Ok(skill_watcher)
 }
 
 /// GOLD-ARCH-01: the pre-config startup guards — home-dir isolation (BS-9),

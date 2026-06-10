@@ -73,99 +73,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "loaded freedom.yaml"
     );
 
-    // OM-01 SC-14 hard rule: if OMI ingest is enabled, the endpoint MUST be a
-    // self-hosted/local address — refuse to start against a cloud OMI backend
-    // (api.omi.me) so operator transcripts never leave the machine.
-    if config.omi.enabled {
-        if let Err(reason) = crate::installers::omi::is_local_endpoint(&config.omi.endpoint) {
-            anyhow::bail!(
-                "SC-14 OMI hard rule: {reason}. Set freedom.yaml::omi.endpoint to a local \
-                 address (e.g. http://127.0.0.1:8002) or disable it (omi.enabled: false)."
-            );
-        }
-    }
-
-    // ── 1a. Plugin discovery + invoker registration (Pick #34 follow-up) ───
-    //
-    // Discover `~/.neoth/plugins/<id>/`, compile each .wasm, register the
-    // resulting CompiledPluginInvoker as the process-wide hook invoker.
-    // Failure on any individual plugin logs a warn + continues (operator
-    // sees the cause in `neoth plugins list` separately); a missing
-    // plugin dir is silently fine.
-    //
-    // Feature-gated so the slim daemon (no wasm-plugin-host) skips the
-    // whole block without an `unused_imports` warning. Runtime gate
-    // via `config.plugins.wasm.enabled` (NOOB-UX-3) — operator on a
-    // wasm-plugin-host-compiled release can still disable plugins
-    // via freedom.yaml without recompiling.
-    //
-    // SC-04: the actual `bootstrap_plugin_invoker` call moved DOWN to
-    // after the WAL writer is spawned (step 3) — the invoker needs a
-    // clone of the daemon's single writer so a denied plugin hostcall
-    // emits its 0xC7 PLUGIN_CAP_DENIED audit frame. Bootstrapping here
-    // (before the writer existed) left the production audit hollow.
-
-    // V03-08 + A-2 preflight: daemon has no TTY so `ensure_all_granted_or_prompt`
-    // bails with an actionable error if any cloud provider in the
-    // operator's freedom.yaml is not yet consented. Covers both the
-    // legacy single-mode `provider_kind` AND the per-hemisphere
-    // providers in `inference.{left,right,cerebellum}` (A-2 closes the
-    // bypass). Operator runs `neoth consent grant <provider>` once per
-    // missing provider + re-launches `neoth serve`. `NEOTH_CONSENT_BYPASS=1`
-    // skips the gate for CI / scripted bring-up. LocalQwen + Skip never gate.
-    {
-        let home = FreedomConfig::default_neoth_home();
-        crate::consent::ensure_all_granted_or_prompt(&home, &config)
-            .context("consent gate (V03-08 + A-2)")?;
-    }
-
-    // E-22 chat-route (Session 21, 2026-05-23): prime the process-wide
-    // SkillRegistry + start its filesystem watcher BEFORE any
-    // request-handling tasks spawn. Every in-daemon chat path reads
-    // through `crate::skills::registry::global()`, so once this fires
-    // operator edits to `~/.neoth/skills/<id>/skill.yaml` propagate to
-    // the next chat turn without a daemon restart (250ms debounce).
-    // Watcher handle is intentionally leaked: daemon lifetime owns it,
-    // tear-down on process exit is fine.
-    let _skill_watcher = {
-        let home = FreedomConfig::default_neoth_home();
-        let skills_dir = home.join("skills");
-        match crate::skills::SkillRegistry::load(&skills_dir).await {
-            Ok(reg) => {
-                let watcher = reg.watch();
-                let inited = crate::skills::registry::init_global(std::sync::Arc::clone(&reg));
-                if !inited {
-                    warn!(
-                        "global skill registry already initialised earlier in this process — \
-                         keeping the existing instance + spawning a redundant watcher (cheap)"
-                    );
-                }
-                info!(
-                    skill_count = reg.snapshot().len(),
-                    dir = %skills_dir.display(),
-                    watcher_active = watcher.is_some(),
-                    "skill registry primed for daemon"
-                );
-                watcher
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    "skill registry load failed; chat paths will fall back to per-call load"
-                );
-                None
-            }
-        }
-    };
-
-    // GOLD-WIRE-10: install the process-wide domain-event bus + spawn its meter
-    // drainer BEFORE any request-handling task can produce events. Council
-    // hemisphere calls fire `ProviderResponded` into it; the UsageMeter folds the
-    // token counts into the running KF-08 budget total (read via
-    // `domain_events::global_meter_snapshot()`; the GUI display is WIRE-10b).
-    if !crate::domain_events::init_global() {
-        warn!("domain-event bus already installed earlier in this process");
-    }
+    // GOLD-ARCH-01: post-config runtime-service priming relocated to serve_tasks
+    // (OMI SC-14 hard rule + V03-08/A-2 consent gate + SkillRegistry watcher +
+    // GOLD-WIRE-10 domain-event bus). The SkillRegistry watcher handle is bound
+    // HERE (named `_skill_watcher`, not bare `_`) for the daemon lifetime.
+    // NOTE: the wasm plugin invoker is bootstrapped LATER (step 3c, after the WAL
+    // writer exists) so a denied hostcall can emit its 0xC7 audit frame.
+    let _skill_watcher = crate::cli::serve_tasks::prime_runtime_services(&config).await?;
 
     // ── 2. Prepare WAL directory + segment ──────────────────────────────────
     let wal_dir = FreedomConfig::default_wal_dir();
