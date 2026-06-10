@@ -17,12 +17,12 @@
 //!
 //! ## Atomic write
 //!
-//! `.tmp` + rename, Windows-safe (explicit target-remove before
-//! rename). Same shape as `daemon::dreaming::sync_dreams_to_obsidian`
-//! + `reflection::sync_reflections_to_obsidian` +
-//! `proactive::action_staging::sync_proposals_to_obsidian` — one
-//! pattern across all vault writes so a future audit finds them
-//! together.
+//! Via the shared [`crate::util::atomic_write::atomic_write`] helper (`.tmp` +
+//! fsync + atomic `rename` — no target-remove window; std `rename` replaces in
+//! place on Windows too). Same crash-safety shape as
+//! `daemon::dreaming::sync_dreams_to_obsidian` +
+//! `reflection::sync_reflections_to_obsidian` +
+//! `proactive::action_staging::sync_proposals_to_obsidian`.
 //!
 //! ## Frontmatter discipline
 //!
@@ -36,8 +36,7 @@ pub mod consult;
 pub mod webhook;
 pub mod webhook_server;
 
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -88,20 +87,7 @@ pub fn sync_ocr_to_obsidian(
     let body = render_obsidian_md(payload);
 
     fs::create_dir_all(&dest_dir)?;
-    let tmp_path = final_path.with_extension("md.tmp");
-    {
-        let mut f = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp_path)?;
-        f.write_all(body.as_bytes())?;
-        f.flush()?;
-    }
-    if final_path.exists() {
-        fs::remove_file(&final_path)?;
-    }
-    fs::rename(&tmp_path, &final_path)?;
+    crate::util::atomic_write::atomic_write(&final_path, body.as_bytes())?;
 
     Ok(OcrSyncOutcome {
         doc_id,

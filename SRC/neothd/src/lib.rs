@@ -141,6 +141,7 @@ pub mod tools;
 pub mod transport;
 pub mod tweaks;
 pub mod updater;
+pub mod util;
 pub mod wal;
 pub mod wasm_plugin;
 pub mod wizard;
