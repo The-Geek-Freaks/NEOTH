@@ -644,6 +644,144 @@ pub(crate) fn run_stale_planning_reaper_on_startup() {
     }
 }
 
+/// n8n localhost API (`freedom.yaml::n8n_api.enabled`). Loopback hyper server
+/// on 127.0.0.1; `n8n_api_shutdown` (a shared `Notify`) lets the daemon stop the
+/// accept loop cleanly at shutdown. `None` when disabled or the token load
+/// fails (API simply absent that session). WAL-emitting (the API state holds a
+/// writer clone) — but a pure construction relocation, so the handle stays bound
+/// to the same site + drained at the same shutdown point.
+pub(crate) fn spawn_n8n_api(
+    config: &FreedomConfig,
+    writer: &WalWriterHandle,
+    n8n_api_shutdown: &Arc<tokio::sync::Notify>,
+) -> Option<JoinHandle<()>> {
+    if !config.n8n_api.enabled {
+        tracing::debug!("freedom.yaml::n8n_api.enabled = false; skipping localhost API spawn");
+        return None;
+    }
+    let home = FreedomConfig::default_neoth_home();
+    let token_path = config
+        .n8n_api
+        .token_path
+        .clone()
+        .unwrap_or_else(|| home.clone());
+    match crate::n8n_api::server::load_or_init_token(&token_path) {
+        Ok(token) => {
+            let state = std::sync::Arc::new(crate::n8n_api::server::ApiState {
+                writer: writer.clone(),
+                config: std::sync::Arc::new(config.clone()),
+                home: home.clone(),
+                token,
+                cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+                boot_instant: std::time::Instant::now(),
+            });
+            info!(
+                port = config.n8n_api.port,
+                "n8n localhost API enabled — spawning hyper task on 127.0.0.1"
+            );
+            Some(crate::n8n_api::server::spawn_server(
+                state,
+                std::sync::Arc::clone(n8n_api_shutdown),
+            ))
+        }
+        Err(e) => {
+            warn!(
+                error = %e,
+                path = %token_path.display(),
+                "n8n_api token load/init failed — API will NOT be available this session"
+            );
+            None
+        }
+    }
+}
+
+/// `/healthz` + `/metrics` listener (Phase 33c BS-1). Off by default; opt in via
+/// `freedom.yaml::observability_listen: "127.0.0.1:PORT"`. Loopback by design.
+/// `None` when unset or the host:port is invalid. WAL-free.
+pub(crate) fn spawn_healthz(
+    config: &FreedomConfig,
+    provider_meter: &crate::providers::meter::Meter,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    match config.observability_listen.as_deref() {
+        None => None,
+        Some(addr_str) => match addr_str.parse::<std::net::SocketAddr>() {
+            Ok(addr) => {
+                let cfg = crate::daemon::healthz::HealthzConfig {
+                    home: FreedomConfig::default_neoth_home(),
+                    config: Some(Arc::new(config.clone())),
+                    // Daemon path: feed the live provider meter so
+                    // `/healthz` + `/metrics` show tps + p50/p95.
+                    meter: Some(provider_meter.clone()),
+                };
+                info!(addr = %addr, "spawning /healthz + /metrics listener");
+                Some(crate::daemon::healthz::spawn(addr, cfg))
+            }
+            Err(e) => {
+                warn!(addr = %addr_str, error = %e, "observability_listen has invalid host:port; listener not started");
+                None
+            }
+        },
+    }
+}
+
+/// Audit-RPC loopback listener (AUDIT-RPC-01). Off by default. When
+/// `freedom.yaml::audit_rpc.enabled`, one-shot CLIs forward their `0xA5..=0xAD`
+/// audit frames to this (the WAL-owning) daemon. Returns BOTH the listener task
+/// AND the `SidecarGuard` — the guard MUST be bound for the daemon lifetime in
+/// `run_serve` (its `Drop` removes the sidecar + token), so it is returned, not
+/// dropped here. `(None, None)` when disabled or bind/token-mint fails. Async
+/// (binds the socket). WAL-emitting via the listener's writer clone.
+pub(crate) async fn spawn_audit_rpc(
+    config: &FreedomConfig,
+    writer: &WalWriterHandle,
+) -> (
+    Option<JoinHandle<anyhow::Result<()>>>,
+    Option<crate::daemon::audit_rpc::SidecarGuard>,
+) {
+    if !config.audit_rpc.enabled {
+        return (None, None);
+    }
+    let home = FreedomConfig::default_neoth_home();
+    // Clear any sidecar+token a PRIOR daemon left behind on a crash (no clean
+    // SidecarGuard drop) BEFORE minting fresh ones — closes the
+    // stale-token-disclosure window (recycled port).
+    crate::daemon::audit_rpc::remove_sidecar(&home);
+    match crate::daemon::audit_rpc::init_rpc_token(&home) {
+        Ok(token) => {
+            let state = crate::daemon::audit_rpc::AuditRpcState {
+                token: token.clone(),
+                writer: writer.clone(),
+                cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
+            };
+            match crate::daemon::audit_rpc::bind_and_serve(state).await {
+                Ok((addr, task)) => {
+                    if let Err(e) = crate::daemon::audit_rpc::write_sidecar(
+                        &home,
+                        addr.port(),
+                        std::process::id(),
+                        &token,
+                    ) {
+                        warn!(error = %e, "audit-RPC sidecar write failed; one-shots can't find the port");
+                    }
+                    info!(port = addr.port(), "audit-RPC listener up (127.0.0.1)");
+                    (
+                        Some(task),
+                        Some(crate::daemon::audit_rpc::SidecarGuard::new(home.clone())),
+                    )
+                }
+                Err(e) => {
+                    warn!(error = %e, "audit-RPC listener failed to bind; one-shot audit forwarding disabled");
+                    (None, None)
+                }
+            }
+        }
+        Err(e) => {
+            warn!(error = %e, "audit-RPC token mint failed; listener not started");
+            (None, None)
+        }
+    }
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]

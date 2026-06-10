@@ -1097,45 +1097,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // 256 KiB body cap. Default OFF — operator opts in + runs
     // `neoth n8n token` first to generate the bearer.
     let n8n_api_shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
-    let n8n_api_task: Option<tokio::task::JoinHandle<()>> = if config.n8n_api.enabled {
-        let home = FreedomConfig::default_neoth_home();
-        let token_path = config
-            .n8n_api
-            .token_path
-            .clone()
-            .unwrap_or_else(|| home.clone());
-        match crate::n8n_api::server::load_or_init_token(&token_path) {
-            Ok(token) => {
-                let state = std::sync::Arc::new(crate::n8n_api::server::ApiState {
-                    writer: writer.clone(),
-                    config: std::sync::Arc::new(config.clone()),
-                    home: home.clone(),
-                    token,
-                    cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
-                    boot_instant: std::time::Instant::now(),
-                });
-                info!(
-                    port = config.n8n_api.port,
-                    "n8n localhost API enabled — spawning hyper task on 127.0.0.1"
-                );
-                Some(crate::n8n_api::server::spawn_server(
-                    state,
-                    std::sync::Arc::clone(&n8n_api_shutdown),
-                ))
-            }
-            Err(e) => {
-                warn!(
-                    error = %e,
-                    path = %token_path.display(),
-                    "n8n_api token load/init failed — API will NOT be available this session"
-                );
-                None
-            }
-        }
-    } else {
-        debug!("freedom.yaml::n8n_api.enabled = false; skipping localhost API spawn");
-        None
-    };
+    let n8n_api_task =
+        crate::cli::serve_tasks::spawn_n8n_api(&config, &writer, &n8n_api_shutdown);
 
     // ── 5c-bis. Spawn /healthz + /metrics listener — Phase 33c BS-1 ────────
     //
@@ -1143,29 +1106,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // `observability_listen: "127.0.0.1:43117"` (or similar) in freedom.yaml.
     // Localhost-only by design — public exposure is the operator's choice
     // via a reverse proxy if they want one.
-    let healthz_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> = match config
-        .observability_listen
-        .as_deref()
-    {
-        None => None,
-        Some(addr_str) => match addr_str.parse::<std::net::SocketAddr>() {
-            Ok(addr) => {
-                let cfg = crate::daemon::healthz::HealthzConfig {
-                    home: FreedomConfig::default_neoth_home(),
-                    config: Some(Arc::new(config.clone())),
-                    // Daemon path: feed the live provider meter so
-                    // `/healthz` + `/metrics` show tps + p50/p95.
-                    meter: Some(provider_meter.clone()),
-                };
-                info!(addr = %addr, "spawning /healthz + /metrics listener");
-                Some(crate::daemon::healthz::spawn(addr, cfg))
-            }
-            Err(e) => {
-                warn!(addr = %addr_str, error = %e, "observability_listen has invalid host:port; listener not started");
-                None
-            }
-        },
-    };
+    let healthz_task = crate::cli::serve_tasks::spawn_healthz(&config, &provider_meter);
 
     // ── 5c-ter. Spawn the audit-RPC listener — AUDIT-RPC-01 ────────────────
     //
@@ -1174,50 +1115,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // WAL-owning) daemon so a `neoth os launch` / `fs` / `lease` run while the
     // daemon is up still lands its `0xA5..=0xAD` audit frames. Bearer-token +
     // loopback-only + a compile-time event-type allowlist (anti-poisoning).
-    let mut _audit_rpc_guard: Option<crate::daemon::audit_rpc::SidecarGuard> = None;
-    let audit_rpc_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
-        if config.audit_rpc.enabled {
-            let home = FreedomConfig::default_neoth_home();
-            // Clear any sidecar+token a PRIOR daemon left behind on a crash
-            // (no clean SidecarGuard drop) BEFORE minting fresh ones — closes
-            // the stale-token-disclosure window (recycled port).
-            crate::daemon::audit_rpc::remove_sidecar(&home);
-            match crate::daemon::audit_rpc::init_rpc_token(&home) {
-                Ok(token) => {
-                    let state = crate::daemon::audit_rpc::AuditRpcState {
-                        token: token.clone(),
-                        writer: writer.clone(),
-                        cooldown: std::sync::Arc::new(crate::n8n_api::auth::AuthCooldown::new()),
-                    };
-                    match crate::daemon::audit_rpc::bind_and_serve(state).await {
-                        Ok((addr, task)) => {
-                            if let Err(e) = crate::daemon::audit_rpc::write_sidecar(
-                                &home,
-                                addr.port(),
-                                std::process::id(),
-                                &token,
-                            ) {
-                                warn!(error = %e, "audit-RPC sidecar write failed; one-shots can't find the port");
-                            }
-                            _audit_rpc_guard =
-                                Some(crate::daemon::audit_rpc::SidecarGuard::new(home.clone()));
-                            info!(port = addr.port(), "audit-RPC listener up (127.0.0.1)");
-                            Some(task)
-                        }
-                        Err(e) => {
-                            warn!(error = %e, "audit-RPC listener failed to bind; one-shot audit forwarding disabled");
-                            None
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(error = %e, "audit-RPC token mint failed; listener not started");
-                    None
-                }
-            }
-        } else {
-            None
-        };
+    let (audit_rpc_task, _audit_rpc_guard) =
+        crate::cli::serve_tasks::spawn_audit_rpc(&config, &writer).await;
 
     // ── 5d. Cron scheduler — Phase 33a AU-B5 ───────────────────────────────
     //
