@@ -642,6 +642,27 @@ pub(crate) fn run_stale_planning_reaper_on_startup() {
     }
 }
 
+/// Abort an optional background task and await its termination, swallowing the
+/// `JoinError` from the cancel. No-op when `None`. This is the standard daemon
+/// shutdown teardown for every cancel-safe background task — `abort` + `await`
+/// stops the task from emitting new WAL frames BEFORE `drop(writer)` drains the
+/// writer. Behaviour-identical to the inline `if let Some(task) = X { task.abort();
+/// let _ = task.await; }` it replaces.
+pub(crate) async fn abort_optional<T>(task: Option<JoinHandle<T>>) {
+    if let Some(task) = task {
+        task.abort();
+        let _ = task.await;
+    }
+}
+
+/// Abort a (non-optional) background task and await its termination. The
+/// always-spawned sibling of [`abort_optional`]; behaviour-identical to the
+/// inline `task.abort(); let _ = task.await;` it replaces.
+pub(crate) async fn abort_join<T>(task: JoinHandle<T>) {
+    task.abort();
+    let _ = task.await;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
