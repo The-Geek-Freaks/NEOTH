@@ -93,21 +93,87 @@ fn parse_params(pairs: &[String]) -> BTreeMap<String, String> {
         .collect()
 }
 
+/// Max sub-recipe nesting depth (cycle / runaway guard).
+const MAX_SUBRECIPE_DEPTH: usize = 4;
+
+/// GOLD-ADOPT-16 — sub-recipe composition (TEMPLATE composition, NEOTH's
+/// cheap-by-default interpretation: a sub-recipe's RENDERED PROMPT is injected
+/// into the parent via `{{key}}`, NOT a nested LLM call — so composing recipes
+/// costs zero extra provider calls). Returns the parent's supplied params
+/// augmented with one `{sub.key => sub.rendered_prompt}` entry per sub-recipe.
+///
+/// Sub files resolve relative to the parent recipe's directory. A sub's param
+/// VALUES may themselves reference parent params (`{{parent_key}}`), substituted
+/// before the sub renders. Deeplinks can't carry file-based sub-recipes (no
+/// parent dir) — that's an error.
+fn resolve_subrecipes(
+    spec: &RecipeSpec,
+    parent_dir: Option<&Path>,
+    supplied: &BTreeMap<String, String>,
+    depth: usize,
+) -> Result<BTreeMap<String, String>> {
+    let mut augmented = supplied.clone();
+    if spec.sub_recipes.is_empty() {
+        return Ok(augmented);
+    }
+    if depth >= MAX_SUBRECIPE_DEPTH {
+        anyhow::bail!(
+            "recipe `{}`: sub-recipe nesting exceeds depth {MAX_SUBRECIPE_DEPTH} (cycle?)",
+            spec.name
+        );
+    }
+    let dir = parent_dir.context(
+        "this recipe declares sub_recipes but was loaded from a deeplink — \
+         sub-recipes resolve relative files and need a local parent path",
+    )?;
+    for sub in &spec.sub_recipes {
+        let sub_path = dir.join(&sub.file);
+        let body = std::fs::read_to_string(&sub_path)
+            .with_context(|| format!("read sub-recipe `{}`", sub_path.display()))?;
+        let sub_spec = RecipeSpec::parse(&body)
+            .with_context(|| format!("parse sub-recipe `{}`", sub_path.display()))?;
+        // Sub param values may reference the PARENT's params: substitute those
+        // first (a plain key→value pass), so `params: { host: "{{target}}" }`
+        // forwards the parent's `target`.
+        let sub_supplied: BTreeMap<String, String> = sub
+            .params
+            .iter()
+            .map(|(k, v)| (k.clone(), substitute_parent_tokens(v, supplied)))
+            .collect();
+        let sub_dir = sub_path.parent().map(Path::to_path_buf);
+        let sub_augmented =
+            resolve_subrecipes(&sub_spec, sub_dir.as_deref(), &sub_supplied, depth + 1)?;
+        let sub_rendered = render(&sub_spec, &sub_augmented)
+            .map_err(|e| anyhow::anyhow!("sub-recipe `{}`: {e}", sub_spec.name))?;
+        augmented.insert(sub.key.clone(), sub_rendered.prompt);
+    }
+    Ok(augmented)
+}
+
+/// Plain `{{key}}` / `{{ key }}` substitution of parent params into a sub-recipe
+/// param value (no type-checking — sub params get type-checked when the sub
+/// renders).
+fn substitute_parent_tokens(value: &str, parent: &BTreeMap<String, String>) -> String {
+    let mut out = value.to_string();
+    for (k, v) in parent {
+        out = out.replace(&format!("{{{{{k}}}}}"), v);
+        out = out.replace(&format!("{{{{ {k} }}}}"), v);
+    }
+    out
+}
+
 async fn run_one(source: &str, params: &[String], dry_run: bool, output: OutputFormat) -> Result<()> {
     let spec = load_recipe(source)?;
     let supplied = parse_params(params);
-    let rendered = render(&spec, &supplied)
+    // Resolve sub-recipes (template composition) into the param map first.
+    let parent_dir = if deeplink::is_deeplink(source) {
+        None
+    } else {
+        Path::new(source).parent().map(Path::to_path_buf)
+    };
+    let augmented = resolve_subrecipes(&spec, parent_dir.as_deref(), &supplied, 0)?;
+    let rendered = render(&spec, &augmented)
         .map_err(|e| anyhow::anyhow!("recipe `{}`: {e}", spec.name))?;
-
-    // ADOPT-16 (core): sub-recipe composition + retry are parsed but not yet
-    // executed — surface that rather than silently dropping them so a recipe
-    // author isn't misled into thinking they ran.
-    if !spec.sub_recipes.is_empty() || spec.retry.is_some() {
-        eprintln!(
-            "  note: this recipe declares sub_recipes/retry, which are parsed but \
-             NOT executed by `recipe run` in this version (core run only)."
-        );
-    }
 
     if dry_run {
         match output {
@@ -134,13 +200,14 @@ async fn run_one(source: &str, params: &[String], dry_run: bool, output: OutputF
         return Ok(());
     }
 
-    // Build a one-shot ChatArgs from the rendered recipe + run the full chat
-    // pipeline (skill routing, MCP tool-loop, council, hooks). `message` MUST be
-    // non-empty (render guarantees it) or run_chat would block on stdin.
-    let chat_args = crate::cli::chat::ChatArgs {
-        message: Some(rendered.prompt),
-        model: rendered.settings.model,
-        system: rendered.system,
+    // A one-shot ChatArgs factory from the rendered recipe — rebuilt per attempt
+    // because run_chat consumes the args. The full chat pipeline (skill routing,
+    // MCP tool-loop, council, hooks) fires; `message` is guaranteed non-empty by
+    // render (else run_chat would block on stdin).
+    let make_args = || crate::cli::chat::ChatArgs {
+        message: Some(rendered.prompt.clone()),
+        model: rendered.settings.model.clone(),
+        system: rendered.system.clone(),
         config: None,
         wal_segment: None,
         stream: matches!(output, OutputFormat::Jsonl),
@@ -149,7 +216,62 @@ async fn run_one(source: &str, params: &[String], dry_run: bool, output: OutputF
         sampling_seed: None,
         resume_from: None,
     };
-    crate::cli::chat::run_chat(chat_args).await
+
+    // GOLD-ADOPT-16 — per-recipe retry with a shell success-check. SECURITY: the
+    // success_check is an arbitrary shell command, so it runs ONLY for a recipe
+    // loaded from a LOCAL FILE the operator authored. A deeplinked (untrusted)
+    // recipe NEVER auto-runs its shell check — we warn + run once.
+    match &spec.retry {
+        None => crate::cli::chat::run_chat(make_args()).await,
+        Some(retry) if deeplink::is_deeplink(source) => {
+            eprintln!(
+                "  ⚠ this recipe came from a deeplink and declares retry.success_check \
+                 (a shell command) — refusing to auto-run untrusted shell. Running once. \
+                 Save it to a local file you've reviewed to enable retry."
+            );
+            let _ = retry;
+            crate::cli::chat::run_chat(make_args()).await
+        }
+        Some(retry) => {
+            let attempts = retry.max.saturating_add(1);
+            for attempt in 1..=attempts {
+                crate::cli::chat::run_chat(make_args()).await?;
+                if shell_check_succeeds(&retry.success_check) {
+                    return Ok(());
+                }
+                if attempt < attempts {
+                    eprintln!(
+                        "  retry {attempt}/{attempts}: success_check `{}` failed — re-running",
+                        retry.success_check
+                    );
+                }
+            }
+            anyhow::bail!(
+                "recipe `{}`: success_check `{}` still failing after {attempts} attempt(s)",
+                spec.name,
+                retry.success_check
+            )
+        }
+    }
+}
+
+/// Run a shell `success_check` and report whether it exited 0. Uses the platform
+/// shell (`cmd /C` on Windows, `sh -c` elsewhere). A spawn failure counts as
+/// NOT-succeeded (the check couldn't confirm success).
+fn shell_check_succeeds(cmd: &str) -> bool {
+    let mut command = if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/C", cmd]);
+        c
+    } else {
+        let mut c = std::process::Command::new("sh");
+        c.args(["-c", cmd]);
+        c
+    };
+    command
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn validate_one(file: &Path, output: OutputFormat) -> Result<()> {
@@ -278,5 +400,48 @@ mod tests {
         let link = deeplink::encode(&spec).unwrap();
         let loaded = load_recipe(&link).unwrap();
         assert_eq!(loaded.name, "g");
+    }
+
+    #[test]
+    fn subrecipe_composition_injects_rendered_sub_prompt() {
+        // Parent references {{enriched}}; the sub-recipe renders "scan host.x"
+        // (its `host` param forwarded from the parent's `target`), and that
+        // rendered text is injected into the parent — zero extra LLM calls.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("sub.yaml"),
+            "name: sub\nprompt: \"scan {{host}}\"\nparameters:\n  - key: host\n",
+        )
+        .unwrap();
+        let parent_path = dir.path().join("parent.yaml");
+        std::fs::write(
+            &parent_path,
+            "name: parent\nprompt: \"Do this: {{enriched}}\"\nparameters:\n  - key: target\nsub_recipes:\n  - key: enriched\n    file: sub.yaml\n    params:\n      host: \"{{target}}\"\n",
+        )
+        .unwrap();
+
+        let spec = load_recipe(parent_path.to_str().unwrap()).unwrap();
+        let supplied = parse_params(&["target=host.x".into()]);
+        let augmented =
+            resolve_subrecipes(&spec, dir.path().into(), &supplied, 0).unwrap();
+        let rendered = render(&spec, &augmented).unwrap();
+        assert_eq!(rendered.prompt, "Do this: scan host.x");
+    }
+
+    #[test]
+    fn subrecipe_from_deeplink_is_rejected() {
+        // A recipe with sub_recipes can't resolve relative files from a deeplink.
+        let spec = RecipeSpec::parse(
+            "name: p\nprompt: \"{{e}}\"\nsub_recipes:\n  - key: e\n    file: sub.yaml\n",
+        )
+        .unwrap();
+        let err = resolve_subrecipes(&spec, None, &BTreeMap::new(), 0).unwrap_err();
+        assert!(err.to_string().contains("deeplink"), "got: {err}");
+    }
+
+    #[test]
+    fn shell_check_distinguishes_success_and_failure() {
+        assert!(shell_check_succeeds("exit 0"), "exit 0 → success");
+        assert!(!shell_check_succeeds("exit 1"), "exit 1 → failure");
     }
 }

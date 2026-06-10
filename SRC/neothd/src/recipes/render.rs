@@ -45,6 +45,13 @@ pub fn render(spec: &RecipeSpec, supplied: &BTreeMap<String, String>) -> Result<
         let checked = type_check(p, &raw)?;
         values.insert(p.key.clone(), checked);
     }
+    // Pass through any supplied keys that are NOT declared parameters — these are
+    // sub-recipe template injections (`sub_recipes[].key`) the runner merged in,
+    // or operator-supplied extras. They substitute as-is (no type-check; their
+    // declared owner already validated them). A declared param always wins.
+    for (k, v) in supplied {
+        values.entry(k.clone()).or_insert_with(|| v.clone());
+    }
 
     let prompt = substitute(&spec.prompt, &values);
     reject_unresolved(&prompt)?;
