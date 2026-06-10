@@ -2030,6 +2030,19 @@ pub async fn run_chat_with(
         name_session_best_effort(&config, &first_tour_home, &current_session_id, &prompt).await;
     }
 
+    // GOLD-ADOPT-24 — turn-end context-window usage bar (this turn's tokens vs
+    // the configured cap). Printed to STDERR so it never pollutes the stdout
+    // response/JSON; skipped in --stream/jsonl machine mode. Limit comes from
+    // tokens.max_per_request (no hardcoded per-model window — model-agnostic rule).
+    if !args.stream {
+        let used = prompt_token_estimate.saturating_add(final_output_tokens.unwrap_or(0));
+        if let Some(bar) =
+            crate::cli::chat_display::render_context_bar(used, config.tokens.max_per_request)
+        {
+            eprintln!("{bar}");
+        }
+    }
+
     drop(writer);
     let _ = writer_join.await;
     Ok(())

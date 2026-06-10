@@ -18,6 +18,7 @@ pub mod backup;
 pub mod catalog;
 pub mod channel;
 pub mod chat;
+pub mod chat_display;
 pub mod cloud;
 pub mod cloud_sync_task;
 // GOLD-SEC-16: `neoth cluster` CLI surface gated with the `cluster` feature.
