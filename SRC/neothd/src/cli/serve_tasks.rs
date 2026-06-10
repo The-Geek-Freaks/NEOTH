@@ -1197,6 +1197,58 @@ pub(crate) async fn abort_join<T>(task: JoinHandle<T>) {
     let _ = task.await;
 }
 
+/// GOLD-ARCH-01: the pre-config startup guards — home-dir isolation (BS-9),
+/// clock-rollback guard (BS-5), and the single-instance PID lock (BS-12). These
+/// run at the very top of `run_serve` BEFORE config load and produce only the
+/// `PidGuard` (returned so the caller binds it for the daemon lifetime — its
+/// `Drop` releases the lock). `--one-shot` skips isolation + the PID lock
+/// (ephemeral tempdirs / shared CI runners). Synchronous; bails on a tripped
+/// guard. Behaviour-identical to the prior inline `run_serve` prelude.
+pub(crate) fn run_preflight_guards(
+    one_shot: bool,
+    allow_clock_rollback: bool,
+) -> anyhow::Result<Option<crate::daemon::pidfile::PidGuard>> {
+    // ── 0. Home-dir isolation (Phase 33c BS-9) ──────────────────────────────
+    // Refuse to start if `~/.neoth/` is readable by other users. One-shot mode
+    // (smoke checks + integration tests) skips this guard — those run against
+    // ephemeral tempdirs / shared CI runners where home perms are out of scope.
+    if !one_shot {
+        crate::daemon::isolation::check_home_isolation(&FreedomConfig::default_neoth_home())?;
+    }
+
+    // ── 0a. Clock rollback guard (Phase 33c BS-5) ───────────────────────────
+    // Bail before any WAL write if the system clock is far behind the last
+    // observed timestamp. `--allow-clock-rollback` skips it (intentional rewind).
+    if !allow_clock_rollback {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
+            .unwrap_or(0);
+        crate::daemon::clock_floor::check(
+            &crate::daemon::clock_floor::default_floor_path(),
+            now_ns,
+        )?;
+    } else {
+        warn!("--allow-clock-rollback: skipping monotonic clock guard");
+    }
+
+    // ── 0b. Single-instance lock (Phase 33c BS-12) ──────────────────────────
+    // Acquire `~/.neoth/neothd.pid` BEFORE touching the WAL — a second daemon
+    // writing the same segment would corrupt the byte stream. Skipped under
+    // `--one-shot` so integration tests can run in parallel.
+    let pid_guard = if one_shot {
+        None
+    } else {
+        match crate::daemon::pidfile::acquire(&crate::daemon::pidfile::default_pidfile()) {
+            Ok(g) => Some(g),
+            Err(e) => {
+                anyhow::bail!("{e}");
+            }
+        }
+    };
+    Ok(pid_guard)
+}
+
 /// GOLD-ARCH-01: every background-task handle + teardown-only local produced
 /// between WAL setup and the idle-wait, grouped so the ~230-LOC shutdown
 /// sequence can move out of `run_serve` into [`shutdown_background_tasks`].

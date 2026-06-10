@@ -52,51 +52,15 @@ pub struct ServeArgs {
 }
 
 pub async fn run_serve(args: ServeArgs) -> Result<()> {
-    // ── 0. Home-dir isolation (Phase 33c BS-9) ──────────────────────────────
-    // Refuse to start if `~/.neoth/` is readable by other users on this
-    // host. WAL frames + ground-truth rows are operator-private.
-    //
-    // One-shot mode (smoke checks + integration tests) skips this guard
-    // for the same reason it skips the PID lock at line 84: those run
-    // against ephemeral tempdirs or shared CI runners where the home
-    // dir's permissions are out of NEOTH's control. The long-lived
-    // daemon path is the only place the invariant matters.
-    if !args.one_shot {
-        crate::daemon::isolation::check_home_isolation(&FreedomConfig::default_neoth_home())?;
-    }
-
-    // ── 0a. Clock rollback guard (Phase 33c BS-5) ───────────────────────────
-    // Bail before any WAL write if the system clock is far behind the
-    // last observed timestamp. Operator can pass --allow-clock-rollback
-    // when intentional (backup restore, snapshot rewind).
-    if !args.allow_clock_rollback {
-        let now_ns = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
-            .unwrap_or(0);
-        crate::daemon::clock_floor::check(
-            &crate::daemon::clock_floor::default_floor_path(),
-            now_ns,
-        )?;
-    } else {
-        warn!("--allow-clock-rollback: skipping monotonic clock guard");
-    }
-
-    // ── 0b. Single-instance lock (Phase 33c BS-12) ──────────────────────────
-    // Acquire ~/.neoth/neothd.pid BEFORE touching the WAL — a second daemon
-    // writing the same segment would corrupt the byte stream. Stale-PID
-    // (process gone) is taken over silently; live-PID aborts startup.
-    // Skipped under --one-shot so integration tests can run in parallel.
-    let _pid_guard = if args.one_shot {
-        None
-    } else {
-        match crate::daemon::pidfile::acquire(&crate::daemon::pidfile::default_pidfile()) {
-            Ok(g) => Some(g),
-            Err(e) => {
-                anyhow::bail!("{e}");
-            }
-        }
-    };
+    // ── 0/0a/0b. Pre-config startup guards (GOLD-ARCH-01: relocated to
+    // serve_tasks). Home-dir isolation (BS-9) + clock-rollback guard (BS-5) +
+    // single-instance PID lock (BS-12). `--one-shot` skips isolation + PID.
+    // The PidGuard is bound HERE (named `_pid_guard`, not bare `_`) for the
+    // daemon lifetime — its Drop releases the lock at run_serve fn-end.
+    let _pid_guard = crate::cli::serve_tasks::run_preflight_guards(
+        args.one_shot,
+        args.allow_clock_rollback,
+    )?;
 
     // ── 1. Load config ──────────────────────────────────────────────────────
     let config = match &args.config {
