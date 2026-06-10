@@ -1343,73 +1343,17 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         interval_secs: config.updater.interval_secs,
     };
 
-    let updater_self_task: Option<tokio::task::JoinHandle<()>> = {
-        let writer_for_updater = writer.clone();
-        let cfg = updater_cron_cfg.clone();
-        let builder: std::sync::Arc<
-            dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
-        > = std::sync::Arc::new(|| {
-            crate::updater::probes::neoth_self_specs_blocking(
-                crate::updater::pipeline::GateDecision::Allow,
-            )
-        });
-        let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-            cfg,
-            crate::wal::payloads_u04::UpdaterTaskKind::NeothSelf,
-            builder,
-            writer_for_updater,
-        );
-        if handle.is_some() {
-            info!("updater cron loop spawned: neoth_self (U-01)");
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let updater_self_task =
+        crate::cli::serve_tasks::spawn_updater_self_cron(updater_cron_cfg.clone(), writer.clone());
 
-    let updater_cli_task: Option<tokio::task::JoinHandle<()>> = {
-        let writer_for_updater = writer.clone();
-        let cfg = updater_cron_cfg.clone();
-        let builder: std::sync::Arc<
-            dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
-        > = std::sync::Arc::new(|| {
-            crate::updater::probes::cli_version_specs_blocking(
-                crate::updater::pipeline::GateDecision::Allow,
-            )
-        });
-        let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-            cfg,
-            crate::wal::payloads_u04::UpdaterTaskKind::CliVersions,
-            builder,
-            writer_for_updater,
-        );
-        if handle.is_some() {
-            info!("updater cron loop spawned: cli_version (U-03)");
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let updater_cli_task =
+        crate::cli::serve_tasks::spawn_updater_cli_cron(updater_cron_cfg.clone(), writer.clone());
 
-    let updater_skill_task: Option<tokio::task::JoinHandle<()>> = {
-        let writer_for_updater = writer.clone();
-        let home_for_skills = FreedomConfig::default_neoth_home();
-        let cfg = updater_cron_cfg.clone();
-        let builder: std::sync::Arc<
-            dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static,
-        > = std::sync::Arc::new(move || {
-            crate::updater::probes::skill_plugin_specs_blocking(
-                home_for_skills.clone(),
-                crate::updater::pipeline::GateDecision::Allow,
-            )
-        });
-        let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
-            cfg,
-            crate::wal::payloads_u04::UpdaterTaskKind::SkillPlugin,
-            builder,
-            writer_for_updater,
-        );
-        if handle.is_some() {
-            info!("updater cron loop spawned: skill_plugin (U-02)");
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let updater_skill_task =
+        crate::cli::serve_tasks::spawn_updater_skill_cron(updater_cron_cfg.clone(), writer.clone());
 
     // ── 5d.c. CLI auto-apply loop — MV-01b (Session 28c) ─────────────────
     //
@@ -1419,16 +1363,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // already surface availability). Emits `0x13 UPDATE_RAN` per applied
     // CLI. The `neoth` daemon's own self-replacement stays manual
     // (`neoth update --self --apply`).
-    let cli_autoupdate_task: Option<tokio::task::JoinHandle<()>> =
-        crate::daemon::auto_update::spawn(
-            config.autonomy,
-            config.updater.enabled,
-            config.updater.interval_secs,
-            writer.clone(),
-        );
-    if cli_autoupdate_task.is_some() {
-        info!("CLI auto-apply loop spawned (MV-01b; autonomy elevated/full)");
-    }
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let cli_autoupdate_task = crate::cli::serve_tasks::spawn_cli_autoupdate(&config, writer.clone());
 
     // ── 5d.d. neoth-self STAGING loop — MV-01b #5 (Session 28c) ──────────
     //
@@ -1436,18 +1372,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Confirm-always): at elevated/full it downloads + verifies (sha256 +
     // minisig) + stages newer releases to ~/.neoth/staged/ + notifies.
     // The operator applies via `neoth update --self --apply`.
-    let self_stage_task: Option<tokio::task::JoinHandle<()>> =
-        crate::daemon::auto_update::spawn_self_stage(
-            config.autonomy,
-            config.updater.enabled,
-            config.updater.interval_secs,
-            "The-Geek-Freaks/NEOTH".to_string(),
-            FreedomConfig::default_neoth_home(),
-            writer.clone(),
-        );
-    if self_stage_task.is_some() {
-        info!("neoth-self staging loop spawned (MV-01b #5; stage-only)");
-    }
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let self_stage_task = crate::cli::serve_tasks::spawn_self_stage(&config, writer.clone());
 
     // ── 5d.b. Doctor cron loop — EL-01 (Session 25) ──────────────────────
     //

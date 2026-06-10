@@ -390,6 +390,123 @@ pub(crate) fn spawn_ecology_cron(
     handle
 }
 
+// ── Region-7 updater lanes (U-04 + MV-01b). The three probe crons share one
+// `UpdaterCronConfig` (built once in run_serve + cloned into each) and differ
+// only by their ComponentSpec builder closure + UpdaterTaskKind. The two
+// auto_update lanes (cli-apply / self-stage) gate internally on autonomy. All
+// WAL-emitting; per-site keeps each handle/abort-site/worker_watch unchanged. ──
+
+/// Shared type of the `ComponentSpec` builder closure each updater probe cron
+/// hands to `spawn_updater_cron_loop`.
+type UpdaterSpecBuilder =
+    Arc<dyn Fn() -> Vec<crate::updater::pipeline::ComponentSpec> + Send + Sync + 'static>;
+
+/// U-01 — neoth-self GitHub-Releases update probe cron (`0x44`/`0x45`).
+pub(crate) fn spawn_updater_self_cron(
+    cfg: crate::daemon::updater_cron::UpdaterCronConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let builder: UpdaterSpecBuilder = Arc::new(|| {
+        crate::updater::probes::neoth_self_specs_blocking(
+            crate::updater::pipeline::GateDecision::Allow,
+        )
+    });
+    let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
+        cfg,
+        crate::wal::payloads_u04::UpdaterTaskKind::NeothSelf,
+        builder,
+        writer,
+    );
+    if handle.is_some() {
+        info!("updater cron loop spawned: neoth_self (U-01)");
+    }
+    handle
+}
+
+/// U-03 — CLI-version npm-registry update probe cron (claude/codex/gemini).
+pub(crate) fn spawn_updater_cli_cron(
+    cfg: crate::daemon::updater_cron::UpdaterCronConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let builder: UpdaterSpecBuilder = Arc::new(|| {
+        crate::updater::probes::cli_version_specs_blocking(
+            crate::updater::pipeline::GateDecision::Allow,
+        )
+    });
+    let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
+        cfg,
+        crate::wal::payloads_u04::UpdaterTaskKind::CliVersions,
+        builder,
+        writer,
+    );
+    if handle.is_some() {
+        info!("updater cron loop spawned: cli_version (U-03)");
+    }
+    handle
+}
+
+/// U-02 — skill/plugin update probe cron (captures `home` for the spec scan).
+pub(crate) fn spawn_updater_skill_cron(
+    cfg: crate::daemon::updater_cron::UpdaterCronConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let home_for_skills = FreedomConfig::default_neoth_home();
+    let builder: UpdaterSpecBuilder = Arc::new(move || {
+        crate::updater::probes::skill_plugin_specs_blocking(
+            home_for_skills.clone(),
+            crate::updater::pipeline::GateDecision::Allow,
+        )
+    });
+    let handle = crate::daemon::updater_cron::spawn_updater_cron_loop(
+        cfg,
+        crate::wal::payloads_u04::UpdaterTaskKind::SkillPlugin,
+        builder,
+        writer,
+    );
+    if handle.is_some() {
+        info!("updater cron loop spawned: skill_plugin (U-02)");
+    }
+    handle
+}
+
+/// MV-01b — CLI auto-apply loop. Internally `None` at autonomy below
+/// elevated/full (notify-only); emits `0x13 UPDATE_RAN` per applied CLI.
+pub(crate) fn spawn_cli_autoupdate(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::auto_update::spawn(
+        config.autonomy,
+        config.updater.enabled,
+        config.updater.interval_secs,
+        writer,
+    );
+    if handle.is_some() {
+        info!("CLI auto-apply loop spawned (MV-01b; autonomy elevated/full)");
+    }
+    handle
+}
+
+/// MV-01b #5 — neoth-self STAGING loop (stage-only — downloads + verifies +
+/// stages newer releases; the operator applies via `neoth update --self --apply`).
+pub(crate) fn spawn_self_stage(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let handle = crate::daemon::auto_update::spawn_self_stage(
+        config.autonomy,
+        config.updater.enabled,
+        config.updater.interval_secs,
+        "The-Geek-Freaks/NEOTH".to_string(),
+        FreedomConfig::default_neoth_home(),
+        writer,
+    );
+    if handle.is_some() {
+        info!("neoth-self staging loop spawned (MV-01b #5; stage-only)");
+    }
+    handle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
