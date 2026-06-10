@@ -1723,6 +1723,60 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         handle
     };
 
+    // ── GOLD-WIRE-07b — daemon HNSW snapshot auto-freshness ────────────────────
+    // WIRE-07 made `neoth recall` cold-load the on-disk HNSW snapshot, but it
+    // only refreshed on the manual `neoth memory --rebuild-index`. This task
+    // periodically REBUILDS the snapshot FROM SQLite — the source of truth shared
+    // with the SEPARATE `neoth ingest` CLI process — when it has gone stale, so
+    // the cross-process cold-load stays fresh without operator action. An
+    // in-memory daemon warm index would be WRONG here (it would miss every
+    // CLI-ingested vector and could clobber a good snapshot); reading SQLite
+    // captures every writer. Gated to backend=hnsw + corpus past the brute-force
+    // ceiling; idempotent + best-effort; writes NO WAL frames (only SQLite reads
+    // + an atomic snapshot rename) so it is order-independent at shutdown. Off
+    // entirely when the backend is brute-force.
+    let snapshot_refresh_handle: Option<tokio::task::JoinHandle<()>> =
+        if config.memory.vector_index.backend == crate::config::VectorBackend::Hnsw {
+            const REFRESH_INTERVAL_SECS: u64 = 1800; // 30 min
+            let home = FreedomConfig::default_neoth_home();
+            let handle = tokio::spawn(async move {
+                let mut tick =
+                    tokio::time::interval(std::time::Duration::from_secs(REFRESH_INTERVAL_SECS));
+                // A slow rebuild must not bunch up missed ticks into a burst.
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                loop {
+                    // First tick fires immediately → a boot-time freshness pass.
+                    tick.tick().await;
+                    let home = home.clone();
+                    // Blocking SQLite + a full O(N log N) index rebuild → off the reactor.
+                    match tokio::task::spawn_blocking(move || {
+                        crate::memory::snapshot_refresh::refresh_snapshot_once(&home, true)
+                    })
+                    .await
+                    {
+                        Ok(Ok(Some(n))) => info!(
+                            vectors = n,
+                            "GOLD-WIRE-07b: HNSW snapshot refreshed from SQLite"
+                        ),
+                        Ok(Ok(None)) => {} // fresh / below-ceiling — nothing to do
+                        Ok(Err(e)) => {
+                            warn!(error = %e, "GOLD-WIRE-07b snapshot refresh failed (non-fatal)")
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "GOLD-WIRE-07b snapshot refresh task join error")
+                        }
+                    }
+                }
+            });
+            info!(
+                interval_secs = REFRESH_INTERVAL_SECS,
+                "HNSW snapshot auto-refresh cron spawned (GOLD-WIRE-07b)"
+            );
+            Some(handle)
+        } else {
+            None
+        };
+
     // ── OM-01 local OMI transcript ingest ─────────────────────────────────────
     // Polls the operator's self-hosted OMI backend (SC-14 already confirmed the
     // endpoint is local above), promotes high-confidence items to ground-truth
@@ -1833,6 +1887,7 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
             profile_adapt_cron_handle.as_ref().map(|h| WatchedWorker::new("profile_adapt_cron", h.abort_handle())),
             ecology_cron_handle.as_ref().map(|h| WatchedWorker::new("ecology_scheduler", h.abort_handle())),
             pattern_cron_handle.as_ref().map(|h| WatchedWorker::new("pattern_cron", h.abort_handle())),
+            snapshot_refresh_handle.as_ref().map(|h| WatchedWorker::new("snapshot_refresh", h.abort_handle())),
         ]
         .into_iter()
         .flatten()
@@ -2537,6 +2592,13 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
 
     // Abort the HO-07 monitor alerting cron loop (drain before writer close).
     if let Some(task) = monitor_cron_handle {
+        task.abort();
+        let _ = task.await;
+    }
+    // GOLD-WIRE-07b: abort the HNSW snapshot auto-refresh cron. It writes no WAL
+    // frames (only SQLite reads + an atomic snapshot rename), so its ordering vs
+    // the writer drain is irrelevant — but abort it cleanly like the others.
+    if let Some(task) = snapshot_refresh_handle {
         task.abort();
         let _ = task.await;
     }

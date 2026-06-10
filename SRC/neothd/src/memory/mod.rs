@@ -38,6 +38,7 @@ pub mod region_router;
 pub mod channel_weights;
 pub mod regions;
 pub mod routing_weights;
+pub mod snapshot_refresh;
 pub mod store;
 pub mod tiers;
 pub mod transfer_bundle;
