@@ -4,13 +4,38 @@
 //! the current stage, applies each in order, and returns a [`StageOutcome`]
 //! that the caller folds into its own dispatch logic.
 
-use std::sync::{Arc, OnceLock};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use anyhow::Result;
 use regex::Regex;
 
 use super::schema::{HookAction, HookDef};
 use super::stages::HookStage;
+
+/// Compile `pattern` to a [`Regex`], memoised process-wide by pattern string.
+///
+/// GOLD-ARCH-10: a hook matcher was compiled TWICE per dispatch (the `fires`
+/// check + the `Replace` action) and re-compiled on every stage run. Hook
+/// patterns come from the operator's config (a bounded, static set), so caching
+/// each successful compile and cloning it out (cheap — `Regex` is `Arc`-backed)
+/// removes both the double-compile and the per-dispatch recompile. Compile
+/// ERRORS are deliberately NOT cached: they are bad-config edge cases (rare) and
+/// skipping the cache there keeps the `fail_fast` error path byte-identical to a
+/// direct `Regex::new`.
+fn compile_cached(pattern: &str) -> Result<Regex, regex::Error> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Regex>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(re) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(pattern) {
+        return Ok(re.clone());
+    }
+    let re = Regex::new(pattern)?;
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(pattern.to_string(), re.clone());
+    Ok(re)
+}
 
 /// Process-wide registered plugin invoker. The daemon's startup
 /// bootstrap (cli::serve) builds a `CompiledPluginInvoker` from
@@ -114,7 +139,7 @@ pub fn run_stage_with_config(
     for hook in hooks.iter().filter(|h| h.stage == stage && h.is_enabled()) {
         let fires = match &hook.matcher {
             None => true,
-            Some(m) => match Regex::new(&m.pattern) {
+            Some(m) => match compile_cached(&m.pattern) {
                 Ok(re) => re.is_match(&current),
                 Err(e) => {
                     if fail_fast {
@@ -156,7 +181,7 @@ pub fn run_stage_with_config(
             HookAction::Replace { template } => {
                 hits.push(hook.name.clone());
                 if let Some(m) = &hook.matcher {
-                    if let Ok(re) = Regex::new(&m.pattern) {
+                    if let Ok(re) = compile_cached(&m.pattern) {
                         current = re.replace_all(&current, template.as_str()).into_owned();
                         continue;
                     }
@@ -242,6 +267,22 @@ pub fn run_stage_with_config(
 mod tests {
     use super::*;
     use crate::hooks::schema::{HookAction, HookMatcher};
+
+    #[test]
+    fn compile_cached_returns_equivalent_regex_and_caches_by_pattern() {
+        // First compile populates the cache; second returns the cached clone.
+        // Both must behave identically to a direct `Regex::new` (GOLD-ARCH-10
+        // is perf-only — zero behaviour change).
+        let a = compile_cached(r"\bsecret\b").expect("valid pattern compiles");
+        let b = compile_cached(r"\bsecret\b").expect("repeat compile served from cache");
+        assert!(a.is_match("a secret here"));
+        assert!(b.is_match("a secret here"));
+        assert!(!a.is_match("secretive"));
+        assert!(!b.is_match("secretive"));
+        // A genuinely invalid pattern still surfaces the compile error (the
+        // error path is NOT cached so fail_fast stays byte-identical).
+        assert!(compile_cached(r"(unclosed").is_err());
+    }
 
     fn allow_hook(name: &str, stage: HookStage) -> HookDef {
         HookDef {
