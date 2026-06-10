@@ -507,6 +507,61 @@ pub(crate) fn spawn_self_stage(
     handle
 }
 
+/// G-01 — weekly reflection cron (enqueues proactive items; per-week dedup key
+/// in the producer keeps emissions to one/ISO-week regardless of tick rate).
+/// WAL-free, home-only. Bare `JoinHandle<()>` (always spawns).
+pub(crate) fn spawn_reflection_cron() -> JoinHandle<()> {
+    let handle = crate::daemon::reflection_cron::spawn_reflection_cron_loop(
+        FreedomConfig::default_neoth_home(),
+        crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
+    );
+    info!(
+        interval_secs = crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
+        "reflection cron loop spawned (G-01 wiring — Round-3 v0.4)"
+    );
+    handle
+}
+
+/// G-02 — "knows things about you you don't know" surfacing cron; scans
+/// idx_profile for high-confidence claims + enqueues them. WAL-free, home-only.
+pub(crate) fn spawn_g02_surfacing_cron() -> JoinHandle<()> {
+    let handle = crate::daemon::g02_surfacing_cron::spawn_g02_surfacing_cron_loop(
+        FreedomConfig::default_neoth_home(),
+        crate::daemon::g02_surfacing_cron::G02_CRON_INTERVAL_SECS,
+    );
+    info!(
+        interval_secs = crate::daemon::g02_surfacing_cron::G02_CRON_INTERVAL_SECS,
+        "G-02 surfacing cron loop spawned (Round-3 v0.4)"
+    );
+    handle
+}
+
+/// EL-01 — periodic `neoth doctor` cron (`0x46 DOCTOR_TICK`) + a sidecar
+/// notification sink under `~/.neoth/notifications/`. `None` when disabled.
+pub(crate) fn spawn_doctor_cron(
+    config: &FreedomConfig,
+    writer: WalWriterHandle,
+) -> Option<JoinHandle<()>> {
+    let home = FreedomConfig::default_neoth_home();
+    let sink: Arc<dyn crate::daemon::doctor_cron::DoctorNotificationSink> = Arc::new(
+        crate::daemon::doctor_cron::SidecarNotificationSink::new(home.join("notifications")),
+    );
+    let cfg = crate::daemon::doctor_cron::DoctorCronConfig {
+        enabled: config.doctor.enabled,
+        interval_secs: config.doctor.interval_secs,
+        notify_channel: "cli".to_string(),
+    };
+    let interval_secs = cfg.interval_secs;
+    let enabled = cfg.enabled;
+    let handle = crate::daemon::doctor_cron::spawn_doctor_cron_loop(cfg, home, writer, sink);
+    if handle.is_some() {
+        info!(interval_secs, "doctor cron loop spawned (EL-01)");
+    } else if !enabled {
+        info!("doctor cron disabled via freedom.yaml::doctor.enabled = false");
+    }
+    handle
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

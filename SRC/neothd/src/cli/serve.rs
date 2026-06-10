@@ -1383,32 +1383,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // Warn / Fail findings. GUI notifications panel polls the directory;
     // future channel-push subscribers can subscribe similarly without
     // re-running the diagnostic suite.
-    let doctor_cron_task: Option<tokio::task::JoinHandle<()>> = {
-        let home = FreedomConfig::default_neoth_home();
-        let writer_for_doctor = writer.clone();
-        let sink: std::sync::Arc<dyn crate::daemon::doctor_cron::DoctorNotificationSink> =
-            std::sync::Arc::new(crate::daemon::doctor_cron::SidecarNotificationSink::new(
-                home.join("notifications"),
-            ));
-        // EL-01 follow-up (Session 26): read the operator's tunable
-        // doctor knobs from freedom.yaml. Missing fields default per
-        // `DoctorConfig::default()` so pre-EL-01 configs still load.
-        let cfg = crate::daemon::doctor_cron::DoctorCronConfig {
-            enabled: config.doctor.enabled,
-            interval_secs: config.doctor.interval_secs,
-            notify_channel: "cli".to_string(),
-        };
-        let interval_secs = cfg.interval_secs;
-        let enabled = cfg.enabled;
-        let handle =
-            crate::daemon::doctor_cron::spawn_doctor_cron_loop(cfg, home, writer_for_doctor, sink);
-        if handle.is_some() {
-            info!(interval_secs, "doctor cron loop spawned (EL-01)");
-        } else if !enabled {
-            info!("doctor cron disabled via freedom.yaml::doctor.enabled = false");
-        }
-        handle
-    };
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let doctor_cron_task = crate::cli::serve_tasks::spawn_doctor_cron(&config, writer.clone());
 
     // ── 5d-bis. Reflection cron — G-01 (Round-3 v0.4 cron wiring) ────
     //
@@ -1423,17 +1399,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // interval_secs`); ships always-on at 24h. Operators who don't
     // want proactive reflections can drain the proactive_queue.json
     // before the consumer-side reads it.
-    let reflection_cron_handle = {
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        crate::daemon::reflection_cron::spawn_reflection_cron_loop(
-            home,
-            crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
-        )
-    };
-    info!(
-        interval_secs = crate::daemon::reflection_cron::DEFAULT_CRON_INTERVAL_SECS,
-        "reflection cron loop spawned (G-01 wiring — Round-3 v0.4)"
-    );
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let reflection_cron_handle = crate::cli::serve_tasks::spawn_reflection_cron();
 
     // ── 5d-tris. Proactive drain cron — G-01 consumer half (Round-3 v0.4) ──
     //
@@ -1469,17 +1436,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     //
     // Quiet no-op on fresh installs (no views.db yet) so first-week
     // wizard logs stay clean.
-    let g02_surfacing_cron_handle = {
-        let home = crate::config::FreedomConfig::default_neoth_home();
-        crate::daemon::g02_surfacing_cron::spawn_g02_surfacing_cron_loop(
-            home,
-            crate::daemon::g02_surfacing_cron::G02_CRON_INTERVAL_SECS,
-        )
-    };
-    info!(
-        interval_secs = crate::daemon::g02_surfacing_cron::G02_CRON_INTERVAL_SECS,
-        "G-02 surfacing cron loop spawned (Round-3 v0.4)"
-    );
+    // GOLD-ARCH-01: relocated to serve_tasks (same handle, same site).
+    let g02_surfacing_cron_handle = crate::cli::serve_tasks::spawn_g02_surfacing_cron();
 
     // ── 5d-quintus. Profile drift-alert cron — HO-09b. Runs the same
     // drift evaluation as `neoth profile drift report` on a 6h schedule
