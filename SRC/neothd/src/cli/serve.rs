@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::channels::{Channel, PipelineHandler, telegram::TelegramChannel};
 use crate::config::FreedomConfig;
-use crate::memory::{indexer, store};
+use crate::memory::store;
 use crate::providers::{self, Provider};
 use crate::shutdown;
 use crate::wal::events::EVENT_TYPE_BOOT;
@@ -540,23 +540,8 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         })
     };
 
-    let indexer_task = {
-        let conn_path = store::default_path();
-        let seg = segment_path.clone();
-        match store::open(&conn_path) {
-            Ok(conn) => Some(tokio::spawn(async move {
-                if let Err(e) =
-                    indexer::tail(conn, seg, std::time::Duration::from_millis(500)).await
-                {
-                    tracing::error!(error = %e, "indexer tail task exited with error");
-                }
-            })),
-            Err(e) => {
-                warn!(error = %e, "failed to open views.db; recall queries will run an index pass each time");
-                None
-            }
-        }
-    };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let indexer_task = crate::cli::serve_tasks::spawn_indexer(&segment_path);
 
     // ── 5a-kanban. Stale-planning reaper — HO-02 (Session 28). Best-effort
     // startup sweep of kanban rows stranded in Planning by a crash mid-decompose.

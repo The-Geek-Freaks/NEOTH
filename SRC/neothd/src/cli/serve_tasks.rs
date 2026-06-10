@@ -872,6 +872,28 @@ pub(crate) async fn spawn_cron_scheduler(
     }
 }
 
+/// Memory indexer — tails the WAL into the SQLite views db so `neoth recall` is
+/// near-real-time. Opens its own `views.db` connection; `None` (logged) when the
+/// open fails (recall then runs a per-query index pass). WAL-free (reads the WAL,
+/// writes SQLite).
+pub(crate) fn spawn_indexer(segment_path: &std::path::Path) -> Option<JoinHandle<()>> {
+    let conn_path = crate::memory::store::default_path();
+    let seg = segment_path.to_path_buf();
+    match crate::memory::store::open(&conn_path) {
+        Ok(conn) => Some(tokio::spawn(async move {
+            if let Err(e) =
+                crate::memory::indexer::tail(conn, seg, std::time::Duration::from_millis(500)).await
+            {
+                tracing::error!(error = %e, "indexer tail task exited with error");
+            }
+        })),
+        Err(e) => {
+            warn!(error = %e, "failed to open views.db; recall queries will run an index pass each time");
+            None
+        }
+    }
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]
