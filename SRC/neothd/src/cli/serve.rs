@@ -2042,60 +2042,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // sidecar, and removes the file. At-least-once semantics: a crash
     // between WAL append + file remove leaves the file for the next
     // tick to retry; the WAL writer dedupes by event_id.
-    let installer_audit_task: tokio::task::JoinHandle<()> = {
-        let writer_for_installer = writer.clone();
-        let home = FreedomConfig::default_neoth_home();
-        tokio::spawn(async move {
-            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-            loop {
-                tokio::time::sleep(POLL_INTERVAL).await;
-                let pending = match crate::daemon::installer_audit_sidecar::list_pending(&home) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(error = %e, "installer_ran sidecar list failed");
-                        continue;
-                    }
-                };
-                for (path, payload) in pending {
-                    let body =
-                        crate::daemon::installer_audit_sidecar::build_wal_frame_body(&payload);
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_INSTALLER_RAN,
-                        &body,
-                    )
-                    .build();
-                    match writer_for_installer.append(header, body).await {
-                        Ok(_) => {
-                            if let Err(e) =
-                                crate::daemon::installer_audit_sidecar::remove_sidecar(&path)
-                            {
-                                warn!(
-                                    error = %e,
-                                    path = %path.display(),
-                                    "installer_ran sidecar remove failed after WAL append"
-                                );
-                            } else {
-                                info!(
-                                    cli_name = payload.cli_name.as_str(),
-                                    version = payload.version.as_str(),
-                                    pkg_mgr = payload.pkg_mgr.as_str(),
-                                    "installer_ran frame appended to WAL"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                path = %path.display(),
-                                "installer_ran WAL append failed; sidecar retained for next tick"
-                            );
-                        }
-                    }
-                }
-            }
-        })
-    };
-    info!("installer_ran sidecar ingester spawned (5s tick)");
+    // GOLD-ARCH-01: body relocated to serve_tasks (same handle, same site).
+    let installer_audit_task =
+        crate::cli::serve_tasks::spawn_installer_audit_ingester(writer.clone());
 
     // ── C-05d credentials_import sidecar ingester (Session 26) ────────────
     // `neoth init` wizard step 6g drops
@@ -2105,119 +2054,18 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // sidecar, and removes the file. The payload is already redacted
     // by the time it lands on disk — this loop never touches raw
     // secret material.
-    let credentials_import_task: tokio::task::JoinHandle<()> = {
-        let writer_for_credentials = writer.clone();
-        let home = FreedomConfig::default_neoth_home();
-        tokio::spawn(async move {
-            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-            loop {
-                tokio::time::sleep(POLL_INTERVAL).await;
-                let pending = match crate::daemon::credentials_import_sidecar::list_pending(&home) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(error = %e, "credentials_import sidecar list failed");
-                        continue;
-                    }
-                };
-                for (path, payload) in pending {
-                    let body =
-                        crate::daemon::credentials_import_sidecar::build_wal_frame_body(&payload);
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_CREDENTIAL_IMPORT,
-                        &body,
-                    )
-                    .build();
-                    match writer_for_credentials.append(header, body).await {
-                        Ok(_) => {
-                            if let Err(e) =
-                                crate::daemon::credentials_import_sidecar::remove_sidecar(&path)
-                            {
-                                warn!(
-                                    error = %e,
-                                    path = %path.display(),
-                                    "credentials_import sidecar remove failed after WAL append"
-                                );
-                            } else {
-                                info!(
-                                    source = payload.source.as_str(),
-                                    entry_count = payload.entry_count,
-                                    target_vault_id = payload.target_vault_id.as_str(),
-                                    "credentials_import frame appended to WAL"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                path = %path.display(),
-                                "credentials_import WAL append failed; sidecar retained for next tick"
-                            );
-                        }
-                    }
-                }
-            }
-        })
-    };
-    info!("credentials_import sidecar ingester spawned (5s tick)");
+    // GOLD-ARCH-01: body relocated to serve_tasks (same handle, same site).
+    let credentials_import_task =
+        crate::cli::serve_tasks::spawn_credentials_import_ingester(writer.clone());
 
     // ── W-04 follow-up: detect_complete sidecar ingester (Session 26) ─────
     // The wizard's step1b drops `~/.neoth/detect_complete_<ts>.json`
     // after a fresh probe pass produced a `DetectCompletePayload`.
     // Same 5s poll + at-least-once contract as the installer +
     // credentials ingesters above.
-    let detect_complete_task: tokio::task::JoinHandle<()> = {
-        let writer_for_detect = writer.clone();
-        let home = FreedomConfig::default_neoth_home();
-        tokio::spawn(async move {
-            const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
-            loop {
-                tokio::time::sleep(POLL_INTERVAL).await;
-                let pending = match crate::daemon::detect_complete_sidecar::list_pending(&home) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(error = %e, "detect_complete sidecar list failed");
-                        continue;
-                    }
-                };
-                for (path, payload) in pending {
-                    let body =
-                        crate::daemon::detect_complete_sidecar::build_wal_frame_body(&payload);
-                    let header = crate::wal::HeaderBuilder::new(
-                        crate::wal::events::EVENT_TYPE_DETECT_COMPLETE,
-                        &body,
-                    )
-                    .build();
-                    match writer_for_detect.append(header, body).await {
-                        Ok(_) => {
-                            if let Err(e) =
-                                crate::daemon::detect_complete_sidecar::remove_sidecar(&path)
-                            {
-                                warn!(
-                                    error = %e,
-                                    path = %path.display(),
-                                    "detect_complete sidecar remove failed after WAL append"
-                                );
-                            } else {
-                                info!(
-                                    probed_at_unix = payload.probed_at_unix,
-                                    has_accelerator = payload.has_accelerator(),
-                                    "detect_complete frame appended to WAL"
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            warn!(
-                                error = %e,
-                                path = %path.display(),
-                                "detect_complete WAL append failed; sidecar retained for next tick"
-                            );
-                        }
-                    }
-                }
-            }
-        })
-    };
-    info!("detect_complete sidecar ingester spawned (5s tick)");
+    // GOLD-ARCH-01: body relocated to serve_tasks (same handle, same site).
+    let detect_complete_task =
+        crate::cli::serve_tasks::spawn_detect_complete_ingester(writer.clone());
 
     // ── Self-dev outbox drain (P-04 follow-on, Session 21) ────────────────
     // CLI commands `neoth self-dev accept/decline/propose` run
