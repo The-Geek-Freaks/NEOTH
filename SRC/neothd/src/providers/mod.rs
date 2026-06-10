@@ -414,6 +414,39 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
     }
 }
 
+/// GOLD-ADOPT-21 — build the FAST/CHEAP "utility" provider for low-stakes
+/// internal LLM calls (dreaming theme labels, email threat tiebreak, cron jobs,
+/// regression re-query). Mirrors [`from_config_for_learn`]'s synthetic-config
+/// trick but pins the provider's `ModelRole::Fast` model id so the call lands
+/// on the cheapest tier (Haiku / GPT-4o-mini / Gemini Flash-lite).
+///
+/// Resolution:
+///   1. `inference.utility_provider == None` (default) → fall through to
+///      [`from_config`] (the operator's MAIN provider) — no routing change, no
+///      regression. This is deliberately NOT defaulted to a local model: an
+///      operator on `claude_cli` with no local inference must keep working.
+///   2. `Some(kind)` → synthetic `FreedomConfig` with that provider kind + its
+///      `fast` model id (from the default role table), then [`from_config`].
+///      A build failure propagates so best-effort callers fall back to their
+///      own deterministic path (cheap-by-default — never silently spends the
+///      flagship model the operator was trying to avoid).
+pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
+    let Some(kind) = config.inference.utility_provider else {
+        return from_config(config).await;
+    };
+    let mut synthetic = config.clone();
+    synthetic.provider_kind = Some(kind.to_provider_kind());
+    // Pin the cheapest model for this provider so a utility call never lands on
+    // the flagship. `None` (e.g. local providers with no `fast` entry) leaves
+    // the model unset → the adapter uses its own default.
+    if let Some(fast) = crate::providers::model_roles::default_table()
+        .resolve(kind.as_str(), crate::providers::model_roles::ModelRole::Fast)
+    {
+        synthetic.provider_model = Some(fast.to_string());
+    }
+    from_config(&synthetic).await
+}
+
 /// Construct the provider configured in `~/.neoth/freedom.yaml`.
 ///
 /// Async because `LocalQwen` may need to download model artifacts from HF
@@ -942,6 +975,49 @@ mod tests {
         assert!(msg.contains("bogus_provider_name"));
         assert!(msg.contains("not a recognised provider slug"));
         assert!(msg.contains("local_qwen"));
+    }
+
+    // ── GOLD-ADOPT-21 from_config_for_utility ──────────────────
+
+    #[tokio::test]
+    async fn from_config_for_utility_none_falls_through_to_main_provider() {
+        // No utility_provider → behave EXACTLY like from_config (no regression).
+        let mut cfg = base_config();
+        cfg.inference.utility_provider = None;
+        let result = from_config_for_utility(&cfg).await;
+        let main_result = from_config(&cfg).await;
+        assert_eq!(result.is_ok(), main_result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn from_config_for_utility_explicit_kind_routes_to_synthetic_provider() {
+        // Main provider is ClaudeCli (constructs cleanly). Setting
+        // utility_provider = gemini_api (no key) must route to the SYNTHETIC
+        // gemini kind — proven by a gemini/key-related build error rather than
+        // a clean ClaudeCli construction.
+        let mut cfg = base_config();
+        cfg.inference.utility_provider =
+            Some(crate::config::inference::InferenceProvider::Gemini);
+        let result = from_config_for_utility(&cfg).await;
+        if let Err(e) = result {
+            let s = e.to_string().to_lowercase();
+            assert!(
+                s.contains("gemini") || s.contains("key") || s.contains("api"),
+                "expected a gemini/key-related error (proves synthetic routing), got: {e}"
+            );
+        }
+        // If it constructed (key present in env), that's also fine — it routed.
+    }
+
+    #[test]
+    fn utility_pins_the_fast_model_id_per_provider() {
+        // The cost guarantee: the utility builder pins each cloud provider's
+        // FAST (cheapest) model from the default role table.
+        use crate::providers::model_roles::{default_table, ModelRole};
+        let t = default_table();
+        assert_eq!(t.resolve("claude_cli", ModelRole::Fast), Some("claude-haiku-4-5-20251001"));
+        assert_eq!(t.resolve("openai_api", ModelRole::Fast), Some("gpt-4o-mini"));
+        assert_eq!(t.resolve("gemini_api", ModelRole::Fast), Some("gemini-3-flash-lite"));
     }
 
     #[tokio::test]

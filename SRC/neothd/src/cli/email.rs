@@ -366,7 +366,9 @@ async fn fetch_and_triage(
     // non-ReviewQueue email, so there is zero LLM cost on a clean inbox.
     let fcfg = crate::config::FreedomConfig::load_from_default_path().unwrap_or_default();
     if fcfg.email.llm_tiebreak && triaged.iter().any(|t| t.action == InboundAction::ReviewQueue) {
-        match crate::providers::from_config(&fcfg).await {
+        // GOLD-ADOPT-21 — threat-level tiebreak is a classify-grade utility call;
+        // route it to the fast/cheap `inference.utility_provider` when set.
+        match crate::providers::from_config_for_utility(&fcfg).await {
             Ok(provider) => {
                 let allow = fcfg.email.llm_tiebreak_allow_downgrade;
                 let mut reviewed = Vec::with_capacity(triaged.len());

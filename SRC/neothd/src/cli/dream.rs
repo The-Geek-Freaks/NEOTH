@@ -65,7 +65,10 @@ async fn run_now(
     // would bill). Built only when the flag is on AND a provider is
     // configured; otherwise deterministic `cluster-N-seed-id` labels.
     let chat: Option<Box<dyn crate::providers::Provider>> = if config.dreaming.summarize_themes {
-        crate::providers::from_config(&config).await.ok()
+        // GOLD-ADOPT-21 — theme labels are a low-stakes utility call; route them
+        // to the fast/cheap `inference.utility_provider` when configured (else
+        // this is identical to the main provider).
+        crate::providers::from_config_for_utility(&config).await.ok()
     } else {
         None
     };

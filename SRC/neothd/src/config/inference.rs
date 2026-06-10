@@ -256,6 +256,20 @@ pub struct InferenceTopology {
     /// case so the privacy posture stays auditable.
     #[serde(default)]
     pub profile_provider: Option<InferenceProvider>,
+    /// GOLD-ADOPT-21 — fast/cheap "utility" provider for low-stakes internal
+    /// LLM calls (dreaming theme labels, email threat tiebreak, scheduled cron
+    /// jobs, regression re-query). When set, `providers::from_config_for_utility`
+    /// routes those calls to this provider at its `ModelRole::Fast` model id
+    /// (Haiku / GPT-4o-mini / Gemini Flash-lite) instead of the operator's main
+    /// (flagship) provider — so the cheap calls stay cheap.
+    ///
+    /// `None` (default) = NO routing change: utility calls fall through to the
+    /// main provider exactly as before (no regression, no surprise dependency
+    /// on a local model the operator hasn't set up). Operators opt into the
+    /// cost saving by naming a provider here, e.g. `utility_provider: gemini_api`
+    /// or `local_qwen`.
+    #[serde(default)]
+    pub utility_provider: Option<InferenceProvider>,
     /// Per-completion maximum new token budget for local inference.
     /// `None` → adapter default (256 — fits ChatML reply within ~1 KiB
     /// for most operator queries). Operators wanting longer outputs
