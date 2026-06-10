@@ -782,6 +782,50 @@ pub(crate) async fn spawn_audit_rpc(
     }
 }
 
+/// R-02 Phase 4c dreaming nightly task. Off by default (`dreaming.enabled`);
+/// composes one batch of dreams per interval over a window, using
+/// `compose_dreams_with_embeddings` when an embedding provider is buildable
+/// (falls back to deterministic compose otherwise). Hands the chat provider in
+/// only when `dreaming.summarize_themes` is on (cost gate). WAL-emitting (0xF4
+/// DREAM_COMPOSED via the writer clone). `None` when disabled. Async — it builds
+/// the embedding provider at spawn time.
+pub(crate) async fn spawn_dreaming(
+    config: &FreedomConfig,
+    shared_provider: &Option<Arc<dyn Provider>>,
+    writer: &WalWriterHandle,
+) -> Option<JoinHandle<anyhow::Result<()>>> {
+    if !config.dreaming.enabled {
+        return None;
+    }
+    let embed_provider = crate::providers::embed_provider_from_config(config).await;
+    // SPEC-12 Phase 4b — only hand the chat provider to the dreaming task when
+    // `dreaming.summarize_themes` is on (cost-safe gate: it adds one LLM call
+    // per cluster). Reuses the already-built shared provider chain; `None` keeps
+    // deterministic cluster labels.
+    let dream_chat = if config.dreaming.summarize_themes {
+        shared_provider.as_ref().map(Arc::clone)
+    } else {
+        None
+    };
+    Some(crate::cli::dreaming_task::spawn(
+        FreedomConfig::default_neoth_home(),
+        embed_provider,
+        dream_chat,
+        config
+            .dreaming
+            .interval_secs
+            .map(std::time::Duration::from_secs),
+        config
+            .dreaming
+            .window_secs
+            .map(std::time::Duration::from_secs),
+        config.dreaming.max_events,
+        // SPEC-12 daemon-side audit: the daemon owns the WAL writer, so each
+        // non-empty nightly pass emits a `0xF4 DREAM_COMPOSED` frame.
+        Some(writer.clone()),
+    ))
+}
+
 /// Build the per-message channel pipeline handler shared by every configured
 /// channel adapter (Telegram / Slack socket-mode / WhatsApp webhook). The three
 /// adapters previously inlined an identical 11-field [`PipelineHandlerDeps`]

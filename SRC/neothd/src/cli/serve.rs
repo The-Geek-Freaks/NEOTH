@@ -973,38 +973,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // `inference.embedding_provider` is wired + buildable; falls back
     // to deterministic `compose_dream` per L-07 safe-default when
     // not. Errors log + retry next tick; never crashes the daemon.
-    let dreaming_task: Option<tokio::task::JoinHandle<anyhow::Result<()>>> =
-        if config.dreaming.enabled {
-            let embed_provider = crate::providers::embed_provider_from_config(&config).await;
-            // SPEC-12 Phase 4b — only hand the chat provider to the dreaming
-            // task when `dreaming.summarize_themes` is on (cost-safe gate: it
-            // adds one LLM call per cluster). Reuses the already-built shared
-            // provider chain; `None` keeps deterministic cluster labels.
-            let dream_chat = if config.dreaming.summarize_themes {
-                shared_provider.as_ref().map(Arc::clone)
-            } else {
-                None
-            };
-            Some(crate::cli::dreaming_task::spawn(
-                crate::config::FreedomConfig::default_neoth_home(),
-                embed_provider,
-                dream_chat,
-                config
-                    .dreaming
-                    .interval_secs
-                    .map(std::time::Duration::from_secs),
-                config
-                    .dreaming
-                    .window_secs
-                    .map(std::time::Duration::from_secs),
-                config.dreaming.max_events,
-                // SPEC-12 daemon-side audit: the daemon owns the WAL writer, so
-                // each non-empty nightly pass emits a `0xF4 DREAM_COMPOSED` frame.
-                Some(writer.clone()),
-            ))
-        } else {
-            None
-        };
+    // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
+    let dreaming_task =
+        crate::cli::serve_tasks::spawn_dreaming(&config, &shared_provider, &writer).await;
 
     // ── 5b-arxiv. EL-02 arXiv topic-feed ingest task ───────────────────────
     //
