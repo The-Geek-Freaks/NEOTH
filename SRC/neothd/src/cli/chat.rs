@@ -1993,9 +1993,85 @@ pub async fn run_chat_with(
         &response_text,
     );
 
+    // GOLD-ADOPT-21 — optional LLM session title (opt-in: `memory.name_sessions`).
+    // AWAITED, not spawned: `neoth chat` is one-shot, so a spawned task would die
+    // on process exit. Uses the cheap utility provider + a 12s timeout cap; any
+    // failure leaves the deterministic `one_line_summary` in place.
+    if config.memory.name_sessions {
+        name_session_best_effort(&config, &first_tour_home, &current_session_id, &prompt).await;
+    }
+
     drop(writer);
     let _ = writer_join.await;
     Ok(())
+}
+
+/// GOLD-ADOPT-21 — best-effort LLM title for the just-completed session, stored
+/// as the card's `display_name`. Cheap (utility provider), bounded (12s), and
+/// silent on any failure (the deterministic summary remains). The "after the 2nd
+/// message" trigger from the source design does not fit NEOTH's one-shot CLI
+/// chat, so naming fires at session-card write instead — naming the session that
+/// just ended.
+async fn name_session_best_effort(
+    config: &crate::config::FreedomConfig,
+    home: &std::path::Path,
+    session_id: &str,
+    opening: &str,
+) {
+    let provider = match crate::providers::from_config_for_utility(config).await {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::debug!(error = %e, "session-naming: utility provider build failed");
+            return;
+        }
+    };
+    let req = crate::providers::Request {
+        prompt: format!(
+            "Give a terse 3-6 word title for a conversation that began with the message below. \
+             Reply with ONLY the title — no quotes, no trailing punctuation.\n\nMessage: {}",
+            opening.chars().take(500).collect::<String>()
+        ),
+        ..Default::default()
+    };
+    let title = match tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        provider.complete(req),
+    )
+    .await
+    {
+        Ok(Ok(c)) => sanitize_session_title(&c.text),
+        Ok(Err(e)) => {
+            tracing::debug!(error = %e, "session-naming: completion failed");
+            return;
+        }
+        Err(_) => {
+            tracing::debug!("session-naming: timed out (12s)");
+            return;
+        }
+    };
+    if title.is_empty() {
+        return;
+    }
+    if let Err(e) = crate::memory::hindsight::update_display_name(home, session_id, &title) {
+        tracing::debug!(error = %e, "session-naming: card update failed");
+    }
+}
+
+/// Reduce a raw model reply to a clean one-line title: first non-empty line,
+/// stripped of surrounding quotes + trailing punctuation, capped at 80 chars.
+fn sanitize_session_title(raw: &str) -> String {
+    let line = raw
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    line.trim_matches(|c| c == '"' || c == '\'' || c == '`')
+        .trim()
+        .trim_end_matches(|c: char| c == '.' || c == '!' || c == '?')
+        .trim()
+        .chars()
+        .take(80)
+        .collect()
 }
 
 /// Stable-ish per-call ID for `LOCAL_INFERENCE_START` / `END` correlation.
@@ -3945,6 +4021,21 @@ mod tests {
     use crate::wal::segment_header::SEGMENT_HEADER_LEN;
     use async_trait::async_trait;
     use std::time::Duration;
+
+    // ── GOLD-ADOPT-21 session-title sanitizer ───────────────────────────
+    #[test]
+    fn sanitize_session_title_strips_quotes_punct_and_extra_lines() {
+        assert_eq!(sanitize_session_title("\"Rust Parser Refactor\""), "Rust Parser Refactor");
+        assert_eq!(sanitize_session_title("Fixing the WAL bug."), "Fixing the WAL bug");
+        // First non-empty line only (models sometimes add a preamble blank line).
+        assert_eq!(sanitize_session_title("\n  Auth Flow Redesign  \nignored second line"), "Auth Flow Redesign");
+        // Backtick / single-quote wrappers + trailing ?! stripped.
+        assert_eq!(sanitize_session_title("`What about caching?`"), "What about caching");
+        // Empty / whitespace → empty (caller skips the update).
+        assert_eq!(sanitize_session_title("   \n  "), "");
+        // Over-long titles are capped at 80 chars.
+        assert!(sanitize_session_title(&"word ".repeat(40)).chars().count() <= 80);
+    }
     use tempfile::tempdir;
     use tokio::fs::read;
 

@@ -487,6 +487,13 @@ pub struct FreedomConfig {
 #[serde(default)]
 pub struct MemoryConfig {
     pub vector_index: VectorIndexConfig,
+    /// GOLD-ADOPT-21 — when `true`, NEOTH generates an LLM title for each
+    /// completed `neoth chat` session (via the cheap `inference.utility_provider`)
+    /// and stores it as the card's `display_name`, which the next-session banner
+    /// then prefers over the deterministic summary. Default `false`: it costs one
+    /// extra (fast-model) call + a little latency at chat exit, so it's opt-in.
+    #[serde(default)]
+    pub name_sessions: bool,
 }
 
 /// GOLD-WIRE-07 — similarity-recall vector-index backend selector.

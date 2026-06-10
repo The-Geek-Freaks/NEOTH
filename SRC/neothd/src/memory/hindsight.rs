@@ -87,6 +87,12 @@ pub struct HindsightCard {
     /// Pinned shape: `"<turn_count> turns over <minutes> min on
     /// <topics-comma-separated>"`.
     pub one_line_summary: String,
+    /// GOLD-ADOPT-21 — optional LLM-generated session title. Populated at
+    /// session-card write when `memory.name_sessions` is on (via the cheap
+    /// `inference.utility_provider`). `None` = deterministic `one_line_summary`
+    /// is used. Display surfaces (`next_session_seed_banner`) prefer this when set.
+    #[serde(default)]
+    pub display_name: Option<String>,
 }
 
 impl HindsightCard {
@@ -118,6 +124,7 @@ pub fn compress_session(session_id: impl Into<String>, turns: &[SessionTurn]) ->
             opening_utterance: String::new(),
             closing_utterance: String::new(),
             one_line_summary: "empty session".to_string(),
+            display_name: None,
         };
     }
 
@@ -163,6 +170,7 @@ pub fn compress_session(session_id: impl Into<String>, turns: &[SessionTurn]) ->
         opening_utterance,
         closing_utterance,
         one_line_summary,
+        display_name: None,
     }
 }
 
@@ -252,6 +260,23 @@ pub fn save_card(home: &Path, card: &HindsightCard) -> std::io::Result<PathBuf> 
     }
     fs::rename(&tmp_path, &final_path)?;
     Ok(final_path)
+}
+
+/// GOLD-ADOPT-21 — set the LLM-generated `display_name` on an already-written
+/// card + persist it. Load → patch → atomic re-save (reuses [`save_card`]).
+/// Best-effort: a missing card or empty name is a no-op `Ok(false)` (the
+/// deterministic `one_line_summary` stands); `Ok(true)` when the name landed.
+pub fn update_display_name(home: &Path, session_id: &str, name: &str) -> std::io::Result<bool> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+    let Some(mut card) = load_card(home, session_id) else {
+        return Ok(false);
+    };
+    card.display_name = Some(trimmed.to_string());
+    save_card(home, &card)?;
+    Ok(true)
 }
 
 /// Load a card by session id. Returns None for missing or
@@ -366,7 +391,14 @@ pub fn next_session_seed_banner(home: &Path, current_session_id: &str) -> String
     if card.turn_count == 0 {
         return String::new();
     }
-    format!("[neoth] last session: {}", card.one_line_summary)
+    // GOLD-ADOPT-21 — prefer the LLM-generated title when present; fall back to
+    // the deterministic one-line summary.
+    let label = card
+        .display_name
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(&card.one_line_summary);
+    format!("[neoth] last session: {label}")
 }
 
 #[cfg(test)]
@@ -508,6 +540,7 @@ mod tests {
             opening_utterance: String::new(),
             closing_utterance: String::new(),
             one_line_summary: "x".into(),
+            display_name: None,
         };
         assert_eq!(card.duration_seconds(), 0);
         assert_eq!(card.duration_minutes(), 0);
@@ -526,6 +559,7 @@ mod tests {
             opening_utterance: String::new(),
             closing_utterance: String::new(),
             one_line_summary: "x".into(),
+            display_name: None,
         };
         assert_eq!(card.duration_minutes(), 1);
     }
@@ -752,5 +786,51 @@ mod tests {
         let current_id = session_id_for(100, "rust memory");
         let banner = next_session_seed_banner(home.path(), &current_id);
         assert!(banner.is_empty());
+    }
+
+    // ── GOLD-ADOPT-21 LLM session naming ────────────────────────────
+
+    #[test]
+    fn update_display_name_sets_persists_and_handles_misses() {
+        let home = tempfile::tempdir().unwrap();
+        save_session_card(home.path(), 100, "build a parser", "ok").unwrap();
+        let id = session_id_for(100, "build a parser");
+        // Set + persist.
+        assert!(update_display_name(home.path(), &id, "Parser Build").unwrap());
+        assert_eq!(
+            load_card(home.path(), &id).unwrap().display_name.as_deref(),
+            Some("Parser Build")
+        );
+        // Missing card → Ok(false), no panic.
+        assert!(!update_display_name(home.path(), "chat-999-deadbeefdeadbeef", "x").unwrap());
+        // Empty / whitespace name → Ok(false), leaves the existing name intact.
+        assert!(!update_display_name(home.path(), &id, "   ").unwrap());
+        assert_eq!(
+            load_card(home.path(), &id).unwrap().display_name.as_deref(),
+            Some("Parser Build"),
+            "an empty update must not clobber an existing display_name"
+        );
+    }
+
+    #[test]
+    fn banner_prefers_display_name_over_summary() {
+        let home = tempfile::tempdir().unwrap();
+        save_session_card(home.path(), 200, "topic alpha", "reply").unwrap();
+        let id = session_id_for(200, "topic alpha");
+        update_display_name(home.path(), &id, "Alpha Deep Dive").unwrap();
+        let banner = next_session_seed_banner(home.path(), "some-other-current-id");
+        assert!(banner.contains("Alpha Deep Dive"), "banner: {banner}");
+        assert!(
+            !banner.contains("turns over"),
+            "the deterministic summary must be superseded: {banner}"
+        );
+    }
+
+    #[test]
+    fn banner_falls_back_to_summary_when_no_display_name() {
+        let home = tempfile::tempdir().unwrap();
+        save_session_card(home.path(), 300, "topic beta", "reply").unwrap();
+        let banner = next_session_seed_banner(home.path(), "some-other-current-id");
+        assert!(banner.contains("turns over"), "no display_name → summary: {banner}");
     }
 }
