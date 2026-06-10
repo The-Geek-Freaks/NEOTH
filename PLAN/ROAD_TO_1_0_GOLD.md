@@ -74,9 +74,9 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-D Feature wiring (unwired modules) | 16 | 4 | 12 |
 | WS-E Architecture debt | 23 | 22 | 1 |
 | WS-F Gold-TODO feature build-out | 16 | 16 | 0 |
-| WS-G Repo adoptions | 28 | 9 | 19 |
+| WS-G Repo adoptions | 28 | 8 | 20 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** | **199** | **66** | **133** |
+| **TOTAL** | **199** | **65** | **134** |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -402,7 +402,7 @@ Verdict table from `REVIEWS/_gold_audit/research/repo_adopt_batch_a.md` and `rep
 - [ ] **GOLD-ADOPT-05** Run agent-gremium evaluation on ECC (affaan-m/ECC) and produce verdict: adopt-native / ground-truth / skip + integration note — *files:* `REVIEWS/_gold_audit/gremium_eval_ecc.md` (new) — *test:* verdict document with concrete adopt/skip decision — *origin:* GOLD-ADOPT (ECC)
 - [ ] **GOLD-ADOPT-06** Run agent-gremium evaluation on stop-slop (hardikpandya/stop-slop) and produce verdict — *files:* `REVIEWS/_gold_audit/gremium_eval_stop_slop.md` (new) — *test:* verdict document — *origin:* GOLD-ADOPT (stop-slop)
 - [ ] **GOLD-ADOPT-07** Run agent-gremium evaluation on claudeclaw (moazbuilds/claudeclaw) and produce verdict — *files:* `REVIEWS/_gold_audit/gremium_eval_claudeclaw.md` (new) — *test:* verdict document — *origin:* GOLD-ADOPT (claudeclaw)
-- [ ] **GOLD-ADOPT-08** Run agent-gremium evaluation on adhd (UditAkhourii/adhd) — high priority per operator — and produce verdict — *files:* `REVIEWS/_gold_audit/gremium_eval_adhd.md` (new) — *test:* verdict document — *origin:* GOLD-ADOPT (adhd, HIGH PRIORITY)
+- [x] **GOLD-ADOPT-08** Run agent-gremium evaluation on adhd (UditAkhourii/adhd) — high priority per operator — and produce verdict — *files:* `REVIEWS/_gold_audit/gremium_eval_adhd.md` (new) — *test:* verdict document — *origin:* GOLD-ADOPT (adhd, HIGH PRIORITY) — ✅DONE: 3-lens gremium (adoption-value · integration-fit · skip-risk), each grounded in NEOTH source. ADHD = divergent-reasoning (15 cognitive frames in N=6 isolated calls + trap-detection critic). **Verdict: ADOPT-NATIVE (minimal, prompt-level)** — separating *the ideas* from *the engine* dissolved the disagreement: the skeptic's valid objections (6-7x cost, ADV-08 primitive-ahead-of-consumer, ~80-90% council/MAGI-ULTRA coverage) ALL target the parallel ENGINE (NOT built — redundant + no consumer); the value/fit lenses' real delta is the **cognitive-frame menu + idea-level trap-detection critic** (no NEOTH equivalent — factual_check is factual, quality_score is response-quality, self_reflect is post-hoc) with a consumer that ALREADY fires (the `brainstorming` skill on design/architecture). **Realized in commit:** enriched `assets/skills/brainstorming/skill.yaml` with Phase 2.5 (10-frame divergent-framing menu, open-ended only) + Phase 2.6 (trap-detection critic: score, flag seductive-but-broken, cluster by angle) — prompt-level, ZERO new Rust / new skill / parallel engine / LLM-cost. Verdict doc records what was explicitly NOT done + the deferred promote-to-skill path if real ideation traffic appears. Bundled tests green (skill parses).
 - [ ] **GOLD-ADOPT-09** GUI design pass inspired by odysseus: produce list of odysseus GUI features not in NEOTH's Slint GUI; implement top-3 most impactful; Obsidian note with design reference — *files:* `REVIEWS/_gold_audit/gremium_eval_odysseus_gui.md` (new), `SRC/neothd-gui/` (changes per analysis) — *test:* 3 implemented GUI improvements; Obsidian note created — *origin:* GOLD-ADOPT (odysseus)
 
 ### Batch C — whichllm / goose / Agent-Reach / pm-skills / open-code-review (operator directive 2026-06-09; research workflow `wezji6zpk`, sources in `QUELLEN/{whichllm,goose,Agent-Reach,pm-skills}`)
