@@ -114,6 +114,7 @@ pub mod skills;
 pub mod slack;
 pub mod slash;
 pub mod status;
+pub mod streaming_buffer;
 pub mod supervisor;
 pub mod telemetry;
 pub mod todo;

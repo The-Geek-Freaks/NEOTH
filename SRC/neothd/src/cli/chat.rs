@@ -1104,17 +1104,30 @@ pub async fn run_chat_with(
 
         use futures_util::stream::StreamExt;
         use std::io::Write as _;
+        // GOLD-ADOPT-24 — safe-flush markdown buffer: print only the prefix that
+        // doesn't split an open construct (code fence, table, inline span). `acc`
+        // + the per-chunk WAL frame still see the RAW delta; only the terminal
+        // print is buffered, so the output text is identical, just fence-safe.
+        let mut md_buf = crate::cli::streaming_buffer::MarkdownBuffer::new();
         while let Some(item) = stream.next().await {
             match item {
                 Ok(chunk) => {
                     if !chunk.delta.is_empty() {
-                        print!("{}", chunk.delta);
-                        let _ = std::io::stdout().flush();
+                        if let Some(safe) = md_buf.push(&chunk.delta) {
+                            print!("{safe}");
+                            let _ = std::io::stdout().flush();
+                        }
                         acc.push_str(&chunk.delta);
                         chunk_count += 1;
                         emit_stream_chunk(&writer, provider.name(), &chunk, chunk_count).await?;
                     }
                     if chunk.done {
+                        // Release any construct still held at stream end.
+                        let rest = md_buf.flush();
+                        if !rest.is_empty() {
+                            print!("{rest}");
+                            let _ = std::io::stdout().flush();
+                        }
                         input_tokens = chunk.input_tokens;
                         output_tokens = chunk.output_tokens;
                         break;
@@ -1133,6 +1146,16 @@ pub async fn run_chat_with(
         }
         // Loop only reaches here on clean exit — every Err arm
         // returns above so success path is implicit.
+        // GOLD-ADOPT-24 — defensive: if the stream ended without a `done` chunk,
+        // release any markdown tail still buffered (the done-arm flush didn't run).
+        {
+            let rest = md_buf.flush();
+            if !rest.is_empty() {
+                use std::io::Write as _;
+                print!("{rest}");
+                let _ = std::io::stdout().flush();
+            }
+        }
         if let Some(p) = stream_permit {
             p.record_success();
         }
