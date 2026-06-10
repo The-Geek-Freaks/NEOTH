@@ -45,6 +45,12 @@ pub struct DoctorArgs {
     /// Useful for tab-completion + operator-side runbook generation.
     #[arg(long)]
     pub list_checks: bool,
+    /// GOLD-ADOPT-24: after running the checks, feed any WARN/FAIL outcomes to
+    /// the cheap `inference.utility_provider` for an LLM root-cause + first-fix.
+    /// NEOTH's 31 structured checks are a richer signal than a raw log dump, so
+    /// the LLM reasons over them. Best-effort; needs a configured provider.
+    #[arg(long)]
+    pub diagnose: bool,
     /// Output format inherited from the global `--output` flag.
     #[arg(skip)]
     pub output: OutputFormat,
@@ -754,12 +760,67 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
         }
     }
 
+    // GOLD-ADOPT-24 — optional LLM root-cause pass over the check results.
+    if args.diagnose {
+        diagnose_with_llm(&outcomes).await;
+    }
+
     if any_fail {
         // GOLD-COR-01 / A-03: non-zero status via QuietExit so the stack
         // unwinds (Drop-time flushes run) before the code reaches `main`.
         return Err(crate::QuietExit(1).into());
     }
     Ok(())
+}
+
+/// GOLD-ADOPT-24 — feed the WARN/FAIL check outcomes to the cheap utility
+/// provider for a terse root-cause + first-fix. Best-effort: a clean bill of
+/// health, an absent provider, or a provider error all just print a note and
+/// return (diagnosis never changes the doctor exit code). The structured check
+/// outcomes ARE the context — richer than goose's raw-log LLM dump.
+async fn diagnose_with_llm(outcomes: &[CheckOutcome]) {
+    let problems: Vec<&CheckOutcome> = outcomes
+        .iter()
+        .filter(|o| matches!(o.status, CheckStatus::Warn | CheckStatus::Fail))
+        .collect();
+    if problems.is_empty() {
+        println!("\ndiagnose: all checks pass — nothing to root-cause.");
+        return;
+    }
+    let config = match FreedomConfig::load_from_default_path() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("diagnose: cannot load freedom.yaml ({e}); skipping LLM pass.");
+            return;
+        }
+    };
+    let provider = match crate::providers::from_config_for_utility(&config).await {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("diagnose: no usable provider ({e}); skipping LLM pass.");
+            return;
+        }
+    };
+    let mut blob = String::new();
+    for o in &problems {
+        blob.push_str(&format!("- [{}] {}: {}\n", o.status.tag(), o.name, o.detail));
+    }
+    let req = crate::providers::Request {
+        prompt: format!(
+            "You are NEOTH's self-diagnostic assistant. `neoth doctor` reported these \
+             problems (structured health checks):\n\n{blob}\nGive the single MOST-LIKELY \
+             root cause and the FIRST concrete fix step/command. Be terse (max 8 lines). \
+             Do NOT invent checks that aren't listed; reason only over the above.",
+        ),
+        ..Default::default()
+    };
+    match provider.complete(req).await {
+        Ok(c) if !c.text.trim().is_empty() => {
+            println!("\n── diagnose (LLM root-cause) ──\n{}", c.text.trim());
+        }
+        Ok(_) => eprintln!("diagnose: provider returned an empty response."),
+        Err(e) => eprintln!("diagnose: provider call failed ({e})."),
+    }
 }
 
 /// Run every diagnostic in order. Pure synchronous — each check is short.
@@ -3325,6 +3386,7 @@ mod tests {
             quiet: false,
             explain: None,
             list_checks: true,
+            diagnose: false,
             output: OutputFormat::Table,
         };
         // Just verify it returns Ok without panicking — output capture
@@ -3340,6 +3402,7 @@ mod tests {
             quiet: false,
             explain: Some("nope-not-real".to_string()),
             list_checks: false,
+            diagnose: false,
             output: OutputFormat::Table,
         };
         let err = run_doctor(args).await.unwrap_err();
@@ -3355,6 +3418,7 @@ mod tests {
             quiet: false,
             explain: Some("freedom.yaml".to_string()),
             list_checks: false,
+            diagnose: false,
             output: OutputFormat::Table,
         };
         run_doctor(args).await.unwrap();
