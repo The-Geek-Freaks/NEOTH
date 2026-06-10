@@ -83,10 +83,12 @@ mod tests {
         assert!(names.contains(&"glossary"));
         assert!(names.contains(&"privacy"));
         assert!(names.contains(&"tour"));
+        // GOLD-ADOPT-16 — /recipe slash-gen (prompt-based).
+        assert!(names.contains(&"recipe"));
         assert_eq!(
             cmds.len(),
-            21,
-            "ships 9 prompt-based + 12 action-based built-ins: {names:?}"
+            22,
+            "ships 10 prompt-based + 12 action-based built-ins: {names:?}"
         );
     }
 

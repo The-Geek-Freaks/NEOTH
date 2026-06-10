@@ -259,6 +259,36 @@ pub fn built_in_commands() -> Vec<SlashCommand> {
              Mirrors `neoth tour --step <id>`.\n\
              Available stops: chat, memory, consent, audit, next.",
         ),
+        // GOLD-ADOPT-16 — /recipe slash-gen: scaffold a runnable recipe YAML
+        // from a plain-language description, matching `neoth recipe`'s schema.
+        SlashCommand {
+            name: "recipe".into(),
+            description: "Generate a runnable recipe YAML from a description.".into(),
+            prompt: "Generate a complete, runnable NEOTH recipe in YAML for: {args}\n\n\
+                 Output ONLY a fenced ```yaml block, no prose. Follow this exact schema \
+                 (the one `neoth recipe run` consumes):\n\
+                 - `name:` short kebab id; `description:` one line.\n\
+                 - `parameters:` a list; each item has `key:` (the {{token}} it fills), \
+                 `description:`, `input_type:` (string|number|boolean|select), \
+                 `required:` (true/false), optional `default:`, and for select an \
+                 `options: [..]` list. Infer the parameters the task needs.\n\
+                 - `prompt:` the user-turn template, referencing each parameter as \
+                 `{{key}}` (double braces). REQUIRED, non-empty.\n\
+                 - optional `instructions:` a system-prompt template (also {{key}}-templated).\n\
+                 - optional `settings:` with `model:` and/or `temperature:`.\n\
+                 Make every {{token}} in prompt/instructions a declared parameter. End \
+                 with a one-line comment showing an example invocation: \
+                 `# neoth recipe run <name>.yaml --param key=value`."
+                .into(),
+            action: None,
+            help: Some(
+                "Usage: /recipe <what the recipe should do>\n\
+                 Generates a recipe YAML you can save to ~/.neoth/recipes/ and run with \
+                 `neoth recipe run <file> --param k=v`."
+                    .into(),
+            ),
+            enabled: true,
+        },
     ]
 }
 
