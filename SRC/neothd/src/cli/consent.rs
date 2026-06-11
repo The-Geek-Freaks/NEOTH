@@ -77,6 +77,16 @@ fn daemon_is_live() -> bool {
     )
 }
 
+/// GR-038 — whether `neoth consent grant/revoke` (a security-relevant privilege
+/// change) must enforce the required-audit posture before mutating, mirroring
+/// `cli::autonomy`. Reads `audit_rpc.required_for_oneshot_permission_events` from
+/// freedom.yaml; a missing or unparseable config → not required (no posture).
+fn consent_audit_required(home: &std::path::Path) -> bool {
+    FreedomConfig::load_from_path(&home.join("freedom.yaml"))
+        .map(|c| c.audit_rpc.required_for_oneshot_permission_events)
+        .unwrap_or(false)
+}
+
 async fn emit_consent_change(
     event_type: u8,
     provider: ProviderKind,
@@ -191,6 +201,16 @@ async fn render_grant(
             consent::slug(provider)
         );
     }
+    // GR-038 — granting a cloud provider consent is a security-relevant privilege
+    // change, so it must honour the required-audit posture BEFORE the mutation
+    // (mirrors cli::autonomy). If the daemon owns the WAL but its audit-RPC
+    // listener is unreachable under a required posture, refuse — never let the
+    // change land without an audit record.
+    crate::daemon::audit_rpc::enforce_required_audit(
+        consent_audit_required(home),
+        daemon_is_live(),
+        home,
+    )?;
     consent::grant(home, provider)?;
     // SR-017 / GOLD-SEC-30: forensic WAL trail for the consent grant.
     emit_consent_change(EVENT_TYPE_CONSENT_GRANTED, provider, daemon_is_live(), home).await;
@@ -221,6 +241,13 @@ async fn render_revoke(
 ) -> Result<()> {
     let slug_s = consent::slug(provider);
     let was_granted = consent::is_granted(home, provider);
+    // GR-038 — a revocation is a security-relevant change too; enforce the
+    // required-audit posture before mutating (mirrors the grant path above).
+    crate::daemon::audit_rpc::enforce_required_audit(
+        consent_audit_required(home),
+        daemon_is_live(),
+        home,
+    )?;
     consent::revoke(home, provider)?;
     // SR-017 / GOLD-SEC-30: audit only a real revocation of a cloud marker.
     // (`is_granted` returns true for non-cloud kinds, which never hold a marker,
@@ -343,6 +370,25 @@ mod tests {
         assert_eq!(
             event_name_from_code(EVENT_TYPE_CONSENT_REVOKED),
             Some("consent_revoked")
+        );
+    }
+
+    #[test]
+    fn consent_audit_required_reads_the_posture_flag() {
+        // GR-038: consent grant/revoke must honour the required-audit posture.
+        let dir = TempDir::new().unwrap();
+        // No config → no posture (fresh install): not required.
+        assert!(!consent_audit_required(dir.path()));
+        // A config that turns the required-audit posture on → required, so the
+        // enforce gate runs before any consent mutation.
+        std::fs::write(
+            dir.path().join("freedom.yaml"),
+            "audit_rpc:\n  required_for_oneshot_permission_events: true\n",
+        )
+        .unwrap();
+        assert!(
+            consent_audit_required(dir.path()),
+            "the required-audit flag must be honoured for consent changes"
         );
     }
 }
