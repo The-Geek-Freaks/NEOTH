@@ -239,7 +239,7 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 // (rare), so the lease file isn't read on every call.
                 if gate.is_blocked() {
                     let (dangerous_leased, egress_leased, lease_id, expired_present) =
-                        check_risk_leases(&risk);
+                        check_risk_leases(&risk, security_policy.confirm_high);
                     if dangerous_leased || egress_leased {
                         let lifted = crate::security::risk_gate::apply_risk_leases(
                             &risk,
@@ -607,11 +607,24 @@ async fn emit_risk_gate_wal(
 /// rather than silently re-blocking). Best-effort: an unreadable lease store
 /// fails closed (no override). Only called on a block, so the file isn't read
 /// per call.
+/// GR-046 — whether a tool-call risk needs the operator's DangerousCommand
+/// risk-override lease to lift its block. A Critical dangerous finding always
+/// does; a HIGH finding does too ONLY when `confirm_high` is on (it then
+/// generates a `Confirm` that `neoth risk-confirm`'s DangerousCommand lease must
+/// be able to lift — a High confirm_high block was previously unliftable). Pure
+/// → unit-testable.
+fn risk_needs_dangerous_lease(risk: &crate::security::ToolCallRisk, confirm_high: bool) -> bool {
+    use crate::security::dangerous_command::Severity;
+    risk.dangerous
+        .iter()
+        .any(|d| d.severity == Severity::Critical || (confirm_high && d.severity == Severity::High))
+}
+
 fn check_risk_leases(
     risk: &crate::security::ToolCallRisk,
+    confirm_high: bool,
 ) -> (bool, bool, Option<String>, bool) {
     use crate::permissions::lease::{LeaseScope, LeaseStore};
-    use crate::security::dangerous_command::Severity;
     use crate::security::risk_gate::RISK_LEASE_SUBJECT;
 
     let home = crate::config::FreedomConfig::default_neoth_home();
@@ -623,7 +636,7 @@ fn check_risk_leases(
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
 
-    let needs_dangerous = risk.dangerous.iter().any(|d| d.severity == Severity::Critical);
+    let needs_dangerous = risk_needs_dangerous_lease(risk, confirm_high);
     let needs_egress = !risk.egress.is_empty();
     let mut lease_id = None;
     let dangerous_leased = needs_dangerous
@@ -1050,6 +1063,30 @@ mod tests {
                 .is_none(),
             "single-use: the lifted risk lease must be consumed, not reusable"
         );
+    }
+
+    #[test]
+    fn confirm_high_makes_a_high_finding_need_the_dangerous_lease() {
+        use crate::security::ToolCallRisk;
+        use crate::security::dangerous_command::inspect;
+        // A HIGH-severity finding (git push --force).
+        let high = ToolCallRisk {
+            egress: vec![],
+            dangerous: inspect("git push --force origin main"),
+        };
+        assert!(!high.dangerous.is_empty(), "git push --force must be a High finding");
+        // GR-046: without confirm_high a High block is NOT liftable via the
+        // DangerousCommand lease; WITH confirm_high it IS (so `neoth risk-confirm`
+        // can lift the confirm_high block).
+        assert!(!risk_needs_dangerous_lease(&high, false));
+        assert!(risk_needs_dangerous_lease(&high, true));
+        // A Critical finding always needs the lease, regardless of confirm_high.
+        let crit = ToolCallRisk {
+            egress: vec![],
+            dangerous: inspect("rm -rf /"),
+        };
+        assert!(risk_needs_dangerous_lease(&crit, false));
+        assert!(risk_needs_dangerous_lease(&crit, true));
     }
 
     // Holds the env lock + points NEOTH_HOME at a CLEAN home (no leases) so the
