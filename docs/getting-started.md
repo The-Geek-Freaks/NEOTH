@@ -11,10 +11,11 @@ NEOTH has two happy paths:
 
 ## 1. Install
 
-Fast path:
+Fast path (bootstrap installer — NEOTH is not yet on crates.io, so
+`cargo install neoth` lands with the 1.0 release):
 
 ```bash
-cargo install neoth
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
 ```
 
 Source path:

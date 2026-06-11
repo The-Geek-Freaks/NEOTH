@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 203 | 6 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 202 | 7 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -519,7 +519,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [ ] **GR-002** Auto-promote gate (COR-03) bypassable via an empty patch with self-reported green tests (`dispatcher.rs:652`, `worker.rs:83`).
 - [ ] **GR-006** ARCH-03 frame-scan fix breaks pre-fix installs — a stale `wal_cursor` < header_len causes an infinite no-progress indexer loop (`memory/indexer.rs:69`).
 - [ ] **DD-01** `docs/import-format.md` describes a non-existent `neoth-migrate import/export` pipeline as shipped (HON-01 fixed main.rs+RUNBOOK, not this doc).
-- [ ] **DD-02** Three install docs (`quickstart/install/getting-started.md`) sell `cargo install neoth` while README explicitly denies it's published.
+- [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
 Full triaged detail (decisive file:line per finding) in the local file. **Security-relevant MEDIUM next-priority cluster:** egress-proxy bypass (GR-023/034 GGUF resolver ignores NEOTH_HTTP_PROXY), SSRF-via-redirect (GR-042 RSS poller follows redirects past `validate_url`; GR-016 jina r.jina.ai off the no_outbound_network allowlist), unrestricted pm-skill `tool_allowlist:[]` = unrestricted + prompts instruct web-egress/file-writes (GR-050/054), consent-grant skips required-audit (GR-038), risk-confirm lifts the whole dimension not the single call (GR-047), relay auth has no client token (GR-009), MCP per-read-not-per-request timeout (GR-015), Windows isolation `\Users` false-positive + warn-only asymmetry (GR-022, SEC-33). The OVERSTATED set (review was wrong) + INTENTIONAL set (deliberate tradeoffs, e.g. SEC-27 opt-out backup) are listed in the triage file so they are NOT re-investigated.

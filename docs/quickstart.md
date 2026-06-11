@@ -5,14 +5,18 @@ Follow it in order. Do not edit YAML unless you choose the operator path.
 
 ## The 3-command path
 
+> ⚠️ NEOTH is at `1.0.0-beta.1` and is **not yet published to crates.io** — use
+> the bootstrap installer below (or the source build); `cargo install neoth`
+> lands with the 1.0 release.
+
 ```bash
-cargo install neoth
+curl -fsSL https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.sh | bash
 neoth gui
 neoth doctor
 ```
 
-If `cargo` is missing, install Rust from <https://rustup.rs>, restart the
-terminal, then run the commands again.
+On Windows (PowerShell): `irm https://raw.githubusercontent.com/The-Geek-Freaks/NEOTH/main/SRC/install.ps1 | iex`.
+If you prefer a manual build, see **Source install** below.
 
 ## Source install
 
