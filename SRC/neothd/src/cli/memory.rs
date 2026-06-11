@@ -489,7 +489,21 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                 println!("  segments scanned : {}", redact_report.segments_touched);
                 println!("  frames redacted  : {}", redact_report.frames_redacted);
                 println!("  bytes zeroed     : {}", redact_report.bytes_redacted);
-                if redact_report.frames_redacted == 0 {
+                println!("  errors           : {}", redact_report.errors);
+                if physical_erasure_incomplete(&redact_report) {
+                    // GR-008 — do NOT claim success when a segment errored. An
+                    // `errors > 0` means a segment REFUSED redaction (e.g. a
+                    // sealed/compressed v2 segment — GOLD-ARCH-03b) so the data
+                    // could persist, and/or a redaction-marker audit emit failed.
+                    // Either way the GDPR erasure is NOT provably complete.
+                    println!(
+                        "  ⚠ INCOMPLETE: {} segment(s) errored — a sealed/compressed \
+                         segment may have REFUSED redaction (the data could persist) \
+                         and/or an audit marker failed. Physical erasure is NOT \
+                         confirmed complete; see the warnings above + the audit log.",
+                        redact_report.errors
+                    );
+                } else if redact_report.frames_redacted == 0 {
                     println!("  (no matching WAL frames — SQLite-only forget was sufficient)");
                 } else {
                     println!(
@@ -498,6 +512,18 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
                     );
                 }
             }
+        }
+        // GR-008 — fail loud: a `--physical` erasure that hit ANY error is not a
+        // confirmed GDPR-grade wipe. Return a non-zero exit so an operator (or a
+        // script) never mistakes a partial / refused redaction for success. The
+        // report above is still printed (stdout) for diagnosis.
+        if physical_erasure_incomplete(&redact_report) {
+            anyhow::bail!(
+                "physical WAL erasure for topic `{topic}` reported {} error(s) — erasure is \
+                 INCOMPLETE / unconfirmed (a sealed segment may have refused redaction; see \
+                 GOLD-ARCH-03b). Review the audit log; the affected data may still persist.",
+                redact_report.errors
+            );
         }
     }
     Ok(())
@@ -615,6 +641,16 @@ struct PhysicalRedactSummary {
     /// Path to the dedicated audit segment carrying every marker
     /// emitted in this redaction pass. None when no markers fired.
     pub audit_segment: Option<String>,
+}
+
+/// GR-008 — a `--physical` erasure is only a CONFIRMED success when no segment
+/// errored. Any `errors > 0` means a segment refused redaction (e.g. a sealed /
+/// compressed v2 segment — GOLD-ARCH-03b — whose data could still persist) or a
+/// redaction-marker audit emit failed, so the GDPR-grade wipe is not provably
+/// complete. The CLI must NOT print an affirmative "sufficient / GDPR-grade
+/// erasure" message and must fail loud (non-zero exit) in that case.
+fn physical_erasure_incomplete(summary: &PhysicalRedactSummary) -> bool {
+    summary.errors > 0
 }
 
 /// `neoth memory --dimension` — EXP-FD-0. Compute D_mem across tiers.
@@ -800,6 +836,31 @@ mod tests {
         // actually had frames redacted.
         assert_eq!(summary.markers_emitted, 1, "one marker per touched segment");
         assert!(summary.audit_segment.is_some());
+    }
+
+    #[test]
+    fn physical_erasure_incomplete_when_any_error() {
+        // GR-008: a `--physical` pass with any errors (a segment that refused
+        // redaction and/or a failed audit marker) is NOT a confirmed wipe — the
+        // CLI must warn + fail loud, not print an affirmative success message.
+        let clean = PhysicalRedactSummary {
+            frames_redacted: 3,
+            errors: 0,
+            ..Default::default()
+        };
+        assert!(
+            !physical_erasure_incomplete(&clean),
+            "no errors → confirmed complete"
+        );
+        let errored = PhysicalRedactSummary {
+            frames_redacted: 0,
+            errors: 1,
+            ..Default::default()
+        };
+        assert!(
+            physical_erasure_incomplete(&errored),
+            "a refused-redaction error must mark the erasure incomplete"
+        );
     }
 
     #[tokio::test]
