@@ -83,9 +83,9 @@ impl RequestedPermission {
 /// `post_provider` here but `pre_provider_call` / `post_provider_call` in the
 /// dispatcher — a silent divergence. They are now `PreProviderCall` /
 /// `PostProviderCall` (the canonical wire form), each with a `#[serde(alias)]`
-/// so manifests written against the old short form still parse. Use
-/// [`HookStage::to_hook_stage`] to bridge to the dispatcher enum; stages with
-/// no dispatcher counterpart map to `None`.
+/// so manifests written against the old short form still parse. This is
+/// advisory/display metadata only — see the GOLD-COR-27 note below on why a
+/// plugin's declared stages are NOT auto-registered into the daemon dispatcher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -108,27 +108,20 @@ pub enum HookStage {
     OnConsolidationPass,
 }
 
-impl HookStage {
-    /// Bridge a plugin-declared stage to the daemon dispatcher's
-    /// [`crate::hooks::stages::HookStage`]. Returns `None` for stages with no
-    /// dispatcher counterpart (`PostChannelReceive`, `OnRecallQuery`,
-    /// `OnConsolidationPass`) so a caller skips them rather than mis-firing.
-    ///
-    /// COR-27: this is the conversion the eventual manifest→`HookDef` dispatch
-    /// wiring uses to register a plugin's hooks at the correct stage; before
-    /// the wire forms were unified there was no way to map between the enums.
-    /// The match is exhaustive (the enum is only `#[non_exhaustive]` to
-    /// downstream crates) so a new variant forces an explicit decision here.
-    pub fn to_hook_stage(self) -> Option<crate::hooks::stages::HookStage> {
-        use crate::hooks::stages::HookStage as H;
-        match self {
-            Self::PreProviderCall => Some(H::PreProviderCall),
-            Self::PostProviderCall => Some(H::PostProviderCall),
-            Self::PreChannelSend => Some(H::PreEgress),
-            Self::PostChannelReceive | Self::OnRecallQuery | Self::OnConsolidationPass => None,
-        }
-    }
-}
+// GOLD-COR-27 / GR-035 — the `to_hook_stage()` manifest→dispatcher bridge was
+// REMOVED as dead code. It had zero non-test callers: a plugin's declared
+// `hook_stages` is NOT auto-registered into the daemon's hook dispatcher.
+//
+// That is a DELIBERATE security posture, not an oversight. Auto-wiring a loaded
+// plugin's WASM `invoke` as a `PreProviderCall` / `PreEgress` hook would let any
+// installed plugin intercept (and block) every provider call + outbound message
+// from a manifest declaration alone. Plugin participation in a hook stage is
+// instead wired EXPLICITLY by the operator via a `HookDef` TOML action
+// (serve.rs hook setup) — the same operator-controlled gate every other hook
+// goes through. `hook_stages` stays as advisory/display metadata (surfaced by
+// `neoth plugins`) so the operator sees which stages a plugin is designed for
+// before wiring it. If manifest→HookDef auto-registration is ever built, it
+// needs its own consent model — re-introduce the enum bridge WITH that consumer.
 
 /// Parsed `plugin.toml`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -405,23 +398,6 @@ mod tests {
         assert!(!serialized.contains("\"pre_provider\""));
     }
 
-    #[test]
-    fn to_hook_stage_bridges_overlapping_stages_to_the_dispatcher() {
-        use crate::hooks::stages::HookStage as H;
-        // The provider stages a plugin declares now resolve to the dispatcher
-        // stage they mean — impossible while the wire forms diverged (PAT-002).
-        assert_eq!(
-            HookStage::PreProviderCall.to_hook_stage(),
-            Some(H::PreProviderCall)
-        );
-        assert_eq!(
-            HookStage::PostProviderCall.to_hook_stage(),
-            Some(H::PostProviderCall)
-        );
-        assert_eq!(HookStage::PreChannelSend.to_hook_stage(), Some(H::PreEgress));
-        // Manifest-only vocabulary with no dispatcher counterpart → None.
-        assert_eq!(HookStage::PostChannelReceive.to_hook_stage(), None);
-        assert_eq!(HookStage::OnRecallQuery.to_hook_stage(), None);
-        assert_eq!(HookStage::OnConsolidationPass.to_hook_stage(), None);
-    }
+    // GOLD-COR-27 / GR-035 — the to_hook_stage bridge + its test were removed
+    // (dead code; plugin hook_stages are advisory metadata, not auto-registered).
 }
