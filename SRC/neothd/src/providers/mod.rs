@@ -431,11 +431,36 @@ pub async fn from_config_for_learn(config: &FreedomConfig) -> Result<Box<dyn Pro
 ///      own deterministic path (cheap-by-default — never silently spends the
 ///      flagship model the operator was trying to avoid).
 pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn Provider>> {
-    let Some(kind) = config.inference.utility_provider else {
-        return from_config(config).await;
-    };
+    match build_utility_config(config) {
+        // No `utility_provider` configured → use the operator's MAIN provider
+        // (no routing change, no regression).
+        None => from_config(config).await,
+        Some(synthetic) => from_config(&synthetic).await,
+    }
+}
+
+/// GR-027 — build the synthetic [`FreedomConfig`] for the utility provider, or
+/// `None` when no `utility_provider` is set (the caller falls back to the main
+/// provider).
+///
+/// **Key isolation:** when the utility provider is a DIFFERENT vendor than the
+/// main provider, the cloned `provider_key` / `provider_endpoint` /
+/// `provider_model` all belong to the MAIN vendor — reusing them would send the
+/// main provider's API key (plus a wrong endpoint + model id) to the utility
+/// vendor. They are reset so the utility build resolves its OWN key, or fails
+/// cleanly (the best-effort caller then falls back to its deterministic path).
+/// A same-vendor utility (e.g. flagship→fast on one provider) legitimately
+/// keeps the shared key. Pure (no I/O) so this property is unit-testable.
+fn build_utility_config(config: &FreedomConfig) -> Option<FreedomConfig> {
+    let kind = config.inference.utility_provider?;
+    let utility_kind = kind.to_provider_kind();
     let mut synthetic = config.clone();
-    synthetic.provider_kind = Some(kind.to_provider_kind());
+    if config.provider_kind != Some(utility_kind) {
+        synthetic.provider_key = None;
+        synthetic.provider_endpoint = None;
+        synthetic.provider_model = None;
+    }
+    synthetic.provider_kind = Some(utility_kind);
     // Pin the cheapest model for this provider so a utility call never lands on
     // the flagship. `None` (e.g. local providers with no `fast` entry) leaves
     // the model unset → the adapter uses its own default.
@@ -444,7 +469,7 @@ pub async fn from_config_for_utility(config: &FreedomConfig) -> Result<Box<dyn P
     {
         synthetic.provider_model = Some(fast.to_string());
     }
-    from_config(&synthetic).await
+    Some(synthetic)
 }
 
 /// Construct the provider configured in `~/.neoth/freedom.yaml`.
@@ -1018,6 +1043,48 @@ mod tests {
         assert_eq!(t.resolve("claude_cli", ModelRole::Fast), Some("claude-haiku-4-5-20251001"));
         assert_eq!(t.resolve("openai_api", ModelRole::Fast), Some("gpt-4o-mini"));
         assert_eq!(t.resolve("gemini_api", ModelRole::Fast), Some("gemini-3-flash-lite"));
+    }
+
+    #[test]
+    fn utility_config_strips_main_key_for_a_different_vendor() {
+        // GR-027 regression guard: a utility provider of a DIFFERENT vendor must
+        // NOT inherit the main provider's API key — that would leak the main key
+        // (and a wrong endpoint) to the utility vendor. Main = OpenAI with a
+        // key; utility = Gemini.
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::OpenaiApi);
+        cfg.provider_key = Some(crate::secret::SecretString::from("sk-MAIN-secret"));
+        cfg.provider_endpoint = Some("https://api.openai.com/v1".into());
+        cfg.inference.utility_provider = Some(InferenceProvider::Gemini);
+
+        let synthetic = build_utility_config(&cfg).expect("utility config built");
+        assert_eq!(synthetic.provider_kind, Some(ProviderKind::GeminiApi));
+        assert!(
+            synthetic.provider_key.is_none(),
+            "main provider key must NOT cross to a different utility vendor"
+        );
+        assert!(
+            synthetic.provider_endpoint.is_none(),
+            "main endpoint must NOT cross to a different utility vendor"
+        );
+    }
+
+    #[test]
+    fn utility_config_keeps_key_for_same_vendor() {
+        // A same-vendor utility (flagship→fast on one provider) legitimately
+        // shares the single configured key — clearing it would break the
+        // intended cost-tier routing.
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::GeminiApi);
+        cfg.provider_key = Some(crate::secret::SecretString::from("sk-gemini"));
+        cfg.inference.utility_provider = Some(InferenceProvider::Gemini);
+
+        let synthetic = build_utility_config(&cfg).expect("utility config built");
+        assert_eq!(synthetic.provider_kind, Some(ProviderKind::GeminiApi));
+        assert!(
+            synthetic.provider_key.is_some(),
+            "same-vendor utility must keep the shared key"
+        );
     }
 
     #[tokio::test]
