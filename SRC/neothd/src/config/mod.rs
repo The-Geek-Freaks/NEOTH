@@ -2923,13 +2923,15 @@ pub struct SecurityPolicy {
     /// friction; operators working against precious repos opt in.
     #[serde(default)]
     pub confirm_high: bool,
-    /// GOLD-ADOPT-22 SmartApprove — when `true`, a tool call the autonomy gate
-    /// would `Confirm` is AUTO-APPROVED if the tool's server-DECLARED EFFECT
-    /// metadata (`readOnlyHint`, never its name) marks it read-only (and not
-    /// destructive). Default `false` — a confirm-bypass is opt-in and trusts the
-    /// configured server's annotations, so only enable it for trusted servers.
-    /// Never lifts a `Deny`; every auto-approval is audited
-    /// (`RISK_GATE_ALLOWED_BY_READONLY_CACHE`).
+    /// GOLD-ADOPT-22 SmartApprove — the global MASTER switch. When `true`, a
+    /// tool call the autonomy gate would `Confirm` MAY be AUTO-APPROVED if the
+    /// tool's server-DECLARED EFFECT metadata (`readOnlyHint`, never its name)
+    /// marks it read-only (and not destructive). Default `false` — a
+    /// confirm-bypass is opt-in. GR-018: this master switch alone is NOT
+    /// sufficient — the specific server must ALSO set `smart_approve: true` in
+    /// its `McpServerConfig`, so enabling it for one trusted server never
+    /// bypasses confirmation for the rest. Never lifts a `Deny`; every
+    /// auto-approval is audited (`RISK_GATE_ALLOWED_BY_READONLY_CACHE`).
     #[serde(default)]
     pub smart_approve: bool,
 }

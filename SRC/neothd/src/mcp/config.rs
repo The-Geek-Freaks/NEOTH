@@ -65,6 +65,14 @@ pub struct McpServerConfig {
     /// !trust_all_tools` configs.
     #[serde(default)]
     pub trust_all_tools: bool,
+    /// GR-018 — per-server SmartApprove opt-in. When `false` (the default),
+    /// this server's tools are NEVER auto-approved past a `Confirm` gate, even
+    /// if the global master switch (`security.smart_approve`) is on. The
+    /// confirm-bypass fires only when BOTH the global master AND this per-server
+    /// flag are set, so enabling SmartApprove for one trusted server can no
+    /// longer silently bypass confirmation for every other configured server.
+    #[serde(default)]
+    pub smart_approve: bool,
 }
 
 fn default_enabled() -> bool {
@@ -267,6 +275,7 @@ servers:
                     enabled: true,
                     allow_tools: None,
                     trust_all_tools: false,
+                    smart_approve: false,
                 },
                 McpServerConfig {
                     id: "b".into(),
@@ -277,6 +286,7 @@ servers:
                     enabled: false,
                     allow_tools: None,
                     trust_all_tools: false,
+                    smart_approve: false,
                 },
             ],
         };
@@ -300,6 +310,7 @@ servers:
             enabled: true,
             allow_tools: None,
             trust_all_tools: false,
+            smart_approve: false,
         };
         let resolved = cfg.resolve_env().unwrap();
         assert_eq!(resolved.get("LOG_LEVEL").map(String::as_str), Some("info"));
@@ -323,6 +334,7 @@ servers:
             enabled: true,
             allow_tools: None,
             trust_all_tools: false,
+            smart_approve: false,
         };
         let err = cfg.resolve_env().unwrap_err();
         assert!(
@@ -344,6 +356,7 @@ servers:
                 enabled: true,
                 allow_tools: None,
                 trust_all_tools: false,
+                smart_approve: false,
             }],
         }
     }
@@ -398,6 +411,7 @@ servers:
                 enabled: false,
                 allow_tools: None,
                 trust_all_tools: false,
+                smart_approve: false,
             }],
         };
         assert_eq!(s.autoroute_decision(None), AutorouteDecision::AutoOff);

@@ -269,6 +269,7 @@ mod tests {
                 enabled: true,
                 allow_tools: None,
                 trust_all_tools: false,
+                smart_approve: false,
             }],
         };
         run_list(&s, &OutputFormat::Json).unwrap();
@@ -296,6 +297,7 @@ mod tests {
                 enabled: true,
                 allow_tools: None,
                 trust_all_tools: false,
+                smart_approve: false,
             }],
         };
         let err = run_call(&s, "test", "echo", "this is not json", &OutputFormat::Json)

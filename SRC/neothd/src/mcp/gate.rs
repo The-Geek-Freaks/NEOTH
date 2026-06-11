@@ -274,7 +274,15 @@ pub async fn invoke_with_audit(
             // name) marks it read-only. Never lifts a Deny; every auto-approval
             // is audited. A disabled cache / non-read-only / unknown tool falls
             // through to the normal confirm path.
-            if smart_approve_is_readonly(smart_approve, client, &cfg.id, tool).await {
+            // GR-018 — per-server gate: only THIS server's own opt-in
+            // (`cfg.smart_approve`) lets a Confirm be auto-approved. The global
+            // master switch (`security.smart_approve`) merely allocates the
+            // ReadOnlyCache upstream; without the per-server flag we fall through
+            // to the normal confirm path even for a declared read-only tool, so
+            // trusting one server never bypasses confirmation for the others.
+            if cfg.smart_approve
+                && smart_approve_is_readonly(smart_approve, client, &cfg.id, tool).await
+            {
                 if let Some(w) = writer {
                     emit_readonly_allow(w, &cfg.id, tool, now_unix)
                         .await
@@ -551,6 +559,7 @@ mod tests {
             enabled: true,
             allow_tools: allow.map(|v| v.into_iter().map(String::from).collect()),
             trust_all_tools: false,
+            smart_approve: false,
         }
     }
 
@@ -775,6 +784,31 @@ mod tests {
         cfg.trust_all_tools = true;
         let blocked = cfg.allow_tools.is_none() && !cfg.trust_all_tools;
         assert!(!blocked, "None + trust=true must pass through");
+    }
+
+    #[test]
+    fn smart_approve_is_per_server_opt_in() {
+        // GR-018 regression guard: the SmartApprove confirm-bypass is per
+        // server. A server that did NOT opt in (`smart_approve: false`, the
+        // default) is never eligible for auto-approval — even when the global
+        // master switch is on AND the tool is declared read-only — so enabling
+        // it on one trusted server must not bypass confirm for the rest. The
+        // Confirm arm gates on exactly this `cfg.smart_approve &&
+        // smart_approve_is_readonly(..)` predicate.
+        let mut cfg = base_cfg(None);
+        assert!(
+            !cfg.smart_approve,
+            "default must be secure — no per-server confirm-bypass"
+        );
+        // A non-opted server is short-circuited before the read-only check.
+        assert!(
+            !cfg.smart_approve,
+            "non-opted server must not be auto-approve-eligible"
+        );
+        // Operator opts THIS server in — only now is it eligible (still gated
+        // by the live read-only annotation check at dispatch time).
+        cfg.smart_approve = true;
+        assert!(cfg.smart_approve, "an opted-in server becomes eligible");
     }
 
     #[test]

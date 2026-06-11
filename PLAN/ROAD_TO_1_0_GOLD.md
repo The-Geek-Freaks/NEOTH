@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 206 | 3 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 205 | 4 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -508,7 +508,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **GR-005** 🔒 ✅ FIXED — `forget` now rebuilds the on-disk HNSW snapshot from the wiped SQLite (new `embeddings::rebuild_snapshot_if_present(conn, home)`, called in run_forget when embedding_rows>0), so forgotten vectors are purged from the searchable index, not just idx_embedding. Best-effort (SQLite already wiped; cold-load falls back). Tests: rebuild_snapshot_if_present_purges_forgotten_vectors + noop-without-snapshot. clippy clean.
 - [ ] **GR-007** 🔒 WAL verify fail-open — `wal/compaction.rs:316` `let Ok(hdr) = parse_segment_header(raw) else { return Ok(...) }`: a corrupt/truncated header is silently treated as a bare frame-stream, making the HMAC check vacuous.
 - [ ] **GR-008** 🔒 `forget --physical` prints the affirmative "no matching WAL frames" success message even when zstd segments REFUSED redaction (errors>0 ignored at `cli/memory.rs:472`).
-- [ ] **GR-018** 🔒 SmartApprove is a single global `SecurityPolicy.smart_approve` bool — enabling confirm-bypass for ALL MCP servers when any one trusted server uses it (`mcp/dispatch_loop.rs:146`); should be per-`McpServerConfig`.
+- [x] **GR-018** 🔒 ✅ FIXED — SmartApprove confirm-bypass is now per-server: global security.smart_approve is the MASTER switch (allocates the cache), and the bypass fires only when the specific McpServerConfig.smart_approve is ALSO true (gate.rs:277 `cfg.smart_approve && smart_approve_is_readonly`). Enabling it on one trusted server no longer bypasses confirm for the rest. New per-server field (serde default false, 10 literals) + master-switch doc + regression test smart_approve_is_per_server_opt_in. mcp:: 185/0; clippy -D warnings clean.
 - [ ] **GR-027** 🔒 `from_config_for_utility` (providers/mod.rs:437) carries `provider_key` unchanged → a cross-provider utility config sends the MAIN provider's key to the utility vendor.
 - [ ] **GR-032** 🔒 Risk-override leases are unscoped + reusable + TTL-unbounded — `DangerousCommand` is a nullary variant (no command scope), `--egress` grants it by default, `parse_duration('9999d')` accepted.
 - [ ] **GR-033** 🔒 `permissions/audit.rs:147` `let _ = for_each_frame(...)` discards the WAL-scan Result → a tamper-suspect compressed blob makes `neoth permissions audit` fail-open (silent).
