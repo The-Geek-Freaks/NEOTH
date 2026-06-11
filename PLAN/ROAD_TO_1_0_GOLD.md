@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 209 | 0 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 206 | 3 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -503,7 +503,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 **Re-opened DONE-claims:** several WS-A/B/C tasks marked `[x]` shipped their NAMED fix but the verification found the origin finding only PARTIALLY closed (or the fix not wired): GOLD-SEC-08 (eviction not-wired → DoS persists), SEC-10/12/15/20/21/23/28/33/35, HON-16, COR-04/09/25, ADOPT-10 + the §1 partials. Their checkboxes stay `[x]` (the named deliverable shipped) — the residual GAP is tracked as the GOLD-SEC-*/GR-*/DD-* items below + in the triage file. This is the honest reconciliation, not a wholesale revert.
 
 ### HIGH (16) — confirmed; security 🔒 first
-- [ ] **GOLD-SEC-08** 🔒 `channels::rate_limit` HashMap is unbounded; the eviction fix in `daemon::rate_limit` (MAX_BUCKETS cap, evict_if_needed) has ZERO live callers — dead module. The A-18 unique-sender flood DoS persists on the live inbound path. *fix:* port eviction into `channels::rate_limit::try_consume_at` or consolidate the two limiters.
+- [x] **GOLD-SEC-08** 🔒 ✅ FIXED — channels::rate_limit bucket map now bounded (MAX_BUCKETS=10_000 + evict_if_needed wired into try_consume; idle-TTL sweep + live_bucket_count accessor + regression test); the A-18 unique-sender flood DoS is closed on the live inbound path. bd068f8.
 - [x] **GR-003** 🔒 ✅ FIXED — n8n provider_call cloud-check now routes through the canonical EXHAUSTIVE `consent::is_cloud` (was an inline matches! omitting AnthropicApi+Cohere → those skipped the Strict consent gate). is_some_and(consent::is_cloud); compile-enforced no-drift. n8n_api::handlers 5/0; clippy clean.
 - [x] **GR-005** 🔒 ✅ FIXED — `forget` now rebuilds the on-disk HNSW snapshot from the wiped SQLite (new `embeddings::rebuild_snapshot_if_present(conn, home)`, called in run_forget when embedding_rows>0), so forgotten vectors are purged from the searchable index, not just idx_embedding. Best-effort (SQLite already wiped; cold-load falls back). Tests: rebuild_snapshot_if_present_purges_forgotten_vectors + noop-without-snapshot. clippy clean.
 - [ ] **GR-007** 🔒 WAL verify fail-open — `wal/compaction.rs:316` `let Ok(hdr) = parse_segment_header(raw) else { return Ok(...) }`: a corrupt/truncated header is silently treated as a bare frame-stream, making the HMAC check vacuous.
@@ -578,6 +578,7 @@ All of the following must be `[x]` before tagging `v1.0-gold`:
 - `REVIEWS/neoth beta review/NEOTH-Findings-Register.md` — B-01..B-23 (written at `35c94d2`)
 - `REVIEWS/roman review/findings.html` — CR-* / PAT-* / SR-* / CQ-* findings (written at `3ef9771`)
 
-**Progress tracker:** `PLAN/PROGRESS_v1_0.md` — the live OPEN/DONE tracker; must be updated in the same commit as each task.
-
+**Progress tracker:**
+- `PLAN/PROGRESS_v1_0.md` — the live OPEN/DONE tracker; must be updated in the same commit as each task.
+- `PLAN/PROGRESS_v1_0_GOLD.md` — the live OPEN/DONE tracker; must be updated in the same commit as each task.
 **Architecture spec:** `PLAN/00_DESIGN_v1.1_FINAL.md` — authoritative design. SPEC files: `PLAN/SPEC_*.md`.
