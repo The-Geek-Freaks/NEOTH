@@ -126,12 +126,34 @@ fn resolve_subrecipes(
         "this recipe declares sub_recipes but was loaded from a deeplink — \
          sub-recipes resolve relative files and need a local parent path",
     )?;
+    // GR-117 — canonicalize the parent dir once for the path-traversal
+    // containment check below.
+    let dir_canon = dir
+        .canonicalize()
+        .with_context(|| format!("canonicalize recipe dir {}", dir.display()))?;
     for sub in &spec.sub_recipes {
+        // GR-117 — a sub-recipe file MUST live under the parent recipe's
+        // directory. `dir.join(sub.file)` alone lets a `sub.file` of
+        // `../../secret.yaml` (or an absolute path, which `join` adopts wholesale)
+        // escape and read arbitrary files. Canonicalize (resolves `..` +
+        // symlinks) and reject anything outside the parent dir.
         let sub_path = dir.join(&sub.file);
-        let body = std::fs::read_to_string(&sub_path)
-            .with_context(|| format!("read sub-recipe `{}`", sub_path.display()))?;
+        let sub_canon = sub_path.canonicalize().with_context(|| {
+            format!("resolve sub-recipe `{}` ({})", sub.file, sub_path.display())
+        })?;
+        if !sub_canon.starts_with(&dir_canon) {
+            anyhow::bail!(
+                "recipe `{}`: sub-recipe file `{}` resolves OUTSIDE the recipe directory {} \
+                 — refusing a path-traversal read",
+                spec.name,
+                sub.file,
+                dir_canon.display()
+            );
+        }
+        let body = std::fs::read_to_string(&sub_canon)
+            .with_context(|| format!("read sub-recipe `{}`", sub_canon.display()))?;
         let sub_spec = RecipeSpec::parse(&body)
-            .with_context(|| format!("parse sub-recipe `{}`", sub_path.display()))?;
+            .with_context(|| format!("parse sub-recipe `{}`", sub_canon.display()))?;
         // Sub param values may reference the PARENT's params: substitute those
         // first (a plain key→value pass), so `params: { host: "{{target}}" }`
         // forwards the parent's `target`.
@@ -140,7 +162,7 @@ fn resolve_subrecipes(
             .iter()
             .map(|(k, v)| (k.clone(), substitute_parent_tokens(v, supplied)))
             .collect();
-        let sub_dir = sub_path.parent().map(Path::to_path_buf);
+        let sub_dir = sub_canon.parent().map(Path::to_path_buf);
         let sub_augmented =
             resolve_subrecipes(&sub_spec, sub_dir.as_deref(), &sub_supplied, depth + 1)?;
         let sub_rendered = render(&sub_spec, &sub_augmented)
@@ -484,6 +506,29 @@ mod tests {
             resolve_subrecipes(&spec, dir.path().into(), &supplied, 0).unwrap();
         let rendered = render(&spec, &augmented).unwrap();
         assert_eq!(rendered.prompt, "Do this: scan host.x");
+    }
+
+    #[test]
+    fn subrecipe_path_traversal_is_rejected() {
+        // GR-117: a sub-recipe `file` that escapes the parent recipe directory
+        // (`../secret.yaml`) must be REFUSED, not read.
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("secret.yaml"), "name: secret\nprompt: leaked\n").unwrap();
+        let recipe_dir = root.path().join("recipes");
+        std::fs::create_dir_all(&recipe_dir).unwrap();
+        let parent_path = recipe_dir.join("parent.yaml");
+        std::fs::write(
+            &parent_path,
+            "name: parent\nprompt: \"X: {{leak}}\"\nsub_recipes:\n  - key: leak\n    file: ../secret.yaml\n",
+        )
+        .unwrap();
+        let spec = load_recipe(parent_path.to_str().unwrap()).unwrap();
+        let err =
+            resolve_subrecipes(&spec, recipe_dir.as_path().into(), &BTreeMap::new(), 0).unwrap_err();
+        assert!(
+            err.to_string().contains("OUTSIDE") || err.to_string().contains("path-traversal"),
+            "a `../` sub-recipe path must be refused: {err}"
+        );
     }
 
     #[test]
