@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 190 | 19 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 189 | 20 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-099** (MED) ✅ FIXED — 'neoth goal show' no longer hides an active goal/grind behind '(none)' when freedom.yaml exists-but-fails-to-parse. The unwrap_or_default() that swallowed IO+YAML errors is replaced by load_for_show: a MISSING config → fresh-install default (ok), an EXISTING but unparseable one → surfaced error. Test goal_show_surfaces_a_corrupt_config_instead_of_hiding_it; cli::goal 2/0; clippy clean.
 - [x] **GR-101** (MED) ✅ FIXED — enabling FULL-AUTO now requires an explicit operator confirmation BEFORE the persist (confirm_full_auto: prints the consequence + interactive y/N), fail-closed when stdin isn't a TTY so the most-permissive mode can never be enabled unattended. Guards BOTH paths: run_set_mode (sudomode/full-auto) + run_set (autonomy set full, on escalation). Test confirm_full_auto_fails_closed_when_not_a_tty; cli::autonomy 10/0; clippy clean.
 - [x] **GR-117** (MED) ✅ FIXED — sub-recipe file paths are containment-checked: dir.join(sub.file) is canonicalized and must start_with the canonicalized parent recipe dir, so a sub.file of '../../secret.yaml' (or an absolute path) is REFUSED instead of reading arbitrary files (recipe.rs resolve_subrecipes). Test subrecipe_path_traversal_is_rejected; cli::recipe 8/0; clippy clean.
 - [x] **GR-105** (MED) ✅ FIXED — domain_allowed no longer lets a single-label (bare TLD) allowlist entry suffix-match the whole TLD ('com' allowing evil.com); a single-label entry is honoured by EXACT match only, suffix matching requires ≥2 labels (risk_gate.rs:78). Test bare_tld_allowlist_entry_does_not_overmatch; security::risk_gate 15/0; clippy clean.

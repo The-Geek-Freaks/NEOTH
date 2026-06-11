@@ -49,9 +49,11 @@ pub enum GoalAction {
 pub async fn run_goal(args: GoalArgs) -> Result<()> {
     let yaml = FreedomConfig::default_neoth_home().join("freedom.yaml");
 
-    // `show` works without an existing config (fresh install → nothing active).
+    // `show` works without an existing config (fresh install → nothing active),
+    // but a freedom.yaml that EXISTS must parse — GR-099: silently defaulting on
+    // a parse error would print "(none)" and HIDE an active goal/grind.
     if matches!(args.action, GoalAction::Show) {
-        let cfg = FreedomConfig::load_from_path(&yaml).unwrap_or_default();
+        let cfg = load_for_show(&yaml)?;
         return print_state(&cfg, &args.output);
     }
 
@@ -74,6 +76,20 @@ pub async fn run_goal(args: GoalArgs) -> Result<()> {
     cfg.save_public_to_default_path()
         .context("write freedom.yaml")?;
     print_state(&cfg, &args.output)
+}
+
+/// GR-099 — load the config for `goal show`. A MISSING freedom.yaml is a fresh
+/// install (empty/default — nothing active). An EXISTING-but-unparseable one
+/// must surface the parse/IO error rather than silently defaulting to an empty
+/// config, which would print "goal: (none)" and HIDE an active goal/grind the
+/// running daemon is still acting on. Pure → unit-testable.
+fn load_for_show(yaml: &std::path::Path) -> Result<FreedomConfig> {
+    if yaml.exists() {
+        FreedomConfig::load_from_path(yaml)
+            .with_context(|| format!("load {} for `goal show`", yaml.display()))
+    } else {
+        Ok(FreedomConfig::default())
+    }
 }
 
 fn print_state(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
@@ -120,5 +136,22 @@ mod tests {
         // what print_state reads.)
         assert_eq!(cfg.goal.grind.as_deref(), Some("ship it"));
         assert!(cfg.goal.goal.is_none());
+    }
+
+    #[test]
+    fn goal_show_surfaces_a_corrupt_config_instead_of_hiding_it() {
+        // GR-099: a MISSING freedom.yaml is a fresh install (default, ok); an
+        // EXISTING but unparseable one must ERROR rather than silently default to
+        // an empty config that would hide an active goal/grind as "(none)".
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.yaml");
+        assert!(load_for_show(&missing).is_ok(), "missing config → fresh-install default");
+
+        let bad = dir.path().join("freedom.yaml");
+        std::fs::write(&bad, "{ broken: [unclosed").unwrap();
+        assert!(
+            load_for_show(&bad).is_err(),
+            "an existing but corrupt freedom.yaml must surface the error, not default to (none)"
+        );
     }
 }
