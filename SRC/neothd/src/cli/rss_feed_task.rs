@@ -78,7 +78,12 @@ async fn run(
         feeds = entries.len(),
         "rss feed poller started"
     );
-    let client = crate::providers::http_client::build_client()
+    // GR-042 — SSRF: validate_url only checks the ORIGINAL feed URL, so a
+    // redirect-following client would let a validated feed URL 30x-redirect to an
+    // internal/metadata target (169.254.169.254, localhost, …) past the guard.
+    // Use the no-redirect client (the SX-01 norm web_fetch already follows): the
+    // validated URL is the only host fetched.
+    let client = crate::providers::http_client::build_client_no_redirect()
         .context("rss_feed_task: build reqwest client")?;
     let mut ticker = tokio::time::interval(interval);
     // Burn the immediate tick — a fresh boot has nothing new to fetch
@@ -359,6 +364,27 @@ mod tests {
             .mount(&server)
             .await;
         server
+    }
+
+    #[tokio::test]
+    async fn rss_client_does_not_follow_redirects() {
+        // GR-042: the RSS poller's client must NOT follow redirects (the SSRF
+        // guard only validated the ORIGINAL feed URL). Prove the builder the
+        // poller uses surfaces a 30x instead of chasing it to an internal target.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", "http://169.254.169.254/"),
+            )
+            .mount(&server)
+            .await;
+        let client = crate::providers::http_client::build_client_no_redirect().unwrap();
+        let resp = client.get(server.uri()).send().await.unwrap();
+        assert_eq!(
+            resp.status().as_u16(),
+            302,
+            "the RSS client must surface the redirect, not follow it to the internal target"
+        );
     }
 
     fn label_exists(home: &Path, label: &str) -> bool {
