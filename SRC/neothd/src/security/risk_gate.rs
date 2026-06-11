@@ -74,8 +74,16 @@ fn domain_allowed(domain: &str, allowlist: &[String]) -> bool {
             // Exact only — compare both the raw and de-bracketed forms.
             let a_ip = a.trim_start_matches('[').trim_end_matches(']');
             d == a || d_ip == a_ip
-        } else {
+        } else if a.contains('.') {
+            // A real registrable domain (≥2 labels, e.g. `github.com`): exact or
+            // dot-boundary suffix match.
             d == a || d.ends_with(&format!(".{a}"))
+        } else {
+            // GR-105: a SINGLE-LABEL allowlist entry (a bare TLD like `com`/`io`,
+            // or an internal host like `localhost`) must NOT suffix-match the
+            // whole TLD — `com` allowing `evil.com` is an allowlist bypass. A
+            // single label is honoured by EXACT match only.
+            d == a
         }
     })
 }
@@ -339,6 +347,26 @@ mod tests {
         assert!(domain_allowed("api.github.com", &allow));
         assert!(!domain_allowed("evilgithub.com", &allow));
         assert!(!domain_allowed("github.com.attacker.net", &allow));
+    }
+
+    #[test]
+    fn bare_tld_allowlist_entry_does_not_overmatch() {
+        // GR-105: a single-label (bare TLD) allowlist entry must NOT suffix-match
+        // the entire TLD — `com` must not allow evil.com / attacker.com. Only an
+        // exact match is honoured for a single-label entry.
+        let allow = vec!["com".to_string()];
+        assert!(!domain_allowed("evil.com", &allow), "bare TLD must not over-match");
+        assert!(!domain_allowed("attacker.com", &allow));
+        assert!(!domain_allowed("api.github.com", &allow));
+        assert!(domain_allowed("com", &allow), "exact single-label still matches");
+        // An internal single-label host is still honoured by exact match only.
+        let allow_local = vec!["localhost".to_string()];
+        assert!(domain_allowed("localhost", &allow_local));
+        assert!(!domain_allowed("evil.localhost", &allow_local));
+        // A real 2-label entry keeps dot-boundary suffix matching (regression).
+        let allow2 = vec!["github.com".to_string()];
+        assert!(domain_allowed("api.github.com", &allow2));
+        assert!(!domain_allowed("evilgithub.com", &allow2));
     }
 
     #[test]
