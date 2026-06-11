@@ -253,13 +253,23 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                                 lease = lease_id.as_deref().unwrap_or("?"),
                                 "risk-gate block LIFTED by active operator risk-confirm lease"
                             );
+                            // GR-032 — single-use: spend the covering lease(s)
+                            // NOW so this window authorises exactly ONE blocked
+                            // call (matching `neoth risk-confirm`'s "the next
+                            // blocked tool call proceeds"), not unlimited calls
+                            // until the TTL lapses. The audited id is the one
+                            // actually consumed.
+                            let consumed = consume_risk_leases(dangerous_leased, egress_leased);
                             // GOLD-ADOPT-23 point 3 — the confirm window was spent.
                             emit_risk_gate_wal(
                                 writer,
                                 call,
                                 crate::wal::events::EVENT_TYPE_RISK_CONFIRM_USED,
                                 "lifted_by_lease",
-                                lease_id.as_deref().unwrap_or("egress"),
+                                consumed
+                                    .as_deref()
+                                    .or(lease_id.as_deref())
+                                    .unwrap_or("egress"),
                             )
                             .await;
                             gate = lifted; // now Allow — fall through to dispatch.
@@ -646,6 +656,56 @@ fn check_risk_leases(
     (dangerous_leased, egress_leased, lease_id, expired_present)
 }
 
+/// GR-032 — make a risk-override confirm SINGLE-USE: remove the active covering
+/// lease(s) for the lifted dimension(s) from `leases.json` and persist, so the
+/// NEXT blocked call in the (still-unexpired) window re-blocks instead of
+/// silently proceeding. Returns one consumed lease id for the audit frame.
+/// Best-effort: a save failure is warned (the lease stays reusable until expiry)
+/// but never blocks the in-flight, already-authorised call.
+fn consume_risk_leases(consume_dangerous: bool, consume_egress: bool) -> Option<String> {
+    use crate::permissions::lease::{LeaseScope, LeaseStore};
+    use crate::security::risk_gate::RISK_LEASE_SUBJECT;
+
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    let path = LeaseStore::default_path(&home);
+    let Ok(mut store) = LeaseStore::load(&path) else {
+        return None;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    let mut consumed: Option<String> = None;
+    if consume_dangerous {
+        if let Some(id) = store
+            .find_covering(RISK_LEASE_SUBJECT, &LeaseScope::DangerousCommand, now)
+            .map(|l| l.lease_id.clone())
+        {
+            store.revoke(&id);
+            consumed = Some(id);
+        }
+    }
+    if consume_egress {
+        if let Some(id) = store
+            .find_covering(RISK_LEASE_SUBJECT, &LeaseScope::Egress, now)
+            .map(|l| l.lease_id.clone())
+        {
+            store.revoke(&id);
+            consumed.get_or_insert(id);
+        }
+    }
+    if consumed.is_some() {
+        if let Err(e) = store.save(&path) {
+            warn!(
+                error = %e,
+                "failed to persist single-use risk-lease consumption (lease stays reusable until expiry)"
+            );
+        }
+    }
+    consumed
+}
+
 /// GOLD-ADOPT-20 — render a repetition-guard block as an operator-visible
 /// tool-result so the LLM sees WHY the call didn't run and changes approach.
 fn format_guard_block(
@@ -975,6 +1035,21 @@ mod tests {
             cur += t;
         }
         assert_eq!(verdict, "lifted_by_lease", "active lease must lift + audit via RISK_CONFIRM_USED");
+
+        // GR-032 single-use: the lifted lease was CONSUMED — a second blocked
+        // call in the same (still-unexpired) window would re-block. The store no
+        // longer carries an active dangerous lease for the operator subject.
+        let store_after = LeaseStore::load(&LeaseStore::default_path(dir.path())).unwrap();
+        assert!(
+            store_after
+                .find_covering(
+                    crate::security::risk_gate::RISK_LEASE_SUBJECT,
+                    &LeaseScope::DangerousCommand,
+                    now
+                )
+                .is_none(),
+            "single-use: the lifted risk lease must be consumed, not reusable"
+        );
     }
 
     // Holds the env lock + points NEOTH_HOME at a CLEAN home (no leases) so the

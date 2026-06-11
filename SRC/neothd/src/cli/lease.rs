@@ -72,6 +72,9 @@ pub async fn run_lease(args: LeaseArgs) -> Result<()> {
             }
             let scope = LeaseScope::parse(scope)?;
             let ttl_secs = crate::cli::privacy::parse_duration(ttl)? as i64;
+            // GR-032 — a risk-override scope (dangerous_command / egress) is
+            // hard-capped so a long `--ttl` can't leave a safety block lifted.
+            scope.check_ttl(ttl_secs)?;
             let lease = CapabilityLease::new(granted_to.clone(), scope, ttl_secs, now);
 
             let mut store = LeaseStore::load(&path)?;

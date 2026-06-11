@@ -69,6 +69,10 @@ pub async fn run_risk_confirm(args: RiskConfirmArgs) -> Result<()> {
     if ttl_secs <= 0 {
         anyhow::bail!("--ttl must be greater than zero (e.g. 10m / 300s / 1h)");
     }
+    // GR-032 — bound the risk-override window so a `--ttl 9999d` can't leave a
+    // safety block permanently lifted. risk-confirm grants dangerous_command
+    // (+ optionally egress); both scopes share the same cap.
+    LeaseScope::DangerousCommand.check_ttl(ttl_secs)?;
     let (do_dangerous, do_egress) = resolve_scopes(args.egress, args.egress_only);
 
     let home = FreedomConfig::default_neoth_home();
@@ -266,5 +270,20 @@ mod tests {
         .await;
         assert!(r.is_err());
         assert!(r.unwrap_err().to_string().contains("greater than zero"));
+    }
+
+    #[tokio::test]
+    async fn over_cap_ttl_is_rejected() {
+        // GR-032: a risk-confirm window beyond the 24h cap is refused before any
+        // lease is written — a safety-block override must auto-expire.
+        let r = run_risk_confirm(RiskConfirmArgs {
+            ttl: "9999d".to_string(),
+            egress: false,
+            egress_only: false,
+            output: OutputFormat::Table,
+        })
+        .await;
+        assert!(r.is_err());
+        assert!(r.unwrap_err().to_string().contains("maximum"));
     }
 }

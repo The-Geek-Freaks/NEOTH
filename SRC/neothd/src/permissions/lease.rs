@@ -52,6 +52,13 @@ pub enum LeaseScope {
     Egress,
 }
 
+/// GR-032 — hard cap on the TTL of a risk-override grant (`dangerous_command` /
+/// `egress`). Those scopes lift a hard SAFETY block, so the operator confirm
+/// window must auto-close — a `--ttl 9999d` can't degenerate into a
+/// permanently-open override. 24 hours: long enough for a maintenance session,
+/// short enough that a forgotten grant lapses within a day.
+pub const MAX_RISK_OVERRIDE_TTL_SECS: i64 = 24 * 60 * 60;
+
 impl LeaseScope {
     /// Stable operator-facing label for the audit log + CLI.
     pub fn as_str(&self) -> &'static str {
@@ -87,6 +94,38 @@ impl LeaseScope {
                  dangerous_command / egress"
             ),
         }
+    }
+
+    /// GR-032 — the maximum TTL (seconds) a grant of this scope may request, or
+    /// `None` when the scope is uncapped. The risk-override scopes
+    /// (`DangerousCommand` / `Egress`) lift a hard SAFETY block, so they are
+    /// hard-capped at [`MAX_RISK_OVERRIDE_TTL_SECS`] — the override window must
+    /// auto-expire. Other scopes (cluster task accept, channel send, read, …)
+    /// have legitimate long-lived windows and stay uncapped.
+    pub fn max_ttl_secs(&self) -> Option<i64> {
+        match self {
+            LeaseScope::DangerousCommand | LeaseScope::Egress => Some(MAX_RISK_OVERRIDE_TTL_SECS),
+            _ => None,
+        }
+    }
+
+    /// GR-032 — validate a requested TTL against this scope's cap. `Ok(())` when
+    /// allowed; an actionable error when a risk-override grant exceeds
+    /// [`MAX_RISK_OVERRIDE_TTL_SECS`]. Both `neoth lease grant` and `neoth
+    /// risk-confirm` call this so a `--ttl 9999d` can't leave a safety block
+    /// permanently lifted.
+    pub fn check_ttl(&self, ttl_secs: i64) -> Result<()> {
+        if let Some(max) = self.max_ttl_secs() {
+            if ttl_secs > max {
+                anyhow::bail!(
+                    "{} lease TTL {ttl_secs}s exceeds the {}h maximum for a risk-override \
+                     window — a safety-block override must auto-expire; request a shorter --ttl",
+                    self.as_str(),
+                    max / 3600
+                );
+            }
+        }
+        Ok(())
     }
 }
 
@@ -293,6 +332,40 @@ mod tests {
         );
         assert!(LeaseScope::parse("mcp_tool:").is_err());
         assert!(LeaseScope::parse("nonsense").is_err());
+    }
+
+    #[test]
+    fn risk_override_scopes_are_ttl_capped() {
+        // GR-032: dangerous_command / egress (safety-block overrides) are
+        // hard-capped; other scopes stay uncapped.
+        assert_eq!(
+            LeaseScope::DangerousCommand.max_ttl_secs(),
+            Some(MAX_RISK_OVERRIDE_TTL_SECS)
+        );
+        assert_eq!(
+            LeaseScope::Egress.max_ttl_secs(),
+            Some(MAX_RISK_OVERRIDE_TTL_SECS)
+        );
+        assert_eq!(LeaseScope::Read.max_ttl_secs(), None);
+        assert_eq!(LeaseScope::ClusterTaskAccept.max_ttl_secs(), None);
+
+        // Within the cap is allowed; the exact boundary is allowed; over is not.
+        assert!(LeaseScope::DangerousCommand.check_ttl(3600).is_ok());
+        assert!(
+            LeaseScope::DangerousCommand
+                .check_ttl(MAX_RISK_OVERRIDE_TTL_SECS)
+                .is_ok()
+        );
+        let err = LeaseScope::DangerousCommand
+            .check_ttl(MAX_RISK_OVERRIDE_TTL_SECS + 1)
+            .unwrap_err();
+        assert!(err.to_string().contains("maximum"));
+        // An uncapped scope accepts a long window (e.g. a cluster task lease).
+        assert!(
+            LeaseScope::ClusterTaskAccept
+                .check_ttl(MAX_RISK_OVERRIDE_TTL_SECS * 30)
+                .is_ok()
+        );
     }
 
     #[test]

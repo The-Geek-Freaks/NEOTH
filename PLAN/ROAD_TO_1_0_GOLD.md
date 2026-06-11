@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 204 | 5 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 203 | 6 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
 
@@ -510,7 +510,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [ ] **GR-008** 🔒 `forget --physical` prints the affirmative "no matching WAL frames" success message even when zstd segments REFUSED redaction (errors>0 ignored at `cli/memory.rs:472`).
 - [x] **GR-018** 🔒 ✅ FIXED — SmartApprove confirm-bypass is now per-server: global security.smart_approve is the MASTER switch (allocates the cache), and the bypass fires only when the specific McpServerConfig.smart_approve is ALSO true (gate.rs:277 `cfg.smart_approve && smart_approve_is_readonly`). Enabling it on one trusted server no longer bypasses confirm for the rest. New per-server field (serde default false, 10 literals) + master-switch doc + regression test smart_approve_is_per_server_opt_in. mcp:: 185/0; clippy -D warnings clean.
 - [x] **GR-027** 🔒 ✅ FIXED — from_config_for_utility no longer leaks the main provider key to a different utility vendor. Refactored into a pure build_utility_config that strips provider_key/endpoint/model when the utility kind differs from the main kind (require_provider_key then resolves the utility's OWN key or fails cleanly → best-effort caller falls back); same-vendor flagship→fast keeps the shared key. Tests utility_config_strips_main_key_for_a_different_vendor + keeps_key_for_same_vendor; providers:: 587/0; clippy clean.
-- [ ] **GR-032** 🔒 Risk-override leases are unscoped + reusable + TTL-unbounded — `DangerousCommand` is a nullary variant (no command scope), `--egress` grants it by default, `parse_duration('9999d')` accepted.
+- [x] **GR-032** 🔒 ✅ FIXED — risk-override leases are now bounded + single-use: (1) dangerous_command/egress grants are hard-capped at MAX_RISK_OVERRIDE_TTL_SECS=24h via LeaseScope::check_ttl, enforced in both 'neoth lease grant' and 'neoth risk-confirm' (--ttl 9999d rejected); (2) a lease that lifts a block is CONSUMED on use (consume_risk_leases revokes+persists in dispatch_loop), so the window authorises exactly ONE blocked call, not unlimited until expiry. Per-command scope is N/A to a pre-auth window — single-use bounds the blast radius. Tests risk_override_scopes_are_ttl_capped + over_cap_ttl_is_rejected + single-use assert; lease 10/0, risk_confirm 6/0, dispatch_loop 17/0; clippy clean.
 - [ ] **GR-033** 🔒 `permissions/audit.rs:147` `let _ = for_each_frame(...)` discards the WAL-scan Result → a tamper-suspect compressed blob makes `neoth permissions audit` fail-open (silent).
 - [ ] **GR-043** 🔒 Staged-apply fast-path (`cli/update.rs:144-178`) fires `apply_from_staged` BEFORE the GOLD-SEC-10 signature-required gate (line 223) → bypasses signature-by-default.
 - [ ] **GR-055** 🔒 Deeplink recipe — `recipes/render.rs:62` substitutes a deeplink-decoded `instructions` field as a system-prompt override + runs agentic with no confirm/preview.
