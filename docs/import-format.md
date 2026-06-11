@@ -15,6 +15,21 @@ Closes **E-08** (PROGRESS.md) — the pre-v1.0 ship gate that
 operators have a documented path for "I have N MB of past chat
 history; how do I get NEOTH to see it as memory?"
 
+> **Command status (current binary `1.0.0-beta.1`).** This document is the
+> import/export *contract*; the binary you run today exposes only:
+>
+> - `neoth-migrate dry-run --manifest <file>` — ✅ **works**: validates the
+>   manifest + reports rows/sample entries, scan-only (never writes the WAL).
+> - `neoth-migrate apply --manifest <file>` — ⚠️ **preview-only in this release**:
+>   validates the manifest then refuses and points you back at `dry-run`. The
+>   real WAL-writing import (the `MIGRATE_RAN` + per-event frames described
+>   below) is **post-v1.0** — not yet implemented.
+> - `neoth-migrate export <file>` (§5) — ⚠️ **not yet implemented** (the planned
+>   reverse path).
+>
+> So where this spec writes `neoth-migrate import …` it means the consume-side
+> contract; the runnable command today is `dry-run`.
+
 ---
 
 ## 1. Input shape — `<source_id>.import.jsonl`
@@ -135,7 +150,11 @@ error report listing every failure they need to fix.
 
 ## 5. Reverse path — exporting from NEOTH
 
-`neoth-migrate export <output.jsonl>` produces a file in this exact
+> ⚠️ **Not yet implemented.** `export` is the planned reverse path (post-v1.0);
+> the binary today exposes only `dry-run` + `apply`. This section is the target
+> contract, not a shipped command.
+
+`neoth-migrate export <output.jsonl>` will produce a file in this exact
 same format so operators moving to a different daemon (or backing
 up before a destructive op) can round-trip. The reverse path:
 
@@ -183,13 +202,15 @@ print(json.dumps({
 }))
 ' > my-export.import.jsonl
 
-# 2. Dry-run — checks every event without emitting a frame.
-neoth-migrate import my-export.import.jsonl --dry-run
+# 2. Dry-run — validates every event, scan-only (no WAL frames). WORKS TODAY.
+neoth-migrate dry-run --manifest my-export.import.jsonl
 
-# 3. Real import. Audit frame + per-event frames land in WAL.
-neoth-migrate import my-export.import.jsonl
+# 3. Apply — PREVIEW-ONLY in this release: validates then refuses and points
+#    you back at dry-run. The real WAL-writing import (audit + per-event
+#    frames) is post-v1.0.
+neoth-migrate apply --manifest my-export.import.jsonl
 
-# 4. Verify with recall.
+# 4. Verify with recall (once the real apply ships).
 neoth recall "something you imported" --since 30d
 ```
 

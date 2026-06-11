@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 202 | 7 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 201 | 8 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -518,7 +518,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [ ] **GR-058** 🔒 `wal/redact.rs:138` `Err(_) => SEGMENT_HEADER_LEN` fail-open — wrong offset for v2 (61-byte) headers → silent null-redaction on a corrupt header.
 - [ ] **GR-002** Auto-promote gate (COR-03) bypassable via an empty patch with self-reported green tests (`dispatcher.rs:652`, `worker.rs:83`).
 - [ ] **GR-006** ARCH-03 frame-scan fix breaks pre-fix installs — a stale `wal_cursor` < header_len causes an infinite no-progress indexer loop (`memory/indexer.rs:69`).
-- [ ] **DD-01** `docs/import-format.md` describes a non-existent `neoth-migrate import/export` pipeline as shipped (HON-01 fixed main.rs+RUNBOOK, not this doc).
+- [x] **DD-01** ✅ FIXED — import-format.md now states the real command surface up front (status banner: only 'neoth-migrate dry-run --manifest' works today; 'apply' is preview-only/refuses with the real WAL-writing import post-v1.0; 'export' not yet implemented) + the runnable example and §5 export section are corrected/caveated — no longer presents the import/export pipeline as shipped.
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
