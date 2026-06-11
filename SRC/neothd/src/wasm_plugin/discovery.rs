@@ -39,15 +39,18 @@ pub(crate) fn read_capped_minisig(path: &Path) -> Result<Option<String>, ()> {
     if !path.exists() {
         return Ok(None);
     }
-    let Ok(meta) = fs::metadata(path) else {
-        return Ok(None); // unreadable metadata → treat as absent
+    // GR-089 — open without following a symlink (O_NOFOLLOW on Unix), then size
+    // it on the SAME fd. The old code did `fs::metadata(path)` then a separate
+    // `fs::File::open(path)`, both of which follow a symlink and race each other.
+    let Ok(file) = open_no_follow(path) else {
+        return Ok(None); // symlink (ELOOP) / unreadable → treat as absent
+    };
+    let Ok(meta) = file.metadata() else {
+        return Ok(None);
     };
     if meta.len() > MAX_MINISIG_BYTES {
         return Err(()); // over the cap — caller refuses the plugin
     }
-    let Ok(file) = fs::File::open(path) else {
-        return Ok(None);
-    };
     let mut buf = String::new();
     if file
         .take(MAX_MINISIG_BYTES)
@@ -57,6 +60,38 @@ pub(crate) fn read_capped_minisig(path: &Path) -> Result<Option<String>, ()> {
         return Ok(None);
     }
     Ok(Some(buf))
+}
+
+/// GR-089 — open a file for reading, refusing to follow a symlink AT OPEN time
+/// (`O_NOFOLLOW` on Unix). Closes the check-then-read TOCTOU window a
+/// `symlink_metadata` pre-check + a later `fs::read` leaves: even if the path is
+/// swapped to a symlink between the check and here, the open fails with `ELOOP`
+/// rather than reading the link target. On non-Unix platforms (where creating a
+/// symlink needs privilege) it falls back to a plain open — the `symlink_metadata`
+/// loop in `discover_one` is the guard there.
+fn open_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+    }
+    #[cfg(not(unix))]
+    {
+        fs::File::open(path)
+    }
+}
+
+/// Read a whole file via [`open_no_follow`] (GR-089) — the symlink-safe
+/// replacement for `fs::read` on the plugin-discovery path.
+fn read_no_follow(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut f = open_no_follow(path)?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    Ok(buf)
 }
 
 /// One discovered plugin directory + its parsed manifest + the WASM
@@ -290,7 +325,17 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
     // via `fs::read` with no check — a symlinked plugin.wasm would make the
     // SHA-256 / signature cover the symlink target rather than the declared
     // file. `symlink_metadata` does NOT follow the link.
-    for (p, name) in [(&toml_path, "plugin.toml"), (&wasm_path, "plugin.wasm")] {
+    let minisig_path = dir.join("plugin.wasm.minisig");
+    for (p, name) in [
+        (&toml_path, "plugin.toml"),
+        (&wasm_path, "plugin.wasm"),
+        // GOLD-SEC-20 — the minisig was read (read_capped_minisig) with NO
+        // symlink check, so a symlinked `plugin.wasm.minisig` could point the
+        // signature at an arbitrary file. A missing minisig makes
+        // `symlink_metadata` error → `unwrap_or(false)` lets it through to the
+        // optional read; only a real symlink is refused.
+        (&minisig_path, "plugin.wasm.minisig"),
+    ] {
         if std::fs::symlink_metadata(p)
             .map(|m| m.file_type().is_symlink())
             .unwrap_or(false)
@@ -301,7 +346,10 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
             });
         }
     }
-    let toml_bytes = fs::read(&toml_path).map_err(|e| DiscoveryError::TomlIo {
+    // GR-089 — read via O_NOFOLLOW (open_no_follow) so even a post-check symlink
+    // swap can't redirect the read: the check above + the open here are no longer
+    // a check-then-read TOCTOU on Unix (the open itself refuses a symlink).
+    let toml_bytes = read_no_follow(&toml_path).map_err(|e| DiscoveryError::TomlIo {
         dir: dir.to_path_buf(),
         kind: e.kind(),
     })?;
@@ -325,7 +373,7 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
             expected: dir_name,
         });
     }
-    let wasm_bytes = fs::read(&wasm_path).map_err(|e| DiscoveryError::WasmIo {
+    let wasm_bytes = read_no_follow(&wasm_path).map_err(|e| DiscoveryError::WasmIo {
         dir: dir.to_path_buf(),
         kind: e.kind(),
     })?;
@@ -334,7 +382,7 @@ fn load_one(dir: &Path) -> Result<DiscoveredPlugin, DiscoveryError> {
     // plugin.wasm` writes `plugin.wasm.minisig`; absence is fine (the
     // signature gate is opt-in via freedom.yaml::plugins.wasm.author_pubkey).
     // Capped read — a hostile over-size companion is refused, not OOM'd.
-    let signature = read_capped_minisig(&dir.join("plugin.wasm.minisig")).map_err(|()| {
+    let signature = read_capped_minisig(&minisig_path).map_err(|()| {
         DiscoveryError::SignatureInvalid {
             dir: dir.to_path_buf(),
             reason: format!("plugin.wasm.minisig exceeds {MAX_MINISIG_BYTES} bytes — refusing"),
@@ -1044,6 +1092,19 @@ mod tests {
             !auto_activation_eligible(&p, &policy),
             "without a configured author key no plugin can auto-activate"
         );
+    }
+
+    #[test]
+    fn read_no_follow_reads_a_regular_file_and_errors_on_missing() {
+        // GR-089 — the symlink-safe reader returns a regular file's bytes and
+        // errors (no panic) on a missing path. The O_NOFOLLOW symlink-refusal
+        // itself is Unix-only (CI-verified) + mirrors the existing
+        // symlink_metadata loop pattern.
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("f.bin");
+        std::fs::write(&p, b"hello-bytes").unwrap();
+        assert_eq!(read_no_follow(&p).unwrap(), b"hello-bytes");
+        assert!(read_no_follow(&dir.path().join("absent")).is_err());
     }
 
     #[test]
