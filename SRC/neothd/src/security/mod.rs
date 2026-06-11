@@ -44,6 +44,29 @@ const CMD_FIELD_HINTS: &[&str] = &[
     "uri", "endpoint", "target", "host", "dest", "remote", "link", "addr",
 ];
 
+/// GR-104 — fields that carry human PROSE / display text (documentation, chat,
+/// labels), NOT executable payloads. Scanning these false-trips on legitimate
+/// text that merely MENTIONS a dangerous command (`content: "… rm -rf / …"`), so
+/// they are EXEMPT from the non-hint payload scan below.
+const PROSE_FIELD_HINTS: &[&str] = &[
+    "content",
+    "description",
+    "summary",
+    "message",
+    "text",
+    "prompt",
+    "comment",
+    "explanation",
+    "documentation",
+    "readme",
+    "detail",
+    "label",
+    "title",
+    "reason",
+    "markdown",
+    "prose",
+];
+
 /// Append a value's string content (a string, or an array joined with spaces).
 fn push_value_strings(v: &serde_json::Value, out: &mut Vec<String>) {
     match v {
@@ -104,14 +127,48 @@ fn all_string_leaves(args: &serde_json::Value, out: &mut Vec<String>) {
     }
 }
 
+/// GR-104 — collect string values from object fields that are NEITHER a command
+/// hint NOR a prose/display field. The old exclusive branch scanned ONLY hint
+/// fields once any matched, so a payload hidden in a plainly-named non-hint field
+/// (`data`, `payload`, `notes`, …) slipped past the gate; this catches those
+/// while leaving genuine prose fields unscanned (no false-positive on docs).
+fn non_hint_non_prose_strings(args: &serde_json::Value, out: &mut Vec<String>) {
+    match args {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                let kl = k.to_ascii_lowercase();
+                let is_hint = CMD_FIELD_HINTS.iter().any(|h| kl.contains(h));
+                let is_prose = PROSE_FIELD_HINTS.iter().any(|h| kl.contains(h));
+                if !is_hint && !is_prose {
+                    push_value_strings(v, out);
+                }
+                non_hint_non_prose_strings(v, out); // recurse for nested objects
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for i in items {
+                non_hint_non_prose_strings(i, out);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// GOLD-ADOPT-23 — scan a tool call's arguments for outbound egress + dangerous
 /// shell patterns. Pure; the dispatch loop surfaces a non-empty result.
 pub fn inspect_tool_args(args: &serde_json::Value) -> ToolCallRisk {
     let mut cmds = Vec::new();
-    // Primary: hint-named fields (precise, low false-positive). Fallback (F1):
-    // if NOTHING matched a hint, the command may be in an oddly-named field —
-    // scan every string leaf so a renamed argument can't slip past the gate.
-    if !command_strings(args, &mut cmds) {
+    // Primary: hint-named fields (precise, low false-positive).
+    let hit = command_strings(args, &mut cmds);
+    if hit {
+        // GR-104 — a hint field matched; ALSO scan non-hint, NON-prose fields so
+        // a payload hidden in a plainly-named field (`data`, `notes`, …) can't
+        // slip past the hint-field scan. Genuine prose/display fields stay exempt
+        // so documentation that merely MENTIONS a command never false-trips.
+        non_hint_non_prose_strings(args, &mut cmds);
+    } else {
+        // F1 rename-bypass: NOTHING matched a hint → the command may be in an
+        // oddly-named field, so scan EVERY string leaf.
         all_string_leaves(args, &mut cmds);
     }
     let mut egress_hits = Vec::new();
@@ -157,6 +214,31 @@ mod risk_tests {
             "content": "the docs mention rm -rf / as a footgun",
         });
         assert!(inspect_tool_args(&args).is_empty());
+    }
+
+    #[test]
+    fn inspect_tool_args_scans_non_prose_non_hint_fields() {
+        // GR-104: a payload hidden in a NON-hint, non-prose field (alongside a
+        // benign hint field) must still be scanned — the old exclusive branch
+        // skipped every non-hint field once any hint field matched.
+        let args = serde_json::json!({
+            "url": "https://ok.com",
+            "notes": "rm -rf /",
+        });
+        assert!(
+            inspect_tool_args(&args).dangerous.iter().any(|d| d.id == "rm_rf_root"),
+            "a dangerous payload in a non-hint field must be caught"
+        );
+        // A genuine prose/display field (`content`) stays EXEMPT (no
+        // false-positive) even alongside a hint field.
+        let prose = serde_json::json!({
+            "command": "ls -la",
+            "content": "this tool can run rm -rf / so be careful",
+        });
+        assert!(
+            inspect_tool_args(&prose).is_empty(),
+            "prose in a display field must not false-trip"
+        );
     }
 
     #[test]
