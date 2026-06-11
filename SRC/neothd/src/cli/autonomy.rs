@@ -239,6 +239,14 @@ async fn run_set_mode(full_auto: bool, output: OutputFormat) -> Result<()> {
     let (next, previous) = apply_mode(cfg, full_auto);
     let applied = next.autonomy;
     let mode = if full_auto { "full-auto" } else { "gated" };
+    // GR-101 — FULL-AUTO is the most permissive mode (NEOTH acts WITHOUT asking:
+    // shell, channel sends, writes, token spend). Require an explicit operator
+    // confirmation BEFORE persisting it, and fail closed when stdin is not a TTY
+    // so it can never be enabled unattended/scripted. Switching back to GATED —
+    // the safe direction — needs no confirmation.
+    if full_auto {
+        confirm_full_auto()?;
+    }
     next.save_public_to_default_path()
         .context("persist the operating mode to freedom.yaml")?;
     emit_autonomy_change(previous, applied, Some(mode), daemon_live, &home).await;
@@ -295,6 +303,13 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     crate::daemon::audit_rpc::enforce_required_audit(required, daemon_live, &home)?;
     let (next, previous) = apply_level(cfg, level)?;
     let applied = next.autonomy;
+    // GR-101 — escalating to the most-permissive Full level via `neoth autonomy
+    // set full` needs the same explicit confirmation as `sudomode` (fail closed
+    // when stdin is not a TTY). A no-op (already Full) or a de-escalation needs
+    // no confirmation.
+    if applied == AutonomyLevel::Full && previous != AutonomyLevel::Full {
+        confirm_full_auto()?;
+    }
     next.save_public_to_default_path()
         .context("persist the new autonomy level to freedom.yaml")?;
     // Forensic audit of the security-relevant change (best-effort, after the
@@ -325,9 +340,51 @@ async fn run_set(level: &str, output: OutputFormat) -> Result<()> {
     Ok(())
 }
 
+/// GR-101 — confirm enabling the most-permissive FULL autonomy before it is
+/// persisted. Prints the consequence, then requires an interactive y/N. Fails
+/// closed when stdin is not a terminal so FULL-AUTO can never be enabled
+/// unattended / from a script.
+fn confirm_full_auto() -> Result<()> {
+    use std::io::{IsTerminal, Write};
+    eprintln!(
+        "  ⚠ FULL-AUTO lets NEOTH act WITHOUT asking — shell commands, channel sends, writes,\n\
+         \x20   and token spend happen automatically (self-replace / patch-apply / dangerous\n\
+         \x20   targets / unsigned plugins stay blocked)."
+    );
+    if !std::io::stdin().is_terminal() {
+        anyhow::bail!(
+            "refusing to enable FULL-AUTO without an interactive confirmation (stdin is not a \
+             terminal). Run `neoth sudomode` at a TTY, or stay gated with `neoth autonomy gated`."
+        );
+    }
+    eprint!("  Enable FULL-AUTO? [y/N]: ");
+    std::io::stderr().flush().ok();
+    let mut line = String::new();
+    std::io::stdin()
+        .read_line(&mut line)
+        .context("read FULL-AUTO confirmation")?;
+    let ans = line.trim().to_ascii_lowercase();
+    if ans == "y" || ans == "yes" {
+        Ok(())
+    } else {
+        anyhow::bail!("aborted: FULL-AUTO not enabled");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirm_full_auto_fails_closed_when_not_a_tty() {
+        // GR-101: enabling FULL-AUTO from a non-interactive stdin (the test
+        // harness has no TTY) must be REFUSED, never silently persisted.
+        let err = confirm_full_auto().unwrap_err();
+        assert!(
+            err.to_string().contains("not a terminal"),
+            "must fail closed without a TTY: {err}"
+        );
+    }
 
     #[test]
     fn apply_level_accepts_every_level_and_reports_previous() {
