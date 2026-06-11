@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 185 | 24 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 184 | 25 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-065** (MED) ✅ FIXED — jina_reader uses build_client_no_redirect() (the SX-01 norm) instead of the redirect-following build_client(), so r.jina.ai (a third-party proxy) can't 30x-bounce the fetch to an arbitrary host the SSRF guard never saw. Module doc updated. Test jina_client_does_not_follow_redirects; tools::jina_reader 8/0; clippy clean.
 - [x] **GR-042** (MED) ✅ FIXED — the RSS feed poller no longer follows redirects past its own SSRF guard. validate_url checks only the ORIGINAL feed URL, so the redirect-following build_client() let a validated URL 30x-redirect to an internal/metadata target. Swapped to build_client_no_redirect() (the SX-01 norm web_fetch already uses) — the validated URL is the only host fetched. Test rss_client_does_not_follow_redirects; cli::rss_feed_task 11/0; clippy clean.
 - [x] **GR-080** (MED) ✅ FIXED (doc) — the SecurityPolicy field doc no longer over-claims egress is 'deny/confirm by default'. Corrected to the real defaults: dangerous-command inspector DENIES a Critical finding by default, but the egress inspector is WARN-ONLY by default (EgressMode::Allow — the intentional ADOPT-23-F5 non-breaking default); operator opts into confirm_unknown/deny_unknown (config/mod.rs:138). Doc-only (compiler-inert comment).
 - [x] **GR-107** (MED) ✅ FIXED — the dangerous-command inspector now flags NEOTH's OWN privilege-escalation commands (neoth risk-confirm / lease grant / sudomode / autonomy full|set full) as Critical, so the LLM issuing them via the tool-loop shell can't silently widen its own permissions (which would bypass every other gate). New rule neoth_self_privilege_escalation (inspector scans LLM tool-calls, not the operator CLI). Test flags_neoth_self_privilege_escalation; security::dangerous_command 9/0; clippy clean.

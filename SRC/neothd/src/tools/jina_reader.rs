@@ -14,9 +14,10 @@
 //! the daemon.
 //!
 //! **Network path**: this module dials `r.jina.ai` (a fixed public proxy)
-//! through `providers::http_client::build_client` — the audited, allowlisted
-//! construction site — so it needs no `no_outbound_network` allowlist entry of
-//! its own (it never constructs a `reqwest::Client` directly).
+//! through `providers::http_client::build_client_no_redirect` — the audited,
+//! allowlisted, no-redirect construction site (GR-065) — so it needs no
+//! `no_outbound_network` allowlist entry of its own (it never constructs a
+//! `reqwest::Client` directly).
 
 use anyhow::{Context, Result};
 
@@ -45,7 +46,11 @@ const JINA_UA: &str = "NEOTH-ingest/0.1 (+self-hosted; https://r.jina.ai)";
 /// any network/parse error. The returned `String` is UTF-8 Markdown text.
 pub async fn fetch_via_jina(url: &str) -> Result<String> {
     let jina_url = format!("{JINA_READER_BASE}{url}");
-    let client = http_client::build_client().context("jina_reader: build reqwest client")?;
+    // GR-065 — no-redirect client (the SX-01 norm web_fetch follows): r.jina.ai
+    // (a third-party proxy) must not be able to 30x-bounce the fetch to an
+    // arbitrary host the SSRF guard never saw.
+    let client =
+        http_client::build_client_no_redirect().context("jina_reader: build reqwest client")?;
     let resp = client
         .get(&jina_url)
         .header("User-Agent", JINA_UA)
@@ -143,6 +148,27 @@ mod tests {
         assert_eq!(resp.status().as_u16(), 503);
         // Verify our logic: a 503 would cause fetch_via_jina to bail.
         assert!(!resp.status().is_success());
+    }
+
+    #[tokio::test]
+    async fn jina_client_does_not_follow_redirects() {
+        // GR-065: the Jina fetch must NOT follow a redirect (r.jina.ai bouncing
+        // the response to an arbitrary host). Prove the builder fetch_via_jina now
+        // uses surfaces a 30x instead of chasing it to an internal target.
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", "http://169.254.169.254/"),
+            )
+            .mount(&server)
+            .await;
+        let client = http_client::build_client_no_redirect().unwrap();
+        let resp = client.get(server.uri()).send().await.unwrap();
+        assert_eq!(
+            resp.status().as_u16(),
+            302,
+            "the Jina client must surface the redirect, not follow it"
+        );
     }
 
     #[test]
