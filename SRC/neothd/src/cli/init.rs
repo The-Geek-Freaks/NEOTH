@@ -2074,7 +2074,9 @@ fn step5b_inference_topology(
         // GOLD-ADOPT-12 — multi-local preset: run up to 3 QUANTIZED abliterated
         // GGUFs (one per hemisphere) on the operator's own hardware via Ollama.
         let local_multi_hint = if gpu_detected {
-            "1–3 local abliterated Q4/Q8 models across the hemispheres (Ollama — newest/best auto-picked)"
+            // GR-098 — the preset uses curated_or_nearest (verified repos sized to
+            // VRAM), NOT a live "newest/best" lookup; say what it actually does.
+            "1–3 local abliterated Q4/Q8 models across the hemispheres (Ollama — curated repos, VRAM-sized)"
         } else {
             "1–3 small local abliterated models (CPU — slow; prefer cloud without a GPU)"
         };
@@ -2690,8 +2692,10 @@ async fn step5b2_ollama_provision(interactive: bool, state: &mut WizardState) ->
         if ollama::check_ollama_available().await.is_none() {
             let install = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
                 .with_prompt(format!(
-                    "Ollama not found. Install it now ({})?",
-                    ollama::InstallPath::for_host().as_str()
+                    // GR-086 — show the ACTUAL command (e.g. `curl … | sh`), not
+                    // the terse `upstream_script` tag, so consent is informed.
+                    "Ollama not found. Install it now? This runs:  {}",
+                    ollama::InstallPath::for_host().display_command()
                 ))
                 .default(true)
                 .interact()
@@ -3017,6 +3021,16 @@ pub(crate) fn k4b_telegram_prompt_text(pear_present: bool) -> &'static str {
 /// `LocalQwen` somewhere (default_slot or any hemisphere or the
 /// embedding provider). The probe is sync + ~1ms (file_exists); when
 /// weights are already cached the step is a no-op log line.
+///
+/// GOLD-ADOPT-10 — this step deliberately pre-downloads the FIXED
+/// [`qwen_weights::DEFAULT_QWEN_MODEL_ID`] (Qwen2.5-3B), the single curated
+/// candle weight + the always-available lightweight `LocalQwen` baseline. It is
+/// VRAM-INDEPENDENT by design: VRAM-aware local-model sizing is a SEPARATE path
+/// — the Ollama multi-local preset (`models::hemisphere_preset::build_local_preset`
+/// → `selector::quantized_shortlist(vram)` → `gguf_variants::curated_or_nearest`),
+/// which scales the GGUF size to the detected VRAM. `recommended_model_tier()`
+/// feeds the operator-facing recommendation (`wizard::recommend`), not this
+/// candle pre-download.
 ///
 /// Non-interactive: honours `--download-qwen-weights`. With the flag
 /// the step records the intent + surfaces the `huggingface-cli` line

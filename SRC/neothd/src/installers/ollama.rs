@@ -58,6 +58,19 @@ impl InstallPath {
         }
     }
 
+    /// GR-086 — the exact shell command the operator is about to run, for the
+    /// install-confirm prompt. `as_str()` returns a terse tag (`upstream_script`)
+    /// that HIDES the fact that the operator is consenting to a `curl … | sh`
+    /// pipe-to-shell; this spells it out so consent is informed.
+    pub fn display_command(self) -> String {
+        match self {
+            Self::UpstreamScript => format!("curl -fsSL {OLLAMA_INSTALL_SCRIPT_URL} | sh"),
+            Self::Winget => "winget install Ollama.Ollama".to_string(),
+            Self::Brew => "brew install ollama".to_string(),
+            Self::Manual => format!("manual download from {OLLAMA_DOWNLOAD_URL}"),
+        }
+    }
+
     pub const fn for_host() -> Self {
         #[cfg(target_os = "windows")]
         {
@@ -247,6 +260,19 @@ mod tests {
         assert!(cmd[2].contains("curl"));
         assert!(cmd[2].contains(OLLAMA_INSTALL_SCRIPT_URL));
         assert!(cmd[2].contains("| sh"));
+    }
+
+    #[test]
+    fn display_command_spells_out_the_real_command_gr086() {
+        // GR-086 — the confirm prompt shows the ACTUAL command, not the terse tag.
+        let up = InstallPath::UpstreamScript.display_command();
+        assert!(up.contains("curl"), "{up}");
+        assert!(up.contains(OLLAMA_INSTALL_SCRIPT_URL), "{up}");
+        assert!(up.contains("| sh"), "{up}");
+        assert_ne!(up, InstallPath::UpstreamScript.as_str(), "must not be the bare tag");
+        assert_eq!(InstallPath::Winget.display_command(), "winget install Ollama.Ollama");
+        assert_eq!(InstallPath::Brew.display_command(), "brew install ollama");
+        assert!(InstallPath::Manual.display_command().contains(OLLAMA_DOWNLOAD_URL));
     }
 
     #[test]
