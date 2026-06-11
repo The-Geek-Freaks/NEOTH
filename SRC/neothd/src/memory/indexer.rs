@@ -65,12 +65,14 @@ pub async fn replay_once(conn: &mut Connection, segment_path: &Path) -> Result<u
     };
 
     // First-time index of this segment starts after the header; a resume picks
-    // up from the saved logical cursor.
-    let mut offset = if start_offset == 0 {
-        header_len
-    } else {
-        start_offset
-    };
+    // up from the saved logical cursor. GR-006: a resume cursor must NEVER point
+    // INTO the header. A pre-GOLD-ARCH-03 install could have persisted a stale
+    // cursor below the real header_len (e.g. 60 against a 61-byte v2 header),
+    // which would land `decode_frame` mid-header so the segment makes no progress
+    // and its frames never index. Clamp up to `header_len` so a stale/short
+    // cursor self-heals to the first real frame; a normal resume cursor (≥
+    // header_len) is unchanged.
+    let mut offset = start_offset.max(header_len);
     if offset >= logical.len() {
         return Ok(0);
     }
@@ -478,6 +480,58 @@ mod tests {
         assert_eq!(text, "compressed world");
         // Re-poll: a sealed compressed segment yields nothing new.
         assert_eq!(replay_once(&mut conn, &seg).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn replay_self_heals_a_stale_cursor_below_header_len() {
+        // GR-006 regression: a pre-GOLD-ARCH-03 install could have persisted a
+        // wal_cursor BELOW the real header_len (e.g. 60 against a 61-byte v2
+        // header). That lands `decode_frame` mid-header → the segment makes no
+        // progress and its frames never index (perpetual no-progress). After the
+        // fix, replay_once clamps the resume cursor up to header_len and indexes
+        // the frames. FAILS pre-fix (n == 0, stuck), passes post-fix.
+        use crate::wal::compress::compress_frames;
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000009.wal");
+        let db = dir.path().join("views.db");
+
+        let mut frames = Vec::new();
+        let p1 = b"stale-cursor hello".to_vec();
+        frames.extend_from_slice(&encode_frame(
+            &header_for(EVENT_TYPE_RAW_TEXT, p1.len() as u32, 21, 1_700_000_000_000_000_021),
+            &p1,
+        ));
+        let p2 = b"stale-cursor world".to_vec();
+        frames.extend_from_slice(&encode_frame(
+            &header_for(EVENT_TYPE_RAW_TEXT, p2.len() as u32, 22, 1_700_000_000_000_000_022),
+            &p2,
+        ));
+        let blob = compress_frames(&frames).unwrap();
+        let hdr = SegmentHeaderV2::new(0, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED);
+        let mut seg_bytes = hdr.to_le_bytes().to_vec();
+        seg_bytes.extend_from_slice(&blob);
+        write(&seg, &seg_bytes).await.unwrap();
+
+        let mut conn = crate::memory::store::open(&db).unwrap();
+        // Plant a STALE cursor at 60 — one byte INTO the 61-byte v2 header.
+        let key = seg.to_string_lossy().to_string();
+        conn.execute(
+            "INSERT INTO wal_cursor (segment_path, next_offset, updated_ts) VALUES (?1, 60, 0)",
+            [key.as_str()],
+        )
+        .unwrap();
+
+        let n = replay_once(&mut conn, &seg).await.unwrap();
+        assert_eq!(
+            n, 2,
+            "a stale cursor below header_len must self-heal and index both frames"
+        );
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM idx_episode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
     }
 
     #[tokio::test]
