@@ -179,9 +179,9 @@ fn build_recommendation(vram_mib: Option<u32>, class: VariantClass) -> Vec<RecCa
         .into_iter()
         .enumerate()
         .map(|(i, opt)| {
-            let variant = gguf_variants::curated_fallback(opt.param_b, class)
-                .or_else(|| gguf_variants::curated_fallback(7.0, VariantClass::Standard))
-                .expect("7B standard is always curated");
+            // GR-040 — nearest curated size for an exotic param_b (no exact
+            // row → closest real model, not a silent 7B downgrade).
+            let variant = gguf_variants::curated_or_nearest(opt.param_b, class);
             candidate_from(i + 1, &opt, variant)
         })
         .collect()

@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 163 | 46 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 161 | 48 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,8 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-040** (MED) ✅ FIXED — an exotic model size (e.g. 72B) with no curated row no longer silently collapses to the hardcoded 7B backstop. New central curated_or_nearest(size,class) resolves the exact curated repo else the NEAREST curated size (72B→32B), replacing the `curated_fallback(size).or_else(7B)` chain at all 3 call sites (resolve_gguf_repo + cli/models.rs + hemisphere_preset.rs). Test curated_or_nearest_exotic_size_degrades_to_nearest_not_7b. `models/gguf_variants.rs`.
+- [x] **GR-135** (INFO) ✅ FIXED — VariantClass::Unsloth 'unreachable/silently degrades to Standard' clarified: it's a CLASSIFICATION-only lineage (from_repo_id detects it on live HF repos); no recommendation path requests it + there are no curated unsloth GGUFs for Qwen2.5, so folding to Standard is a documented design choice (now stated on the curated_variant match arm), not an accidental drop. gguf_variants 10/0; clippy clean.
 - [x] **GR-017** (MED) ✅ FIXED — jina_reader OOM claim is now TRUE: fetch_via_jina streams the body (resp.chunk loop) + fast-path rejects on oversized Content-Length, aborting the instant the running total crosses JINA_MAX_BYTES — never buffers the whole body via resp.bytes() first. Test oversized_body_is_rejected_by_streaming_ceiling. `tools/jina_reader.rs`.
 - [x] **GR-095** (LOW) ✅ FIXED — same fix as GR-017: the byte-ceiling now bites BEFORE full buffering (streaming + Content-Length fast-path), so the 'can't OOM the daemon' doc is accurate.
 - [x] **GR-066** (LOW) ✅ FIXED — module doc named a non-existent `neoth ingest <url>` jina caller; corrected to the real + only caller `neoth fetch` (cli/fetch.rs:95).

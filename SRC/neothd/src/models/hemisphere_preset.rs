@@ -11,7 +11,7 @@
 //! the wizard ships a verified-good default that also works air-gapped.
 
 use crate::installers::ollama;
-use crate::models::gguf_variants::{curated_fallback, VariantClass};
+use crate::models::gguf_variants::{curated_or_nearest, VariantClass};
 use crate::models::selector::plan_local_hemispheres;
 
 /// The three hemisphere roles, in the order the wizard binds them.
@@ -68,9 +68,9 @@ pub fn build_local_preset(
         .iter()
         .enumerate()
         .map(|(i, opt)| {
-            let variant = curated_fallback(opt.param_b, class)
-                .or_else(|| curated_fallback(7.0, VariantClass::Standard))
-                .expect("7B standard is always curated");
+            // GR-040 — nearest curated size for an exotic param_b (no exact
+            // row → closest real model, not a silent 7B downgrade).
+            let variant = curated_or_nearest(opt.param_b, class);
             let ollama_model_ref = variant.pull_ref(opt.quant);
             LocalHemisphere {
                 role: ROLES[i.min(ROLES.len() - 1)],

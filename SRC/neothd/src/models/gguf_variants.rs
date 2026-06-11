@@ -217,28 +217,59 @@ const CURATED: &[(f32, Option<&str>, &str)] = &[
     (0.5, None, "bartowski/Qwen2.5-0.5B-Instruct-GGUF"),
 ];
 
-/// Offline / API-failure fallback: the verified repo for a size + lineage.
-/// `Abliterated` with no abliterated GGUF (0.5B) degrades to the standard repo;
-/// `Unsloth` (no curated unsloth GGUFs for Qwen2.5) also uses standard.
+/// Offline / API-failure fallback: the verified repo for an EXACT curated size
+/// + lineage (`±0.01`). Returns `None` for a size with no curated row — callers
+/// that must always resolve use [`curated_or_nearest`].
 pub fn curated_fallback(size_b: f32, class: VariantClass) -> Option<GgufVariant> {
     CURATED
         .iter()
         .find(|(s, _, _)| (*s - size_b).abs() < 0.01)
-        .map(|(_, abl, std)| {
-            let (repo, cls) = match class {
-                VariantClass::Abliterated => match abl {
-                    Some(r) => (*r, VariantClass::Abliterated),
-                    None => (*std, VariantClass::Standard),
-                },
-                VariantClass::Unsloth | VariantClass::Standard => (*std, VariantClass::Standard),
-            };
-            GgufVariant {
-                repo: repo.to_string(),
-                class: cls,
-                downloads: 0,
-                created_at: String::new(),
-            }
-        })
+        .map(|(_, abl, std)| curated_variant(*abl, std, class))
+}
+
+/// Map a CURATED row (`abl`/`std` repos) + requested lineage to a concrete
+/// [`GgufVariant`]. `Abliterated` with no abliterated GGUF (0.5B) degrades to
+/// the standard repo. GR-135 — `Unsloth` is a CLASSIFICATION-only lineage
+/// (detected from a live HF repo id by [`VariantClass::from_repo_id`]); no
+/// recommendation path REQUESTS it and there are no curated unsloth GGUFs for
+/// Qwen2.5, so it deliberately folds into the standard repo here — an explicit
+/// design choice, not an accidental silent drop.
+fn curated_variant(abl: Option<&str>, std: &str, class: VariantClass) -> GgufVariant {
+    let (repo, cls) = match class {
+        VariantClass::Abliterated => match abl {
+            Some(r) => (r, VariantClass::Abliterated),
+            None => (std, VariantClass::Standard),
+        },
+        VariantClass::Unsloth | VariantClass::Standard => (std, VariantClass::Standard),
+    };
+    GgufVariant {
+        repo: repo.to_string(),
+        class: cls,
+        downloads: 0,
+        created_at: String::new(),
+    }
+}
+
+/// GR-040 — the curated entry whose size is NEAREST to `size_b` (no exact-match
+/// requirement). An exotic request such as 72B has no curated row, so it must
+/// degrade to the closest real model (32B), NOT silently collapse to the
+/// hardcoded 7B backstop the call sites previously used. CURATED is non-empty
+/// → always `Some`.
+fn nearest_curated(size_b: f32, class: VariantClass) -> Option<GgufVariant> {
+    CURATED
+        .iter()
+        .min_by(|(a, _, _), (b, _, _)| (*a - size_b).abs().total_cmp(&(*b - size_b).abs()))
+        .map(|(_, abl, std)| curated_variant(*abl, std, class))
+}
+
+/// The exact curated repo for `size_b`, else the NEAREST curated size (GR-040).
+/// Always resolves (CURATED is non-empty) — the canonical offline fallback for
+/// every call site, replacing the old `curated_fallback(size).or_else(7B)` chain
+/// that downgraded a 72B request to 7B instead of the nearest 32B.
+pub fn curated_or_nearest(size_b: f32, class: VariantClass) -> GgufVariant {
+    curated_fallback(size_b, class)
+        .or_else(|| nearest_curated(size_b, class))
+        .expect("CURATED is non-empty so nearest always resolves")
 }
 
 /// Best-effort live HF resolution for a size + lineage. `None` on any network /
@@ -272,9 +303,9 @@ pub async fn resolve_gguf_repo(size_b: f32, class: VariantClass) -> GgufVariant 
     if let Some(v) = resolve_live(size_b, class).await {
         return v;
     }
-    curated_fallback(size_b, class)
-        .or_else(|| curated_fallback(7.0, VariantClass::Standard))
-        .expect("7B standard is always curated")
+    // GR-040 — exact curated row, else the NEAREST curated size (so 72B → 32B,
+    // not the old silent collapse to 7B).
+    curated_or_nearest(size_b, class)
 }
 
 #[cfg(test)]
@@ -378,6 +409,35 @@ mod tests {
         assert_eq!(tiny.class, VariantClass::Standard);
         // Unmodeled size → None.
         assert!(curated_fallback(99.0, VariantClass::Standard).is_none());
+    }
+
+    #[test]
+    fn curated_or_nearest_exotic_size_degrades_to_nearest_not_7b() {
+        // GR-040 — a 72B request has no curated row; the nearest is 32B, NOT
+        // the old hardcoded-7B backstop.
+        let v = curated_or_nearest(72.0, VariantClass::Standard);
+        assert_eq!(v.repo, "bartowski/Qwen2.5-32B-Instruct-GGUF");
+        // 80B → still 32B (the largest curated). Proves it tracks the nearest,
+        // not a fixed cap.
+        assert_eq!(
+            curated_or_nearest(80.0, VariantClass::Standard).repo,
+            "bartowski/Qwen2.5-32B-Instruct-GGUF"
+        );
+        // An exact curated size still resolves to itself.
+        assert_eq!(
+            curated_or_nearest(14.0, VariantClass::Standard).repo,
+            "bartowski/Qwen2.5-14B-Instruct-GGUF"
+        );
+        // Between 7 and 14, 10 is closer to 7 (3 vs 4).
+        assert_eq!(
+            curated_or_nearest(10.0, VariantClass::Standard).repo,
+            "bartowski/Qwen2.5-7B-Instruct-GGUF"
+        );
+        // Nearest also honours the abliterated lineage.
+        assert_eq!(
+            curated_or_nearest(72.0, VariantClass::Abliterated).repo,
+            "mradermacher/Qwen2.5-32B-Instruct-abliterated-GGUF"
+        );
     }
 
     #[test]
