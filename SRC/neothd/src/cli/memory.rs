@@ -414,6 +414,26 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
     let report = forget::forget_by_topic_with_audit(&conn, topic, now_unix, "cli", &writer).await?;
     drop(writer);
     let _ = writer_join.await;
+    // GR-005: the idx_embedding SQLite wipe inside forget does NOT touch the
+    // on-disk HNSW snapshot — forgotten vectors stay searchable via the
+    // cold-load path until a rebuild. Purge them by rebuilding the snapshot from
+    // the now-wiped SQLite. Best-effort: a failure logs but doesn't fail the
+    // forget (the SQLite truth is already erased; recall cold-loads from it / the
+    // snapshot-refresh cron rebuilds later). Acts only when embeddings were forgotten.
+    if report.embedding_rows > 0 {
+        let home = crate::config::FreedomConfig::default_neoth_home();
+        match crate::memory::embeddings::rebuild_snapshot_if_present(&conn, &home) {
+            Ok(Some(n)) => info!(
+                vectors = n,
+                "GR-005: HNSW snapshot rebuilt after forget — forgotten embeddings purged from the searchable index"
+            ),
+            Ok(None) => {}
+            Err(e) => tracing::warn!(
+                error = %e,
+                "GR-005: HNSW snapshot rebuild after forget failed; recall cold-loads from the (already-wiped) SQLite until the snapshot-refresh cron rebuilds it"
+            ),
+        }
+    }
     info!(
         topic = topic,
         total = report.total(),
