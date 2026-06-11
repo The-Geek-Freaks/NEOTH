@@ -399,11 +399,26 @@ fn decrypt_login_entry(
         .map_err(|e| format!("username decrypt failed: {e}"))?;
     let password_bytes = decrypt_aes256_cbc_pkcs7(aes_key, &password_iv, &password_env.ciphertext)
         .map_err(|e| format!("password decrypt failed: {e}"))?;
-    let username =
-        String::from_utf8(username_bytes).map_err(|e| format!("username not UTF-8: {e}"))?;
-    let password =
-        String::from_utf8(password_bytes).map_err(|e| format!("password not UTF-8: {e}"))?;
+    let username = utf8_or_scrub(username_bytes, "username")?;
+    let password = utf8_or_scrub(password_bytes, "password")?;
     Ok((username, password))
+}
+
+/// GOLD-SEC-21 — decode decrypted plaintext to UTF-8, scrubbing the bytes the
+/// `FromUtf8Error` still owns on a decode failure. Plain `String::from_utf8(b)`
+/// moves `b` into the error on the `Err` path, which is then dropped WITHOUT
+/// zeroizing — leaving the decrypted credential plaintext lingering on the heap.
+/// This recovers those bytes via `into_bytes()` and zeroizes them before the
+/// error propagates. (The `Display` of `FromUtf8Error` reports only the invalid
+/// index/length, never the bytes, so formatting it first is safe.)
+fn utf8_or_scrub(bytes: Vec<u8>, label: &str) -> Result<String, String> {
+    String::from_utf8(bytes).map_err(|e| {
+        let msg = format!("{label} not UTF-8: {e}");
+        let mut leaked = e.into_bytes();
+        use zeroize::Zeroize;
+        leaked.zeroize();
+        msg
+    })
 }
 
 #[cfg(test)]
@@ -414,6 +429,17 @@ mod tests {
     fn firefox_profile_root_some_on_supported_os() {
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         assert!(firefox_profile_root().is_some());
+    }
+
+    #[test]
+    fn utf8_or_scrub_errors_and_scrubs_on_invalid_utf8_gold_sec_21() {
+        // GOLD-SEC-21 — invalid UTF-8 plaintext → labelled Err (the bytes the
+        // FromUtf8Error owned are zeroized on the way out; the success path is
+        // unaffected).
+        let r = utf8_or_scrub(vec![0xff, 0xfe, 0x00], "username");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("username not UTF-8"));
+        assert_eq!(utf8_or_scrub(b"alice".to_vec(), "username").unwrap(), "alice");
     }
 
     #[test]

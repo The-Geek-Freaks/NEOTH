@@ -284,11 +284,13 @@ pub struct DecryptedChromeCredential {
 
 impl Drop for DecryptedChromeCredential {
     fn drop(&mut self) {
-        // Scrub the decrypted plaintext password on drop (GOLD-SEC-12 /
-        // A-32) — see the chrome_linux note. Credentials live in a `Vec`
-        // until mapped into `SecretBytes`.
+        // Scrub the decrypted plaintext on drop (GOLD-SEC-12 / A-32) — see the
+        // chrome_linux note. Credentials live in a `Vec` until mapped into
+        // `SecretBytes`. GOLD-SEC-12 — the username is sensitive too; scrub it
+        // alongside the password (it was previously left unscrubbed).
         use zeroize::Zeroize;
         self.password.zeroize();
+        self.username.zeroize();
     }
 }
 
