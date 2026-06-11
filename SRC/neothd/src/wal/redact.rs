@@ -133,9 +133,26 @@ where
                 }
                 hl
             }
-            // No parseable header (bare frame stream / pre-header artifact):
-            // preserve the prior behaviour and start at SEGMENT_HEADER_LEN.
-            Err(_) => SEGMENT_HEADER_LEN as u64,
+            // GR-058: a segment large enough to carry a header whose header does
+            // NOT parse is tamper-suspect. The old fallback guessed a v1 offset
+            // (60); for a corrupt v2 header (61) — or any corruption — that
+            // misaligned the very first frame so the MAGIC check broke
+            // immediately and redaction SILENTLY scrubbed NOTHING. Because the
+            // caller (`memory::forget --physical`) would then report success,
+            // that is a privacy hole. Refuse loudly (like the sealed-compressed
+            // case) so `forget` surfaces an error (GR-008) instead of a false
+            // "erased" result. A file too small to even hold a header has no
+            // frames to redact anyway → keep the benign no-op.
+            Err(_) => {
+                if file_len >= SEGMENT_HEADER_LEN as u64 {
+                    anyhow::bail!(
+                        "refusing to redact WAL segment {} — its header does not parse \
+                         (tamper-suspect); a wrong-offset redaction would silently scrub nothing",
+                        segment_path.display()
+                    );
+                }
+                SEGMENT_HEADER_LEN as u64
+            }
         }
     };
     let mut report = RedactReport::default();
@@ -468,6 +485,24 @@ mod tests {
         assert!(
             err.to_string().contains("compressed"),
             "error should name the compressed-segment refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn scan_refuses_a_segment_with_an_unparseable_header() {
+        // GR-058: a segment large enough to carry a header but whose header does
+        // NOT parse is tamper-suspect — scan_and_redact must REFUSE (Err) rather
+        // than guess a wrong v1 offset (60) and silently redact nothing (a
+        // privacy hole, since memory::forget would then report success). FAILS
+        // pre-fix (Ok, 0 frames), passes post-fix (Err).
+        let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+        // ≥ header length of bytes that do NOT form a valid segment header.
+        std::fs::write(tmp.path(), vec![0xFFu8; SEGMENT_HEADER_LEN + 40]).unwrap();
+        let err = scan_and_redact(tmp.path(), payload_contains_topic("x"))
+            .expect_err("must refuse an unparseable-header segment");
+        assert!(
+            err.to_string().contains("header does not parse"),
+            "error should name the unparseable header: {err}"
         );
     }
 
