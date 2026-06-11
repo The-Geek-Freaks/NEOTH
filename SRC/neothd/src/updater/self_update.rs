@@ -808,6 +808,14 @@ pub struct PendingUpdate {
     pub signature_status: String,
     /// Absolute path of the staged archive on disk.
     pub staged_archive: String,
+    /// GR-043 — absolute path of the staged `.minisig` signature companion on
+    /// disk (when one was published + staged). `apply_from_staged` RE-VERIFIES
+    /// the minisign signature against the pinned key from THIS file at apply
+    /// time, so a staged archive swapped on disk (or planted by an attacker with
+    /// write access to the stage dir + a forged `signature_status:"verified"`)
+    /// can't bypass the SEC-10 signature gate. `None` when no companion exists.
+    #[serde(default)]
+    pub staged_signature: Option<String>,
     pub target_triple: String,
     pub staged_ts_unix: i64,
 }
@@ -824,16 +832,38 @@ pub fn read_pending(stage_dir: &Path) -> Option<PendingUpdate> {
     serde_json::from_slice(&body).ok()
 }
 
-/// Apply an ALREADY-STAGED update — skips the network entirely. The
-/// staging task downloaded + sha256 + minisig-verified this archive; here
-/// we RE-VERIFY the SHA-256 (the staged file could have been touched on
-/// disk) then extract + atomic-replace. Returns the same [`UpdateApplied`]
-/// envelope a fresh `apply_update` would.
-pub fn apply_from_staged(pending: &PendingUpdate, install_dir: &Path) -> Result<UpdateApplied> {
+/// Apply an ALREADY-STAGED update — skips the network entirely. The staging
+/// task downloaded + sha256 + minisig-verified this archive; here we RE-VERIFY
+/// **both** the minisign signature (authenticity, GR-043) AND the SHA-256
+/// (integrity) before any swap — the staged file, its `.minisig`, and the
+/// recorded `pending.json` could all have been touched on disk after staging,
+/// so neither the recorded `signature_status` nor a stale check is trusted.
+/// Returns the same [`UpdateApplied`] envelope a fresh `apply_update` would.
+pub fn apply_from_staged(
+    pending: &PendingUpdate,
+    install_dir: &Path,
+    require_signature: bool,
+) -> Result<UpdateApplied> {
     let archive = PathBuf::from(&pending.staged_archive);
     let bytes = std::fs::read(&archive)
         .with_context(|| format!("read staged archive {}", archive.display()))?;
-    // Re-verify integrity against the recorded hash before any swap.
+    // GR-043 — RE-VERIFY AUTHENTICITY at apply time against the in-binary pinned
+    // key. The recorded `signature_status` is attacker-controllable (anyone who
+    // can write the stage dir writes pending.json), so trusting it would let a
+    // planted archive + a forged `"verified"` record bypass the SEC-10 gate.
+    // Re-running the real minisign check over the staged bytes + the staged
+    // `.minisig` closes that: an attacker can't forge a signature without the
+    // private key, and a swapped archive won't verify against the staged sig.
+    let signature_text = match pending.staged_signature.as_deref() {
+        Some(sig_path) => Some(
+            std::fs::read_to_string(sig_path)
+                .with_context(|| format!("read staged minisig {sig_path}"))?,
+        ),
+        None => None,
+    };
+    crate::updater::sig_verify::check_signature(&bytes, signature_text.as_deref(), require_signature)
+        .context("staged self-update signature gate (apply time)")?;
+    // Re-verify integrity (SHA-256) against the recorded hash before any swap.
     let companion_text = format!("{}  staged\n", pending.archive_sha256);
     let format = archive_format_for_target(&pending.target_triple);
     // `neothd` is the on-disk binary + the archive member basename (Cargo
@@ -953,12 +983,26 @@ pub async fn stage_update(
     std::fs::write(&staged_archive, &asset_bytes)
         .with_context(|| format!("write staged archive {}", staged_archive.display()))?;
 
+    // GR-043 — persist the `.minisig` next to the staged archive so
+    // `apply_from_staged` can RE-VERIFY authenticity offline at apply time
+    // (against the in-binary pinned key), not just trust the recorded status.
+    let staged_signature = match signature_text.as_deref() {
+        Some(sig) => {
+            let sig_path = stage_dir.join(minisig_companion_name(&assets.binary.name));
+            std::fs::write(&sig_path, sig)
+                .with_context(|| format!("write staged minisig {}", sig_path.display()))?;
+            Some(sig_path.display().to_string())
+        }
+        None => None,
+    };
+
     let pending = PendingUpdate {
         to_version: release.tag_name.clone(),
         archive_sha256: expected,
         download_url: assets.binary.browser_download_url.clone(),
         signature_status: sig_status.as_str().to_string(),
         staged_archive: staged_archive.display().to_string(),
+        staged_signature,
         target_triple: target_triple.to_string(),
         staged_ts_unix: now_unix,
     };
@@ -1293,6 +1337,7 @@ mod tests {
             download_url: "https://example.com/neoth.zip".into(),
             signature_status: "verified".into(),
             staged_archive: staged_archive.display().to_string(),
+            staged_signature: None,
             target_triple: "x86_64-pc-windows-msvc".into(),
             staged_ts_unix: 1_700_000_000,
         };
@@ -1301,7 +1346,10 @@ mod tests {
         std::fs::write(&pj, serde_json::to_vec(&pending).unwrap()).unwrap();
         assert_eq!(read_pending(&stage_dir).as_ref(), Some(&pending));
 
-        let outcome = apply_from_staged(&pending, &install_dir).expect("staged apply");
+        // require_signature=false (operator --allow-unsigned): with no pinned
+        // key in test builds the gate returns NoPinnedKey, so the offline
+        // install mechanics still run.
+        let outcome = apply_from_staged(&pending, &install_dir, false).expect("staged apply");
         assert_eq!(outcome.to_version, "v9.9.9");
         assert_eq!(outcome.signature_status, "verified");
         assert_eq!(
@@ -1335,13 +1383,63 @@ mod tests {
             download_url: "x".into(),
             signature_status: "verified".into(),
             staged_archive: staged_archive.display().to_string(),
+            staged_signature: None,
             target_triple: "x86_64-pc-windows-msvc".into(),
             staged_ts_unix: 0,
         };
-        let err = apply_from_staged(&pending, &install_dir).unwrap_err();
+        // require_signature=false so the signature gate passes (NoPinnedKey) and
+        // the SHA-256 re-check is the refusal point under test.
+        let err = apply_from_staged(&pending, &install_dir, false).unwrap_err();
         assert!(
             format!("{err:#}").contains("sha256 mismatch"),
             "tampered staged archive must fail SHA re-check: {err:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_from_staged_refuses_when_signature_required_but_unverifiable() {
+        // GR-043 — the staged fast-path must enforce the SEC-10 signature gate
+        // at APPLY time, not just trust the recorded `signature_status`. With
+        // require_signature=true and no verifiable signature (test builds have
+        // no pinned key), apply_from_staged must REFUSE before any swap — even
+        // though the pending record claims `signature_status:"verified"` and the
+        // SHA-256 matches (an attacker who can write the stage dir controls
+        // both).
+        let want = binary_filename_for_host("neothd");
+        let zip_bytes = make_zip_with_member(&want, b"attacker-binary");
+        let mut hasher = Sha256::new();
+        hasher.update(&zip_bytes);
+        let digest = hex_encode(&hasher.finalize());
+
+        let dir = tempdir().unwrap();
+        let stage_dir = dir.path().join("staged");
+        std::fs::create_dir_all(&stage_dir).unwrap();
+        let staged_archive = stage_dir.join("neoth.zip");
+        std::fs::write(&staged_archive, &zip_bytes).unwrap();
+        let install_dir = dir.path().join("bin");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::write(install_dir.join(&want), b"original").unwrap();
+
+        let pending = PendingUpdate {
+            to_version: "v9.9.9".into(),
+            archive_sha256: digest, // matches the planted archive
+            download_url: "x".into(),
+            signature_status: "verified".into(), // forged claim
+            staged_archive: staged_archive.display().to_string(),
+            staged_signature: None, // no real signature → can't be verified
+            target_triple: "x86_64-pc-windows-msvc".into(),
+            staged_ts_unix: 0,
+        };
+        let err = apply_from_staged(&pending, &install_dir, true).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("signature gate") || format!("{err:#}").contains("pinned"),
+            "a required-but-unverifiable staged apply must be refused: {err:#}"
+        );
+        // The on-disk binary must be UNTOUCHED — no swap happened.
+        assert_eq!(
+            std::fs::read(install_dir.join(&want)).unwrap(),
+            b"original",
+            "no binary swap may occur when the signature gate refuses"
         );
     }
 
@@ -1353,12 +1451,19 @@ mod tests {
             download_url: "https://example.com/neoth.tar.gz".into(),
             signature_status: "verified".into(),
             staged_archive: "/home/user/.neoth/staged/neoth.tar.gz".into(),
+            staged_signature: Some("/home/user/.neoth/staged/neoth.tar.gz.minisig".into()),
             target_triple: "x86_64-unknown-linux-gnu".into(),
             staged_ts_unix: 1_700_000_000,
         };
         let json = serde_json::to_string(&p).unwrap();
         let back: PendingUpdate = serde_json::from_str(&json).unwrap();
         assert_eq!(p, back);
+        // GR-043 — an old pending.json without the field still parses (serde
+        // default → None), so a staged record from before the fix stays
+        // readable (and then fails closed when a signature is required).
+        let legacy = r#"{"to_version":"v1","archive_sha256":"00","download_url":"u","signature_status":"verified","staged_archive":"/a","target_triple":"t","staged_ts_unix":0}"#;
+        let parsed: PendingUpdate = serde_json::from_str(legacy).unwrap();
+        assert_eq!(parsed.staged_signature, None);
     }
 
     #[test]

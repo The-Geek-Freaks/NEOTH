@@ -137,10 +137,27 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
         apply_update, fetch_latest_release, host_target_triple, version_is_newer,
     };
 
-    // MV-01b #5 fast-path: if the unattended staging task already
-    // downloaded + verified a newer release into ~/.neoth/staged/, apply
-    // it WITHOUT re-downloading. The staged archive's SHA-256 is
-    // re-verified inside `apply_from_staged` before any swap.
+    // GOLD-SEC-10 / GR-043 — SIGNATURE REQUIRED BY DEFAULT for BOTH the staged
+    // fast-path below AND the fresh-download path. Compute it once and fail
+    // closed HERE when no pinned key exists, so the staged fast-path can no
+    // longer apply an unverifiable binary (the prior code gated only the fresh
+    // path, which the staged fast-path returned before ever reaching).
+    // `apply_from_staged` ALSO re-verifies the staged signature at apply time;
+    // this early bail gives the same actionable message the fresh path does.
+    let require_signature = !allow_unsigned;
+    if require_signature && crate::updater::sig_verify::PINNED_PUBKEY.is_none() {
+        anyhow::bail!(
+            "this build has no pinned release-signing key yet, so the update cannot be \
+             cryptographically verified. Re-run with `--allow-unsigned` to accept an unsigned \
+             binary (only from a trusted network — it could be tampered in transit), or wait \
+             for a signed release."
+        );
+    }
+
+    // MV-01b #5 fast-path: if the unattended staging task already downloaded +
+    // verified a newer release into ~/.neoth/staged/, apply it WITHOUT
+    // re-downloading. Both the staged archive's SHA-256 AND its minisign
+    // signature are re-verified inside `apply_from_staged` before any swap.
     {
         let home = crate::config::FreedomConfig::default_neoth_home();
         let stage_dir = home.join("staged");
@@ -156,7 +173,11 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
                 let install_dir = exe
                     .parent()
                     .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
-                match crate::updater::self_update::apply_from_staged(&pending, install_dir) {
+                match crate::updater::self_update::apply_from_staged(
+                    &pending,
+                    install_dir,
+                    require_signature,
+                ) {
                     Ok(outcome) => {
                         crate::updater::self_update::clear_staged(&stage_dir, &pending);
                         emit_self_update_applied(
@@ -213,22 +234,10 @@ async fn run_self_apply(repo: &str, allow_unsigned: bool, output: OutputFormat) 
         .parent()
         .ok_or_else(|| anyhow::anyhow!("current_exe() has no parent directory"))?;
 
-    // GOLD-SEC-10 / A-22 — SIGNATURE REQUIRED BY DEFAULT. The manual path
-    // now requires a verified minisign signature unless the operator
-    // explicitly opts out with `--allow-unsigned`. (The unattended daemon
-    // path always requires it.) Until the CI signing keypair is
-    // provisioned, `PINNED_PUBKEY` is None, so a default apply fails the
-    // gate — surface a clear, actionable message instead of a cryptic
-    // bail, pointing at `--allow-unsigned` for trusted-network installs.
-    let require_signature = !allow_unsigned;
-    if require_signature && crate::updater::sig_verify::PINNED_PUBKEY.is_none() {
-        anyhow::bail!(
-            "this build has no pinned release-signing key yet, so the update cannot be \
-             cryptographically verified. Re-run with `--allow-unsigned` to accept an unsigned \
-             binary (only from a trusted network — it could be tampered in transit), or wait \
-             for a signed release."
-        );
-    }
+    // GOLD-SEC-10 / A-22 — SIGNATURE REQUIRED BY DEFAULT. `require_signature`
+    // (and the no-pinned-key fail-closed bail) was already evaluated at the top
+    // of this fn so it covers the staged fast-path too (GR-043); here we just
+    // thread it into the fresh-download verify+apply.
     // The on-disk binary + the archive member basename are both `neothd`
     // (the Cargo package name; the release workflow packs `neothd` /
     // `neothd.exe` into each archive). Pre-Session-28f this was the wrong
