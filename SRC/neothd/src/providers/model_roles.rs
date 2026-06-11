@@ -183,6 +183,16 @@ impl ModelRoleTable {
             .get(provider_id)
             .and_then(|p| p.resolve_with_flagship_fallback(role))
     }
+
+    /// GR-026 — resolve `<provider_id, role>` to the EXACTLY-configured model id
+    /// with NO Flagship fallback. The utility fast-pin uses this so a provider
+    /// WITHOUT a `fast` row (aws_bedrock / azure_openai / cohere_api) leaves the
+    /// utility model UNSET (cheapest-tier intent) instead of silently pinning the
+    /// expensive flagship the operator was trying to avoid. `None` when the
+    /// provider is absent OR the role is unset for it.
+    pub fn resolve_exact(&self, provider_id: &str, role: ModelRole) -> Option<&str> {
+        self.providers.get(provider_id).and_then(|p| p.get(role))
+    }
 }
 
 /// Pinned defaults for the providers NEOTH ships today. Tracks the
@@ -315,6 +325,23 @@ mod tests {
             r.resolve_with_flagship_fallback(ModelRole::Flagship),
             Some("the-one")
         );
+    }
+
+    #[test]
+    fn resolve_exact_has_no_flagship_fallback() {
+        // GR-026: resolve_exact returns ONLY a genuinely-set role — no flagship
+        // fallback. aws_bedrock / azure_openai / cohere have Flagship but no Fast
+        // row, so the utility fast-pin must see None (leave the model unset), not
+        // the flagship that `resolve` falls back to.
+        let t = default_table();
+        assert_eq!(t.resolve_exact("aws_bedrock", ModelRole::Fast), None);
+        assert_eq!(t.resolve_exact("azure_openai", ModelRole::Fast), None);
+        assert_eq!(t.resolve_exact("cohere_api", ModelRole::Fast), None);
+        // Contrast: the flagship-fallback `resolve` DOES return a model for those.
+        assert!(t.resolve("aws_bedrock", ModelRole::Fast).is_some());
+        // A provider WITH a fast row resolves exactly to it; an absent one → None.
+        assert_eq!(t.resolve_exact("openai_api", ModelRole::Fast), Some("gpt-4o-mini"));
+        assert_eq!(t.resolve_exact("nope", ModelRole::Fast), None);
     }
 
     #[test]

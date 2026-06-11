@@ -461,13 +461,21 @@ fn build_utility_config(config: &FreedomConfig) -> Option<FreedomConfig> {
         synthetic.provider_model = None;
     }
     synthetic.provider_kind = Some(utility_kind);
-    // Pin the cheapest model for this provider so a utility call never lands on
-    // the flagship. `None` (e.g. local providers with no `fast` entry) leaves
-    // the model unset → the adapter uses its own default.
-    if let Some(fast) = crate::providers::model_roles::default_table()
-        .resolve(kind.as_str(), crate::providers::model_roles::ModelRole::Fast)
-    {
-        synthetic.provider_model = Some(fast.to_string());
+    // Pin the cheapest model for a CLOUD utility provider so a utility call never
+    // lands on the flagship. GR-026: use `resolve_exact` (NO flagship fallback) so
+    // a provider WITHOUT a `fast` row (aws_bedrock / azure_openai / cohere) leaves
+    // the model UNSET → the adapter uses its own default instead of the expensive
+    // flagship the operator was trying to avoid. GR-028: never pin for a LOCAL
+    // provider — it runs a single loaded model and the table's local `fast` id is
+    // a bare name (not a valid HF repo path), so the local adapter manages its own
+    // model. GR-076: with `resolve_exact`, a missing `fast` row genuinely leaves
+    // `provider_model` unset (the prior `resolve` always returned the flagship).
+    if !is_local_provider(kind.as_str()) {
+        if let Some(fast) = crate::providers::model_roles::default_table()
+            .resolve_exact(kind.as_str(), crate::providers::model_roles::ModelRole::Fast)
+        {
+            synthetic.provider_model = Some(fast.to_string());
+        }
     }
     Some(synthetic)
 }
@@ -1085,6 +1093,39 @@ mod tests {
             synthetic.provider_key.is_some(),
             "same-vendor utility must keep the shared key"
         );
+    }
+
+    #[test]
+    fn utility_config_no_flagship_or_local_pin() {
+        // GR-026: a utility provider WITHOUT a `fast` row (aws_bedrock) must NOT
+        // be pinned to the flagship — provider_model stays unset (adapter default).
+        let mut cfg = base_config();
+        cfg.provider_kind = Some(ProviderKind::OpenaiApi);
+        cfg.provider_key = Some(crate::secret::SecretString::from("sk-main"));
+        cfg.inference.utility_provider = Some(InferenceProvider::AwsBedrock);
+        let s = build_utility_config(&cfg).expect("built");
+        assert_eq!(s.provider_kind, Some(ProviderKind::AwsBedrock));
+        assert_eq!(s.provider_model, None, "no fast row → no flagship pin (GR-026)");
+
+        // GR-028: a LOCAL utility provider must NOT be pinned the table's bare
+        // local `fast` id (an invalid HF repo path) — the local adapter manages
+        // its own model.
+        let mut cfg2 = base_config();
+        cfg2.provider_kind = Some(ProviderKind::OpenaiApi);
+        cfg2.inference.utility_provider = Some(InferenceProvider::LocalQwen);
+        let s2 = build_utility_config(&cfg2).expect("built");
+        assert_eq!(s2.provider_kind, Some(ProviderKind::LocalQwen));
+        assert_eq!(
+            s2.provider_model, None,
+            "local utility → no (invalid) HF-path pin (GR-028)"
+        );
+
+        // Regression: a cloud provider WITH a fast row still gets pinned to it.
+        let mut cfg3 = base_config();
+        cfg3.provider_kind = Some(ProviderKind::ClaudeCli);
+        cfg3.inference.utility_provider = Some(InferenceProvider::OpenAi);
+        let s3 = build_utility_config(&cfg3).expect("built");
+        assert_eq!(s3.provider_model.as_deref(), Some("gpt-4o-mini"));
     }
 
     #[tokio::test]
