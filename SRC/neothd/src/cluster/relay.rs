@@ -30,8 +30,24 @@ pub const DEFAULT_MAX_PEERS_PER_KEY: u32 = 5;
 /// compromised key becomes a real DoS vector.
 pub const MAX_PEERS_PER_KEY_CEILING: u32 = 50;
 
+/// GR-009 — env var the relay **client** reads its bearer token from,
+/// mirroring the `neoth-relay` server (`SRC/neoth-relay/src/main.rs`).
+/// The token is a shared secret, so it is sourced from the environment
+/// ONLY and is deliberately NOT a [`RelayConfig`] field — that keeps it
+/// out of `freedom.yaml` (where it would land in plaintext on disk and in
+/// every config backup). When the relay-client transport ships (Phase 5
+/// follow-up, `SPEC_cluster_phase5_hysteria_relay`), its registration
+/// request sends `Authorization: Bearer <resolve_token()>`.
+pub const RELAY_TOKEN_ENV: &str = "NEOTH_RELAY_TOKEN";
+
 /// Operator-tweakable relay knobs (lives at
 /// `freedom.yaml::cluster.relay`).
+///
+/// GR-009 — note the absence of a `token` field: the relay's bearer
+/// secret is env-only ([`RELAY_TOKEN_ENV`]), never serialized here, so it
+/// cannot leak into the on-disk `freedom.yaml`. The
+/// `relay_config_yaml_carries_no_token_field` test guards against a future
+/// contributor re-introducing a serde token field.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RelayConfig {
@@ -78,6 +94,25 @@ impl RelayConfig {
     /// True ⇔ operator has configured a relay endpoint.
     pub fn is_configured(&self) -> bool {
         !self.endpoint.trim().is_empty()
+    }
+
+    /// GR-009 — resolve the relay bearer token from the environment
+    /// ([`RELAY_TOKEN_ENV`]), mirroring the `neoth-relay` server's own
+    /// CLI-flag-or-env resolution. Returns `None` when unset or blank
+    /// (whitespace-only), so the future relay-client transport can decide
+    /// to connect token-less only against a loopback/dev relay. The token
+    /// is never read from `self` — it is env-only by design, never a
+    /// `freedom.yaml` field.
+    pub fn resolve_token(&self) -> Option<String> {
+        Self::token_from_env(std::env::var(RELAY_TOKEN_ENV).ok())
+    }
+
+    /// Pure core of [`resolve_token`] — a raw env value maps to a usable
+    /// token only when present and non-blank. Split out so the filtering
+    /// rule is unit-tested without touching process env (which races other
+    /// tests — see `memory/neoth_ci_env_race_flakiness`).
+    fn token_from_env(raw: Option<String>) -> Option<String> {
+        raw.filter(|t| !t.trim().is_empty())
     }
 }
 
@@ -467,6 +502,40 @@ mod tests {
         let yaml = serde_yaml::to_string(&original).unwrap();
         let back: RelayConfig = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(original, back);
+    }
+
+    #[test]
+    fn token_from_env_filters_blank_and_absent() {
+        // GR-009: a real token survives; absent / blank env → no token.
+        assert_eq!(
+            RelayConfig::token_from_env(Some("s3cr3t-bearer".into())),
+            Some("s3cr3t-bearer".into())
+        );
+        assert_eq!(RelayConfig::token_from_env(None), None);
+        assert_eq!(RelayConfig::token_from_env(Some("   ".into())), None);
+        assert_eq!(RelayConfig::token_from_env(Some(String::new())), None);
+    }
+
+    #[test]
+    fn relay_config_yaml_carries_no_token_field() {
+        // GR-009 secret-hygiene guard: the relay bearer token is env-only
+        // (NEOTH_RELAY_TOKEN), NEVER a serialized config field — otherwise
+        // it would land in plaintext in freedom.yaml + every backup. If a
+        // future change adds a serde `token`/`secret`/`bearer` field to
+        // RelayConfig, this test fails and forces the env-only decision to
+        // be re-justified.
+        let cfg = RelayConfig {
+            endpoint: "relay.example.org:443".into(),
+            max_peers_per_key: 5,
+        };
+        let yaml = serde_yaml::to_string(&cfg).unwrap().to_ascii_lowercase();
+        for forbidden in ["token", "secret", "bearer", "password", "auth"] {
+            assert!(
+                !yaml.contains(forbidden),
+                "RelayConfig yaml must not serialize a `{forbidden}` field \
+                 (relay secret is env-only): {yaml}"
+            );
+        }
     }
 
     #[test]

@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 171 | 38 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 170 | 39 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-009** SEC — relay-client bearer-token path: env-only `NEOTH_RELAY_TOKEN` resolver on RelayConfig (mirrors neoth-relay server) + serde-guard test that the relay secret can never become a freedom.yaml field. Wire-send integration lands with the relay-client transport (SPEC_cluster_phase5, multi-week deferred — no client send-site exists today). `cluster/relay.rs`.
 - [x] **GR-104** (MED) ✅ FIXED (measured) — inspect_tool_args no longer lets a payload hidden in a non-hint field slip past once any hint field matched. When a hint matches it now ALSO scans non-hint NON-prose fields (new non_hint_non_prose_strings + PROSE_FIELD_HINTS exemption), so a payload in data/notes/payload is caught while genuine prose/display fields (content/…) stay exempt to avoid false-tripping on docs that merely MENTION a command (the deliberate low-false-positive design preserved). Test inspect_tool_args_scans_non_prose_non_hint_fields; security::risk_tests 6/0; clippy clean.
 - [x] **GR-081** (MED) ✅ FIXED — write_mode_0600 no longer leaves a plaintext-secret temp file on disk when a write/fsync/rename (or, on Windows, DACL-restrict) error path fires. New SecretTmpGuard RAII removes the temp on any early return/panic, disarmed only after the atomic rename succeeds. Fixed BOTH the Unix AND Windows credential-write paths. Test secret_tmp_guard_removes_on_drop_unless_disarmed; config::credentials 9/0; clippy clean.
 - [x] **GR-046** (MED) ✅ FIXED — a confirm_high block is now liftable via 'neoth risk-confirm'. check_risk_leases computed needs_dangerous on Critical only, so a HIGH finding (which generates a Confirm under confirm_high) was never recognized as needing the DangerousCommand lease → unliftable. New pure risk_needs_dangerous_lease(risk, confirm_high) includes High when confirm_high; confirm_high threaded from security_policy. Test confirm_high_makes_a_high_finding_need_the_dangerous_lease; mcp::dispatch_loop 18/0; clippy clean.
