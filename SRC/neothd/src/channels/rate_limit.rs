@@ -33,6 +33,18 @@ pub const DEFAULT_TOKENS_PER_MINUTE: f64 = 30.0;
 /// Default burst size = bucket capacity.
 pub const DEFAULT_BURST: u32 = 30;
 
+/// GOLD-SEC-08 / A-18 eviction bounds. A bucket idle this long has fully
+/// refilled — recreating it on next access yields the identical full state, so
+/// dropping it is behaviour-neutral.
+const IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+/// Absolute hard cap on the number of buckets. An attacker who mints a fresh
+/// `sender_id` per message (so every message creates a bucket) cannot grow this
+/// limiter's own memory past the cap — the DoS the rate limiter must not become.
+const MAX_BUCKETS: usize = 10_000;
+/// Eviction trims to this low-watermark in one O(n) pass, so the next sweep is
+/// ~`MAX_BUCKETS - LOW_WATER` inserts away — amortised O(1) per `try_consume`.
+const LOW_WATER: usize = 7_500;
+
 /// Outcome of a `try_consume` call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decision {
@@ -108,13 +120,29 @@ impl RateLimiter {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
         };
-        let bucket = guard
-            .entry(key)
-            .or_insert_with(|| Bucket::new(self.capacity));
-        let (updated, decision) =
-            refill_and_consume(*bucket, self.tokens_per_sec, self.capacity, now);
-        *bucket = updated;
+        let decision = {
+            let bucket = guard
+                .entry(key)
+                .or_insert_with(|| Bucket::new(self.capacity));
+            let (updated, decision) =
+                refill_and_consume(*bucket, self.tokens_per_sec, self.capacity, now);
+            *bucket = updated;
+            decision
+        };
+        // GOLD-SEC-08 / A-18: keep the bucket map bounded. Cheap no-op under
+        // normal load; only sweeps once the map crosses MAX_BUCKETS (a flood of
+        // unique sender_ids each minting a fresh bucket).
+        evict_if_needed(&mut guard, now);
         decision
+    }
+
+    /// Number of live buckets — hard-bounded by `MAX_BUCKETS` (GOLD-SEC-08).
+    /// Used by the eviction regression test.
+    pub fn bucket_count(&self) -> usize {
+        match self.buckets.lock() {
+            Ok(g) => g.len(),
+            Err(poisoned) => poisoned.into_inner().len(),
+        }
     }
 
     /// Drop everything we know about `(channel, sender)` — useful when the
@@ -169,10 +197,55 @@ fn refill_and_consume(
     }
 }
 
+/// Bound the bucket map (GOLD-SEC-08 / A-18). No-op until the map crosses
+/// `MAX_BUCKETS`; then drop every bucket idle for `IDLE_TTL` (fully refilled —
+/// recreating is identical state) and, if an active flood of unique senders is
+/// still over the cap, keep the most-recently-active `LOW_WATER` and drop the
+/// rest. Memory is hard-capped regardless of attacker behaviour.
+fn evict_if_needed(buckets: &mut HashMap<String, Bucket>, now: Instant) {
+    // Fast-path: the common case is a small map (a personal agent sees a few
+    // hundred senders) — return until we cross the high-watermark.
+    if buckets.len() <= MAX_BUCKETS {
+        return;
+    }
+    buckets.retain(|_, b| now.saturating_duration_since(b.last_refill) < IDLE_TTL);
+    if buckets.len() > LOW_WATER {
+        let mut by_recency: Vec<(String, Instant)> = buckets
+            .iter()
+            .map(|(k, b)| (k.clone(), b.last_refill))
+            .collect();
+        // Most-recently-active first.
+        by_recency.sort_by_key(|(_, t)| std::cmp::Reverse(*t));
+        let keep: std::collections::HashSet<String> = by_recency
+            .into_iter()
+            .take(LOW_WATER)
+            .map(|(k, _)| k)
+            .collect();
+        buckets.retain(|k, _| keep.contains(k));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn bucket_map_is_bounded_under_unique_sender_flood() {
+        // GOLD-SEC-08 / A-18: an attacker minting a fresh sender per message
+        // must not grow the limiter's own memory without bound. The live
+        // channel pipeline calls this limiter (NOT the dead daemon::rate_limit).
+        let rl = RateLimiter::new(60.0, 1);
+        let t = Instant::now();
+        for i in 0..(MAX_BUCKETS + 2_500) {
+            rl.try_consume_at("tg", &format!("attacker-{i}"), t);
+        }
+        let n = rl.bucket_count();
+        assert!(
+            n <= MAX_BUCKETS,
+            "bucket map must stay <= MAX_BUCKETS ({MAX_BUCKETS}); got {n}"
+        );
+    }
 
     #[test]
     fn fresh_sender_can_burst_up_to_capacity() {
