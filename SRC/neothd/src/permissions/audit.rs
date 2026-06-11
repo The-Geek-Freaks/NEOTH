@@ -144,7 +144,11 @@ pub fn audit_segment(
     // GOLD-ARCH-03: for_each_frame so permission/consent frames inside a
     // v2/zstd-compressed segment are audited, not silently skipped. Frame order
     // is preserved, so the prev→next "downstream effect" wiring is unchanged.
-    let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
+    // GR-033: the scan Result is PROPAGATED (not `let _ =`-discarded). It Errs
+    // only on an unreconstructable — tamper-suspect — compressed blob, so a
+    // security audit MUST fail loud on a corrupt segment rather than silently
+    // report a clean trail (the old fail-open).
+    crate::wal::scan::for_each_frame(&bytes, |_, dec| {
         let event_id = dec.header.event_id.0;
         let event_type = dec.header.event_type;
         let ts_ns = dec.header.hlc.physical_ns();
@@ -167,7 +171,14 @@ pub fn audit_segment(
             raw_decisions.push((event_id, ts_ns, event_type, dec.payload.to_vec()));
         }
         Ok(())
-    });
+    })
+    .with_context(|| {
+        format!(
+            "permission audit: WAL segment {} is tamper-suspect / unreconstructable — \
+             refusing to report a clean audit over a corrupt segment",
+            segment.display()
+        )
+    })?;
 
     // Build entries + summary counts.
     let mut entries: Vec<AuditEntry> = Vec::with_capacity(raw_decisions.len());
@@ -336,6 +347,29 @@ mod tests {
         assert_eq!(AuditDecision::Denied.as_str(), "denied");
         assert_eq!(AuditDecision::ConsentAllow.as_str(), "consent_allow");
         assert_eq!(AuditDecision::ConsentDeny.as_str(), "consent_deny");
+    }
+
+    #[test]
+    fn audit_segment_fails_loud_on_a_tamper_suspect_compressed_segment() {
+        // GR-033: a security audit must NOT silently report a clean trail over an
+        // unreconstructable (tamper-suspect) compressed segment. A v2 header that
+        // FLAGS compression but whose body is not valid zstd makes for_each_frame
+        // (via logical_segment_bytes) Err — audit_segment must PROPAGATE it, not
+        // swallow it via `let _ =`. FAILS pre-fix (Ok empty report), passes post.
+        use crate::wal::segment_header::{SEGMENT_FLAG_COMPRESSED, SegmentHeaderV2};
+        let dir = tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        let mut bytes = SegmentHeaderV2::new(0, 1, 0, 0, [0u8; 16], SEGMENT_FLAG_COMPRESSED)
+            .to_le_bytes()
+            .to_vec();
+        // A body that is NOT valid zstd → decompress fails → tamper-suspect.
+        bytes.extend_from_slice(&[0xFFu8; 64]);
+        std::fs::write(&seg, &bytes).unwrap();
+        let r = audit_segment(&seg, 0, i64::MAX, 10);
+        assert!(
+            r.is_err(),
+            "a tamper-suspect compressed segment must fail the audit, not report clean"
+        );
     }
 
     #[test]
