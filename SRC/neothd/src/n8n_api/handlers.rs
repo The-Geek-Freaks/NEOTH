@@ -327,15 +327,12 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // (c) the circuit-breaker wrap happens INSIDE
     //     `provider.complete()` (GR-04) — automatic.
     let provider_kind = state.config.provider_kind;
-    let is_cloud = matches!(
-        provider_kind,
-        Some(crate::cli::init::ProviderKind::OpenaiApi)
-            | Some(crate::cli::init::ProviderKind::OpenaiCompat)
-            | Some(crate::cli::init::ProviderKind::GeminiApi)
-            | Some(crate::cli::init::ProviderKind::AzureOpenAi)
-            | Some(crate::cli::init::ProviderKind::AwsBedrock)
-            | Some(crate::cli::init::ProviderKind::ClaudeCli)
-    );
+    // GR-003: route through the canonical EXHAUSTIVE cloud classifier
+    // (`consent::is_cloud`) instead of an inline `matches!`. The inline set had
+    // drifted and silently omitted `AnthropicApi` + `Cohere`, so an n8n
+    // provider_call to either skipped the Strict-autonomy consent gate. The
+    // canonical classifier is compile-enforced exhaustive — no future drift.
+    let is_cloud = provider_kind.is_some_and(crate::consent::is_cloud);
     if is_cloud
         && matches!(
             state.config.autonomy,
