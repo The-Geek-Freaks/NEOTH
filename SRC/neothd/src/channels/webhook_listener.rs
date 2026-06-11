@@ -434,7 +434,15 @@ async fn handle_meta(
                     // the legacy detached spawn.
                     match cfg.dispatch_join.as_ref() {
                         Some(join) => {
-                            join.lock().await.spawn(dispatch);
+                            let mut js = join.lock().await;
+                            js.spawn(dispatch);
+                            // GOLD-COR-34 — reap COMPLETED fan-out tasks now (the
+                            // non-blocking try_join_next under the lock we already
+                            // hold). Without this the shared JoinSet only shed
+                            // entries at shutdown, so finished handles accumulated
+                            // unbounded over the daemon's lifetime — one per Meta
+                            // webhook fan-out. This bounds it to the in-flight set.
+                            while js.try_join_next().is_some() {}
                         }
                         None => {
                             tokio::spawn(dispatch);

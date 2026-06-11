@@ -114,8 +114,12 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
                 (ProbeStatus::NotConfigured, "no telegram_token")
             } else if !v.telegram_user_id {
                 (
-                    ProbeStatus::Warn,
-                    "token set but telegram_user_id missing — the inbound sender allowlist is open",
+                    // GR-126 — an OPEN inbound allowlist on an autonomous agent is a
+                    // security exposure (anyone who finds the bot can drive it), not a
+                    // mere caveat. Rate it Error (must-fix before exposing), at least
+                    // as severe as a functional misconfig like the missing Slack pair.
+                    ProbeStatus::Error,
+                    "token set but telegram_user_id missing — the inbound sender allowlist is OPEN; anyone who finds the bot can drive the agent. Set telegram_user_id before exposing it",
                 )
             } else {
                 (ProbeStatus::Ok, "token + user_id configured (polling loop)")
@@ -156,8 +160,12 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
         ChannelKind::Keet => {
             if v.keet_seed {
                 (
-                    ProbeStatus::Ok,
-                    "keet_seed_phrase configured (outbound via the Pears bridge)",
+                    // GR-014 — NOT Ok: KeetChannel::run() always bails (the inbound
+                    // receive loop is deferred to K-3), so Keet cannot serve as a
+                    // running channel. Outbound send_text via the Pears bridge does
+                    // work, hence Warn (partial), not Ok (claims 'adapter can run').
+                    ProbeStatus::Warn,
+                    "keet_seed configured: outbound send_text works via the Pears bridge, but the inbound receive loop is DEFERRED (K-3) — KeetChannel::run() bails, so Keet can't serve inbound yet. Use Telegram for inbound",
                 )
             } else {
                 (ProbeStatus::NotConfigured, "no keet_seed_phrase")
@@ -204,9 +212,10 @@ mod tests {
             telegram_token: true,
             ..Default::default()
         };
+        // GR-126 — open inbound allowlist (no user_id) is a security exposure → Error.
         assert_eq!(
             probe_channel(ChannelKind::Telegram, &token_only).status,
-            ProbeStatus::Warn
+            ProbeStatus::Error
         );
         let full = ChannelCredsView {
             telegram_token: true,
@@ -276,12 +285,14 @@ mod tests {
     }
 
     #[test]
-    fn keet_ok_when_seed_present() {
+    fn keet_warn_when_seed_present_because_run_is_deferred() {
+        // GR-014 — keet_seed set → Warn, NOT Ok: outbound send works but
+        // KeetChannel::run() always bails (inbound deferred to K-3).
         let v = ChannelCredsView {
             keet_seed: true,
             ..Default::default()
         };
-        assert_eq!(probe_channel(ChannelKind::Keet, &v).status, ProbeStatus::Ok);
+        assert_eq!(probe_channel(ChannelKind::Keet, &v).status, ProbeStatus::Warn);
     }
 
     #[test]
