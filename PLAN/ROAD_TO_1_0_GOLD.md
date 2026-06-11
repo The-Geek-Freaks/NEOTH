@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 179 | 30 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 177 | 32 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,8 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-047** (MED) ✅ OVERSTATED/already-fixed — the triage read apply_risk_leases in isolation; the FULL chain already makes a risk-confirm grant SINGLE-USE (not TTL-duration) via dispatch_loop.rs:262 consume_risk_leases (revokes+persists the covering lease on the lift — shipped in GR-032). No code change. Verified by the wsv-med-analysis workflow + grep.
+- [x] **GR-094** (MED) ✅ FIXED — launch_editor splits $EDITOR/$VISUAL via a quote-aware split_editor_command instead of split_whitespace, so an editor path WITH SPACES (Windows: "C:\Program Files\…\subl.exe" -w) stays one token. No shell invoked → no injection. Test split_editor_command_handles_quoted_paths_with_spaces; cli::editor 7/0; clippy clean.
 - [x] **GR-026** / **GR-028** / **GR-076** (MED/INFO · GROUP 9) ✅ FIXED — utility fast-pin overhaul (providers/mod.rs + model_roles.rs, one pass): new resolve_exact (NO flagship fallback) so a provider with no fast row (bedrock/azure/cohere) leaves the model UNSET instead of pinning the expensive flagship (GR-026); pin gated on !is_local_provider so a LOCAL utility isn't pinned the table's bare local id (an invalid HF path) (GR-028); doc corrected to match (GR-076). Tests resolve_exact_has_no_flagship_fallback + utility_config_no_flagship_or_local_pin; providers:: 589/0; clippy clean.
 - [x] **GR-034** / **GR-023** (MED) ✅ FIXED — gguf_variants::resolve_live now routes HF GGUF lookups through providers::http_client::build_client() (audited, NEOTH_HTTP_PROXY + egress-allowlist aware) instead of a direct reqwest::Client that bypassed the operator's egress proxy; the tight 8s budget kept as a per-request timeout (overrides build_client's 120s). One fix closes both IDs (same file:line root). models::gguf_variants 9/0; clippy clean.
 - [x] **GR-065** (MED) ✅ FIXED — jina_reader uses build_client_no_redirect() (the SX-01 norm) instead of the redirect-following build_client(), so r.jina.ai (a third-party proxy) can't 30x-bounce the fetch to an arbitrary host the SSRF guard never saw. Module doc updated. Test jina_client_does_not_follow_redirects; tools::jina_reader 8/0; clippy clean.

@@ -61,10 +61,53 @@ fn create_temp_file(prefill: Option<&str>) -> Result<NamedTempFile> {
     Ok(f)
 }
 
+/// GR-094 — split an `$EDITOR` / `$VISUAL` command into argv, honouring single-
+/// and double-quoted spans so an editor PATH WITH SPACES (common on Windows,
+/// e.g. `"C:\Program Files\Sublime\subl.exe" -w`) stays ONE token instead of
+/// being shredded by a naive whitespace split. No shell is invoked, so there is
+/// no injection surface — the operator's own editor string is parsed directly.
+fn split_editor_command(cmd: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quote: Option<char> = None;
+    let mut has_token = false;
+    for ch in cmd.chars() {
+        match quote {
+            Some(q) => {
+                if ch == q {
+                    quote = None;
+                } else {
+                    cur.push(ch);
+                }
+            }
+            None => match ch {
+                '"' | '\'' => {
+                    quote = Some(ch);
+                    has_token = true;
+                }
+                c if c.is_whitespace() => {
+                    if has_token {
+                        out.push(std::mem::take(&mut cur));
+                        has_token = false;
+                    }
+                }
+                c => {
+                    cur.push(c);
+                    has_token = true;
+                }
+            },
+        }
+    }
+    if has_token {
+        out.push(cur);
+    }
+    out
+}
+
 /// Spawn the editor on `file_path` with inherited stdio + wait. Errors on a
 /// non-zero editor exit.
 fn launch_editor(editor_cmd: &str, file_path: &Path) -> Result<()> {
-    let parts: Vec<&str> = editor_cmd.split_whitespace().collect();
+    let parts = split_editor_command(editor_cmd);
     let Some((bin, pre_args)) = parts.split_first() else {
         anyhow::bail!("empty editor command");
     };
@@ -157,5 +200,24 @@ mod tests {
     fn extract_empty_prompt_section_is_empty() {
         let content = "# NEOTH Prompt Editor\n\n# Your prompt:\n\n   \n";
         assert_eq!(extract_user_input(content), "");
+    }
+
+    #[test]
+    fn split_editor_command_handles_quoted_paths_with_spaces() {
+        // GR-094: a quoted editor path with spaces stays ONE token; without
+        // quotes a naive split would shred it.
+        assert_eq!(split_editor_command("vim"), vec!["vim"]);
+        assert_eq!(split_editor_command("code -w"), vec!["code", "-w"]);
+        assert_eq!(
+            split_editor_command(r#""C:\Program Files\Sublime\subl.exe" -w"#),
+            vec![r"C:\Program Files\Sublime\subl.exe", "-w"]
+        );
+        assert_eq!(
+            split_editor_command("'/usr/bin/my editor' --flag"),
+            vec!["/usr/bin/my editor", "--flag"]
+        );
+        // Repeated / leading / trailing whitespace collapses.
+        assert_eq!(split_editor_command("  nano   -B  "), vec!["nano", "-B"]);
+        assert_eq!(split_editor_command(""), Vec::<String>::new());
     }
 }
