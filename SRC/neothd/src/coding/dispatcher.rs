@@ -485,8 +485,16 @@ pub async fn dispatch_session_with_apply(
                             // the operator promote REVIEW → DONE. Without a
                             // `test_cmd` no suite ran, so the verified-claim stays
                             // false (apply alone is not test evidence).
+                            // GR-002: an EMPTY patch is a no-op — apply_patch_via_worktree
+                            // returned Ok WITHOUT applying anything or running the
+                            // worktree suite, so the worker's self-reported green
+                            // summary has NO verification behind it. `applied` stays
+                            // false for an empty patch so it can't auto-promote.
                             let verified = TestSummary {
-                                applied: cfg.test_cmd.is_some(),
+                                applied: apply_is_test_verified(
+                                    cfg.test_cmd.is_some(),
+                                    &o.patch_text,
+                                ),
                                 ..o.tests
                             };
                             if let Err(e) = store::attach_task_artifact(
@@ -1310,12 +1318,46 @@ fn recent_output_refs(
         .unwrap_or_default()
 }
 
+/// GR-002 — whether a worktree apply may stamp the worker's test summary as
+/// `applied` (i.e. test-VERIFIED, which is what `check_auto_promotable` lets
+/// auto-promote REVIEW → DONE). Requires BOTH a configured test command (a suite
+/// actually ran in the worktree) AND a NON-EMPTY patch. An empty patch is a
+/// no-op: `apply_patch_via_worktree` returns Ok without applying or running any
+/// suite, so its self-reported "tests green" claim has no verification behind it
+/// and must never auto-promote. Pure → unit-testable.
+fn apply_is_test_verified(test_cmd_present: bool, patch_text: &str) -> bool {
+    test_cmd_present && !patch_text.is_empty()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn empty_patch_is_never_test_verified() {
+        // GR-002: an empty patch (a no-op that ran no worktree suite) must NOT be
+        // stamped `applied`, even when a test_cmd is configured and the worker
+        // self-reports green — otherwise it would auto-promote to DONE with no
+        // change + no test evidence.
+        assert!(
+            !apply_is_test_verified(true, ""),
+            "empty patch + test_cmd must NOT be verified"
+        );
+        assert!(!apply_is_test_verified(false, ""), "empty patch, no test_cmd");
+        // A real (non-empty) patch with a configured suite IS verified; without a
+        // suite it is not (apply alone is not test evidence).
+        assert!(
+            apply_is_test_verified(true, "diff --git a/x b/x\n"),
+            "non-empty patch + test_cmd must be verified"
+        );
+        assert!(
+            !apply_is_test_verified(false, "diff --git a/x b/x\n"),
+            "non-empty patch without a test_cmd is not test-verified"
+        );
+    }
 
     /// A canned worker — returns the same outcome every call.
     /// Sufficient to pin the dispatch path's contract.
