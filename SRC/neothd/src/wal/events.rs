@@ -2137,6 +2137,12 @@ const _: () = {
     let _ = [(); 1][(EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED < 0x40
         || EVENT_TYPE_ECOLOGY_SCHEDULER_FIRED > 0x4F) as usize];
     let _ = [(); 1][(EVENT_TYPE_WORKER_DIED < 0x40 || EVENT_TYPE_WORKER_DIED > 0x4F) as usize];
+    // GR-166 — the RSS feed band-guards were missing; 0x4E/0x4F live in the
+    // 0x40-0x4F job/monitor band like every other code here.
+    let _ = [(); 1][(EVENT_TYPE_RSS_FEED_ITEM_INDEXED < 0x40
+        || EVENT_TYPE_RSS_FEED_ITEM_INDEXED > 0x4F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_RSS_FEED_PASS_COMPLETE < 0x40
+        || EVENT_TYPE_RSS_FEED_PASS_COMPLETE > 0x4F) as usize];
     let _ = [(); 1]
         [(EVENT_TYPE_RECOVERY_TRUNCATED < 0x50 || EVENT_TYPE_RECOVERY_TRUNCATED > 0x5F) as usize];
     let _ = [(); 1]
@@ -2284,6 +2290,10 @@ const _: () = {
         || EVENT_TYPE_VIDEO_FRAME_SYNTHESIZED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_STT_TRANSCRIBED < 0xC0 || EVENT_TYPE_STT_TRANSCRIBED > 0xCF) as usize];
     let _ = [(); 1][(EVENT_TYPE_TTS_SYNTHESIZED < 0xC0 || EVENT_TYPE_TTS_SYNTHESIZED > 0xCF) as usize];
+    // GR-166 — RISK_GATE_BLOCKED (0xCF) sits at the top of the 0xC0-0xCF tool
+    // band but had no band-guard; pin it like its neighbours.
+    let _ = [(); 1]
+        [(EVENT_TYPE_RISK_GATE_BLOCKED < 0xC0 || EVENT_TYPE_RISK_GATE_BLOCKED > 0xCF) as usize];
     // V11 Pick #38 (2026-05-19): coding-workflow band 0x70..=0x7F.
     let _ = [(); 1][(EVENT_TYPE_KANBAN_SESSION_OPENED < 0x70
         || EVENT_TYPE_KANBAN_SESSION_OPENED > 0x7F) as usize];

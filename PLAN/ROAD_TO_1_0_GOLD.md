@@ -49,7 +49,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 
 ## 2. WAL / Code Gotchas
 
-- **0xA band FULL.** Free WAL slots: `0x52-5F`, `0x69-6F`, `0x78-7F`, `0x85-8F`, `0x9D-9F`, `0xBE-BF`, `0xCE-CF`, `0xDB-DF`, `0xF6+`.
+- **0xA band FULL.** Free WAL slots: `0x5D-5F`, `0x69-6F`, `0x78-7F`, `0x85-8F`, `0x9D-9F`, `0xBE-BF`, `0xDD-DF`, `0xF6+`. (GR-078: 0x52-5C, 0xCE-CF and 0xDB-DC are ASSIGNED — removed from the free list; verified against wal/events.rs.)
 - **Adding a WAL event = 5 sites:** const + compile-time band-assert + `EVENT_NAME_TABLE` + `all_event_codes_are_unique` + emit-site; plus `immediate_sync` default.
 - **Exhaustive `Action` matches** live in `permissions/mod.rs` (`evaluate_strict/standard/elevated/full` + `lease_scope_for`) — adding a new `Action` variant requires updating all four arms.
 - **Pastejack guards** must be `chars()`-based, not byte-slice based.
@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 161 | 48 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 157 | 52 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,10 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-166** (INFO) ✅ FIXED — the band-guard const-assert block had no entry for 0x4E/0x4F (RSS_FEED_ITEM_INDEXED/PASS_COMPLETE) or 0xCF (RISK_GATE_BLOCKED); added all three (0x4E/0x4F pinned to 0x40-0x4F, 0xCF to 0xC0-0xCF). Compile-time guard now covers every code in those bands. `wal/events.rs`.
+- [x] **GR-078** (LOW) ✅ FIXED — the ROAD §2 free-WAL-slot list named ASSIGNED codes as free (verified against wal/events.rs): 0x52-5C are RISK_GATE_*/HINT/WEB_EXTRACT/COMPACTION; the whole 0xCE-CF is CALENDAR_WRITE_FAILED+RISK_GATE_BLOCKED (0xC band FULL); 0xDB-DC are CONSENT_GRANTED/REVOKED. Corrected to 0x5D-5F / 0xDD-DF and dropped 0xCE-CF.
+- [x] **GR-079** (INFO) ✅ FIXED — ADR-009 allocated `0xCF MEDIA_CALL_INTENT` but 0xCF is RISK_GATE_BLOCKED and the entire 0xC0 band is full; reassigned MEDIA_CALL_INTENT to the free 0xF6 overflow slot (table row + prose), so the future INTENT/RESULT design no longer collides.
+- [x] **GR-024** (LOW) ✅ FIXED — council/qa_verdict.rs doc claimed a `0x72 QA_VERDICT_EMITTED` WAL frame + council/sub_agents wiring that don't exist (0x72 is KANBAN_TASK_ASSIGNED; QaVerdict has zero production callers). Doc now states the honest wiring status: types-only, no emitter/frame/council integration yet (future work). wal::events 20/0, qa_verdict 6/0; clippy clean.
 - [x] **GR-040** (MED) ✅ FIXED — an exotic model size (e.g. 72B) with no curated row no longer silently collapses to the hardcoded 7B backstop. New central curated_or_nearest(size,class) resolves the exact curated repo else the NEAREST curated size (72B→32B), replacing the `curated_fallback(size).or_else(7B)` chain at all 3 call sites (resolve_gguf_repo + cli/models.rs + hemisphere_preset.rs). Test curated_or_nearest_exotic_size_degrades_to_nearest_not_7b. `models/gguf_variants.rs`.
 - [x] **GR-135** (INFO) ✅ FIXED — VariantClass::Unsloth 'unreachable/silently degrades to Standard' clarified: it's a CLASSIFICATION-only lineage (from_repo_id detects it on live HF repos); no recommendation path requests it + there are no curated unsloth GGUFs for Qwen2.5, so folding to Standard is a documented design choice (now stated on the curated_variant match arm), not an accidental drop. gguf_variants 10/0; clippy clean.
 - [x] **GR-017** (MED) ✅ FIXED — jina_reader OOM claim is now TRUE: fetch_via_jina streams the body (resp.chunk loop) + fast-path rejects on oversized Content-Length, aborting the instant the running total crosses JINA_MAX_BYTES — never buffers the whole body via resp.bytes() first. Test oversized_body_is_rejected_by_streaming_ceiling. `tools/jina_reader.rs`.

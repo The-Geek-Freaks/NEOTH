@@ -6,17 +6,22 @@
 //! dispatcher loop's old `bool success` return was too thin: a real verifier
 //! reports WHY it failed (failed test names, missing invariants, blocked-by-
 //! permission), and that diagnosis feeds the retry path's reframing/replanning.
-//! These types are shared by council voting + the sub-agent QA passes
-//! (`sub_agents::{parallel, schema}`) and surface in `neoth code show <task>` +
-//! the WAL `0x72 QA_VERDICT_EMITTED` frame. Pure data + constructors — the
-//! scoring logic stays in [`crate::council::quality_score`].
+//! GR-024 — wiring status: these are the verdict TYPES only. As of v1.0 they
+//! have NO production emitter — there is no `QA_VERDICT_EMITTED` WAL code
+//! allocated (the previously-documented `0x72` is `KANBAN_TASK_ASSIGNED`, an
+//! unrelated frame), and no council-voting / `sub_agents` call site constructs
+//! a `QaVerdict` yet. The emission frame + council integration + the
+//! `neoth code show <task>` surface are future work; don't read this module as
+//! evidence they already exist. Pure data + constructors — the scoring logic
+//! stays in [`crate::council::quality_score`].
 
 use serde::{Deserialize, Serialize};
 
 /// One failure item from a verifier sub-agent. Carries enough context
 /// for the retry path to decide between "fix this one thing" vs "scrap
-/// the patch and replan". Operator-readable strings — these surface in
-/// `neoth code show <task>` + the WAL `0x72 QA_VERDICT_EMITTED` frame.
+/// the patch and replan". Operator-readable strings — intended for a future
+/// `neoth code show <task>` surface (not yet wired; see the module-level
+/// GR-024 note: no `QA_VERDICT_EMITTED` WAL frame exists today).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FailureItem {
     /// Short stable id: `test_failure` / `lint_violation` / `invariant`

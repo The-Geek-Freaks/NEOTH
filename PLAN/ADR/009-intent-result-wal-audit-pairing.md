@@ -36,7 +36,7 @@ The five concrete new event pairs to allocate (next free slots in appropriate ba
 |---|---|---|---|
 | OS file-write | `0xBE OS_FILE_WRITE_INTENT` | `0xBF OS_FILE_WRITE_RESULT` | 0xB0-overflow (existing precedent: 0xBC/0xBD clipboard) |
 | Channel egress | `0x69 CHANNEL_SEND_INTENT` | `0x6A CHANNEL_SEND_RESULT` | 0x60-governance band (existing: 0x67/0x68 CHANNEL_SEND/DENIED) |
-| Media cloud call | `0xCF MEDIA_CALL_INTENT` | promote existing `0xC9/0xCC/0xCD` to RESULT role with an `op_id` field added | 0xC0 tool band |
+| Media cloud call | `0xF6 MEDIA_CALL_INTENT` (GR-079: `0xCF` is already `RISK_GATE_BLOCKED` and the **entire 0xC0 tool band is full** — the INTENT moves to the 0xF6+ overflow band) | promote existing `0xC9/0xCC/0xCD` to RESULT role with an `op_id` field added | 0xF6+ overflow (0xC0 band full) |
 | Self-update apply | `0xDA SELF_UPDATE_INTENT` (already taken by PRESET_APPLIED) → use `0xDE SELF_UPDATE_APPLY_INTENT` | promote existing `0xD2 SELF_UPDATE_APPLIED` to RESULT role with `op_id` field | 0xD0 config-lifecycle band |
 | OS app-launch | `0xBE` is now file-write; `OS_APP_LAUNCH_INTENT` deferred to next free 0xB slot | — |
 
@@ -82,7 +82,7 @@ For backwards compatibility, existing `*_APPLIED` / `*_SYNTHESIZED` / `*_WRITE` 
 **Class 3 — Media cloud calls:**
 - Current: `0xC9 VIDEO_FRAME_SYNTHESIZED` at video_dispatch.rs:113 is emitted after the provider call returns. `0xCC STT_TRANSCRIBED` at stt_provider.rs:366 and `0xCD TTS_SYNTHESIZED` at tts_cloud.rs:292 are both post-hoc. There is no INTENT frame before any cloud media call.
 - Gap: a crash during a multi-second video/STT/TTS cloud call leaves no WAL evidence that audio/video/text left the device.
-- What INTENT/RESULT adds: `0xCF MEDIA_CALL_INTENT` emitted before every cloud media dispatch (video_dispatch.rs, stt_dispatch.rs, tts_dispatch.rs). Existing `0xC9`, `0xCC`, `0xCD` gain `op_id` field and become the RESULT frames.
+- What INTENT/RESULT adds: `0xF6 MEDIA_CALL_INTENT` (GR-079: NOT `0xCF`, which is `RISK_GATE_BLOCKED`; the 0xC0 band is full) emitted before every cloud media dispatch (video_dispatch.rs, stt_dispatch.rs, tts_dispatch.rs). Existing `0xC9`, `0xCC`, `0xCD` gain `op_id` field and become the RESULT frames.
 
 **Class 4 — Self-update:**
 - Current: `0xD2 SELF_UPDATE_APPLIED` is emitted at cli/update.rs:240,286–344 and daemon/auto_update.rs:249,268 AFTER `atomic_replace_binary` (self_update.rs:678,844) completes. `0xD7 MODEL_DOWNLOAD_START` / `0xD8 MODEL_DOWNLOAD_COMPLETE` form a partial pair for HF model pulls (events.rs:1393–1404) but do NOT cover the daemon binary replace path.
