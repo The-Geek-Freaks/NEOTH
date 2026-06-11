@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 173 | 36 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 172 | 37 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-081** (MED) ✅ FIXED — write_mode_0600 no longer leaves a plaintext-secret temp file on disk when a write/fsync/rename (or, on Windows, DACL-restrict) error path fires. New SecretTmpGuard RAII removes the temp on any early return/panic, disarmed only after the atomic rename succeeds. Fixed BOTH the Unix AND Windows credential-write paths. Test secret_tmp_guard_removes_on_drop_unless_disarmed; config::credentials 9/0; clippy clean.
 - [x] **GR-046** (MED) ✅ FIXED — a confirm_high block is now liftable via 'neoth risk-confirm'. check_risk_leases computed needs_dangerous on Critical only, so a HIGH finding (which generates a Confirm under confirm_high) was never recognized as needing the DangerousCommand lease → unliftable. New pure risk_needs_dangerous_lease(risk, confirm_high) includes High when confirm_high; confirm_high threaded from security_policy. Test confirm_high_makes_a_high_finding_need_the_dangerous_lease; mcp::dispatch_loop 18/0; clippy clean.
 - [x] **GR-022** / **GOLD-SEC-29** / **GOLD-SEC-33** (MED · GROUP 11) ✅ FIXED/CLARIFIED — Windows home-ACL check no longer false-positives on every install: icacls echoes the queried PATH (contains \Users) as its leading token; the scan now anchors on the ACE form PRINCIPAL:( (new pure icacls_broad_principal) so only a REAL broad grant matches (GR-022/SEC-29). SEC-33: the Windows warn-only vs Unix hard-fail asymmetry is INTENTIONAL — Windows dirs routinely inherit broad ACEs (verified: C:\Temp grants Jeder/Everyone — my own Err-escalation broke windows_path_no_panic, proving a hard-fail would lock out a legitimate home); the wizard's explicit icacls restriction is the enforcement. Test icacls_broad_principal_ignores_echoed_path_but_catches_aces; daemon::isolation 3/0; clippy clean.
 - [x] **GR-047** (MED) ✅ OVERSTATED/already-fixed — the triage read apply_risk_leases in isolation; the FULL chain already makes a risk-confirm grant SINGLE-USE (not TTL-duration) via dispatch_loop.rs:262 consume_risk_leases (revokes+persists the covering lease on the lift — shipped in GR-032). No code change. Verified by the wsv-med-analysis workflow + grep.

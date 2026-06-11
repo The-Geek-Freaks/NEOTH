@@ -247,6 +247,36 @@ fn atomic_tmp_path(path: &Path) -> std::path::PathBuf {
     path.with_file_name(format!(".{name}.tmp{}", std::process::id()))
 }
 
+/// GR-081 — RAII cleanup that removes a secret temp file on drop (any early
+/// return or panic) UNLESS disarmed after a successful rename, so a
+/// partially-written plaintext secret never lingers on disk on a write / fsync /
+/// rename / DACL-restrict error path. Best-effort removal (a failed unlink is no
+/// worse than the prior leak).
+struct SecretTmpGuard {
+    path: Option<PathBuf>,
+}
+
+impl SecretTmpGuard {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: Some(path.to_path_buf()),
+        }
+    }
+    /// Call after the atomic rename succeeds — the temp is gone (renamed), so
+    /// there is nothing left to clean up.
+    fn disarm(mut self) {
+        self.path = None;
+    }
+}
+
+impl Drop for SecretTmpGuard {
+    fn drop(&mut self) {
+        if let Some(p) = self.path.take() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
 #[cfg(unix)]
 pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     use std::io::Write;
@@ -263,6 +293,9 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
         .mode(0o600)
         .open(&tmp)
         .with_context(|| format!("create credentials temp {} mode 0600", tmp.display()))?;
+    // GR-081 — remove the secret temp on any early return below (write / fsync /
+    // rename error or panic); disarmed only after the rename succeeds.
+    let guard = SecretTmpGuard::new(&tmp);
     file.write_all(body)
         .with_context(|| format!("write credentials body to {}", tmp.display()))?;
     file.sync_all()
@@ -270,6 +303,7 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     drop(file);
     std::fs::rename(&tmp, path)
         .with_context(|| format!("atomically replace credentials {}", path.display()))?;
+    guard.disarm();
     Ok(())
 }
 
@@ -288,8 +322,11 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     let _ = std::fs::remove_file(&tmp);
     std::fs::File::create(&tmp)
         .with_context(|| format!("create credentials temp {}", tmp.display()))?;
+    // GR-081 — the secret temp is removed on ANY early return below (DACL-restrict
+    // failure, open / write / fsync / rename error, or panic); disarmed only after
+    // a successful rename.
+    let guard = SecretTmpGuard::new(&tmp);
     if let Err(e) = crate::wal::win_acl::restrict_to_owner(&tmp) {
-        let _ = std::fs::remove_file(&tmp);
         return Err(anyhow::anyhow!(
             "refusing to write credentials {}: could not restrict the file to \
              owner-only (DACL) — the only at-rest protection for plaintext \
@@ -309,6 +346,7 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     drop(file);
     std::fs::rename(&tmp, path)
         .with_context(|| format!("atomically replace credentials {}", path.display()))?;
+    guard.disarm();
     Ok(())
 }
 
@@ -316,6 +354,27 @@ pub(crate) fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn secret_tmp_guard_removes_on_drop_unless_disarmed() {
+        // GR-081: an un-disarmed guard removes the secret temp on drop (the
+        // error / early-return path); a disarmed guard leaves it (rename done).
+        let dir = tempdir().unwrap();
+        let leaked = dir.path().join(".leak.tmp");
+        std::fs::write(&leaked, b"secret-bytes").unwrap();
+        {
+            let _g = SecretTmpGuard::new(&leaked);
+        } // dropped without disarm → removed
+        assert!(!leaked.exists(), "an un-disarmed guard must remove the temp on drop");
+
+        let kept = dir.path().join(".kept.tmp");
+        std::fs::write(&kept, b"secret-bytes").unwrap();
+        {
+            let g = SecretTmpGuard::new(&kept);
+            g.disarm();
+        }
+        assert!(kept.exists(), "a disarmed guard must leave the file (rename succeeded)");
+    }
 
     #[test]
     fn missing_file_returns_default() {
