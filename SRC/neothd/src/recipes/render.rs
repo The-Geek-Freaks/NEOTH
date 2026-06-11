@@ -53,16 +53,20 @@ pub fn render(spec: &RecipeSpec, supplied: &BTreeMap<String, String>) -> Result<
         values.entry(k.clone()).or_insert_with(|| v.clone());
     }
 
-    let prompt = substitute(&spec.prompt, &values);
-    reject_unresolved(&prompt)?;
+    let (prompt, unresolved) = substitute(&spec.prompt, &values);
+    if let Some(tok) = unresolved.into_iter().next() {
+        return Err(RecipeError::UnresolvedToken(tok));
+    }
     if prompt.trim().is_empty() {
         return Err(RecipeError::EmptyPrompt);
     }
 
     let system = match &spec.instructions {
         Some(instr) => {
-            let s = substitute(instr, &values);
-            reject_unresolved(&s)?;
+            let (s, unresolved) = substitute(instr, &values);
+            if let Some(tok) = unresolved.into_iter().next() {
+                return Err(RecipeError::UnresolvedToken(tok));
+            }
             Some(s)
         }
         None => None,
@@ -107,38 +111,54 @@ fn type_check(p: &RecipeParameter, raw: &str) -> Result<String, RecipeError> {
     }
 }
 
-/// Replace `{{key}}` and `{{ key }}` (inner spaces tolerated) for every value.
-fn substitute(template: &str, values: &BTreeMap<String, String>) -> String {
-    let mut out = template.to_string();
-    for (k, v) in values {
-        out = out.replace(&format!("{{{{{k}}}}}"), v); // {{key}}
-        out = out.replace(&format!("{{{{ {k} }}}}"), v); // {{ key }}
-    }
-    out
-}
-
-/// Error if a `{{ identifier }}` token survives substitution — that means the
-/// prompt references a parameter the recipe never declared (a typo). Non-token
-/// braces (e.g. a JSON example `{{...}}` with non-identifier content) are left
-/// alone.
-fn reject_unresolved(rendered: &str) -> Result<(), RecipeError> {
-    if let Some(start) = rendered.find("{{") {
-        let rest = &rendered[start + 2..];
-        if let Some(end) = rest.find("}}") {
-            let inner = rest[..end].trim();
-            // Only treat it as an unresolved PARAM token if it looks like a bare
-            // identifier (letters/digits/_/-, no spaces) — avoids false-positives
-            // on legit `{{` in example payloads.
-            if !inner.is_empty()
-                && inner
+/// Replace `{{key}}` / `{{ key }}` (inner spaces tolerated) in a SINGLE pass,
+/// returning the rendered text PLUS the identifier-shaped tokens that referenced
+/// an UNDECLARED parameter (a typo).
+///
+/// GR-116 — a substituted value is emitted VERBATIM and never rescanned, so a
+/// value of `{{otherkey}}` can't inject another parameter's placeholder (the old
+/// sequential `out.replace(...)` per BTreeMap entry expanded it when that later
+/// key's turn arrived — a value-driven template injection).
+///
+/// GR-115 — every `{{…}}` in the TEMPLATE is inspected (not just the first), and
+/// unresolved detection runs HERE on the template tokens, not on the
+/// post-substitution string. That means a value which legitimately contains a
+/// literal `{{…}}` is never re-examined and so never mistaken for an unresolved
+/// reference, while a real undeclared token after a non-identifier `{{…}}` (e.g.
+/// a JSON example) is still caught. Non-identifier braces are left literal and
+/// never flagged.
+fn substitute(template: &str, values: &BTreeMap<String, String>) -> (String, Vec<String>) {
+    let mut out = String::with_capacity(template.len());
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut rest = template;
+    while let Some(open) = rest.find("{{") {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 2..];
+        let Some(close) = after.find("}}") else {
+            // No closing brace — emit the remainder verbatim and stop.
+            out.push_str(&rest[open..]);
+            return (out, unresolved);
+        };
+        let key = after[..close].trim();
+        if let Some(v) = values.get(key) {
+            out.push_str(v); // verbatim — never rescanned (GR-116)
+        } else {
+            // Undeclared token. Flag it iff it's a bare identifier (a typo'd
+            // param ref); non-identifier braces (JSON, etc.) are legit literals.
+            // Emit verbatim either way.
+            if !key.is_empty()
+                && key
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
             {
-                return Err(RecipeError::UnresolvedToken(inner.to_string()));
+                unresolved.push(key.to_string());
             }
+            out.push_str(&rest[open..open + 2 + close + 2]);
         }
+        rest = &after[close + 2..];
     }
-    Ok(())
+    out.push_str(rest);
+    (out, unresolved)
 }
 
 #[cfg(test)]
@@ -233,6 +253,30 @@ mod tests {
     fn undeclared_token_is_rejected() {
         // `{{target}}` is referenced but never declared as a parameter.
         let spec = RecipeSpec::parse("name: g\nprompt: \"scan {{target}}\"\n").unwrap();
+        assert_eq!(
+            render(&spec, &params(&[])).unwrap_err(),
+            RecipeError::UnresolvedToken("target".into())
+        );
+    }
+
+    #[test]
+    fn value_with_placeholder_is_not_re_expanded_gr116() {
+        // GR-116 — a's value contains `{{b}}`; the single-pass substitute must
+        // emit it VERBATIM, NOT expand it when b's turn comes.
+        let spec = RecipeSpec::parse(
+            "name: g\nprompt: \"{{a}}-{{b}}\"\nparameters:\n  - key: a\n  - key: b\n",
+        )
+        .unwrap();
+        let r = render(&spec, &params(&[("a", "{{b}}"), ("b", "X")])).unwrap();
+        assert_eq!(r.prompt, "{{b}}-X", "a's value must stay literal, not become X-X");
+    }
+
+    #[test]
+    fn unresolved_token_after_non_identifier_braces_is_caught_gr115() {
+        // GR-115 — the first `{{x y}}` is non-identifier (space) and skipped; a
+        // REAL undeclared `{{target}}` later in the string must still be caught
+        // (the old code only inspected the first `{{`).
+        let spec = RecipeSpec::parse("name: g\nprompt: \"a {{x y}} b {{target}}\"\n").unwrap();
         assert_eq!(
             render(&spec, &params(&[])).unwrap_err(),
             RecipeError::UnresolvedToken("target".into())

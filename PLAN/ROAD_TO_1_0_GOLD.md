@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 144 | 65 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 142 | 67 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,8 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-116** (LOW) ✅ FIXED — recipe substitute() ran a sequential out.replace() per BTreeMap entry, so a parameter VALUE containing `{{laterkey}}` got expanded when that later key's iteration arrived (value-driven template injection). Rewrote as a SINGLE forward pass that emits each value verbatim and never rescans it. Test value_with_placeholder_is_not_re_expanded_gr116. `recipes/render.rs`.
+- [x] **GR-115** (LOW) ✅ FIXED — reject_unresolved inspected only the FIRST `{{…}}`, so a real undeclared `{{token}}` AFTER a non-identifier `{{…}}` (e.g. a JSON example with spaces) escaped detection. Unresolved detection now runs INSIDE the single-pass substitute over every TEMPLATE token (not the post-substitution string), which also means a value's legit literal `{{…}}` is never re-flagged. Removed the separate reject_unresolved fn. Test unresolved_token_after_non_identifier_braces_is_caught_gr115. render 11/0; clippy clean.
 - [x] **GOLD-SEC-12** (LOW SEC) ✅ FIXED — the Chrome importer Drop impl zeroized self.password but left the decrypted plaintext USERNAME unscrubbed on the heap (swap-to-disk risk). Added self.username.zeroize() to the Drop in ALL THREE OS importers (chrome_linux/macos/windows — the finding named linux+macos; windows had the identical bug). `credentials/chrome_{linux,macos,windows}.rs`.
 - [x] **GOLD-SEC-21** (LOW SEC) ✅ FIXED — firefox decrypt did `String::from_utf8(bytes)` whose Err path moves the decrypted plaintext into FromUtf8Error, then drops it UNzeroized. New utf8_or_scrub(bytes,label) recovers the bytes via into_bytes() and zeroizes them before the error propagates (Display reports only index/len, never bytes). Test utf8_or_scrub_errors_and_scrubs_on_invalid_utf8_gold_sec_21 (the previously-absent zeroize test). firefox 21/0; clippy (browser-import) clean.
 - [x] **GOLD-COR-34** (MED) ✅ FIXED — the shared dispatch_join JoinSet (Meta webhook fan-out) was only drained at shutdown, so completed task handles accumulated unbounded over the daemon's lifetime (one per fan-out). The spawn site now reaps completed tasks immediately via a non-blocking `while js.try_join_next().is_some() {}` under the lock it already holds, bounding the set to the in-flight tasks. `channels/webhook_listener.rs`.
