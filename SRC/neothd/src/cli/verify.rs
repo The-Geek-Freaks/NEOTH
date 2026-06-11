@@ -152,6 +152,23 @@ fn verify_segments(
         if raw.len() < SEGMENT_HEADER_LEN {
             continue;
         }
+        // GR-007 — a segment large enough to carry a header (≥ SEGMENT_HEADER_LEN)
+        // whose header does NOT parse is tamper-suspect. `logical_segment_bytes`
+        // silently falls back to treating it as a header-less bare frame stream
+        // (offset 0), which would find 0 markers and report the segment "clean" —
+        // a verify FAIL-OPEN for a corrupted-header (especially compressed)
+        // segment. Production segments always carry a parseable v1/v2 header, so
+        // surface the parse failure as a verification failure instead of silently
+        // passing it as a header-less stream.
+        if crate::wal::segment_header::parse_segment_header(&raw).is_err() {
+            outcome.failures.push(format!(
+                "{}: segment header does not parse — tamper-suspect (a corrupted \
+                 header would otherwise be read as a header-less stream, hiding its \
+                 markers)",
+                seg.display()
+            ));
+            continue;
+        }
         let (header_len, logical) = match compaction::logical_segment_bytes(&raw) {
             Ok(v) => v,
             Err(e) => {
@@ -1071,5 +1088,29 @@ mod tests {
         run_verify(args)
             .await
             .expect("a compressed segment with an intact marker verifies clean");
+    }
+
+    #[test]
+    fn verify_flags_a_corrupt_header_segment_as_tamper_suspect() {
+        // GR-007: a segment large enough to carry a header but whose header does
+        // NOT parse must be reported as a verification FAILURE (tamper-suspect),
+        // not silently treated as a header-less bare stream that finds 0 markers
+        // and reports "clean" — that was the verify fail-open for a corrupted
+        // (especially compressed) segment. FAILS pre-fix (0 failures), passes post.
+        let dir = tempfile::tempdir().unwrap();
+        let seg = dir.path().join("000001.wal");
+        // ≥ header length of bytes that do NOT form a valid segment header.
+        let n = crate::wal::segment_header::SEGMENT_HEADER_LEN + 40;
+        std::fs::write(&seg, vec![0xFFu8; n]).unwrap();
+        let outcome = verify_segments(std::slice::from_ref(&seg), b"any-key", &[]).unwrap();
+        assert!(
+            !outcome.failures.is_empty(),
+            "a corrupt-header segment must be flagged as tamper-suspect, not silently clean"
+        );
+        assert!(
+            outcome.failures[0].contains("header does not parse"),
+            "the failure must name the unparseable header: {:?}",
+            outcome.failures
+        );
     }
 }
