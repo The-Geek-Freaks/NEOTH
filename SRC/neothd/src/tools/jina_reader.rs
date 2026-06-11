@@ -1,17 +1,21 @@
 //! GOLD-ADOPT-26 — zero-config web-to-Markdown via Jina Reader.
 //!
 //! `https://r.jina.ai/<url>` converts any web page to clean Markdown without
-//! requiring an API key. This is the last-resort fetcher in NEOTH's ingest
-//! pipeline: when an operator passes a URL to `neoth ingest <url>` (or the
-//! agent calls this internally) and no specialised extractor matches, we
-//! prepend the Jina Reader prefix and GET the result.
+//! requiring an API key. NEOTH's live caller is `neoth fetch <url>`
+//! ([`crate::cli::fetch`]) — when an operator asks the CLI to fetch a URL and
+//! the `--jina` path is taken, we prepend the Jina Reader prefix and GET the
+//! result. (GR-066/096: the previous doc named `neoth ingest <url>`, which has
+//! no jina wiring — `cli::fetch` is the real and only caller.)
 //!
 //! The caller is responsible for SSRF guard (validate_url from
 //! `tools::web_fetch`) BEFORE calling into this module — Jina always dials
 //! `r.jina.ai`, which is a fixed public proxy, so the SSRF risk is limited
 //! to the proxy bouncing back a transformed version of whatever the operator
-//! supplied. We still enforce a hard byte ceiling so a giant page can't OOM
-//! the daemon.
+//! supplied. GR-017/095: we STREAM the response and abort the moment the
+//! running total crosses [`JINA_MAX_BYTES`] (plus a fast-path reject on an
+//! honest oversized `Content-Length`), so we never buffer more than one chunk
+//! past the ceiling — a giant page genuinely can't OOM the daemon (the old
+//! code buffered the WHOLE body via `resp.bytes()` before checking the size).
 //!
 //! **Network path**: this module dials `r.jina.ai` (a fixed public proxy)
 //! through `providers::http_client::build_client_no_redirect` — the audited,
@@ -39,19 +43,29 @@ const JINA_UA: &str = "NEOTH-ingest/0.1 (+self-hosted; https://r.jina.ai)";
 ///
 /// The caller MUST have already run `tools::web_fetch::validate_url(url)` (or
 /// equivalent SSRF guard) on the original URL before this call. This function
-/// prepends `JINA_READER_BASE` and sends a plain GET — it does NOT re-validate
+/// prepends [`JINA_READER_BASE`] and sends a plain GET — it does NOT re-validate
 /// the proxy URL (r.jina.ai is a fixed known host).
 ///
-/// Returns `Err` on non-2xx HTTP status, body exceeding `JINA_MAX_BYTES`, or
+/// Returns `Err` on non-2xx HTTP status, body exceeding [`JINA_MAX_BYTES`], or
 /// any network/parse error. The returned `String` is UTF-8 Markdown text.
 pub async fn fetch_via_jina(url: &str) -> Result<String> {
-    let jina_url = format!("{JINA_READER_BASE}{url}");
+    fetch_via_jina_at(JINA_READER_BASE, url).await
+}
+
+/// GR-067/151 — testable core of [`fetch_via_jina`]. `base` is the proxy
+/// prefix: production passes [`JINA_READER_BASE`]; the unit tests point it at a
+/// local wiremock server so the REAL status-check + streaming byte-ceiling +
+/// no-redirect path is exercised end-to-end (the old tests only mirrored this
+/// function's body against a direct client, leaving the function itself
+/// untested).
+async fn fetch_via_jina_at(base: &str, url: &str) -> Result<String> {
+    let jina_url = format!("{base}{url}");
     // GR-065 — no-redirect client (the SX-01 norm web_fetch follows): r.jina.ai
     // (a third-party proxy) must not be able to 30x-bounce the fetch to an
     // arbitrary host the SSRF guard never saw.
     let client =
         http_client::build_client_no_redirect().context("jina_reader: build reqwest client")?;
-    let resp = client
+    let mut resp = client
         .get(&jina_url)
         .header("User-Agent", JINA_UA)
         .header("Accept", "text/plain")
@@ -70,20 +84,34 @@ pub async fn fetch_via_jina(url: &str) -> Result<String> {
         );
     }
 
-    let bytes = resp
-        .bytes()
-        .await
-        .with_context(|| format!("jina_reader: read body for {url}"))?;
-
-    if bytes.len() > JINA_MAX_BYTES {
-        anyhow::bail!(
-            "jina_reader: response body {} bytes exceeds ceiling {} for {url}",
-            bytes.len(),
-            JINA_MAX_BYTES
-        );
+    // GR-017/095 — fast-path: refuse before reading a single body byte when the
+    // server honestly advertises an oversized payload.
+    if let Some(len) = resp.content_length() {
+        if len > JINA_MAX_BYTES as u64 {
+            anyhow::bail!(
+                "jina_reader: Content-Length {len} exceeds ceiling {JINA_MAX_BYTES} for {url}"
+            );
+        }
     }
 
-    let text = String::from_utf8_lossy(&bytes).into_owned();
+    // GR-017/095 — stream the body chunk-by-chunk and abort the instant the
+    // running total crosses the ceiling, so a giant (or Content-Length-lying)
+    // page can never buffer more than one chunk past JINA_MAX_BYTES into RAM.
+    let mut body: Vec<u8> = Vec::with_capacity(8 * 1024);
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .with_context(|| format!("jina_reader: read body for {url}"))?
+    {
+        if body.len() + chunk.len() > JINA_MAX_BYTES {
+            anyhow::bail!(
+                "jina_reader: response body exceeds ceiling {JINA_MAX_BYTES} for {url}"
+            );
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    let text = String::from_utf8_lossy(&body).into_owned();
     Ok(text)
 }
 
@@ -95,20 +123,20 @@ mod tests {
     use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    /// Helper: start a wiremock server that serves the given body on any GET.
-    async fn mock_jina(body: &str, status: u16) -> MockServer {
+    /// Helper: a wiremock server that serves `body` with `status` on any GET,
+    /// plus the `base` URL (with trailing slash) to feed `fetch_via_jina_at`.
+    async fn mock_jina(body: &str, status: u16) -> (MockServer, String) {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
-            .respond_with(if status == 200 {
-                ResponseTemplate::new(200)
+            .respond_with(
+                ResponseTemplate::new(status)
                     .set_body_string(body)
-                    .insert_header("content-type", "text/plain; charset=utf-8")
-            } else {
-                ResponseTemplate::new(status).set_body_string("error")
-            })
+                    .insert_header("content-type", "text/plain; charset=utf-8"),
+            )
             .mount(&server)
             .await;
-        server
+        let base = format!("{}/", server.uri());
+        (server, base)
     }
 
     #[test]
@@ -120,41 +148,29 @@ mod tests {
 
     #[tokio::test]
     async fn returns_markdown_body_on_200() {
-        let server = mock_jina("# Hello\n\nThis is Markdown.", 200).await;
-        // We can't actually hit r.jina.ai in unit tests. We test the HTTP layer
-        // by exercising fetch_via_jina against a mock that simulates the proxy.
-        // To do this we call the underlying client directly (the function always
-        // prepends JINA_READER_BASE so we test the full URL-building + parsing
-        // path via the parse test above, and the HTTP response handling below
-        // via a direct client call that mirrors what fetch_via_jina does).
-        let client = http_client::build_client().unwrap();
-        let resp = client
-            .get(server.uri())
-            .header("Accept", "text/plain")
-            .send()
-            .await
-            .unwrap();
-        assert!(resp.status().is_success());
-        let body = resp.text().await.unwrap();
-        assert!(body.contains("Hello"));
-        assert!(body.contains("Markdown"));
+        // GR-067/151 — exercises the REAL fetch_via_jina_at end-to-end against a
+        // mock proxy (not a hand-mirrored client call).
+        let (_server, base) = mock_jina("# Hello\n\nThis is Markdown.", 200).await;
+        let text = fetch_via_jina_at(&base, "target").await.unwrap();
+        assert!(text.contains("Hello"));
+        assert!(text.contains("Markdown"));
     }
 
     #[tokio::test]
     async fn non_200_triggers_error() {
-        let server = mock_jina("", 503).await;
-        let client = http_client::build_client().unwrap();
-        let resp = client.get(server.uri()).send().await.unwrap();
-        assert_eq!(resp.status().as_u16(), 503);
-        // Verify our logic: a 503 would cause fetch_via_jina to bail.
-        assert!(!resp.status().is_success());
+        let (_server, base) = mock_jina("error", 503).await;
+        let err = fetch_via_jina_at(&base, "target").await.unwrap_err();
+        assert!(
+            format!("{err}").contains("503"),
+            "a 503 must bail with the status in the message: {err}"
+        );
     }
 
     #[tokio::test]
     async fn jina_client_does_not_follow_redirects() {
-        // GR-065: the Jina fetch must NOT follow a redirect (r.jina.ai bouncing
-        // the response to an arbitrary host). Prove the builder fetch_via_jina now
-        // uses surfaces a 30x instead of chasing it to an internal target.
+        // GR-065: a 302 from r.jina.ai must NOT be chased to an internal target.
+        // The no-redirect client surfaces the 302 → fetch_via_jina_at bails
+        // (302 is not a success status) instead of fetching 169.254.169.254.
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .respond_with(
@@ -162,12 +178,11 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let client = http_client::build_client_no_redirect().unwrap();
-        let resp = client.get(server.uri()).send().await.unwrap();
-        assert_eq!(
-            resp.status().as_u16(),
-            302,
-            "the Jina client must surface the redirect, not follow it"
+        let base = format!("{}/", server.uri());
+        let err = fetch_via_jina_at(&base, "target").await.unwrap_err();
+        assert!(
+            format!("{err}").contains("302"),
+            "the redirect must surface as a 302 error, not be followed: {err}"
         );
     }
 
@@ -185,10 +200,10 @@ mod tests {
         );
     }
 
-    /// Verify that the accept + format headers are set correctly in the
-    /// request by checking they match what the mock expects.
     #[tokio::test]
     async fn sends_correct_accept_and_format_headers() {
+        // GR-067/151 — the real fetch must send the documented headers; the mock
+        // ONLY answers when they match, so a green result proves they were sent.
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(header("Accept", "text/plain"))
@@ -200,28 +215,32 @@ mod tests {
             )
             .mount(&server)
             .await;
-
-        // Exercise the exact client code fetch_via_jina uses (headers mirrored).
-        let client = http_client::build_client().unwrap();
-        let resp = client
-            .get(server.uri())
-            .header("Accept", "text/plain")
-            .header("X-Return-Format", "markdown")
-            .send()
-            .await
-            .unwrap();
-        assert!(resp.status().is_success());
+        let base = format!("{}/", server.uri());
+        assert_eq!(fetch_via_jina_at(&base, "target").await.unwrap(), "ok");
     }
 
-    /// Confirm that a body exactly at the ceiling is accepted and one byte
-    /// over is rejected. (We test the predicate inline since the actual
-    /// fetch function can't be intercepted mid-stream without a real network
-    /// call — this validates the byte-ceiling logic.)
-    #[test]
-    fn byte_ceiling_boundary() {
+    #[tokio::test]
+    async fn oversized_body_is_rejected_by_streaming_ceiling() {
+        // GR-017/095 — a body over the ceiling must bail (the fix: the old code
+        // buffered the whole body via resp.bytes() THEN checked; now we refuse
+        // on Content-Length / mid-stream). Proves the OOM-safety claim is real.
+        let big = "x".repeat(JINA_MAX_BYTES + 100);
+        let (_server, base) = mock_jina(&big, 200).await;
+        let err = fetch_via_jina_at(&base, "target").await.unwrap_err();
+        assert!(
+            format!("{err}").contains("ceiling"),
+            "an oversized body must be rejected against the ceiling: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn body_exactly_at_ceiling_is_accepted() {
+        // GR-017/095 boundary — exactly JINA_MAX_BYTES is NOT over the ceiling,
+        // so the streaming reader accepts it (real call, replaces the old
+        // tautological byte_ceiling_boundary self-check).
         let at_limit = "x".repeat(JINA_MAX_BYTES);
-        let over_limit = "x".repeat(JINA_MAX_BYTES + 1);
-        assert!(at_limit.len() <= JINA_MAX_BYTES);
-        assert!(over_limit.len() > JINA_MAX_BYTES);
+        let (_server, base) = mock_jina(&at_limit, 200).await;
+        let text = fetch_via_jina_at(&base, "target").await.unwrap();
+        assert_eq!(text.len(), JINA_MAX_BYTES);
     }
 }

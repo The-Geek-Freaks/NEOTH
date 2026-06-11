@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 170 | 39 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 163 | 46 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,13 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-017** (MED) ✅ FIXED — jina_reader OOM claim is now TRUE: fetch_via_jina streams the body (resp.chunk loop) + fast-path rejects on oversized Content-Length, aborting the instant the running total crosses JINA_MAX_BYTES — never buffers the whole body via resp.bytes() first. Test oversized_body_is_rejected_by_streaming_ceiling. `tools/jina_reader.rs`.
+- [x] **GR-095** (LOW) ✅ FIXED — same fix as GR-017: the byte-ceiling now bites BEFORE full buffering (streaming + Content-Length fast-path), so the 'can't OOM the daemon' doc is accurate.
+- [x] **GR-066** (LOW) ✅ FIXED — module doc named a non-existent `neoth ingest <url>` jina caller; corrected to the real + only caller `neoth fetch` (cli/fetch.rs:95).
+- [x] **GR-096** (LOW) ✅ FIXED — duplicate of GR-066 (false ingest-pipeline integration claim); doc now names cli::fetch.
+- [x] **GR-067** (LOW) ✅ FIXED — test theater killed: extracted testable core fetch_via_jina_at(base,url); tests now call the REAL function against wiremock (status/headers/redirect/ceiling), replacing the tautological byte_ceiling_boundary with body_exactly_at_ceiling_is_accepted + oversized_body_is_rejected.
+- [x] **GR-151** (INFO) ✅ FIXED — same as GR-067: jina_reader tests no longer duplicate the function body; they exercise fetch_via_jina_at end-to-end. jina_reader 9/0; clippy clean.
+- [x] **GR-016** (MED SEC) ✅ VERIFIED-MOOT — no_outbound_network.rs audits reqwest::Client CONSTRUCTION sites outside providers/, not destinations; jina_reader builds via providers::http_client::build_client_no_redirect (GR-065) so it never constructs a client itself → no audit bypass. Module doc already states this correctly. No code change needed.
 - [x] **GR-009** SEC — relay-client bearer-token path: env-only `NEOTH_RELAY_TOKEN` resolver on RelayConfig (mirrors neoth-relay server) + serde-guard test that the relay secret can never become a freedom.yaml field. Wire-send integration lands with the relay-client transport (SPEC_cluster_phase5, multi-week deferred — no client send-site exists today). `cluster/relay.rs`.
 - [x] **GR-104** (MED) ✅ FIXED (measured) — inspect_tool_args no longer lets a payload hidden in a non-hint field slip past once any hint field matched. When a hint matches it now ALSO scans non-hint NON-prose fields (new non_hint_non_prose_strings + PROSE_FIELD_HINTS exemption), so a payload in data/notes/payload is caught while genuine prose/display fields (content/…) stay exempt to avoid false-tripping on docs that merely MENTION a command (the deliberate low-false-positive design preserved). Test inspect_tool_args_scans_non_prose_non_hint_fields; security::risk_tests 6/0; clippy clean.
 - [x] **GR-081** (MED) ✅ FIXED — write_mode_0600 no longer leaves a plaintext-secret temp file on disk when a write/fsync/rename (or, on Windows, DACL-restrict) error path fires. New SecretTmpGuard RAII removes the temp on any early return/panic, disarmed only after the atomic rename succeeds. Fixed BOTH the Unix AND Windows credential-write paths. Test secret_tmp_guard_removes_on_drop_unless_disarmed; config::credentials 9/0; clippy clean.
