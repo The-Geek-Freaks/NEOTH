@@ -18,7 +18,6 @@ use anyhow::{Context, Result};
 use clap::Args;
 use tracing::{debug, error, info, warn};
 
-use crate::channels::{PipelineHandler, telegram::TelegramChannel};
 use crate::config::FreedomConfig;
 use crate::memory::store;
 use crate::providers::{self, Provider};
@@ -465,200 +464,28 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // could otherwise hang shutdown on a slow turn).
     let dispatch_join: std::sync::Arc<tokio::sync::Mutex<tokio::task::JoinSet<()>>> =
         std::sync::Arc::new(tokio::sync::Mutex::new(tokio::task::JoinSet::new()));
-    if let (Some(telegram_token), Some(provider)) =
-        (config.telegram_token.clone(), shared_provider.as_ref())
-    {
-        let handler: PipelineHandler = crate::cli::serve_tasks::build_channel_handler(
-            provider.clone(),
-            &config,
-            &writer,
-            &provider_meter,
-            &rate_limiter,
-            &segment_path,
-            &shared_views_conn,
-            &reload_controller,
-        );
-        // SF-03: hand the adapter the daemon's WAL writer so allowlist-
-        // rejected senders are audited via `0x3B CHANNEL_GATE_REJECTED`
-        // (the daemon is the single writer; this is a cheap handle clone).
-        let channel = TelegramChannel::new(telegram_token, config.telegram_user_id)
-            .with_gate_writer(writer.clone());
-        // GOLD-ARCH-01: spawn relocated to serve_tasks (same handle into channel_tasks).
-        crate::cli::serve_tasks::spawn_channel_run(channel, handler, "Telegram", &mut channel_tasks);
-        info!(
-            channel = "telegram",
-            status = "LIVE",
-            "channel: spawned (polling loop)"
-        );
-    } else if config.telegram_token.is_some() && shared_provider.is_none() {
-        warn!(
-            channel = "telegram",
-            status = "CONFIGURED-NOT-STARTED",
-            "Telegram token configured but provider unavailable; channel not started"
-        );
-    }
-
-    // ── R4-P1 honest channel-bootstrap status logging ─────────────────────
-    //
-    // Per `PLAN/REEVALUATION_GESAMT_2026-05-22_R4.md` P1: every channel
-    // gets an explicit log line at boot so `neoth doctor channels`'s
-    // honest classification matches what `neoth serve` actually did.
-    // No silent failures, no "looks like everything started but
-    // half the channels are scaffolds".
-    //
-    // Implementation matches the R2-P0-2 doctor classification:
-    //   LIVE = adapter has live inbound + serve spawns it
-    //   OUTBOUND-ONLY = send_text works, no inbound receive loop
-    //   CONFIGURED-NOT-STARTED = full inbound code exists but serve
-    //                            does not yet bootstrap it
-    //   absent = no credentials configured (silent)
+    // R4-P1: load credentials once. Used by the Slack/WhatsApp adapters in
+    // spawn_channel_adapters below AND by cluster-transport activation later, so
+    // it stays in run_serve and is passed by reference (not consumed).
     let creds = crate::config::credentials::Credentials::load_or_default(
         &crate::config::credentials::default_path(),
     )
     .unwrap_or_default();
-    // Slack socket-mode inbound — spawns the WebSocket receive loop when
-    // both bot + app tokens are configured. Requires a provider so the
-    // pipeline can answer; otherwise log CONFIGURED-NOT-STARTED.
-    match (
-        creds.slack_bot_token.clone(),
-        creds.slack_app_token.clone(),
-        shared_provider.as_ref(),
-    ) {
-        (Some(bot), Some(app), Some(provider)) => {
-            let handler: PipelineHandler = crate::cli::serve_tasks::build_channel_handler(
-                provider.clone(),
-                &config,
-                &writer,
-                &provider_meter,
-                &rate_limiter,
-                &segment_path,
-                &shared_views_conn,
-                &reload_controller,
-            );
-            let channel = crate::channels::slack::SlackChannel::new(bot, app);
-            // GOLD-ARCH-01: spawn relocated to serve_tasks (same handle into channel_tasks).
-            crate::cli::serve_tasks::spawn_channel_run(channel, handler, "Slack", &mut channel_tasks);
-            info!(
-                channel = "slack",
-                status = "LIVE",
-                "channel: spawned (socket-mode WS loop)"
-            );
-        }
-        (Some(_), None, _) | (None, Some(_), _) => {
-            warn!(
-                channel = "slack",
-                status = "CONFIGURED-NOT-STARTED",
-                "Slack needs BOTH bot_token (xoxb-) and app_token (xapp-) for socket mode; \
-                 only one supplied — receive loop not started. send_text still works."
-            );
-        }
-        (Some(_), Some(_), None) => {
-            warn!(
-                channel = "slack",
-                status = "CONFIGURED-NOT-STARTED",
-                "Slack tokens configured but provider unavailable; channel not started"
-            );
-        }
-        (None, None, _) => {}
-    }
-
-    // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
-    // verify-token + app-secret + provider are all present. Listens on
-    // 127.0.0.1:<whatsapp_webhook_port> (default 8443); the operator's
-    // reverse proxy terminates TLS and forwards `/webhook` here.
-    let whatsapp_inbound_started = match (
-        creds.whatsapp_token.clone(),
-        creds.whatsapp_phone_id.clone(),
-        creds.whatsapp_verify_token.clone(),
-        creds.whatsapp_app_secret.clone(),
-        shared_provider.as_ref(),
-    ) {
-        (Some(token), Some(phone), Some(verify), Some(secret), Some(provider)) => {
-            let handler: PipelineHandler = crate::cli::serve_tasks::build_channel_handler(
-                provider.clone(),
-                &config,
-                &writer,
-                &provider_meter,
-                &rate_limiter,
-                &segment_path,
-                &shared_views_conn,
-                &reload_controller,
-            );
-            let port = config.whatsapp_webhook_port.unwrap_or(8443);
-            let bind: std::net::SocketAddr = format!("127.0.0.1:{port}")
-                .parse()
-                .expect("static bind addr parses");
-            // GR-01 Pick B: thread the Graph API send creds into the
-            // listener so the dispatch path can route pipeline replies
-            // back through Meta instead of logging+dropping them.
-            let listener_cfg = crate::channels::webhook_listener::WebhookListenerConfig {
-                meta_app_secret: secret.expose().as_bytes().to_vec(),
-                meta_verify_token: verify.expose().to_string(),
-                slack_signing_secret: Vec::new(),
-                pipeline: handler,
-                whatsapp_send_creds: Some(crate::channels::webhook_listener::WhatsAppSendCreds {
-                    access_token: token.clone(),
-                    phone_number_id: phone.clone(),
-                    base_url: None,
-                }),
-                // P0 — gate + audit the WhatsApp webhook reply send. The daemon
-                // owns the WAL writer; evaluate the channel-send permission once
-                // under the active autonomy; honour the proof-hardline
-                // required-audit switch (a send that can't be audited is then
-                // refused fail-closed).
-                send_governance: crate::channels::webhook_listener::SendGovernance {
-                    wal_writer: Some(writer.clone()),
-                    decision: crate::permissions::evaluate(
-                        &crate::permissions::Action::ChannelSend,
-                        config.autonomy,
-                    ),
-                    required_audit: config.audit_rpc.required_for_oneshot_permission_events,
-                    dry_run: false,
-                },
-                max_concurrent_connections: None,
-                // COR-34: track this listener's detached Meta fan-out tasks so
-                // shutdown can drain their WAL writes before the writer closes.
-                dispatch_join: Some(std::sync::Arc::clone(&dispatch_join)),
-            };
-            let task = tokio::spawn(async move {
-                let shutdown = std::future::pending::<()>();
-                if let Err(e) =
-                    crate::channels::webhook_listener::serve(bind, listener_cfg, shutdown).await
-                {
-                    tracing::error!(error = %e, "WhatsApp webhook listener exited with error");
-                }
-            });
-            channel_tasks.push(task);
-            info!(
-                channel = "whatsapp",
-                status = "LIVE",
-                port = port,
-                "channel: spawned (Meta webhook listener on 127.0.0.1)"
-            );
-            true
-        }
-        (Some(_), _, _, _, None) => {
-            warn!(
-                channel = "whatsapp",
-                status = "CONFIGURED-NOT-STARTED",
-                "WhatsApp credentials configured but provider unavailable; channel not started"
-            );
-            false
-        }
-        (Some(_), _, _, _, _) => {
-            warn!(
-                channel = "whatsapp",
-                status = "OUTBOUND-ONLY",
-                "WhatsApp send_text works but inbound needs whatsapp_verify_token + \
-                 whatsapp_app_secret in credentials.yaml. Listener not started."
-            );
-            false
-        }
-        _ => false,
-    };
-    let _ = whatsapp_inbound_started;
-    // Discord + Keet have no credential fields in credentials.yaml yet
-    // — when they land, the same explicit-log pattern fires.
+    // GOLD-ARCH-01: the channel-adapter bootstrap (Telegram polling + Slack
+    // socket-mode + WhatsApp Meta webhook listener) is relocated to serve_tasks.
+    crate::cli::serve_tasks::spawn_channel_adapters(
+        &config,
+        &shared_provider,
+        &writer,
+        &provider_meter,
+        &rate_limiter,
+        &segment_path,
+        &shared_views_conn,
+        &reload_controller,
+        &dispatch_join,
+        &creds,
+        &mut channel_tasks,
+    );
 
     // ── 5b-tris. Obsidian vault auto-sync (R-5 follow-up) ──────────────────
     //
