@@ -25,11 +25,15 @@ use super::segment_header::SEGMENT_HEADER_LEN;
 /// segment — identical to the offset v1 callers already tracked, and the value
 /// the `wal_cursor` table + rollback `absolute_offset` are measured in.
 ///
-/// Stops cleanly at a torn / short trailing frame (a crashed writer may leave a
-/// partial frame), guards against a `total_len == 0` infinite loop, and treats a
-/// segment shorter than a header as empty (not an error). Returns the first
-/// error from `cb` (a caller may `bail!` to abort the walk early) or from an
-/// unreconstructable — tamper-suspect — compressed blob.
+/// Stops cleanly at a SHORT trailing frame (a crashed writer may leave the last
+/// frame incomplete → `decode_frame` returns `BufferTooShort`), guards against a
+/// `total_len == 0` infinite loop, and treats a segment shorter than a header as
+/// empty (not an error). GR-059 — a NON-short decode failure mid-segment
+/// (`CrcMismatch`, `InvalidMagic`, `InconsistentTotalLen`, bad version/flags, …)
+/// means a fully-present frame failed to validate, i.e. corruption or tampering;
+/// it is returned as an error (fail loud) rather than read as a clean
+/// end-of-data. Also returns the first error from `cb` (a caller may `bail!` to
+/// abort the walk early) or from an unreconstructable compressed blob.
 pub(crate) fn for_each_frame<F>(seg_bytes: &[u8], mut cb: F) -> Result<()>
 where
     F: FnMut(usize, &DecodedFrame<'_>) -> Result<()>,
@@ -42,8 +46,21 @@ where
     while cursor < logical.len() {
         let dec = match decode_frame(&logical[cursor..]) {
             Ok(d) => d,
-            // Torn / partial trailing frame (crashed writer) — stop walking.
-            Err(_) => break,
+            // GR-059 — a benign torn/short trailing frame (crashed writer) shows
+            // up ONLY as `BufferTooShort` (decode_frame maps an incomplete header
+            // OR body to it). Stop walking cleanly for that. Every OTHER
+            // HeaderParseError means a fully-present frame failed to validate —
+            // corruption or tampering — which must fail loud, not be read as a
+            // clean end-of-data (the old `Err(_) => break` silently truncated the
+            // scan on a CRC mismatch / bad magic mid-segment).
+            Err(super::error::HeaderParseError::BufferTooShort { .. }) => break,
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "wal::scan: tamper-suspect frame at logical offset {cursor}: {e} \
+                     (a fully-present frame failed to validate mid-segment — corruption \
+                     or tampering, not a torn tail)"
+                ));
+            }
         };
         let total = dec.header.total_len as usize;
         if total == 0 {
@@ -152,14 +169,35 @@ mod tests {
     fn torn_tail_after_good_frames_is_silently_skipped() {
         let (frames, _) = three_frames();
         let mut seg = uncompressed_segment(&frames);
-        seg.extend_from_slice(b"garbage partial frame tail"); // not a full frame
+        // A REALISTIC torn tail: the writer crashed mid-frame, leaving a valid
+        // magic + a truncated remainder → `BufferTooShort`. (GR-059: this is the
+        // ONLY benign decode failure; see the tamper test below.)
+        let partial = frame_bytes(0x01, b"payload-that-was-being-written");
+        seg.extend_from_slice(&partial[..partial.len().min(12)]);
         let mut called = 0;
         for_each_frame(&seg, |_, _| {
             called += 1;
             Ok(())
         })
         .unwrap();
-        assert_eq!(called, 3, "the torn tail after the 3 good frames is dropped");
+        assert_eq!(called, 3, "the short torn tail after the 3 good frames is dropped");
+    }
+
+    #[test]
+    fn corrupt_frame_mid_segment_fails_loud_gr059() {
+        // GR-059 — a fully-present frame region that fails to validate (here a
+        // bad magic over a header-length block, the InvalidMagic case) is NOT a
+        // torn tail; it must fail loud, not silently truncate the scan as the
+        // old `Err(_) => break` did.
+        let (frames, _) = three_frames();
+        let mut seg = uncompressed_segment(&frames);
+        seg.extend_from_slice(&[0xAB; 200]); // long enough to clear the header → InvalidMagic
+        let r = for_each_frame(&seg, |_, _| Ok(()));
+        assert!(r.is_err(), "a non-BufferTooShort decode error must fail loud");
+        assert!(
+            format!("{:?}", r.unwrap_err()).contains("tamper-suspect"),
+            "the error must name the tamper-suspect cause"
+        );
     }
 
     #[test]
