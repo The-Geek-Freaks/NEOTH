@@ -53,22 +53,18 @@ pub fn check_home_isolation(home: &Path) -> Result<()> {
         match std::process::Command::new("icacls.exe").arg(home).output() {
             Ok(out) if out.status.success() => {
                 let acl = String::from_utf8_lossy(&out.stdout);
-                const BROAD_PRINCIPALS: &[&str] = &[
-                    "Everyone",
-                    "Jeder",
-                    "S-1-1-0", // Everyone
-                    "\\Users",
-                    "\\Benutzer",
-                    "S-1-5-32-545", // BUILTIN\Users
-                    "Authenticated Users",
-                    "Authentifizierte Benutzer",
-                    "S-1-5-11", // Authenticated Users
-                ];
-                if let Some(hit) = BROAD_PRINCIPALS
-                    .iter()
-                    .copied()
-                    .find(|p| acl.contains(p))
-                {
+                // SEC-29/GR-022 — `icacls_broad_principal` anchors on the ACE form
+                // `PRINCIPAL:(perms)` so the queried PATH icacls echoes as its
+                // leading token (it contains `\Users` on every standard install)
+                // is NOT false-matched — the warning now fires only on a REAL
+                // broad grant. SEC-33 — the Windows path WARNS (never errors)
+                // while the Unix path hard-fails: that asymmetry is INTENTIONAL,
+                // not a bug. Windows directories routinely INHERIT broad ACEs
+                // (e.g. `C:\Temp` grants `Jeder`/Everyone), so a hard-fail would
+                // lock the operator out of a legitimate home; the wizard's
+                // explicit `icacls /grant:r %USER%:(F)` is the actual enforcement
+                // and this surfaces a leak loudly without blocking startup.
+                if let Some(hit) = icacls_broad_principal(&acl) {
                     tracing::warn!(
                         home = %home.display(),
                         principal = %hit,
@@ -88,6 +84,32 @@ pub fn check_home_isolation(home: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// SEC-29/GR-022/SEC-33 — scan `icacls` output for a broad-principal ACE. Anchors
+/// on the `PRINCIPAL:(perms)` ACE form so the queried PATH that icacls echoes as
+/// the leading token (which contains `\Users` on every standard Windows install)
+/// is NOT false-matched. Locale-robust: the `:(` separator + perms are icacls
+/// syntax (not localized); a missed other-locale NAME is a false-NEGATIVE
+/// (under-protection), never a false-positive lock-out. `None` when no broad
+/// grant is present. Pure → unit-testable on any platform.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn icacls_broad_principal(acl: &str) -> Option<&'static str> {
+    const BROAD_PRINCIPALS: &[&str] = &[
+        "Everyone",
+        "Jeder",
+        "S-1-1-0", // Everyone
+        "\\Users",
+        "\\Benutzer",
+        "S-1-5-32-545", // BUILTIN\Users
+        "Authenticated Users",
+        "Authentifizierte Benutzer",
+        "S-1-5-11", // Authenticated Users
+    ];
+    BROAD_PRINCIPALS
+        .iter()
+        .copied()
+        .find(|p| acl.contains(&format!("{p}:(")))
 }
 
 #[cfg(test)]
@@ -144,5 +166,36 @@ mod tests {
         // Best-effort on Windows; verify the function doesn't crash.
         let dir = tempdir().unwrap();
         check_home_isolation(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn icacls_broad_principal_ignores_echoed_path_but_catches_aces() {
+        // SEC-29/GR-022: the queried path icacls echoes (contains \Users) must
+        // NOT false-match; a genuine broad-principal ACE IS detected (→ SEC-33
+        // hard-fail). Pure logic, runs on every platform.
+        assert_eq!(
+            icacls_broad_principal("C:\\Users\\alex\\.neoth NEOTH-PC\\alex:(OI)(CI)(F)\r\n"),
+            None,
+            "the echoed \\Users path must not false-match"
+        );
+        assert_eq!(
+            icacls_broad_principal("C:\\Users\\alex\\.neoth Everyone:(F)\r\n"),
+            Some("Everyone")
+        );
+        assert_eq!(
+            icacls_broad_principal("C:\\Users\\alex\\.neoth BUILTIN\\Users:(RX)\r\n"),
+            Some("\\Users")
+        );
+        assert_eq!(
+            icacls_broad_principal("C:\\Users\\alex\\.neoth S-1-1-0:(F)\r\n"),
+            Some("S-1-1-0")
+        );
+        // A clean, user + SYSTEM only ACL → no broad principal.
+        assert_eq!(
+            icacls_broad_principal(
+                "C:\\Users\\alex\\.neoth NEOTH-PC\\alex:(F)\r\nNT AUTHORITY\\SYSTEM:(F)\r\n"
+            ),
+            None
+        );
     }
 }
