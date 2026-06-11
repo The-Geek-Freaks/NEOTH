@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 157 | 52 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 154 | 55 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,9 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-019** (MED) ✅ FIXED — web_extract::derive_selector emitted `tag.firstClass` / `tag#id`, which is INVALID CSS for Tailwind-style names (`md:flex`, `w-1/2`: the `:` opens a pseudo-class) → Selector::parse erred → the adaptive recovery path hard-failed on those pages. Now uses attribute selectors `tag[class~="…"]` / `tag[id="…"]` (+ css_attr_value_escape for `"`/`\`), which need no CSS-identifier escaping. Tests derive_selector_handles_tailwind_classes_gr019 + quote-escape. `tools/web_extract.rs`.
+- [x] **GOLD-ADOPT-04** (MED) ✅ FIXED — the cache held its tokio RwLock WRITE guard across the WAL-append awaits inside apply (serialising every concurrent extract on WAL I/O). apply is now SYNCHRONOUS and returns the WAL events to emit (new PendingAudit enum); extract_with_cache holds the guard only for the sync decision + persist and appends the audit AFTER releasing it. Consolidated emit_hit/emit_stale into PendingAudit::emit. `tools/web_selector_cache.rs`.
+- [x] **GR-097** (LOW) ✅ VERIFIED/CLARIFIED — the 0x59/0x5A WAL audit is reachable only when a WAL-OWNING caller passes a handle (the daemon, when it consumes the cache). The sole caller today (one-shot `neoth fetch` CLI) has no daemon WAL context so passes None BY DESIGN — the high-cadence 0x59 HIT is telemetry, not an audit-RPC-forwardable permission event (the 30-entry ALLOWED_CLIENT_EVENT_TYPES allowlist is for permission/lifecycle frames). Emission is built+tested against a real WAL writer; module doc now states this honestly instead of implying live-path coverage. web_extract 11/0, web_selector_cache 7/0; clippy clean.
 - [x] **GR-166** (INFO) ✅ FIXED — the band-guard const-assert block had no entry for 0x4E/0x4F (RSS_FEED_ITEM_INDEXED/PASS_COMPLETE) or 0xCF (RISK_GATE_BLOCKED); added all three (0x4E/0x4F pinned to 0x40-0x4F, 0xCF to 0xC0-0xCF). Compile-time guard now covers every code in those bands. `wal/events.rs`.
 - [x] **GR-078** (LOW) ✅ FIXED — the ROAD §2 free-WAL-slot list named ASSIGNED codes as free (verified against wal/events.rs): 0x52-5C are RISK_GATE_*/HINT/WEB_EXTRACT/COMPACTION; the whole 0xCE-CF is CALENDAR_WRITE_FAILED+RISK_GATE_BLOCKED (0xC band FULL); 0xDB-DC are CONSENT_GRANTED/REVOKED. Corrected to 0x5D-5F / 0xDD-DF and dropped 0xCE-CF.
 - [x] **GR-079** (INFO) ✅ FIXED — ADR-009 allocated `0xCF MEDIA_CALL_INTENT` but 0xCF is RISK_GATE_BLOCKED and the entire 0xC0 band is full; reassigned MEDIA_CALL_INTENT to the free 0xF6 overflow slot (table row + prose), so the future INTENT/RESULT design no longer collides.

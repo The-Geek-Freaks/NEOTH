@@ -210,17 +210,32 @@ fn score_candidate(fp: &ElementFingerprint, el: &ElementRef) -> u32 {
     score
 }
 
-/// Derive a fresh CSS selector for a relocated element: `tag#id`, else
-/// `tag.firstClass`, else bare `tag`.
+/// Derive a fresh CSS selector for a relocated element: `tag[id="…"]`, else
+/// `tag[class~="…"]`, else bare `tag`.
+///
+/// GR-019 — attribute selectors are used instead of `tag#id` / `tag.firstClass`
+/// because Tailwind-style ids/classes routinely carry CSS-special characters
+/// (`md:flex`, `w-1/2`, `text-[#fff]`). A bare `.md:flex` is INVALID CSS — the
+/// `:` opens a pseudo-class — so `Selector::parse` would error and the recovery
+/// path (`extract_text(raw, &new_sel)?`) would hard-fail on every such page. An
+/// attribute selector needs no CSS-identifier escaping; only the quoted value's
+/// `"` / `\` are special (handled by [`css_attr_value_escape`]), and `~=`
+/// matches the single class as a whitespace-separated token.
 fn derive_selector(el: &ElementRef) -> String {
     let tag = el.value().name();
     if let Some(id) = el.value().id() {
-        return format!("{tag}#{id}");
+        return format!("{tag}[id=\"{}\"]", css_attr_value_escape(id));
     }
     if let Some(first) = el.value().classes().next() {
-        return format!("{tag}.{first}");
+        return format!("{tag}[class~=\"{}\"]", css_attr_value_escape(first));
     }
     tag.to_string()
+}
+
+/// Escape a string for use inside a double-quoted CSS attribute value: per the
+/// CSS Syntax module only the backslash and the closing quote are special there.
+fn css_attr_value_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 /// Relocate the fingerprinted element in `html` when its old selector broke.
@@ -306,6 +321,35 @@ mod tests {
         // Completely unrelated document — no span at all.
         let v2 = r#"<p class="totally-different">hello world</p>"#;
         assert!(refind(v2, &fp).is_none());
+    }
+
+    #[test]
+    fn derive_selector_handles_tailwind_classes_gr019() {
+        // GR-019 — a Tailwind class carries CSS-special chars (`:`, `/`). The old
+        // `tag.firstClass` produced `span.md:flex` (INVALID CSS → recovery
+        // hard-error). The attribute-selector form parses AND re-matches.
+        let html = r#"<span class="md:flex w-1/2">x</span>"#;
+        let doc = Html::parse_fragment(html);
+        let sel = Selector::parse("span").unwrap();
+        let el = doc.select(&sel).next().unwrap();
+        let derived = derive_selector(&el);
+        assert_eq!(derived, r#"span[class~="md:flex"]"#);
+        // The derived selector MUST be valid CSS (the bare `.md:flex` was not).
+        let resel = Selector::parse(&derived).expect("derived selector must parse");
+        assert_eq!(doc.select(&resel).count(), 1, "must re-match the same element");
+        // End-to-end: extract_text no longer errors on the relocated selector.
+        assert_eq!(extract_text(html, &derived).unwrap(), vec!["x"]);
+    }
+
+    #[test]
+    fn derive_selector_quote_escapes_value_gr019() {
+        // A class containing a double-quote must not break out of the attr value.
+        let html = r#"<a class='ab&quot;cd'>y</a>"#;
+        let doc = Html::parse_fragment(html);
+        let sel = Selector::parse("a").unwrap();
+        let el = doc.select(&sel).next().unwrap();
+        let derived = derive_selector(&el);
+        assert!(Selector::parse(&derived).is_ok(), "escaped selector must parse: {derived}");
     }
 
     #[test]
