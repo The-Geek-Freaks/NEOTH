@@ -135,8 +135,12 @@ pub struct FreedomConfig {
     /// operator opts in with `feeds.enabled = true` + `feeds.entries`.
     #[serde(default)]
     pub feeds: FeedsConfig,
-    /// GOLD-ADOPT-23 P0 — tool-call risk policy gate (egress + dangerous-command
-    /// inspectors → deny/confirm, not just a warning).
+    /// GOLD-ADOPT-23 P0 — tool-call risk policy gate. GR-080: the two inspectors
+    /// have DIFFERENT defaults — the dangerous-command inspector DENIES a Critical
+    /// finding by default (`dangerous_commands = deny`), but the egress inspector
+    /// is WARN-ONLY by default (`egress.mode = allow`, non-breaking); the operator
+    /// opts into `confirm_unknown` / `deny_unknown`. So "deny/confirm" is the
+    /// dangerous-command default + the egress OPT-IN, NOT the egress default.
     #[serde(default)]
     pub security: SecurityPolicy,
     /// Round-3 v0.4 ARCH-04 — operator-tunable token cap for the
