@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 188 | 21 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 187 | 22 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-107** (MED) ✅ FIXED — the dangerous-command inspector now flags NEOTH's OWN privilege-escalation commands (neoth risk-confirm / lease grant / sudomode / autonomy full|set full) as Critical, so the LLM issuing them via the tool-loop shell can't silently widen its own permissions (which would bypass every other gate). New rule neoth_self_privilege_escalation (inspector scans LLM tool-calls, not the operator CLI). Test flags_neoth_self_privilege_escalation; security::dangerous_command 9/0; clippy clean.
 - [x] **GR-038** (MED) ✅ FIXED — 'neoth consent grant/revoke' now enforces the required-audit posture BEFORE the mutation (enforce_required_audit, mirroring cli::autonomy + fs.rs), so a security-relevant consent change can't land without an audit record when the daemon owns the WAL but its audit-RPC listener is unreachable under a required posture. Both render_grant + render_revoke guarded; required read via consent_audit_required (missing/corrupt config → no posture). Test consent_audit_required_reads_the_posture_flag; cli::consent 4/0; clippy clean.
 - [x] **GR-099** (MED) ✅ FIXED — 'neoth goal show' no longer hides an active goal/grind behind '(none)' when freedom.yaml exists-but-fails-to-parse. The unwrap_or_default() that swallowed IO+YAML errors is replaced by load_for_show: a MISSING config → fresh-install default (ok), an EXISTING but unparseable one → surfaced error. Test goal_show_surfaces_a_corrupt_config_instead_of_hiding_it; cli::goal 2/0; clippy clean.
 - [x] **GR-101** (MED) ✅ FIXED — enabling FULL-AUTO now requires an explicit operator confirmation BEFORE the persist (confirm_full_auto: prints the consequence + interactive y/N), fail-closed when stdin isn't a TTY so the most-permissive mode can never be enabled unattended. Guards BOTH paths: run_set_mode (sudomode/full-auto) + run_set (autonomy set full, on escalation). Test confirm_full_auto_fails_closed_when_not_a_tty; cli::autonomy 10/0; clippy clean.

@@ -118,6 +118,18 @@ fn rules() -> &'static [Rule] {
             // (the regex crate has none), so the lease-safe form excludes itself.
             re: r"(?i)\bgit\s+push\b[^\n]*?(?:--force(?:\s|$)|\s-f(?:\s|$))",
         },
+        Rule {
+            id: "neoth_self_privilege_escalation",
+            severity: Severity::Critical,
+            // GR-107 — this inspector scans the LLM-issued tool-loop shell, NOT
+            // the operator's own terminal. NEOTH's own privilege commands let the
+            // AGENT widen its OWN permissions (grant itself a dangerous-command /
+            // egress lease, open a risk-confirm window, flip to FULL-AUTO), which
+            // then bypasses every other gate. The agent must never self-escalate,
+            // so flag these Critical (Deny by default).
+            reason: "NEOTH self-privilege-escalation (neoth risk-confirm / lease grant / sudomode / autonomy full) — the agent must not widen its own permissions",
+            re: r"(?i)\bneoth\b\s+(?:risk-confirm\b|sudomode\b|lease\s+grant\b|autonomy\s+(?:set\s+)?(?:full|full-auto)\b)",
+        },
     ]
 }
 
@@ -171,6 +183,26 @@ mod tests {
         assert!(ids("rm -rf ./build").is_empty());
         assert!(ids("rm -rf target/").is_empty());
         assert!(ids("rm -rf /home/user/project").is_empty(), "specific path under / is fine");
+    }
+
+    #[test]
+    fn flags_neoth_self_privilege_escalation() {
+        // GR-107: NEOTH's own privilege commands, issued by the LLM via the
+        // tool-loop shell, must be flagged Critical so the agent can't widen its
+        // own permissions.
+        let r = "neoth_self_privilege_escalation";
+        assert!(ids("neoth risk-confirm --ttl 10m").contains(&r));
+        assert!(ids("neoth lease grant operator dangerous_command --ttl 300").contains(&r));
+        assert!(ids("neoth sudomode").contains(&r));
+        assert!(ids("neoth autonomy full-auto").contains(&r));
+        assert!(ids("neoth autonomy set full").contains(&r));
+        assert!(ids("/usr/local/bin/neoth sudomode").contains(&r), "path-prefixed neoth too");
+        assert_eq!(worst_severity("neoth sudomode"), Some(Severity::Critical));
+        // Benign neoth commands are NOT flagged.
+        assert!(ids("neoth status").is_empty());
+        assert!(ids("neoth recall something").is_empty());
+        assert!(ids("neoth lease list").is_empty());
+        assert!(ids("neoth autonomy gated").is_empty());
     }
 
     #[test]
