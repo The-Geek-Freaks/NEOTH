@@ -245,11 +245,17 @@ pub fn curated_fallback(size_b: f32, class: VariantClass) -> Option<GgufVariant>
 /// parse failure so the caller falls back to [`curated_fallback`].
 async fn resolve_live(size_b: f32, class: VariantClass) -> Option<GgufVariant> {
     let url = hf_search_url(size_b, class);
-    let client = reqwest::Client::builder()
+    // GR-023/034 — route through the audited client builder so the operator's
+    // NEOTH_HTTP_PROXY (+ egress allowlist) applies; a direct reqwest::Client
+    // bypassed the configured egress proxy entirely. Keep the resolver's tight 8s
+    // budget as a per-request timeout (overrides build_client's 120s default).
+    let client = crate::providers::http_client::build_client().ok()?;
+    let resp = client
+        .get(&url)
         .timeout(Duration::from_secs(8))
-        .build()
+        .send()
+        .await
         .ok()?;
-    let resp = client.get(&url).send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }
