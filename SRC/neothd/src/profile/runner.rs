@@ -418,11 +418,41 @@ pub async fn run_pipeline(
 
     // Stage 6 — apply. Idempotent on extraction_id. COR-33: re-lock for the
     // write phase (the lock was released around the LLM extract above).
+    //
+    // GR-056 / COR-33 — re-check the redaction registry under the SAME lock that
+    // applies, closing the TOCTOU window between the Stage-5 redaction snapshot
+    // and here. Stage 5b's approval gate can take human-interactive time, during
+    // which a `forget` / redaction may land; without this re-check the apply
+    // would write a claim against a field the operator just forbade. The fresh
+    // load + re-check happen atomically under the apply lock, so no redaction
+    // committed before apply can be missed.
     let apply_outcome = {
         let mut g = conn.lock().await;
-        apply_delta(g.as_mut(), writer, &guarded, now_unix as i64)
-            .await
-            .context("pipeline stage 6: profile.apply")?
+        let fresh_redactions = load_active_redactions(g.as_mut())?;
+        match guard.check_with_redactions(guarded.clone(), &attributed, &fresh_redactions, now_unix)
+        {
+            GuardOutcome::Accepted(_) => apply_delta(g.as_mut(), writer, &guarded, now_unix as i64)
+                .await
+                .context("pipeline stage 6: profile.apply")?,
+            GuardOutcome::Rejected {
+                reason,
+                blocked_delta_hash,
+            } => {
+                drop(g); // release before the WAL write + early return
+                let hex_hash = hex_encode(&blocked_delta_hash);
+                let reason_str = reason_to_str(&reason);
+                record_blocked(
+                    writer,
+                    &validated.delta.extraction_id,
+                    &reason_str,
+                    &hex_hash,
+                    &validated.delta.guard_version,
+                    now_unix as i64,
+                )
+                .await?;
+                return Ok(PipelineRun::Skipped(PipelineSkip::GuardRejected(reason_str)));
+            }
+        }
     };
 
     Ok(PipelineRun::Applied {

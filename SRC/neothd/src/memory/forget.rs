@@ -52,6 +52,14 @@ pub struct ForgetReport {
     /// right-to-erasure request silently kept the operator's extracted
     /// profile claims about the topic.
     pub profile_rows: i64,
+    /// In-flight profile-extraction rows deleted (GOLD-SEC-28): pending deltas
+    /// not yet applied + queued outbox WAL frames. Without these, a topic the
+    /// operator forgot would re-materialise when the pending delta is applied or
+    /// the outbox frame is written — a right-to-erasure hole.
+    #[serde(default)]
+    pub profile_pending_rows: i64,
+    #[serde(default)]
+    pub profile_outbox_rows: i64,
     pub topic: String,
 }
 
@@ -63,6 +71,8 @@ impl ForgetReport {
             + self.groundtruth_revoked
             + self.embedding_rows
             + self.profile_rows
+            + self.profile_pending_rows
+            + self.profile_outbox_rows
     }
 }
 
@@ -136,6 +146,26 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         )
         .context("revoke idx_groundtruth")? as i64;
 
+    // GOLD-SEC-28 — in-flight profile extractions. A pending delta or a queued
+    // outbox frame mentioning the topic would re-materialise the forgotten data
+    // when it's later applied / written, so the erasure must cover them too.
+    // `delta_json` is TEXT; the outbox `payload` is a BLOB → CAST to TEXT so the
+    // topic substring is matched byte-for-byte.
+    let profile_pending_rows = conn
+        .execute(
+            "DELETE FROM idx_profile_pending WHERE delta_json COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            rusqlite::params![pattern],
+        )
+        .context("delete from idx_profile_pending")? as i64;
+
+    let profile_outbox_rows = conn
+        .execute(
+            "DELETE FROM idx_profile_outbox \
+             WHERE CAST(payload AS TEXT) COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            rusqlite::params![pattern],
+        )
+        .context("delete from idx_profile_outbox")? as i64;
+
     // Embeddings: hard delete. Vectors carry no audit value — they're
     // a derived index, not an assertion.
     let embedding_rows =
@@ -148,6 +178,8 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         groundtruth_revoked,
         embedding_rows,
         profile_rows,
+        profile_pending_rows,
+        profile_outbox_rows,
         topic: topic.to_string(),
     })
 }
@@ -478,6 +510,49 @@ mod tests {
             )
             .unwrap();
         assert_eq!(pizza, 1, "unrelated profile claim survives");
+    }
+
+    #[test]
+    fn forget_cascades_to_in_flight_pending_and_outbox_gold_sec_28() {
+        // GOLD-SEC-28 — a pending delta or a queued outbox frame mentioning the
+        // topic would re-materialise the forgotten data when later applied /
+        // written; erasure must cover both (delta_json TEXT + payload BLOB).
+        let conn = seed_db();
+        conn.execute(
+            "INSERT INTO idx_profile_pending (extraction_id, delta_json, claim_count, created_at_unix) \
+             VALUES ('p1', '{\"field\":\"identity.employer\",\"value\":\"AcmeCorp\"}', 1, 0), \
+                    ('p2', '{\"field\":\"identity.food\",\"value\":\"pizza\"}', 1, 0)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_profile_outbox (extraction_id, event_type, payload, enqueued_at) \
+             VALUES ('p1', 1, CAST('claim about AcmeCorp' AS BLOB), 0), \
+                    ('p2', 1, CAST('claim about pizza' AS BLOB), 0)",
+            [],
+        )
+        .unwrap();
+
+        let report = forget_by_topic(&conn, "AcmeCorp", 0).unwrap();
+        assert_eq!(report.profile_pending_rows, 1, "pending AcmeCorp delta deleted");
+        assert_eq!(report.profile_outbox_rows, 1, "outbox AcmeCorp frame deleted");
+
+        let pending_left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_profile_pending", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pending_left, 1, "unrelated pending delta survives");
+        let outbox_left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_profile_outbox", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(outbox_left, 1, "unrelated outbox frame survives");
+        let acme_pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_profile_pending WHERE delta_json LIKE '%AcmeCorp%'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(acme_pending, 0, "no AcmeCorp pending delta survives erasure");
     }
 
     #[tokio::test]
