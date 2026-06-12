@@ -487,7 +487,7 @@ pub struct FreedomConfig {
 
 /// GOLD-WIRE-07 — memory subsystem tuning. One field today
 /// (`vector_index`); a natural home for future retention / decay knobs.
-#[derive(Clone, Debug, Default, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct MemoryConfig {
     pub vector_index: VectorIndexConfig,
@@ -498,6 +498,32 @@ pub struct MemoryConfig {
     /// extra (fast-model) call + a little latency at chat exit, so it's opt-in.
     #[serde(default)]
     pub name_sessions: bool,
+    /// GR-039 — gate for the GOLD-WIRE-02 conversational-recall short-circuit
+    /// in `neoth chat`. `true` (default, the shipped behaviour): recall-looking
+    /// prompts ("do you remember when…") are answered straight from the local
+    /// episode store without an LLM call. `false`: such prompts go to the
+    /// provider like any other turn.
+    #[serde(default = "default_recall_shortcut")]
+    pub recall_shortcut: bool,
+}
+
+// Manual impl (not derived): `recall_shortcut` must default `true` on BOTH
+// deserialization paths — a missing field inside an existing `memory:` block
+// (field-level serde default) AND a missing `memory:` block entirely (struct
+// `#[serde(default)]` → `Default::default()`). A derived Default would make
+// the second path silently disable the shipped behaviour.
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            vector_index: VectorIndexConfig::default(),
+            name_sessions: false,
+            recall_shortcut: true,
+        }
+    }
+}
+
+fn default_recall_shortcut() -> bool {
+    true
 }
 
 /// GOLD-WIRE-07 — similarity-recall vector-index backend selector.
@@ -3148,6 +3174,18 @@ mod tests {
     use tempfile::tempdir;
 
     // ── GOLD-WIRE-07: memory.vector_index.backend ─────────────────────────
+
+    /// GR-039: `recall_shortcut` must default `true` on BOTH paths — the
+    /// derived-struct path (missing `memory:` block → Default::default())
+    /// and the field-level serde path (present block, absent field).
+    #[test]
+    fn memory_recall_shortcut_defaults_true_on_both_paths() {
+        assert!(MemoryConfig::default().recall_shortcut);
+        let cfg: MemoryConfig = serde_yaml::from_str("name_sessions: false").unwrap();
+        assert!(cfg.recall_shortcut, "field-level serde default must be true");
+        let cfg: MemoryConfig = serde_yaml::from_str("recall_shortcut: false").unwrap();
+        assert!(!cfg.recall_shortcut, "explicit false must stick");
+    }
 
     #[test]
     fn memory_config_defaults_to_brute_force() {

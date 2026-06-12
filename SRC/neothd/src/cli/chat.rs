@@ -306,17 +306,27 @@ pub async fn run_chat_with(
     // the DB (a recall miss yields a localized "nothing found" reply, never
     // an error), and returns `None` for any non-recall prompt — which falls
     // through to the normal provider path below unchanged.
-    if let Some(reply) = crate::cli::recall::answer_conversational_recall(
-        &prompt,
-        &crate::memory::store::default_path(),
-    )
-    .await
-    {
-        println!("{reply}");
-        // Same WAL-writer teardown every other early return in this fn uses.
-        drop(writer);
-        let _ = writer_join.await;
-        return Ok(());
+    // GR-039: gated on `memory.recall_shortcut` (default true) so operators
+    // can route recall-looking prompts to the provider like any other turn.
+    if config.memory.recall_shortcut {
+        if let Some(reply) = crate::cli::recall::answer_conversational_recall(
+            &prompt,
+            &crate::memory::store::default_path(),
+        )
+        .await
+        {
+            println!("{reply}");
+            // GR-090: machine consumers in --stream mode block on the
+            // done-sentinel — the recall early-return must emit it too.
+            if args.stream {
+                println!();
+                println!("{}", serde_json::json!({"neoth_stream":"done","count":1}));
+            }
+            // Same WAL-writer teardown every other early return in this fn uses.
+            drop(writer);
+            let _ = writer_join.await;
+            return Ok(());
+        }
     }
 
     // ── PROVIDER_REQUEST (hashed metadata) ────────────────────────────────
@@ -660,7 +670,7 @@ pub async fn run_chat_with(
         // (nothing crosses the bar) the keyword Stage-1 result stands as
         // the fallback. Either way Stage-2 only fires when the operator
         // configured `inference.embedding_provider` (off by default).
-        // Full-auto mode (the whole 98-skill library is live) raises the
+        // Full-auto mode (the whole bundled skill library is live) raises the
         // Stage-1 confidence floor so a lone generic single-word trigger can't
         // false-activate; gated mode keeps the historical floor of 1.
         let stage1_floor = if config.skills.enable_all_bundled {
@@ -1144,6 +1154,13 @@ pub async fn run_chat_with(
                         p.record_failure();
                     }
                     warn!(error = %e, "stream chunk error");
+                    // GR-091: release any markdown tail still buffered so the
+                    // already-streamed partial output isn't swallowed on error.
+                    let tail = md_buf.flush();
+                    if !tail.is_empty() {
+                        print!("{tail}");
+                        let _ = std::io::stdout().flush();
+                    }
                     drop(writer);
                     let _ = writer_join.await;
                     return Err(e);
@@ -2027,7 +2044,8 @@ pub async fn run_chat_with(
     // on process exit. Uses the cheap utility provider + a 12s timeout cap; any
     // failure leaves the deterministic `one_line_summary` in place.
     if config.memory.name_sessions {
-        name_session_best_effort(&config, &first_tour_home, &current_session_id, &prompt).await;
+        name_session_best_effort(&config, &writer, &first_tour_home, &current_session_id, &prompt)
+            .await;
     }
 
     // GOLD-ADOPT-24 — turn-end context-window usage bar (this turn's tokens vs
@@ -2035,7 +2053,11 @@ pub async fn run_chat_with(
     // response/JSON; skipped in --stream/jsonl machine mode. Limit comes from
     // tokens.max_per_request (no hardcoded per-model window — model-agnostic rule).
     if !args.stream {
-        let used = prompt_token_estimate.saturating_add(final_output_tokens.unwrap_or(0));
+        // GR-092: prefer the provider-reported input count over the local
+        // estimate; fall back to the estimate when the provider returns None.
+        let used = final_input_tokens
+            .unwrap_or(prompt_token_estimate)
+            .saturating_add(final_output_tokens.unwrap_or(0));
         if let Some(bar) =
             crate::cli::chat_display::render_context_bar(used, config.tokens.max_per_request)
         {
@@ -2056,6 +2078,7 @@ pub async fn run_chat_with(
 /// just ended.
 async fn name_session_best_effort(
     config: &crate::config::FreedomConfig,
+    writer: &crate::wal::writer::WalWriterHandle,
     home: &std::path::Path,
     session_id: &str,
     opening: &str,
@@ -2075,12 +2098,41 @@ async fn name_session_best_effort(
         ),
         ..Default::default()
     };
-    let title = match tokio::time::timeout(
+    // GR-036: this is a real provider round-trip, so it must leave the same
+    // PROVIDER_REQUEST/RESPONSE audit trail as every other call. Hashed
+    // metadata only (same posture as the main path); `call_type` lets WAL
+    // consumers separate naming calls from chat turns. Best-effort like the
+    // rest of this fn — a WAL hiccup never blocks naming.
+    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+        "operator_id": config.operator_id,
+        "provider": provider.name(),
+        "call_type": "session_naming",
+        "prompt_hash_xxh3": xxhash_rust::xxh3::xxh3_64(req.prompt.as_bytes()),
+        "prompt_bytes": req.prompt.len(),
+        "ts_unix": now_unix(),
+    })) {
+        let header = crate::wal::make_header(EVENT_TYPE_PROVIDER_REQUEST, &payload);
+        if let Err(e) = writer.append(header, payload).await {
+            tracing::debug!(error = %e, "session-naming: PROVIDER_REQUEST frame failed");
+        }
+    }
+    let completion = tokio::time::timeout(
         std::time::Duration::from_secs(12),
         provider.complete(req),
     )
-    .await
-    {
+    .await;
+    if let Ok(payload) = serde_json::to_vec(&serde_json::json!({
+        "provider": provider.name(),
+        "call_type": "session_naming",
+        "ok": matches!(&completion, Ok(Ok(_))),
+        "ts_unix": now_unix(),
+    })) {
+        let header = crate::wal::make_header(EVENT_TYPE_PROVIDER_RESPONSE, &payload);
+        if let Err(e) = writer.append(header, payload).await {
+            tracing::debug!(error = %e, "session-naming: PROVIDER_RESPONSE frame failed");
+        }
+    }
+    let title = match completion {
         Ok(Ok(c)) => sanitize_session_title(&c.text),
         Ok(Err(e)) => {
             tracing::debug!(error = %e, "session-naming: completion failed");
