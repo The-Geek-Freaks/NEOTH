@@ -99,7 +99,7 @@ pub fn count_crc_frames_in_segment(
     // GOLD-ARCH-03: for_each_frame so CRC-anomaly frames inside a v2/zstd-
     // compressed segment are counted, not silently skipped (the prior walk
     // parsed the header but ran decode_frame over the raw zstd blob).
-    let _ = crate::wal::scan::for_each_frame(seg_bytes, |_, dec| {
+    if let Err(e) = crate::wal::scan::for_each_frame(seg_bytes, |_, dec| {
         if dec.header.event_type == EVENT_TYPE_RECOVERY_TRUNCATED
             || dec.header.event_type == EVENT_TYPE_COMPACTION_AUTH_FAILED
         {
@@ -117,7 +117,12 @@ pub fn count_crc_frames_in_segment(
             }
         }
         Ok(())
-    });
+    }) {
+        // GR-133 — surface a tamper-suspect segment instead of silently dropping
+        // the error (its CRC-anomaly frames won't be counted). The monitor is
+        // advisory, but it must not HIDE an integrity failure.
+        tracing::warn!(error = %e, "monitor CRC scan: skipping a tamper-suspect WAL segment");
+    }
     (truncated, auth_failed)
 }
 
@@ -222,7 +227,7 @@ pub fn latest_channel_activity_in_segment(seg_bytes: &[u8]) -> Option<i64> {
     let mut latest: Option<i64> = None;
     // GOLD-ARCH-03: for_each_frame so channel activity inside a v2/zstd-
     // compressed segment is seen, not silently skipped.
-    let _ = crate::wal::scan::for_each_frame(seg_bytes, |_, dec| {
+    if let Err(e) = crate::wal::scan::for_each_frame(seg_bytes, |_, dec| {
         if dec.header.event_type == EVENT_TYPE_CHANNEL_INGRESS
             || dec.header.event_type == EVENT_TYPE_CHANNEL_EGRESS
         {
@@ -234,7 +239,11 @@ pub fn latest_channel_activity_in_segment(seg_bytes: &[u8]) -> Option<i64> {
             }
         }
         Ok(())
-    });
+    }) {
+        // GR-133 — surface a tamper-suspect segment rather than silently dropping
+        // the error (its channel-activity frames won't be seen).
+        tracing::warn!(error = %e, "monitor channel-activity scan: skipping a tamper-suspect WAL segment");
+    }
     latest
 }
 

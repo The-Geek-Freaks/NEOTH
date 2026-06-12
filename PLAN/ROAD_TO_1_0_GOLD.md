@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 114 | 95 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 111 | 98 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -495,6 +495,16 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 **FROM OPENHUMAN** READ the HERMES AI AGENT REPO! ALL FILES - Search more features we need or logic. Plan below is INCOMPLETE! (
 - [ ] **Alex-04** - READ THE HERMES AI AGENT REPO - copy locally, deploy agents, agents should investigate features, logic, and everything we should adopt to perfect NEOTH (ui elements, logic, algorithms, functions, features, bundled skills/plugins, dau onboarding, dau experience, etc.) - EXPAND THIS PLAN WITH THE FINDINGS!!!
 
+**FROM mnemo** READ the mnemo REPO! ALL FILES - Search more features we need or logic. Plan below is INCOMPLETE! (
+- [ ] **Alex-05** - READ THE mnemo REPO - copy locally, deploy agents, agents should investigate features, logic, and everything we should adopt to perfect NEOTH (ui elements, logic, algorithms, functions, features, bundled skills/plugins, dau onboarding, dau experience, etc.) - EXPAND THIS PLAN WITH THE FINDINGS!!!
+https://github.com/zaydmulani09/mnemo
+
+
+**FROM rscrypto** READ the rscrypto(https://github.com/loadingalias/rscrypto) REPO! ALL FILES - Search more features we need or logic. Plan below is INCOMPLETE! (
+- [ ] **Alex-06** - READ THE rscrypto(https://github.com/loadingalias/rscrypto) REPO - copy locally, deploy agents, agents should investigate features, logic, and everything we should adopt to perfect NEOTH (ui elements, logic, algorithms, functions, features, bundled skills/plugins, dau onboarding, dau experience, etc.) - EXPAND THIS PLAN WITH THE FINDINGS!!!
+
+https://github.com/loadingalias/rscrypto
+
 ---
 
 ## WS-V — GOLD Verification Findings (external review 2026-06-11, triaged)
@@ -522,6 +532,9 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-074** (LOW) ✅ FIXED — benchmark_scores::classify matched the punctuation-stripped `compact`, so a bare-3 Llama sized 3B/1B ("Llama-3-3B"→"llama33b") false-matched the 3.3 family. ⚠ VERIFY-FIRST KILLED the workflow design (`lo.contains("3.3")` would have broken the existing separator-insensitive test `Llama_3_1_8B`→Llama31). Correct fix: `contains("llama33") && !contains("llama33b")` (size-suffix guard) + same for llama31. Test extended (bare-3 3B/1B → Llama3; underscore 3.1 still classifies). `models/benchmark_scores.rs`.
+- [x] **GR-133** (LOW) ✅ FIXED — monitor_cron's two for_each_frame scans (CRC-anomaly count + channel-activity) discarded the Result with `let _ =`; after GR-059 that silently drops a tamper-suspect segment. Both now surface it via tracing::warn (advisory monitor must not HIDE integrity failures), best-effort like GR-103. `daemon/monitor_cron.rs`. monitor_cron 12/0.
+- [x] **GR-083** (LOW) ✅ FIXED — hooks::dispatcher::compile_cached doc claimed hook patterns are 'a bounded, static set', but they load dynamically via hooks::load_all, so the regex memo HashMap had no growth bound. Corrected the doc + hard-capped at MAX_CACHED_PATTERNS=512 (past it: compile-and-return without memoising). `hooks/dispatcher.rs`. hooks::dispatcher 19/0; clippy clean.
 - [x] **GR-085** (LOW SEC) ✅ FIXED — omi is_local_host accepted loopback/RFC-1918 but NOT RFC-6598 CGNAT 100.64.0.0/10, the range Tailscale assigns node IPs from — and the wizard recommends Tailscale. A Tailscale-reachable OMI endpoint was wrongly rejected by the SSRF guard. New is_cgnat_v4 + accept it. Test validator_accepts_tailscale_cgnat_range_gr085 (incl. /10 boundaries). `installers/omi.rs`.
 - [x] **GR-088** (LOW) ✅ FIXED — atomic_write fsynced the temp file's DATA before rename but never fsynced the PARENT directory, so the new directory entry (the rename) wasn't durable on a power loss (POSIX: rename = parent-inode metadata). Added a best-effort #[cfg(unix)] parent-dir File::open + sync_all after the rename. Test dir_fsync path. `util/atomic_write.rs`.
 - [x] **GR-072** (INFO) ✅ FIXED — rate_limit doc referenced a non-existent `EVICT_TRIGGER` constant; the actual high-watermark guard is MAX_BUCKETS. Corrected the doc-comment + the test comment. `daemon/rate_limit.rs`.

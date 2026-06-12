@@ -17,23 +17,34 @@ use super::stages::HookStage;
 ///
 /// GOLD-ARCH-10: a hook matcher was compiled TWICE per dispatch (the `fires`
 /// check + the `Replace` action) and re-compiled on every stage run. Hook
-/// patterns come from the operator's config (a bounded, static set), so caching
-/// each successful compile and cloning it out (cheap — `Regex` is `Arc`-backed)
-/// removes both the double-compile and the per-dispatch recompile. Compile
-/// ERRORS are deliberately NOT cached: they are bad-config edge cases (rare) and
-/// skipping the cache there keeps the `fail_fast` error path byte-identical to a
-/// direct `Regex::new`.
+/// patterns come from the operator's config — practically bounded by the number
+/// of distinct patterns an operator ever writes — so caching each successful
+/// compile and cloning it out (cheap — `Regex` is `Arc`-backed) removes both the
+/// double-compile and the per-dispatch recompile. GR-083 — the cache is NOT a
+/// truly static set (patterns are loaded dynamically via `hooks::load_all`), so
+/// it is hard-capped at [`MAX_CACHED_PATTERNS`] to stay bounded even if a future
+/// path ever generated patterns programmatically. Compile ERRORS are
+/// deliberately NOT cached: they are bad-config edge cases (rare) and skipping
+/// the cache there keeps the `fail_fast` error path byte-identical to a direct
+/// `Regex::new`.
 fn compile_cached(pattern: &str) -> Result<Regex, regex::Error> {
+    /// GR-083 — far above any realistic operator hook set; only a runaway
+    /// dynamic-pattern path could approach it, and there the cache simply stops
+    /// growing (compile-and-return without memoising).
+    const MAX_CACHED_PATTERNS: usize = 512;
     static CACHE: OnceLock<Mutex<HashMap<String, Regex>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(re) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(pattern) {
-        return Ok(re.clone());
+    {
+        let guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(re) = guard.get(pattern) {
+            return Ok(re.clone());
+        }
     }
     let re = Regex::new(pattern)?;
-    cache
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .insert(pattern.to_string(), re.clone());
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.len() < MAX_CACHED_PATTERNS {
+        guard.insert(pattern.to_string(), re.clone());
+    }
     Ok(re)
 }
 

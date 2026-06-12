@@ -122,11 +122,16 @@ pub fn classify(id: &str) -> ModelFamily {
     if compact.contains("qwen2") {
         return ModelFamily::Qwen2;
     }
-    // Llama — 3.3 / 3.1 before the bare 3.0.
-    if compact.contains("llama33") {
+    // Llama — 3.3 / 3.1 before the bare 3.0. GR-074: a bare-3 model whose SIZE is
+    // 3B ("Llama-3-3B" → compact "llama33b") must NOT false-match the 3.3 family.
+    // The point release "3.3" is always followed by a size token ("3.3-70B" →
+    // "llama3370b"), never by the bare "b" of a 3B size, so `llama33b`/`llama31b`
+    // (= the 3B/1B size of a bare-3 model) are excluded. Using `compact` (not the
+    // dotted `lo`) keeps separator-insensitivity — "Llama_3_1_8B" stays 3.1.
+    if compact.contains("llama33") && !compact.contains("llama33b") {
         return ModelFamily::Llama33;
     }
-    if compact.contains("llama31") {
+    if compact.contains("llama31") && !compact.contains("llama31b") {
         return ModelFamily::Llama31;
     }
     if compact.contains("llama3") {
@@ -171,7 +176,11 @@ mod tests {
         assert_eq!(classify("bartowski/Llama-3.3-70B-Instruct-GGUF"), ModelFamily::Llama33);
         assert_eq!(classify("x/Meta-Llama-3.1-8B-Instruct-GGUF"), ModelFamily::Llama31);
         assert_eq!(classify("x/Llama-3-8B-Instruct-GGUF"), ModelFamily::Llama3);
-        // Separator-insensitive.
+        // GR-074 — a bare-3 model sized 3B/1B must stay Llama3, not false-match
+        // the 3.3 / 3.1 point releases (the size digit collided in `compact`).
+        assert_eq!(classify("bartowski/Llama-3-3B-Instruct-GGUF"), ModelFamily::Llama3);
+        assert_eq!(classify("x/Llama-3-1B-Instruct"), ModelFamily::Llama3);
+        // Separator-insensitive — the real 3.1 point release still classifies.
         assert_eq!(classify("x/llama3.1-8b"), ModelFamily::Llama31);
         assert_eq!(classify("x/Llama_3_1_8B"), ModelFamily::Llama31);
     }
