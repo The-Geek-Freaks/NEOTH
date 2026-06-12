@@ -307,6 +307,8 @@ export component MainWindow inherits Window {
     in property <string> hw-memory: "";
     in property <string> hw-accelerator: "";
     in property <string> hw-vram: "";
+    // GOLD-PROG-07 — VRAM used/total fraction for the live meter, forwarded to SettingsView.
+    in property <float> hw-vram-fraction: 0.0;
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
     // KF-08 — Council budget meter (Config tab), forwarded to SettingsView.
@@ -1452,6 +1454,7 @@ export component MainWindow inherits Window {
             hw-memory: root.hw-memory;
             hw-accelerator: root.hw-accelerator;
             hw-vram: root.hw-vram;
+            hw-vram-fraction: root.hw-vram-fraction;
             hw-disk: root.hw-disk;
             hw-models: root.hw-models;
             council-cap: root.council-cap;

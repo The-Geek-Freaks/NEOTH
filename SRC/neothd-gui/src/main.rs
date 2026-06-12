@@ -775,6 +775,46 @@ fn main() -> Result<()> {
         timer
     };
 
+    // GOLD-PROG-07 — live VRAM/hardware refresh. The startup bundle fetches the
+    // snapshot once; this 30s timer keeps the VRAM meter current while the
+    // operator is on the Settings tab. Same race-free shape as the kanban timer:
+    // a worker thread owns the subprocess, invoke_from_event_loop owns the UI
+    // write, and an AtomicBool caps it at one fetch in flight. 30s (not 2s) —
+    // `neoth hardware` reads sysinfo at call time, so a shorter interval just
+    // taxes the Windows refresh rate without yielding finer data.
+    let weak_hw_tick = window.as_weak();
+    let hw_fetch_in_flight = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let _hardware_live_timer = {
+        let timer = slint::Timer::default();
+        let in_flight = hw_fetch_in_flight.clone();
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_secs(30),
+            move || {
+                if let Some(w) = weak_hw_tick.upgrade() {
+                    if w.get_step() != WizardStep::Settings {
+                        return;
+                    }
+                    if in_flight.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                        return;
+                    }
+                    let weak = weak_hw_tick.clone();
+                    let done = in_flight.clone();
+                    std::thread::spawn(move || {
+                        let snap = fetch_hardware_snapshot();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak.upgrade() {
+                                apply_hardware(&w, snap);
+                            }
+                        });
+                        done.store(false, std::sync::atomic::Ordering::Release);
+                    });
+                }
+            },
+        );
+        timer
+    };
+
     // Step 6 (2026-05-20): operator action handlers. Each spawns a
     // worker thread that subprocesses `neoth kanban move/review` and
     // logs the outcome. The 2s live-tail timer picks up the resulting
@@ -1737,6 +1777,7 @@ fn apply_hardware(window: &MainWindow, snap: panel_logic::HardwareSnapshot) {
     window.set_hw_memory(snap.memory.into());
     window.set_hw_accelerator(snap.accelerator.into());
     window.set_hw_vram(snap.vram.into());
+    window.set_hw_vram_fraction(snap.vram_fraction);
     window.set_hw_disk(snap.disk.into());
     window.set_hw_models(ModelRc::new(VecModel::from(models)));
 }

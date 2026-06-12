@@ -75,8 +75,8 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-E Architecture debt | 23 | 10 | 13 |
 | WS-F Gold-TODO feature build-out | 15 | 13 | 2 |
 | WS-G Repo adoptions | 28 | 2 | 26 |
-| WS-H PROGRESS carry-forward | 19 | 14 | 5 |
-| **TOTAL** (WS-A…H) | **198** | **43** | **155** |
+| WS-H PROGRESS carry-forward | 19 | 13 | 6 |
+| **TOTAL** (WS-A…H) | **198** | **42** | **156** |
 | WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 44 | 165 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | 150 | 142 | 8 |
@@ -452,7 +452,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **GOLD-PROG-04** PC-01 clipboard R/W (0xBC/0xBD) shipped (`10adfad`) — *origin:* session 39 burndown
 - [ ] **GOLD-PROG-05** SL-02 cluster topology GUI panel — CLI shipped; GUI panel display-gated; build Slint topology panel consuming `neoth cluster topology --output json` — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* cluster tab shows peer list with RTT/stability — *origin:* agent6 Section C SL-02
 - [ ] **GOLD-PROG-06** SL-01/SL-01b cluster task-accept full loop — transport shipped; complete ProactiveChannelSend consumer wiring for task-accept — *files:* `SRC/neothd/src/cluster/hyperswarm.rs`, `SRC/neothd/src/cli/serve.rs` — *test:* remote task arrives via cluster and is dispatched — *origin:* agent6 Section C SL-01
-- [ ] **GOLD-PROG-07** SL-03 local LLM resource tab GUI — headless telemetry shipped; build Slint panel for VRAM/load/power — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* GUI tab shows live VRAM reading — *origin:* agent6 Section C SL-03
+- [x] **GOLD-PROG-07** SL-03 local LLM resource tab GUI — headless telemetry shipped; build Slint panel for VRAM/load/power — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* GUI tab shows live VRAM reading — *origin:* agent6 Section C SL-03 ✅ DONE: HardwareSnapshot.vram_fraction (clamped used/total, computed in parse_hardware) + a settings.slint pill meter (accent fill width = track × fraction, shown only when a GPU is present) forwarded through MainWindow; apply_hardware pushes it + a 30s Settings-tab refresh timer (in-flight-guarded, kanban-timer pattern). 100 neothd-gui tests + clippy -D warnings green.
 - [ ] **GOLD-PROG-08** KF-08 live council budget meter Slint GUI widget — headless `telemetry/council_meter.rs` shipped; build Slint widget + tokio broadcast wiring — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* GUI meter updates after council call — *origin:* agent6 Section C KF-08
 - [ ] **GOLD-PROG-09** OP-01 hashline content-hash edits in `cli/edit.rs` (-61% output tokens) — implement `hashline_diff(old, new)` + `--hashline` flag + `freedom.yaml::tokens.hashline_edits` toggle — *files:* `SRC/neothd/src/cli/edit.rs` — *test:* `neoth edit --hashline` produces `@@ <sha256_8> +N:` format — *origin:* agent6 Section C OP-01
 - [ ] **GOLD-PROG-10** OP-03 LSP diagnostics loop on every write — implement LSP server integration for real-time diagnostics — *files:* new `SRC/neothd/src/lsp/` module — *test:* `neoth edit <file>` triggers LSP diagnostics — *origin:* agent6 Section C OP-03

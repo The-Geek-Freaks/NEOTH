@@ -392,6 +392,8 @@ export component SettingsView inherits Rectangle {
     in property <string> hw-memory: "";
     in property <string> hw-accelerator: "";
     in property <string> hw-vram: "";
+    // GOLD-PROG-07 — VRAM used/total as a 0.0..=1.0 fraction for the live meter.
+    in property <float> hw-vram-fraction: 0.0;
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
 
@@ -1228,6 +1230,22 @@ export component SettingsView inherits Rectangle {
                             font-family: Theme.font-mono;
                             font-size: Theme.font-size-caption;
                             color: Theme.text-primary;
+                        }
+                        // GOLD-PROG-07 — live VRAM utilisation meter. Shown only
+                        // when a GPU is present (fraction > 0): a pill track with
+                        // an accent fill whose width tracks used/total.
+                        if root.hw-vram-fraction > 0.0: Rectangle {
+                            height: 8px;
+                            background: Theme.border-subtle;
+                            border-radius: Theme.radius-button;
+                            Rectangle {
+                                x: 0;
+                                y: 0;
+                                width: parent.width * root.hw-vram-fraction;
+                                height: parent.height;
+                                background: Theme.accent-green;
+                                border-radius: Theme.radius-button;
+                            }
                         }
                         if root.hw-cpu != "": Text {
                             text: "disk: " + root.hw-disk;

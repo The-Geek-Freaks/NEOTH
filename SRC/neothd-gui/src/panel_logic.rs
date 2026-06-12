@@ -332,12 +332,16 @@ fn object_rows(obj: Option<&serde_json::Value>) -> Vec<TrustRow> {
 /// the SL-03 resource panel shows — CPU, memory, accelerator, VRAM, disk, and
 /// which local models are cached. Headline fields are pre-formatted strings;
 /// `models` is label→state rows (reusing [`TrustRow`]).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct HardwareSnapshot {
     pub cpu: String,
     pub memory: String,
     pub accelerator: String,
     pub vram: String,
+    /// GOLD-PROG-07 — VRAM used/total as a clamped 0.0..=1.0 fraction the Slint
+    /// meter binds to. 0.0 when no GPU / total is 0, so the bar stays hidden.
+    /// (`f32` is why this struct is `PartialEq` but not `Eq`.)
+    pub vram_fraction: f32,
     pub disk: String,
     pub models: Vec<TrustRow>,
 }
@@ -397,6 +401,13 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
         }
         _ => "(no GPU detected)".to_string(),
     };
+    // GOLD-PROG-07 — the same used/total expressed as a clamped 0.0..=1.0
+    // fraction for the live VRAM meter; 0.0 (bar hidden) when VRAM is absent or
+    // total is 0 (no divide-by-zero), clamped so a stray used>total can't overrun.
+    let vram_fraction = match (g("/vram/used_mib"), g("/vram/total_mib")) {
+        (Some(u), Some(t)) if t > 0 => (u as f32 / t as f32).clamp(0.0, 1.0),
+        _ => 0.0,
+    };
     let disk = match (g("/disk/home_available_bytes"), g("/disk/home_total_bytes")) {
         (Some(a), Some(t)) if t > 0 => {
             let mount = v
@@ -421,6 +432,7 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
         memory,
         accelerator,
         vram,
+        vram_fraction,
         disk,
         models,
     }
@@ -985,6 +997,7 @@ mod tests {
         assert_eq!(h.memory, "224 / 255 GiB available");
         assert_eq!(h.accelerator, "cuda — GPU path active");
         assert_eq!(h.vram, "1405 / 24576 MiB used (5%)");
+        assert!((h.vram_fraction - 0.057169).abs() < 1e-4);
         assert!(h.disk.starts_with("108 / 1675 GiB free (C:"));
         assert!(h.models.iter().any(|r| r.label == "qwen2_5_3b" && r.value == "cached"));
         assert!(h.models.iter().any(|r| r.label == "clip_vit_b32" && r.value == "not cached"));
@@ -997,6 +1010,22 @@ mod tests {
         let h = parse_hardware(r#"{"cpu":{"brand":"x","physical_cores":1,"logical_cores":1,"frequency_mhz":1}}"#);
         assert_eq!(h.vram, "(no GPU detected)");
         assert_eq!(h.accelerator, "");
+        // No vram node → fraction 0.0 (meter hidden).
+        assert_eq!(h.vram_fraction, 0.0);
+    }
+
+    // ── GOLD-PROG-07 VRAM meter fraction ──────────────────────────────────
+    #[test]
+    fn parse_hardware_vram_fraction_is_ratio_and_safe() {
+        // used/total = 1405/24576 ≈ 0.0572.
+        let full = parse_hardware(r#"{"vram":{"used_mib":1405,"total_mib":24576}}"#);
+        assert!((full.vram_fraction - 0.057169).abs() < 1e-4);
+        // total_mib = 0 → 0.0, no divide-by-zero / infinity.
+        let zero = parse_hardware(r#"{"vram":{"used_mib":10,"total_mib":0}}"#);
+        assert_eq!(zero.vram_fraction, 0.0);
+        // Defensive clamp: a stray used>total stays ≤ 1.0 (bar never overruns).
+        let over = parse_hardware(r#"{"vram":{"used_mib":99999,"total_mib":1000}}"#);
+        assert_eq!(over.vram_fraction, 1.0);
     }
 
     // ── KF-08 council budget meter parser ─────────────────────────────────
