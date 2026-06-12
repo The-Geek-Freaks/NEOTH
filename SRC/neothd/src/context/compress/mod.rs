@@ -19,8 +19,18 @@
 //!   passthrough.
 //! - **HR-04..07** per-type compressors (log, diff, smart-crusher, search).
 //!
-//! Nothing here is wired into a live call path yet — that happens at HR-08
-//! (`mcp::dispatch_loop` tool-result blocks, gated on `compression.enabled`).
+//! Wired live at HR-08 (`mcp::dispatch_loop` tool-result blocks, gated on
+//! `compression.enabled`).
+//!
+//! ## Attribution & upstream resync (GOLD-HR-11)
+//!
+//! These transforms are a native Rust port of headroom's `headroom-core`
+//! (chopratejas/headroom, Apache-2.0). The full attribution, the per-file
+//! provenance table (headroom path → NEOTH file), and the list of deliberate
+//! modifications (magika OUT, SHA-256 CCR key, sequential pipeline, lean
+//! crushers) live in the repo-root `THIRD_PARTY_LICENSES`. When resyncing from
+//! a newer upstream, walk that table file-by-file; the per-module doc headers
+//! name their specific upstream source.
 
 pub mod ccr;
 pub mod content_detector;

@@ -32,3 +32,56 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+## chopratejas/headroom
+
+Source: https://github.com/chopratejas/headroom
+Files:  SRC/neothd/src/context/compress/*.rs
+
+NEOTH's WS-HR token-compression pipeline is a native Rust port of headroom's
+`headroom-core` transforms. Per-file provenance (headroom path -> NEOTH file):
+
+| headroom (crates/headroom-core/src/...)        | NEOTH (src/context/compress/...) |
+|------------------------------------------------|----------------------------------|
+| transforms/content_detector.rs                 | content_detector.rs              |
+| ccr/ (mod.rs + in_memory backend)              | ccr.rs                           |
+| transforms/pipeline/{traits,orchestrator}.rs   | transform.rs + pipeline.rs       |
+| transforms/pipeline/reformats/log_template.rs  | log_template.rs                  |
+| transforms/log_compressor.rs + log_offload.rs  | log_compressor.rs                |
+| transforms/pipeline/offloads/diff_noise.rs     | diff_compressor.rs               |
+| transforms/pipeline/reformats/json_minifier.rs | smart_crusher.rs (JsonMinifier)  |
+| transforms/smart_crusher/ (sampling)           | smart_crusher.rs (SmartCrusher)  |
+| transforms/pipeline/offloads/search_offload.rs | search_compressor.rs             |
+| transforms/tag_protector.rs                    | tag_protector.rs                 |
+
+### Modifications (Apache-2.0 section 4(b))
+
+This is a re-implementation with significant changes, all to keep NEOTH
+self-contained (no ML, minimal deps):
+
+- The magika ML content detector is OMITTED -- only the heuristic regex path
+  is ported.
+- CCR keys use SHA-256[:24] (NEOTH already depends on `sha2`) instead of
+  headroom's BLAKE3; the in-memory store uses one `std::sync::Mutex<HashMap>`
+  instead of a sharded `DashMap`.
+- The log offload scores line importance with a small regex heuristic instead
+  of headroom's aho-corasick `KeywordDetector`.
+- `DiffCompressor` folds headroom's `DiffNoise` together with context-trimming
+  and a file cap via a lean line-walker (not the 1600-line unified-diff parser).
+- `SmartCrusher` is a head/strided-middle/tail row sampler, not headroom's
+  20-module statistical crusher (Kneedle saturation / simhash / outliers).
+- `tag_protector` provides a line-level protected-region guard rather than the
+  full placeholder-swap (NEOTH's compressors are structural, not ML-text).
+- The pipeline runs sequentially (no `rayon`).
+
+Apache License 2.0. The full license text is in `LICENSE-APACHE`. The upstream
+NOTICE attribution follows.
+
+----
+Headroom
+Copyright 2025 Headroom Contributors
+
+This product includes software developed by the Headroom Contributors.
+----
