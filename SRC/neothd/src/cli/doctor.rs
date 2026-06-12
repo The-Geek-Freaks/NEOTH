@@ -3482,7 +3482,7 @@ mod tests {
     fn run_all_checks_returns_one_outcome_per_diagnostic() {
         let dir = tempdir().unwrap();
         let outs = run_all_checks(dir.path());
-        // 30 checks: 19 pre-Session-20 + node toolchain + tmux for
+        // 31 checks: 19 pre-Session-20 + node toolchain + tmux for
         // claude-cli + usage today + circuit breakers + channel
         // flapping + cluster registry (Phase 4 follow-on) + cluster
         // mDNS announcer (Session 21 bite #2) + refusal recovery

@@ -67,6 +67,12 @@ pub async fn run_webhook(args: WebhookArgs) -> Result<()> {
                      or explicitly opt out with --allow-no-auth",
                 );
             }
+            if !bind.ip().is_loopback() {
+                anyhow::bail!(
+                    "webhook server must bind to a loopback address; got {bind} — \
+                     the paperless webhook is a local-only sidecar surface",
+                );
+            }
             let vault_root = vault.unwrap_or_else(default_vault_path);
             let handle = spawn_webhook_server(WebhookServerConfig {
                 bind_addr: bind,
@@ -120,6 +126,22 @@ mod tests {
             msg.contains("--token") || msg.contains("allow-no-auth"),
             "expected token-config error: {msg}",
         );
+    }
+
+    #[tokio::test]
+    async fn serve_non_loopback_bind_is_rejected() {
+        let args = WebhookArgs {
+            action: WebhookAction::Serve {
+                bind: "0.0.0.0:0".parse().unwrap(),
+                vault: Some(std::env::temp_dir()),
+                subdir: "NEOTH".into(),
+                token: Some("tok".into()),
+                allow_no_auth: false,
+            },
+        };
+        let err = run_webhook(args).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("loopback"), "expected loopback error: {msg}");
     }
 
     #[tokio::test]

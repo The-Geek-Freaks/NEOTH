@@ -121,6 +121,10 @@ impl Worker for ProviderWorker {
         // (≤ 16 384, e.g. local Qwen/deepseek) first pick ONE tool
         // category so the task prompt can be primed with just that
         // category's vocabulary; larger models skip the extra turn.
+        // `detected_context_window = 0` — no live endpoint-side context
+        // probe is wired yet, so the static `model_profile::KNOWN_PROFILES`
+        // table is used as-is (`0` never overrides). Pass a real detected
+        // value here once an endpoint context-window probe exists.
         let profile = crate::coding::model_profile::get_profile(&self.model_name, 0);
         let tool_hint = match tool_router::routing_mode_for_profile(&profile) {
             RoutingMode::TwoStage => self.select_tool_category().await,

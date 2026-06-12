@@ -807,6 +807,39 @@ mod tests {
         }
     }
 
+    /// GR-159: the bundled pm-product-vision manifest must activate on
+    /// every trigger its own system_prompt metadata advertises — the
+    /// `trigger_keywords` list and the prompt's Triggers line are kept
+    /// in sync. The skill ships `enabled: false`, so force-enable in
+    /// memory the way full-auto mode does.
+    #[test]
+    fn pm_product_vision_north_star_activates() {
+        let mut manifest: SkillManifest = serde_yaml::from_str(include_str!(
+            "../../assets/skills/pm-product-vision/skill.yaml"
+        ))
+        .expect("bundled pm-product-vision yaml parses");
+        manifest.enabled = true;
+        let skill = Skill {
+            manifest,
+            path: PathBuf::from("/bundled/pm-product-vision/skill.yaml"),
+            content_hash: String::new(),
+        };
+        let skills = [skill];
+        for prompt in [
+            "align teams around a north star vision",
+            "help me write a vision statement for our product",
+        ] {
+            match route(prompt, &skills) {
+                Some(rm) => assert_eq!(
+                    rm.skill.id(),
+                    "pm-product-vision",
+                    "prompt `{prompt}` matched the wrong skill"
+                ),
+                None => panic!("prompt `{prompt}` should activate pm-product-vision"),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn r4_p1_no_skill_silently_dominates_unrelated_prompts() {
         // Non-skill prompts (greeting, generic chat) should NOT

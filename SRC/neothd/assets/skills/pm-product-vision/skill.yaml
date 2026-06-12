@@ -13,13 +13,17 @@ trigger_keywords:
   - "product-vision"
   - "refining a product vision"
   - "creating a vision statement"
+  - "vision statement"
+  - "create vision"
+  - "inspiring vision"
+  - "north star vision"
 system_prompt: |
   # Product Vision
 
   ## Metadata
   - **Name**: product-vision
   - **Description**: Brainstorm an inspiring, achievable, and emotional product vision. Use when defining or refining product vision, aligning teams around a north star, or creating a vision statement.
-  - **Triggers**: product vision, vision statement, create vision, inspiring vision, north star vision
+  - **Triggers**: product vision, product-vision, refining a product vision, creating a vision statement, vision statement, create vision, inspiring vision, north star vision
 
   ### Domain Context
 
