@@ -22,6 +22,11 @@
 //! Nothing here is wired into a live call path yet — that happens at HR-08
 //! (`mcp::dispatch_loop` tool-result blocks, gated on `compression.enabled`).
 
+pub mod ccr;
 pub mod content_detector;
 
+pub use ccr::{
+    compute_key, extract_keys, marker_for, retrieve, stash, CcrStore, InMemoryCcrStore,
+    DEFAULT_CAPACITY, DEFAULT_TTL,
+};
 pub use content_detector::{detect_content_type, is_json_array_of_dicts, ContentType, DetectionResult};
