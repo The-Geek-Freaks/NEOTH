@@ -442,6 +442,9 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
         longterm = report.longterm_rows,
         groundtruth = report.groundtruth_revoked,
         embedding = report.embedding_rows,
+        profile = report.profile_rows,
+        profile_pending = report.profile_pending_rows,
+        profile_outbox = report.profile_outbox_rows,
         audit_segment = %segment.display(),
         "forget executed (TOMBSTONE_REQUESTED audit frame written)"
     );
@@ -460,6 +463,17 @@ async fn run_memory_forget(args: &MemoryArgs, topic: &str) -> Result<()> {
             println!(
                 "  idx_groundtruth  : {} revoked",
                 report.groundtruth_revoked
+            );
+            // GR-100 — the profile rows were omitted, so the printed lines did
+            // not sum to `total`. GOLD-SEC-28 added the two in-flight tables.
+            println!("  idx_profile      : {} rows deleted", report.profile_rows);
+            println!(
+                "  idx_profile_pend : {} rows deleted",
+                report.profile_pending_rows
+            );
+            println!(
+                "  idx_profile_outb : {} rows deleted",
+                report.profile_outbox_rows
             );
             println!(
                 "  idx_embedding    : {} vectors wiped",
