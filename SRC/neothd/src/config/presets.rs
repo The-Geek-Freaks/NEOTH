@@ -58,6 +58,14 @@ pub struct Preset {
     /// When set, takes effect after `apply()` — operator confirms
     /// via the autonomy gate's normal flow.
     pub autonomy: Option<String>,
+    /// ODY-27 — text prepended to every USER message while this preset is
+    /// active (e.g. an output-format directive). `None`/empty = no prefix.
+    /// Per-message wrap, NOT a system-prompt layer — keeps the system prompt
+    /// clean + prefix-cache-friendly while still steering output shape.
+    pub inject_prefix: Option<String>,
+    /// ODY-27 — text appended to every USER message while this preset is
+    /// active. `None`/empty = no suffix.
+    pub inject_suffix: Option<String>,
 }
 
 /// Top-level `presets.yaml` shape. Multiple named presets + one
@@ -67,6 +75,32 @@ pub struct Preset {
 pub struct PresetFile {
     pub active: Option<String>,
     pub presets: BTreeMap<String, Preset>,
+}
+
+/// ODY-27 — wrap a user message with the active preset's `inject_prefix` /
+/// `inject_suffix` (per-message, NOT a system-prompt layer). When both are
+/// `None`/empty the original prompt is returned borrowed (zero-copy). Each
+/// injected directive is separated from the message by a blank line so it
+/// reads as its own paragraph.
+pub fn wrap_user_prompt<'a>(prompt: &'a str, preset: &Preset) -> std::borrow::Cow<'a, str> {
+    let prefix = preset.inject_prefix.as_deref().filter(|s| !s.is_empty());
+    let suffix = preset.inject_suffix.as_deref().filter(|s| !s.is_empty());
+    match (prefix, suffix) {
+        (None, None) => std::borrow::Cow::Borrowed(prompt),
+        (p, s) => {
+            let mut out = String::new();
+            if let Some(p) = p {
+                out.push_str(p);
+                out.push_str("\n\n");
+            }
+            out.push_str(prompt);
+            if let Some(s) = s {
+                out.push_str("\n\n");
+                out.push_str(s);
+            }
+            std::borrow::Cow::Owned(out)
+        }
+    }
 }
 
 /// Default path: `<neoth_home>/presets.yaml`.
@@ -347,6 +381,45 @@ fn insert_value(mapping: &mut serde_yaml::Mapping, key: &str, value: serde_yaml:
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn wrap_user_prompt_injects_prefix_and_suffix() {
+        // ODY-27: prefix prepended + suffix appended, each its own paragraph;
+        // None/empty are no-ops (zero-copy borrow when both absent).
+        let plain = Preset::default();
+        assert!(
+            matches!(wrap_user_prompt("hi", &plain), std::borrow::Cow::Borrowed(_)),
+            "no-inject must be zero-copy"
+        );
+        assert_eq!(wrap_user_prompt("hi", &plain), "hi");
+
+        let pref = Preset {
+            inject_prefix: Some("Answer in JSON.".into()),
+            ..Default::default()
+        };
+        assert_eq!(wrap_user_prompt("list colours", &pref), "Answer in JSON.\n\nlist colours");
+
+        let suf = Preset {
+            inject_suffix: Some("Be terse.".into()),
+            ..Default::default()
+        };
+        assert_eq!(wrap_user_prompt("explain x", &suf), "explain x\n\nBe terse.");
+
+        let both = Preset {
+            inject_prefix: Some("P".into()),
+            inject_suffix: Some("S".into()),
+            ..Default::default()
+        };
+        assert_eq!(wrap_user_prompt("M", &both), "P\n\nM\n\nS");
+
+        // Empty strings count as absent — no spurious blank lines.
+        let empty = Preset {
+            inject_prefix: Some(String::new()),
+            inject_suffix: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(wrap_user_prompt("m", &empty), "m");
+    }
 
     fn cloud_heavy_preset() -> Preset {
         let mut hemis = BTreeMap::new();
