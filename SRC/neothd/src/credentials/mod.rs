@@ -47,6 +47,8 @@ pub mod bitwarden_encrypted;
 // browser password stores. Opt in with `--features browser-import`.
 #[cfg(feature = "browser-import")]
 pub mod chrome;
+#[cfg(feature = "browser-import")]
+pub mod chrome_common;
 #[cfg(all(feature = "browser-import", target_os = "linux"))]
 pub mod chrome_linux;
 #[cfg(all(feature = "browser-import", target_os = "macos"))]

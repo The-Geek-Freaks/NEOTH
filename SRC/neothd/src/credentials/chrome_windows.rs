@@ -50,14 +50,11 @@ use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use serde::Deserialize;
 
-/// First 3 bytes of the modern Chrome password envelope (v10).
-pub const V10_PREFIX: &[u8] = b"v10";
-
-/// First 3 bytes of the v11 password envelope (App-Bound Encryption
-/// — Chrome 127+). Same AES-GCM body shape; selects a different
-/// `Local State` key source on Chrome internally. We don't need to
-/// distinguish — the dispatched decrypt is identical.
-pub const V11_PREFIX: &[u8] = b"v11";
+// GOLD-ARCH-08 — the row/credential structs + v10/v11 prefixes are shared in
+// `chrome_common`; Windows supplies only the DPAPI / AES-256-GCM specifics.
+pub use crate::credentials::chrome_common::{
+    ChromeLoginRow, DecryptedChromeCredential, V10_PREFIX, V11_PREFIX,
+};
 
 /// First 5 bytes of the `Local State` `encrypted_key` field after
 /// base64 decode. NSS-style sentinel that announces "the rest is a
@@ -94,16 +91,6 @@ pub enum ChromeWindowsError {
     PasswordNotUtf8(String),
     #[error("SQLite read of Login Data failed: {0}")]
     Sqlite(String),
-}
-
-/// One row from Chrome's `logins` table — the raw shape before
-/// decrypt. `password_blob` is either a v10/v11 envelope or a bare
-/// DPAPI blob; [`decrypt_chrome_password`] picks the right path.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChromeLoginRow {
-    pub origin_url: String,
-    pub username: String,
-    pub password_blob: Vec<u8>,
 }
 
 #[derive(Deserialize)]
@@ -268,30 +255,6 @@ pub fn read_chrome_logins(
         out.push(row.map_err(|e| ChromeWindowsError::Sqlite(e.to_string()))?);
     }
     Ok(out)
-}
-
-/// One decrypted Chrome credential the importer surfaces. `password`
-/// is the UTF-8 decoded plaintext; non-UTF-8 entries (Chrome stores
-/// passwords as bytes — operator might have a binary password) get
-/// folded into a per-entry warning by the caller and are not surfaced
-/// in the entries list.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecryptedChromeCredential {
-    pub origin_url: String,
-    pub username: String,
-    pub password: String,
-}
-
-impl Drop for DecryptedChromeCredential {
-    fn drop(&mut self) {
-        // Scrub the decrypted plaintext on drop (GOLD-SEC-12 / A-32) — see the
-        // chrome_linux note. Credentials live in a `Vec` until mapped into
-        // `SecretBytes`. GOLD-SEC-12 — the username is sensitive too; scrub it
-        // alongside the password (it was previously left unscrubbed).
-        use zeroize::Zeroize;
-        self.password.zeroize();
-        self.username.zeroize();
-    }
 }
 
 /// Full discover orchestration: read Local State + Login Data, unwrap

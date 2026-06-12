@@ -50,26 +50,19 @@ use sha1::Sha1;
 
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
-/// First 3 bytes of the modern Chrome password envelope (v10).
-pub const V10_PREFIX: &[u8] = b"v10";
-
-/// First 3 bytes of the v11 envelope (forward compat).
-pub const V11_PREFIX: &[u8] = b"v11";
-
-/// PBKDF2 salt Chrome hardcodes on macOS + Linux.
-pub const SALTYSALT: &[u8] = b"saltysalt";
-
-/// AES-CBC IV Chrome hardcodes on macOS. 16 ASCII spaces, same as Linux.
-pub const CHROME_CBC_IV: &[u8; 16] = b"                ";
+// GOLD-ARCH-08 — the row/credential structs + the saltysalt/CBC envelope
+// constants are shared in `chrome_common`; macOS supplies only the PBKDF2
+// iteration count (1003) + the Login Keychain source.
+pub use crate::credentials::chrome_common::{
+    AES_KEY_BYTES, CHROME_CBC_IV, ChromeLoginRow, DecryptedChromeCredential, SALTYSALT,
+    V10_PREFIX, V11_PREFIX,
+};
 
 /// PBKDF2 iteration count on macOS. Chrome hardcodes **1003** on
 /// macOS for legacy compatibility (Linux uses 1, Windows uses
 /// DPAPI + GCM). Do **NOT** change — would break interop with every
 /// existing macOS Chrome profile.
 pub const PBKDF2_ITERATIONS: u32 = 1003;
-
-/// Derived key length. AES-128 needs 16 bytes.
-pub const AES_KEY_BYTES: usize = 16;
 
 /// Keychain service name Chrome registers under. Chromium-derived
 /// browsers (Brave, Vivaldi) use their own variant; we accept any
@@ -98,34 +91,6 @@ pub enum ChromeMacosError {
     UnrecognizedBlob,
     #[error("SQLite read of Login Data failed: {0}")]
     Sqlite(String),
-}
-
-/// One row from Chrome's `logins` table.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChromeLoginRow {
-    pub origin_url: String,
-    pub username: String,
-    pub password_blob: Vec<u8>,
-}
-
-/// One decrypted Chrome credential.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecryptedChromeCredential {
-    pub origin_url: String,
-    pub username: String,
-    pub password: String,
-}
-
-impl Drop for DecryptedChromeCredential {
-    fn drop(&mut self) {
-        // Scrub the decrypted plaintext on drop (GOLD-SEC-12 / A-32) — see the
-        // chrome_linux note. Credentials live in a `Vec` until mapped into
-        // `SecretBytes`. GOLD-SEC-12 — the username is sensitive too; scrub it
-        // alongside the password (it was previously left unscrubbed).
-        use zeroize::Zeroize;
-        self.password.zeroize();
-        self.username.zeroize();
-    }
 }
 
 /// PBKDF2-HMAC-SHA1 with Chrome's hardcoded `"saltysalt"` salt + **1003**

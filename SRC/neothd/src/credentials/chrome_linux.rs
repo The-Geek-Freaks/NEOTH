@@ -48,21 +48,13 @@ use sha1::Sha1;
 
 type Aes128CbcDec = cbc::Decryptor<Aes128>;
 
-/// First 3 bytes of the modern Chrome password envelope (v10).
-pub const V10_PREFIX: &[u8] = b"v10";
-
-/// First 3 bytes of the v11 password envelope. Same AES-CBC body
-/// shape — kept for forward compatibility with Chromium-derived
-/// browsers that bumped the prefix.
-pub const V11_PREFIX: &[u8] = b"v11";
-
-/// PBKDF2 salt Chrome hardcodes on every platform that uses the
-/// `saltysalt`-derived AES key (Linux + macOS). Bytes — not chars —
-/// because the PBKDF2 input is byte-typed.
-pub const SALTYSALT: &[u8] = b"saltysalt";
-
-/// AES-CBC IV Chrome hardcodes on Linux. 16 ASCII space bytes.
-pub const CHROME_CBC_IV: &[u8; 16] = b"                ";
+// GOLD-ARCH-08 — the row/credential structs + the saltysalt/CBC envelope
+// constants are shared in `chrome_common`; Linux supplies only the PBKDF2
+// iteration count (1) + the Secret Service keyring source.
+pub use crate::credentials::chrome_common::{
+    AES_KEY_BYTES, CHROME_CBC_IV, ChromeLoginRow, DecryptedChromeCredential, SALTYSALT,
+    V10_PREFIX, V11_PREFIX,
+};
 
 /// Fallback PBKDF2 password Chrome uses on Linux when the operator's
 /// login keyring is unavailable (no DBus, declined keyring unlock,
@@ -73,9 +65,6 @@ pub const CHROME_FALLBACK_PASSWORD: &[u8] = b"peanuts";
 /// PBKDF2 iteration count. Linux installs use 1; do **NOT** change —
 /// would break interop with every existing Chrome profile.
 pub const PBKDF2_ITERATIONS: u32 = 1;
-
-/// Derived key length. AES-128 needs 16 bytes; do **NOT** change.
-pub const AES_KEY_BYTES: usize = 16;
 
 /// Errors surfaced by the Linux Chrome decrypt path. Importer
 /// collapses variants into a generic per-source diagnostic before
@@ -97,38 +86,6 @@ pub enum ChromeLinuxError {
     UnrecognizedBlob,
     #[error("SQLite read of Login Data failed: {0}")]
     Sqlite(String),
-}
-
-/// One row from Chrome's `logins` table — the raw shape before
-/// decrypt. Shared shape with the Windows path so the importer
-/// wiring can stay consistent.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChromeLoginRow {
-    pub origin_url: String,
-    pub username: String,
-    pub password_blob: Vec<u8>,
-}
-
-/// One decrypted Chrome credential.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecryptedChromeCredential {
-    pub origin_url: String,
-    pub username: String,
-    pub password: String,
-}
-
-impl Drop for DecryptedChromeCredential {
-    fn drop(&mut self) {
-        // Scrub the decrypted plaintext on drop (GOLD-SEC-12 / A-32). These
-        // credentials live in a `Vec` until they are mapped into `SecretBytes`,
-        // so without this the operator's Chrome passwords would linger
-        // unscrubbed on the heap (and could be swapped to disk). GOLD-SEC-12 —
-        // the username is sensitive too (it pairs with the password) and was
-        // previously left unscrubbed; zeroize it as well.
-        use zeroize::Zeroize;
-        self.password.zeroize();
-        self.username.zeroize();
-    }
 }
 
 /// PBKDF2-HMAC-SHA1 with Chrome's hardcoded `"saltysalt"` salt + 1
