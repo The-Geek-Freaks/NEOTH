@@ -218,6 +218,22 @@ mod watcher {
             return None;
         }
 
+        // GR-049: also watch freedom.yaml (it lives next to skills_dir) so an
+        // edit to skills.{disabled,enabled,enable_all_bundled} hot-reloads the
+        // registry — `load_all` re-reads freedom.yaml on every `reload_now`, so
+        // this watch makes those operator edits take effect WITHOUT a restart.
+        // Best-effort + NonRecursive: a failed watch leaves skill.yaml hot-
+        // reload working (unlike the mandatory skills_dir watch above).
+        if let Some(parent) = registry.skills_dir.parent() {
+            if let Err(e) = watcher.watch(parent, RecursiveMode::NonRecursive) {
+                warn!(
+                    dir = %parent.display(),
+                    error = %e,
+                    "could not watch freedom.yaml dir; skills.* edits need a restart to apply"
+                );
+            }
+        }
+
         info!(
             dir = %registry.skills_dir.display(),
             "skill hot-reload watcher started"
@@ -239,7 +255,7 @@ mod watcher {
                     maybe_ev = event_rx.recv() => {
                         match maybe_ev {
                             Some(ev) => {
-                                if event_is_skill_relevant(&ev) {
+                                if event_is_skill_relevant(&ev, &registry.skills_dir) {
                                     pending = Some(tokio::time::Instant::now() + DEBOUNCE);
                                 }
                             }
@@ -270,10 +286,14 @@ mod watcher {
         })
     }
 
-    /// Filter — we only care about `skill.yaml` create/modify/remove +
-    /// directory create/remove (the operator dropping/removing a whole
-    /// skill folder). Permission changes etc. are noise.
-    fn event_is_skill_relevant(ev: &Event) -> bool {
+    /// Filter — we care about `skill.yaml` create/modify/remove, a `skill`
+    /// folder create/remove, and (GR-049) a `freedom.yaml` change (its
+    /// `skills.*` settings are re-read by `load_all`). Permission changes etc.
+    /// are noise. `skills_dir` scopes the directory match so the freedom.yaml
+    /// parent-dir watch never fires on unrelated home-dir directories (`wal/`,
+    /// `archive/`, …) — a Modify on `~/.neoth/wal` would otherwise spuriously
+    /// reload on every WAL write.
+    fn event_is_skill_relevant(ev: &Event, skills_dir: &std::path::Path) -> bool {
         let kind_matches = matches!(
             ev.kind,
             EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
@@ -282,13 +302,13 @@ mod watcher {
             return false;
         }
         ev.paths.iter().any(|p| {
-            // skill.yaml file change OR a directory create/remove
-            // affecting a child of skills_dir.
-            let is_skill_yaml = p
-                .file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|n| n == "skill.yaml");
-            is_skill_yaml || p.is_dir()
+            match p.file_name().and_then(|s| s.to_str()) {
+                // skill.yaml anywhere under the watch, or freedom.yaml (GR-049).
+                Some("skill.yaml") | Some("freedom.yaml") => true,
+                // A skill-folder create/remove — but ONLY under skills_dir, so a
+                // home-dir directory event from the freedom.yaml watch is noise.
+                _ => p.is_dir() && p.starts_with(skills_dir),
+            }
         })
     }
 
