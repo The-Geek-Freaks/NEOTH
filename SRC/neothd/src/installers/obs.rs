@@ -174,30 +174,18 @@ async fn cli_version(binary: &str) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
-/// Build the headless-launch command-line that exposes obs-websocket
-/// on `port` with `password`. Wizard generates a fresh 32-byte CSPRNG
-/// base64url password operator never sees (stored in
-/// `freedom.yaml::plugins.facecam.obs_password` as SecretString).
-///
-/// # SECURITY — do NOT wire this verbatim (GOLD-SEC-23 / A-85)
-/// The `--websocket_password <pw>` argument is visible to every other user
-/// on the host via `ps` / Task Manager. This helper is currently UNWIRED
-/// (referenced only by tests). Before any code actually spawns OBS with it,
-/// the password MUST be delivered out-of-band instead — write the
-/// obs-websocket plugin config (`…/plugin_config/obs-websocket/config.json`,
-/// mode 0600) and launch WITHOUT the password flag. The port/tray/vcam flags
-/// are safe to pass on the command line.
-pub fn obs_headless_launch_args(port: u16, password: &str) -> Vec<String> {
-    vec![
-        "obs".into(),
-        "--websocket_port".into(),
-        port.to_string(),
-        "--websocket_password".into(),
-        password.to_string(),
-        "--minimize-to-tray".into(),
-        "--startvirtualcam".into(),
-    ]
-}
+// GOLD-SEC-23 / GR-145 — `obs_headless_launch_args(port, password)` was REMOVED.
+// It was UNWIRED (referenced only by its own tests) and a footgun: it placed
+// `--websocket_password <pw>` on the OBS argv, which is visible to every other
+// user on the host via `ps` / Task Manager / `/proc/<pid>/cmdline` — guarded
+// only by a "do not wire this verbatim" doc comment, not by the type system.
+//
+// When OBS control is actually built, the password MUST be delivered OUT-OF-BAND
+// — write the obs-websocket plugin config
+// (`…/plugin_config/obs-websocket/config.json`, mode 0600) and launch WITHOUT a
+// password flag — and only THEN build the safe `--websocket_port` / tray / vcam
+// args, with a real consumer. A safe-by-construction launch-args helper is
+// re-added at that point; an argv-password one never is.
 
 #[cfg(test)]
 mod tests {
@@ -305,27 +293,9 @@ mod tests {
         let _ = detect_obs_install();
     }
 
-    #[test]
-    fn headless_launch_args_carry_websocket_credentials() {
-        let args = obs_headless_launch_args(4455, "secret-password");
-        assert_eq!(args[0], "obs");
-        assert!(args.contains(&"--websocket_port".to_string()));
-        assert!(args.contains(&"4455".to_string()));
-        assert!(args.contains(&"--websocket_password".to_string()));
-        assert!(args.contains(&"secret-password".to_string()));
-        assert!(args.contains(&"--startvirtualcam".to_string()));
-        // Tray-minimize so OBS doesn't steal focus — operator-grade UX.
-        assert!(args.contains(&"--minimize-to-tray".to_string()));
-    }
-
-    #[test]
-    fn headless_launch_password_round_trips_verbatim() {
-        // Drift guard — any future shell-escape change would break the
-        // password handoff. Pin exact verbatim equality.
-        let pwd = "a-b_c.d!e:f@g~h";
-        let args = obs_headless_launch_args(9999, pwd);
-        assert!(args.contains(&pwd.to_string()));
-    }
+    // GOLD-SEC-23 / GR-145 — the obs_headless_launch_args tests were removed with
+    // the dead argv-password helper (a launch arg builder that leaked the
+    // websocket password via the command line).
 
     #[tokio::test]
     async fn check_obs_version_returns_some_or_none_no_panic() {

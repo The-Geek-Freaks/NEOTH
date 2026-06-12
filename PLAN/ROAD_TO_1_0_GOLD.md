@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 131 | 78 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 129 | 80 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,8 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GOLD-SEC-23** (MED SEC) ✅ FIXED (dead footgun removed) — obs_headless_launch_args put `--websocket_password <pw>` on the OBS argv (visible via ps / Task Manager / /proc/<pid>/cmdline), guarded ONLY by a 'do not wire this verbatim' doc comment, and was UNWIRED (test-only callers). Removed the helper + its 2 tests. When OBS control is built, the password must be delivered out-of-band (obs-websocket plugin_config/config.json mode 0600) + launch WITHOUT a password flag — a safe launch-args helper re-added WITH a consumer then. `installers/obs.rs`.
+- [x] **GR-145** (LOW SEC) ✅ FIXED — duplicate of GOLD-SEC-23 (argv --websocket_password, only a comment guard); resolved by the same removal. installers::obs 54/0; clippy clean.
 - [x] **DD-03** (MED) ✅ FIXED (doc honesty) — media/audio.rs + media/mod.rs headers UNDER-claimed: they said local Whisper STT was unimplemented 'Phase 2b' / 'emits no transcript text yet', but transcribe_if_cached() actually runs providers::whisper::WhisperEngine (candle) and returns real transcript text once the model artifacts are cached (status 'model not cached' only until pre-fetched). Corrected the audio.rs header, the mod.rs Audio matrix row, and the mod.rs prose to state local Whisper STT IS wired (cache-gated); only local TTS + PDF OCR remain scaffold. `media/audio.rs` + `media/mod.rs`.
 - [x] **GOLD-HON-04** (INFO) ✅ FIXED — same as DD-03 (headers claim local STT not implemented while whisper is wired); resolved by the same header corrections. media::audio 6/0; clippy clean.
 - [x] **GOLD-SEC-20** (MED SEC) ✅ FIXED — the plugin-discovery symlink-check loop covered plugin.toml + plugin.wasm but NOT plugin.wasm.minisig, so a symlinked minisig could point the signature read at an arbitrary file. Added plugin.wasm.minisig to the loop (a missing minisig still passes — symlink_metadata errors → unwrap_or(false)). `wasm_plugin/discovery.rs`.
