@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 14;
+pub const SCHEMA_VERSION: i64 = 15;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -272,7 +272,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             -- tier. Recall increments it; the retrieval ranker stretches a
             -- frequently-accessed memory's recency half-life so it decays
             -- slower (tiers::effective_half_life_days). Default 0.
-            access_count   INTEGER NOT NULL DEFAULT 0
+            access_count   INTEGER NOT NULL DEFAULT 0,
+            -- JV-MEM-14: per-event source-trust tag (0=low external / 1=medium /
+            -- 2=high operator-explicit). Set at index time from the event source;
+            -- weights recall ranking (tiers::trust_weight) so operator-typed
+            -- memories outrank external chatter. Default 1 (medium).
+            trust          INTEGER NOT NULL DEFAULT 1
         );
 
         CREATE INDEX IF NOT EXISTS idx_episode_ts          ON idx_episode (ts_ns DESC);

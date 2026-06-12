@@ -324,6 +324,7 @@ mod tests {
             tier: "hot".into(),
             importance: None,
             access_count: 0,
+            trust: 1,
         }
     }
 

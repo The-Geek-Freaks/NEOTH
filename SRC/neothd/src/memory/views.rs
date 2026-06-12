@@ -29,8 +29,19 @@ pub struct EpisodeHit {
     /// 0 for warm/cold/groundtruth rows (no per-row count) and old payloads.
     #[serde(default)]
     pub access_count: u32,
+    /// JV-MEM-14: source-trust tag (0=low external / 1=medium / 2=high operator-
+    /// explicit). Weights recall ranking via [`crate::memory::tiers::trust_weight`].
+    /// Defaults to 1 (medium) for warm/cold/groundtruth/region rows + old payloads.
+    #[serde(default = "default_trust")]
+    pub trust: u8,
 }
 
 fn default_hot_tier() -> String {
     "hot".to_string()
+}
+
+/// JV-MEM-14: medium trust is the neutral default for rows that don't carry an
+/// explicit source tag (warm/cold/groundtruth/region hits + pre-JV-MEM-14 payloads).
+fn default_trust() -> u8 {
+    1
 }

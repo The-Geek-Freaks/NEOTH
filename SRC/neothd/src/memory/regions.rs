@@ -218,6 +218,7 @@ pub fn recall_from_region(
                     tier: "hot".to_string(),
                     importance: Some(r.get::<_, f64>(8)?),
                     access_count: 0,
+                    trust: 1,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
@@ -265,6 +266,7 @@ pub fn recall_from_region(
                     tier: "hot".to_string(),
                     importance: r.get::<_, Option<f64>>(8)?,
                     access_count: 0,
+                    trust: 1,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?

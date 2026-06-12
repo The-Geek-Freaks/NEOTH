@@ -347,6 +347,9 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
     let rank_tier = tiers::tier_for_by_access(age_tier, h.access_count, importance);
     let base =
         tiers::ranking_score_repromoted(importance, age_tier, rank_tier, days_since, h.access_count);
+    // JV-MEM-14: weight by source trust so operator-explicit memories outrank
+    // lower-trust external chatter at equal relevance.
+    let base = base * tiers::trust_weight(h.trust);
     // JV-MEM-07: length normalization — a gentle logarithmic penalty on verbose
     // entries so they don't win on raw keyword density. Entries at/below the
     // 300-char anchor are unpenalised (ratio clamped to 1 → log2(1)=0 → factor
@@ -364,7 +367,7 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
 fn recall_fts(conn: &Connection, query: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
     let mut stmt = conn.prepare(
         "SELECT e.event_id, e.event_type, e.ts_ns, e.text, e.text_hash, \
-                e.channel, e.sender_id, e.operator_id, e.importance, e.access_count \
+                e.channel, e.sender_id, e.operator_id, e.importance, e.access_count, e.trust \
          FROM idx_episode e \
          JOIN idx_episode_fts f ON f.rowid = e.event_id \
          WHERE idx_episode_fts MATCH ?1 \
@@ -465,7 +468,7 @@ fn recall_episodes_best_effort(db_path: &Path, topic: &str, limit: usize) -> Vec
 fn recall_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
     let pattern = format!("%{query}%");
     let mut stmt = conn.prepare(
-        "SELECT event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, access_count \
+        "SELECT event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, access_count, trust \
          FROM idx_episode \
          WHERE text LIKE ?1 COLLATE NOCASE \
          ORDER BY ts_ns DESC \
@@ -505,6 +508,7 @@ fn recall_warm_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
                 tier: "warm".to_string(),
                 importance: Some(r.get::<_, f64>(4)?),
                 access_count: r.get::<_, i64>(5)? as u32,
+                trust: 1,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -535,6 +539,7 @@ fn recall_cold_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
                 tier: "cold".to_string(),
                 importance: Some(r.get::<_, f64>(4)?),
                 access_count: r.get::<_, i64>(5)? as u32,
+                trust: 1,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -582,6 +587,8 @@ fn recall_groundtruth_like(
                 // not by composite score).
                 importance: None,
                 access_count: 0,
+                // Ground-truth is operator-asserted → highest source trust.
+                trust: 2,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -601,6 +608,7 @@ fn hot_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeHit> {
         tier: "hot".to_string(),
         importance: Some(r.get::<_, f64>(8)?),
         access_count: r.get::<_, i64>(9)? as u32,
+        trust: r.get::<_, i64>(10)? as u8,
     })
 }
 
@@ -1163,6 +1171,7 @@ mod tests {
             tier: tier.to_string(),
             importance: Some(imp),
             access_count: 0,
+            trust: 1,
         };
         let mut rows = vec![
             mk("hot", 0.50, now_ns as i64),
@@ -1201,6 +1210,7 @@ mod tests {
             tier: "cold".to_string(),
             importance: Some(0.85),
             access_count,
+            trust: 1,
         };
         let mut rows = vec![mk(1, 0), mk(2, 12)];
         rank_in_place(&mut rows, now_ns);
@@ -1208,6 +1218,31 @@ mod tests {
             rows[0].event_id, 2,
             "the frequently-recalled cold row re-promotes and ranks first"
         );
+        assert_eq!(rows[1].event_id, 1);
+    }
+
+    #[test]
+    fn higher_trust_outranks_equal_lower_trust_peer() {
+        // JV-MEM-14: two identical hot hits except source trust — the operator-
+        // explicit (trust 2) one ranks above the medium (trust 1) one.
+        let now_ns: u64 = 5 * 86_400 * 1_000_000_000;
+        let mk = |event_id: i64, trust: u8| EpisodeHit {
+            event_id,
+            event_type: 1,
+            ts_ns: now_ns as i64,
+            text: "same topic".to_string(),
+            text_hash: "h".to_string(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "hot".to_string(),
+            importance: Some(0.6),
+            access_count: 0,
+            trust,
+        };
+        let mut rows = vec![mk(1, 1), mk(2, 2)];
+        rank_in_place(&mut rows, now_ns);
+        assert_eq!(rows[0].event_id, 2, "higher-trust hit ranks first");
         assert_eq!(rows[1].event_id, 1);
     }
 
@@ -1229,6 +1264,7 @@ mod tests {
             tier: "hot".to_string(),
             importance: Some(0.8),
             access_count: 0,
+            trust: 1,
         };
         let mut rows = vec![
             mk(1, "x".repeat(1200)),       // verbose → length-penalised

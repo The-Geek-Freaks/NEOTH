@@ -156,6 +156,18 @@ pub fn tier_for_by_access(age_tier: Tier, access_count: u32, importance: f64) ->
     age_tier
 }
 
+/// JV-MEM-14 — per-event source-trust multiplier for recall ranking. Operator-
+/// explicit memories (trust 2) rank at full weight; medium (1) and low/external
+/// (0) get a gentle discount so external chatter doesn't outrank the operator's
+/// own words on keyword density alone. Bounded to (0, 1].
+pub fn trust_weight(trust: u8) -> f64 {
+    match trust {
+        2 => 1.0,
+        1 => 0.94,
+        _ => 0.85,
+    }
+}
+
 /// Hebbian reinforce: `new = old + k·(1 − old)`, clamped to [0, 1].
 ///
 /// `k` comes from `tier.reinforce_coefficient()`. The formula gives diminishing
@@ -407,6 +419,20 @@ mod tests {
         assert_eq!(tier_for_by_access(Hot, 50, 0.1), Warm);
         assert_eq!(tier_for_by_access(Warm, 0, 0.1), Cold);
         assert_eq!(tier_for_by_access(Cold, 0, 0.1), Cold);
+    }
+
+    #[test]
+    fn trust_weight_orders_sources_within_unit_interval() {
+        // JV-MEM-14: high (operator) > medium > low (external); all in (0, 1].
+        assert_eq!(trust_weight(2), 1.0);
+        assert!(trust_weight(2) > trust_weight(1));
+        assert!(trust_weight(1) > trust_weight(0));
+        for t in 0u8..=2 {
+            let w = trust_weight(t);
+            assert!(w > 0.0 && w <= 1.0, "trust {t} weight {w} out of (0,1]");
+        }
+        // Defensive: an out-of-range tag falls back to the low-trust discount.
+        assert_eq!(trust_weight(9), trust_weight(0));
     }
 
     #[test]

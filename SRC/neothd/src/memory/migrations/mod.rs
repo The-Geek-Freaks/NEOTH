@@ -117,6 +117,13 @@ pub const MIGRATIONS: &[Migration] = &[
                       and an aged frequently-recalled row can re-promote in ranking",
         run: migration_v13_to_v14,
     },
+    Migration {
+        from: 14,
+        to: 15,
+        description: "JV-MEM-14: add idx_episode.trust — per-event source-trust tag \
+                      that weights recall ranking (operator-explicit > external)",
+        run: migration_v14_to_v15,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -154,6 +161,17 @@ fn migration_v13_to_v14(conn: &Connection) -> Result<()> {
     );
     let _ = conn.execute(
         "ALTER TABLE idx_longterm ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    Ok(())
+}
+
+/// v14 → v15: add the `trust` source-credibility tag to `idx_episode`
+/// (GOLD-ADAPT-JV-MEM-14). Mirrors the canonical column in `store::apply_schema`.
+/// Idempotent.
+fn migration_v14_to_v15(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_episode ADD COLUMN trust INTEGER NOT NULL DEFAULT 1",
         [],
     );
     Ok(())

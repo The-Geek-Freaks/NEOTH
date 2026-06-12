@@ -239,8 +239,8 @@ fn index_frame(
                 let importance = header.importance.raw() as f64;
                 tx.execute(
                     "INSERT OR IGNORE INTO idx_episode \
-                     (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7)",
+                     (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts, trust) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7, 2)",
                     params![event_id, event_type as i64, ts_ns, text, text_hash, importance, ts_ns],
                 )?;
             }
