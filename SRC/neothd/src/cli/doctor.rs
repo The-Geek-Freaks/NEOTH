@@ -1647,15 +1647,26 @@ fn check_vector_index_snapshot(home: &Path) -> CheckOutcome {
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64);
-    let newest_embedding = crate::memory::store::open(&home.join("views.db"))
-        .ok()
-        .and_then(|c| {
-            c.query_row("SELECT MAX(created_at) FROM idx_embedding", [], |r| {
-                r.get::<_, Option<i64>>(0)
-            })
+    // store::open would CREATE the DB + apply schema on a missing file —
+    // a doctor check must stay read-only. Open the existing file with
+    // SQLITE_OPEN_READ_ONLY (same pattern as the credentials readers) and
+    // treat any failure as "unavailable" → present-OK path.
+    let db_path = home.join("views.db");
+    let newest_embedding = if db_path.exists() {
+        use rusqlite::OpenFlags;
+        let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        rusqlite::Connection::open_with_flags(&db_path, flags)
             .ok()
-            .flatten()
-        });
+            .and_then(|c| {
+                c.query_row("SELECT MAX(created_at) FROM idx_embedding", [], |r| {
+                    r.get::<_, Option<i64>>(0)
+                })
+                .ok()
+                .flatten()
+            })
+    } else {
+        None
+    };
     match (snap_mtime, newest_embedding) {
         (Some(mtime), Some(latest)) if latest > mtime => CheckOutcome {
             name: NAME,

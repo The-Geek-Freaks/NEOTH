@@ -1,11 +1,14 @@
 # PROGRESS — v1.0 working backlog
 
-**Date:** 2026-05-24
+**Created:** 2026-05-24  **Last updated:** 2026-06-12
+> **GOLD phase:** task-by-task source of truth is `PLAN/ROAD_TO_1_0_GOLD.md`; this file tracks the broader v1.0 lane backlog. Update both files in the same commit per the same-turn rule.
+
 **Predecessor archive:** `PLAN/PROGRESS_v0_2_FINAL.md` (4612 lines, historical record of v0.1 → v0.2 closeout)
 **Reference docs:**
 
 - `PLAN/v1_0_OPERATOR_WISHLIST_2026-05-24.md` — 35-bucket verbatim operator wish-list
 - `PLAN/ROAD_TO_1_0.md` — 5-lane roadmap (v0.3 → v1.0)
+- `PLAN/ROAD_TO_1_0_GOLD.md` — GOLD-phase task tracker (primary for WS-A..WS-I)
 
 This file is the working backlog. Items roll `[ ] open` → `[~] in flight` → `[x] shipped` exactly the way `PROGRESS_v0_2_FINAL.md` tracked v0.2. Every shipped item carries a commit hash + line of evidence. Same-turn PROGRESS flip rule from v0.2 carries over: every code commit pairs with the `[~]` → `[x]` flip in the same commit.
 

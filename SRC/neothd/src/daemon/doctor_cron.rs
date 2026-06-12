@@ -320,7 +320,14 @@ pub async fn run_doctor_tick(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let outcomes = crate::cli::doctor::run_all_checks(home);
+    // run_all_checks is sync and blocks (check_stuck_claude_processes
+    // sleeps 200ms; several checks do file/registry IO) — run it on the
+    // blocking pool so the daemon's reactor keeps ticking.
+    let home_owned = home.to_path_buf();
+    let outcomes =
+        tokio::task::spawn_blocking(move || crate::cli::doctor::run_all_checks(&home_owned))
+            .await
+            .map_err(|e| format!("doctor checks panicked: {e}"))?;
     let report = build_report(ts_unix, &outcomes);
 
     // WAL emit — every tick, clean or not. The audit chain proves
