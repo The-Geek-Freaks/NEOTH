@@ -16,6 +16,46 @@ impl EventId {
     }
 }
 
+/// GOLD-ARCH-20: coarse fan-out routing tag in `EventHeaderV2`, evaluated
+/// before payload decode (SPEC_wire_header_v2_slim.md §7). Newtype over the
+/// wire `u32` so a raw integer (or a `WalCategory`) can't be passed where a
+/// scope is expected. `#[repr(transparent)]` + LE passthrough keep the
+/// 96-byte wire format byte-identical — `PROG-19`'s pinned-offset oracle
+/// still holds.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct WalScope(pub u32);
+
+impl WalScope {
+    /// No routing scope — the production default (no code sets a non-zero
+    /// scope yet; reserved for future fan-out routing).
+    pub const UNSET: Self = Self(0);
+    pub const fn to_le_bytes(self) -> [u8; 4] {
+        self.0.to_le_bytes()
+    }
+    pub const fn from_le_bytes(b: [u8; 4]) -> Self {
+        Self(u32::from_le_bytes(b))
+    }
+}
+
+/// GOLD-ARCH-20: routing tag paired with [`WalScope`] in `EventHeaderV2`
+/// (SPEC_wire_header_v2_slim.md §7). Distinct newtype so scope and category
+/// can't be swapped at a construction site. Wire-format byte-identical.
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub struct WalCategory(pub u32);
+
+impl WalCategory {
+    /// No routing category — the production default.
+    pub const UNSET: Self = Self(0);
+    pub const fn to_le_bytes(self) -> [u8; 4] {
+        self.0.to_le_bytes()
+    }
+    pub const fn from_le_bytes(b: [u8; 4]) -> Self {
+        Self(u32::from_le_bytes(b))
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SessionId(pub [u8; 16]);
 

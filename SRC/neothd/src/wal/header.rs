@@ -4,7 +4,7 @@
 
 use super::error::HeaderParseError;
 use super::hlc::Hlc;
-use super::types::{EventFlags, EventId, Importance, NodeId, SessionId};
+use super::types::{EventFlags, EventId, Importance, NodeId, SessionId, WalCategory, WalScope};
 
 pub const MAGIC: [u8; 4] = *b"NEOT";
 pub const WAL_FORMAT_VERSION: u8 = 0x02;
@@ -28,8 +28,8 @@ pub struct EventHeaderV2 {
     pub event_id: EventId,
     pub hlc: Hlc,
     pub importance: Importance,
-    pub scope: u32,
-    pub category: u32,
+    pub scope: WalScope,
+    pub category: WalCategory,
     pub session_id: SessionId,
     pub node_id: NodeId,
     pub payload_hash: u64,
@@ -91,8 +91,8 @@ impl EventHeaderV2 {
         let hlc_physical_ns = u64::from_le_bytes(b[29..37].try_into().unwrap());
         let hlc_logical = u32::from_le_bytes(b[37..41].try_into().unwrap());
         let importance_raw = f32::from_le_bytes(b[41..45].try_into().unwrap());
-        let scope = u32::from_le_bytes(b[45..49].try_into().unwrap());
-        let category = u32::from_le_bytes(b[49..53].try_into().unwrap());
+        let scope = WalScope::from_le_bytes(b[45..49].try_into().unwrap());
+        let category = WalCategory::from_le_bytes(b[49..53].try_into().unwrap());
         let session_id_raw: [u8; 16] = b[53..69].try_into().unwrap();
         let node_id_raw: [u8; 16] = b[69..85].try_into().unwrap();
         let payload_hash = u64::from_le_bytes(b[85..93].try_into().unwrap());
@@ -172,8 +172,8 @@ impl EventHeaderV2 {
             event_id: EventId::NONE,
             hlc: Hlc::EPOCH,
             importance: Importance::ZERO,
-            scope: 0,
-            category: 0,
+            scope: WalScope::UNSET,
+            category: WalCategory::UNSET,
             session_id: SessionId::ZERO,
             node_id: NodeId::ZERO,
             payload_hash: 0,
@@ -212,8 +212,8 @@ mod tests {
             event_id: EventId(0xDEADBEEFCAFEBABE),
             hlc: Hlc::new(1_700_000_000_000_000_000, 5).unwrap(),
             importance: Importance::new(0.42).unwrap(),
-            scope: 99,
-            category: 1,
+            scope: WalScope(99),
+            category: WalCategory(1),
             session_id: SessionId([1u8; 16]),
             node_id: NodeId([2u8; 16]),
             payload_hash: 0x0102030405060708,
@@ -235,8 +235,8 @@ mod tests {
         let event_id = 0xA1A2A3A4A5A6A7A8u64;
         let phys = 1_700_000_000_000_000_000u64;
         let logical = 5u32;
-        let scope = 0xB1B2B3B4u32;
-        let category = 0xC1C2C3C4u32;
+        let scope = WalScope(0xB1B2B3B4u32);
+        let category = WalCategory(0xC1C2C3C4u32);
         let session = [0x51u8; 16];
         let node = [0x6Eu8; 16];
         let payload_hash = 0xD1D2D3D4D5D6D7D8u64;

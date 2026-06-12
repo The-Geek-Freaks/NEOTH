@@ -88,5 +88,7 @@ pub use header::EventHeaderV2;
 pub use hlc::Hlc;
 #[allow(unused_imports)]
 pub use types::{EventId, Importance, NodeId, SessionId};
+#[allow(unused_imports)]
+pub use types::{WalCategory, WalScope};
 // WalError gets re-exported once an external caller consumes it directly;
 // for now `?` conversion via thiserror handles propagation.

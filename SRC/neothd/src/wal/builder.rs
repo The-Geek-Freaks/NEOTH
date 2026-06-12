@@ -17,7 +17,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::header::{CRC_LEN, EventHeaderV2, HEADER_BODY_LEN, PREAMBLE_LEN};
 use super::hlc::Hlc;
-use super::types::{EventFlags, EventId, Importance, NodeId, SessionId};
+use super::types::{EventFlags, EventId, Importance, NodeId, SessionId, WalCategory, WalScope};
 
 /// Defaults applied to every header unless explicitly overridden.
 const DEFAULT_IMPORTANCE: f32 = 0.5;
@@ -140,8 +140,8 @@ impl<'p> HeaderBuilder<'p> {
             event_id: EventId(hlc.physical_ns()),
             hlc,
             importance: Importance::new(self.importance).unwrap_or(Importance::ZERO),
-            scope: self.scope,
-            category: self.category,
+            scope: WalScope(self.scope),
+            category: WalCategory(self.category),
             session_id: self.session_id,
             node_id: self.node_id,
             payload_hash,
@@ -248,8 +248,8 @@ mod tests {
         assert!((h.importance.raw() - 0.9).abs() < 1e-6);
         assert_eq!(h.session_id.0, session.0);
         assert_eq!(h.node_id.0, node.0);
-        assert_eq!(h.scope, 42);
-        assert_eq!(h.category, 1);
+        assert_eq!(h.scope, WalScope(42));
+        assert_eq!(h.category, WalCategory(1));
     }
 
     #[test]
