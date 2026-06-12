@@ -28,7 +28,7 @@
 //! the deferral when the field is set.
 
 use anyhow::{Context, Result};
-use candle_core::{D, DType, Device, IndexOp, Module, Tensor};
+use candle_core::{DType, Device, IndexOp, Module, Tensor};
 use candle_nn::{
     Embedding, Linear, RmsNorm, VarBuilder, linear_no_bias, ops::softmax_last_dim, rms_norm,
 };
@@ -169,7 +169,13 @@ impl OuroModel {
         // Causal mask only when the sequence has more than one token
         // (single-token decoding doesn't need a mask).
         let attention_mask = if seq_len > 1 {
-            Some(self.causal_attention_mask(b_size, seq_len, seqlen_offset)?)
+            Some(super::model_trait::build_causal_mask(
+                b_size,
+                seq_len,
+                seqlen_offset,
+                &self.device,
+                self.dtype,
+            )?)
         } else {
             None
         };
@@ -202,35 +208,6 @@ impl OuroModel {
             }
         }
         h.apply(&self.final_norm).context("OuroModel: final_norm")
-    }
-
-    fn causal_attention_mask(
-        &self,
-        b_size: usize,
-        tgt_len: usize,
-        seqlen_offset: usize,
-    ) -> Result<Tensor> {
-        // Strict upper-triangle mask — `i < j` positions get
-        // -inf so the softmax can only attend to past tokens.
-        let mask: Vec<f32> = (0..tgt_len)
-            .flat_map(|i| (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 }))
-            .collect();
-        let mask = Tensor::from_slice(&mask, (tgt_len, tgt_len), &self.device)
-            .context("causal mask: build tensor")?;
-        let mask = if seqlen_offset > 0 {
-            // Prepend a [tgt_len × seqlen_offset] zero block — positions
-            // in the offset region are all attendable (they're the
-            // already-emitted prefix).
-            let mask0 = Tensor::zeros((tgt_len, seqlen_offset), DType::F32, &self.device)
-                .context("causal mask: build offset prefix")?;
-            Tensor::cat(&[&mask0, &mask], D::Minus1).context("causal mask: cat offset")?
-        } else {
-            mask
-        };
-        mask.expand((b_size, 1, tgt_len, tgt_len + seqlen_offset))
-            .context("causal mask: expand to [b, 1, tgt, k]")?
-            .to_dtype(self.dtype)
-            .context("causal mask: cast to model dtype")
     }
 
     /// Clear every layer's KV-cache. Exposed for the future

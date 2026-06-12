@@ -35,6 +35,7 @@ pub mod adapter;
 pub mod forward;
 pub mod layers;
 pub mod model;
+pub mod model_trait;
 pub mod quantize;
 pub mod quantized_forward;
 pub mod quantized_layers;

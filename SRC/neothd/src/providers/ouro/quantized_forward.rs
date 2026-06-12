@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use candle_core::{D, DType, Device, Module, Tensor};
+use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::{Embedding, RmsNorm, VarBuilder, rms_norm};
 use candle_transformers::quantized_nn::Linear as QuantizedLinear;
 
@@ -145,7 +145,13 @@ impl QuantizedOuroModel {
             .dims2()
             .context("QuantizedOuroModel: input_ids must be [b, seq]")?;
         let attention_mask = if seq_len > 1 {
-            Some(self.causal_attention_mask(b_size, seq_len, seqlen_offset)?)
+            Some(super::model_trait::build_causal_mask(
+                b_size,
+                seq_len,
+                seqlen_offset,
+                &self.device,
+                self.dtype,
+            )?)
         } else {
             None
         };
@@ -174,30 +180,6 @@ impl QuantizedOuroModel {
         }
         h.apply(&self.final_norm)
             .context("QuantizedOuroModel: final_norm")
-    }
-
-    fn causal_attention_mask(
-        &self,
-        b_size: usize,
-        tgt_len: usize,
-        seqlen_offset: usize,
-    ) -> Result<Tensor> {
-        let mask: Vec<f32> = (0..tgt_len)
-            .flat_map(|i| (0..tgt_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 }))
-            .collect();
-        let mask = Tensor::from_slice(&mask, (tgt_len, tgt_len), &self.device)
-            .context("causal mask: build tensor")?;
-        let mask = if seqlen_offset > 0 {
-            let mask0 = Tensor::zeros((tgt_len, seqlen_offset), DType::F32, &self.device)
-                .context("causal mask: build offset prefix")?;
-            Tensor::cat(&[&mask0, &mask], D::Minus1).context("causal mask: cat offset")?
-        } else {
-            mask
-        };
-        mask.expand((b_size, 1, tgt_len, tgt_len + seqlen_offset))
-            .context("causal mask: expand to [b, 1, tgt, k]")?
-            .to_dtype(self.dtype)
-            .context("causal mask: cast to model dtype")
     }
 
     pub fn clear_kv_cache(&mut self) {
