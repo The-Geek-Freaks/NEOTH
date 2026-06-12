@@ -6,8 +6,11 @@
 //! tool-result blocks, and any subdir hints. On a long chain that string can
 //! approach the model's context window. When it crosses the operator's
 //! threshold this module replaces the bulk of it with a single dense
-//! `[CONTEXT SUMMARY]` produced by one extra LLM call — preserving the latest
-//! exchange while collapsing the older history.
+//! `[CONTEXT SUMMARY]` produced by one extra LLM call. GR-120: the history
+//! BEFORE the last exchange is collapsed; the last exchange is split off and
+//! re-attached VERBATIM after the summary, so preserving the latest exchange is
+//! a STRUCTURAL guarantee — not merely an instruction the summarizing model
+//! might ignore under degradation.
 //!
 //! Design notes:
 //! - The summarization call reuses the loop's own `CompletionDriver` (no second
@@ -130,6 +133,33 @@ pub fn wrap_summary(summary: &str) -> String {
     format!("{SUMMARY_MARKER}\n{}", summary.trim())
 }
 
+/// Marker `dispatch_loop::build_next_prompt` inserts before each iteration's
+/// assistant reply. The last occurrence delimits the most-recent exchange.
+const LAST_EXCHANGE_MARKER: &str = "\n\n[assistant]\n";
+
+/// GR-120 — split `history` into `(older_history, last_exchange)` at the last
+/// [`LAST_EXCHANGE_MARKER`]. When no marker exists (iteration 1 is just the
+/// operator's prompt) the whole text is older and the last exchange is empty.
+/// Lets the loop summarize only the older bulk and re-attach the most recent
+/// exchange verbatim, so its tool results can never be summarized away.
+pub fn split_last_exchange(history: &str) -> (&str, &str) {
+    match history.rfind(LAST_EXCHANGE_MARKER) {
+        Some(i) => (&history[..i], &history[i..]),
+        None => (history, ""),
+    }
+}
+
+/// GR-120 — re-attach the verbatim `last_exchange` after a model-produced
+/// summary, under the [`SUMMARY_MARKER`]. Identical to [`wrap_summary`] when
+/// `last_exchange` is empty. `last_exchange` keeps its leading
+/// `\n\n[assistant]\n` so the next `build_next_prompt` append stays well-formed.
+pub fn wrap_summary_with_last_exchange(summary: &str, last_exchange: &str) -> String {
+    if last_exchange.is_empty() {
+        return wrap_summary(summary);
+    }
+    format!("{SUMMARY_MARKER}\n{}{}", summary.trim(), last_exchange)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,6 +215,31 @@ mod tests {
         assert!(w.starts_with(SUMMARY_MARKER));
         assert!(w.contains("did X, pending Y"));
         assert!(!w.contains("  did X")); // trimmed
+    }
+
+    #[test]
+    fn split_last_exchange_carves_off_most_recent() {
+        let h = "OP PROMPT\n\n[assistant]\nfirst\n\n[tool results]\nR1\n\n[assistant]\nsecond\n\n[tool results]\nR2";
+        let (older, last) = split_last_exchange(h);
+        assert!(older.ends_with("R1"), "older = everything before the last [assistant]");
+        assert!(last.starts_with("\n\n[assistant]\nsecond"));
+        assert!(last.contains("R2"));
+        // No marker (iteration 1) → whole text older, last empty.
+        let (o2, l2) = split_last_exchange("just the operator prompt");
+        assert_eq!(o2, "just the operator prompt");
+        assert_eq!(l2, "");
+    }
+
+    #[test]
+    fn wrap_summary_with_last_exchange_keeps_last_verbatim() {
+        let last = "\n\n[assistant]\nlast reply\n\n[tool results]\nVERBATIM_RESULT";
+        let w = wrap_summary_with_last_exchange("summary of older", last);
+        assert!(w.starts_with(SUMMARY_MARKER));
+        assert!(w.contains("summary of older"));
+        assert!(w.contains("VERBATIM_RESULT"), "last exchange must survive structurally");
+        assert!(w.contains("\n\n[assistant]\nlast reply"), "marker structure preserved");
+        // Empty last exchange → identical to plain wrap_summary.
+        assert_eq!(wrap_summary_with_last_exchange("s", ""), wrap_summary("s"));
     }
 
     #[test]

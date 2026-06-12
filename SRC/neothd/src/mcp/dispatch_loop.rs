@@ -437,10 +437,15 @@ async fn compact_if_needed<D: CompletionDriver + Send>(
     )
     .await;
 
-    let summary_prompt = crate::context::compaction::build_compaction_prompt(&prompt);
+    // GR-120: summarize only the OLDER history and re-attach the most recent
+    // exchange verbatim, so the last tool result can never be summarized away
+    // (the retention instruction alone was a behavioural hint, not a guarantee).
+    let (older, last_exchange) = crate::context::compaction::split_last_exchange(&prompt);
+    let summary_prompt = crate::context::compaction::build_compaction_prompt(older);
     match driver.complete(&summary_prompt).await {
         Ok(summary) if !summary.trim().is_empty() => {
-            let compacted = crate::context::compaction::wrap_summary(&summary);
+            let compacted =
+                crate::context::compaction::wrap_summary_with_last_exchange(&summary, last_exchange);
             let after_tokens = crate::tokens::budget::count_tokens(&compacted);
             info!(
                 iteration,
