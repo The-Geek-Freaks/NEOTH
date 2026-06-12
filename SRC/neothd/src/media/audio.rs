@@ -1,25 +1,26 @@
 //! Audio backend — R-9 Phase 2.
 //!
-//! Scope today: pure-Rust audio decode via `symphonia` (WAV / MP3 / FLAC /
-//! Ogg / M4A → 16 kHz mono f32). The whisper transcription pass itself
-//! lands as Phase 2b — it needs the candle `whisper` model artifacts
-//! (encoder weights + tokenizer.json + mel-filters) plus a chunking loop
-//! for files > 30s. The scaffold below loads + decodes the audio
-//! cleanly so the only remaining work is wiring the candle decoder.
+//! Pure-Rust audio decode via `symphonia` (WAV / MP3 / FLAC / Ogg / M4A →
+//! 16 kHz mono f32), then **local Whisper transcription** (DD-03 / HON-04 — the
+//! doc previously claimed this was unimplemented "Phase 2b"; it IS wired):
+//! [`transcribe_if_cached`] runs `providers::whisper::WhisperEngine` (candle)
+//! over the decoded samples once the model artifacts (tokenizer + config +
+//! safetensors) are cached. The model (`providers::whisper::DEFAULT_WHISPER_REPO`,
+//! ~1.6 GiB) is NOT auto-downloaded on this path — until it is pre-fetched,
+//! `text` stays empty with status `"model not cached"`.
 //!
 //! Operator-visible behaviour:
 //!   - WAV / MP3 / … bytes or path → decoded f32 samples + sample-rate
 //!     metadata. Returned in `Extraction.metadata` as `sample_count` +
 //!     `sample_rate` + `decoded_duration_secs`.
-//!   - `text` stays empty until Phase 2b lands the transcription pass.
+//!   - `text` carries the real Whisper transcript when the model is cached;
+//!     empty (status `"model not cached"`) until the operator pre-fetches it.
 //!
 //! Limitations:
-//!   - No transcription text (Phase 2b).
-//!   - Single-channel mix-down — stereo inputs are averaged to mono so
-//!     the eventual whisper pass has the right shape.
+//!   - Transcription needs the cached model (no first-call auto-download here).
+//!   - Single-channel mix-down — stereo inputs are averaged to mono.
 //!   - 16 kHz resample is approximate (linear interpolation, not
-//!     low-pass-filtered). Phase 2b will swap for `rubato` if quality
-//!     measurably drifts.
+//!     low-pass-filtered); swap for `rubato` if quality measurably drifts.
 
 use std::path::Path;
 

@@ -10,18 +10,20 @@
 //! |----------|-------------------------------------------------------------------------|----------------------------------------------------------------------------------------------|
 //! | PDF      | `pdf-extract` text · `pdfium-render` forms (feature `pdf-forms`)         | text extraction shipped (no OCR); form fields behind `pdf-forms`                              |
 //! | Vision   | `image` decode · local CLIP embed (candle) · cloud vision synth (MM-02b) | decode + cached-CLIP embed + cloud synth shipped                                              |
-//! | Audio    | `symphonia` decode · STT: `whisper-rs` local (Phase 2b) + cloud REST (MM-01b) · TTS: cloud REST (MM-03b) + planned `piper-rs`/OS-native | decode + **cloud** STT/TTS REST shipped; **local audio I/O NOT shipped** (no local transcript text, no local TTS) |
+//! | Audio    | `symphonia` decode · STT: candle `whisper` local (cache-gated) + cloud REST (MM-01b) · TTS: cloud REST (MM-03b) + planned `piper-rs`/OS-native | decode + **local candle-Whisper STT** (wired; fires once the model artifacts are cached) + cloud STT/TTS REST shipped; local **TTS** still planned |
 //! | Video    | ffmpeg decode → vision synth (MM-02b)                                    | frame decode + vision synth shipped                                                           |
 //!
-//! This module started as a **trait surface**; the cloud paths are now real
-//! — cloud STT (MM-01b), cloud TTS (MM-03b), and video decode → vision-synth
-//! (MM-02b) ship working REST/ffmpeg backends, and PDF text + CLIP image
-//! embedding work locally. The remaining **local** paths (whisper-rs
-//! transcription, piper-rs / OS-native TTS, PDF OCR) are still scaffold:
-//! `audio.rs` decodes audio but emits no transcript text yet, and there is
-//! no local speech synthesis at all. The shape is intentional — no
-//! module-internal "later we'll generalise" pattern: every backend is its
-//! own typed `Asset` consumer + producer.
+//! This module started as a **trait surface**; most paths are now real — cloud
+//! STT (MM-01b), cloud TTS (MM-03b), and video decode → vision-synth (MM-02b)
+//! ship working REST/ffmpeg backends; PDF text + CLIP image embedding work
+//! locally; and **local Whisper STT is wired** (DD-03 / HON-04 — the doc
+//! previously said the opposite): `audio.rs`'s `transcribe_if_cached` runs
+//! `providers::whisper::WhisperEngine` (candle) once the model artifacts are
+//! cached, emitting real transcript text; only when the model is absent does
+//! `text` stay empty (status `"model not cached"`). The remaining **local**
+//! scaffold is TTS (piper-rs / OS-native speech synthesis) and PDF OCR. The
+//! shape is intentional — no module-internal "later we'll generalise" pattern:
+//! every backend is its own typed `Asset` consumer + producer.
 
 pub mod audio;
 pub mod document;
