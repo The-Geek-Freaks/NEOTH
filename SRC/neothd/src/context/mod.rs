@@ -8,6 +8,7 @@
 //! tool chain doesn't blow the model's context window.
 
 pub mod compaction;
+pub mod compress;
 
 pub use compaction::{
     build_compaction_prompt, needs_compaction, wrap_summary, CompactionPolicy, SUMMARY_MARKER,
