@@ -83,5 +83,7 @@ system_prompt: |
     creates a worktree per sub-agent task; on success the diff
     merges back to main, on failure the worktree gets cleaned up.
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

@@ -125,5 +125,7 @@ system_prompt: |
   **SQL:** INSERT statements, directly executable on relational databases
 
   **Python Script:** Executable generator for custom or large datasets
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

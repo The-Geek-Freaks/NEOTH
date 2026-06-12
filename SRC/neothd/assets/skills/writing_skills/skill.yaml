@@ -87,5 +87,7 @@ system_prompt: |
   - The "skill" would just say "be careful with X" — that's CLAUDE.md
     rule territory, not a router-invokable surface
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

@@ -118,5 +118,7 @@ system_prompt: |
   - [How to Achieve Product-Market Fit? Part I: Market and Value Proposition](https://www.productcompass.pm/p/how-to-achieve-the-product-market)
   - [Jobs-to-be-Done Masterclass with Tony Ulwick and Sabeen Sattar](https://www.productcompass.pm/p/jobs-to-be-done-masterclass-with) (video course)
   - [Product Innovation Masterclass](https://www.productcompass.pm/p/product-innovation-masterclass) (video course)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

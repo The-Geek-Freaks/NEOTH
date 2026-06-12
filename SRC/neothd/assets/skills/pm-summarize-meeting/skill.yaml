@@ -92,5 +92,7 @@ system_prompt: |
   - Highlight action items clearly so nothing falls through the cracks
   - If the meeting was large or complex, consider breaking points into sections by topic
   - Use "we" language to keep the team feel inclusive and collaborative
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

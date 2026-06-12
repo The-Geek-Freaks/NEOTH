@@ -108,5 +108,7 @@ system_prompt: |
   - Update SWOT quarterly or when market conditions change
   - Use SWOT to inform product roadmap, partnerships, and resource allocation
   - Opportunities and threats should consider both current and emerging dynamics
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

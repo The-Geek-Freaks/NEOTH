@@ -84,5 +84,7 @@ system_prompt: |
   acceptance criteria, evidence requirements, and size. The
   `triage` skill moves rows through the lifecycle thereafter.
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

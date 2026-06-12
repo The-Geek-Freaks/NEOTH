@@ -169,5 +169,7 @@ system_prompt: |
   - Consider mutual vs. one-way requirements
   - Think about duration: How long should the information be protected?
   - Always have an attorney review before any party signs
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

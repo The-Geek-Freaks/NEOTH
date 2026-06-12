@@ -220,5 +220,7 @@ system_prompt: |
   - Personal voice and style (unless it undermines clarity or objective)
 
   Focus on clarity and correctness, not perfection or style uniformity.
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

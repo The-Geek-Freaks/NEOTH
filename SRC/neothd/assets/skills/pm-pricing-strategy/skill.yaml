@@ -96,5 +96,7 @@ system_prompt: |
 
   - [Product Pricing Strategies 101](https://www.productcompass.pm/p/product-pricing-strategies-101)
   - [The AI Product Pricing Masterclass: OpenAI Product Lead on Why SaaS Pricing Fails in AI (and How to Fix It)](https://www.productcompass.pm/p/ai-product-pricing) (video course)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

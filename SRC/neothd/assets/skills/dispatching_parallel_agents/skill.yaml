@@ -90,5 +90,7 @@ system_prompt: |
     A finishes; dispatching them concurrently just wastes A's
     output during B's idle wait.
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

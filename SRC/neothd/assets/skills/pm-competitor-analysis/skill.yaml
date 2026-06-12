@@ -120,5 +120,7 @@ system_prompt: |
 
   - [Market Research: Advanced Techniques](https://www.productcompass.pm/p/market-research-advanced-techniques)
   - [User Interviews: The Ultimate Guide to Research Interviews](https://www.productcompass.pm/p/interviewing-customers-the-ultimate)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

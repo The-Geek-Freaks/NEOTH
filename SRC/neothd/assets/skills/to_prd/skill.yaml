@@ -93,5 +93,7 @@ system_prompt: |
   bite-sized tasks. `triage` moves those tasks through the
   lifecycle.
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

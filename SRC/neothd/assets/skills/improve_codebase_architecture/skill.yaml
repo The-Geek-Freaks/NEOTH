@@ -75,5 +75,7 @@ system_prompt: |
      of N scattered helpers)
   4. What new tests cover the seam (the seam is now a contract)
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

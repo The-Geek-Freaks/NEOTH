@@ -86,5 +86,7 @@ system_prompt: |
   ### Further Reading
 
   - [How to Design a Value Proposition Customers Can't Resist?](https://www.productcompass.pm/p/how-to-design-value-proposition-template)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

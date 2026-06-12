@@ -232,5 +232,7 @@ system_prompt: |
   - [How to Land a PM Interview: A Step-by-Step Guide. Product Manager Resume Template.](https://www.productcompass.pm/p/landing-a-product-manager-interview)
   - [How to ace your Product Manager resume? 12 Tips + Templates](https://www.productcompass.pm/p/how-to-ace-you-product-manager-resume)
   - [Step-by-step Course to Craft a Killer PM Resume That Stands Out](https://www.productcompass.pm/p/pm-resume-course) (video course)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

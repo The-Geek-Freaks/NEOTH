@@ -90,5 +90,7 @@ system_prompt: |
   smallest production-shaped slice. Let me write that with full
   tests + the throwaway contract removed."
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

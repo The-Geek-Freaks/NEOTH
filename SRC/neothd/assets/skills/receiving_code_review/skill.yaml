@@ -72,5 +72,7 @@ system_prompt: |
   Default to (3) clarification. Asking the reviewer to be more
   specific is cheaper than implementing the wrong fix.
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

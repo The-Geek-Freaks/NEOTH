@@ -74,5 +74,7 @@ system_prompt: |
   5. **Adjust tone** to match the product's voice — professional for B2B, friendly for consumer, developer-focused for APIs.
 
   Save as a markdown document. If the user wants HTML or another format, convert accordingly.
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

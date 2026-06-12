@@ -83,5 +83,7 @@ system_prompt: |
   - `triage` keeps task states in sync (`needs-info` if blocked,
     `ready-for-human` if outside daemon scope)
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

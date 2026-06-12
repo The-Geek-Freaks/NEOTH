@@ -92,5 +92,7 @@ system_prompt: |
   - The agent operating-context file (`CLAUDE.md` / `AGENTS.md`) is a *different* artifact — instructions derived from these docs, not system documentation. It is produced at the handoff step by `/ship-check`, not here.
   - `tests.md` is produced by `/derive-tests`; the rest are produced by `/document-app`.
   - Do not include an "updated date" line; the file's history is the source of truth.
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

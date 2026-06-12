@@ -85,5 +85,7 @@ system_prompt: |
   - [AARRR (Pirate) Metrics: The 5-Stage Framework for Growth](https://www.productcompass.pm/p/aarrr-pirate-metrics)
   - [The Google HEART Framework: Your Guide to Measuring User-Centric Success](https://www.productcompass.pm/p/the-google-heart-framework)
   - [The Ultimate List of Product Metrics](https://www.productcompass.pm/p/the-ultimate-list-of-product-metrics)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

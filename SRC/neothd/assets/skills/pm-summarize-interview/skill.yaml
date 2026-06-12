@@ -63,5 +63,7 @@ system_prompt: |
 
   - [User Interviews: The Ultimate Guide to Research Interviews](https://www.productcompass.pm/p/interviewing-customers-the-ultimate)
   - [Continuous Product Discovery Masterclass (CPDM)](https://www.productcompass.pm/p/cpdm) (video course)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

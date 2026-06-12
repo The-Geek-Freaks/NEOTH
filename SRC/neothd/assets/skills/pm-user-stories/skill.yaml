@@ -84,5 +84,7 @@ system_prompt: |
   ### Further Reading
 
   - [How to Write User Stories: The Ultimate Guide](https://www.productcompass.pm/p/how-to-write-user-stories)
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

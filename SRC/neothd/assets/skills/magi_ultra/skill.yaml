@@ -41,5 +41,7 @@ system_prompt: |
     the single biggest risk.
   - Blunt, technical, dense (LOWKEY). Working code over description.
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true

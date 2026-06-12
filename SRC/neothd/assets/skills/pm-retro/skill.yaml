@@ -84,5 +84,7 @@ system_prompt: |
      ```
 
   Save as markdown. Keep the tone constructive — the goal is improvement, not blame.
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: false

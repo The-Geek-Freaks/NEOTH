@@ -81,5 +81,7 @@ system_prompt: |
   legitimate end state — over-grilling a sound plan is its own
   failure mode.
 
-tool_allowlist: []
+tool_allowlist:
+  - fetch
+  - recall
 enabled: true
