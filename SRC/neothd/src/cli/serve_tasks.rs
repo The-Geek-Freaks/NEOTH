@@ -1299,6 +1299,11 @@ pub(crate) fn spawn_channel_adapters(
                 // COR-34: track this listener's detached Meta fan-out tasks so
                 // shutdown can drain their WAL writes before the writer closes.
                 dispatch_join: Some(std::sync::Arc::clone(dispatch_join)),
+                // GR-010: dedup inbound wamids so Meta reconnect-storm
+                // re-deliveries don't re-run the pipeline (+ re-send the reply).
+                inbound_dedup: Some(std::sync::Arc::new(tokio::sync::Mutex::new(
+                    crate::channels::webhook_listener::InboundDedup::new(2048),
+                ))),
             };
             let task = tokio::spawn(async move {
                 let shutdown = std::future::pending::<()>();
