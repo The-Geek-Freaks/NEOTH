@@ -99,6 +99,25 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     // Every LIKE below pairs the pattern with `ESCAPE '\'`.
     let pattern = format!("%{}%", crate::memory::escape_like(topic));
 
+    // GR-165: collect channel-side (channel, sender_id) pairs BEFORE the
+    // episode delete below destroys the correlation. Channel ingest keys
+    // idx_embedding with opaque "channel:chat_id:sender_id:ts" source_refs
+    // that never contain the topic string — these pairs drive the second
+    // embedding-wipe leg further down.
+    let channel_sender_pairs: Vec<(String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT channel, sender_id FROM idx_episode \
+                 WHERE channel IS NOT NULL AND sender_id IS NOT NULL \
+                   AND text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+            )
+            .context("prepare channel/sender pre-collect")?;
+        stmt.query_map(rusqlite::params![pattern], |r| Ok((r.get(0)?, r.get(1)?)))
+            .context("query channel/sender pairs for embedding wipe")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect channel/sender pairs")?
+    };
+
     let episode_rows = conn
         .execute(
             "DELETE FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
@@ -167,9 +186,15 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         .context("delete from idx_profile_outbox")? as i64;
 
     // Embeddings: hard delete. Vectors carry no audit value — they're
-    // a derived index, not an assertion.
-    let embedding_rows =
+    // a derived index, not an assertion. Two legs: path-keyed refs match
+    // the topic pattern directly; channel-keyed refs (opaque ids) match
+    // via the (channel, sender_id) pairs pre-collected above (GR-165).
+    let mut embedding_rows =
         embeddings::wipe_by_source_ref_pattern(conn, &pattern).context("wipe idx_embedding")?;
+    if !channel_sender_pairs.is_empty() {
+        embedding_rows += embeddings::wipe_by_channel_sender_refs(conn, &channel_sender_pairs)
+            .context("wipe idx_embedding channel-side")?;
+    }
 
     Ok(ForgetReport {
         episode_rows,
@@ -424,6 +449,41 @@ mod tests {
             "logo embedding wiped, vacation kept"
         );
         assert_eq!(report.total(), 5);
+    }
+
+    /// GR-165: channel-ingested embeddings carry the opaque
+    /// "channel:chat_id:sender_id:ts" source_ref that a `%topic%` pattern
+    /// can never match — the cascade must derive (channel, sender_id)
+    /// from the matching episode rows and wipe those vectors too.
+    #[test]
+    fn forget_wipes_channel_side_embeddings_by_sender() {
+        let conn = seed_db();
+        conn.execute(
+            "INSERT INTO idx_episode (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts, channel, sender_id) \
+             VALUES (3, 1, 3, 'whatsapp message about AcmeCorp', 'h5', 0.7, 0, 'whatsapp', '987654321')",
+            [],
+        ).unwrap();
+        let v = unit(vec![0.0, 1.0, 0.0, 0.0]);
+        embeddings::upsert(
+            &conn,
+            "image",
+            "whatsapp:442071234:987654321:1717000000",
+            "clip",
+            &v,
+        )
+        .unwrap();
+        // Different sender on another channel — must survive.
+        embeddings::upsert(&conn, "image", "telegram:1:555:1717000001", "clip", &v).unwrap();
+
+        let report = forget_by_topic(&conn, "AcmeCorp", 1_700_000_000).unwrap();
+        assert_eq!(
+            report.embedding_rows, 2,
+            "path-keyed logo + channel-keyed whatsapp embedding wiped"
+        );
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM idx_embedding", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 2, "vacation.png + telegram embedding survive");
     }
 
     #[test]

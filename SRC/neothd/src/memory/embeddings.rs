@@ -330,6 +330,37 @@ pub fn wipe_by_source_ref_pattern(conn: &Connection, pattern: &str) -> Result<i6
     Ok(n as i64)
 }
 
+/// GR-165 — wipe channel-side embeddings whose `source_ref` matches
+/// `<channel>:%:<sender_id>:%`. Channel ingest keys embeddings with the
+/// opaque `"channel:chat_id:sender_id:ts"` ref (serve_pipeline), which a
+/// `%topic%` pattern can never match — the GDPR forget cascade derives
+/// the `(channel, sender_id)` pairs from the episode rows that matched
+/// the topic and wipes the matching vectors here.
+pub fn wipe_by_channel_sender_refs(
+    conn: &Connection,
+    channel_sender_pairs: &[(String, String)],
+) -> Result<i64> {
+    let mut total = 0i64;
+    for (channel, sender_id) in channel_sender_pairs {
+        // Escape the literal channel/sender values so `%`/`_` inside them
+        // can't act as wildcards (GOLD-SEC-04 posture, same as the topic
+        // pattern). The `%` separators are the only intended wildcards.
+        let pattern = format!(
+            "{}:%:{}:%",
+            crate::memory::escape_like(channel),
+            crate::memory::escape_like(sender_id),
+        );
+        let n = conn
+            .execute(
+                "DELETE FROM idx_embedding WHERE source_ref COLLATE NOCASE LIKE ?1 ESCAPE '\\'",
+                rusqlite::params![pattern],
+            )
+            .context("wipe idx_embedding channel-side rows")?;
+        total += n as i64;
+    }
+    Ok(total)
+}
+
 /// Total row count — exposed for `neoth status` and similar diagnostics.
 pub fn count(conn: &Connection) -> Result<i64> {
     let n: i64 = conn
