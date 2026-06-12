@@ -1,9 +1,9 @@
 //! R3 P0 — Bundled skills embedded into the binary at compile time.
 //!
 //! Per `PLAN/REEVALUATION_GESAMT_2026-05-22_R3.md` §5 P0: NEOTH ships
-//! 30 skill YAMLs under `SRC/neothd/assets/skills/<id>/skill.yaml` (the
-//! exact count is pinned by the `bundled_count_matches_assets_directory`
-//! test), but
+//! the full skill library under `SRC/neothd/assets/skills/<id>/skill.yaml`
+//! (one YAML per skill — the exact count grows with the library and is
+//! pinned by the `bundled_count_matches_assets_directory` test), but
 //! pre-this-module those YAMLs only existed as source-tree assets +
 //! loader-test fixtures. Runtime [`super::loader::load_all`] walked
 //! `~/.neoth/skills/` exclusively, so a fresh operator install booted
