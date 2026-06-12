@@ -131,6 +131,17 @@ impl Default for V2Fields {
 
 /// Full operator wizard state. v0.2 fields land at the top of
 /// the YAML via flatten + v2 fields under their own keys.
+///
+/// ⚠ SECURITY (GOLD-ARCH-19): this struct + [`BaseFields`] + [`V2Fields`] MUST
+/// NOT hold secrets. Every API key / cluster passphrase / browser credential
+/// lives in `Credentials` (a SEPARATE file). The serde shape here is
+/// ALLOWLIST-per-field — every field carries an explicit `#[serde(default,
+/// skip_serializing_if = …)]`, never serde's include-everything default. If a
+/// `SecretString`-shaped field is ever genuinely needed in wizard state, it
+/// needs `#[serde(skip)]` AND a hand-rolled `impl Serialize` — a missed `skip`
+/// on a derive-`Serialize` context is a SILENT leak to the on-disk
+/// `wizard_state_v2.yaml`. The `wizard_state_v2_yaml_never_contains_secret_sentinels`
+/// test is the runtime tripwire for this invariant.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WizardStateV2 {
     #[serde(flatten)]
@@ -207,6 +218,44 @@ impl WizardStateV2 {
 mod tests {
     use super::*;
     use crate::installers::gpu::{GpuKind, GpuReport};
+
+    #[test]
+    fn wizard_state_v2_yaml_never_contains_secret_sentinels() {
+        // GOLD-ARCH-19: WizardStateV2 holds ONLY non-secret wizard UX state —
+        // every secret (API keys, cluster passphrase, browser credentials) lives
+        // in `Credentials`, a SEPARATE file. This is the runtime tripwire for that
+        // invariant: if any field ever serializes a token/key/password-shaped
+        // value into `wizard_state_v2.yaml`, the sentinel check fires.
+        let s = WizardStateV2 {
+            base: BaseFields {
+                operator_id: Some("operator".to_string()),
+                role: Some("solo-dev".to_string()),
+                provider_kind: Some("claude_cli".to_string()),
+                steps_completed: vec![0, 1, 2],
+            },
+            v2: V2Fields {
+                privacy_first: true,
+                steps_completed_v2: vec!["welcome_v2".to_string(), "mode".to_string()],
+                state_version: 2,
+                ..Default::default()
+            },
+        };
+        let yaml = serde_yaml::to_string(&s).unwrap();
+        for sentinel in [
+            "Bearer ", "sk-", "ghp_", "xoxb-", "xapp-", "AKIA", "-----BEGIN",
+        ] {
+            assert!(
+                !yaml.contains(sentinel),
+                "WizardStateV2 YAML must NEVER contain secret-like content (found {sentinel:?}) — \
+                 secrets belong in Credentials, not wizard state. YAML was:\n{yaml}",
+            );
+        }
+        // Not vacuous: the non-secret fields DO serialize.
+        assert!(
+            yaml.contains("operator") && yaml.contains("claude_cli"),
+            "the non-secret UX fields must still serialize"
+        );
+    }
 
     fn fixture_detect() -> DetectReport {
         DetectReport {
