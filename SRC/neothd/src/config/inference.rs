@@ -978,6 +978,41 @@ region: eu-central-1
         assert_eq!(slot.region.as_deref(), Some("eu-central-1"));
     }
 
+    #[test]
+    fn hemisphere_mode_single_routes_all_calls_to_one_provider() {
+        // GOLD-FEAT-01a: in single mode every role resolves to `default_slot` —
+        // the distinct per-role left/right/cerebellum providers are ignored.
+        let mut topo = InferenceTopology::default();
+        topo.mode = TopologyMode::Single;
+        topo.default_slot = HemisphereSlot {
+            provider: Some(InferenceProvider::LocalQwen),
+            ..Default::default()
+        };
+        topo.left = HemisphereSlot {
+            provider: Some(InferenceProvider::ClaudeCli),
+            ..Default::default()
+        };
+        topo.right = HemisphereSlot {
+            provider: Some(InferenceProvider::Gemini),
+            ..Default::default()
+        };
+        topo.cerebellum = HemisphereSlot {
+            provider: Some(InferenceProvider::ClaudeCli),
+            ..Default::default()
+        };
+        for role in [
+            HemisphereRole::Left,
+            HemisphereRole::Right,
+            HemisphereRole::Cerebellum,
+        ] {
+            assert_eq!(
+                topo.slot_for(role).provider,
+                Some(InferenceProvider::LocalQwen),
+                "single mode must route {role:?} to default_slot, ignoring its per-role override",
+            );
+        }
+    }
+
     // ── E-2 Phase 3 (Session 14) sub-slot resolution ────────────────
 
     #[test]

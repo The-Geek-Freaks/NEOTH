@@ -88,6 +88,27 @@ pub enum HemisphereAction {
         #[arg(long)]
         count: Option<u8>,
     },
+    /// GOLD-FEAT-01a: switch to single-provider mode — set `inference.mode =
+    /// single` so all three roles resolve to ONE provider (`default_slot`) and
+    /// bind that provider in one step. Unlike `preset single` (which keeps the
+    /// existing default slot), this picks the provider explicitly. Writes
+    /// freedom.yaml atomically with a pre-mutation rollback snapshot.
+    Mode {
+        /// Provider all hemispheres route to: `claude_cli` / `anthropic_api` /
+        /// `openai_api` / `openai_compat` / `gemini_api` / `local_qwen` /
+        /// `local_ouro` / `aws_bedrock` / `azure_openai`.
+        #[arg(long)]
+        provider: String,
+        /// Model identifier for the single provider.
+        #[arg(long)]
+        model: Option<String>,
+        /// API key (when the provider needs one).
+        #[arg(long)]
+        key: Option<String>,
+        /// Endpoint URL (for `openai_compat`).
+        #[arg(long)]
+        endpoint: Option<String>,
+    },
 }
 
 /// Named hemisphere presets for `neoth hemispheres preset` (GOLD-ADOPT-12).
@@ -127,6 +148,12 @@ pub async fn run_hemispheres(args: HemispheresArgs) -> Result<()> {
         HemisphereAction::Preset { name, vram, count } => {
             run_preset(name, vram, count, &args.output).await
         }
+        HemisphereAction::Mode {
+            provider,
+            model,
+            key,
+            endpoint,
+        } => run_mode_single(&provider, model, key, endpoint, &args.output).await,
     }
 }
 
@@ -354,6 +381,100 @@ fn run_show(cfg: &FreedomConfig, output: &OutputFormat) -> Result<()> {
                     voice,
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+/// GOLD-FEAT-01a — `neoth hemispheres mode --provider X` — switch to
+/// single-provider mode (`TopologyMode::Single`) and bind `default_slot` to X so
+/// all three roles resolve to one provider. Mirrors `run_set`'s atomic save +
+/// pre-mutation rollback snapshot. `preset single` keeps the existing default
+/// slot; this picks the provider explicitly in one command.
+async fn run_mode_single(
+    provider_str: &str,
+    model: Option<String>,
+    key: Option<String>,
+    endpoint: Option<String>,
+    output: &OutputFormat,
+) -> Result<()> {
+    let provider = InferenceProvider::from_str(provider_str).ok_or_else(|| {
+        anyhow::anyhow!(
+            "unknown provider `{provider_str}`. Valid: claude_cli, anthropic_api, \
+             openai_api, openai_compat, gemini_api, local_qwen, local_ouro, \
+             aws_bedrock, azure_openai"
+        )
+    })?;
+
+    let mut cfg = FreedomConfig::load_from_default_path().context("load freedom.yaml")?;
+    let prior_mode = cfg.inference.mode;
+    let prior_voice = cfg.inference.default_slot.voice;
+
+    cfg.inference.mode = crate::config::inference::TopologyMode::Single;
+    cfg.inference.default_slot = crate::config::inference::HemisphereSlot {
+        provider: Some(provider),
+        model: model.clone(),
+        key: key.map(crate::secret::SecretString::from),
+        endpoint: endpoint.clone(),
+        region: None,
+        api_version: None,
+        // Preserve any specialist voice already on the default slot.
+        voice: prior_voice,
+    };
+
+    let path = FreedomConfig::default_path();
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Pre-mutation rollback snapshot (same policy gate as `run_set`) so
+    // `neoth rollback apply` can restore the prior topology.
+    let prior_yaml_bytes = std::fs::read(&path).unwrap_or_default();
+    let wal_dir = FreedomConfig::default_wal_dir();
+    std::fs::create_dir_all(&wal_dir).context("create WAL dir for hemispheres audit")?;
+    let snapshot_segment = wal_dir.join(format!("hemispheres-snapshot-{}.wal", now_unix));
+    let (snap_writer, snap_join) = crate::wal::writer::spawn(snapshot_segment.clone())
+        .context("spawn WAL writer for hemispheres rollback snapshot")?;
+    let _ = crate::wal::snapshot::emit_if_policy_allows(
+        &snap_writer,
+        &cfg.rollback,
+        crate::wal::snapshot::MutationKind::ConfigWrite,
+        path.display().to_string(),
+        &prior_yaml_bytes,
+        now_unix,
+        Some("hemispheres mode single via CLI".to_string()),
+    )
+    .await
+    .context("emit pre-mutation snapshot for freedom.yaml rewrite")?;
+    drop(snap_writer);
+    let _ = snap_join.await;
+
+    cfg.save_public_to_default_path()
+        .with_context(|| format!("write {}", path.display()))?;
+
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "mode": cfg.inference.mode.as_str(),
+                    "prior_mode": prior_mode.as_str(),
+                    "single_provider": provider.as_str(),
+                    "model": model,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            println!(
+                "# Single-provider mode: all hemispheres → {}",
+                provider.as_str()
+            );
+            println!("  mode: {} → single", prior_mode.as_str());
+            if let Some(m) = &model {
+                println!("  model: {m}");
+            }
+            println!("  freedom.yaml updated (pre-mutation rollback snapshot written).");
         }
     }
     Ok(())

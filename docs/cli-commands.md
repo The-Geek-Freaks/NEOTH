@@ -781,6 +781,15 @@ Consolidated hardware probe — CPU + RAM + accelerator (CUDA / Metal / OpenVINO
 
 Per-hemisphere provider configuration (Left/Right/Cerebellum). `show` displays the current binding; `set --role X --provider Y` mutates `freedom.yaml::inference.<role>` atomically; `test --role X` builds the adapter without making a live LLM call. See `PLAN/SPEC_hemisphere_provider_selection.md`
 
+### `neoth hemispheres mode`
+
+GOLD-FEAT-01a: switch to single-provider mode — set `inference.mode = single` so all three roles resolve to ONE provider (`default_slot`) and bind that provider in one step. Unlike `preset single` (which keeps the existing default slot), this picks the provider explicitly. Writes freedom.yaml atomically with a pre-mutation rollback snapshot
+
+- `--provider <PROVIDER>` — Provider all hemispheres route to: `claude_cli` / `anthropic_api` / `openai_api` / `openai_compat` / `gemini_api` / `local_qwen` / `local_ouro` / `aws_bedrock` / `azure_openai`
+- `--model <MODEL>` — Model identifier for the single provider
+- `--key <KEY>` — API key (when the provider needs one)
+- `--endpoint <ENDPOINT>` — Endpoint URL (for `openai_compat`)
+
 ### `neoth hemispheres preset`
 
 Apply a named hemisphere preset to `freedom.yaml` non-interactively (GOLD-ADOPT-12) — the same presets the `neoth init` wizard offers. Writes atomically + emits a 0x1F HEMISPHERE_REBOUND audit frame per changed role (with a pre-mutation rollback snapshot)
