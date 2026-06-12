@@ -1502,7 +1502,16 @@ fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     use std::io::Write;
     let tmp = atomic_tmp_path(path);
     let _ = std::fs::remove_file(&tmp);
-    std::fs::File::create(&tmp).with_context(|| format!("create temp {}", tmp.display()))?;
+    // create_new mirrors the Unix O_CREAT|O_EXCL arm: exclusive create
+    // removes the TOCTOU window between remove_file and the first open.
+    // The empty handle is dropped immediately; icacls acts on the path.
+    drop(
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp)
+            .with_context(|| format!("create temp {}", tmp.display()))?,
+    );
     if let Err(e) = icacls_restrict_to_owner(&tmp) {
         let _ = std::fs::remove_file(&tmp);
         anyhow::bail!(
@@ -1521,8 +1530,12 @@ fn write_mode_0600(path: &Path, body: &[u8]) -> Result<()> {
     file.sync_all()
         .with_context(|| format!("fsync {}", tmp.display()))?;
     drop(file);
-    std::fs::rename(&tmp, path)
-        .with_context(|| format!("atomically replace {}", path.display()))?;
+    // Clean up the tmp if rename fails — never leave a secret-bearing
+    // stale file behind when the target is locked (common on Windows).
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e).with_context(|| format!("atomically replace {}", path.display()));
+    }
     Ok(())
 }
 

@@ -875,6 +875,10 @@ pub fn parse_provider_ids(json: &str) -> Vec<String> {
 /// LIVE catalog ids without ever hard-failing the GUI on a subprocess hiccup.
 /// Stays model-version-agnostic — surfaces whatever the catalog holds, no
 /// whitelist (a new model id appears the moment `catalog refresh` sees it).
+// MV-01c headless half (50b826c): the Slint model-picker consumer isn't
+// wired yet — only the unit tests call this, so the bin target flags it
+// dead. Exempt until the GUI half lands; remove the allow with that wiring.
+#[allow(dead_code)]
 pub fn parse_catalog_model_ids(json: &str, provider: &str) -> Vec<String> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
         return Vec::new();
