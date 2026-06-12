@@ -5,11 +5,13 @@
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "wizard")]
+use super::apply_local_multi_preset_interactive;
 use super::{
-    apply_local_multi_preset_interactive, apply_local_only_preset, collect_ollama_model_refs,
-    inference_uses_local_qwen, parse_topology_mode_arg, prompt_hemisphere_model,
-    prompt_inference_provider, recommended_provider_for_role, render_council_depth_cost_warning,
-    step_markers, topology_default_idx_for_probe, InitArgs, WizardState,
+    apply_local_only_preset, collect_ollama_model_refs, inference_uses_local_qwen,
+    parse_topology_mode_arg, prompt_hemisphere_model, prompt_inference_provider,
+    recommended_provider_for_role, render_council_depth_cost_warning, step_markers,
+    topology_default_idx_for_probe, InitArgs, WizardState,
 };
 
 /// Step 5b — inference topology (D14b).

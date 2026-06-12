@@ -10,9 +10,11 @@ use tracing::debug;
 // belong in `providers/` architecturally — the wizard is just one caller.
 use crate::providers::local_probe::probe_local_bridge_sync;
 
+#[cfg(feature = "wizard")]
+use super::npm_path_hint;
 use super::{
-    catalog_recommended_for_provider_kind, npm_path_hint, prompt_provider_key, step_markers,
-    which_binary, InitArgs, ProviderKind, WizardState,
+    catalog_recommended_for_provider_kind, prompt_provider_key, step_markers, which_binary,
+    InitArgs, ProviderKind, WizardState,
 };
 
 pub(crate) async fn step5_provider(args: &InitArgs, interactive: bool, state: &mut WizardState) -> Result<()> {
