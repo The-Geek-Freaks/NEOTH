@@ -645,6 +645,7 @@ fn main() -> Result<()> {
         let rails = fetch_safe_mode_snapshot();
         let trust = fetch_trust_snapshot();
         let hardware = fetch_hardware_snapshot();
+        let topology = fetch_topology_snapshot();
         let council_budget = fetch_council_budget();
         let profile_presets = fetch_profile_presets();
         let hemis = fetch_hemispheres_snapshot();
@@ -660,6 +661,7 @@ fn main() -> Result<()> {
                 apply_safe_mode(&w, rails);
                 apply_trust(&w, trust);
                 apply_hardware(&w, hardware);
+                apply_topology(&w, topology);
                 apply_council_budget(&w, council_budget);
                 apply_profile_presets(&w, profile_presets);
                 apply_hemispheres(&w, hemis);
@@ -1780,6 +1782,45 @@ fn apply_hardware(window: &MainWindow, snap: panel_logic::HardwareSnapshot) {
     window.set_hw_vram_fraction(snap.vram_fraction);
     window.set_hw_disk(snap.disk.into());
     window.set_hw_models(ModelRc::new(VecModel::from(models)));
+}
+
+/// SL-02 — fetch the cluster peer topology via `neoth cluster topology --output
+/// json`. Empty on missing binary / failure. PARSE is the unit-tested
+/// `panel_logic::parse_cluster_topology`; this is the thin subprocess shell.
+fn fetch_topology_snapshot() -> Vec<panel_logic::ClusterPeerRow> {
+    let Some(bin) = which_neothd() else {
+        return Vec::new();
+    };
+    match spawn_neothd_plain(&bin)
+        .arg("cluster")
+        .arg("topology")
+        .arg("--output")
+        .arg("json")
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            panel_logic::parse_cluster_topology(&String::from_utf8_lossy(&o.stdout))
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// SL-02 — push the parsed peer rows onto the Cluster-tab topology panel.
+/// UI-thread only.
+fn apply_topology(window: &MainWindow, rows: Vec<panel_logic::ClusterPeerRow>) {
+    use slint::{ModelRc, VecModel};
+    let peers: Vec<ClusterPeerRow> = rows
+        .into_iter()
+        .map(|r| ClusterPeerRow {
+            label: r.label.into(),
+            addr: r.addr.into(),
+            status: r.status.into(),
+            rtt_ms: r.rtt_ms.into(),
+            stability: r.stability_pct.into(),
+            last_seen: r.last_seen.into(),
+        })
+        .collect();
+    window.set_cluster_peers(ModelRc::new(VecModel::from(peers)));
 }
 
 /// KF-08 — fetch the council budget meter via `neoth council budget --output

@@ -438,6 +438,75 @@ pub fn parse_hardware(json: &str) -> HardwareSnapshot {
     }
 }
 
+// ── SL-02 cluster topology (parse `neoth cluster topology --output json`) ────
+
+/// One peer row for the Cluster-tab topology panel. Pre-formatted strings so
+/// the Slint side is pure display (mirrors [`TrustRow`] / [`HardwareSnapshot`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ClusterPeerRow {
+    pub label: String,
+    pub addr: String,
+    pub status: String,
+    /// "N ms" or "---" until the first heartbeat round-trip.
+    pub rtt_ms: String,
+    /// EWMA heartbeat success as a percent, e.g. "87%".
+    pub stability_pct: String,
+    /// Human last-seen age, e.g. "2m ago" / "never".
+    pub last_seen: String,
+}
+
+/// Human last-seen age from `last_seen_age_secs` (None / JSON null → "never").
+/// Mirrors `cli/cluster.rs::fmt_last_seen` so the GUI matches the CLI table.
+fn fmt_peer_last_seen(age: Option<i64>) -> String {
+    match age {
+        None => "never".to_string(),
+        Some(s) if s < 5 => "just now".to_string(),
+        Some(s) if s < 60 => format!("{s}s ago"),
+        Some(s) if s < 3600 => format!("{}m ago", s / 60),
+        Some(s) => format!("{}h ago", s / 3600),
+    }
+}
+
+/// PURE + robust: parse `neoth cluster topology --output json` into peer rows.
+/// Garbage / a missing `peers` array → empty (panel shows the "no peers" hint).
+pub fn parse_cluster_topology(json: &str) -> Vec<ClusterPeerRow> {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    let Some(peers) = v.get("peers").and_then(|p| p.as_array()) else {
+        return Vec::new();
+    };
+    peers
+        .iter()
+        .map(|p| {
+            let s = |k: &str| p.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            // Prefer the instance label; fall back to the short key so a row is
+            // never blank.
+            let label = {
+                let l = s("label");
+                if l.is_empty() { s("pub_key_short") } else { l }
+            };
+            let rtt_ms = match p.get("rtt_ms").and_then(|x| x.as_u64()) {
+                Some(ms) => format!("{ms} ms"),
+                None => "---".to_string(),
+            };
+            let stability_pct = {
+                let score = p.get("stability_score").and_then(|x| x.as_f64()).unwrap_or(0.0);
+                format!("{:.0}%", (score * 100.0).clamp(0.0, 100.0))
+            };
+            let last_seen = fmt_peer_last_seen(p.get("last_seen_age_secs").and_then(|x| x.as_i64()));
+            ClusterPeerRow {
+                label,
+                addr: s("addr"),
+                status: s("status"),
+                rtt_ms,
+                stability_pct,
+                last_seen,
+            }
+        })
+        .collect()
+}
+
 // ── KF-08 council budget meter (parse `neoth council budget --output json`) ──
 
 /// Parsed `neoth council budget --output json`: the per-message council cap +
@@ -1026,6 +1095,49 @@ mod tests {
         // Defensive clamp: a stray used>total stays ≤ 1.0 (bar never overruns).
         let over = parse_hardware(r#"{"vram":{"used_mib":99999,"total_mib":1000}}"#);
         assert_eq!(over.vram_fraction, 1.0);
+    }
+
+    // ── SL-02 cluster topology parser ─────────────────────────────────────
+    #[test]
+    fn parse_cluster_topology_empty_peers_is_empty() {
+        assert!(parse_cluster_topology(r#"{"peers":[],"local_mode":"single-node"}"#).is_empty());
+    }
+
+    #[test]
+    fn parse_cluster_topology_malformed_is_empty() {
+        assert!(parse_cluster_topology("not json").is_empty());
+        assert!(parse_cluster_topology("{}").is_empty()); // no peers key
+    }
+
+    #[test]
+    fn parse_cluster_topology_formats_full_row() {
+        let json = r#"{"peers":[{
+            "pub_key_short":"abc123","label":"workstation","addr":"100.64.0.2:7777",
+            "status":"recent","rtt_ms":42,"stability_score":0.87,"last_seen_age_secs":130
+        }]}"#;
+        let rows = parse_cluster_topology(json);
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.label, "workstation");
+        assert_eq!(r.addr, "100.64.0.2:7777");
+        assert_eq!(r.status, "recent");
+        assert_eq!(r.rtt_ms, "42 ms");
+        assert_eq!(r.stability_pct, "87%");
+        assert_eq!(r.last_seen, "2m ago");
+    }
+
+    #[test]
+    fn parse_cluster_topology_missing_rtt_and_label_fallback() {
+        // rtt null → "---", last_seen null → "never", empty label → short key.
+        let json = r#"{"peers":[{
+            "pub_key_short":"deadbeef","label":"","addr":"x","status":"uncontacted",
+            "rtt_ms":null,"stability_score":0.0,"last_seen_age_secs":null
+        }]}"#;
+        let rows = parse_cluster_topology(json);
+        assert_eq!(rows[0].rtt_ms, "---");
+        assert_eq!(rows[0].last_seen, "never");
+        assert_eq!(rows[0].stability_pct, "0%");
+        assert_eq!(rows[0].label, "deadbeef");
     }
 
     // ── KF-08 council budget meter parser ─────────────────────────────────

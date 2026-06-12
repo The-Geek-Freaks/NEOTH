@@ -75,8 +75,8 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-E Architecture debt | 23 | 10 | 13 |
 | WS-F Gold-TODO feature build-out | 15 | 13 | 2 |
 | WS-G Repo adoptions | 28 | 2 | 26 |
-| WS-H PROGRESS carry-forward | 19 | 13 | 6 |
-| **TOTAL** (WS-A…H) | **198** | **42** | **156** |
+| WS-H PROGRESS carry-forward | 19 | 12 | 7 |
+| **TOTAL** (WS-A…H) | **198** | **41** | **157** |
 | WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 44 | 165 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | 150 | 142 | 8 |
@@ -450,7 +450,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **GOLD-PROG-02** MONITOR-02 real-time worker-task death detection (0x4D WORKER_DIED) shipped (`7383abd`) — *origin:* session 39 burndown
 - [x] **GOLD-PROG-03** F4-01 winner-chain council win-distribution shipped (`35c94d2`) — *origin:* session 39 burndown
 - [x] **GOLD-PROG-04** PC-01 clipboard R/W (0xBC/0xBD) shipped (`10adfad`) — *origin:* session 39 burndown
-- [ ] **GOLD-PROG-05** SL-02 cluster topology GUI panel — CLI shipped; GUI panel display-gated; build Slint topology panel consuming `neoth cluster topology --output json` — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* cluster tab shows peer list with RTT/stability — *origin:* agent6 Section C SL-02
+- [x] **GOLD-PROG-05** SL-02 cluster topology GUI panel — CLI shipped; GUI panel display-gated; build Slint topology panel consuming `neoth cluster topology --output json` — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* cluster tab shows peer list with RTT/stability — *origin:* agent6 Section C SL-02 ✅ DONE: panel_logic::parse_cluster_topology (peers[] → ClusterPeerRow: label-or-shortkey / addr / status / rtt "N ms"|--- / stability % / last-seen, null-safe) + a CLUSTER PEERS Card in the Cluster tab (status-coloured recent=green/stale=amber/uncontacted=muted, empty-state hint) wired via fetch_topology_snapshot+apply_topology in the startup bundle, forwarded through MainWindow. 104 neothd-gui tests (4 new) + clippy -D warnings green.
 - [ ] **GOLD-PROG-06** SL-01/SL-01b cluster task-accept full loop — transport shipped; complete ProactiveChannelSend consumer wiring for task-accept — *files:* `SRC/neothd/src/cluster/hyperswarm.rs`, `SRC/neothd/src/cli/serve.rs` — *test:* remote task arrives via cluster and is dispatched — *origin:* agent6 Section C SL-01
 - [x] **GOLD-PROG-07** SL-03 local LLM resource tab GUI — headless telemetry shipped; build Slint panel for VRAM/load/power — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* GUI tab shows live VRAM reading — *origin:* agent6 Section C SL-03 ✅ DONE: HardwareSnapshot.vram_fraction (clamped used/total, computed in parse_hardware) + a settings.slint pill meter (accent fill width = track × fraction, shown only when a GPU is present) forwarded through MainWindow; apply_hardware pushes it + a 30s Settings-tab refresh timer (in-flight-guarded, kanban-timer pattern). 100 neothd-gui tests + clippy -D warnings green.
 - [ ] **GOLD-PROG-08** KF-08 live council budget meter Slint GUI widget — headless `telemetry/council_meter.rs` shipped; build Slint widget + tokio broadcast wiring — *files:* `SRC/neothd-gui/ui/settings.slint`, `SRC/neothd-gui/src/main.rs` — *test:* GUI meter updates after council call — *origin:* agent6 Section C KF-08

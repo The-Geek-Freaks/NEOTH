@@ -66,6 +66,17 @@ export struct TrustRow {
     value: string,
 }
 
+// GOLD-PROG-05 (SL-02) — one peer row for the Cluster-tab topology panel,
+// from `neoth cluster topology --output json`. All fields pre-formatted.
+export struct ClusterPeerRow {
+    label: string,
+    addr: string,
+    status: string,
+    rtt-ms: string,
+    stability: string,
+    last-seen: string,
+}
+
 // GU-01 — one role→provider binding for the Hemispheres panel.
 export struct HemisphereRow {
     role: string,      // "left" | "right" | "cerebellum"
@@ -396,6 +407,9 @@ export component SettingsView inherits Rectangle {
     in property <float> hw-vram-fraction: 0.0;
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
+    // GOLD-PROG-05 — cluster peer topology rows (Cluster tab), from
+    // `neoth cluster topology --output json`.
+    in property <[ClusterPeerRow]> cluster-peers: [];
 
     // KF-08 — Council budget meter (Config tab), from `neoth council budget
     // --output json`: the per-message cap + last debate's live usage.
@@ -1273,6 +1287,56 @@ export component SettingsView inherits Rectangle {
                                 font-family: Theme.font-mono;
                                 font-size: Theme.font-size-caption;
                                 color: row.value == "cached" ? Theme.accent-green : Theme.text-muted;
+                            }
+                        }
+                    }
+                }
+                // GOLD-PROG-05 (SL-02) — cluster peer topology. Confirmed peers
+                // from `neoth cluster topology --output json`; live RTT/stability
+                // populate only while the daemon runs. Empty until a peer pairs.
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "CLUSTER PEERS";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        if root.cluster-peers.length == 0: Text {
+                            text: "No confirmed peers — run `neoth cluster discover`, then `neoth cluster confirm <pub_key>`.";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        for peer in root.cluster-peers: VerticalLayout {
+                            spacing: 2px;
+                            HorizontalLayout {
+                                spacing: Theme.space-base;
+                                Text {
+                                    text: peer.label;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: Theme.text-primary;
+                                    horizontal-stretch: 1;
+                                }
+                                Text {
+                                    text: peer.status;
+                                    font-family: Theme.font-mono;
+                                    font-size: Theme.font-size-caption;
+                                    color: peer.status == "recent" ? Theme.accent-green : (peer.status == "stale" ? Theme.accent-amber : Theme.text-muted);
+                                }
+                            }
+                            Text {
+                                text: peer.addr + "  ·  rtt " + peer.rtt-ms + "  ·  " + peer.stability + " stable  ·  " + peer.last-seen;
+                                font-family: Theme.font-mono;
+                                font-size: Theme.font-size-caption;
+                                color: Theme.text-muted;
+                                wrap: word-wrap;
                             }
                         }
                     }

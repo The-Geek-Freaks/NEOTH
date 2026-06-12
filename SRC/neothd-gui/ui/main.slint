@@ -21,7 +21,7 @@
 import { Button, CheckBox, LineEdit, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { NeothButton, Card, ScreenHeader, ProgressIndicator, FooterBar, ModeCard, NeothComboBox, SovereignFade } from "components.slint";
-import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow } from "settings.slint";
+import { SettingsView, SettingsTab, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow, SafeRailRow, TrustRow, ClusterPeerRow, HemisphereRow, SkillRow, PluginRow, MemoryRow, ChannelRow } from "settings.slint";
 import { ChatView, ChatMessage } from "chat.slint";
 export { SettingsTab, ChatMessage, KanbanTaskRow, KanbanFeedRow, KanbanCommentRow }
 
@@ -311,6 +311,8 @@ export component MainWindow inherits Window {
     in property <float> hw-vram-fraction: 0.0;
     in property <string> hw-disk: "";
     in property <[TrustRow]> hw-models: [];
+    // GOLD-PROG-05 — cluster peer topology, forwarded to SettingsView.
+    in property <[ClusterPeerRow]> cluster-peers: [];
     // KF-08 — Council budget meter (Config tab), forwarded to SettingsView.
     in property <string> council-cap: "";
     in property <string> council-daily-usd: "";
@@ -1457,6 +1459,7 @@ export component MainWindow inherits Window {
             hw-vram-fraction: root.hw-vram-fraction;
             hw-disk: root.hw-disk;
             hw-models: root.hw-models;
+            cluster-peers: root.cluster-peers;
             council-cap: root.council-cap;
             council-daily-usd: root.council-daily-usd;
             council-depth-warning: root.council-depth-warning;
