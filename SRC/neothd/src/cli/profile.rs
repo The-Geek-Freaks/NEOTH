@@ -1287,6 +1287,56 @@ async fn run_pending_decline(
     Ok(())
 }
 
+/// GOLD-ARCH-20: structured `profile.require_approval` edit on a freedom.yaml
+/// document. Replaces the old `String::replace` surgery, which matched the
+/// `require_approval:` token globally — it flipped values inside YAML comments
+/// (`# require_approval: true`), corrupted a same-named key in any other
+/// section, and on a CRLF file the `"\nprofile:\n"` needle missed, appending a
+/// DUPLICATE `profile:` block (invalid YAML, silently). This parses into a
+/// `serde_yaml::Value` tree and edits exactly `root.profile.require_approval`,
+/// so comments can't false-match, the key is scoped to the profile section, and
+/// CRLF is handled by the YAML parser.
+///
+/// Returns `Ok(None)` when the field already equals `target` (no write needed),
+/// `Ok(Some(updated_yaml))` when the caller should write the new document.
+/// Comments are NOT preserved — the same accepted tradeoff as the shipped
+/// `config::presets::apply_preset_to_freedom_yaml` round-trip; the wizard never
+/// writes comments into freedom.yaml.
+fn set_require_approval_yaml(raw: &str, target: bool) -> Result<Option<String>> {
+    let mut root: serde_yaml::Value =
+        serde_yaml::from_str(raw).context("parse freedom.yaml as YAML")?;
+    let mapping = root
+        .as_mapping_mut()
+        .context("freedom.yaml root is not a YAML mapping")?;
+
+    // Get-or-insert the profile block (project idiom: see
+    // config::presets::ensure_council_block).
+    let profile_key = serde_yaml::Value::from("profile");
+    if mapping
+        .get(&profile_key)
+        .and_then(|v| v.as_mapping())
+        .is_none()
+    {
+        mapping.insert(
+            profile_key.clone(),
+            serde_yaml::Value::Mapping(serde_yaml::Mapping::new()),
+        );
+    }
+    let profile_map = mapping
+        .get_mut(&profile_key)
+        .and_then(|v| v.as_mapping_mut())
+        .context("freedom.yaml profile: is not a mapping")?;
+
+    let approval_key = serde_yaml::Value::from("require_approval");
+    if profile_map.get(&approval_key).and_then(|v| v.as_bool()) == Some(target) {
+        return Ok(None);
+    }
+    profile_map.insert(approval_key, serde_yaml::Value::Bool(target));
+
+    let updated = serde_yaml::to_string(&root).context("re-serialize freedom.yaml")?;
+    Ok(Some(updated))
+}
+
 fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<()> {
     use crate::config::FreedomConfig;
     let path = FreedomConfig::default_path();
@@ -1297,61 +1347,31 @@ fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<
         );
     }
     let raw = std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
+    let target = !disable;
     let target_value = if disable { "false" } else { "true" };
 
-    // Idempotent surgical edit: scan for an existing
-    // `require_approval:` line under `profile:` and rewrite. If
-    // absent, append the line at the end of the profile block (we
-    // detect the block by the bare `profile:` header — operators
-    // hand-editing yaml use that convention).
-    let already_set_pattern = format!("require_approval: {target_value}");
-    if raw.contains(&already_set_pattern) {
-        match output {
-            OutputFormat::Json | OutputFormat::Jsonl => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "migrated": false,
-                        "reason": "already-set",
-                        "value": target_value,
-                    }))?
-                );
+    let updated = match set_require_approval_yaml(&raw, target)? {
+        None => {
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "migrated": false,
+                            "reason": "already-set",
+                            "value": target_value,
+                        }))?
+                    );
+                }
+                OutputFormat::Table => {
+                    println!(
+                        "profile.require_approval is already {target_value}. No change written."
+                    );
+                }
             }
-            OutputFormat::Table => {
-                println!("profile.require_approval is already {target_value}. No change written.");
-            }
+            return Ok(());
         }
-        return Ok(());
-    }
-
-    // Two cases: (a) field already present with the OTHER value
-    // (flip it), (b) field absent (insert).
-    let updated = if raw.contains("require_approval:") {
-        // Flip existing line — match either spelling: `true` or `false`.
-        raw.replace(
-            "require_approval: true",
-            &format!("require_approval: {target_value}"),
-        )
-        .replace(
-            "require_approval: false",
-            &format!("require_approval: {target_value}"),
-        )
-    } else if raw.contains("\nprofile:\n") || raw.starts_with("profile:\n") {
-        // Insert under the existing profile: header.
-        let needle = "profile:\n";
-        raw.replacen(
-            needle,
-            &format!("profile:\n  require_approval: {target_value}\n"),
-            1,
-        )
-    } else {
-        // No profile: block at all — append one. Conservative since
-        // hand-edited freedom.yaml is rare and we want the migration
-        // to never destroy operator content.
-        format!(
-            "{}\nprofile:\n  require_approval: {target_value}\n",
-            raw.trim_end(),
-        )
+        Some(updated) => updated,
     };
 
     // Atomic write — `.tmp` + rename (same pattern as config::presets::apply),
@@ -1361,6 +1381,20 @@ fn run_migrate_require_approval(disable: bool, output: &OutputFormat) -> Result<
         .with_context(|| format!("write {}", tmp.display()))?;
     std::fs::rename(&tmp, &path)
         .with_context(|| format!("rename into {}", path.display()))?;
+
+    // Post-write verify: re-parse the written file as a full FreedomConfig and
+    // confirm the field actually landed. A structured edit should never produce
+    // a file that fails to parse or carries the wrong value — fail loudly if it
+    // somehow does, since this gates approval behaviour.
+    let written =
+        std::fs::read_to_string(&path).with_context(|| format!("re-read {}", path.display()))?;
+    let cfg: FreedomConfig = serde_yaml::from_str(&written)
+        .context("post-write parse of freedom.yaml failed — file may be corrupt")?;
+    anyhow::ensure!(
+        cfg.profile.require_approval == target,
+        "post-write verify failed: expected require_approval={target}, got {}",
+        cfg.profile.require_approval
+    );
 
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => {
@@ -2313,34 +2347,13 @@ mod tests {
         disable: bool,
     ) -> Result<bool> {
         let raw = std::fs::read_to_string(yaml_path)?;
-        let target_value = if disable { "false" } else { "true" };
-        let already = format!("require_approval: {target_value}");
-        if raw.contains(&already) {
-            return Ok(false);
+        match set_require_approval_yaml(&raw, !disable)? {
+            None => Ok(false),
+            Some(updated) => {
+                std::fs::write(yaml_path, updated.as_bytes())?;
+                Ok(true)
+            }
         }
-        let updated = if raw.contains("require_approval:") {
-            raw.replace(
-                "require_approval: true",
-                &format!("require_approval: {target_value}"),
-            )
-            .replace(
-                "require_approval: false",
-                &format!("require_approval: {target_value}"),
-            )
-        } else if raw.contains("\nprofile:\n") || raw.starts_with("profile:\n") {
-            raw.replacen(
-                "profile:\n",
-                &format!("profile:\n  require_approval: {target_value}\n"),
-                1,
-            )
-        } else {
-            format!(
-                "{}\nprofile:\n  require_approval: {target_value}\n",
-                raw.trim_end()
-            )
-        };
-        std::fs::write(yaml_path, updated.as_bytes())?;
-        Ok(true)
     }
 
     #[test]
@@ -2439,10 +2452,83 @@ mod tests {
         let wrote = migrate_require_approval_at_path(&path, false).unwrap();
         assert!(wrote);
         let after = std::fs::read_to_string(&path).unwrap();
-        assert!(after.contains("profile:\n  require_approval: true"));
+        assert!(after.contains("require_approval: true"));
         // Original lines preserved.
         assert!(after.contains("operator_id: tester"));
         assert!(after.contains("provider_kind: claude_cli"));
+    }
+
+    #[test]
+    fn migrate_require_approval_ignores_value_in_comment() {
+        // GOLD-ARCH-20: the old String::replace matched the token inside YAML
+        // comments. A comment carrying the target value must NOT make the
+        // migration a silent no-op when the real field is absent.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "# require_approval: true is the secure default\nprofile:\n  learn_enabled: false\n",
+        )
+        .unwrap();
+        let wrote = migrate_require_approval_at_path(&path, false).unwrap();
+        assert!(wrote, "comment must not be mistaken for the live field");
+        let after = std::fs::read_to_string(&path).unwrap();
+        let cfg: crate::config::FreedomConfig = serde_yaml::from_str(&after).unwrap();
+        assert!(
+            cfg.profile.require_approval,
+            "the real profile.require_approval must be set true, got: {after}"
+        );
+    }
+
+    #[test]
+    fn migrate_require_approval_handles_crlf_without_duplicate_profile_block() {
+        // GOLD-ARCH-20: on a CRLF file the old `"\nprofile:\n"` needle missed
+        // and appended a SECOND profile: block (invalid YAML). The structured
+        // edit must produce a single, parseable profile section.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "operator_id: tester\r\nprofile:\r\n  learn_enabled: false\r\n",
+        )
+        .unwrap();
+        let wrote = migrate_require_approval_at_path(&path, true).unwrap();
+        assert!(wrote);
+        let after = std::fs::read_to_string(&path).unwrap();
+        let cfg: crate::config::FreedomConfig = serde_yaml::from_str(&after).unwrap();
+        assert!(!cfg.profile.require_approval, "disable=true → false");
+        assert_eq!(
+            after.matches("profile:").count(),
+            1,
+            "exactly one profile block, no CRLF-induced duplicate: {after}"
+        );
+    }
+
+    #[test]
+    fn migrate_require_approval_does_not_corrupt_other_section_same_key() {
+        // GOLD-ARCH-20: a `require_approval:` key in an UNRELATED section must
+        // stay untouched — the edit is scoped to profile.require_approval.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("freedom.yaml");
+        std::fs::write(
+            &path,
+            "some_other:\n  require_approval: false\nprofile:\n  learn_enabled: false\n",
+        )
+        .unwrap();
+        let wrote = migrate_require_approval_at_path(&path, false).unwrap();
+        assert!(wrote);
+        let after = std::fs::read_to_string(&path).unwrap();
+        let root: serde_yaml::Value = serde_yaml::from_str(&after).unwrap();
+        assert_eq!(
+            root["some_other"]["require_approval"].as_bool(),
+            Some(false),
+            "unrelated section's require_approval must be untouched: {after}"
+        );
+        assert_eq!(
+            root["profile"]["require_approval"].as_bool(),
+            Some(true),
+            "profile.require_approval must be set true: {after}"
+        );
     }
 
     #[test]
