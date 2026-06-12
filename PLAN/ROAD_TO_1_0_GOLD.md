@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **198** | **48** | **150** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 39 | 170 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 38 | 171 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | 150 | 146 | 4 |
 
@@ -768,6 +768,7 @@ https://github.com/loadingalias/rscrypto
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-069** (low) ✅ VERIFIED-INTENTIONAL — verify-first:  wird AUSSCHLIESSLICH in  (das explizite  Operator-Command) gebaut — es gibt KEINEN autonomen/Daemon-Coding-Pfad (einzige weitere Konstruktion ist der Test). Der vorgeschlagene Fix (den chat.rs:839 -Gate spiegeln) ist daher FALSCH: er würde den vom Operator selbst angeforderten Coding-Run blockieren. Der chat-Gate schützt AUTONOMES/proaktives Spending — Coding hat davon keins. Der Audit-Frame-Teil bräuchte WAL-Writer-Plumbing durch , das im CLI-Pfad gar keinen Daemon-Writer hat (usage wird ohnehin best-effort im Provider-Adapter gemetert). Reviewer-NUANCED bestätigt. Kein Code-Change — explizite Invocation ist die Operator-Entscheidung. .
 - [x] **GR-021** (medium) ✅ FIXED — replaced propagating `?` on `apply_outcome` at dispatcher.rs:448 with a match that routes DB errors through `handle_retryable_failure`; tasks can no longer be permanently stranded in InProgress when the DB write fails mid-result-loop. `SRC/neothd/src/coding/dispatcher.rs`.
 - [x] **GR-010** (medium) ✅ FIXED — Added `InboundDedup` newtype (VecDeque ring, cap 2048) + `inbound_dedup: Option<Arc<Mutex<InboundDedup>>>` to `WebhookListenerConfig`; `dispatch_messages` now skips messages whose wamid was already seen, closing the Meta reconnect-storm duplicate pipeline run gap that the GOLD-COR-10 comment promised but never implemented. `webhook_listener.rs`.
 - [x] **GR-122** (medium) ✅ FIXED — add `PaidProviderCall` gate check at start of `name_session_best_effort`; return early when gate denies, preserving Strict-mode contract `SRC/neothd/src/cli/chat.rs`.
