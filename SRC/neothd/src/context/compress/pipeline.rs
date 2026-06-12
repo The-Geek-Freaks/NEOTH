@@ -25,7 +25,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::context::compress::ccr::CcrStore;
+use crate::context::compress::ccr::{CcrStore, InMemoryCcrStore};
 use crate::context::compress::content_detector::{detect_content_type, ContentType};
 use crate::context::compress::transform::{
     CompressionContext, OffloadTransform, ReformatTransform, TransformError,
@@ -162,6 +162,59 @@ pub fn target_bytes_for_budget(token_budget: usize) -> usize {
 }
 
 // ─── Orchestrator ──────────────────────────────────────────────────────
+
+/// Build the stock pipeline with every WS-HR compressor registered against its
+/// content type, using each transform's default tuning. This is the pipeline
+/// the daemon mounts once at startup (HR-08).
+///
+/// Registration order is execution order: reformats run before offloads, and
+/// for a given content type the lossless reformat (template-mine / minify)
+/// runs first so the offload sees the already-denser buffer.
+pub fn default_pipeline(thresholds: Thresholds) -> CompressionPipeline {
+    use crate::context::compress::diff_compressor::DiffCompressor;
+    use crate::context::compress::log_compressor::LogOffload;
+    use crate::context::compress::log_template::LogTemplate;
+    use crate::context::compress::search_compressor::SearchOffload;
+    use crate::context::compress::smart_crusher::{JsonMinifier, SmartCrusher};
+
+    CompressionPipeline::builder()
+        // Reformats (lossless, run first).
+        .with_reformat(LogTemplate::default())
+        .with_reformat(JsonMinifier)
+        // Offloads (drop + CCR).
+        .with_offload(LogOffload::default())
+        .with_offload(DiffCompressor::default())
+        .with_offload(SmartCrusher::default())
+        .with_offload(SearchOffload::default())
+        .with_thresholds(thresholds)
+        .build()
+}
+
+/// The daemon-mounted compression state: the stock pipeline, a shared CCR
+/// store (so dropped bytes stay retrievable across the loop), and the gate.
+/// `Clone` is cheap (both heavy fields are behind `Arc`).
+#[derive(Clone)]
+pub struct CompressionRuntime {
+    pub pipeline: Arc<CompressionPipeline>,
+    pub store: Arc<dyn CcrStore>,
+    pub gate: Gate,
+}
+
+impl CompressionRuntime {
+    /// Build the runtime from the freedom.yaml gate + thresholds. Returns
+    /// `None` when compression is disabled, so a caller can pass
+    /// `Option<CompressionRuntime>` and the off-path stays allocation-free.
+    pub fn new(gate: Gate, thresholds: Thresholds) -> Option<Self> {
+        if !gate.enabled {
+            return None;
+        }
+        Some(Self {
+            pipeline: Arc::new(default_pipeline(thresholds)),
+            store: Arc::new(InMemoryCcrStore::new()),
+            gate,
+        })
+    }
+}
 
 /// Sequential reformat-then-gated-offload pipeline.
 pub struct CompressionPipeline {
@@ -664,5 +717,33 @@ mod tests {
         // The errors must survive on the wire regardless of which stage fired.
         assert!(r.output.contains("ERROR disk full on /var"));
         assert!(r.output.contains("ERROR retry exhausted"));
+    }
+
+    #[test]
+    fn default_pipeline_compresses_each_content_type() {
+        let p = default_pipeline(Thresholds::default());
+        let gate = Gate::enabled(512, 3);
+
+        // Log → BuildOutput.
+        let log: String = (0..200).map(|i| format!("INFO worker-{i} heartbeat\n")).collect();
+        let s = store();
+        let r = p.compress_block(&log, 50, &gate, &ctx(), &s);
+        assert_eq!(r.skipped, None);
+        assert!(r.bytes_saved > 0, "log should compress");
+
+        // Clustered search → SearchResults.
+        let search: String = (0..100).map(|i| format!("utils.py:{}:def fn_{i}\n", i + 1)).collect();
+        let s2 = store();
+        let r2 = p.compress_block(&search, 50, &gate, &ctx(), &s2);
+        assert!(r2.bytes_saved > 0, "clustered search should compress");
+
+        // Big JSON array → JsonArray.
+        let json = format!(
+            "[{}]",
+            (0..300).map(|i| format!(r#"{{"id":{i},"v":{}}}"#, i * 2)).collect::<Vec<_>>().join(",")
+        );
+        let s3 = store();
+        let r3 = p.compress_block(&json, 50, &gate, &ctx(), &s3);
+        assert!(r3.bytes_saved > 0, "big json should compress");
     }
 }

@@ -1363,6 +1363,12 @@ pub(crate) fn build_pipeline_handler(deps: PipelineHandlerDeps) -> PipelineHandl
                         config_for_handler.tokens.max_per_request,
                         config_for_handler.compaction.threshold_fraction,
                     ),
+                    // GOLD-HR-08 — tool-result compression (live snapshot; None
+                    // when freedom.yaml::compression.enabled = false).
+                    crate::context::compress::CompressionRuntime::new(
+                        config_for_handler.compression.gate(),
+                        config_for_handler.compression.thresholds(),
+                    ),
                 )
                 .await
                 {

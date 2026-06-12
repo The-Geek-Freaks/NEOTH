@@ -39,8 +39,9 @@ pub use ccr::{
 };
 pub use content_detector::{detect_content_type, is_json_array_of_dicts, ContentType, DetectionResult};
 pub use pipeline::{
-    in_live_zone, target_bytes_for_budget, CompressionPipeline, CompressionPipelineBuilder,
-    CompressionSkip, Gate, PipelineResult, Thresholds, BYTES_PER_TOKEN_ESTIMATE,
+    default_pipeline, in_live_zone, target_bytes_for_budget, CompressionPipeline,
+    CompressionPipelineBuilder, CompressionRuntime, CompressionSkip, Gate, PipelineResult,
+    Thresholds, BYTES_PER_TOKEN_ESTIMATE,
 };
 pub use transform::{
     CompressionContext, OffloadOutput, OffloadTransform, ReformatOutput, ReformatTransform,

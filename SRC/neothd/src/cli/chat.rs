@@ -1399,6 +1399,11 @@ pub async fn run_chat_with(
                     config.tokens.max_per_request,
                     config.compaction.threshold_fraction,
                 ),
+                // GOLD-HR-08 — tool-result compression (None when disabled).
+                crate::context::compress::CompressionRuntime::new(
+                    config.compression.gate(),
+                    config.compression.thresholds(),
+                ),
             )
             .await
             {
@@ -3940,6 +3945,9 @@ pub(crate) async fn run_mcp_dispatch_loop(
     hints_enabled: bool,
     // GOLD-ADOPT-19 — auto context-compaction policy (freedom.yaml::compaction).
     compaction: crate::context::compaction::CompactionPolicy,
+    // GOLD-HR-08 — per-block tool-result compression (freedom.yaml::compression).
+    // `None` = disabled (the default); behaviour is then unchanged.
+    compression: Option<crate::context::compress::CompressionRuntime>,
 ) -> anyhow::Result<crate::mcp::dispatch_loop::LoopOutcome> {
     struct ProviderDriver<'a> {
         provider: &'a dyn crate::providers::Provider,
@@ -4026,6 +4034,7 @@ pub(crate) async fn run_mcp_dispatch_loop(
         goal_context,
         hints_enabled,
         compaction,
+        compression,
     )
     .await
 }
