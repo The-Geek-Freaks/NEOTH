@@ -165,11 +165,17 @@ impl SessionArchive {
         };
 
         let header_if_new = if is_new {
+            // GR-121 / COR-29 — sanitize the session id for the FILE CONTENT too,
+            // not just the filename (file_path). A crafted id with newlines or
+            // YAML-special characters would otherwise break out of the
+            // `session:` frontmatter value or inject markdown into the heading.
+            // Same `[A-Za-z0-9_-]` form as the filename keeps the two consistent.
+            let id = sanitize_session_id(&self.session_id);
             format!(
                 "---\nsession: {}\nopened: {}\n---\n\n# Session {}\n\n",
-                self.session_id,
+                id,
                 self.opened_at.format("%Y-%m-%d %H:%M:%S UTC"),
-                self.session_id,
+                id,
             )
         } else {
             String::new()
@@ -240,6 +246,25 @@ mod tests {
         assert!(body.starts_with("---\nsession: abc-123\n"));
         assert!(body.contains("**You:**\n\nHi Neoth."));
         assert!(body.contains("**Neoth:**\n\nHi operator."));
+    }
+
+    #[tokio::test]
+    async fn frontmatter_and_heading_sanitize_a_crafted_session_id_gr121() {
+        // GR-121 — a session id with newlines / YAML-special chars must NOT
+        // inject into the frontmatter value or the markdown heading; both now
+        // use the same `[A-Za-z0-9_-]` sanitization as the filename.
+        let dir = tempdir().unwrap();
+        let opened = Utc.with_ymd_and_hms(2026, 5, 14, 9, 34, 12).unwrap();
+        let evil = "ok\ninjected: true\n# pwned";
+        let sa = SessionArchive::new(dir.path().to_path_buf(), evil, opened);
+        sa.append_turn("hi", "yo", opened).await.unwrap();
+
+        let body = fs::read_to_string(&sa.file_path()).await.unwrap();
+        assert!(!body.contains("injected: true"), "YAML injection must not survive: {body}");
+        assert!(!body.contains("# pwned"), "heading injection must not survive: {body}");
+        let id = sanitize_session_id(evil);
+        assert!(body.contains(&format!("session: {id}\n")), "sanitized id in frontmatter: {body}");
+        assert!(body.contains(&format!("# Session {id}\n")), "sanitized id in heading: {body}");
     }
 
     #[tokio::test]
