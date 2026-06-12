@@ -223,6 +223,73 @@ mod tests {
         assert_eq!(h, parsed);
     }
 
+    /// GOLD-PROG-19 — pin the EXACT little-endian byte offset of every field in
+    /// the 96-byte EventHeaderV2 wire layout. The round-trip test above proves
+    /// self-consistency, but a field REORDER would round-trip cleanly while
+    /// silently shifting every external consumer's interpretation. These
+    /// hardcoded offset asserts (independent of `to_le_bytes`'s own ranges) fail
+    /// loudly the moment a field moves, changes width, or flips endianness.
+    /// Offsets are SPEC_wire_header_v2_slim.md §3-§11 authoritative.
+    #[test]
+    fn wire_format_byte_offsets_pinned() {
+        let event_id = 0xA1A2A3A4A5A6A7A8u64;
+        let phys = 1_700_000_000_000_000_000u64;
+        let logical = 5u32;
+        let scope = 0xB1B2B3B4u32;
+        let category = 0xC1C2C3C4u32;
+        let session = [0x51u8; 16];
+        let node = [0x6Eu8; 16];
+        let payload_hash = 0xD1D2D3D4D5D6D7D8u64;
+        let total_len = 0xE1E2E3E4u32;
+        let payload_len = 0xF1F2F3F4u32;
+        let generation = 0x71727374u32;
+        let reserved_len = 0x0203u16;
+
+        let h = EventHeaderV2 {
+            wal_format_version: WAL_FORMAT_VERSION,
+            event_schema_version: EVENT_SCHEMA_VERSION,
+            event_type: 0xAB,
+            event_subtype: 0xCD,
+            flags: EventFlags::TOMBSTONE,
+            header_len: HEADER_BODY_LEN as u16,
+            reserved_len,
+            total_len,
+            payload_len,
+            generation,
+            event_id: EventId(event_id),
+            hlc: Hlc::new(phys, logical).unwrap(),
+            importance: Importance::new(0.5).unwrap(),
+            scope,
+            category,
+            session_id: SessionId(session),
+            node_id: NodeId(node),
+            payload_hash,
+        };
+        let b = h.to_le_bytes();
+
+        assert_eq!(b.len(), HEADER_BODY_LEN);
+        assert_eq!(b[0], WAL_FORMAT_VERSION, "byte 0: wal_format_version");
+        assert_eq!(b[1], EVENT_SCHEMA_VERSION, "byte 1: event_schema_version");
+        assert_eq!(b[2], 0xAB, "byte 2: event_type");
+        assert_eq!(b[3], 0xCD, "byte 3: event_subtype");
+        assert_eq!(b[4], h.flags.bits(), "byte 4: flags");
+        assert_eq!(&b[5..7], &96u16.to_le_bytes(), "bytes 5..7: header_len = 96");
+        assert_eq!(&b[7..9], &reserved_len.to_le_bytes(), "bytes 7..9: reserved_len");
+        assert_eq!(&b[9..13], &total_len.to_le_bytes(), "bytes 9..13: total_len");
+        assert_eq!(&b[13..17], &payload_len.to_le_bytes(), "bytes 13..17: payload_len");
+        assert_eq!(&b[17..21], &generation.to_le_bytes(), "bytes 17..21: generation");
+        assert_eq!(&b[21..29], &event_id.to_le_bytes(), "bytes 21..29: event_id");
+        assert_eq!(&b[29..37], &phys.to_le_bytes(), "bytes 29..37: hlc.physical_ns");
+        assert_eq!(&b[37..41], &logical.to_le_bytes(), "bytes 37..41: hlc.logical");
+        assert_eq!(&b[41..45], &h.importance.raw().to_le_bytes(), "bytes 41..45: importance f32");
+        assert_eq!(&b[45..49], &scope.to_le_bytes(), "bytes 45..49: scope");
+        assert_eq!(&b[49..53], &category.to_le_bytes(), "bytes 49..53: category");
+        assert_eq!(&b[53..69], &session, "bytes 53..69: session_id");
+        assert_eq!(&b[69..85], &node, "bytes 69..85: node_id");
+        assert_eq!(&b[85..93], &payload_hash.to_le_bytes(), "bytes 85..93: payload_hash");
+        assert_eq!(&b[93..96], &[0u8, 0, 0], "bytes 93..96: reserved = zero");
+    }
+
     #[test]
     fn parser_rejects_inconsistent_total_len() {
         // GOLD-COR-06 / A-80: a header whose total_len does not match

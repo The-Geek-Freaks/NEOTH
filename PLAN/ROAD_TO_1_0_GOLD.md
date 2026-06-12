@@ -75,8 +75,8 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-E Architecture debt | 23 | 9 | 14 |
 | WS-F Gold-TODO feature build-out | 15 | 13 | 2 |
 | WS-G Repo adoptions | 28 | 2 | 26 |
-| WS-H PROGRESS carry-forward | 19 | 12 | 7 |
-| **TOTAL** (WS-A…H) | **198** | **40** | **158** |
+| WS-H PROGRESS carry-forward | 19 | 11 | 8 |
+| **TOTAL** (WS-A…H) | **198** | **37** | **161** |
 | WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 44 | 165 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | 150 | 142 | 8 |
@@ -464,7 +464,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [ ] **GOLD-PROG-16** SPEC-11 Phase 2 adapters: Discord, Signal, iMessage, LINE, Matrix channel adapters (5 channels, ~3-5d each) — *files:* `SRC/neothd/src/channels/discord.rs` (new), signal/imessage/line/matrix adapters (new) — *test:* each adapter passes inbound message through pipeline — *origin:* agent6 Section C SPEC-11
 - [x] **GOLD-PROG-17** ✅ DONE (2026-06-12c) — `neoth wal proof-key sign <message>` + `verify <message> <sig> [--pubkey]` wrap the shipped ed25519 proof-key primitives (`wal/signing.rs::{sign_b64,verify_b64,load_or_init_signing_key,pubkey_b64}`). New `ProofKeyAction::Sign/Verify` + testable pure helpers `proof_sign(path,msg)` / `proof_verify(path,msg,sig,claimed)` (verify defaults to the operator proof key, never mints one). `proof_sign_then_verify_round_trips_and_rejects_tampering` test (explicit+default pubkey verify, tampered-msg/garbage-sig/no-key-no-pubkey all fail loud); cli::wal 22 green, docgen regen, clippy `--all-targets -D warnings` clean. (Show/ExportPub already shipped; `Rotate` + a PROOF_KEY_ROTATED WAL frame is the remaining follow-on.) — primitive ed25519 signing shipped; build full CLI. *origin:* agent6 Section C PROOF-KEY-01
 - [ ] **GOLD-PROG-18** SPEC-05 user adaptation estimator quality verification + full adaptation loop consumer — cron wired; complete verify pass for 5 passive estimators — *files:* `SRC/neothd/src/profile/`, relevant modules — *test:* adaptation loop updates profile based on detected patterns — *origin:* agent6 Section C SPEC-05
-- [ ] **GOLD-PROG-19** ARCH-06 full 96-byte WAL header with HLC physical+logical fields — HLC tick local in builder; complete 96-byte header format verification — *files:* `SRC/neothd/src/wal/header.rs`, `SRC/neothd/src/wal/builder.rs` — *test:* header size is exactly 96 bytes; physical + logical clock fields decode correctly — *origin:* agent6 Section C ARCH-06
+- [x] **GOLD-PROG-19** ARCH-06 full 96-byte WAL header with HLC physical+logical fields — HLC tick local in builder; complete 96-byte header format verification — *files:* `SRC/neothd/src/wal/header.rs`, `SRC/neothd/src/wal/builder.rs` — *test:* header size is exactly 96 bytes; physical + logical clock fields decode correctly — *origin:* agent6 Section C ARCH-06 ✅ DONE: verify-first confirmed the 96-byte EventHeaderV2 + HLC physical/logical are already correct; added wire_format_byte_offsets_pinned — a drift oracle asserting the exact LE byte offset of all 18 fields (b[0..96]) so a future field reorder/width/endianness change fails loudly even though it would still round-trip. wal::header 9/9 + clippy -D warnings green. Sub-task B (UUID-v7 event_id) is a separate concern with WAL-reader migration risk — filed as follow-on, not this close.
 
 ---
 
