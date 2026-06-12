@@ -5,8 +5,12 @@ version: "0.1.0"
 
 # GOLD-ADOPT-02 — skill ported to NEOTH house style (source repo not vendored;
 # authored from standard practice). Ships ENABLED so NEOTH proactively applies
-# the discipline; specific multi-word triggers keep it from false-activating
-# even under the full-auto router (all 98+ skills live).
+# the discipline. GR-109 — two routing paths bound false-activation, not just
+# keywords: Stage-1 needs a specific multi-word trigger to match, AND Stage-2
+# (route_stage2_embedding) only fires when the message is semantically close
+# enough to THIS skill's `description` to cross the cosine threshold. Keep the
+# description narrow + the triggers specific so neither path over-activates
+# under the full-auto router (all 98+ skills live).
 author: ported (GOLD-ADOPT cybersecurity pack)
 tags:
   - cybersecurity
