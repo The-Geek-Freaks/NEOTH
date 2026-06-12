@@ -71,6 +71,15 @@ fuel = 1000000
 timeout_ms = 250
 ```
 
+> **Feature gate:** WASM plugin support is compiled in only when `neothd` is built with
+> `--features wasm-plugin-host`. Stock release binaries (from GitHub Releases / winget) already
+> include this feature. If you built from source with a plain `cargo build`, rebuild with:
+> ```
+> cargo build --release --features wasm-plugin-host
+> ```
+> Runtime execution is separately gated by `freedom.yaml::plugins.wasm.enabled` (default `true`
+> on builds that include the feature).
+
 ## Hook points
 
 | Hook | Purpose |

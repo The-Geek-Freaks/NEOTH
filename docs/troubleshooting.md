@@ -88,7 +88,7 @@ error: CUDA not found. Set CUDA_HOME or disable GPU features.
 If you don't need GPU: build without GPU feature:
 
 ```
-cargo build --release --no-default-features --features cli,wal,channels
+cargo build --release
 ```
 
 If you have CUDA: ensure `nvcc` is in PATH and `CUDA_HOME` is set:
