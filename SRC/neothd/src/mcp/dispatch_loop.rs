@@ -195,12 +195,6 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
         let mut iteration_had_success = false;
         let mut tool_result_blocks = Vec::new();
         for call in &extraction.calls {
-            // GOLD-ADOPT-18 — note the dirs this call touches (recorded for
-            // EVERY call, before any block/continue, so hints track intent even
-            // when a call is gated).
-            if let Some(t) = hint_tracker.as_mut() {
-                t.record_tool_arguments(&call.arguments, &hint_cwd);
-            }
             // GOLD-ADOPT-20 — block runaway repetition BEFORE spawning a server.
             let verdict = repetition_guard.check(call);
             if verdict.is_blocked() {
@@ -338,6 +332,17 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                 Ok(rendered) => {
                     successful_calls += 1;
                     iteration_had_success = true;
+                    // GR-127 — record the dirs this call touched ONLY after it
+                    // passed EVERY gate (repetition + risk + skill-allowlist +
+                    // autonomy, all inside dispatch_one) and was actually invoked.
+                    // The old code recorded for every parsed call BEFORE the
+                    // gates, so a DENIED/blocked call still seeded pending_dirs and
+                    // `load_new_hints` below read those dirs' hint files + injected
+                    // their content into the next prompt — a side-channel +
+                    // injection surface driven by a call the policy refused.
+                    if let Some(t) = hint_tracker.as_mut() {
+                        t.record_tool_arguments(&call.arguments, &hint_cwd);
+                    }
                     tool_result_blocks.push(rendered);
                 }
                 Err(reason) => {
