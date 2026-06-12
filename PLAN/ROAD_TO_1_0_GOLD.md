@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **198** | **48** | **150** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 44 | 165 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 41 | 168 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | 150 | 146 | 4 |
 
@@ -768,6 +768,9 @@ https://github.com/loadingalias/rscrypto
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-122** (medium) ✅ FIXED — add `PaidProviderCall` gate check at start of `name_session_best_effort`; return early when gate denies, preserving Strict-mode contract `SRC/neothd/src/cli/chat.rs`.
+- [x] **GR-082** (low) ✅ FIXED — replaced `Command::output()` in `probe_cmd` thread with `Command::spawn()` + piped stdout + `child.kill()` on timeout path; background thread now exits cleanly after kill instead of blocking indefinitely on a wedged vendor tool `SRC/neothd/src/installers/gpu.rs`.
+- [x] **GR-150** (info) ✅ FIXED — added `tracing::debug!` log inside the `discover_scan` pubkey-validation filter closure so operators can distinguish zero-peers-on-network from all-peers-rejected-as-malformed; filter logic and GOLD-SEC-26 / A-28 security invariant unchanged `SRC/neothd/src/cli/cluster.rs`.
 - [x] **GR-140** (INFO) ✅ FIXED — GOLD-FEAT-01 `[~]`→`[x]` mit 3 extrahierten `[ ]`-Subeinträgen (GOLD-FEAT-01a/b/c); stale `0xDB/0xDC`-Referenz in der Elternzeile durch korrekten `WAL 0xA2`-Verweis ersetzt (0xDB/0xDC sind CONSENT_GRANTED/REVOKED, events.rs:1544/1552); HON-21-Duplikat bereits per DD-14 (plan:787) gelöscht — dieser Teil war STALE. `PLAN/ROAD_TO_1_0_GOLD.md:366`.
 - [x] **DD-06** (low) ✅ FIXED — WS-F-Zeile von `16 | 16 | 0` auf `12 | 12 | 0` korrigiert; TOTAL von `199 | 50 | 149` auf `195 | 46 | 149` (DONE bleibt 149, da alle 4 Phantom-Einträge in der OPEN-Spalte lagen); GOLD-FEAT-13..16 existieren nicht im File — `PLAN/ROAD_TO_1_0_GOLD.md` Zeilen 76+79.
 - [x] **DD-05** (medium) ✅ FIXED — docs/troubleshooting.md:91 ersetzt phantom `--features cli,wal,channels` durch `cargo build --release` (keine Flags nötig: `qwen-cuda`/`qwen-metal` sind bereits default-OFF laut Cargo.toml:13); design-Vorschlag `--no-default-features --features wizard` war ebenfalls falsch (hätte `cluster` still-geschleppt), rev_concern bestätigt.

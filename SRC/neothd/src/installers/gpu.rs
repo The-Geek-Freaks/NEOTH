@@ -188,22 +188,34 @@ pub fn classify_from_subprocess(
 }
 
 /// Run a probe command with a hard timeout, returning its stdout on success.
-/// A hung tool (bad driver) leaks one short-lived thread but NEVER blocks the
-/// caller — onboarding must not stall on a wedged `nvidia-smi`.
+/// A hung tool (bad driver) NEVER blocks the caller — onboarding must not stall
+/// on a wedged `nvidia-smi`. GR-082: on timeout the child is killed and reaped
+/// (the reader thread unblocks when the pipe breaks), so nothing leaks — the
+/// reader thread owns only `stdout`, this thread owns the `Child` directly.
 fn probe_cmd(cmd: &str, args: &[&str], timeout: std::time::Duration) -> Option<String> {
-    let cmd = cmd.to_string();
-    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    use std::io::Read;
+    let mut child = std::process::Command::new(cmd)
+        .args(args)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let out = std::process::Command::new(&cmd)
-            .args(&args)
-            .output()
-            .ok()
-            .filter(|o| o.status.success())
-            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-        let _ = tx.send(out);
+        let mut buf = Vec::new();
+        let ok = stdout.read_to_end(&mut buf).is_ok();
+        let _ = tx.send(if ok { Some(buf) } else { None });
     });
-    rx.recv_timeout(timeout).ok().flatten()
+    let stdout_buf = rx.recv_timeout(timeout).ok().flatten();
+    // Always kill (no-op if the child already exited) + wait, so the child is
+    // reaped (no zombie) and the reader thread's `read_to_end` returns.
+    let _ = child.kill();
+    let status = child.wait().ok();
+    match (stdout_buf, status) {
+        (Some(buf), Some(s)) if s.success() => Some(String::from_utf8_lossy(&buf).into_owned()),
+        _ => None,
+    }
 }
 
 /// LIVE GPU probe (GOLD-ADOPT-10): run the platform vendor tools + classify
@@ -445,5 +457,34 @@ mod tests {
             None,
         );
         assert_eq!(r.kind, GpuKind::Rocm);
+    }
+
+    #[test]
+    fn probe_cmd_nonexistent_command_returns_none() {
+        // spawn() fails → early None, no thread spawned.
+        assert_eq!(
+            probe_cmd("definitely-not-a-real-binary-xyz", &[], std::time::Duration::from_millis(500)),
+            None
+        );
+    }
+
+    #[test]
+    fn probe_cmd_timeout_does_not_block_caller() {
+        // GR-082 regression: a hung child must NOT block past the timeout, and
+        // must be killed (not leaked). Use a platform sleep that runs far longer
+        // than the timeout; the call must return None promptly.
+        #[cfg(windows)]
+        let (cmd, args): (&str, &[&str]) = ("ping", &["127.0.0.1", "-n", "20"]);
+        #[cfg(not(windows))]
+        let (cmd, args): (&str, &[&str]) = ("sleep", &["20"]);
+
+        let start = std::time::Instant::now();
+        let out = probe_cmd(cmd, args, std::time::Duration::from_millis(200));
+        let elapsed = start.elapsed();
+        assert_eq!(out, None, "timed-out probe must return None");
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "probe blocked for {elapsed:?} — timeout/kill did not unblock the caller"
+        );
     }
 }

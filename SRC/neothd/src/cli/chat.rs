@@ -2090,6 +2090,20 @@ async fn name_session_best_effort(
             return;
         }
     };
+    // GR-122: the utility (session-naming) call is a real provider round-trip,
+    // so it must clear the same PaidProviderCall autonomy gate as the main path
+    // — otherwise a Strict operator who blocked paid calls still has naming fire
+    // silently. eur_estimate 0.0 (utility provider is locally-routed/cheap by
+    // design); Strict (Deny) blocks the action class, others auto-confirm.
+    {
+        use crate::permissions::{Action, Gate};
+        let action = Action::PaidProviderCall { eur_estimate: 0.0 };
+        let gate = Gate::for_level(config.autonomy).with_confirm(Gate::auto_confirm());
+        if gate.check(&action, Some(writer)).await.is_err() {
+            tracing::debug!("session-naming: blocked by autonomy gate");
+            return;
+        }
+    }
     let req = crate::providers::Request {
         prompt: format!(
             "Give a terse 3-6 word title for a conversation that began with the message below. \
