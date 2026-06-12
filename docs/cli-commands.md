@@ -2181,6 +2181,20 @@ Print ONLY the base64 public key (pipe it to an auditor so they can `wal verify-
 
 Print the proof signing key's public key + on-disk path (or report that no key exists yet)
 
+#### `neoth wal proof-key sign`
+
+PROOF-KEY-01 — sign an arbitrary message with the operator's proof key (auto-creates the key on first use, same as `wal export --sign`). Prints the base64 detached ed25519 signature + the public key
+
+- `<MESSAGE>` — The message to sign
+
+#### `neoth wal proof-key verify`
+
+PROOF-KEY-01 — verify a base64 signature over MESSAGE. Defaults to THIS operator's proof key when `--pubkey` is omitted; exits non-zero on mismatch
+
+- `<MESSAGE>` — The signed message
+- `<BASE64_SIG>` — The base64 detached signature (from `proof-key sign`)
+- `--pubkey <BASE64>` — The signer's base64 public key. Defaults to this operator's proof key
+
 ### `neoth wal show`
 
 Pretty-print frames, newest first. With no `<segment>`, scans EVERY `~/.neoth/wal/*.wal` segment so an operator can audit the whole chain without naming a file. `--type` filters to one event type — this is how an operator proves a guarantee, e.g. `neoth wal show --type plugin_cap_denied` (every denied plugin hostcall) or `--type provider_fallback_attempted` (every 429 failover)

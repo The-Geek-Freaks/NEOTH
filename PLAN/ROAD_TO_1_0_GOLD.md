@@ -75,8 +75,8 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-E Architecture debt | 23 | 11 | 12 |
 | WS-F Gold-TODO feature build-out | 15 | 13 | 2 |
 | WS-G Repo adoptions | 28 | 2 | 26 |
-| WS-H PROGRESS carry-forward | 19 | 15 | 4 |
-| **TOTAL** (WS-A…H) | **198** | **45** | **153** |
+| WS-H PROGRESS carry-forward | 19 | 14 | 5 |
+| **TOTAL** (WS-A…H) | **198** | **44** | **154** |
 | WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 44 | 165 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | 150 | 142 | 8 |
@@ -462,7 +462,7 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [ ] **GOLD-PROG-14** MV-01c model-version-agnostic `pub(crate)` blocker resolution — *files:* `SRC/neothd/src/providers/mod.rs` — *test:* model catalog passthrough works without hardcoded whitelist — *origin:* agent6 Section C MV-01
 - [ ] **GOLD-PROG-15** PC-02 Chrome DevTools MCP — operator decision needed on license + forced `CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS=1` + telemetry confirm before build — *operator-input needed:* Alex must approve license — *files:* new MCP plugin — *test:* Chrome DevTools MCP connects and tools are accessible — *origin:* agent6 Section C PC-02
 - [ ] **GOLD-PROG-16** SPEC-11 Phase 2 adapters: Discord, Signal, iMessage, LINE, Matrix channel adapters (5 channels, ~3-5d each) — *files:* `SRC/neothd/src/channels/discord.rs` (new), signal/imessage/line/matrix adapters (new) — *test:* each adapter passes inbound message through pipeline — *origin:* agent6 Section C SPEC-11
-- [ ] **GOLD-PROG-17** PROOF-KEY-01 full operator proof-key lifecycle CLI (`neoth wal proof`) — primitive ed25519 signing shipped; build full CLI + UX + docs — *files:* `SRC/neothd/src/cli/wal.rs`, docs — *test:* `neoth wal proof sign` + `verify` round-trip — *origin:* agent6 Section C PROOF-KEY-01
+- [x] **GOLD-PROG-17** ✅ DONE (2026-06-12c) — `neoth wal proof-key sign <message>` + `verify <message> <sig> [--pubkey]` wrap the shipped ed25519 proof-key primitives (`wal/signing.rs::{sign_b64,verify_b64,load_or_init_signing_key,pubkey_b64}`). New `ProofKeyAction::Sign/Verify` + testable pure helpers `proof_sign(path,msg)` / `proof_verify(path,msg,sig,claimed)` (verify defaults to the operator proof key, never mints one). `proof_sign_then_verify_round_trips_and_rejects_tampering` test (explicit+default pubkey verify, tampered-msg/garbage-sig/no-key-no-pubkey all fail loud); cli::wal 22 green, docgen regen, clippy `--all-targets -D warnings` clean. (Show/ExportPub already shipped; `Rotate` + a PROOF_KEY_ROTATED WAL frame is the remaining follow-on.) — primitive ed25519 signing shipped; build full CLI. *origin:* agent6 Section C PROOF-KEY-01
 - [ ] **GOLD-PROG-18** SPEC-05 user adaptation estimator quality verification + full adaptation loop consumer — cron wired; complete verify pass for 5 passive estimators — *files:* `SRC/neothd/src/profile/`, relevant modules — *test:* adaptation loop updates profile based on detected patterns — *origin:* agent6 Section C SPEC-05
 - [ ] **GOLD-PROG-19** ARCH-06 full 96-byte WAL header with HLC physical+logical fields — HLC tick local in builder; complete 96-byte header format verification — *files:* `SRC/neothd/src/wal/header.rs`, `SRC/neothd/src/wal/builder.rs` — *test:* header size is exactly 96 bytes; physical + logical clock fields decode correctly — *origin:* agent6 Section C ARCH-06
 

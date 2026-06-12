@@ -129,6 +129,28 @@ pub enum ProofKeyAction {
     /// Print ONLY the base64 public key (pipe it to an auditor so they can
     /// `wal verify-proof --pubkey <key>`). Exits non-zero if no key exists yet.
     ExportPub,
+    /// PROOF-KEY-01 — sign an arbitrary message with the operator's proof key
+    /// (auto-creates the key on first use, same as `wal export --sign`). Prints
+    /// the base64 detached ed25519 signature + the public key.
+    Sign {
+        /// The message to sign.
+        #[arg(value_name = "MESSAGE")]
+        message: String,
+    },
+    /// PROOF-KEY-01 — verify a base64 signature over MESSAGE. Defaults to THIS
+    /// operator's proof key when `--pubkey` is omitted; exits non-zero on
+    /// mismatch.
+    Verify {
+        /// The signed message.
+        #[arg(value_name = "MESSAGE")]
+        message: String,
+        /// The base64 detached signature (from `proof-key sign`).
+        #[arg(value_name = "BASE64_SIG")]
+        signature: String,
+        /// The signer's base64 public key. Defaults to this operator's proof key.
+        #[arg(long, value_name = "BASE64")]
+        pubkey: Option<String>,
+    },
 }
 
 pub async fn run_wal(args: WalArgs) -> Result<()> {
@@ -189,6 +211,38 @@ fn proof_key_pubkey(key_path: &Path) -> Result<Option<String>> {
     Ok(Some(crate::wal::signing::pubkey_b64(&key)))
 }
 
+/// PROOF-KEY-01 (PROG-17) — sign `message` with the operator's proof key
+/// (auto-created on first use), returning `(base64_signature, base64_pubkey)`.
+/// Pure helper so the CLI handler is unit-testable against a temp key path.
+fn proof_sign(key_path: &Path, message: &str) -> Result<(String, String)> {
+    let key = crate::wal::signing::load_or_init_signing_key(key_path)
+        .context("load or create the proof signing key")?;
+    Ok((
+        crate::wal::signing::sign_b64(&key, message.as_bytes()),
+        crate::wal::signing::pubkey_b64(&key),
+    ))
+}
+
+/// PROOF-KEY-01 (PROG-17) — verify a base64 `signature` over `message`.
+/// `claimed_pubkey` defaults to THIS operator's proof key (read-only; never
+/// mints one). `Ok(())` iff valid, descriptive `Err` otherwise.
+fn proof_verify(
+    key_path: &Path,
+    message: &str,
+    signature: &str,
+    claimed_pubkey: Option<&str>,
+) -> Result<()> {
+    let pk = match claimed_pubkey {
+        Some(p) => p.to_string(),
+        None => proof_key_pubkey(key_path)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no proof signing key yet + no --pubkey given — nothing to verify against"
+            )
+        })?,
+    };
+    crate::wal::signing::verify_b64(&pk, signature, message.as_bytes())
+}
+
 fn run_proof_key(action: ProofKeyAction, output: OutputFormat) -> Result<()> {
     let path = crate::wal::signing::default_signing_key_path();
     let pubkey = proof_key_pubkey(&path)?;
@@ -228,6 +282,48 @@ fn run_proof_key(action: ProofKeyAction, output: OutputFormat) -> Result<()> {
                 );
                 // GOLD-COR-01 / A-03: QuietExit instead of process::exit so the
                 // stack unwinds (Drop-time flushes run) before the code lands.
+                return Err(crate::QuietExit(1).into());
+            }
+        },
+        ProofKeyAction::Sign { message } => {
+            let (sig, pk) = proof_sign(&path, &message)?;
+            match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({
+                        "message": message,
+                        "signature": sig,
+                        "public_key": pk,
+                        "algorithm": crate::wal::signing::SIG_ALGORITHM,
+                    })
+                ),
+                OutputFormat::Table => {
+                    println!("signature:  {sig}");
+                    println!("public_key: {pk}");
+                    println!("  verify: neoth wal proof-key verify \"{message}\" {sig}");
+                }
+            }
+        }
+        ProofKeyAction::Verify {
+            message,
+            signature,
+            pubkey: claimed,
+        } => match proof_verify(&path, &message, &signature, claimed.as_deref()) {
+            Ok(()) => match output {
+                OutputFormat::Json | OutputFormat::Jsonl => println!(
+                    "{}",
+                    serde_json::json!({ "verified": true, "message": message })
+                ),
+                OutputFormat::Table => println!("✓ verified — signature matches the public key"),
+            },
+            Err(e) => {
+                match output {
+                    OutputFormat::Json | OutputFormat::Jsonl => println!(
+                        "{}",
+                        serde_json::json!({ "verified": false, "error": e.to_string() })
+                    ),
+                    OutputFormat::Table => eprintln!("✗ NOT verified — {e}"),
+                }
                 return Err(crate::QuietExit(1).into());
             }
         },
@@ -918,6 +1014,29 @@ mod tests {
     use crate::wal::header::EventHeaderV2;
     use crate::wal::segment_header::SegmentHeader;
     use tempfile::tempdir;
+
+    #[test]
+    fn proof_sign_then_verify_round_trips_and_rejects_tampering() {
+        // PROG-17: sign a message with a fresh proof key, verify with its pubkey
+        // (explicit + operator-default), and prove tampering / wrong-sig fail.
+        let dir = tempdir().unwrap();
+        let kp = dir.path().join("signing.key");
+        let (sig, pk) = proof_sign(&kp, "attest this bundle").unwrap();
+        // Explicit pubkey verifies.
+        assert!(proof_verify(&kp, "attest this bundle", &sig, Some(&pk)).is_ok());
+        // Operator-default (None → reads the same on-disk key) verifies.
+        assert!(proof_verify(&kp, "attest this bundle", &sig, None).is_ok());
+        // A tampered message fails.
+        assert!(proof_verify(&kp, "attest THAT bundle", &sig, Some(&pk)).is_err());
+        // A garbage signature fails (not a 64-byte ed25519 sig).
+        assert!(proof_verify(&kp, "attest this bundle", "AAAA", Some(&pk)).is_err());
+        // Verify against an empty key dir with no --pubkey errors loudly.
+        let empty = tempdir().unwrap();
+        assert!(
+            proof_verify(&empty.path().join("none.key"), "x", &sig, None).is_err(),
+            "no key + no --pubkey must error, not silently pass"
+        );
+    }
 
     fn write_segment(dir: &std::path::Path, seq: u64, frames: usize) -> PathBuf {
         let path = dir.join(format!("{:06}.wal", seq));
