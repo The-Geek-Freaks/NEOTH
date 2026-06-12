@@ -149,7 +149,6 @@ pub enum PipelineRun {
 // TODO(profile follow-up): extract a `RunPipelineInputs` config struct
 // so the 9-arg signature shrinks; the wide signature mirrors the
 // pipeline's stage inputs 1:1 and is stable across callers.
-#[allow(clippy::too_many_arguments)]
 /// ADV-07: drop every `operator_preferences` claim from a freshly
 /// extracted delta (applied on mirror-recovery turns). Returns the number
 /// of claims removed. Pure — unit-testable without the full pipeline /

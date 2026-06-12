@@ -304,6 +304,25 @@ async fn run_dispatch_phase(
     Ok(())
 }
 
+/// ARCH-22 — intern Worker name labels so the `&'static str` the `Worker` trait
+/// requires is leaked at most ONCE per unique label, not once per dispatch. The
+/// label set is `{hemisphere}/{provider}` — tiny + stable — so the interned set
+/// can't grow unbounded; re-dispatches reuse the cached `&'static str` instead
+/// of leaking a fresh `String` every time.
+fn intern_label(label: &str) -> &'static str {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static INTERN: OnceLock<Mutex<HashSet<&'static str>>> = OnceLock::new();
+    let set = INTERN.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut guard = set.lock().expect("worker-label interner poisoned");
+    if let Some(&existing) = guard.get(label) {
+        return existing;
+    }
+    let leaked: &'static str = Box::leak(label.to_string().into_boxed_str());
+    guard.insert(leaked);
+    leaked
+}
+
 /// QU-10b: build the `HemisphereWorkerSet` from the operator's
 /// per-hemisphere provider bindings. Extracted from `run_dispatch_phase`
 /// so the single-session dispatch path AND the `--run-pending` controller
@@ -328,11 +347,10 @@ async fn build_worker_set(cfg: &FreedomConfig) -> crate::coding::dispatcher::Hem
         match providers::from_config_for_role(cfg, role).await {
             Ok(p) => {
                 let provider_name = p.name();
-                // Leak a `String` to get `&'static str` for the Worker
-                // name. One-off per invocation — bounded cost, and the
-                // audit trail benefits from the hemisphere/provider pair.
-                let label: &'static str =
-                    Box::leak(format!("{name}/{provider_name}").into_boxed_str());
+                // ARCH-22: intern the `{hemisphere}/{provider}` label so the
+                // `&'static str` the Worker trait needs is leaked once per
+                // unique label, not once per dispatch.
+                let label: &'static str = intern_label(&format!("{name}/{provider_name}"));
                 // GOLD-WIRE-01: hand the worker the operator-configured
                 // model so it can pick the tool-router profile. Empty when
                 // the slot left it unset → unknown-default (Direct).
@@ -557,6 +575,21 @@ fn now_unix_ns() -> u64 {
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn intern_label_leaks_each_unique_label_at_most_once() {
+        // ARCH-22: the same label must intern to the SAME &'static str (no
+        // re-leak on a repeated dispatch); distinct labels intern separately.
+        let a = intern_label("left/claude_cli");
+        let b = intern_label("left/claude_cli");
+        assert!(
+            std::ptr::eq(a, b),
+            "a repeated label must reuse the interned pointer, not re-leak"
+        );
+        let c = intern_label("right/claude_cli");
+        assert!(!std::ptr::eq(a, c), "distinct labels intern separately");
+        assert_eq!(c, "right/claude_cli");
+    }
 
     #[test]
     fn apply_requires_dispatch_or_run_pending() {
