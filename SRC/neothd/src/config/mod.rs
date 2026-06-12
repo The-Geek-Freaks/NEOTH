@@ -153,6 +153,13 @@ pub struct FreedomConfig {
     /// GOLD-ADOPT-19 — auto context-compaction for the agentic tool-loop.
     #[serde(default)]
     pub compaction: CompactionConfig,
+    /// WS-HR — headroom-style token compression of long tool-result blocks.
+    /// Off by default (`enabled = false`) → every block passes through
+    /// byte-identical. Distinct from `compaction`: compaction summarises the
+    /// WHOLE accumulated prompt with an LLM call; compression shrinks an
+    /// INDIVIDUAL block losslessly via CCR with no extra model call.
+    #[serde(default)]
+    pub compression: CompressionConfig,
     /// R-5 Obsidian vault auto-sync: when set, the daemon mirrors
     /// `~/.neoth/archive/sessions/<day>/<file>.md` into the operator's
     /// vault on a schedule. `None` = task off (operator still runs
@@ -3087,6 +3094,132 @@ impl Default for CompactionConfig {
             threshold_fraction: Self::default_threshold_fraction(),
             progressive: false,
         }
+    }
+}
+
+/// WS-HR — `freedom.yaml::compression`. Per-block token compression of long
+/// tool outputs (headroom port). Off by default — an operator opts in with
+/// `compression.enabled = true`. The three orchestrator thresholds are exposed
+/// for tuning but default to headroom's conservative stock values.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct CompressionConfig {
+    /// Master switch. `false` → no block is ever compressed (passthrough).
+    #[serde(default)]
+    pub enabled: bool,
+    /// Blocks smaller than this many bytes are left untouched (compression
+    /// overhead + a CCR marker isn't worth it on small outputs).
+    #[serde(default = "CompressionConfig::default_min_block_bytes")]
+    pub min_block_bytes: usize,
+    /// The most-recent N turns are never compressed — the live zone. Protects
+    /// correctness on the active turn and keeps provider prompt-cache hits.
+    #[serde(default = "CompressionConfig::default_live_zone_turns")]
+    pub live_zone_turns: usize,
+    /// After reformat, `output/input ≤ this` ⇒ reformat sufficient, skip
+    /// offloads unless bloat demands them.
+    #[serde(default = "CompressionConfig::default_reformat_target_ratio")]
+    pub reformat_target_ratio: f64,
+    /// Bloat score ≥ this ⇒ run the offload regardless of reformat outcome.
+    #[serde(default = "CompressionConfig::default_bloat_threshold")]
+    pub bloat_threshold: f32,
+    /// After reformat, `output/input > this` ⇒ run offloads even below the
+    /// bloat threshold (the "reformat barely helped" fallback).
+    #[serde(default = "CompressionConfig::default_offload_fallback_ratio")]
+    pub offload_fallback_ratio: f64,
+}
+
+impl CompressionConfig {
+    pub fn default_min_block_bytes() -> usize {
+        2048
+    }
+    pub fn default_live_zone_turns() -> usize {
+        3
+    }
+    pub fn default_reformat_target_ratio() -> f64 {
+        0.5
+    }
+    pub fn default_bloat_threshold() -> f32 {
+        0.5
+    }
+    pub fn default_offload_fallback_ratio() -> f64 {
+        0.85
+    }
+
+    /// Runtime gating view consumed by `CompressionPipeline::compress_block`.
+    pub fn gate(&self) -> crate::context::compress::Gate {
+        crate::context::compress::Gate {
+            enabled: self.enabled,
+            min_block_bytes: self.min_block_bytes,
+            live_zone_turns: self.live_zone_turns,
+        }
+    }
+
+    /// Orchestrator acceptance thresholds consumed by the pipeline builder.
+    pub fn thresholds(&self) -> crate::context::compress::Thresholds {
+        crate::context::compress::Thresholds {
+            reformat_target_ratio: self.reformat_target_ratio,
+            bloat_threshold: self.bloat_threshold,
+            offload_fallback_ratio: self.offload_fallback_ratio,
+        }
+    }
+}
+
+impl Default for CompressionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_block_bytes: Self::default_min_block_bytes(),
+            live_zone_turns: Self::default_live_zone_turns(),
+            reformat_target_ratio: Self::default_reformat_target_ratio(),
+            bloat_threshold: Self::default_bloat_threshold(),
+            offload_fallback_ratio: Self::default_offload_fallback_ratio(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod compression_config_tests {
+    use super::*;
+
+    #[test]
+    fn defaults_are_disabled_and_conservative() {
+        let c = CompressionConfig::default();
+        assert!(!c.enabled);
+        assert_eq!(c.min_block_bytes, 2048);
+        assert_eq!(c.live_zone_turns, 3);
+        assert_eq!(c.reformat_target_ratio, 0.5);
+        assert_eq!(c.bloat_threshold, 0.5);
+        assert_eq!(c.offload_fallback_ratio, 0.85);
+    }
+
+    #[test]
+    fn omitted_block_deserialises_to_disabled_default() {
+        // A freedom.yaml that omits the field (or an empty block) must agree
+        // with ::default() — both disabled — so loaded configs behave like
+        // code-built ones.
+        let from_empty: CompressionConfig =
+            serde_yaml::from_str("{}").expect("empty compression block deserialises");
+        assert_eq!(from_empty, CompressionConfig::default());
+        assert!(!from_empty.enabled);
+    }
+
+    #[test]
+    fn gate_and_thresholds_mirror_config_fields() {
+        let c = CompressionConfig {
+            enabled: true,
+            min_block_bytes: 4096,
+            live_zone_turns: 5,
+            reformat_target_ratio: 0.3,
+            bloat_threshold: 0.7,
+            offload_fallback_ratio: 0.9,
+        };
+        let g = c.gate();
+        assert!(g.enabled);
+        assert_eq!(g.min_block_bytes, 4096);
+        assert_eq!(g.live_zone_turns, 5);
+        let t = c.thresholds();
+        assert_eq!(t.reformat_target_ratio, 0.3);
+        assert_eq!(t.bloat_threshold, 0.7);
+        assert_eq!(t.offload_fallback_ratio, 0.9);
     }
 }
 

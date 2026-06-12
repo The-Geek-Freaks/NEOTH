@@ -24,9 +24,19 @@
 
 pub mod ccr;
 pub mod content_detector;
+pub mod pipeline;
+pub mod transform;
 
 pub use ccr::{
     compute_key, extract_keys, marker_for, retrieve, stash, CcrStore, InMemoryCcrStore,
     DEFAULT_CAPACITY, DEFAULT_TTL,
 };
 pub use content_detector::{detect_content_type, is_json_array_of_dicts, ContentType, DetectionResult};
+pub use pipeline::{
+    in_live_zone, target_bytes_for_budget, CompressionPipeline, CompressionPipelineBuilder,
+    CompressionSkip, Gate, PipelineResult, Thresholds, BYTES_PER_TOKEN_ESTIMATE,
+};
+pub use transform::{
+    CompressionContext, OffloadOutput, OffloadTransform, ReformatOutput, ReformatTransform,
+    TransformError,
+};
