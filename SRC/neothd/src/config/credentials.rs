@@ -38,6 +38,19 @@ pub struct Credentials {
     pub provider_key: Option<SecretString>,
     /// Telegram bot token from @BotFather.
     pub telegram_token: Option<SecretString>,
+    /// GR-041 — per-hemisphere inference key overrides, companions to the
+    /// `inference.{left,right,cerebellum,default_slot}.key` slots in
+    /// `freedom.yaml`. `save_public_to_default_path` strips those slot keys
+    /// from `freedom.yaml`, so credentials.yaml is the only place they can be
+    /// configured; on load they are merged back onto the matching slot.
+    #[serde(default)]
+    pub inference_left_key: Option<SecretString>,
+    #[serde(default)]
+    pub inference_right_key: Option<SecretString>,
+    #[serde(default)]
+    pub inference_cerebellum_key: Option<SecretString>,
+    #[serde(default)]
+    pub inference_default_slot_key: Option<SecretString>,
     /// WhatsApp Business Cloud API access token. Issued from the Meta
     /// developer console. Scaffold-only in v0.1.x — adapter returns
     /// `NotSupported` until the webhook/HTTP server lands.
@@ -184,6 +197,10 @@ impl Credentials {
         let Self {
             provider_key,
             telegram_token,
+            inference_left_key,
+            inference_right_key,
+            inference_cerebellum_key,
+            inference_default_slot_key,
             whatsapp_token,
             whatsapp_phone_id,
             whatsapp_verify_token,
@@ -207,6 +224,10 @@ impl Credentials {
         } = self;
         provider_key.is_none()
             && telegram_token.is_none()
+            && inference_left_key.is_none()
+            && inference_right_key.is_none()
+            && inference_cerebellum_key.is_none()
+            && inference_default_slot_key.is_none()
             && whatsapp_token.is_none()
             && whatsapp_phone_id.is_none()
             && whatsapp_verify_token.is_none()
@@ -408,6 +429,26 @@ mod tests {
         let c = Credentials::load_or_default(&path).unwrap();
         assert!(c.provider_key.is_some());
         assert!(c.telegram_token.is_none());
+    }
+
+    #[test]
+    fn parses_per_slot_inference_keys_and_counts_non_empty() {
+        // GR-041: a credentials file with only a per-slot inference key must
+        // parse it AND not be treated as empty (else save would delete the
+        // file and the key would be lost — the very gap this finding closed).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        std::fs::write(
+            &path,
+            "inference_left_key: left-secret\ninference_default_slot_key: default-secret\n",
+        )
+        .unwrap();
+        let c = Credentials::load_or_default(&path).unwrap();
+        assert!(c.inference_left_key.is_some());
+        assert!(c.inference_default_slot_key.is_some());
+        assert!(c.inference_right_key.is_none());
+        assert!(c.inference_cerebellum_key.is_none());
+        assert!(!c.is_empty(), "a per-slot key must count toward non-empty");
     }
 
     #[test]
