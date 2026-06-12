@@ -19,11 +19,16 @@ use super::discovery::DiscoveryVia;
 /// pairing CLI) can't lose-update the whole-file load→mutate→save cycle
 /// (COR-16 / A-43). The on-disk write is already atomic (`.tmp` + rename),
 /// which prevents torn READS; this lock closes the read-modify-write race
-/// on top of it. One daemon per host (the pidfile lock, COR-16) makes a
-/// process-wide lock sufficient — there is no second writer process to
-/// contend with. Read-only accessors (`load`, `is_paired`,
-/// `find_by_hostname`) intentionally skip the lock: atomic rename means
-/// they always observe a complete file.
+/// on top of it. Two levels (GR-020):
+/// - `REGISTRY_LOCK` (process-local Mutex): serializes the daemon's own
+///   background tasks (heartbeat RTT, stability, last-seen, gossip).
+/// - [`lock_registry_file`] (blocking OS file lock on `cluster.yaml.lock`):
+///   serializes against `neoth cluster confirm`/`revoke` CLI invocations,
+///   which are SEPARATE processes — the old "one daemon per host makes a
+///   process-wide lock sufficient" claim missed that writer.
+/// Read-only accessors (`load`, `is_paired`, `find_by_hostname`)
+/// intentionally skip both locks: atomic rename means they always observe
+/// a complete file.
 static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Take the process-wide registry lock, tolerating poisoning (a panic in a
@@ -31,6 +36,29 @@ static REGISTRY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// rename, so the `()` payload is meaningless — recover and proceed).
 fn lock_registry() -> std::sync::MutexGuard<'static, ()> {
     REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
+
+/// GR-020 — blocking exclusive OS lock on `<home>/cluster.yaml.lock`.
+/// `std::fs::File::lock` blocks until acquired (flock on Unix,
+/// LockFileEx on Windows — full parity, no libc); dropping the returned
+/// handle releases it. Every cross-process write path takes this BEFORE
+/// the intra-process Mutex so a CLI write can't land between a daemon
+/// task's load and save (silent lost-update).
+fn lock_registry_file(home: &Path) -> Result<std::fs::File> {
+    let lock_path = home.join("cluster.yaml.lock");
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create cluster lock dir {}", parent.display()))?;
+    }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&lock_path)
+        .with_context(|| format!("open cluster lock file {}", lock_path.display()))?;
+    f.lock()
+        .with_context(|| format!("lock {}", lock_path.display()))?;
+    Ok(f)
 }
 
 /// One paired peer — the operator confirmed this device + it's now
@@ -162,6 +190,7 @@ pub fn save(home: &Path, reg: &ClusterRegistry) -> Result<()> {
 /// exists, the new entry replaces the old (preserves `paired_at_unix`
 /// from the original — re-confirm doesn't reset the timestamp).
 pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
+    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
     let mut reg = load(home)?;
     if let Some(existing) = reg.peers.iter().find(|p| p.pub_key_hex == peer.pub_key_hex) {
@@ -180,6 +209,7 @@ pub fn upsert(home: &Path, mut peer: PairedPeer) -> Result<()> {
 /// matches any peer whose `pub_key_hex` starts with it. Errors on
 /// ambiguous match (multiple peers with that prefix).
 pub fn remove(home: &Path, key_or_prefix: &str) -> Result<bool> {
+    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
     let mut reg = load(home)?;
     let matches: Vec<usize> = reg
@@ -238,6 +268,7 @@ pub fn find_by_hostname(home: &Path, hostname: &str) -> Option<PairedPeer> {
 /// isn't paired yet — Phase 2 discovery passes every authenticated
 /// announce through this; only the paired ones update.
 pub fn refresh_last_seen(home: &Path, pub_key_hex: &str, ts_unix: i64) -> Result<bool> {
+    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
     let mut reg = load(home)?;
     let mut changed = false;
@@ -258,6 +289,7 @@ pub fn refresh_last_seen(home: &Path, pub_key_hex: &str, ts_unix: i64) -> Result
 /// when the peer isn't paired. Same load→mutate→save shape as
 /// [`refresh_last_seen`].
 pub fn refresh_rtt(home: &Path, pub_key_hex: &str, rtt_ms: u64) -> Result<bool> {
+    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
     let mut reg = load(home)?;
     let mut changed = false;
@@ -277,6 +309,7 @@ pub fn refresh_rtt(home: &Path, pub_key_hex: &str, rtt_ms: u64) -> Result<bool> 
 /// SL-02b: fold a heartbeat hit/miss into a paired peer's EWMA stability score
 /// via [`compute_stability`]. No-op + `false` when the peer isn't paired.
 pub fn refresh_stability(home: &Path, pub_key_hex: &str, success: bool) -> Result<bool> {
+    let _file_guard = lock_registry_file(home)?;
     let _guard = lock_registry();
     let mut reg = load(home)?;
     let mut changed = false;
@@ -297,6 +330,31 @@ pub fn refresh_stability(home: &Path, pub_key_hex: &str, success: bool) -> Resul
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    /// GR-020: the registry file lock must exclude a second handle —
+    /// same semantics an independent `neoth cluster confirm` process
+    /// would see (flock/LockFileEx are per open-file-description, so a
+    /// second fd in this process is an equivalent probe, no child
+    /// process needed).
+    #[test]
+    fn registry_file_lock_excludes_second_handle_until_released() {
+        let dir = tempdir().unwrap();
+        let held = lock_registry_file(dir.path()).unwrap();
+        let second = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(dir.path().join("cluster.yaml.lock"))
+            .unwrap();
+        match second.try_lock() {
+            Err(std::fs::TryLockError::WouldBlock) => {}
+            other => panic!("expected WouldBlock while lock held, got {other:?}"),
+        }
+        drop(held);
+        second
+            .try_lock()
+            .expect("lock must be acquirable after release");
+    }
 
     fn sample_peer(hex_prefix: &str, label: &str) -> PairedPeer {
         let full = format!("{hex_prefix}{}", "0".repeat(64 - hex_prefix.len()));
