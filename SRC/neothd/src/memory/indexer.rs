@@ -220,17 +220,30 @@ fn index_frame(
 
     match event_type {
         EVENT_TYPE_RAW_TEXT => {
-            let text = std::str::from_utf8(payload).unwrap_or("").to_string();
-            let text_hash = format!("{:016x}", header.payload_hash);
-            // Phase 28a R-22: materialise importance from the WAL header so
-            // recall ranking + decay can read it without re-parsing the WAL.
-            let importance = header.importance.raw() as f64;
-            tx.execute(
-                "INSERT OR IGNORE INTO idx_episode \
-                 (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7)",
-                params![event_id, event_type as i64, ts_ns, text, text_hash, importance, ts_ns],
-            )?;
+            // GOLD-ADAPT-JV-MEM-11: sanitize before storing — a verbatim-stored
+            // prompt-injection / wrapper block could be resurfaced into a future
+            // prompt by recall. A payload that is mostly such markup is skipped.
+            let raw = std::str::from_utf8(payload).unwrap_or("");
+            let cleaned = crate::memory::ingress::sanitize(raw);
+            if cleaned.noise {
+                tracing::debug!(
+                    event_id,
+                    noise_ratio = cleaned.noise_ratio,
+                    "ingress: RAW_TEXT skipped as injection-noise (JV-MEM-11)"
+                );
+            } else {
+                let text = cleaned.text;
+                let text_hash = format!("{:016x}", header.payload_hash);
+                // Phase 28a R-22: materialise importance from the WAL header so
+                // recall ranking + decay can read it without re-parsing the WAL.
+                let importance = header.importance.raw() as f64;
+                tx.execute(
+                    "INSERT OR IGNORE INTO idx_episode \
+                     (event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, last_access_ts) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, NULL, ?6, ?7)",
+                    params![event_id, event_type as i64, ts_ns, text, text_hash, importance, ts_ns],
+                )?;
+            }
         }
         EVENT_TYPE_CHANNEL_INGRESS | EVENT_TYPE_CHANNEL_EGRESS => {
             // Channel payloads are JSON with {channel, sender_id, text_*, ...}.
