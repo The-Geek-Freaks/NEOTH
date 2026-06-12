@@ -179,6 +179,48 @@ async fn emit_autonomy_change(
     }
 }
 
+/// GOLD-FEAT-01c — record `0xDD SUDOMODE_PRESET_APPLIED` when the full-auto
+/// preset is applied (autonomy → Full + the whole bundled skill library): a
+/// dedicated forensic anchor distinct from the generic LEVEL_ELEVATED that
+/// `emit_autonomy_change` already records, so a reader can pinpoint the gate
+/// being dropped via the full-auto/sudomode preset specifically. Same
+/// best-effort daemon-forward-else-one-shot path. Payload `{previous, source,
+/// ts_unix}`.
+async fn emit_sudomode_preset_applied(
+    previous: AutonomyLevel,
+    daemon_live: bool,
+    home: &std::path::Path,
+) {
+    let payload = serde_json::to_vec(&serde_json::json!({
+        "previous": previous.as_str(),
+        "source": "cli",
+        "ts_unix": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    }))
+    .unwrap_or_else(|_| b"{}".to_vec());
+    let event_type = crate::wal::events::EVENT_TYPE_SUDOMODE_PRESET_APPLIED;
+    if daemon_live {
+        if let Err(e) =
+            crate::daemon::audit_rpc::try_post_audit_frame(home, event_type, &payload).await
+        {
+            tracing::debug!(error = %e, "sudomode-preset audit forward failed (best-effort)");
+        }
+    } else {
+        let segment = home.join("wal").join("000001.wal");
+        if let Some(parent) = segment.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok((writer, join)) = crate::wal::spawn(segment) {
+            let header = crate::wal::HeaderBuilder::new(event_type, &payload).build();
+            let _ = writer.append(header, payload).await;
+            drop(writer);
+            let _ = join.await;
+        }
+    }
+}
+
 pub async fn run_autonomy(args: AutonomyArgs, output: OutputFormat) -> Result<()> {
     match args.action {
         AutonomyAction::Show => run_show(output),
@@ -250,6 +292,12 @@ async fn run_set_mode(full_auto: bool, output: OutputFormat) -> Result<()> {
     next.save_public_to_default_path()
         .context("persist the operating mode to freedom.yaml")?;
     emit_autonomy_change(previous, applied, Some(mode), daemon_live, &home).await;
+    // GOLD-FEAT-01c — a dedicated forensic anchor for the full-auto/sudomode
+    // preset, distinct from the generic LEVEL_ELEVATED above: records that the
+    // operator dropped the gate specifically via the full-auto preset.
+    if full_auto {
+        emit_sudomode_preset_applied(previous, daemon_live, &home).await;
+    }
     match output {
         OutputFormat::Json | OutputFormat::Jsonl => println!(
             "{}",
@@ -374,6 +422,28 @@ fn confirm_full_auto() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GOLD-FEAT-01c: applying the full-auto preset writes a dedicated
+    /// `0xDD SUDOMODE_PRESET_APPLIED` forensic frame (one-shot path, no daemon).
+    #[tokio::test]
+    async fn sudomode_preset_emits_0xdd_wal_frame() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let segment = tmp.path().join("wal").join("000001.wal");
+        // daemon_live=false → deterministic one-shot writer path.
+        emit_sudomode_preset_applied(AutonomyLevel::Standard, false, tmp.path()).await;
+        let bytes = std::fs::read(&segment).expect("wal segment written");
+        let mut found = 0usize;
+        let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
+            if dec.header.event_type == crate::wal::events::EVENT_TYPE_SUDOMODE_PRESET_APPLIED {
+                found += 1;
+            }
+            Ok(())
+        });
+        assert_eq!(
+            found, 1,
+            "full-auto preset must write one 0xDD SUDOMODE_PRESET_APPLIED frame"
+        );
+    }
 
     #[test]
     fn confirm_full_auto_fails_closed_when_not_a_tty() {

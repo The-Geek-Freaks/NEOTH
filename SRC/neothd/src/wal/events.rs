@@ -1551,6 +1551,16 @@ pub const EVENT_TYPE_CONSENT_GRANTED: u8 = 0xDB;
 /// Payload (JSON): `{provider, source, ts_unix}`.
 pub const EVENT_TYPE_CONSENT_REVOKED: u8 = 0xDC;
 
+/// `0xDD SUDOMODE_PRESET_APPLIED` — GOLD-FEAT-01c. `neoth autonomy full-auto`
+/// (a.k.a. `neoth sudomode`) applied the full-auto preset: autonomy → `Full` AND
+/// the entire bundled skill library force-enabled (`skills.enable_all_bundled`).
+/// A companion to the generic `0xA2 LEVEL_ELEVATED` that `emit_autonomy_change`
+/// already records, scoped to the full-auto/sudomode code path so a forensic
+/// reader can tell "operator dropped the gate via the full-auto preset" apart
+/// from any other elevation. Config-lifecycle band. Payload (JSON):
+/// `{previous, source, ts_unix}`.
+pub const EVENT_TYPE_SUDOMODE_PRESET_APPLIED: u8 = 0xDD;
+
 // ---- 0xE0..=0xEF  Cluster lifecycle (R-7, Session 19; 0xE0..=0xEA assigned) ----
 //
 // Per `PLAN/CHORUS_hyperswarm_heartbeat_VERDICT.md`. Frames in
@@ -1873,6 +1883,7 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
     ("preset_applied", EVENT_TYPE_PRESET_APPLIED),
     ("consent_granted", EVENT_TYPE_CONSENT_GRANTED),
     ("consent_revoked", EVENT_TYPE_CONSENT_REVOKED),
+    ("sudomode_preset_applied", EVENT_TYPE_SUDOMODE_PRESET_APPLIED),
     ("permission_granted", EVENT_TYPE_PERMISSION_GRANTED),
     ("permission_denied", EVENT_TYPE_PERMISSION_DENIED),
     ("lease_granted", EVENT_TYPE_LEASE_GRANTED),
@@ -2335,6 +2346,8 @@ const _: () = {
         [(); 1][(EVENT_TYPE_CONSENT_GRANTED < 0xD0 || EVENT_TYPE_CONSENT_GRANTED > 0xDF) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CONSENT_REVOKED < 0xD0 || EVENT_TYPE_CONSENT_REVOKED > 0xDF) as usize];
+    let _ = [(); 1][(EVENT_TYPE_SUDOMODE_PRESET_APPLIED < 0xD0
+        || EVENT_TYPE_SUDOMODE_PRESET_APPLIED > 0xDF) as usize];
     // R-7 cluster lifecycle band (0xE0..=0xEF).
     // All eleven assigned codes (0xE0..=0xEA) and the four reserved slots
     // (0xEB..=0xEF) share one declared band. Every assertion uses the full
@@ -2634,6 +2647,7 @@ mod tests {
             ("PRESET_APPLIED", EVENT_TYPE_PRESET_APPLIED),
             ("CONSENT_GRANTED", EVENT_TYPE_CONSENT_GRANTED),
             ("CONSENT_REVOKED", EVENT_TYPE_CONSENT_REVOKED),
+            ("SUDOMODE_PRESET_APPLIED", EVENT_TYPE_SUDOMODE_PRESET_APPLIED),
             ("CLUSTER_PEER_CONNECTED", EVENT_TYPE_CLUSTER_PEER_CONNECTED),
             (
                 "CLUSTER_PEER_DISCONNECTED",
