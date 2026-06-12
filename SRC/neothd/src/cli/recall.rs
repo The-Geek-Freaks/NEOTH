@@ -327,7 +327,16 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
     let importance = h.importance.unwrap_or(0.5);
     let age_ns = now_ns.saturating_sub(h.ts_ns.max(0) as u64) as f64;
     let days_since = (age_ns / ns_per_day).max(0.0);
-    tiers::ranking_score(importance, tier, days_since)
+    let base = tiers::ranking_score(importance, tier, days_since);
+    // JV-MEM-07: length normalization — a gentle logarithmic penalty on verbose
+    // entries so they don't win on raw keyword density. Entries at/below the
+    // 300-char anchor are unpenalised (ratio clamped to 1 → log2(1)=0 → factor
+    // 1); a 2×/4×/8×-anchor entry is scaled by 1/2 / 1/3 / 1/4. The factor is
+    // always in (0, 1], so the score stays ≥ 0 and finite.
+    const LEN_ANCHOR_CHARS: f64 = 300.0;
+    let ratio = (h.text.chars().count() as f64 / LEN_ANCHOR_CHARS).max(1.0);
+    let length_norm = 1.0 / (1.0 + ratio.log2());
+    base * length_norm
 }
 
 /// FTS5 path. Uses MATCH with the raw query — FTS5 supports prefix (`foo*`),
@@ -1145,6 +1154,33 @@ mod tests {
             "cold beats hot at this importance gap"
         );
         assert_eq!(rows[2].tier, "hot");
+    }
+
+    #[test]
+    fn length_normalization_penalises_verbose_entries() {
+        // JV-MEM-07: two hits with identical tier/importance/age but different
+        // text length — the SHORTER ranks higher (verbose entries don't win on
+        // raw keyword density; entries ≤ the 300-char anchor are unpenalised).
+        let now_ns: u64 = 10 * 86_400 * 1_000_000_000;
+        let mk = |id: i64, text: String| EpisodeHit {
+            event_id: id,
+            event_type: 0,
+            ts_ns: now_ns as i64,
+            text,
+            text_hash: "h".to_string(),
+            channel: None,
+            sender_id: None,
+            operator_id: None,
+            tier: "hot".to_string(),
+            importance: Some(0.8),
+        };
+        let mut rows = vec![
+            mk(1, "x".repeat(1200)),       // verbose → length-penalised
+            mk(2, "short note".to_string()), // short → unpenalised, outranks it
+        ];
+        rank_in_place(&mut rows, now_ns);
+        assert_eq!(rows[0].event_id, 2, "the short entry outranks the verbose one");
+        assert_eq!(rows[1].event_id, 1);
     }
 
     #[tokio::test]
