@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 118 | 91 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 114 | 95 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 
 _WS-A COMPLETE (35/35): the last three — SEC-16 (gate `cluster` behind a Cargo feature), SEC-18 (gate `browser-import`), SEC-30 (sudomode consent WAL events) — all landed in Session 45 (`f326508`/`7955bd4`/`4b999b2`). Every exploitable/correctness/at-rest/DoS finding is closed._
@@ -522,6 +522,10 @@ Items from `PLAN/PROGRESS_v1_0.md` at HEAD. Shipped parts are `[x]`, open remain
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-085** (LOW SEC) ✅ FIXED — omi is_local_host accepted loopback/RFC-1918 but NOT RFC-6598 CGNAT 100.64.0.0/10, the range Tailscale assigns node IPs from — and the wizard recommends Tailscale. A Tailscale-reachable OMI endpoint was wrongly rejected by the SSRF guard. New is_cgnat_v4 + accept it. Test validator_accepts_tailscale_cgnat_range_gr085 (incl. /10 boundaries). `installers/omi.rs`.
+- [x] **GR-088** (LOW) ✅ FIXED — atomic_write fsynced the temp file's DATA before rename but never fsynced the PARENT directory, so the new directory entry (the rename) wasn't durable on a power loss (POSIX: rename = parent-inode metadata). Added a best-effort #[cfg(unix)] parent-dir File::open + sync_all after the rename. Test dir_fsync path. `util/atomic_write.rs`.
+- [x] **GR-072** (INFO) ✅ FIXED — rate_limit doc referenced a non-existent `EVICT_TRIGGER` constant; the actual high-watermark guard is MAX_BUCKETS. Corrected the doc-comment + the test comment. `daemon/rate_limit.rs`.
+- [x] **GR-119** (INFO) ✅ FIXED — route_stage2_embedding doc cited a stale '22-skill bundle'; the real default-enabled count is 44 (30 explicit enabled:true + 14 serde-default-on). Doc corrected. `skills/router.rs`.
 - [x] **GR-057** (MED) ✅ FIXED — clean_topic_en/de stripped leading particles with raw str::strip_prefix (no word boundary), so a topic merely STARTING with a particle substring was corrupted (`"we"`→`"weather"`=`"ather"`, `"wir"`→`"wirklich"`). New strip_prefix_word_boundary helper (match must end at a separator/EOS) used in both fixpoint loops. Tests clean_topic_{en,de}_does_not_corrupt_word_starting_with_particle_gr057. `recall/conversational.rs`.
 - [x] **GR-144** (INFO) ✅ FIXED (dead-code) — removed `pub fn is_live(_)->bool{true}` (cloud/mod.rs) — zero production callers (only its pinning test); the per-config liveness contract is covered by connector_mode_of. cloud 26/0.
 - [x] **GR-102** (INFO) ✅ FIXED — shutdown_background_tasks doc claimed the body is 'byte-identical to the prior inline sequence'; it is NOT — abort_optional now awaits every task (incl. audit_rpc_task which the old inline aborted WITHOUT awaiting). Doc corrected. `cli/serve_tasks.rs`.

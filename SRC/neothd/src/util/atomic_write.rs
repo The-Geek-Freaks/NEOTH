@@ -39,14 +39,23 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         // between rename and the next fsync can't leave a renamed-but-empty file.
         f.sync_all()?;
     }
-    match std::fs::rename(&tmp, path) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            // Best-effort: don't leave the orphan temp behind on a rename failure.
-            let _ = std::fs::remove_file(&tmp);
-            Err(e)
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        // Best-effort: don't leave the orphan temp behind on a rename failure.
+        let _ = std::fs::remove_file(&tmp);
+    })?;
+    // GR-088 — fsync the PARENT directory so the new directory entry created by
+    // the rename is durable. The file's DATA was fsynced above, but on POSIX the
+    // rename only updates the parent inode's metadata, which survives a power
+    // loss only once the directory itself is fsynced. Best-effort + Unix-only
+    // (on Windows the rename is journalled, and opening a directory as a File to
+    // fsync it isn't valid).
+    #[cfg(unix)]
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
         }
     }
+    Ok(())
 }
 
 /// The pid-scoped temp sibling for `path` (`<name>.<pid>.tmp` in the SAME

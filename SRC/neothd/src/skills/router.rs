@@ -207,8 +207,9 @@ pub fn cosine_rerank<'a>(
 /// **Cost**: N+1 embedding calls per invocation (1 message + 1 per
 /// enabled skill), re-embedding every skill description on EVERY call —
 /// there is NO session/process embedding cache yet (a planned but
-/// unshipped optimisation). For the default 22-skill bundle on CPU
-/// Qwen2.5-3B this is ~10-30s cold-start; warm calls run in seconds.
+/// unshipped optimisation). For the default 44-skill bundle (30 with explicit
+/// `enabled: true` + 14 defaulting on) on CPU Qwen2.5-3B this is ~10-30s
+/// cold-start; warm calls run in seconds.
 /// PF-01 (Session 30) made this path the default routing strategy
 /// (`freedom.yaml::skills.always_embed_route`, default `true`), but the
 /// cost is self-gating: Stage-2 only runs at all when the operator has

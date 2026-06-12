@@ -105,11 +105,22 @@ fn is_local_host(host: &str) -> bool {
         return true;
     }
     match host.parse::<std::net::IpAddr>() {
-        Ok(std::net::IpAddr::V4(v4)) => v4.is_loopback() || v4.is_private(),
+        // GR-085 — also accept RFC-6598 CGNAT 100.64.0.0/10: Tailscale draws node
+        // IPs from that range and NEOTH's wizard recommends Tailscale, so a
+        // Tailscale-reachable OMI endpoint is legitimately local (private mesh),
+        // not a public host the SSRF guard should reject.
+        Ok(std::net::IpAddr::V4(v4)) => v4.is_loopback() || v4.is_private() || is_cgnat_v4(v4),
         // Loopback ::1 or Unique-Local-Address fc00::/7.
         Ok(std::net::IpAddr::V6(v6)) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
         Err(_) => false,
     }
+}
+
+/// RFC-6598 carrier-grade-NAT shared range `100.64.0.0/10` (100.64.0.0 –
+/// 100.127.255.255) — the range Tailscale assigns node IPs from.
+fn is_cgnat_v4(v4: std::net::Ipv4Addr) -> bool {
+    let o = v4.octets();
+    o[0] == 100 && (64..=127).contains(&o[1])
 }
 
 /// Outcome of a live OMI endpoint probe. Same shape as the
@@ -203,6 +214,16 @@ mod tests {
     fn validator_accepts_lan_addresses() {
         assert!(is_local_endpoint("http://192.168.1.50:8002").is_ok());
         assert!(is_local_endpoint("http://10.0.0.5:8002").is_ok());
+    }
+
+    #[test]
+    fn validator_accepts_tailscale_cgnat_range_gr085() {
+        // GR-085 — RFC-6598 100.64.0.0/10 (Tailscale) is local.
+        assert!(is_local_endpoint("http://100.64.0.5:8002").is_ok());
+        assert!(is_local_endpoint("http://100.127.255.254:8002").is_ok());
+        // Boundaries: 100.63.x and 100.128.x are NOT in the /10.
+        assert!(is_local_endpoint("http://100.63.0.1:8002").is_err());
+        assert!(is_local_endpoint("http://100.128.0.1:8002").is_err());
     }
 
     #[test]

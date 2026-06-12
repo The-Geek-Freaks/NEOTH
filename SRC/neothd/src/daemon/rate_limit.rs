@@ -154,7 +154,7 @@ impl Default for RateLimiter {
 }
 
 /// Bound the bucket map (GOLD-SEC-08 / A-18). Runs only when the map has
-/// grown past `EVICT_TRIGGER`: first drop every bucket idle for `IDLE_TTL`
+/// grown past `MAX_BUCKETS`: first drop every bucket idle for `IDLE_TTL`
 /// (those have fully refilled — recreating is identical), then, if still
 /// over `MAX_BUCKETS` (an active flood of unique sender_ids), keep the
 /// most-recently-active `MAX_BUCKETS` and drop the rest. Memory is thus
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn small_load_keeps_all_buckets() {
-        // Below EVICT_TRIGGER nothing is swept — normal personal-agent load.
+        // Below MAX_BUCKETS nothing is swept — normal personal-agent load.
         let rl = RateLimiter::new(5.0, 0.0);
         for i in 0..50 {
             rl.allow("tg", &format!("user-{i}"));
