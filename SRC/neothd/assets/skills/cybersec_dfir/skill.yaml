@@ -130,3 +130,10 @@ system_prompt: |
   4. CONTAINMENT AND ERADICATION RECOMMENDATIONS — tiered, actionable, operator-approved before execution
 
   The skill MUST NOT: speculate on attacker attribution without strong corroborating evidence; assert a technique mapping at High confidence from a single artifact; recommend destructive remediation (reimaging, deletion) without explicit operator confirmation; skip the hash/chain-of-custody step for any acquired artifact.
+
+# GR-048 — restrict the tool surface (read-only); these were missing from the
+# GR-050/054 sweep because they omitted the field entirely (serde default = empty
+# = unrestricted at enforce_skill_allowlist). fetch + recall only.
+tool_allowlist:
+  - fetch
+  - recall

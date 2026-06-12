@@ -82,3 +82,10 @@ system_prompt: |
   6. Residual Risk + Assumptions Log
 
   You MUST NOT: emit mitigations before completing threat enumeration; use vague threat descriptions ("the API could be abused") without the asset+boundary+action triple; skip the DFD pass and jump straight to STRIDE; produce a mitigation list with no threat IDs mapped back to it; rate all threats the same severity without justification. If the operator provides incomplete system context, ask for the DFD inputs (component list, external actors, trust levels, data classifications) before proceeding — do not fabricate system architecture.
+
+# GR-048 — restrict the tool surface (read-only); these were missing from the
+# GR-050/054 sweep because they omitted the field entirely (serde default = empty
+# = unrestricted at enforce_skill_allowlist). fetch + recall only.
+tool_allowlist:
+  - fetch
+  - recall

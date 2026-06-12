@@ -130,6 +130,21 @@ fn topic_is_compound(topic: &str) -> bool {
     topic.contains('?') || topic.contains('!')
 }
 
+/// Like [`str::strip_prefix`] but only succeeds when the match terminates at a
+/// WORD BOUNDARY — the remainder is empty or starts with a separator. GR-057:
+/// the raw `strip_prefix` in the leading-particle loops corrupted any topic that
+/// merely STARTS with a particle substring (`"we"` ate `"weather"` → `"ather"`;
+/// `"ich"` / `"als"` ate German words), because `.trim()` after the strip only
+/// removes whitespace, never checking the match ended on a boundary.
+fn strip_prefix_word_boundary<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = s.strip_prefix(prefix)?;
+    if rest.is_empty() || rest.starts_with([' ', ',', ':', ';', '?', '!', '.']) {
+        Some(rest)
+    } else {
+        None
+    }
+}
+
 fn clean_topic_de(s: &str) -> String {
     let trimmed = s.trim_start_matches([',', ' ', ':']).trim_end_matches('?');
     let mut out = trimmed.trim().to_string();
@@ -157,7 +172,9 @@ fn clean_topic_de(s: &str) -> String {
     loop {
         let before = out.clone();
         for particle in leading {
-            if let Some(stripped) = out.strip_prefix(particle) {
+            // GR-057 — word-boundary guard so a particle never eats into a
+            // longer word it's a prefix of ("we" must not corrupt "weather").
+            if let Some(stripped) = strip_prefix_word_boundary(&out, particle) {
                 out = stripped.trim().to_string();
             }
         }
@@ -227,7 +244,9 @@ fn clean_topic_en(s: &str) -> String {
     loop {
         let before = out.clone();
         for particle in leading {
-            if let Some(stripped) = out.strip_prefix(particle) {
+            // GR-057 — word-boundary guard so a particle never eats into a
+            // longer word it's a prefix of ("we" must not corrupt "weather").
+            if let Some(stripped) = strip_prefix_word_boundary(&out, particle) {
                 out = stripped.trim().to_string();
             }
         }
@@ -371,6 +390,20 @@ mod tests {
         // Single-particle cases still behave (no over-strip / no infinite loop).
         assert_eq!(clean_topic_en("when i said rust"), "rust");
         assert_eq!(clean_topic_en("about caching"), "caching");
+    }
+
+    #[test]
+    fn clean_topic_en_does_not_corrupt_word_starting_with_particle_gr057() {
+        // GR-057 — a particle must NOT eat the leading chars of a longer word
+        // it's merely a prefix of: "we" ⊀ "weather", "i" ⊀ "ideas".
+        assert_eq!(clean_topic_en("when i said weather was nice"), "weather was nice");
+        assert_eq!(clean_topic_en("about ideas"), "ideas");
+    }
+
+    #[test]
+    fn clean_topic_de_does_not_corrupt_word_starting_with_particle_gr057() {
+        // GR-057 — "wir" must not corrupt "wirklich" (prefix without a boundary).
+        assert_eq!(clean_topic_de("über wirklich wichtiges"), "wirklich wichtiges");
     }
 
     #[test]

@@ -1740,8 +1740,11 @@ pub(crate) struct BackgroundHandles {
 /// (worker_watch FIRST per MONITOR-02; WAL-emitting tasks before `drop(writer)`;
 /// the self-dev outbox final-drained via `&writer`; n8n notify-then-await;
 /// cluster teardown; hysteria drop), then `drop(writer)` + `writer_join.await`.
-/// The destructure restores the original local names so the body below is
-/// byte-identical to the prior inline sequence.
+/// The destructure restores the original local names. GR-102 — the body is NOT
+/// byte-identical to the old inline sequence: every optional task is now drained
+/// through `abort_optional` (abort + `task.await`), which uniformly awaits the
+/// task — a deliberate improvement over the prior inline `audit_rpc_task.abort()`
+/// that aborted WITHOUT awaiting. The ordering + set of tasks is preserved.
 pub(crate) async fn shutdown_background_tasks(
     handles: BackgroundHandles,
     writer: WalWriterHandle,

@@ -173,19 +173,10 @@ fn local_mirror_root(cfg: &CloudConfig) -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-/// **v1.1 coarse capability gate — always `true` (GOLD-HON-20 / A-17).**
-/// Returns whether a provider has ANY reachable implementation path. Since
-/// OpenDAL `services-fs` landed (R-8) every provider can run in local-mirror
-/// mode when the operator points NEOTH at the desktop client's synced folder,
-/// so this is unconditionally `true`. It deliberately does NOT reflect a
-/// specific config's liveness — a provider configured WITHOUT a `local_root`
-/// is a [`ConnectorMode::StubFallback`] whose runtime calls bail. For the
-/// accurate **per-config** status use [`connector_mode_of`]; `is_live` only
-/// answers "is this provider buildable at all". (Future per-provider OAuth
-/// direct-API impls keep it `true`.)
-pub fn is_live(_provider: Provider) -> bool {
-    true
-}
+// GR-144 — `pub fn is_live(_) -> bool { true }` was removed as dead code: zero
+// production callers (only its own pinning test). It unconditionally returned
+// `true` and the per-config liveness contract is fully expressed by
+// `connector_mode_of` below. Re-add only with a real consumer.
 
 /// R2-P2-1 honesty surface (2026-05-22 Session 20). Classifies a
 /// CloudConfig as one of:
@@ -474,25 +465,8 @@ sources:
         assert!(err.contains("gmail"));
     }
 
-    #[test]
-    fn is_live_returns_true_now_that_opendal_local_fs_landed() {
-        // R-8 Session 19 (2026-05-21): is_live flipped to true
-        // across all providers because the LocalFsConnector path
-        // works for every provider when the operator's desktop
-        // client mirrors that provider to a local folder. Future
-        // per-provider OAuth direct-API impls keep is_live=true;
-        // pin the status here.
-        for p in [
-            Provider::Dropbox,
-            Provider::OneDrive,
-            Provider::GoogleDrive,
-            Provider::GoogleCloudStorage,
-            Provider::ICloud,
-            Provider::Gmail,
-        ] {
-            assert!(is_live(p), "{} unexpectedly stub", p.as_str());
-        }
-    }
+    // GR-144 — the is_live pinning test was removed with the dead fn; the
+    // per-config status contract is covered by the connector_mode_of tests.
 
     // ── R-8 LocalFsConnector round-trip (Session 19) ────────────────
 

@@ -105,3 +105,10 @@ system_prompt: |
   - Claim a rule is production-ready if Pass 5 validation has not been performed or documented.
 
   If the operator's input does not name a specific technique, ask exactly one clarifying question: "Which ATT&CK technique or adversary behavior should this detection cover?" and do not draft a rule until answered.
+
+# GR-048 — restrict the tool surface (read-only); these were missing from the
+# GR-050/054 sweep because they omitted the field entirely (serde default = empty
+# = unrestricted at enforce_skill_allowlist). fetch + recall only.
+tool_allowlist:
+  - fetch
+  - recall
