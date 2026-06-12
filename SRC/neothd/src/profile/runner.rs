@@ -364,7 +364,7 @@ pub async fn run_pipeline(
         } => {
             // Audit-only frame so the operator can grep `neoth wal show
             // --type 0xB4` and see why the delta was rejected.
-            let hex_hash = hex_encode(&blocked_delta_hash);
+            let hex_hash = hex::encode(blocked_delta_hash);
             let reason_str = reason_to_str(&reason);
             record_blocked(
                 writer,
@@ -439,7 +439,7 @@ pub async fn run_pipeline(
                 blocked_delta_hash,
             } => {
                 drop(g); // release before the WAL write + early return
-                let hex_hash = hex_encode(&blocked_delta_hash);
+                let hex_hash = hex::encode(blocked_delta_hash);
                 let reason_str = reason_to_str(&reason);
                 record_blocked(
                     writer,
@@ -595,14 +595,6 @@ fn load_active_redactions(conn: &Connection) -> Result<Vec<String>> {
         .collect::<rusqlite::Result<Vec<_>>>()
         .context("collect active redactions")?;
     Ok(rows)
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
 }
 
 fn reason_to_str(r: &GuardReason) -> String {
@@ -1011,7 +1003,7 @@ mod tests {
 
     #[test]
     fn hex_encode_zero_pads_each_byte() {
-        assert_eq!(hex_encode(&[0x0a, 0xff, 0x00]), "0aff00");
+        assert_eq!(hex::encode([0x0a, 0xff, 0x00]), "0aff00");
     }
 
     // ── V10-07 H3 privacy guard ───────────────────────────────────────

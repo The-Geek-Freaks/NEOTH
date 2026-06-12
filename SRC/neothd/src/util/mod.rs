@@ -6,3 +6,4 @@
 //! (architecture debt) to kill copy-pasted variants.
 
 pub mod atomic_write;
+pub mod url_encode;

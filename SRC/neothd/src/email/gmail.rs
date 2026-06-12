@@ -174,19 +174,7 @@ pub fn token_exchange_form(config: &OAuthConfig, pkce: &PkcePair, auth_code: &st
 /// Minimal URL form-encoder. Handles the OAuth-relevant characters
 /// (spaces, slashes in scope URLs, equals signs). Avoids pulling in
 /// the `url` crate for one helper.
-fn url_encode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len() * 3);
-    for b in input.bytes() {
-        match b {
-            // RFC 3986 unreserved set — safe verbatim.
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char);
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
+use crate::util::url_encode::url_encode;
 
 // ── IMAP-side primitives ──────────────────────────────────────────
 
