@@ -28,8 +28,31 @@ use crate::config::FreedomConfig;
 mod checks;
 mod types;
 
-pub(crate) use checks::*;
 pub use types::*;
+
+const DOMAIN_CHECKS: &[&[CheckFn]] = &[
+    checks::config::CHECKS,
+    checks::storage::CHECKS,
+    checks::tooling::CHECKS,
+    checks::integrations::CHECKS,
+    checks::providers::CHECKS,
+    checks::cluster::CHECKS,
+];
+
+const DOMAIN_DOCS: &[&[CheckDoc]] = &[
+    checks::config::DOCS,
+    checks::storage::DOCS,
+    checks::tooling::DOCS,
+    checks::integrations::DOCS,
+    checks::providers::DOCS,
+    checks::cluster::DOCS,
+];
+
+/// Every check's runbook doc, across all domains (the `--explain` /
+/// `--list-checks` surface).
+fn all_check_docs() -> impl Iterator<Item = &'static CheckDoc> {
+    DOMAIN_DOCS.iter().flat_map(|d| d.iter())
+}
 
 #[derive(Args, Debug, Clone)]
 pub struct DoctorArgs {
@@ -61,530 +84,12 @@ pub struct DoctorArgs {
     pub output: OutputFormat,
 }
 
-const CHECK_DOCS: &[CheckDoc] = &[
-    CheckDoc {
-        name: "freedom.yaml",
-        purpose: "Operator configuration lives in `~/.neoth/freedom.yaml`. \
-                  Doctor verifies the file exists, parses cleanly via \
-                  `FreedomConfig::load_from_path`, and (on unix) is mode \
-                  0600 so secrets at rest survive multi-user systems.",
-        common_failures: "Missing file (operator hasn't run `neoth init`); \
-                         parse error (hand-edited typo); permissions broader \
-                         than 0600 (unix).",
-        fix: "Missing → `neoth init` (or `neoth init --force` for a clean \
-              wipe).\nParse error → diff against `freedom.yaml.example` in \
-              the repo / install root.\nPermissions → `chmod 600 ~/.neoth/freedom.yaml`.",
-    },
-    CheckDoc {
-        name: "credentials.yaml",
-        purpose: "Secret store at `~/.neoth/credentials.yaml`. Holds API \
-                  keys + bot tokens that should NEVER be in freedom.yaml. \
-                  Doctor checks existence (warn if missing — daemon can \
-                  start without it for local_qwen-only deployments), parse \
-                  cleanly, and 0600 mode.",
-        common_failures: "Secrets pasted into freedom.yaml instead (creates \
-                         a leak path through `neoth export`); world-readable \
-                         mode; corrupt YAML.",
-        fix: "Edit by hand: keys at the top level (`provider_key`, \
-              `telegram_token`). `chmod 600 ~/.neoth/credentials.yaml`.",
-    },
-    CheckDoc {
-        name: "views.db",
-        purpose: "SQLite views database — the read-side projection of the \
-                  WAL. Holds idx_episode (recall), idx_profile (operator \
-                  facts), idx_groundtruth (decay-immune anchors), \
-                  idx_consolidated / idx_longterm (memory tiers). Doctor \
-                  runs `PRAGMA integrity_check` + verifies schema_version \
-                  stamp.",
-        common_failures: "Disk full mid-write (corruption); manual delete \
-                         (recoverable via `neoth restore`); schema drift \
-                         (mis-applied migration).",
-        fix: "Corruption → restore from `~/.neoth/backups/`. Schema drift → \
-              `neoth migrate up` brings the schema forward. If the daemon \
-              can't open it, delete + let the indexer rebuild from WAL.",
-    },
-    CheckDoc {
-        name: "wal segments",
-        purpose: "Append-only WAL at `~/.neoth/wal/*.wal`. The audit \
-                  trail of every action NEOTH ever took. Doctor walks \
-                  the segment directory, checks each segment's frame CRC \
-                  + magic preamble, verifies the active segment is \
-                  writeable.",
-        common_failures: "Last-frame corruption (writer crashed mid-fsync — \
-                         self-heals on next index pass); segment dir not \
-                         writeable; segments deleted manually.",
-        fix: "Corrupt tail frame → harmless, indexer truncates. Read-only \
-              dir → `chmod u+w ~/.neoth/wal/`. Manually deleted → live with \
-              the gap; the indexer skips missing segments.",
-    },
-    CheckDoc {
-        name: "hmac.key",
-        purpose: "HMAC key at `~/.neoth/hmac.key` — signs the compaction \
-                  markers in the WAL so tampering is detectable. Doctor \
-                  checks existence, that the file is exactly 32 bytes \
-                  (HMAC-SHA256 key size), and 0600 mode.",
-        common_failures: "Missing (daemon auto-generates on first run); \
-                         wrong size (manual edit); world-readable.",
-        fix: "Missing → next daemon start regenerates. Wrong size → delete \
-              + restart (loses ability to verify markers pre-restart). \
-              `chmod 600 ~/.neoth/hmac.key`.",
-    },
-    CheckDoc {
-        name: "disk quota",
-        purpose: "Pre-write quota guard. Doctor checks the home dir's \
-                  current usage vs the configured ceiling \
-                  (`freedom.yaml::quota_ceiling_bytes`, default 5 GiB). \
-                  Warns past 75% used; fails past 90%.",
-        common_failures: "Long-lived daemon with no consolidation → WAL \
-                         segments accumulate; backups in `~/.neoth/backups/` \
-                         pile up.",
-        fix: "Tighten the ceiling or prune. `neoth wal compact` rolls \
-              old segments. `neoth backup --prune --keep 7` rotates the \
-              backup set.",
-    },
-    CheckDoc {
-        name: "policy.yaml",
-        purpose: "Optional autonomy policy override at \
-                  `~/.neoth/policy.yaml`. When present, overrides the \
-                  freedom.yaml-level `autonomy` field per-action category. \
-                  Doctor verifies parse + schema.",
-        common_failures: "Missing is fine (operator just hasn't customised). \
-                         Parse error blocks daemon startup.",
-        fix: "Missing → no action needed. Parse error → diff against the \
-              schema in `docs/policy.md`, or delete to fall back to \
-              freedom.yaml's autonomy field.",
-    },
-    CheckDoc {
-        name: "hooks/",
-        purpose: "Operator hooks at `~/.neoth/hooks/*.toml`. Each file \
-                  defines an event stage + a command. Doctor loads every \
-                  file via `hooks::load_all` so YAML/TOML syntax errors + \
-                  unknown stages surface BEFORE the daemon hits the event.",
-        common_failures: "Typo in stage name (unknown HookStage); shell \
-                         command not in PATH; regex syntax error in the \
-                         matcher field.",
-        fix: "Run `neoth hooks list` for parse errors. `neoth hooks \
-              validate` runs the schema + regex check standalone. Fix \
-              the file or remove it.",
-    },
-    CheckDoc {
-        name: "agents/",
-        purpose: "Sub-agents at `~/.neoth/agents/*.md`. Each markdown file \
-                  defines an operator-callable agent's system prompt + \
-                  trigger keywords. Doctor loads every agent via \
-                  `sub_agents::load_all`.",
-        common_failures: "Empty system prompt; malformed YAML frontmatter; \
-                         unknown tool_allowlist entries.",
-        fix: "Edit the offending .md to fix the frontmatter. `neoth agents \
-              list` shows parse errors with line numbers.",
-    },
-    CheckDoc {
-        name: "profile_extensions.toml",
-        purpose: "Typed extension registry at \
-                  `~/.neoth/profile_extensions.toml`. Operator-defined \
-                  custom profile fields outside the base taxonomy (e.g. \
-                  `operator.preferences.editor`). Doctor parses + warns on \
-                  unknown reserved keys.",
-        common_failures: "Empty file (use the bundled example as a start); \
-                         TOML syntax error.",
-        fix: "Missing → use defaults. Syntax error → diff against \
-              `assets/profile_extensions.toml.example`.",
-    },
-    CheckDoc {
-        name: "tweaks.toml",
-        purpose: "tweakcc-style customisation at `~/.neoth/tweaks.toml`. \
-                  Operator overrides for prompts, persona, slash-command \
-                  aliases. Doctor parses + flags unknown keys.",
-        common_failures: "Hand-edited YAML where TOML is expected; \
-                         malformed `[[prompts]]` array.",
-        fix: "Diff against `assets/tweaks.toml.example`. Or delete to \
-              fall back to bundled defaults.",
-    },
-    CheckDoc {
-        name: "model caches",
-        purpose: "HuggingFace model caches under \
-                  `~/.cache/huggingface/hub/`. Doctor checks the bundled \
-                  models (whisper-large-v3, clip-vit-base-patch32, \
-                  Qwen2.5-3B-Instruct) are downloaded — warns when \
-                  missing so operators don't first discover the \
-                  network requirement mid-chat.",
-        common_failures: "Fresh install with no HF cache; partial download \
-                         (interrupted git-lfs).",
-        fix: "Run `neoth models pull` to bulk-download. Or accept the \
-              warning — models lazy-download on first use.",
-    },
-    CheckDoc {
-        name: "hysteria",
-        purpose: "Hysteria QUIC transport config at \
-                  `freedom.yaml::hysteria.{server, auth, socks_port}`. \
-                  Doctor verifies the binary exists (in PATH or \
-                  `~/.neoth/bin/hysteria`) + the SOCKS5 port is bindable.",
-        common_failures: "Operator configured server but didn't install \
-                         binary; SOCKS port collision with another \
-                         service.",
-        fix: "Binary missing → download from \
-              https://github.com/apernet/hysteria/releases or remove \
-              the hysteria block. Port collision → pick a different \
-              `socks_port` in freedom.yaml.",
-    },
-    CheckDoc {
-        name: "cloud archive",
-        purpose: "Cloud archive mirror target at \
-                  `freedom.yaml::cloud_archive_dest` (typically a folder \
-                  the operator's Dropbox / GDrive / OneDrive desktop \
-                  client syncs upstream). Doctor checks the path exists + \
-                  is writeable + is a directory (not a file).",
-        common_failures: "Path is a file (operator typo); doesn't exist; \
-                         not writeable.",
-        fix: "Edit `freedom.yaml::cloud_archive_dest` to a real existing \
-              directory. Remove the field to disable cloud archive \
-              entirely.",
-    },
-    CheckDoc {
-        name: "mcp servers",
-        purpose: "Model Context Protocol server registry at \
-                  `~/.neoth/mcp_servers.yaml`. Doctor loads via \
-                  `McpServers::load`, flags parse errors, warns when \
-                  enabled servers reference a command that's not in PATH.",
-        common_failures: "Missing file (fine — MCP autoroute defaults off); \
-                         malformed YAML; binary not installed.",
-        fix: "Missing → no action. Parse error → diff against \
-              `mcp_servers.yaml.example`. Binary missing → install the \
-              server (e.g. `npm i -g @modelcontextprotocol/server-filesystem`).",
-    },
-    CheckDoc {
-        name: "disk space",
-        purpose: "Free space on the partition holding `~/.neoth/`. Warns \
-                  past 1 GiB free, fails past 100 MiB. Below the fail \
-                  threshold the WAL writer's quota guard will reject new \
-                  writes — better to warn early.",
-        common_failures: "A NAS or always-on home server with a data disk \
-                         filling up; a laptop with OS-disk pressure.",
-        fix: "Prune backups (`neoth backup --prune`); compact WAL (`neoth \
-              wal compact`); move `~/.neoth/` to a larger volume via \
-              symlink + `chown`.",
-    },
-    CheckDoc {
-        name: "credentials age",
-        purpose: "Age of `~/.neoth/credentials.yaml`. Telegram bot tokens, \
-                  Slack tokens, and provider API keys quietly expire or \
-                  get rotated server-side. Doctor reads the file's \
-                  modification time and warns past 180 days, fails past \
-                  365. The check skips when the file is absent or holds \
-                  only `None` secret slots (local_qwen-only setups).",
-        common_failures: "Long-lived deployment without rotation; Slack \
-                         workspace revoked the bot token; Telegram \
-                         BotFather rotated the secret.",
-        fix: "Re-run the relevant wizard step (`neoth init --step \
-              credentials`) or edit `~/.neoth/credentials.yaml` and \
-              `touch` the file to reset the age clock once the new \
-              token is in.",
-    },
-    CheckDoc {
-        name: "wasm plugins",
-        purpose: "NOOB-UX-3 effective state of the WASM plugin host. \
-                  Reports one of three states: `compiled-in + enabled` \
-                  (release feature on, freedom.yaml says enabled), \
-                  `compiled-in but disabled by config` (operator flipped \
-                  `freedom.yaml::plugins.wasm.enabled: false`), or \
-                  `not compiled in` (slim daemon build without the \
-                  `wasm-plugin-host` cargo feature). Surfaces the gap \
-                  between build-time + runtime gates so an operator \
-                  who set `enabled: true` but runs a slim build sees \
-                  the mismatch immediately.",
-        common_failures: "Operator expects plugins to work on a slim \
-                         build (cargo feature not compiled in); \
-                         operator's freedom.yaml has `enabled: false` \
-                         but the wizard step7b explanation isn't fresh \
-                         in memory.",
-        fix: "Slim build → rebuild with `--features wasm-plugin-host` \
-              or install the release tarball (cargo-dist flips the \
-              feature ON). Disabled-by-config → edit \
-              `~/.neoth/freedom.yaml` and flip \
-              `plugins:\\n  wasm:\\n    enabled: true`, then \
-              restart the daemon.",
-    },
-    CheckDoc {
-        name: "channels wiring",
-        purpose: "R2-P0-2 honesty surface. Loads `credentials.yaml` + \
-                  classifies every configured channel as one of: LIVE \
-                  (send + receive both real), OUTBOUND-ONLY (send works, \
-                  inbound receive loop not yet wired), CONFIGURED-NOT-\
-                  STARTED (full inbound code ships but serve does not \
-                  bootstrap it), or absent (silent). Closes the \
-                  documented gap where README/Status claimed channels \
-                  were live while `cli::serve` only spawned Telegram.",
-        common_failures: "Operator configures Slack/WhatsApp credentials \
-                         + expects bidirectional chat. Aggregate Warn \
-                         when any partial (OUTBOUND-ONLY / CONFIGURED-NOT-\
-                         STARTED) channel is in the set so the gap \
-                         surfaces during install verification.",
-        fix: "Telegram inbound + outbound: live today. Slack inbound: \
-              live when BOTH bot_token + app_token configured (socket \
-              mode auto-spawns). WhatsApp inbound: live when full Meta \
-              secret set (token + phone_id + verify_token + app_secret) \
-              configured (webhook listener auto-spawns on 127.0.0.1). \
-              Partial configs surface as CONFIGURED-NOT-STARTED with a \
-              precise per-missing-field hint.",
-    },
-    CheckDoc {
-        name: "node toolchain",
-        purpose: "NOOB-UX-6 AIO-compliance probe. Detects whether Node \
-                  + npm are on PATH so the wizard's auto-install path \
-                  for claude-cli / codex actually works (Antigravity \
-                  CLI ships via shell-script, not npm). Pass when both \
-                  binaries respond to `--version`; Warn when missing \
-                  AND the operator's freedom.yaml selects a Node-CLI- \
-                  backed provider; silent when the operator runs \
-                  LocalQwen / API-only / antigravity providers.",
-        common_failures: "Fresh Windows install with no Node — wizard \
-                         step 5d picks claude-cli, install_kind spawns \
-                         `npm install -g …`, npm not found, operator \
-                         gets a cryptic spawn error.",
-        fix: "Install Node 20 LTS from nodejs.org/en/download (Windows \
-              installer adds npm to PATH automatically). On macOS \
-              `brew install node`. On Linux use your distro's package \
-              manager (`apt install nodejs npm` on Debian/Ubuntu; \
-              `dnf install nodejs` on Fedora). Restart NEOTH so the \
-              new PATH takes effect.",
-    },
-    CheckDoc {
-        name: "usage today",
-        purpose: "QM-9 Phase 1 spend-visibility surface. Aggregates \
-                  the last 24h of `~/.neoth/usage/*.jsonl` and warns \
-                  when cost crosses `council.daily_usd_cap` (default \
-                  $5) or 80% of it. Pass when usage dir is missing \
-                  (clean install) or cost is under threshold. Detail \
-                  always carries call count + ok/err split + dollars \
-                  + percent-of-cap so the operator sees burn rate at \
-                  a glance.",
-        common_failures: "Spend creeps past the daily cap before the \
-                         operator notices. Errors-vs-successes ratio \
-                         spikes (provider outage, broken prompt \
-                         template).",
-        fix: "If the spend is intentional, raise `council.daily_usd_cap` \
-              in freedom.yaml. If unexpected, tail \
-              `~/.neoth/usage/<today>.jsonl` to find the chatty path. \
-              Lower the cap to throttle inadvertent loops by setting \
-              `council.max_calls_per_user_message` (default 15) lower.",
-    },
-    CheckDoc {
-        name: "cluster registry",
-        purpose: "Cluster auto-discovery Phase 4 visibility surface. \
-                  Reads `~/.neoth/cluster.yaml` + reports the count \
-                  of confirmed peers + warns when any haven't been \
-                  seen in 14 days (Phase 2+ gossip refreshes \
-                  last_seen_unix on each authenticated announce). \
-                  Single-instance operators see Pass with `no \
-                  confirmed cluster peers` — no noise.",
-        common_failures: "Peer device offline for >14 days (laptop \
-                          retired, server move, network change). \
-                          Stale entry keeps eating Phase 6 gossip \
-                          retry budget until revoked.",
-        fix: "Verify the peer device is still reachable: `neoth \
-              cluster list` shows the addr + via. If the device \
-              is truly gone, `neoth cluster revoke <pub_key_prefix>` \
-              removes it. If it's just been offline, leave it — \
-              gossip will refresh once the peer returns.",
-    },
-    CheckDoc {
-        name: "cluster mDNS announcer",
-        purpose: "Cluster auto-discovery Phase 2 announcer state. \
-                  Composes `cluster.mdns.enabled` + the Q2-ratified \
-                  announce policy (announce_on_untrusted_wifi + \
-                  trusted_ssids) + the OS-detected current SSID to \
-                  report whether the announcer would actually \
-                  broadcast on the current network. Noise scales \
-                  with paired peers — single-instance operators \
-                  never see WARN.",
-        common_failures: "Paired-peer operator joins coffee-shop \
-                          wifi (untrusted SSID) → announcer goes \
-                          silent → peers can't auto-rediscover. \
-                          OR operator on wired/VPN with no SSID \
-                          → strict default treats unknown SSID as \
-                          untrusted → silent.",
-        fix: "Add the current SSID to `cluster.policy.trusted_ssids` \
-              in freedom.yaml, OR set `cluster.policy.announce_on_untrusted_wifi: \
-              true` for broadcast-on-any-network, OR pair peers \
-              via Tailscale (tailnet bypasses the SSID gate). \
-              `neoth cluster discover` surfaces the same verdict \
-              + suggested fix before scanning.",
-    },
-    CheckDoc {
-        name: "provider flapping",
-        purpose: "Flapping detection: scans the last 24h of \
-                  usage_log entries + warns when any provider with \
-                  ≥5 calls has an error rate ≥20%. Catches Slack \
-                  rate-limit storms / WhatsApp Graph 5xx waves / \
-                  OpenAI 429 spirals before they burn the operator's \
-                  daily cap.",
-        common_failures: "Slack workspace exceeded the per-app token \
-                          rate limit (50 req/min for `chat.postMessage` \
-                          on free workspaces); WhatsApp Cloud API \
-                          rejecting webhooks because the operator's \
-                          verify_token changed; OpenAI 429 from sudden \
-                          burst traffic without a paid tier.",
-        fix: "Check `~/.neoth/usage/<today>.jsonl` filtered by \
-              `ok == false` for the failure shape. For rate-limit \
-              flaps, reduce `council.max_calls_per_user_message` or \
-              switch to a local-only preset via `neoth preset activate \
-              fully-local && neoth preset apply fully-local`. For \
-              auth flaps, `neoth doctor channels` shows the credential \
-              wiring + a `neoth doctor --explain channels wiring` \
-              gives the per-channel fix.",
-    },
-    CheckDoc {
-        name: "circuit breakers",
-        purpose: "QM-10 Phase 2 visibility surface. Reads the global \
-                  `BreakerRegistry` snapshot + renders every provider \
-                  the chat dispatch has touched in this process, with \
-                  current state (closed/half_open/open) + consecutive \
-                  failure count. Warn when any breaker is Open or in \
-                  the HalfOpen probe state.",
-        common_failures: "Provider flap (rate limit / regional outage / \
-                          expired token) flips the breaker Open; chat \
-                          calls reject immediately with retry_after \
-                          until cooldown elapses (default 30s).",
-        fix: "Wait the cooldown. Check `~/.neoth/usage/<today>.jsonl` \
-              filtered by `ok == false` for the failure pattern. If a \
-              specific provider is permanently broken, switch via \
-              `neoth hemispheres set --role X --provider Y` or use \
-              `neoth preset activate <bundle>` to swap a cloud-heavy \
-              preset to a local-only one.",
-    },
-    CheckDoc {
-        name: "tmux for claude-cli",
-        purpose: "NOOB-UX-6 AIO-compliance probe. claude-cli's working \
-                  backend is the tmux warm-session path \
-                  (subprocess --print mode is unreliable on some Anthropic \
-                  OAuth/build configurations; the tmux warm-session is the \
-                  supported path). Pass when `tmux -V` answers; \
-                  Warn when missing AND the operator's provider_kind \
-                  is ClaudeCli; silent otherwise.",
-        common_failures: "Operator picks claude-cli in the wizard on a \
-                         fresh Windows or macOS install with no tmux, \
-                         daemon silently falls back to the broken \
-                         subprocess path on chat send.",
-        fix: "Install tmux via your platform's package manager. Windows: \
-              `scoop install tmux` or `choco install tmux` or install \
-              WSL + apt. macOS: `brew install tmux`. Linux: \
-              `apt install tmux` / `pacman -S tmux` / `dnf install tmux`. \
-              Restart NEOTH after install. To silence this check when \
-              you intentionally accept the subprocess path, set \
-              `freedom.yaml::claude_cli.backend: subprocess`.",
-    },
-    CheckDoc {
-        name: "stuck claude processes",
-        purpose: "GOLD-WIRE-05 PID-hunter probe. A `claude` / `claude-cli` \
-                  process can hang mid tool-call, on a closed OAuth browser, \
-                  or on a stale WebSocket — the tmux session still looks live \
-                  (low idle_secs) but the pane is unresponsive, so only \
-                  PID-CPU monitoring catches it. Scans the process table for \
-                  processes past the runtime floor (15 min) at idle CPU \
-                  (< 1%). Gated on top-level `provider_kind == claude_cli` so \
-                  other providers skip the scan — a claude_cli pinned ONLY in \
-                  a per-hemisphere slot is not scanned yet (same scope as the \
-                  tmux check). Warn when one is found; never Fail (a hung \
-                  process is recoverable, not a broken install).",
-        common_failures: "claude-cli wedged after an interrupted tool-call or \
-                         an OAuth login where the browser tab was closed \
-                         before the callback; a build/test loop that spawned \
-                         a claude child which never exited.",
-        fix: "Confirm the flagged PID is NOT your active foreground claude \
-              session, then kill it — Unix: `kill <pid>` (then `kill -9 <pid>` \
-              if it ignores SIGTERM); Windows: `taskkill /PID <pid>` (add `/F` \
-              to force). Re-run `neoth doctor` to confirm it cleared. Raise \
-              the idle-CPU floor in code if a legitimate low-CPU long-runner \
-              keeps tripping the check.",
-    },
-    CheckDoc {
-        name: "vector index snapshot",
-        purpose: "GOLD-WIRE-07 advisory. When `memory.vector_index.backend: \
-                  hnsw` is set, `neoth recall --similar-to*` cold-loads the \
-                  `<neoth_home>/embeddings.hnsw` snapshot. This check flags the \
-                  two states where HNSW recall silently degrades: the snapshot \
-                  is ABSENT (recall falls back to brute-force entirely) or STALE \
-                  (the newest `idx_embedding.created_at` is newer than the \
-                  snapshot's mtime, so HNSW recall silently misses every vector \
-                  upserted since the last rebuild). Read-only. Pass for the \
-                  brute-force default + for a present, fresh snapshot; Warn \
-                  otherwise; never Fail (recall always works via fallback).",
-        common_failures: "Operator set `backend: hnsw` but never ran \
-                         `neoth memory --rebuild-index` (absent snapshot); or \
-                         built it once, then ingested more images so the \
-                         snapshot lags the DB (stale).",
-        fix: "Run `neoth memory --rebuild-index` to (re)build the snapshot \
-              from `idx_embedding`. Re-run after any large ingest. Or set \
-              `memory.vector_index.backend: brute_force` to stay on the \
-              always-fresh O(N) scan. (Automatic snapshot freshness via a \
-              daemon warm index is GOLD-WIRE-07b.)",
-    },
-    CheckDoc {
-        name: "refusal recovery",
-        purpose: "SPEC-10 LOWKEY refusal-recovery health. When the model \
-                  refuses a legitimate request, `try_recover` reframes the \
-                  prompt + retries (up to `max_attempts`) per detected \
-                  cause. Doctor warns when recovery is ENABLED but can \
-                  never fire — every applicable reframing disabled, or \
-                  `max_attempts = 0` — i.e. a silent no-op that looks \
-                  active but does nothing.",
-        common_failures: "All LOWKEY reframings added to \
-                         `refusal_recovery.disabled_reframings`; \
-                         `max_attempts: 0` set by hand; recovery left \
-                         enabled but effectively dead.",
-        fix: "Re-enable a reframing: `neoth refusal enable <id>` (list them \
-              with `neoth refusal reframings`). Restore retries: set \
-              `refusal_recovery.max_attempts: 2` in freedom.yaml. To turn \
-              recovery off on purpose, set `refusal_recovery.enabled: \
-              false` — doctor then passes quietly. Dry-run a refusal with \
-              `neoth refusal test \"<refusal text>\"`.",
-    },
-    CheckDoc {
-        name: "local_qwen weights",
-        purpose: "SPEC-04 private-extraction readiness. When \
-                  `profile.learn_provider = local_qwen` (the privacy-floor \
-                  default), profile facts are extracted ON-DEVICE — but \
-                  only if the Qwen weights are cached. If they're missing, \
-                  the local provider fails to build and (with \
-                  `allow_cloud_fallback = false`) extraction is SKIPPED \
-                  rather than leaking the conversation to a cloud model, \
-                  so profile learning silently stops.",
-        common_failures: "Fresh install where the operator chose local_qwen \
-                         in the wizard but skipped the ~3 GB weight download; \
-                         a wiped `~/.neoth/models/` cache; an interrupted \
-                         download leaving an `.incomplete` marker.",
-        fix: "Download the weights: `neoth model fetch` (or re-run `neoth \
-              init` and accept step 5c). To extract on a cloud model \
-              instead, set `profile.learn_provider` to a cloud slug AND \
-              `profile.allow_cloud_fallback: true` in freedom.yaml \
-              (understand the privacy trade-off first — see `neoth privacy \
-              audit`).",
-    },
-    CheckDoc {
-        name: "n8n_api_token",
-        purpose: "SC-08 — when the n8n API is enabled, its bearer token \
-                  at `~/.neoth/n8n_api_token` is the key to the localhost \
-                  automation surface. On Windows it must be DPAPI-wrapped \
-                  (a copied file is useless outside the operator's \
-                  account); on Unix it must be mode-0600.",
-        common_failures: "A pre-SC-08 plaintext token still on disk \
-                         (Windows); a token file whose mode drifted off \
-                         0600 (Unix, e.g. restored from a backup).",
-        fix: "Delete `~/.neoth/n8n_api_token` and restart `neoth serve` — \
-              it re-mints the token DPAPI-wrapped (Windows) / mode-0600 \
-              (Unix). On Unix you can also just `chmod 600 \
-              ~/.neoth/n8n_api_token`. To remove the surface entirely set \
-              `n8n_api.enabled: false`.",
-    },
-];
 
 /// Find a CheckDoc by case-insensitive name match. `None` when no doc
 /// exists for that check name (typo in operator's `--explain` flag).
 fn find_check_doc(name: &str) -> Option<&'static CheckDoc> {
     let needle = name.trim().to_ascii_lowercase();
-    CHECK_DOCS
-        .iter()
-        .find(|d| d.name.to_ascii_lowercase() == needle)
+    all_check_docs().find(|d| d.name.to_ascii_lowercase() == needle)
 }
 
 /// Render a single CheckDoc in operator-readable text. Used by the
@@ -609,7 +114,7 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
     if args.list_checks {
         match args.output {
             OutputFormat::Json | OutputFormat::Jsonl => {
-                let names: Vec<&str> = CHECK_DOCS.iter().map(|d| d.name).collect();
+                let names: Vec<&str> = all_check_docs().map(|d| d.name).collect();
                 println!(
                     "{}",
                     serde_json::json!({
@@ -621,9 +126,9 @@ pub async fn run_doctor(args: DoctorArgs) -> Result<()> {
             OutputFormat::Table => {
                 println!(
                     "# doctor checks recognised by --explain ({} total)",
-                    CHECK_DOCS.len()
+                    all_check_docs().count()
                 );
-                for d in CHECK_DOCS {
+                for d in all_check_docs() {
                     println!("  {}", d.name);
                 }
             }
@@ -788,39 +293,11 @@ async fn diagnose_with_llm(outcomes: &[CheckOutcome]) {
 
 /// Run every diagnostic in order. Pure synchronous — each check is short.
 pub fn run_all_checks(home: &Path) -> Vec<CheckOutcome> {
-    vec![
-        check_freedom_yaml(home),
-        check_credentials_yaml(home),
-        check_credential_age(home),
-        check_views_db(home),
-        check_wal_segments(home),
-        check_hmac_key(home),
-        check_quota(home),
-        check_policy_yaml(home),
-        check_tweaks_toml(home),
-        check_model_caches(),
-        check_hysteria_config(home),
-        check_cloud_archive_dest(home),
-        check_disk_space(home),
-        check_hooks_dir(home),
-        check_agents_dir(home),
-        check_profile_extensions(home),
-        check_mcp_servers(home),
-        check_wasm_plugins(home),
-        check_channels_wiring(home),
-        check_node_toolchain(home),
-        check_tmux_for_claude_cli(home),
-        check_stuck_claude_processes(home),
-        check_vector_index_snapshot(home),
-        check_usage_today(home),
-        check_circuit_breakers(home),
-        check_provider_flapping(home),
-        check_cluster_registry(home),
-        check_cluster_mdns_announcer(home),
-        check_refusal_recovery(home),
-        check_local_qwen_weights(home),
-        check_n8n_api_token(home),
-    ]
+    DOMAIN_CHECKS
+        .iter()
+        .flat_map(|domain| domain.iter())
+        .map(|check| check(home))
+        .collect()
 }
 
 #[cfg(unix)]
@@ -843,6 +320,9 @@ fn is_mode_0600(_path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::checks::{
+        cluster::*, config::*, integrations::*, providers::*, storage::*, tooling::*,
+    };
     use super::*;
     use tempfile::tempdir;
 
@@ -852,16 +332,15 @@ mod tests {
     fn check_docs_cover_every_check_name_in_run_all() {
         // Drift guard: every check name produced by `run_all_checks`
         // must have an explain entry. Refactor that adds a new check
-        // without updating CHECK_DOCS fails here.
+        // without a DOCS entry in its domain file fails here.
         let dir = tempdir().unwrap();
         let outcomes = run_all_checks(dir.path());
         let doc_names: std::collections::HashSet<&str> =
-            CHECK_DOCS.iter().map(|d| d.name).collect();
+            all_check_docs().map(|d| d.name).collect();
         for o in &outcomes {
             assert!(
                 doc_names.contains(o.name),
-                "check `{}` produced by run_all_checks has no CHECK_DOCS entry — \
-                 add one in cli/doctor.rs::CHECK_DOCS",
+                "check `{}` produced by run_all_checks has no runbook doc — \n                 add a DOCS entry in its cli/doctor/checks/ domain file",
                 o.name
             );
         }
@@ -882,7 +361,7 @@ mod tests {
 
     #[test]
     fn every_check_doc_has_non_empty_fields() {
-        for d in CHECK_DOCS {
+        for d in all_check_docs() {
             assert!(!d.name.is_empty(), "CheckDoc name empty");
             assert!(!d.purpose.is_empty(), "CheckDoc {} purpose empty", d.name);
             assert!(
@@ -905,7 +384,7 @@ mod tests {
         // 29 in Session 28c for `n8n_api_token` (SC-08);
         // 30 in Session 44 for `stuck claude processes` (GOLD-WIRE-05);
         // 31 in Session 44 for `vector index snapshot` (GOLD-WIRE-07).
-        assert_eq!(CHECK_DOCS.len(), 31);
+        assert_eq!(all_check_docs().count(), 31);
     }
 
     // ── GOLD-WIRE-05: stuck claude-process check ──────────────────────
@@ -1937,7 +1416,7 @@ servers:
         // just verify the check produces a non-empty status + detail
         // and that the detail names the `neoth models pull` command
         // when anything is missing.
-        let o = check_model_caches();
+        let o = check_model_caches(Path::new("unused"));
         assert!(!o.detail.is_empty());
         if o.status != CheckStatus::Pass {
             assert!(

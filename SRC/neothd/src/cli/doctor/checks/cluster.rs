@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::super::{CheckOutcome, CheckStatus};
+use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
 /// Cluster mDNS announcer state — surfaces whether the announcer
 /// would actually broadcast on the current network. Composes the
@@ -193,3 +193,56 @@ pub(crate) fn check_cluster_registry(_home: &Path) -> CheckOutcome {
         detail: "cluster feature not compiled in this build".to_string(),
     }
 }
+
+/// Registration: this domain's diagnostics, run in order by
+/// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
+pub(crate) const CHECKS: &[CheckFn] = &[
+    check_cluster_registry,
+    check_cluster_mdns_announcer,
+];
+
+/// Operator runbook entries for this domain (the `--explain` surface).
+pub(crate) const DOCS: &[CheckDoc] = &[
+    CheckDoc {
+        name: "cluster registry",
+        purpose: "Cluster auto-discovery Phase 4 visibility surface. \
+                  Reads `~/.neoth/cluster.yaml` + reports the count \
+                  of confirmed peers + warns when any haven't been \
+                  seen in 14 days (Phase 2+ gossip refreshes \
+                  last_seen_unix on each authenticated announce). \
+                  Single-instance operators see Pass with `no \
+                  confirmed cluster peers` — no noise.",
+        common_failures: "Peer device offline for >14 days (laptop \
+                          retired, server move, network change). \
+                          Stale entry keeps eating Phase 6 gossip \
+                          retry budget until revoked.",
+        fix: "Verify the peer device is still reachable: `neoth \
+              cluster list` shows the addr + via. If the device \
+              is truly gone, `neoth cluster revoke <pub_key_prefix>` \
+              removes it. If it's just been offline, leave it — \
+              gossip will refresh once the peer returns.",
+    },
+    CheckDoc {
+        name: "cluster mDNS announcer",
+        purpose: "Cluster auto-discovery Phase 2 announcer state. \
+                  Composes `cluster.mdns.enabled` + the Q2-ratified \
+                  announce policy (announce_on_untrusted_wifi + \
+                  trusted_ssids) + the OS-detected current SSID to \
+                  report whether the announcer would actually \
+                  broadcast on the current network. Noise scales \
+                  with paired peers — single-instance operators \
+                  never see WARN.",
+        common_failures: "Paired-peer operator joins coffee-shop \
+                          wifi (untrusted SSID) → announcer goes \
+                          silent → peers can't auto-rediscover. \
+                          OR operator on wired/VPN with no SSID \
+                          → strict default treats unknown SSID as \
+                          untrusted → silent.",
+        fix: "Add the current SSID to `cluster.policy.trusted_ssids` \
+              in freedom.yaml, OR set `cluster.policy.announce_on_untrusted_wifi: \
+              true` for broadcast-on-any-network, OR pair peers \
+              via Tailscale (tailnet bypasses the SSID gate). \
+              `neoth cluster discover` surfaces the same verdict \
+              + suggested fix before scanning.",
+    },
+];

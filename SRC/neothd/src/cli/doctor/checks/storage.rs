@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rusqlite::Connection;
 
-use super::super::{is_mode_0600, CheckOutcome, CheckStatus};
+use super::super::{is_mode_0600, CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
 pub(crate) fn check_views_db(home: &Path) -> CheckOutcome {
     let path = home.join("views.db");
@@ -219,3 +219,83 @@ pub(crate) fn fmt_bytes(n: u64) -> String {
         format!("{n} B")
     }
 }
+
+/// Registration: this domain's diagnostics, run in order by
+/// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
+pub(crate) const CHECKS: &[CheckFn] = &[
+    check_views_db,
+    check_wal_segments,
+    check_hmac_key,
+    check_quota,
+    check_disk_space,
+];
+
+/// Operator runbook entries for this domain (the `--explain` surface).
+pub(crate) const DOCS: &[CheckDoc] = &[
+    CheckDoc {
+        name: "views.db",
+        purpose: "SQLite views database — the read-side projection of the \
+                  WAL. Holds idx_episode (recall), idx_profile (operator \
+                  facts), idx_groundtruth (decay-immune anchors), \
+                  idx_consolidated / idx_longterm (memory tiers). Doctor \
+                  runs `PRAGMA integrity_check` + verifies schema_version \
+                  stamp.",
+        common_failures: "Disk full mid-write (corruption); manual delete \
+                         (recoverable via `neoth restore`); schema drift \
+                         (mis-applied migration).",
+        fix: "Corruption → restore from `~/.neoth/backups/`. Schema drift → \
+              `neoth migrate up` brings the schema forward. If the daemon \
+              can't open it, delete + let the indexer rebuild from WAL.",
+    },
+    CheckDoc {
+        name: "wal segments",
+        purpose: "Append-only WAL at `~/.neoth/wal/*.wal`. The audit \
+                  trail of every action NEOTH ever took. Doctor walks \
+                  the segment directory, checks each segment's frame CRC \
+                  + magic preamble, verifies the active segment is \
+                  writeable.",
+        common_failures: "Last-frame corruption (writer crashed mid-fsync — \
+                         self-heals on next index pass); segment dir not \
+                         writeable; segments deleted manually.",
+        fix: "Corrupt tail frame → harmless, indexer truncates. Read-only \
+              dir → `chmod u+w ~/.neoth/wal/`. Manually deleted → live with \
+              the gap; the indexer skips missing segments.",
+    },
+    CheckDoc {
+        name: "hmac.key",
+        purpose: "HMAC key at `~/.neoth/hmac.key` — signs the compaction \
+                  markers in the WAL so tampering is detectable. Doctor \
+                  checks existence, that the file is exactly 32 bytes \
+                  (HMAC-SHA256 key size), and 0600 mode.",
+        common_failures: "Missing (daemon auto-generates on first run); \
+                         wrong size (manual edit); world-readable.",
+        fix: "Missing → next daemon start regenerates. Wrong size → delete \
+              + restart (loses ability to verify markers pre-restart). \
+              `chmod 600 ~/.neoth/hmac.key`.",
+    },
+    CheckDoc {
+        name: "disk quota",
+        purpose: "Pre-write quota guard. Doctor checks the home dir's \
+                  current usage vs the configured ceiling \
+                  (`freedom.yaml::quota_ceiling_bytes`, default 5 GiB). \
+                  Warns past 75% used; fails past 90%.",
+        common_failures: "Long-lived daemon with no consolidation → WAL \
+                         segments accumulate; backups in `~/.neoth/backups/` \
+                         pile up.",
+        fix: "Tighten the ceiling or prune. `neoth wal compact` rolls \
+              old segments. `neoth backup --prune --keep 7` rotates the \
+              backup set.",
+    },
+    CheckDoc {
+        name: "disk space",
+        purpose: "Free space on the partition holding `~/.neoth/`. Warns \
+                  past 1 GiB free, fails past 100 MiB. Below the fail \
+                  threshold the WAL writer's quota guard will reject new \
+                  writes — better to warn early.",
+        common_failures: "A NAS or always-on home server with a data disk \
+                         filling up; a laptop with OS-disk pressure.",
+        fix: "Prune backups (`neoth backup --prune`); compact WAL (`neoth \
+              wal compact`); move `~/.neoth/` to a larger volume via \
+              symlink + `chown`.",
+    },
+];

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use super::super::{is_mode_0600, CheckOutcome, CheckStatus};
+use super::super::{is_mode_0600, CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
 pub(crate) fn check_freedom_yaml(home: &Path) -> CheckOutcome {
     let path = home.join("freedom.yaml");
@@ -233,3 +233,94 @@ pub(crate) fn check_tweaks_toml(home: &Path) -> CheckOutcome {
         },
     }
 }
+
+/// Registration: this domain's diagnostics, run in order by
+/// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
+pub(crate) const CHECKS: &[CheckFn] = &[
+    check_freedom_yaml,
+    check_credentials_yaml,
+    check_credential_age,
+    check_policy_yaml,
+    check_tweaks_toml,
+    check_profile_extensions,
+];
+
+/// Operator runbook entries for this domain (the `--explain` surface).
+pub(crate) const DOCS: &[CheckDoc] = &[
+    CheckDoc {
+        name: "freedom.yaml",
+        purpose: "Operator configuration lives in `~/.neoth/freedom.yaml`. \
+                  Doctor verifies the file exists, parses cleanly via \
+                  `FreedomConfig::load_from_path`, and (on unix) is mode \
+                  0600 so secrets at rest survive multi-user systems.",
+        common_failures: "Missing file (operator hasn't run `neoth init`); \
+                         parse error (hand-edited typo); permissions broader \
+                         than 0600 (unix).",
+        fix: "Missing → `neoth init` (or `neoth init --force` for a clean \
+              wipe).\nParse error → diff against `freedom.yaml.example` in \
+              the repo / install root.\nPermissions → `chmod 600 ~/.neoth/freedom.yaml`.",
+    },
+    CheckDoc {
+        name: "credentials.yaml",
+        purpose: "Secret store at `~/.neoth/credentials.yaml`. Holds API \
+                  keys + bot tokens that should NEVER be in freedom.yaml. \
+                  Doctor checks existence (warn if missing — daemon can \
+                  start without it for local_qwen-only deployments), parse \
+                  cleanly, and 0600 mode.",
+        common_failures: "Secrets pasted into freedom.yaml instead (creates \
+                         a leak path through `neoth export`); world-readable \
+                         mode; corrupt YAML.",
+        fix: "Edit by hand: keys at the top level (`provider_key`, \
+              `telegram_token`). `chmod 600 ~/.neoth/credentials.yaml`.",
+    },
+    CheckDoc {
+        name: "credentials age",
+        purpose: "Age of `~/.neoth/credentials.yaml`. Telegram bot tokens, \
+                  Slack tokens, and provider API keys quietly expire or \
+                  get rotated server-side. Doctor reads the file's \
+                  modification time and warns past 180 days, fails past \
+                  365. The check skips when the file is absent or holds \
+                  only `None` secret slots (local_qwen-only setups).",
+        common_failures: "Long-lived deployment without rotation; Slack \
+                         workspace revoked the bot token; Telegram \
+                         BotFather rotated the secret.",
+        fix: "Re-run the relevant wizard step (`neoth init --step \
+              credentials`) or edit `~/.neoth/credentials.yaml` and \
+              `touch` the file to reset the age clock once the new \
+              token is in.",
+    },
+    CheckDoc {
+        name: "policy.yaml",
+        purpose: "Optional autonomy policy override at \
+                  `~/.neoth/policy.yaml`. When present, overrides the \
+                  freedom.yaml-level `autonomy` field per-action category. \
+                  Doctor verifies parse + schema.",
+        common_failures: "Missing is fine (operator just hasn't customised). \
+                         Parse error blocks daemon startup.",
+        fix: "Missing → no action needed. Parse error → diff against the \
+              schema in `docs/policy.md`, or delete to fall back to \
+              freedom.yaml's autonomy field.",
+    },
+    CheckDoc {
+        name: "tweaks.toml",
+        purpose: "tweakcc-style customisation at `~/.neoth/tweaks.toml`. \
+                  Operator overrides for prompts, persona, slash-command \
+                  aliases. Doctor parses + flags unknown keys.",
+        common_failures: "Hand-edited YAML where TOML is expected; \
+                         malformed `[[prompts]]` array.",
+        fix: "Diff against `assets/tweaks.toml.example`. Or delete to \
+              fall back to bundled defaults.",
+    },
+    CheckDoc {
+        name: "profile_extensions.toml",
+        purpose: "Typed extension registry at \
+                  `~/.neoth/profile_extensions.toml`. Operator-defined \
+                  custom profile fields outside the base taxonomy (e.g. \
+                  `operator.preferences.editor`). Doctor parses + warns on \
+                  unknown reserved keys.",
+        common_failures: "Empty file (use the bundled example as a start); \
+                         TOML syntax error.",
+        fix: "Missing → use defaults. Syntax error → diff against \
+              `assets/profile_extensions.toml.example`.",
+    },
+];

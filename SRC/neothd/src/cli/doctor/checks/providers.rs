@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::super::{CheckOutcome, CheckStatus};
+use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
 /// SC-08 n8n API bearer-token at-rest protection. When the n8n API is
 /// enabled, its bearer token lives at `~/.neoth/n8n_api_token`. On
@@ -404,3 +404,137 @@ pub(crate) fn freedom_daily_usd_cap(home: &Path) -> f64 {
         .and_then(|v| v.as_f64())
         .unwrap_or(DEFAULT_CAP)
 }
+
+/// Registration: this domain's diagnostics, run in order by
+/// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
+pub(crate) const CHECKS: &[CheckFn] = &[
+    check_usage_today,
+    check_circuit_breakers,
+    check_provider_flapping,
+    check_refusal_recovery,
+    check_local_qwen_weights,
+    check_n8n_api_token,
+];
+
+/// Operator runbook entries for this domain (the `--explain` surface).
+pub(crate) const DOCS: &[CheckDoc] = &[
+    CheckDoc {
+        name: "usage today",
+        purpose: "QM-9 Phase 1 spend-visibility surface. Aggregates \
+                  the last 24h of `~/.neoth/usage/*.jsonl` and warns \
+                  when cost crosses `council.daily_usd_cap` (default \
+                  $5) or 80% of it. Pass when usage dir is missing \
+                  (clean install) or cost is under threshold. Detail \
+                  always carries call count + ok/err split + dollars \
+                  + percent-of-cap so the operator sees burn rate at \
+                  a glance.",
+        common_failures: "Spend creeps past the daily cap before the \
+                         operator notices. Errors-vs-successes ratio \
+                         spikes (provider outage, broken prompt \
+                         template).",
+        fix: "If the spend is intentional, raise `council.daily_usd_cap` \
+              in freedom.yaml. If unexpected, tail \
+              `~/.neoth/usage/<today>.jsonl` to find the chatty path. \
+              Lower the cap to throttle inadvertent loops by setting \
+              `council.max_calls_per_user_message` (default 15) lower.",
+    },
+    CheckDoc {
+        name: "circuit breakers",
+        purpose: "QM-10 Phase 2 visibility surface. Reads the global \
+                  `BreakerRegistry` snapshot + renders every provider \
+                  the chat dispatch has touched in this process, with \
+                  current state (closed/half_open/open) + consecutive \
+                  failure count. Warn when any breaker is Open or in \
+                  the HalfOpen probe state.",
+        common_failures: "Provider flap (rate limit / regional outage / \
+                          expired token) flips the breaker Open; chat \
+                          calls reject immediately with retry_after \
+                          until cooldown elapses (default 30s).",
+        fix: "Wait the cooldown. Check `~/.neoth/usage/<today>.jsonl` \
+              filtered by `ok == false` for the failure pattern. If a \
+              specific provider is permanently broken, switch via \
+              `neoth hemispheres set --role X --provider Y` or use \
+              `neoth preset activate <bundle>` to swap a cloud-heavy \
+              preset to a local-only one.",
+    },
+    CheckDoc {
+        name: "provider flapping",
+        purpose: "Flapping detection: scans the last 24h of \
+                  usage_log entries + warns when any provider with \
+                  ≥5 calls has an error rate ≥20%. Catches Slack \
+                  rate-limit storms / WhatsApp Graph 5xx waves / \
+                  OpenAI 429 spirals before they burn the operator's \
+                  daily cap.",
+        common_failures: "Slack workspace exceeded the per-app token \
+                          rate limit (50 req/min for `chat.postMessage` \
+                          on free workspaces); WhatsApp Cloud API \
+                          rejecting webhooks because the operator's \
+                          verify_token changed; OpenAI 429 from sudden \
+                          burst traffic without a paid tier.",
+        fix: "Check `~/.neoth/usage/<today>.jsonl` filtered by \
+              `ok == false` for the failure shape. For rate-limit \
+              flaps, reduce `council.max_calls_per_user_message` or \
+              switch to a local-only preset via `neoth preset activate \
+              fully-local && neoth preset apply fully-local`. For \
+              auth flaps, `neoth doctor channels` shows the credential \
+              wiring + a `neoth doctor --explain channels wiring` \
+              gives the per-channel fix.",
+    },
+    CheckDoc {
+        name: "refusal recovery",
+        purpose: "SPEC-10 LOWKEY refusal-recovery health. When the model \
+                  refuses a legitimate request, `try_recover` reframes the \
+                  prompt + retries (up to `max_attempts`) per detected \
+                  cause. Doctor warns when recovery is ENABLED but can \
+                  never fire — every applicable reframing disabled, or \
+                  `max_attempts = 0` — i.e. a silent no-op that looks \
+                  active but does nothing.",
+        common_failures: "All LOWKEY reframings added to \
+                         `refusal_recovery.disabled_reframings`; \
+                         `max_attempts: 0` set by hand; recovery left \
+                         enabled but effectively dead.",
+        fix: "Re-enable a reframing: `neoth refusal enable <id>` (list them \
+              with `neoth refusal reframings`). Restore retries: set \
+              `refusal_recovery.max_attempts: 2` in freedom.yaml. To turn \
+              recovery off on purpose, set `refusal_recovery.enabled: \
+              false` — doctor then passes quietly. Dry-run a refusal with \
+              `neoth refusal test \"<refusal text>\"`.",
+    },
+    CheckDoc {
+        name: "local_qwen weights",
+        purpose: "SPEC-04 private-extraction readiness. When \
+                  `profile.learn_provider = local_qwen` (the privacy-floor \
+                  default), profile facts are extracted ON-DEVICE — but \
+                  only if the Qwen weights are cached. If they're missing, \
+                  the local provider fails to build and (with \
+                  `allow_cloud_fallback = false`) extraction is SKIPPED \
+                  rather than leaking the conversation to a cloud model, \
+                  so profile learning silently stops.",
+        common_failures: "Fresh install where the operator chose local_qwen \
+                         in the wizard but skipped the ~3 GB weight download; \
+                         a wiped `~/.neoth/models/` cache; an interrupted \
+                         download leaving an `.incomplete` marker.",
+        fix: "Download the weights: `neoth model fetch` (or re-run `neoth \
+              init` and accept step 5c). To extract on a cloud model \
+              instead, set `profile.learn_provider` to a cloud slug AND \
+              `profile.allow_cloud_fallback: true` in freedom.yaml \
+              (understand the privacy trade-off first — see `neoth privacy \
+              audit`).",
+    },
+    CheckDoc {
+        name: "n8n_api_token",
+        purpose: "SC-08 — when the n8n API is enabled, its bearer token \
+                  at `~/.neoth/n8n_api_token` is the key to the localhost \
+                  automation surface. On Windows it must be DPAPI-wrapped \
+                  (a copied file is useless outside the operator's \
+                  account); on Unix it must be mode-0600.",
+        common_failures: "A pre-SC-08 plaintext token still on disk \
+                         (Windows); a token file whose mode drifted off \
+                         0600 (Unix, e.g. restored from a backup).",
+        fix: "Delete `~/.neoth/n8n_api_token` and restart `neoth serve` — \
+              it re-mints the token DPAPI-wrapped (Windows) / mode-0600 \
+              (Unix). On Unix you can also just `chmod 600 \
+              ~/.neoth/n8n_api_token`. To remove the surface entirely set \
+              `n8n_api.enabled: false`.",
+    },
+];

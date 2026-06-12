@@ -1,6 +1,12 @@
 //! Data types for `neoth doctor` (GOLD-ARCH-06): check status, outcome,
 //! and runbook doc entry. Pure data, no I/O. Split out of `cli/doctor.rs`.
 
+use std::path::Path;
+
+/// One diagnostic entry point. Every check takes the `~/.neoth` home dir
+/// and returns exactly one outcome.
+pub(crate) type CheckFn = fn(&Path) -> CheckOutcome;
+
 /// V03-07 2026-05-17: operator-facing documentation for each check.
 /// Triggered via `neoth doctor --explain <name>`. Each entry holds:
 ///   - `name` — exact check identifier (matches `CheckOutcome.name`).

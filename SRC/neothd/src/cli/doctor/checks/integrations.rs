@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use super::super::{CheckOutcome, CheckStatus};
+use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
 /// True ⇔ `freedom.yaml::memory.vector_index.backend == "hnsw"`. Best-effort
 /// `serde_yaml::Value` walk so a partial/unparseable config (or a missing
@@ -462,3 +462,112 @@ pub(crate) fn check_channels_wiring(home: &Path) -> CheckOutcome {
         detail,
     }
 }
+
+/// Registration: this domain's diagnostics, run in order by
+/// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
+pub(crate) const CHECKS: &[CheckFn] = &[
+    check_hooks_dir,
+    check_agents_dir,
+    check_cloud_archive_dest,
+    check_mcp_servers,
+    check_channels_wiring,
+    check_vector_index_snapshot,
+];
+
+/// Operator runbook entries for this domain (the `--explain` surface).
+pub(crate) const DOCS: &[CheckDoc] = &[
+    CheckDoc {
+        name: "hooks/",
+        purpose: "Operator hooks at `~/.neoth/hooks/*.toml`. Each file \
+                  defines an event stage + a command. Doctor loads every \
+                  file via `hooks::load_all` so YAML/TOML syntax errors + \
+                  unknown stages surface BEFORE the daemon hits the event.",
+        common_failures: "Typo in stage name (unknown HookStage); shell \
+                         command not in PATH; regex syntax error in the \
+                         matcher field.",
+        fix: "Run `neoth hooks list` for parse errors. `neoth hooks \
+              validate` runs the schema + regex check standalone. Fix \
+              the file or remove it.",
+    },
+    CheckDoc {
+        name: "agents/",
+        purpose: "Sub-agents at `~/.neoth/agents/*.md`. Each markdown file \
+                  defines an operator-callable agent's system prompt + \
+                  trigger keywords. Doctor loads every agent via \
+                  `sub_agents::load_all`.",
+        common_failures: "Empty system prompt; malformed YAML frontmatter; \
+                         unknown tool_allowlist entries.",
+        fix: "Edit the offending .md to fix the frontmatter. `neoth agents \
+              list` shows parse errors with line numbers.",
+    },
+    CheckDoc {
+        name: "cloud archive",
+        purpose: "Cloud archive mirror target at \
+                  `freedom.yaml::cloud_archive_dest` (typically a folder \
+                  the operator's Dropbox / GDrive / OneDrive desktop \
+                  client syncs upstream). Doctor checks the path exists + \
+                  is writeable + is a directory (not a file).",
+        common_failures: "Path is a file (operator typo); doesn't exist; \
+                         not writeable.",
+        fix: "Edit `freedom.yaml::cloud_archive_dest` to a real existing \
+              directory. Remove the field to disable cloud archive \
+              entirely.",
+    },
+    CheckDoc {
+        name: "mcp servers",
+        purpose: "Model Context Protocol server registry at \
+                  `~/.neoth/mcp_servers.yaml`. Doctor loads via \
+                  `McpServers::load`, flags parse errors, warns when \
+                  enabled servers reference a command that's not in PATH.",
+        common_failures: "Missing file (fine — MCP autoroute defaults off); \
+                         malformed YAML; binary not installed.",
+        fix: "Missing → no action. Parse error → diff against \
+              `mcp_servers.yaml.example`. Binary missing → install the \
+              server (e.g. `npm i -g @modelcontextprotocol/server-filesystem`).",
+    },
+    CheckDoc {
+        name: "channels wiring",
+        purpose: "R2-P0-2 honesty surface. Loads `credentials.yaml` + \
+                  classifies every configured channel as one of: LIVE \
+                  (send + receive both real), OUTBOUND-ONLY (send works, \
+                  inbound receive loop not yet wired), CONFIGURED-NOT-\
+                  STARTED (full inbound code ships but serve does not \
+                  bootstrap it), or absent (silent). Closes the \
+                  documented gap where README/Status claimed channels \
+                  were live while `cli::serve` only spawned Telegram.",
+        common_failures: "Operator configures Slack/WhatsApp credentials \
+                         + expects bidirectional chat. Aggregate Warn \
+                         when any partial (OUTBOUND-ONLY / CONFIGURED-NOT-\
+                         STARTED) channel is in the set so the gap \
+                         surfaces during install verification.",
+        fix: "Telegram inbound + outbound: live today. Slack inbound: \
+              live when BOTH bot_token + app_token configured (socket \
+              mode auto-spawns). WhatsApp inbound: live when full Meta \
+              secret set (token + phone_id + verify_token + app_secret) \
+              configured (webhook listener auto-spawns on 127.0.0.1). \
+              Partial configs surface as CONFIGURED-NOT-STARTED with a \
+              precise per-missing-field hint.",
+    },
+    CheckDoc {
+        name: "vector index snapshot",
+        purpose: "GOLD-WIRE-07 advisory. When `memory.vector_index.backend: \
+                  hnsw` is set, `neoth recall --similar-to*` cold-loads the \
+                  `<neoth_home>/embeddings.hnsw` snapshot. This check flags the \
+                  two states where HNSW recall silently degrades: the snapshot \
+                  is ABSENT (recall falls back to brute-force entirely) or STALE \
+                  (the newest `idx_embedding.created_at` is newer than the \
+                  snapshot's mtime, so HNSW recall silently misses every vector \
+                  upserted since the last rebuild). Read-only. Pass for the \
+                  brute-force default + for a present, fresh snapshot; Warn \
+                  otherwise; never Fail (recall always works via fallback).",
+        common_failures: "Operator set `backend: hnsw` but never ran \
+                         `neoth memory --rebuild-index` (absent snapshot); or \
+                         built it once, then ingested more images so the \
+                         snapshot lags the DB (stale).",
+        fix: "Run `neoth memory --rebuild-index` to (re)build the snapshot \
+              from `idx_embedding`. Re-run after any large ingest. Or set \
+              `memory.vector_index.backend: brute_force` to stay on the \
+              always-fresh O(N) scan. (Automatic snapshot freshness via a \
+              daemon warm index is GOLD-WIRE-07b.)",
+    },
+];

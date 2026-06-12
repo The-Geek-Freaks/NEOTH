@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::super::{CheckOutcome, CheckStatus};
+use super::super::{CheckDoc, CheckFn, CheckOutcome, CheckStatus};
 
 /// Probe a binary's `--version`. Returns `Some(stdout)` on success,
 /// `None` when the binary is missing or returns non-zero. Pure
@@ -195,7 +195,7 @@ pub(crate) fn freedom_uses_claude_cli(home: &Path) -> bool {
 /// to NEOTH want them populated. We emit a `Warn` (not `Fail`) so
 /// `neoth doctor` exits clean for text-only setups while still
 /// surfacing the actionable next step.
-pub(crate) fn check_model_caches() -> CheckOutcome {
+pub(crate) fn check_model_caches(_home: &Path) -> CheckOutcome {
     use crate::providers::{clip_engine, whisper};
 
     let clip_dir = clip_engine::default_cache_dir(clip_engine::DEFAULT_CLIP_REPO);
@@ -330,3 +330,135 @@ pub(crate) fn whisper_doctor_cache_dir(repo: &str) -> PathBuf {
     let flattened = repo.replace('/', "-");
     home.join(".neoth").join("models").join(flattened)
 }
+
+/// Registration: this domain's diagnostics, run in order by
+/// `run_all_checks`. Adding a check = add the fn + a `CheckDoc` here.
+pub(crate) const CHECKS: &[CheckFn] = &[
+    check_model_caches,
+    check_hysteria_config,
+    check_node_toolchain,
+    check_tmux_for_claude_cli,
+    check_stuck_claude_processes,
+    check_wasm_plugins,
+];
+
+/// Operator runbook entries for this domain (the `--explain` surface).
+pub(crate) const DOCS: &[CheckDoc] = &[
+    CheckDoc {
+        name: "model caches",
+        purpose: "HuggingFace model caches under \
+                  `~/.cache/huggingface/hub/`. Doctor checks the bundled \
+                  models (whisper-large-v3, clip-vit-base-patch32, \
+                  Qwen2.5-3B-Instruct) are downloaded — warns when \
+                  missing so operators don't first discover the \
+                  network requirement mid-chat.",
+        common_failures: "Fresh install with no HF cache; partial download \
+                         (interrupted git-lfs).",
+        fix: "Run `neoth models pull` to bulk-download. Or accept the \
+              warning — models lazy-download on first use.",
+    },
+    CheckDoc {
+        name: "hysteria",
+        purpose: "Hysteria QUIC transport config at \
+                  `freedom.yaml::hysteria.{server, auth, socks_port}`. \
+                  Doctor verifies the binary exists (in PATH or \
+                  `~/.neoth/bin/hysteria`) + the SOCKS5 port is bindable.",
+        common_failures: "Operator configured server but didn't install \
+                         binary; SOCKS port collision with another \
+                         service.",
+        fix: "Binary missing → download from \
+              https://github.com/apernet/hysteria/releases or remove \
+              the hysteria block. Port collision → pick a different \
+              `socks_port` in freedom.yaml.",
+    },
+    CheckDoc {
+        name: "node toolchain",
+        purpose: "NOOB-UX-6 AIO-compliance probe. Detects whether Node \
+                  + npm are on PATH so the wizard's auto-install path \
+                  for claude-cli / codex actually works (Antigravity \
+                  CLI ships via shell-script, not npm). Pass when both \
+                  binaries respond to `--version`; Warn when missing \
+                  AND the operator's freedom.yaml selects a Node-CLI- \
+                  backed provider; silent when the operator runs \
+                  LocalQwen / API-only / antigravity providers.",
+        common_failures: "Fresh Windows install with no Node — wizard \
+                         step 5d picks claude-cli, install_kind spawns \
+                         `npm install -g …`, npm not found, operator \
+                         gets a cryptic spawn error.",
+        fix: "Install Node 20 LTS from nodejs.org/en/download (Windows \
+              installer adds npm to PATH automatically). On macOS \
+              `brew install node`. On Linux use your distro's package \
+              manager (`apt install nodejs npm` on Debian/Ubuntu; \
+              `dnf install nodejs` on Fedora). Restart NEOTH so the \
+              new PATH takes effect.",
+    },
+    CheckDoc {
+        name: "tmux for claude-cli",
+        purpose: "NOOB-UX-6 AIO-compliance probe. claude-cli's working \
+                  backend is the tmux warm-session path \
+                  (subprocess --print mode is unreliable on some Anthropic \
+                  OAuth/build configurations; the tmux warm-session is the \
+                  supported path). Pass when `tmux -V` answers; \
+                  Warn when missing AND the operator's provider_kind \
+                  is ClaudeCli; silent otherwise.",
+        common_failures: "Operator picks claude-cli in the wizard on a \
+                         fresh Windows or macOS install with no tmux, \
+                         daemon silently falls back to the broken \
+                         subprocess path on chat send.",
+        fix: "Install tmux via your platform's package manager. Windows: \
+              `scoop install tmux` or `choco install tmux` or install \
+              WSL + apt. macOS: `brew install tmux`. Linux: \
+              `apt install tmux` / `pacman -S tmux` / `dnf install tmux`. \
+              Restart NEOTH after install. To silence this check when \
+              you intentionally accept the subprocess path, set \
+              `freedom.yaml::claude_cli.backend: subprocess`.",
+    },
+    CheckDoc {
+        name: "stuck claude processes",
+        purpose: "GOLD-WIRE-05 PID-hunter probe. A `claude` / `claude-cli` \
+                  process can hang mid tool-call, on a closed OAuth browser, \
+                  or on a stale WebSocket — the tmux session still looks live \
+                  (low idle_secs) but the pane is unresponsive, so only \
+                  PID-CPU monitoring catches it. Scans the process table for \
+                  processes past the runtime floor (15 min) at idle CPU \
+                  (< 1%). Gated on top-level `provider_kind == claude_cli` so \
+                  other providers skip the scan — a claude_cli pinned ONLY in \
+                  a per-hemisphere slot is not scanned yet (same scope as the \
+                  tmux check). Warn when one is found; never Fail (a hung \
+                  process is recoverable, not a broken install).",
+        common_failures: "claude-cli wedged after an interrupted tool-call or \
+                         an OAuth login where the browser tab was closed \
+                         before the callback; a build/test loop that spawned \
+                         a claude child which never exited.",
+        fix: "Confirm the flagged PID is NOT your active foreground claude \
+              session, then kill it — Unix: `kill <pid>` (then `kill -9 <pid>` \
+              if it ignores SIGTERM); Windows: `taskkill /PID <pid>` (add `/F` \
+              to force). Re-run `neoth doctor` to confirm it cleared. Raise \
+              the idle-CPU floor in code if a legitimate low-CPU long-runner \
+              keeps tripping the check.",
+    },
+    CheckDoc {
+        name: "wasm plugins",
+        purpose: "NOOB-UX-3 effective state of the WASM plugin host. \
+                  Reports one of three states: `compiled-in + enabled` \
+                  (release feature on, freedom.yaml says enabled), \
+                  `compiled-in but disabled by config` (operator flipped \
+                  `freedom.yaml::plugins.wasm.enabled: false`), or \
+                  `not compiled in` (slim daemon build without the \
+                  `wasm-plugin-host` cargo feature). Surfaces the gap \
+                  between build-time + runtime gates so an operator \
+                  who set `enabled: true` but runs a slim build sees \
+                  the mismatch immediately.",
+        common_failures: "Operator expects plugins to work on a slim \
+                         build (cargo feature not compiled in); \
+                         operator's freedom.yaml has `enabled: false` \
+                         but the wizard step7b explanation isn't fresh \
+                         in memory.",
+        fix: "Slim build → rebuild with `--features wasm-plugin-host` \
+              or install the release tarball (cargo-dist flips the \
+              feature ON). Disabled-by-config → edit \
+              `~/.neoth/freedom.yaml` and flip \
+              `plugins:\\n  wasm:\\n    enabled: true`, then \
+              restart the daemon.",
+    },
+];
