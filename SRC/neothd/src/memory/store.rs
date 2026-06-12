@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 12;
+pub const SCHEMA_VERSION: i64 = 13;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -163,6 +163,18 @@ pub fn set_episode_pinned(
     )
 }
 
+/// JV-MEM-05 — bump a hot-tier episode's recall `access_count` by one. Called
+/// best-effort on every hot recall hit; the retrieval ranker uses the count to
+/// stretch the memory's recency half-life ([`crate::memory::tiers::effective_half_life_days`]),
+/// so a frequently-recalled memory decays slower. Returns the rows affected
+/// (0 when `event_id` is not a live hot-tier row).
+pub fn increment_episode_access(conn: &Connection, event_id: i64) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE idx_episode SET access_count = access_count + 1 WHERE event_id = ?1",
+        rusqlite::params![event_id],
+    )
+}
+
 /// RECALL-METER-01 — record one recall-latency sample, pruning to the most
 /// recent ~5000 rows so the table stays bounded. Returns the rusqlite error so
 /// the (one-shot recall) caller can log-and-ignore: metering must NEVER fail
@@ -240,7 +252,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             -- pass skips the importance decay of pinned episodes, so a
             -- critical-but-rarely-accessed memory can never fall below
             -- FORGET_FLOOR and be forgotten. Default 0 (not pinned).
-            pinned         INTEGER NOT NULL DEFAULT 0
+            pinned         INTEGER NOT NULL DEFAULT 0,
+            -- JV-MEM-05: access_count — number of recall hits while in the hot
+            -- tier. Recall increments it; the retrieval ranker stretches a
+            -- frequently-accessed memory's recency half-life so it decays
+            -- slower (tiers::effective_half_life_days). Default 0.
+            access_count   INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_episode_ts          ON idx_episode (ts_ns DESC);

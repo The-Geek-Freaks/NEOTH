@@ -102,6 +102,13 @@ pub const MIGRATIONS: &[Migration] = &[
                       critical memories skip the consolidation decay pass",
         run: migration_v11_to_v12,
     },
+    Migration {
+        from: 12,
+        to: 13,
+        description: "JV-MEM-05: add idx_episode.access_count — recall-frequency \
+                      half-life extension (frequently-accessed memories decay slower)",
+        run: migration_v12_to_v13,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -110,6 +117,18 @@ pub const MIGRATIONS: &[Migration] = &[
 fn migration_v11_to_v12(conn: &Connection) -> Result<()> {
     let _ = conn.execute(
         "ALTER TABLE idx_episode ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    Ok(())
+}
+
+/// v12 → v13: add the `access_count` recall-frequency column to `idx_episode`
+/// (GOLD-ADAPT-JV-MEM-05). Mirrors the canonical column in
+/// `store::apply_schema`. Idempotent — re-running against a partially-migrated
+/// db ignores the duplicate column.
+fn migration_v12_to_v13(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_episode ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
         [],
     );
     Ok(())

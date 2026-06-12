@@ -323,6 +323,7 @@ mod tests {
             operator_id: None,
             tier: "hot".into(),
             importance: None,
+            access_count: 0,
         }
     }
 

@@ -241,6 +241,18 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                         "reinforce failed",
                     ),
                 }
+                // JV-MEM-05: bump recall frequency for hot rows so the ranker
+                // can stretch their half-life. Hot tier only — the column lives
+                // on idx_episode. Best-effort; never fails the recall.
+                if matches!(tier, tiers::Tier::Hot) {
+                    if let Err(e) = store::increment_episode_access(&conn, h.event_id) {
+                        tracing::debug!(
+                            event_id = h.event_id,
+                            error = %e,
+                            "access_count bump failed",
+                        );
+                    }
+                }
             }
 
             Ok((rows, reinforcements))
@@ -327,7 +339,10 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
     let importance = h.importance.unwrap_or(0.5);
     let age_ns = now_ns.saturating_sub(h.ts_ns.max(0) as u64) as f64;
     let days_since = (age_ns / ns_per_day).max(0.0);
-    let base = tiers::ranking_score(importance, tier, days_since);
+    // JV-MEM-05: stretch the recency half-life for frequently-accessed (hot)
+    // memories so they decay slower. Warm/cold/groundtruth carry access_count 0
+    // (no per-row count) → identical to the access-naive ranking.
+    let base = tiers::ranking_score_with_access(importance, tier, days_since, h.access_count);
     // JV-MEM-07: length normalization — a gentle logarithmic penalty on verbose
     // entries so they don't win on raw keyword density. Entries at/below the
     // 300-char anchor are unpenalised (ratio clamped to 1 → log2(1)=0 → factor
@@ -345,7 +360,7 @@ fn composite_score(h: &EpisodeHit, now_ns: u64, ns_per_day: f64) -> f64 {
 fn recall_fts(conn: &Connection, query: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
     let mut stmt = conn.prepare(
         "SELECT e.event_id, e.event_type, e.ts_ns, e.text, e.text_hash, \
-                e.channel, e.sender_id, e.operator_id, e.importance \
+                e.channel, e.sender_id, e.operator_id, e.importance, e.access_count \
          FROM idx_episode e \
          JOIN idx_episode_fts f ON f.rowid = e.event_id \
          WHERE idx_episode_fts MATCH ?1 \
@@ -446,7 +461,7 @@ fn recall_episodes_best_effort(db_path: &Path, topic: &str, limit: usize) -> Vec
 fn recall_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<EpisodeHit>> {
     let pattern = format!("%{query}%");
     let mut stmt = conn.prepare(
-        "SELECT event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance \
+        "SELECT event_id, event_type, ts_ns, text, text_hash, channel, sender_id, operator_id, importance, access_count \
          FROM idx_episode \
          WHERE text LIKE ?1 COLLATE NOCASE \
          ORDER BY ts_ns DESC \
@@ -485,6 +500,7 @@ fn recall_warm_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
                 operator_id: None,
                 tier: "warm".to_string(),
                 importance: Some(r.get::<_, f64>(4)?),
+                access_count: 0,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -514,6 +530,7 @@ fn recall_cold_like(conn: &Connection, query: &str, limit: usize) -> Result<Vec<
                 operator_id: None,
                 tier: "cold".to_string(),
                 importance: Some(r.get::<_, f64>(4)?),
+                access_count: 0,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -560,6 +577,7 @@ fn recall_groundtruth_like(
                 // these rows (they always rank first by tier prepending,
                 // not by composite score).
                 importance: None,
+                access_count: 0,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -578,6 +596,7 @@ fn hot_row_mapper(r: &rusqlite::Row<'_>) -> rusqlite::Result<EpisodeHit> {
         operator_id: r.get(7)?,
         tier: "hot".to_string(),
         importance: Some(r.get::<_, f64>(8)?),
+        access_count: r.get::<_, i64>(9)? as u32,
     })
 }
 
@@ -1139,6 +1158,7 @@ mod tests {
             operator_id: None,
             tier: tier.to_string(),
             importance: Some(imp),
+            access_count: 0,
         };
         let mut rows = vec![
             mk("hot", 0.50, now_ns as i64),
@@ -1173,6 +1193,7 @@ mod tests {
             operator_id: None,
             tier: "hot".to_string(),
             importance: Some(0.8),
+            access_count: 0,
         };
         let mut rows = vec![
             mk(1, "x".repeat(1200)),       // verbose → length-penalised

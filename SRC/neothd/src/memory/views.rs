@@ -24,6 +24,11 @@ pub struct EpisodeHit {
     /// has it, but pre-tier hot-tier hits did not record it.
     #[serde(default)]
     pub importance: Option<f64>,
+    /// JV-MEM-05: recall `access_count` for hot-tier rows. The ranker stretches
+    /// a frequently-accessed memory's recency half-life so it decays slower.
+    /// 0 for warm/cold/groundtruth rows (no per-row count) and old payloads.
+    #[serde(default)]
+    pub access_count: u32,
 }
 
 fn default_hot_tier() -> String {

@@ -146,7 +146,50 @@ pub fn hebbian_decay_value(old: f64, tier: Tier) -> f64 {
 /// monotonic non-increasing in `days_since_access` (recency ∈ (0, 1]) — no
 /// `.max(0)` clamp needed; it decays smoothly toward, but never below, 0.
 pub fn ranking_score(importance: f64, tier: Tier, days_since_access: f64) -> f64 {
-    let t = (days_since_access / tier.recency_half_life_days()).max(0.0);
+    ranking_score_with_access(importance, tier, days_since_access, 0)
+}
+
+/// JV-MEM-05 access-frequency half-life extension. Frequently- (and recently-)
+/// accessed memories should decay SLOWER, so their recency half-life is
+/// stretched: `effectiveHL = base · (1 + factor · ln(1 + access·freshness))`,
+/// capped at `MAX_HALF_LIFE_MULTIPLIER×` the base. `freshness` is a 30-day
+/// access-freshness factor `exp(-days_since/30)` so the extension fades for
+/// stale rows (an old-but-once-hot memory gets less boost than a fresh hot
+/// one). `access_count == 0` ⇒ multiplier 1 ⇒ returns the base unchanged, so
+/// the access-naive [`ranking_score`] is exactly the `access_count = 0` case.
+pub fn effective_half_life_days(
+    base_half_life_days: f64,
+    access_count: u32,
+    days_since_access: f64,
+) -> f64 {
+    /// Recent accesses count more than old ones — 30-day access-freshness decay.
+    const ACCESS_FRESHNESS_DAYS: f64 = 30.0;
+    /// How aggressively access frequency stretches the half-life.
+    const EXTENSION_FACTOR: f64 = 0.5;
+    /// Hard cap so a hammered memory can extend its half-life at most this many ×.
+    const MAX_HALF_LIFE_MULTIPLIER: f64 = 3.0;
+    let freshness = (-days_since_access.max(0.0) / ACCESS_FRESHNESS_DAYS).exp();
+    let weighted = access_count as f64 * freshness;
+    let mult = (1.0 + EXTENSION_FACTOR * (1.0 + weighted).ln()).min(MAX_HALF_LIFE_MULTIPLIER);
+    base_half_life_days * mult
+}
+
+/// As [`ranking_score`], but a frequently-accessed memory gets a stretched
+/// recency half-life (GOLD-ADAPT-JV-MEM-05) via [`effective_half_life_days`] —
+/// so a hot row recalled many times decays slower and keeps ranking. The ≥ 0 /
+/// finite / monotonic-non-increasing-in-days invariants are preserved: a longer
+/// half-life only ever raises the recency factor toward (never above) 1, and as
+/// `days_since_access` grows the freshness term shrinks the half-life back
+/// toward the base, so recency still decays monotonically.
+pub fn ranking_score_with_access(
+    importance: f64,
+    tier: Tier,
+    days_since_access: f64,
+    access_count: u32,
+) -> f64 {
+    let half_life =
+        effective_half_life_days(tier.recency_half_life_days(), access_count, days_since_access);
+    let t = (days_since_access / half_life).max(0.0);
     let recency = (-std::f64::consts::LN_2 * t.powf(tier.decay_beta())).exp();
     importance * tier.weight() * recency
 }
@@ -322,6 +365,86 @@ mod tests {
         // A very old cold event asymptotes toward — but never reaches — zero.
         let nearly_zero = ranking_score(0.05, Tier::Cold, 1000.0);
         assert!(nearly_zero > 0.0 && nearly_zero < 0.01, "got {nearly_zero}");
+    }
+
+    #[test]
+    fn effective_half_life_extends_with_access() {
+        // GOLD-ADAPT-JV-MEM-05. access_count 0 ⇒ no extension (base returned).
+        let base = Tier::Hot.recency_half_life_days();
+        assert!((effective_half_life_days(base, 0, 0.0) - base).abs() < 1e-9);
+        // A fresh, frequently-accessed memory gets a longer half-life (decays
+        // slower), rising monotonically with access count …
+        let once = effective_half_life_days(base, 1, 0.0);
+        let many = effective_half_life_days(base, 50, 0.0);
+        assert!(once > base, "one access already extends: {once} vs {base}");
+        assert!(many > once, "more accesses extend further: {many} vs {once}");
+        // … but capped at 3× the base no matter how hammered.
+        let hammered = effective_half_life_days(base, 100_000, 0.0);
+        assert!(hammered <= base * 3.0 + 1e-9, "capped at 3×: {hammered}");
+        // Freshness fades the extension: the same access count on a stale row
+        // (long days_since) extends less than on a fresh one, but never shrinks
+        // the half-life below the base.
+        let fresh = effective_half_life_days(base, 20, 0.0);
+        let stale = effective_half_life_days(base, 20, 365.0);
+        assert!(stale < fresh, "stale extension < fresh: {stale} vs {fresh}");
+        assert!(stale >= base - 1e-9, "never shrinks below base: {stale}");
+    }
+
+    #[test]
+    fn ranking_score_with_access_zero_equals_naive() {
+        // The access-naive ranking_score is exactly the access_count = 0 case,
+        // so every existing caller keeps identical behaviour.
+        const DAYS: &[f64] = &[0.0, 1.0, 7.0, 30.0, 100.0, 365.0];
+        for &imp in IMPORTANCE_GRID {
+            for &tier in TIER_GRID {
+                for &d in DAYS {
+                    let naive = ranking_score(imp, tier, d);
+                    let with0 = ranking_score_with_access(imp, tier, d, 0);
+                    assert!(
+                        (naive - with0).abs() < 1e-12,
+                        "access=0 must equal naive: imp={imp} tier={tier:?} d={d}",
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ranking_score_with_access_boosts_frequently_accessed() {
+        // For the same importance/tier/age (> 0 days), a higher access count
+        // yields a higher score — the frequently-recalled memory decays slower
+        // and keeps ranking. Pick an aged row where the half-life stretch bites.
+        let imp = 0.7;
+        for &tier in TIER_GRID {
+            let seldom = ranking_score_with_access(imp, tier, 60.0, 0);
+            let often = ranking_score_with_access(imp, tier, 60.0, 40);
+            assert!(
+                often > seldom,
+                "frequent access must rank higher: tier={tier:?} often={often} seldom={seldom}",
+            );
+            // Still bounded by importance·weight (recency ≤ 1).
+            assert!(often <= imp * tier.weight() + 1e-12);
+        }
+    }
+
+    #[test]
+    fn ranking_score_with_access_monotonic_in_days() {
+        // The monotonic-in-days invariant survives the access extension: more
+        // days_since never raises the score, even at a high access count, because
+        // freshness shrinks the stretched half-life back toward base as it ages.
+        for &imp in IMPORTANCE_GRID {
+            for &tier in TIER_GRID {
+                let mut prev = f64::INFINITY;
+                for days in 0..200 {
+                    let score = ranking_score_with_access(imp, tier, days as f64, 50);
+                    assert!(
+                        score <= prev + 1e-12,
+                        "must be monotonic non-increasing in days: imp={imp} tier={tier:?} days={days} score={score} prev={prev}",
+                    );
+                    prev = score;
+                }
+            }
+        }
     }
 
     #[test]
