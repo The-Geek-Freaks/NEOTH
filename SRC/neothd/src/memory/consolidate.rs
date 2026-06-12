@@ -87,9 +87,11 @@ pub fn run_consolidation_pass(
     let warm_decay = Tier::Warm.decay_factor();
     let cold_decay = Tier::Cold.decay_factor();
 
+    // NN-MEM-01: `pinned` episodes are decay-immune — skip them so a critical
+    // memory can never decay below FORGET_FLOOR and be forgotten.
     report.hot_decayed = tx
         .execute(
-            "UPDATE idx_episode SET importance = importance * ?1",
+            "UPDATE idx_episode SET importance = importance * ?1 WHERE pinned = 0",
             params![hot_decay],
         )
         .context("decay idx_episode")?;
@@ -319,6 +321,40 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn pinned_episodes_are_decay_immune() {
+        // NN-MEM-01: a pinned hot episode skips the Phase-1 importance decay;
+        // an unpinned one decays by the hot-tier factor. Both are recent
+        // (age 0) so they stay in idx_episode (no hot→warm consolidation).
+        let (_dir, mut conn) = open();
+        let now: i64 = 1_700_000_000_000_000_000;
+        insert_episode(&conn, 1, 0, 0.8, now); // unpinned → decays
+        insert_episode(&conn, 2, 0, 0.8, now); // pinned   → immune
+        assert_eq!(store::set_episode_pinned(&conn, 2, true).unwrap(), 1);
+
+        run_consolidation_pass(&mut conn, now, None).unwrap();
+
+        let importance = |id: i64| -> f64 {
+            conn.query_row(
+                "SELECT importance FROM idx_episode WHERE event_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        let pinned = importance(2);
+        let unpinned = importance(1);
+        assert!(
+            (pinned - 0.8).abs() < 1e-9,
+            "pinned importance must be unchanged, got {pinned}"
+        );
+        assert!(
+            (unpinned - 0.8 * Tier::Hot.decay_factor()).abs() < 1e-9,
+            "unpinned importance must decay by the hot factor, got {unpinned}"
+        );
+        assert!(pinned > unpinned, "the pinned event now outranks the decayed one");
     }
 
     #[test]

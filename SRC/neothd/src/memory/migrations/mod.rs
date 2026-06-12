@@ -95,7 +95,25 @@ pub const MIGRATIONS: &[Migration] = &[
                       rows in flight from consolidated_ts",
         run: migration_v10_to_v11,
     },
+    Migration {
+        from: 11,
+        to: 12,
+        description: "NN-MEM-01: add idx_episode.pinned — decay-immune flag so \
+                      critical memories skip the consolidation decay pass",
+        run: migration_v11_to_v12,
+    },
 ];
+
+/// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
+/// Mirrors the canonical column in `store::apply_schema`. Idempotent —
+/// re-running against a partially-migrated db ignores a duplicate column.
+fn migration_v11_to_v12(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_episode ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    Ok(())
+}
 
 /// v3 → v4: add the two memory-tier views.
 ///

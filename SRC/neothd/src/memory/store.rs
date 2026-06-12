@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 11;
+pub const SCHEMA_VERSION: i64 = 12;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -147,6 +147,22 @@ pub fn open(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
+/// NN-MEM-01 — pin / unpin a hot-tier episode. Pinned episodes are
+/// decay-immune: the daily consolidation pass skips their importance decay
+/// (`memory::consolidate`), so a critical-but-rarely-accessed memory can never
+/// drop below `FORGET_FLOOR` and be forgotten. Returns the rows affected
+/// (0 when `event_id` is unknown).
+pub fn set_episode_pinned(
+    conn: &Connection,
+    event_id: i64,
+    pinned: bool,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE idx_episode SET pinned = ?1 WHERE event_id = ?2",
+        rusqlite::params![pinned as i64, event_id],
+    )
+}
+
 /// RECALL-METER-01 — record one recall-latency sample, pruning to the most
 /// recent ~5000 rows so the table stays bounded. Returns the rusqlite error so
 /// the (one-shot recall) caller can log-and-ignore: metering must NEVER fail
@@ -219,7 +235,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             importance     REAL NOT NULL DEFAULT 0.5,
             -- Last successful recall hit (ns since unix epoch). Updated by
             -- Hebbian reinforce. Used by R-22 recency_penalty term.
-            last_access_ts INTEGER NOT NULL DEFAULT 0
+            last_access_ts INTEGER NOT NULL DEFAULT 0,
+            -- NN-MEM-01: "pinned" decay-immune flag. The daily consolidation
+            -- pass skips the importance decay of pinned episodes, so a
+            -- critical-but-rarely-accessed memory can never fall below
+            -- FORGET_FLOOR and be forgotten. Default 0 (not pinned).
+            pinned         INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_episode_ts          ON idx_episode (ts_ns DESC);
