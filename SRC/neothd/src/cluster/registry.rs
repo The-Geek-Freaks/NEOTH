@@ -38,27 +38,87 @@ fn lock_registry() -> std::sync::MutexGuard<'static, ()> {
     REGISTRY_LOCK.lock().unwrap_or_else(|p| p.into_inner())
 }
 
-/// GR-020 — blocking exclusive OS lock on `<home>/cluster.yaml.lock`.
-/// `std::fs::File::lock` blocks until acquired (flock on Unix,
-/// LockFileEx on Windows — full parity, no libc); dropping the returned
-/// handle releases it. Every cross-process write path takes this BEFORE
-/// the intra-process Mutex so a CLI write can't land between a daemon
-/// task's load and save (silent lost-update).
+/// GR-020 — bounded-blocking exclusive OS lock on
+/// `<home>/cluster.yaml.lock`. Dropping the returned handle releases it.
+/// Every cross-process write path takes this BEFORE the intra-process
+/// Mutex so a CLI write can't land between a daemon task's load and
+/// save (silent lost-update). Built on the same MSRV-1.86-safe
+/// primitives as `daemon/pidfile.rs` (`std::fs::File::lock` needs
+/// 1.89): non-blocking acquire retried every 50ms, failing loudly
+/// after 5s instead of deadlocking on a stuck holder.
 fn lock_registry_file(home: &Path) -> Result<std::fs::File> {
     let lock_path = home.join("cluster.yaml.lock");
     if let Some(parent) = lock_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("create cluster lock dir {}", parent.display()))?;
     }
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(&lock_path)
-        .with_context(|| format!("open cluster lock file {}", lock_path.display()))?;
-    f.lock()
-        .with_context(|| format!("lock {}", lock_path.display()))?;
-    Ok(f)
+    const RETRY_EVERY: std::time::Duration = std::time::Duration::from_millis(50);
+    const GIVE_UP_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(f) = try_lock_registry_file(&lock_path)? {
+            return Ok(f);
+        }
+        if started.elapsed() >= GIVE_UP_AFTER {
+            anyhow::bail!(
+                "cluster registry lock {} held by another process for >5s — \
+                 is a stuck `neoth cluster` invocation or daemon write hanging?",
+                lock_path.display()
+            );
+        }
+        std::thread::sleep(RETRY_EVERY);
+    }
+}
+
+/// One non-blocking exclusive-acquire attempt on the registry lock file.
+/// `Ok(Some(file))` = acquired (drop releases); `Ok(None)` = currently
+/// held elsewhere; `Err` = real I/O failure. Mirrors `pidfile.rs`:
+/// Windows excludes via `share_mode(FILE_SHARE_READ)` at open (a second
+/// write-open hits ERROR_SHARING_VIOLATION), Unix via advisory
+/// `flock(LOCK_EX | LOCK_NB)`.
+fn try_lock_registry_file(lock_path: &Path) -> Result<Option<std::fs::File>> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 0x0000_0001;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .share_mode(FILE_SHARE_READ)
+            .open(lock_path)
+        {
+            Ok(f) => Ok(Some(f)),
+            Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) => Ok(None),
+            Err(e) => Err(e)
+                .with_context(|| format!("open cluster lock file {}", lock_path.display())),
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let f = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)
+            .with_context(|| format!("open cluster lock file {}", lock_path.display()))?;
+        // SAFETY: plain flock syscall on a valid owned fd.
+        let rc = unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if rc == 0 {
+            Ok(Some(f))
+        } else {
+            let e = std::io::Error::last_os_error();
+            if e.kind() == std::io::ErrorKind::WouldBlock {
+                Ok(None)
+            } else {
+                Err(e).with_context(|| format!("flock {}", lock_path.display()))
+            }
+        }
+    }
 }
 
 /// One paired peer — the operator confirmed this device + it's now
@@ -331,29 +391,25 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
-    /// GR-020: the registry file lock must exclude a second handle —
+    /// GR-020: the registry file lock must exclude a second acquirer —
     /// same semantics an independent `neoth cluster confirm` process
-    /// would see (flock/LockFileEx are per open-file-description, so a
-    /// second fd in this process is an equivalent probe, no child
-    /// process needed).
+    /// would see (Windows share-mode + Unix flock both act per
+    /// open-file-description, so a second in-process probe is an
+    /// equivalent stand-in for a foreign process).
     #[test]
-    fn registry_file_lock_excludes_second_handle_until_released() {
+    fn registry_file_lock_excludes_second_acquirer_until_released() {
         let dir = tempdir().unwrap();
+        let lock_path = dir.path().join("cluster.yaml.lock");
         let held = lock_registry_file(dir.path()).unwrap();
-        let second = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(dir.path().join("cluster.yaml.lock"))
-            .unwrap();
-        match second.try_lock() {
-            Err(std::fs::TryLockError::WouldBlock) => {}
-            other => panic!("expected WouldBlock while lock held, got {other:?}"),
+        match try_lock_registry_file(&lock_path) {
+            Ok(None) => {}
+            other => panic!("expected Ok(None) while lock held, got {other:?}"),
         }
         drop(held);
-        second
-            .try_lock()
+        let reacquired = try_lock_registry_file(&lock_path)
+            .expect("probe must not error")
             .expect("lock must be acquirable after release");
+        drop(reacquired);
     }
 
     fn sample_peer(hex_prefix: &str, label: &str) -> PairedPeer {
