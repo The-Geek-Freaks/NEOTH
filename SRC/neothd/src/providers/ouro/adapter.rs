@@ -1027,8 +1027,14 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "current_thread")]
     #[ignore = "requires local Ouro weights; set NEOTH_OURO_TEST_REPO_PATH"]
+    // Holding the std env-lock across complete() is the point (GR-136):
+    // no other env-mutating test may run between set/remove and the
+    // adapter's env read. Single-threaded runtime, test-only lock that
+    // complete() never takes → no deadlock. Same idiom as cli/init.rs,
+    // cli/models.rs, cli/risk_confirm.rs.
+    #[allow(clippy::await_holding_lock)]
     async fn local_ouro_per_loop_decode_matches_full_resequence_on_real_weights() {
         // GOLD-COR-36 real-weight CERT: the per-loop KV-cache O(n) decode
         // (`NEOTH_OURO_KV_CACHE_MODE=per_loop`) must produce the SAME generated
@@ -1051,32 +1057,34 @@ mod tests {
             stop_sequences: Vec::new(),
         };
         // Baseline — full_resequence (default; ensure the var is unset).
-        {
+        // Hold the env lock across the entire complete() call so no
+        // concurrent test can set NEOTH_OURO_KV_CACHE_MODE between the
+        // remove_var and the env read inside the adapter. Requires the
+        // current_thread flavor (above) because the guard is !Send.
+        let baseline = {
             let _env = crate::test_env::lock();
-            // SAFETY: env mutation serialized by the crate-wide test_env lock.
+            // SAFETY: env mutation + read serialized by the crate-wide test_env lock.
             unsafe { std::env::remove_var("NEOTH_OURO_KV_CACHE_MODE") };
-        }
-        let baseline = build_integration_adapter(cache.clone())
-            .complete(mkreq())
-            .await
-            .expect("baseline completion")
-            .text;
-        // per_loop incremental decode.
-        {
+            build_integration_adapter(cache.clone())
+                .complete(mkreq())
+                .await
+                .expect("baseline completion")
+                .text
+        };
+        // per_loop incremental decode — hold the lock through the full call.
+        let per_loop = {
             let _env = crate::test_env::lock();
-            // SAFETY: env mutation serialized by the crate-wide test_env lock.
+            // SAFETY: env mutation + read serialized by the crate-wide test_env lock.
             unsafe { std::env::set_var("NEOTH_OURO_KV_CACHE_MODE", "per_loop") };
-        }
-        let per_loop = build_integration_adapter(cache)
-            .complete(mkreq())
-            .await
-            .expect("per_loop completion")
-            .text;
-        {
-            let _env = crate::test_env::lock();
-            // SAFETY: env mutation serialized by the crate-wide test_env lock.
+            let result = build_integration_adapter(cache)
+                .complete(mkreq())
+                .await
+                .expect("per_loop completion")
+                .text;
+            // SAFETY: guard still held; cleanup before release.
             unsafe { std::env::remove_var("NEOTH_OURO_KV_CACHE_MODE") };
-        }
+            result
+        };
         assert_eq!(
             baseline, per_loop,
             "GOLD-COR-36: per-loop O(n) decode must produce identical text to the \

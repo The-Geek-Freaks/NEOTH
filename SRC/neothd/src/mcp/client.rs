@@ -16,6 +16,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::time::Instant;
 
 use crate::mcp::config::McpServerConfig;
 use crate::mcp::transport::{JsonRpcRequest, JsonRpcResponse, frame, parse_frame};
@@ -210,14 +211,19 @@ impl McpClient {
             .map_err(|e| McpError::Protocol(self.server_id.clone(), e.to_string()))?;
         let framed = frame(&body);
         let timeout = self.request_timeout;
+        // One absolute deadline for the whole request (write + read). A
+        // per-read timeout would reset on every frame, so a server that
+        // dribbles notification frames forever could pin the caller
+        // indefinitely; `timeout_at` bounds the total wall-clock instead.
+        let deadline = Instant::now() + timeout;
 
-        // Write request — bounded by timeout so a stuck server cannot
+        // Write request — bounded by the deadline so a stuck server cannot
         // hold the calling task forever.
-        tokio::time::timeout(timeout, self.stdin.write_all(&framed))
+        tokio::time::timeout_at(deadline, self.stdin.write_all(&framed))
             .await
             .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
             .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
-        tokio::time::timeout(timeout, self.stdin.flush())
+        tokio::time::timeout_at(deadline, self.stdin.flush())
             .await
             .map_err(|_| McpError::Timeout(self.server_id.clone(), timeout))?
             .map_err(|e| McpError::Io(self.server_id.clone(), e.to_string()))?;
@@ -258,7 +264,7 @@ impl McpClient {
                 }
             }
 
-            let read_result = tokio::time::timeout(timeout, self.stdout.read(&mut chunk)).await;
+            let read_result = tokio::time::timeout_at(deadline, self.stdout.read(&mut chunk)).await;
             let n = match read_result {
                 Ok(Ok(0)) => {
                     return Err(McpError::Io(

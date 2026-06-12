@@ -35,23 +35,6 @@ pub fn render_context_bar(used: u32, limit: u32) -> Option<String> {
     ))
 }
 
-/// A heat label for the bar (lets the print site pick a color without the
-/// renderer depending on a terminal-color crate). goose's thresholds: <50 cool,
-/// <85 warm, else hot.
-pub fn usage_heat(used: u32, limit: u32) -> &'static str {
-    if limit == 0 {
-        return "cool";
-    }
-    let pct = (used as f64 / limit as f64) * 100.0;
-    if pct < 50.0 {
-        "cool"
-    } else if pct < 85.0 {
-        "warm"
-    } else {
-        "hot"
-    }
-}
-
 /// Compact token count: `42`, `1k`, `1.3M` (goose's `format_tokens`).
 fn format_tokens(n: u32) -> String {
     if n >= 1_000_000 {
@@ -88,17 +71,6 @@ mod tests {
         assert!(b.contains("100%"), "over-limit clamps to 100%: {b}");
         assert_eq!(b.matches('━').count(), 20);
         assert_eq!(b.matches('╌').count(), 0);
-    }
-
-    #[test]
-    fn heat_thresholds_match_goose() {
-        assert_eq!(usage_heat(10, 100), "cool"); // 10%
-        assert_eq!(usage_heat(49, 100), "cool");
-        assert_eq!(usage_heat(50, 100), "warm");
-        assert_eq!(usage_heat(84, 100), "warm");
-        assert_eq!(usage_heat(85, 100), "hot");
-        assert_eq!(usage_heat(100, 100), "hot");
-        assert_eq!(usage_heat(5, 0), "cool"); // no limit → cool
     }
 
     #[test]

@@ -115,8 +115,9 @@ fn run_apply(args: ApplyArgs) -> Result<()> {
     let _manifest = readers::load_manifest(&args.manifest)?;
     if !args.confirm {
         anyhow::bail!(
-            "refusing to apply without --confirm. Run `neoth-migrate dry-run --manifest \
-             <PATH>` first to inspect what would be migrated, then re-run with --confirm."
+            "Memory import (apply) is not yet available in this release — \
+             `--confirm` is reserved for when apply ships. \
+             Use `neoth-migrate dry-run --manifest <PATH>` to preview your import sources."
         );
     }
     // The apply path (WAL writer + per-reader emitters) is a follow-up
