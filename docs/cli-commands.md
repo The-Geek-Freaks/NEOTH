@@ -56,34 +56,25 @@ Search ArXiv. Query syntax: `all:keyword`, `ti:title`, `au:author`, `cat:cs.CL`,
 
 ## `neoth autonomy`
 
-View or set the operator autonomy level (`strict | standard | elevated | full | custom`) in freedom.yaml. `show` prints the current level; `set <level>` persists a new one without re-running the wizard
+View or set the operator autonomy level (`strict | standard | elevated | full | custom`) in freedom.yaml. `show` prints the current level + the operating mode; `set <level>` persists a raw level; `gated` / `full-auto` are the headline operating-mode switches
+
+### `neoth autonomy full-auto`
+
+FULL-AUTO operating mode: autonomy `full` + the ENTIRE bundled skill library force-enabled (all 98 skills route proactively) + the router confidence floor raised so generic triggers can't false-activate. NEOTH acts without asking. The irreducible security floor still holds (self-replace / patch-apply / dangerous targets stay Confirm; revoked & invalid-signature plugins stay refused; `proactive.enabled`, `trust_all_tools` and unsigned-plugin trust are NOT flipped — each needs its own opt-in). Same effect as `neoth sudomode`
+
+### `neoth autonomy gated`
+
+GATED operating mode (the safe default): autonomy `standard` + the curated skill set. NEOTH asks before shell commands, channel sends, out-of-home writes, and costly calls. Clears `skills.enable_all_bundled`
 
 ### `neoth autonomy set`
 
-Set the autonomy level in freedom.yaml. Persists immediately; takes effect on the next command / daemon config reload
+Set the raw autonomy level in freedom.yaml (advanced / power-user path). Persists immediately; takes effect on the next command / daemon reload. Does NOT change the skill-library breadth — use `gated` / `full-auto` for the headline operating-mode switch
 
 - `<LEVEL>` — One of: `strict` | `standard` | `elevated` | `full` | `custom`
 
 ### `neoth autonomy show`
 
-Print the current autonomy level (read from freedom.yaml)
-
-
-### `neoth autonomy gated`
-
-GATED operating mode (the safe default): sets autonomy `standard` and clears
-`skills.enable_all_bundled`. NEOTH confirms before shell commands, channel
-sends, out-of-home writes, and costly calls. The reverse of `neoth sudomode`.
-
-### `neoth autonomy full-auto`
-
-FULL-AUTO operating mode: sets autonomy `full`, force-enables the entire
-bundled skill library (`skills.enable_all_bundled = true`), and raises the
-skill-router confidence floor. NEOTH acts without asking. The irreducible
-security floor still holds: self-replace / patch-apply / dangerous targets
-stay Confirm, revoked and unsigned plugins stay refused, and `proactive.enabled`,
-`trust_all_tools`, and unsigned-plugin trust are NOT flipped. Same effect as
-`neoth sudomode`.
+Print the current autonomy level + operating mode (read from freedom.yaml)
 
 ## `neoth backup`
 
@@ -180,6 +171,7 @@ One-shot LLM round trip. Loads freedom.yaml, sends prompt, prints reply. Both re
 - `<MESSAGE>` — Message to send. If omitted, NEOTH reads from stdin until EOF
 - `--model <MODEL>` — Override the configured model for this single call
 - `--system <TEXT>` — Inject a one-shot system prompt for this call
+- `--edit <EDIT>` — GOLD-ADOPT-24 — compose the prompt in `$VISUAL`/`$EDITOR` instead of passing it inline. Any inline message/`--message` seeds the editor as prefill. Aborts if the editor is left empty
 - `--config <PATH>` — Override the freedom.yaml path (mostly for tests)
 - `--wal-segment <PATH>` — Override the WAL segment path (mostly for tests)
 - `--temperature <T>` — Sampling temperature for backends that honour it (local_qwen today). Greedy / argmax when ≤ 0.0. Range [0.0, 2.0]. Cloud providers set their own default; the flag is silently ignored when the dispatcher has no path to forward it
@@ -484,6 +476,8 @@ Ctx-mode parity — persistent indexed knowledge with hybrid FTS5 search
 - `--doctor <DOCTOR>` — Run health probe (FTS5, trigram tokenizer, journal_mode)
 - `--purge <PURGE>` — Purge mode. Use with `--label`, `--category`, or `--all`
 - `--all <ALL>` — Purge scope: every source. Mutually exclusive with `--label`/`--category`
+- `--retrieve <KEY>` — GOLD-HR-10 — retrieve a CCR-cached original by its `[0-9a-f]{24}` key (the `<<ccr:KEY>>` marker the compression pipeline left inline). Pulls the byte-exact dropped block back from the persistent store
+- `--savings <SAVINGS>` — GOLD-HR-10 — print cumulative token-compression savings (blocks compressed, bytes before/after, ratio)
 - `--limit <LIMIT>` — Maximum hits returned by `--search`
 
 ## `neoth doctor`
@@ -494,6 +488,7 @@ Run operator health checks (freedom/credentials/db/wal/hmac/quota/...). Exit cod
 - `--quiet <QUIET>` — Suppress per-check output; print only the final summary line + use exit code for CI
 - `--explain <NAME>` — V03-07: print operator-facing documentation for the named check (what it tests, common failures, fix steps) instead of running the full diagnostic suite. Combine with `--output json` for scripted runbook lookups. Pair with `--list-checks` to see what's available
 - `--list-checks <LIST_CHECKS>` — V03-07: print the list of check names recognised by `--explain`. Useful for tab-completion + operator-side runbook generation
+- `--diagnose <DIAGNOSE>` — GOLD-ADOPT-24: after running the checks, feed any WARN/FAIL outcomes to the cheap `inference.utility_provider` for an LLM root-cause + first-fix. NEOTH's 31 structured checks are a richer signal than a raw log dump, so the LLM reasons over them. Best-effort; needs a configured provider
 
 ## `neoth dream`
 
@@ -1640,33 +1635,29 @@ ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader s
 
 ## `neoth recipe`
 
-GOLD-ADOPT-16 — declarative parametrized recipe runner. `run <file|deeplink>
---param k=v` renders a typed-parameter prompt template and runs it through the
-chat pipeline; `list` / `validate` / `share` round out the surface. Author
-recipes from chat with the `/recipe` slash-command.
-
-### `neoth recipe run`
-
-Render a recipe (file path OR `neoth://recipe/…` deeplink) with the given
-`--param key=value` pairs and run it through the chat pipeline.
-
-- `<SOURCE>` — Recipe file path, or a `neoth://recipe/<base64>` deeplink
-- `--param <KEY=VALUE>` — Parameter value. Repeatable
-- `--dry-run` — Render and print the resolved prompt WITHOUT calling the provider
+GOLD-ADOPT-16 — declarative parametrized recipe templates. `recipe run <file|deeplink> --param k=v` renders a typed-parameter prompt template + runs it through the chat pipeline; `list` / `validate` / `share` (base64 `neoth://recipe/…` deeplink) round out the surface
 
 ### `neoth recipe list`
 
-List recipes in `~/.neoth/recipes/` (name + description).
+List recipes in `~/.neoth/recipes/` (name + description)
 
-### `neoth recipe validate`
+### `neoth recipe run`
 
-Parse and structurally validate a recipe file without running it.
+Render a recipe (file path OR `neoth://recipe/…` deeplink) with the given `--param key=value` pairs and run it through the chat pipeline
 
-- `<FILE>` — Recipe file path
+- `<SOURCE>` — Recipe file path, or a `neoth://recipe/<base64>` deeplink
+- `--param <KEY=VALUE>` — Parameter value, `key=value`. Repeatable
+- `--dry-run <DRY_RUN>` — Render + print the resolved prompt WITHOUT calling the provider
 
 ### `neoth recipe share`
 
-Print a shareable `neoth://recipe/<base64>` deeplink for a recipe file.
+Print a shareable `neoth://recipe/<base64>` deeplink for a recipe file
+
+- `<FILE>` — Recipe file path
+
+### `neoth recipe validate`
+
+Parse + structurally validate a recipe file (no run)
 
 - `<FILE>` — Recipe file path
 
@@ -1947,11 +1938,7 @@ Daemon-state snapshot — WAL bytes, tier counts, channels, autonomy. Phase 33c 
 
 ## `neoth sudomode`
 
-Shortcut for `neoth autonomy full-auto` (GOLD-FEAT-01): flips NEOTH into
-FULL-AUTO mode in one word — autonomy `full` plus the entire skill library
-routed proactively. The irreducible security floor still holds (self-replace /
-patch-apply / dangerous targets stay Confirm; revoked and unsigned plugins stay
-refused). Switch back with `neoth autonomy gated`.
+Shortcut for `neoth autonomy full-auto` (GOLD-FEAT-01): flip NEOTH into FULL-AUTO mode in one word — autonomy `full` + the entire skill library routed proactively. The irreducible security floor still holds (self-replace / patch-apply / dangerous targets stay gated; revoked & unsigned plugins stay blocked). Switch back with `neoth autonomy gated`
 
 ## `neoth supervisor`
 
