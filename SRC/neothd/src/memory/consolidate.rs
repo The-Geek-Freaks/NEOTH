@@ -116,11 +116,11 @@ pub fn run_consolidation_pass(
     let seven_days_ago = now_ns - 7 * DAY_NS;
 
     let mut select = tx.prepare(
-        "SELECT event_id, ts_ns, text, text_hash, importance \
+        "SELECT event_id, ts_ns, text, text_hash, importance, access_count \
          FROM idx_episode \
          WHERE ts_ns < ?1",
     )?;
-    let rows: Vec<(i64, i64, String, String, f64)> = select
+    let rows: Vec<(i64, i64, String, String, f64, i64)> = select
         .query_map(params![seven_days_ago], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -128,12 +128,13 @@ pub fn run_consolidation_pass(
                 r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?,
                 r.get::<_, f64>(4)?,
+                r.get::<_, i64>(5)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(select);
 
-    for (event_id, ts_ns, text, text_hash, importance) in rows {
+    for (event_id, ts_ns, text, text_hash, importance, access_count) in rows {
         if importance < FORGET_FLOOR {
             // Below floor → drop without consolidating. Archive MD remains.
             // KF-10: capture the row BEFORE the DELETE for pre-decay export
@@ -158,9 +159,9 @@ pub fn run_consolidation_pass(
         let day = ts_to_day_string(ts_ns);
         tx.execute(
             "INSERT INTO idx_consolidated \
-             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
-             VALUES ('retained', ?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            params![day, event_id, text, text_hash, importance, now_ns],
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts, access_count) \
+             VALUES ('retained', ?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)",
+            params![day, event_id, text, text_hash, importance, now_ns, access_count],
         )?;
         tx.execute(
             "DELETE FROM idx_episode WHERE event_id = ?1",
@@ -177,11 +178,11 @@ pub fn run_consolidation_pass(
     let ninety_days_ago_day = ts_to_day_string(ninety_days_ago);
 
     let mut select_warm = tx.prepare(
-        "SELECT id, event_id, text, text_hash, importance \
+        "SELECT id, event_id, text, text_hash, importance, access_count \
          FROM idx_consolidated \
          WHERE day < ?1",
     )?;
-    let warm_rows: Vec<(i64, Option<i64>, String, String, f64)> = select_warm
+    let warm_rows: Vec<(i64, Option<i64>, String, String, f64, i64)> = select_warm
         .query_map(params![ninety_days_ago_day], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
@@ -189,12 +190,13 @@ pub fn run_consolidation_pass(
                 r.get::<_, String>(2)?,
                 r.get::<_, String>(3)?,
                 r.get::<_, f64>(4)?,
+                r.get::<_, i64>(5)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     drop(select_warm);
 
-    for (row_id, maybe_event_id, text, text_hash, importance) in warm_rows {
+    for (row_id, maybe_event_id, text, text_hash, importance, access_count) in warm_rows {
         if importance >= PROMOTION_THRESHOLD {
             // Promote to long-term. Use the original event_id if we have one,
             // otherwise synthesise from the warm row id (offset to avoid
@@ -202,9 +204,9 @@ pub fn run_consolidation_pass(
             let event_id = maybe_event_id.unwrap_or(-row_id - 1);
             tx.execute(
                 "INSERT OR REPLACE INTO idx_longterm \
-                 (event_id, text, text_hash, importance, promoted_ts, last_access_ts, archive_path) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, NULL)",
-                params![event_id, text, text_hash, importance, now_ns],
+                 (event_id, text, text_hash, importance, promoted_ts, last_access_ts, archive_path, access_count) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5, NULL, ?6)",
+                params![event_id, text, text_hash, importance, now_ns, access_count],
             )?;
             report.promoted += 1;
         } else {
@@ -321,6 +323,52 @@ mod tests {
         )
         .unwrap();
         conn.last_insert_rowid()
+    }
+
+    #[test]
+    fn access_count_carries_through_hot_warm_cold_consolidation() {
+        // JV-MEM-09: a frequently-recalled row must keep its access_count as it
+        // ages out of the hot tier, so it can re-promote in ranking later.
+        let (_dir, mut conn) = open();
+        let now_ns: i64 = 400 * DAY_NS;
+        // A hot row, 10 days old (→ warm), well above FORGET_FLOOR, recalled 7×.
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts, access_count) \
+             VALUES (42, 1, ?1, 'hot', 'h', 0.9, ?1, 7)",
+            params![now_ns - 10 * DAY_NS],
+        )
+        .unwrap();
+
+        run_consolidation_pass(&mut conn, now_ns, None).unwrap();
+
+        // hot → warm carried the count.
+        let warm: i64 = conn
+            .query_row(
+                "SELECT access_count FROM idx_consolidated WHERE event_id = 42",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(warm, 7, "access_count must survive hot→warm consolidation");
+
+        // Age the warm row past 90 days + restore importance above the promotion
+        // threshold so the next pass promotes it to cold.
+        conn.execute(
+            "UPDATE idx_consolidated SET day = ?1, importance = 0.9 WHERE event_id = 42",
+            params![ts_to_day_string(now_ns - 120 * DAY_NS)],
+        )
+        .unwrap();
+        run_consolidation_pass(&mut conn, now_ns, None).unwrap();
+
+        let cold: i64 = conn
+            .query_row(
+                "SELECT access_count FROM idx_longterm WHERE event_id = 42",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cold, 7, "access_count must survive warm→cold promotion");
     }
 
     #[test]

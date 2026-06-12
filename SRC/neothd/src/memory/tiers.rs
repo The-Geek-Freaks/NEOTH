@@ -120,6 +120,42 @@ pub fn tier_for(now_ns: u64, event_ts_ns: u64) -> Tier {
     }
 }
 
+/// JV-MEM-09 — the EFFECTIVE *ranking* tier for a row, which can be HIGHER than
+/// its age-derived [`tier_for`] tier when the row is frequently recalled and
+/// still relevant. A hot-accessed cold row re-promotes so it ranks/decays like a
+/// fresher memory — WITHOUT physically moving between the age-partitioned tables
+/// (consolidation still owns physical placement); only the ranking tier is
+/// lifted. Mirrors the lancedb tier-manager Peripheral→Working→Core ladder onto
+/// Cold→Warm→Hot, using the post-Hebbian `importance` as the relevance signal:
+///   - **demote** one step when `importance < 0.15` (a collapsed-relevance row
+///     ranks below its age tier even if it was once frequently accessed)
+///   - **→ Hot** ("Core") when `access_count ≥ 10` AND `importance ≥ 0.8`
+///   - **→ Warm** ("Working", from Cold only) when `access_count ≥ 3` AND
+///     `importance ≥ 0.4` (Warm/Hot already sit at/above the Working tier)
+///   - otherwise the age tier is unchanged.
+///
+/// `access_count == 0` ⇒ no promotion, so a never-recalled row always ranks at
+/// its age tier (or one below when its importance has collapsed).
+pub fn tier_for_by_access(age_tier: Tier, access_count: u32, importance: f64) -> Tier {
+    // Relevance collapse demotes one step, overriding any access count.
+    if importance < 0.15 {
+        return match age_tier {
+            Tier::Hot => Tier::Warm,
+            Tier::Warm | Tier::Cold => Tier::Cold,
+        };
+    }
+    // Core promotion: heavily recalled + high importance ⇒ rank as Hot.
+    if access_count >= 10 && importance >= 0.8 {
+        return Tier::Hot;
+    }
+    // Working promotion: a moderately-recalled, still-relevant cold row lifts to
+    // Warm. Warm/Hot are already at/above Working, so the gate only touches Cold.
+    if age_tier == Tier::Cold && access_count >= 3 && importance >= 0.4 {
+        return Tier::Warm;
+    }
+    age_tier
+}
+
 /// Hebbian reinforce: `new = old + k·(1 − old)`, clamped to [0, 1].
 ///
 /// `k` comes from `tier.reinforce_coefficient()`. The formula gives diminishing
@@ -187,11 +223,36 @@ pub fn ranking_score_with_access(
     days_since_access: f64,
     access_count: u32,
 ) -> f64 {
+    importance * tier.weight() * recency_factor(tier, days_since_access, access_count)
+}
+
+/// The Weibull recency factor ∈ (0, 1] for `tier` at `days_since_access`, with
+/// the JV-MEM-05 access-frequency half-life extension folded in. Factored out of
+/// [`ranking_score_with_access`] so JV-MEM-09 can combine a PROMOTED tier's
+/// weight with the row's true AGE-tier recency curve.
+pub fn recency_factor(tier: Tier, days_since_access: f64, access_count: u32) -> f64 {
     let half_life =
         effective_half_life_days(tier.recency_half_life_days(), access_count, days_since_access);
     let t = (days_since_access / half_life).max(0.0);
-    let recency = (-std::f64::consts::LN_2 * t.powf(tier.decay_beta())).exp();
-    importance * tier.weight() * recency
+    (-std::f64::consts::LN_2 * t.powf(tier.decay_beta())).exp()
+}
+
+/// JV-MEM-09 retrieval score: the WEIGHT comes from the (possibly access-
+/// promoted) `rank_tier` while RECENCY comes from the row's true `age_tier`.
+/// Keeping recency on the age tier is essential — an old row promoted to Hot
+/// must NOT inherit Hot's short half-life (that would paradoxically PUNISH it
+/// for being old); it keeps its age tier's graceful curve and only gains the
+/// higher weight of a frequently-recalled memory. When `rank_tier == age_tier`
+/// (the no-promotion case, e.g. `access_count == 0`) this is identical to
+/// [`ranking_score_with_access`].
+pub fn ranking_score_repromoted(
+    importance: f64,
+    age_tier: Tier,
+    rank_tier: Tier,
+    days_since_access: f64,
+    access_count: u32,
+) -> f64 {
+    importance * rank_tier.weight() * recency_factor(age_tier, days_since_access, access_count)
 }
 
 /// Result of one recall-hit reinforce. Both fields clamped to [0, 1].
@@ -320,6 +381,32 @@ mod tests {
         assert_eq!(tier_for(now, now - 3 * DAY_NS), Tier::Hot);
         assert_eq!(tier_for(now, now - 30 * DAY_NS), Tier::Warm);
         assert_eq!(tier_for(now, now - 200 * DAY_NS), Tier::Cold);
+    }
+
+    #[test]
+    fn tier_for_by_access_promotes_and_demotes() {
+        use Tier::*;
+        // No/low access ⇒ unchanged age tier.
+        assert_eq!(tier_for_by_access(Cold, 0, 0.5), Cold);
+        assert_eq!(tier_for_by_access(Warm, 2, 0.5), Warm);
+        // Working promotion: a moderately-recalled, relevant cold row ⇒ Warm.
+        assert_eq!(tier_for_by_access(Cold, 3, 0.4), Warm);
+        // Warm/Hot already at/above Working ⇒ the Working gate leaves them.
+        assert_eq!(tier_for_by_access(Warm, 5, 0.5), Warm);
+        // Core promotion: heavily-recalled high-importance row ranks Hot from ANY
+        // age tier (the "hot-accessed 90d row re-promotes" headline case).
+        assert_eq!(tier_for_by_access(Cold, 10, 0.8), Hot);
+        assert_eq!(tier_for_by_access(Warm, 15, 0.9), Hot);
+        // Below the Core importance gate but above Working ⇒ only the Working lift.
+        assert_eq!(tier_for_by_access(Cold, 10, 0.79), Warm);
+        // Below both gates ⇒ unchanged.
+        assert_eq!(tier_for_by_access(Cold, 10, 0.3), Cold); // importance < 0.4
+        assert_eq!(tier_for_by_access(Cold, 2, 0.9), Cold); // access < 3
+        // Demote: collapsed relevance (importance < 0.15) ranks one step below the
+        // age tier, overriding any access count; Cold is the floor.
+        assert_eq!(tier_for_by_access(Hot, 50, 0.1), Warm);
+        assert_eq!(tier_for_by_access(Warm, 0, 0.1), Cold);
+        assert_eq!(tier_for_by_access(Cold, 0, 0.1), Cold);
     }
 
     #[test]

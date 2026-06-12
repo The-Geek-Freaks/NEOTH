@@ -109,6 +109,14 @@ pub const MIGRATIONS: &[Migration] = &[
                       half-life extension (frequently-accessed memories decay slower)",
         run: migration_v12_to_v13,
     },
+    Migration {
+        from: 13,
+        to: 14,
+        description: "JV-MEM-09: add access_count to idx_consolidated + idx_longterm \
+                      so recall frequency survives hot→warm→cold consolidation \
+                      and an aged frequently-recalled row can re-promote in ranking",
+        run: migration_v13_to_v14,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -129,6 +137,23 @@ fn migration_v11_to_v12(conn: &Connection) -> Result<()> {
 fn migration_v12_to_v13(conn: &Connection) -> Result<()> {
     let _ = conn.execute(
         "ALTER TABLE idx_episode ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    Ok(())
+}
+
+/// v13 → v14: carry the recall-frequency `access_count` into the warm + cold
+/// tiers (GOLD-ADAPT-JV-MEM-09) so a frequently-recalled memory keeps its count
+/// through consolidation and can re-promote in ranking after ageing out of hot.
+/// Mirrors the canonical columns in `store::apply_schema`. Idempotent — a
+/// duplicate column on a partially-migrated db is ignored.
+fn migration_v13_to_v14(conn: &Connection) -> Result<()> {
+    let _ = conn.execute(
+        "ALTER TABLE idx_consolidated ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE idx_longterm ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
         [],
     );
     Ok(())

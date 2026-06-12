@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 13;
+pub const SCHEMA_VERSION: i64 = 14;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -163,16 +163,31 @@ pub fn set_episode_pinned(
     )
 }
 
-/// JV-MEM-05 — bump a hot-tier episode's recall `access_count` by one. Called
-/// best-effort on every hot recall hit; the retrieval ranker uses the count to
-/// stretch the memory's recency half-life ([`crate::memory::tiers::effective_half_life_days`]),
-/// so a frequently-recalled memory decays slower. Returns the rows affected
-/// (0 when `event_id` is not a live hot-tier row).
-pub fn increment_episode_access(conn: &Connection, event_id: i64) -> rusqlite::Result<usize> {
-    conn.execute(
-        "UPDATE idx_episode SET access_count = access_count + 1 WHERE event_id = ?1",
-        rusqlite::params![event_id],
-    )
+/// JV-MEM-05 / JV-MEM-09 — bump a row's recall `access_count` by one in the
+/// backing table for its tier (`idx_episode` hot / `idx_consolidated` warm /
+/// `idx_longterm` cold). Called best-effort on every recall hit; the retrieval
+/// ranker uses the count both to stretch the recency half-life
+/// ([`crate::memory::tiers::effective_half_life_days`], JV-MEM-05) and to
+/// re-promote a frequently-recalled aged row's ranking tier
+/// ([`crate::memory::tiers::tier_for_by_access`], JV-MEM-09). Warm lookup uses
+/// `COALESCE(event_id, -id)` to match both retained + synthesised summary rows
+/// (mirrors [`crate::memory::tiers::hebbian_reinforce_at_tier`]). Returns the
+/// rows affected (0 when the id is not a live row in that tier).
+pub fn increment_access_at_tier(
+    conn: &Connection,
+    tier: crate::memory::tiers::Tier,
+    event_id: i64,
+) -> rusqlite::Result<usize> {
+    use crate::memory::tiers::Tier;
+    let sql = match tier {
+        Tier::Hot => "UPDATE idx_episode SET access_count = access_count + 1 WHERE event_id = ?1",
+        Tier::Warm => {
+            "UPDATE idx_consolidated SET access_count = access_count + 1 \
+             WHERE COALESCE(event_id, -id) = ?1"
+        }
+        Tier::Cold => "UPDATE idx_longterm SET access_count = access_count + 1 WHERE event_id = ?1",
+    };
+    conn.execute(sql, rusqlite::params![event_id])
 }
 
 /// RECALL-METER-01 — record one recall-latency sample, pruning to the most
@@ -401,7 +416,12 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             text_hash     TEXT NOT NULL,
             importance    REAL NOT NULL,
             consolidated_ts INTEGER NOT NULL,
-            last_access_ts  INTEGER NOT NULL
+            last_access_ts  INTEGER NOT NULL,
+            -- JV-MEM-09: access_count carried from idx_episode at hot→warm
+            -- consolidation so a frequently-recalled memory keeps its recall
+            -- frequency after it ages out of the hot tier and can re-promote in
+            -- ranking (tiers::tier_for_by_access). Default 0.
+            access_count    INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_consolidated_day        ON idx_consolidated (day DESC);
@@ -421,7 +441,10 @@ fn apply_schema(conn: &Connection) -> Result<()> {
             importance      REAL NOT NULL,
             promoted_ts     INTEGER NOT NULL,
             last_access_ts  INTEGER NOT NULL,
-            archive_path    TEXT                        -- pointer back to MD file
+            archive_path    TEXT,                       -- pointer back to MD file
+            -- JV-MEM-09: access_count carried from idx_consolidated at warm→cold
+            -- promotion (see idx_consolidated.access_count). Default 0.
+            access_count    INTEGER NOT NULL DEFAULT 0
         );
 
         CREATE INDEX IF NOT EXISTS idx_longterm_importance ON idx_longterm (importance DESC);
