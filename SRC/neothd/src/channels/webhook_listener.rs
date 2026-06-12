@@ -409,13 +409,21 @@ async fn handle_request(
     }
 }
 
-/// GOLD-COR-08 / A-12: upper bound on concurrently-running webhook pipeline
+/// GOLD-COR-08 / A-12: upper bound on concurrently-EXECUTING webhook pipeline
 /// dispatches. Now that `handle_meta` ACKs Meta with 200 BEFORE running the LLM
 /// pipeline (so a slow turn can't trip Meta's retry → duplicate processing),
 /// the dispatch runs in a detached task and no longer holds the connection
-/// semaphore permit. This gate restores the "no unbounded `tokio::spawn`"
-/// invariant the R2 reviewer added: a fan-out storm queues on this gate instead
-/// of spawning thousands of simultaneous provider calls. Generous default — far
+/// semaphore permit.
+///
+/// GR-012 — accuracy: this gate bounds how many dispatches RUN at once
+/// (`acquire().await` is inside the spawned task), NOT how many tasks are
+/// spawned. Under a fan-out storm, tasks are still spawned and queue on the
+/// permit; each is lightweight (a future awaiting a permit) and Meta
+/// rate-limits inbound, so the spawned-but-waiting set stays small in practice.
+/// Acquiring BEFORE the spawn (to bound the spawn COUNT) is deliberately NOT
+/// done: the 200 is already returned below regardless, so dropping an
+/// over-the-cap webhook would silently LOSE it (Meta does not redeliver an
+/// ACKed message). Queue-on-gate is the lesser evil. Generous default — far
 /// above any real inbound rate, well below resource exhaustion. (Graceful
 /// shutdown-drain of these detached tasks is tracked by GOLD-COR-34.)
 const DISPATCH_CONCURRENCY: usize = 64;
