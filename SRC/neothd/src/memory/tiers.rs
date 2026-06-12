@@ -8,6 +8,12 @@
 //!     `PROMOTION_THRESHOLD` at the 90-day boundary). Everything else is
 //!     dropped from views but preserved in the immutable archive.
 //!
+//! `idx_groundtruth` (operator-asserted immutable facts) and the profile
+//! store are separate, orthogonal stores — they do not age-decay and are
+//! not represented by [`Tier`]. Together the five named stores are:
+//! episode (hot), consolidated (warm), longterm (cold), ground-truth,
+//! and profile.
+//!
 //! Decay schedule (math-validated by Round-3 research agent, 2026-05-14):
 //!
 //! | tier | decay/day | reinforce |

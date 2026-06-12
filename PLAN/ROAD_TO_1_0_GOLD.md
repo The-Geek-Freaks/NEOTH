@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 89 | 120 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 85 | 124 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | ~128 | ~128 | 0 |
 
@@ -728,6 +728,10 @@ https://github.com/loadingalias/rscrypto
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-051** (MEDIUM) ✅ FIXED — KEINE `$ARGUMENTS`-Substitution existierte in der Pipeline, obwohl 54 bundled Skill-YAMLs (alle pm-*) den Slot nutzen — das Model sah das literale Token statt des Operator-Prompts. Jetzt: Expansion-Pass in `build_enriched_request` (nur Layer 5/skill_system_prompt; re-filter gegen leere Layer bei leerem Prompt). 3 neue Tests (substituted / pass-through / template-only-empty). `pipeline/enriched_request.rs`.
+- [x] **DD-04** (INFO) ✅ FIXED — `docs/cli-commands.md` fehlten `neoth autonomy gated`/`full-auto` (Subcommands seit GOLD-FEAT-01), die komplette `## neoth recipe` Sektion (run/list/validate/share, GOLD-ADOPT-16) und `## neoth sudomode`. Alle ergänzt, alphabetisch einsortiert, Flags gegen `cli/recipe.rs`+`cli/autonomy.rs` verifiziert (Security-Floor-Wortlaut = autonomy.rs:76).
+- [x] **DD-13** (INFO) ✅ FIXED — Tier-Zählung divergierte: tiers.rs=3 (Hot/Warm/Cold), operator-journey=4 Namen, README=5. Ground truth: 3 age-decay-Tiers + 2 orthogonale Stores (ground-truth, profile) = 5 named stores. tiers.rs-Moduldoc + operator-journey:81 jetzt konsistent auf README-Level mit klärendem Zusatz.
+- [x] **DD-17** (INFO) ✅ FIXED — recipe/sudomode/full-auto Surface fehlte komplett in `docs/operator-journey.md` §4 Power-user (0 grep-Treffer im docs/-Tree). 2 Bullets ergänzt (Recipes-Workflow + Full-auto/Gated-Mode inkl. Security-Floor-Hinweis). Superset-Anteil von DD-04 in derselben Batch.
 - [x] **GR-036** (MEDIUM) ✅ FIXED — `name_session_best_effort` machte einen echten Provider-Roundtrip OHNE PROVIDER_REQUEST/RESPONSE WAL-Frames (Audit-Lücke vs. Hauptpfad chat.rs:436). Jetzt: Writer-Param + hashed-metadata REQUEST vor + RESPONSE (ok:bool) nach dem complete(), `call_type:"session_naming"` Diskriminator für WAL-Konsumenten; best-effort (WAL-Fehler blockt naming nie). `cli/chat.rs`.
 - [x] **GR-039** (LOW) ✅ FIXED — conversational-recall short-circuit feuerte ungated für jeden Recall-Prompt (alle anderen GOLD-WIRE-02 Sub-Features haben freedom.yaml-Gates). Neu: `memory.recall_shortcut` (default true). ⚠ Verify-first: MemoryConfig hatte derive(Default) → serde-field-default true + struct-default false wären DIVERGIERT (fehlender memory:-Block hätte das Feature still deaktiviert) → manueller Default-Impl, Test `memory_recall_shortcut_defaults_true_on_both_paths` pinnt beide Pfade. `config/mod.rs` + `cli/chat.rs`.
 - [x] **GR-090** (LOW) ✅ FIXED — recall-early-return drückte plain `println!` ohne `neoth_stream done`-Sentinel; --stream-Konsumenten (GUI-Parser) blockten auf das Stream-Ende. Jetzt Sentinel (count:1) im args.stream-Zweig, Format identisch zu chat.rs:1183-1187. `cli/chat.rs`.

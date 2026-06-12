@@ -111,6 +111,25 @@ pub struct EnrichedRequest {
 /// I/O; deterministic on the inputs.
 #[must_use]
 pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
+    // GR-051: the skill layer gets a `$ARGUMENTS` expansion — pm-* and
+    // other template skills ported from slash-command ecosystems use
+    // `$ARGUMENTS` as the slot the operator's prompt fills. No other
+    // layer carries the token, so the pass stays scoped to this one.
+    // Re-filter after substitution: a prompt-only template with an empty
+    // operator prompt must not inject an empty layer.
+    let skill_prompt_expanded: Option<String> = inputs
+        .skill_system_prompt
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            if s.contains("$ARGUMENTS") {
+                s.replace("$ARGUMENTS", inputs.prompt.trim())
+            } else {
+                s.to_string()
+            }
+        })
+        .filter(|s| !s.is_empty());
+
     // Trim leading/trailing whitespace from every borrowed input so a
     // stray newline at the edge of one block doesn't widen the gap to
     // the next. The merge below adds the canonical "\n\n" separator.
@@ -131,10 +150,7 @@ pub fn build_enriched_request(inputs: EnrichmentInputs<'_>) -> EnrichedRequest {
             .repo_context_block
             .map(str::trim)
             .filter(|s| !s.is_empty()),
-        inputs
-            .skill_system_prompt
-            .map(str::trim)
-            .filter(|s| !s.is_empty()),
+        skill_prompt_expanded.as_deref(),
         inputs
             .mcp_catalogue
             .map(str::trim)
@@ -191,6 +207,38 @@ mod tests {
             mcp_catalogue: None,
             persona_override: None,
         }
+    }
+
+    /// GR-051: template skills (pm-*) carry a `$ARGUMENTS` slot that the
+    /// operator's prompt must fill — without the expansion the model sees
+    /// the literal token.
+    #[test]
+    fn skill_system_prompt_arguments_substituted_with_prompt() {
+        let mut inputs = empty_inputs("sprint retro");
+        inputs.skill_system_prompt = Some("You are helping with **$ARGUMENTS**.");
+        let out = build_enriched_request(inputs);
+        let system = out.system.expect("skill layer present");
+        assert!(
+            system.contains("You are helping with **sprint retro**."),
+            "{system}"
+        );
+        assert!(!system.contains("$ARGUMENTS"), "{system}");
+    }
+
+    #[test]
+    fn skill_prompt_without_token_passes_through_unchanged() {
+        let mut inputs = empty_inputs("ping");
+        inputs.skill_system_prompt = Some("plain skill prompt");
+        let out = build_enriched_request(inputs);
+        assert_eq!(out.system.as_deref(), Some("plain skill prompt"));
+    }
+
+    #[test]
+    fn template_only_skill_prompt_with_empty_prompt_injects_no_layer() {
+        let mut inputs = empty_inputs("   ");
+        inputs.skill_system_prompt = Some("$ARGUMENTS");
+        let out = build_enriched_request(inputs);
+        assert_eq!(out.system, None, "empty expansion must not add a layer");
     }
 
     #[test]

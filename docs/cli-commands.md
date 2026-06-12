@@ -68,6 +68,23 @@ Set the autonomy level in freedom.yaml. Persists immediately; takes effect on th
 
 Print the current autonomy level (read from freedom.yaml)
 
+
+### `neoth autonomy gated`
+
+GATED operating mode (the safe default): sets autonomy `standard` and clears
+`skills.enable_all_bundled`. NEOTH confirms before shell commands, channel
+sends, out-of-home writes, and costly calls. The reverse of `neoth sudomode`.
+
+### `neoth autonomy full-auto`
+
+FULL-AUTO operating mode: sets autonomy `full`, force-enables the entire
+bundled skill library (`skills.enable_all_bundled = true`), and raises the
+skill-router confidence floor. NEOTH acts without asking. The irreducible
+security floor still holds: self-replace / patch-apply / dangerous targets
+stay Confirm, revoked and unsigned plugins stay refused, and `proactive.enabled`,
+`trust_all_tools`, and unsigned-plugin trust are NOT flipped. Same effect as
+`neoth sudomode`.
+
 ## `neoth backup`
 
 Write a tar.gz backup of `~/.neoth/` state. Phase 33c BS-2
@@ -1621,6 +1638,38 @@ ARCH-05/SPEC-08 — score the legacy-AI→NEOTH recall-parity gate over grader s
 - `--goldset <GOLDSET>` — Optional goldset JSONL — validated + its query count reported (the scoring runs off the grades, not the goldset)
 - `--no-audit <NO_AUDIT>` — Don't emit `0x3E` WAL frames (dry scoring; the report still prints)
 
+## `neoth recipe`
+
+GOLD-ADOPT-16 — declarative parametrized recipe runner. `run <file|deeplink>
+--param k=v` renders a typed-parameter prompt template and runs it through the
+chat pipeline; `list` / `validate` / `share` round out the surface. Author
+recipes from chat with the `/recipe` slash-command.
+
+### `neoth recipe run`
+
+Render a recipe (file path OR `neoth://recipe/…` deeplink) with the given
+`--param key=value` pairs and run it through the chat pipeline.
+
+- `<SOURCE>` — Recipe file path, or a `neoth://recipe/<base64>` deeplink
+- `--param <KEY=VALUE>` — Parameter value. Repeatable
+- `--dry-run` — Render and print the resolved prompt WITHOUT calling the provider
+
+### `neoth recipe list`
+
+List recipes in `~/.neoth/recipes/` (name + description).
+
+### `neoth recipe validate`
+
+Parse and structurally validate a recipe file without running it.
+
+- `<FILE>` — Recipe file path
+
+### `neoth recipe share`
+
+Print a shareable `neoth://recipe/<base64>` deeplink for a recipe file.
+
+- `<FILE>` — Recipe file path
+
 ## `neoth refusal`
 
 Test the Schicht-0 mirror-refusal detector against arbitrary text. `classify <text>` runs the deterministic classifier; `patterns` dumps the pattern dictionaries the classifier uses
@@ -1895,6 +1944,14 @@ Daemon-state snapshot — WAL bytes, tier counts, channels, autonomy. Phase 33c 
 
 - `--home <DIR>` — Override the `~/.neoth/` home dir (mostly for tests)
 - `--prometheus <PROMETHEUS>` — Print as Prometheus text format instead of the default table. Useful when the operator wants to scrape NEOTH from a Prometheus instance running on the same host
+
+## `neoth sudomode`
+
+Shortcut for `neoth autonomy full-auto` (GOLD-FEAT-01): flips NEOTH into
+FULL-AUTO mode in one word — autonomy `full` plus the entire skill library
+routed proactively. The irreducible security floor still holds (self-replace /
+patch-apply / dangerous targets stay Confirm; revoked and unsigned plugins stay
+refused). Switch back with `neoth autonomy gated`.
 
 ## `neoth supervisor`
 

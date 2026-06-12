@@ -78,7 +78,8 @@ Everything NEOTH does is in the audit log from minute one: `neoth wal show` (and
 **Goal:** NEOTH is doing useful work between your messages.
 
 - **Memory that pays off.** `neoth recall "<question>"` searches your full history across the
-  hot / warm / cold / ground-truth tiers by relevance, not just keywords. Ask it
+  hot / warm / cold age-decay tiers plus the immutable ground-truth and profile
+  stores, ranked by relevance, not just keywords. Ask it
   "do you remember when…" mid-chat and it answers with the date + your own words.
 - **Proactive nudges (opt-in).** Turn on `freedom.yaml::pattern_cron.enabled` and
   `proactive.enabled` and NEOTH watches your behaviour patterns — a long silence, the same
@@ -112,6 +113,14 @@ Everything NEOTH does is in the audit log from minute one: `neoth wal show` (and
     hammers your memory is visible, not silent.
 - **n8n + cron.** NEOTH ships starter n8n workflows and a local cron; `neoth jobs` previews
   whether a job belongs in local cron or n8n.
+- **Recipes.** `neoth recipe run <file> --param k=v` executes a declarative YAML prompt
+  template with typed parameters — the YAML lives in `~/.neoth/recipes/` or arrives as a
+  `neoth://recipe/…` deeplink. `validate` checks the schema without running; `share` prints
+  the portable deeplink. Author recipes with the `/recipe` slash-command in chat.
+- **Full-auto / gated mode.** `neoth sudomode` (alias: `neoth autonomy full-auto`) flips
+  NEOTH into hands-free operation: autonomy `full` + the entire skill library routes
+  proactively. Revert with `neoth autonomy gated`. The security floor (self-replace,
+  patch-apply, unsigned plugins) stays engaged regardless.
 - **Tools.** `neoth fetch` (SSRF-guarded URL fetch), `neoth search`, `neoth arxiv`,
   `neoth todo` (Todoist), `neoth paperless` (document OCR → Obsidian ground-truth),
   `neoth models` (auto-discovers new model versions so you never hand-patch a model id).
