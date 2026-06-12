@@ -24,6 +24,8 @@
 
 pub mod ccr;
 pub mod content_detector;
+pub mod log_compressor;
+pub mod log_template;
 pub mod pipeline;
 pub mod transform;
 
@@ -40,3 +42,5 @@ pub use transform::{
     CompressionContext, OffloadOutput, OffloadTransform, ReformatOutput, ReformatTransform,
     TransformError,
 };
+pub use log_compressor::{line_importance, LogOffload, LogOffloadConfig};
+pub use log_template::{LogTemplate, LogTemplateConfig};

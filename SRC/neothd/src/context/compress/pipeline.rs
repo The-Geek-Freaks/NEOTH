@@ -629,4 +629,40 @@ mod tests {
         let r = p.run(&"x".repeat(100), ContentType::PlainText, &ctx(), &s);
         assert_eq!(r.steps_applied, vec!["first".to_string(), "second".to_string()]);
     }
+
+    // ── End-to-end with the real HR-04 log transforms ─────────────────
+
+    #[test]
+    fn e2e_bloaty_log_routes_through_template_and_offload_via_compress_block() {
+        use crate::context::compress::log_compressor::LogOffload;
+        use crate::context::compress::log_template::LogTemplate;
+
+        let p = CompressionPipeline::builder()
+            .with_reformat(LogTemplate::default())
+            .with_offload(LogOffload::default())
+            .build();
+        let s = store();
+
+        // 200 INFO heartbeats with 2 buried ERRORs. Note: leading ISO
+        // timestamps (`12:00:00`) would classify as SEARCH (the `x:N:` grep
+        // shape, dispatched before log), so we use a log-shaped format —
+        // INFO keyword first, no leading colon-number-colon.
+        let mut log = String::new();
+        for i in 0..100 {
+            log.push_str(&format!("INFO worker-{i} processing heartbeat batch-{i}\n"));
+        }
+        log.push_str("ERROR disk full on /var\n");
+        log.push_str("ERROR retry exhausted\n");
+        for i in 0..100 {
+            log.push_str(&format!("INFO worker-{} processing heartbeat batch-{}\n", 100 + i, 100 + i));
+        }
+
+        let r = p.compress_block(&log, 50, &Gate::enabled(2048, 3), &ctx(), &s);
+        assert_eq!(r.skipped, None, "eligible bloaty log should run");
+        assert!(r.bytes_saved > 0, "must save bytes");
+        assert!(r.output.len() < log.len());
+        // The errors must survive on the wire regardless of which stage fired.
+        assert!(r.output.contains("ERROR disk full on /var"));
+        assert!(r.output.contains("ERROR retry exhausted"));
+    }
 }
