@@ -67,6 +67,17 @@ pub struct CtxArgs {
     #[arg(long, conflicts_with_all = ["label", "category"])]
     pub all: bool,
 
+    /// GOLD-HR-10 — retrieve a CCR-cached original by its `[0-9a-f]{24}` key
+    /// (the `<<ccr:KEY>>` marker the compression pipeline left inline). Pulls
+    /// the byte-exact dropped block back from the persistent store.
+    #[arg(long, value_name = "KEY", conflicts_with_all = ["search", "index", "index_stdin", "stats", "doctor", "purge", "savings"])]
+    pub retrieve: Option<String>,
+
+    /// GOLD-HR-10 — print cumulative token-compression savings (blocks
+    /// compressed, bytes before/after, ratio).
+    #[arg(long, conflicts_with_all = ["search", "index", "index_stdin", "stats", "doctor", "purge", "retrieve"])]
+    pub savings: bool,
+
     /// Maximum hits returned by `--search`.
     #[arg(long, default_value_t = 20)]
     pub limit: usize,
@@ -77,6 +88,54 @@ pub struct CtxArgs {
 }
 
 pub async fn run_ctx(args: CtxArgs) -> Result<()> {
+    // GOLD-HR-10 — CCR retrieval + savings don't touch the views DB; handle
+    // them first so they work even before any `ctx` indexing has happened.
+    if let Some(key) = &args.retrieve {
+        let dir = crate::context::compress::default_ccr_dir();
+        let store = crate::context::compress::FileCcrStore::new(dir);
+        match crate::context::compress::retrieve(&store, key) {
+            Some(original) => {
+                print!("{original}");
+                return Ok(());
+            }
+            None => {
+                anyhow::bail!(
+                    "CCR key not found or expired: {key} (keys live ~5 min; \
+                     the daemon must have produced the marker this session)"
+                );
+            }
+        }
+    }
+    if args.savings {
+        let dir = crate::context::compress::default_ccr_dir();
+        let s = crate::context::compress::read_savings(&dir);
+        match args.output {
+            OutputFormat::Json | OutputFormat::Jsonl => {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "blocks": s.blocks,
+                        "bytes_before": s.bytes_before,
+                        "bytes_after": s.bytes_after,
+                        "bytes_saved": s.bytes_saved(),
+                        "ratio": s.ratio(),
+                    })
+                );
+            }
+            _ => {
+                println!(
+                    "compression savings: {} blocks · {} → {} bytes · {} saved ({:.1}%)",
+                    s.blocks,
+                    s.bytes_before,
+                    s.bytes_after,
+                    s.bytes_saved(),
+                    s.ratio() * 100.0
+                );
+            }
+        }
+        return Ok(());
+    }
+
     let path = store::default_path();
     let mut conn = store::open(&path).with_context(|| format!("open {}", path.display()))?;
 

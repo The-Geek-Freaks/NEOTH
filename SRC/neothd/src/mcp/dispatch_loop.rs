@@ -524,6 +524,9 @@ async fn compress_tool_results(
         let before = block.len();
         let after = result.output.len();
         *block = result.output;
+        // GOLD-HR-10 — meter the saving (persistent path only) so
+        // `neoth ctx savings` can report cumulative compression.
+        runtime.meter(before, after);
         emit_compaction_wal(
             writer,
             crate::wal::events::EVENT_TYPE_COMPRESSION_APPLIED,

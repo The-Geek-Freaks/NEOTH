@@ -191,19 +191,22 @@ pub fn default_pipeline(thresholds: Thresholds) -> CompressionPipeline {
 }
 
 /// The daemon-mounted compression state: the stock pipeline, a shared CCR
-/// store (so dropped bytes stay retrievable across the loop), and the gate.
-/// `Clone` is cheap (both heavy fields are behind `Arc`).
+/// store (so dropped bytes stay retrievable), the gate, and — for the
+/// persistent (daemon) path — the on-disk CCR dir used for savings metering.
+/// `Clone` is cheap (heavy fields are behind `Arc`).
 #[derive(Clone)]
 pub struct CompressionRuntime {
     pub pipeline: Arc<CompressionPipeline>,
     pub store: Arc<dyn CcrStore>,
     pub gate: Gate,
+    /// `Some(<home>/.neoth/ccr)` on the persistent path — every shrink appends
+    /// a savings record there. `None` for the in-memory (test) path.
+    pub ccr_dir: Option<std::path::PathBuf>,
 }
 
 impl CompressionRuntime {
-    /// Build the runtime from the freedom.yaml gate + thresholds. Returns
-    /// `None` when compression is disabled, so a caller can pass
-    /// `Option<CompressionRuntime>` and the off-path stays allocation-free.
+    /// In-memory runtime (test / non-persistent). Retrieval works only within
+    /// this process; no savings are metered. Returns `None` when disabled.
     pub fn new(gate: Gate, thresholds: Thresholds) -> Option<Self> {
         if !gate.enabled {
             return None;
@@ -212,7 +215,50 @@ impl CompressionRuntime {
             pipeline: Arc::new(default_pipeline(thresholds)),
             store: Arc::new(InMemoryCcrStore::new()),
             gate,
+            ccr_dir: None,
         })
+    }
+
+    /// GOLD-HR-10 — persistent runtime the daemon mounts. Stashes to a
+    /// file-backed [`FileCcrStore`](super::ccr_file::FileCcrStore) under `dir`
+    /// so `neoth ctx retrieve` (a separate process) can pull dropped blocks
+    /// back, and meters savings into `<dir>/savings.log`. `None` when disabled.
+    pub fn persistent(gate: Gate, thresholds: Thresholds, dir: std::path::PathBuf) -> Option<Self> {
+        if !gate.enabled {
+            return None;
+        }
+        Some(Self {
+            pipeline: Arc::new(default_pipeline(thresholds)),
+            store: Arc::new(super::ccr_file::FileCcrStore::new(dir.clone())),
+            gate,
+            ccr_dir: Some(dir),
+        })
+    }
+
+    /// Record a block's before/after bytes to the savings log (no-op on the
+    /// in-memory path). Called by every compression site after a real shrink.
+    pub fn meter(&self, before: usize, after: usize) {
+        if let Some(dir) = &self.ccr_dir {
+            super::ccr_file::record_savings(dir, before, after);
+        }
+    }
+
+    /// GOLD-HR-09 — compress one standalone, LLM-bound piece of content (a
+    /// recall block, an injected context block, a directly-fetched structured
+    /// web body) before it's concatenated into a prompt. Recency-independent
+    /// (the content is CCR-backed data, not a conversational turn). Returns
+    /// the (possibly unchanged) text + bytes saved (0 = passthrough). Prose
+    /// passes through untouched — only structurally-detected content
+    /// (json/log/diff/search) is shrunk. Records savings on the persistent path.
+    pub fn compress_for_llm(&self, text: &str) -> (String, usize) {
+        let ctx = CompressionContext::default();
+        let result = self.pipeline.compress_block(text, usize::MAX, &self.gate, &ctx, self.store.as_ref());
+        if result.skipped.is_some() || result.bytes_saved == 0 {
+            (text.to_string(), 0)
+        } else {
+            self.meter(text.len(), result.output.len());
+            (result.output, result.bytes_saved)
+        }
     }
 }
 
@@ -717,6 +763,24 @@ mod tests {
         // The errors must survive on the wire regardless of which stage fired.
         assert!(r.output.contains("ERROR disk full on /var"));
         assert!(r.output.contains("ERROR retry exhausted"));
+    }
+
+    #[test]
+    fn compress_for_llm_shrinks_structured_passes_prose() {
+        let rt = CompressionRuntime::new(Gate::enabled(512, 3), Thresholds::default()).unwrap();
+        // Structured: a 300-row JSON array shrinks + the original is stored.
+        let json = format!(
+            "[{}]",
+            (0..300).map(|i| format!(r#"{{"id":{i},"v":{}}}"#, i * 2)).collect::<Vec<_>>().join(",")
+        );
+        let (out, saved) = rt.compress_for_llm(&json);
+        assert!(saved > 0 && out.len() < json.len());
+        assert!(out.contains("<<ccr:"));
+        // Prose passes through untouched (no structural type, 0 saved).
+        let prose = "The quick brown fox. ".repeat(200);
+        let (out2, saved2) = rt.compress_for_llm(&prose);
+        assert_eq!(saved2, 0);
+        assert_eq!(out2, prose);
     }
 
     #[test]

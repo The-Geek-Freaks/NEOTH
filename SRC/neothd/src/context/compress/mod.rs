@@ -33,6 +33,7 @@
 //! name their specific upstream source.
 
 pub mod ccr;
+pub mod ccr_file;
 pub mod content_detector;
 pub mod diff_compressor;
 pub mod log_compressor;
@@ -47,6 +48,7 @@ pub use ccr::{
     compute_key, extract_keys, marker_for, retrieve, stash, CcrStore, InMemoryCcrStore,
     DEFAULT_CAPACITY, DEFAULT_TTL,
 };
+pub use ccr_file::{default_ccr_dir, read_savings, record_savings, FileCcrStore, Savings};
 pub use content_detector::{detect_content_type, is_json_array_of_dicts, ContentType, DetectionResult};
 pub use pipeline::{
     default_pipeline, in_live_zone, target_bytes_for_budget, CompressionPipeline,
