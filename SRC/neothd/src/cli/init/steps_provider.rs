@@ -13,7 +13,7 @@ use crate::providers::local_probe::probe_local_bridge_sync;
 #[cfg(feature = "wizard")]
 use super::npm_path_hint;
 use super::{
-    catalog_recommended_for_provider_kind, prompt_provider_key, step_markers, which_binary,
+    catalog_recommended_for_provider_kind, prompt_provider_key, WizardStep, which_binary,
     InitArgs, ProviderKind, WizardState,
 };
 
@@ -343,7 +343,7 @@ pub(crate) async fn step5_provider(args: &InitArgs, interactive: bool, state: &m
         }
     }
 
-    state.steps_completed.push(step_markers::STEP_5_PROVIDER);
+    state.steps_completed.push(WizardStep::Provider as u8);
     Ok(())
 }
 

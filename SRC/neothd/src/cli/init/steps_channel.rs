@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
 use super::{
-    k4b_telegram_prompt_text, step_markers, validate_telegram_token,
+    k4b_telegram_prompt_text, WizardStep, validate_telegram_token,
     write_credential_import_sidecar, InitArgs, WizardState,
 };
 
@@ -63,7 +63,7 @@ pub(crate) async fn step6_channel(args: &InitArgs, interactive: bool, state: &mu
         println!("  [6/9] Telegram skipped. Add later: `neoth channel add telegram`");
     }
 
-    state.steps_completed.push(step_markers::STEP_6_CHANNEL);
+    state.steps_completed.push(WizardStep::Channel as u8);
     Ok(())
 }
 
@@ -103,7 +103,7 @@ pub(crate) async fn step6b_keet_pairing(
         // ~/.neoth/credentials.yaml directly + running `neoth serve`.
         // No prompt available, no flag yet — K-3.5 deferred non-
         // interactive surface.
-        state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING); // 6b marker
+        state.steps_completed.push(WizardStep::KeetPairing as u8); // 6b marker
         return Ok(());
     }
 
@@ -122,7 +122,7 @@ pub(crate) async fn step6b_keet_pairing(
                 println!("       To enable Keet later, install Pears + re-run `neoth init`:");
                 println!("       $ {}", cmd.join(" "));
             }
-            state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING);
+            state.steps_completed.push(WizardStep::KeetPairing as u8);
             return Ok(());
         }
 
@@ -132,7 +132,7 @@ pub(crate) async fn step6b_keet_pairing(
             .interact()
             .context("keet pairing confirm")?;
         if !set_up {
-            state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING);
+            state.steps_completed.push(WizardStep::KeetPairing as u8);
             return Ok(());
         }
 
@@ -190,7 +190,7 @@ pub(crate) async fn step6b_keet_pairing(
         }
     }
 
-    state.steps_completed.push(step_markers::STEP_6B_KEET_PAIRING);
+    state.steps_completed.push(WizardStep::KeetPairing as u8);
     Ok(())
 }
 
@@ -213,13 +213,13 @@ pub(crate) async fn step6c_obsidian_install(
     if already {
         info!("obsidian already installed; skipping install step");
         state.install_obsidian = true;
-        state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
+        state.steps_completed.push(WizardStep::Obsidian as u8);
         return Ok(());
     }
 
     if !interactive {
         if !args.install_obsidian {
-            state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
+            state.steps_completed.push(WizardStep::Obsidian as u8);
             return Ok(());
         }
         state.install_obsidian = true;
@@ -230,7 +230,7 @@ pub(crate) async fn step6c_obsidian_install(
             cmd = %cmd.join(" "),
             "operator opted into obsidian install"
         );
-        state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
+        state.steps_completed.push(WizardStep::Obsidian as u8);
         return Ok(());
     }
 
@@ -244,7 +244,7 @@ pub(crate) async fn step6c_obsidian_install(
             .interact()
             .context("obsidian install confirm")?;
         if !install {
-            state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
+            state.steps_completed.push(WizardStep::Obsidian as u8);
             return Ok(());
         }
         state.install_obsidian = true;
@@ -260,7 +260,7 @@ pub(crate) async fn step6c_obsidian_install(
         }
     }
 
-    state.steps_completed.push(step_markers::STEP_6C_OBSIDIAN);
+    state.steps_completed.push(WizardStep::Obsidian as u8);
     Ok(())
 }
 
@@ -304,7 +304,7 @@ pub(crate) fn step6d_obsidian_vault_bootstrap_with_home(
 
     if !interactive {
         if !args.bootstrap_vault {
-            state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
+            state.steps_completed.push(WizardStep::ObsidianVault as u8);
             return Ok(());
         }
         bootstrap = true;
@@ -332,13 +332,13 @@ pub(crate) fn step6d_obsidian_vault_bootstrap_with_home(
     }
 
     if !bootstrap {
-        state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
+        state.steps_completed.push(WizardStep::ObsidianVault as u8);
         return Ok(());
     }
 
     let Some(path) = vault_path else {
         warn!("vault bootstrap requested but no default path resolvable (HOME unset); skipping");
-        state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
+        state.steps_completed.push(WizardStep::ObsidianVault as u8);
         return Ok(());
     };
 
@@ -369,7 +369,7 @@ pub(crate) fn step6d_obsidian_vault_bootstrap_with_home(
 
     state.bootstrap_vault = true;
     state.vault_path = Some(path);
-    state.steps_completed.push(step_markers::STEP_6D_OBSIDIAN_VAULT);
+    state.steps_completed.push(WizardStep::ObsidianVault as u8);
     Ok(())
 }
 
@@ -390,7 +390,7 @@ pub(crate) async fn step6e_n8n_install(
 
     if !interactive {
         if !args.install_n8n {
-            state.steps_completed.push(step_markers::STEP_6E_N8N);
+            state.steps_completed.push(WizardStep::N8n as u8);
             return Ok(());
         }
         state.install_n8n = true;
@@ -411,7 +411,7 @@ pub(crate) async fn step6e_n8n_install(
                 );
             }
         }
-        state.steps_completed.push(step_markers::STEP_6E_N8N);
+        state.steps_completed.push(WizardStep::N8n as u8);
         return Ok(());
     }
 
@@ -429,7 +429,7 @@ pub(crate) async fn step6e_n8n_install(
             crate::wizard::recommend::ExperienceLevel::Beginner
         ) {
             println!("[6e/9] Skipped optional workflow-engine install (n8n).");
-            state.steps_completed.push(step_markers::STEP_6E_N8N);
+            state.steps_completed.push(WizardStep::N8n as u8);
             return Ok(());
         }
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -438,7 +438,7 @@ pub(crate) async fn step6e_n8n_install(
             .interact()
             .context("n8n install confirm")?;
         if !want {
-            state.steps_completed.push(step_markers::STEP_6E_N8N);
+            state.steps_completed.push(WizardStep::N8n as u8);
             return Ok(());
         }
         state.install_n8n = true;
@@ -465,7 +465,7 @@ pub(crate) async fn step6e_n8n_install(
         }
     }
 
-    state.steps_completed.push(step_markers::STEP_6E_N8N);
+    state.steps_completed.push(WizardStep::N8n as u8);
     Ok(())
 }
 
@@ -490,7 +490,7 @@ pub(crate) fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &m
                 .interact()
                 .context("legacy-ai import confirm")?;
             if !want {
-                state.steps_completed.push(step_markers::STEP_6F_IMPORT_MEMORY);
+                state.steps_completed.push(WizardStep::ImportMemory as u8);
                 return Ok(());
             }
             let raw: String =
@@ -515,7 +515,7 @@ pub(crate) fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &m
     };
 
     let Some(path) = path else {
-        state.steps_completed.push(step_markers::STEP_6F_IMPORT_MEMORY);
+        state.steps_completed.push(WizardStep::ImportMemory as u8);
         return Ok(());
     };
 
@@ -547,7 +547,7 @@ pub(crate) fn step6f_import_memory(args: &InitArgs, interactive: bool, state: &m
         );
     }
 
-    state.steps_completed.push(step_markers::STEP_6F_IMPORT_MEMORY);
+    state.steps_completed.push(WizardStep::ImportMemory as u8);
     Ok(())
 }
 

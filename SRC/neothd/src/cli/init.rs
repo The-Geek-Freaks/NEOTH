@@ -998,7 +998,7 @@ mod tests {
         assert!(state.auto_update.enabled);
         assert!(state.auto_update.auto_apply);
         // Step marker recorded.
-        assert!(state.steps_completed.contains(&70));
+        assert!(state.steps_completed.contains(&(WizardStep::AutoUpdate as u8)));
     }
 
     #[test]
@@ -1018,7 +1018,7 @@ mod tests {
             "non-interactive must not install a supervisor"
         );
         assert_eq!(state.supervisor.kind, crate::config::SupervisorKind::None);
-        assert!(state.steps_completed.contains(&72));
+        assert!(state.steps_completed.contains(&(WizardStep::Supervisor as u8)));
     }
 
     #[tokio::test]
@@ -1324,7 +1324,7 @@ mod tests {
             state.plugins.wasm.activations.is_empty(),
             "no plugins discovered → no activations recorded"
         );
-        assert!(state.steps_completed.contains(&71));
+        assert!(state.steps_completed.contains(&(WizardStep::WasmPlugins as u8)));
     }
 
     #[test]
@@ -1340,7 +1340,7 @@ mod tests {
         let mut state = fixture_state();
         step7c_wasm_plugin_activation(&args, false, &neoth_dir, &mut state).unwrap();
         assert!(state.plugins.wasm.activations.is_empty());
-        assert!(state.steps_completed.contains(&71));
+        assert!(state.steps_completed.contains(&(WizardStep::WasmPlugins as u8)));
     }
 
     #[test]
@@ -1377,7 +1377,7 @@ mod tests {
             "non-interactive run MUST NOT auto-activate; got {:?}",
             state.plugins.wasm.activations,
         );
-        assert!(state.steps_completed.contains(&71));
+        assert!(state.steps_completed.contains(&(WizardStep::WasmPlugins as u8)));
     }
 
     #[test]
@@ -1475,30 +1475,70 @@ mod tests {
         assert!(
             state
                 .steps_completed
-                .contains(&step_markers::STEP_6B_KEET_PAIRING)
+                .contains(&(WizardStep::KeetPairing as u8))
         );
     }
 
     #[test]
-    fn step_markers_are_unique() {
-        // GOLD-COR-07 / A-26: the regression guard. step 5d and step 6b both
-        // used to push `60`, making the checkpoint record ambiguous. Every
-        // marker in `step_markers::ALL` must be distinct — a future duplicate
-        // (or a re-used value on a new sub-step) trips this test instead of
-        // silently corrupting resume state.
+    fn wizard_step_all_covered() {
+        // GOLD-COR-07 / A-26 + GOLD-ARCH-20: the regression guard. step 5d and
+        // step 6b both used to push `60`, making the checkpoint record
+        // ambiguous. Every discriminant in `WizardStep::ALL` must be distinct —
+        // a future duplicate (or a re-used value on a new sub-step) trips this
+        // test instead of silently corrupting resume state. The count guard
+        // trips when a variant is added to the enum without registering it in
+        // `ALL` (or vice versa).
         use std::collections::HashSet;
         let mut seen = HashSet::new();
-        for &m in step_markers::ALL {
+        for &step in WizardStep::ALL {
+            let m = step as u8;
             assert!(
                 seen.insert(m),
-                "duplicate wizard step marker {m} in step_markers::ALL"
+                "duplicate wizard step discriminant {m} in WizardStep::ALL"
             );
         }
         assert_eq!(
             seen.len(),
-            step_markers::ALL.len(),
-            "step_markers::ALL must contain only distinct values"
+            WizardStep::ALL.len(),
+            "WizardStep::ALL must contain only distinct discriminants"
         );
+        assert_eq!(WizardStep::ALL.len(), 20, "WizardStep variant count drifted");
+    }
+
+    #[test]
+    fn wizard_step_try_from_round_trips_and_rejects_unknown() {
+        // GOLD-ARCH-20: every registered step survives u8 -> WizardStep -> u8;
+        // gaps and out-of-range values are rejected (no silent Default).
+        for &step in WizardStep::ALL {
+            let raw = step as u8;
+            assert_eq!(WizardStep::try_from(raw).unwrap() as u8, raw);
+        }
+        assert!(WizardStep::try_from(0u8).is_err());
+        assert!(WizardStep::try_from(9u8).is_err()); // gap between 8 and 56
+        assert!(WizardStep::try_from(255u8).is_err());
+    }
+
+    #[test]
+    fn initialized_marker_steps_completed_deserializes_raw_u8_array() {
+        // GOLD-ARCH-20 backward-compat pin: `.initialized` files written before
+        // the WizardStep enum hold raw JSON integers in steps_completed. The
+        // Vec<u8> persistence boundary keeps parsing them, and every stored
+        // value maps to a known WizardStep.
+        let json = r#"{
+            "wizard_version": 2,
+            "neoth_version": "0.4.0",
+            "operator_id": "legacy_op",
+            "steps_completed": [1, 14, 2, 3, 4, 5, 6, 7, 8, 56, 58, 60, 65, 61, 62, 63, 64, 70, 71, 72],
+            "init_time_unix": 1700000000,
+            "init_time_iso8601": "2023-11-14T22:13:20Z",
+            "channels": []
+        }"#;
+        let parsed: super::InitializedMarker = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.steps_completed.len(), 20);
+        for &raw in &parsed.steps_completed {
+            WizardStep::try_from(raw)
+                .unwrap_or_else(|_| panic!("step value {raw} not covered by WizardStep"));
+        }
     }
 
     #[test]
@@ -1681,7 +1721,7 @@ mod tests {
         let args = args_with_flag(|a| a.download_qwen_weights = true);
         step5c_qwen_weights(&args, false, &mut state).await.unwrap();
         assert!(!state.download_qwen_weights);
-        assert!(state.steps_completed.contains(&58));
+        assert!(state.steps_completed.contains(&(WizardStep::QwenWeights as u8)));
     }
 
     // The std::Mutex env-lock is intentional here: tests in this module
@@ -1711,7 +1751,7 @@ mod tests {
         let args = args_with_flag(|a| a.download_qwen_weights = true);
         step5c_qwen_weights(&args, false, &mut state).await.unwrap();
         assert!(state.download_qwen_weights);
-        assert!(state.steps_completed.contains(&58));
+        assert!(state.steps_completed.contains(&(WizardStep::QwenWeights as u8)));
 
         unsafe {
             match prev_home {
@@ -1736,7 +1776,7 @@ mod tests {
         // happens to have Obsidian already installed (sets it true).
         // The flag-absent path either records "already present" or
         // does nothing — the marker MUST land either way.
-        assert!(state.steps_completed.contains(&61));
+        assert!(state.steps_completed.contains(&(WizardStep::Obsidian as u8)));
     }
 
     #[tokio::test]
@@ -1747,7 +1787,7 @@ mod tests {
             .await
             .unwrap();
         assert!(state.install_obsidian);
-        assert!(state.steps_completed.contains(&61));
+        assert!(state.steps_completed.contains(&(WizardStep::Obsidian as u8)));
     }
 
     #[test]
@@ -1757,7 +1797,7 @@ mod tests {
         step6d_obsidian_vault_bootstrap(&args, false, &mut state).unwrap();
         assert!(!state.bootstrap_vault);
         assert!(state.vault_path.is_none());
-        assert!(state.steps_completed.contains(&62));
+        assert!(state.steps_completed.contains(&(WizardStep::ObsidianVault as u8)));
     }
 
     #[test]
@@ -1777,7 +1817,7 @@ mod tests {
         assert!(path.exists());
         assert!(path.join("README.md").exists());
         assert!(path.join(".obsidian").join("app.json").exists());
-        assert!(state.steps_completed.contains(&62));
+        assert!(state.steps_completed.contains(&(WizardStep::ObsidianVault as u8)));
     }
 
     #[test]
@@ -1806,7 +1846,7 @@ mod tests {
         let args = args_with_flag(|_| {});
         step6e_n8n_install(&args, false, &mut state).await.unwrap();
         assert!(!state.install_n8n);
-        assert!(state.steps_completed.contains(&63));
+        assert!(state.steps_completed.contains(&(WizardStep::N8n as u8)));
     }
 
     #[tokio::test]
@@ -1815,7 +1855,7 @@ mod tests {
         let args = args_with_flag(|a| a.install_n8n = true);
         step6e_n8n_install(&args, false, &mut state).await.unwrap();
         assert!(state.install_n8n);
-        assert!(state.steps_completed.contains(&63));
+        assert!(state.steps_completed.contains(&(WizardStep::N8n as u8)));
     }
 
     #[test]
@@ -1824,7 +1864,7 @@ mod tests {
         let args = args_with_flag(|_| {});
         step6f_import_memory(&args, false, &mut state).unwrap();
         assert!(state.import_memory.is_none());
-        assert!(state.steps_completed.contains(&64));
+        assert!(state.steps_completed.contains(&(WizardStep::ImportMemory as u8)));
     }
 
     #[test]
@@ -1837,7 +1877,7 @@ mod tests {
         let args = args_with_flag(|a| a.import_memory = Some(memory_path.clone()));
         step6f_import_memory(&args, false, &mut state).unwrap();
         assert_eq!(state.import_memory.as_ref(), Some(&memory_path));
-        assert!(state.steps_completed.contains(&64));
+        assert!(state.steps_completed.contains(&(WizardStep::ImportMemory as u8)));
     }
 
     // --- GOLD-HON-10: step 1d onboarding mode (new vs migration) ---
@@ -1850,7 +1890,7 @@ mod tests {
         assert_eq!(state.onboarding_mode, OnboardingMode::New);
         assert!(state
             .steps_completed
-            .contains(&step_markers::STEP_1D_ONBOARDING_MODE));
+            .contains(&(WizardStep::OnboardingMode as u8)));
     }
 
     #[test]
@@ -1863,7 +1903,7 @@ mod tests {
         assert_eq!(state.onboarding_mode, OnboardingMode::Migration);
         assert!(state
             .steps_completed
-            .contains(&step_markers::STEP_1D_ONBOARDING_MODE));
+            .contains(&(WizardStep::OnboardingMode as u8)));
     }
 
     #[test]
@@ -1878,12 +1918,12 @@ mod tests {
         let idx_1d = state
             .steps_completed
             .iter()
-            .position(|&m| m == step_markers::STEP_1D_ONBOARDING_MODE)
+            .position(|&m| m == WizardStep::OnboardingMode as u8)
             .expect("1d marker present");
         let idx_2 = state
             .steps_completed
             .iter()
-            .position(|&m| m == step_markers::STEP_2_OPERATOR_ID)
+            .position(|&m| m == WizardStep::OperatorId as u8)
             .expect("step-2 marker present");
         assert!(
             idx_1d < idx_2,
@@ -1996,7 +2036,7 @@ mod tests {
         state.experience_level = crate::wizard::recommend::ExperienceLevel::Beginner;
         step5d_profile_approval_gate(true, &mut state).expect("step5d Beginner");
         assert!(
-            state.steps_completed.contains(&60),
+            state.steps_completed.contains(&(WizardStep::ProfileGate as u8)),
             "step5d marker (60) must be recorded irrespective of experience level",
         );
     }
@@ -2009,7 +2049,7 @@ mod tests {
         let mut state = fixture_state();
         state.experience_level = crate::wizard::recommend::ExperienceLevel::Intermediate;
         step5d_profile_approval_gate(true, &mut state).expect("step5d Intermediate");
-        assert!(state.steps_completed.contains(&60));
+        assert!(state.steps_completed.contains(&(WizardStep::ProfileGate as u8)));
     }
 
     #[tokio::test]
@@ -2032,7 +2072,7 @@ mod tests {
             !state.install_n8n,
             "Beginner default is don't-install n8n — operator opts in via settings later",
         );
-        assert!(state.steps_completed.contains(&63));
+        assert!(state.steps_completed.contains(&(WizardStep::N8n as u8)));
     }
 
     #[test]
@@ -2055,6 +2095,6 @@ mod tests {
             crate::permissions::AutonomyLevel::Standard,
             "Beginner gate must land on Standard regardless of prior state",
         );
-        assert!(state.steps_completed.contains(&7));
+        assert!(state.steps_completed.contains(&(WizardStep::Autonomy as u8)));
     }
 }

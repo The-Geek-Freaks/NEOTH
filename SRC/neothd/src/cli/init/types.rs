@@ -4,6 +4,7 @@
 //! markers and the cross-step `WizardState`. Split out of `cli/init.rs`.
 
 use clap::{Args, ValueEnum};
+use num_enum::{IntoPrimitive, TryFromPrimitive};
 use serde::{Deserialize, Serialize};
 
 /// LLM provider kind. Typed enum (replaces stringly-typed v0.1 alpha).
@@ -343,57 +344,71 @@ pub struct InitArgs {
 /// magic number, and step 5d + step 6b BOTH pushed `60` — a silent collision
 /// that made the resume/checkpoint record ambiguous (a half-finished run
 /// couldn't tell whether 5d or 6b had completed). Naming every marker here +
-/// the `step_markers_are_unique` test makes a future duplicate a test failure
+/// the `wizard_step_all_covered` test makes a future duplicate a test failure
 /// instead of a latent bug. Values are identity tags, not an ordering — the Vec
 /// preserves push order — so the only invariant is uniqueness.
-pub(crate) mod step_markers {
-    pub const STEP_1_LICENSE: u8 = 1;
+/// GOLD-ARCH-20: typed wizard step marker, replacing the old magic-`u8`
+/// `step_markers` consts. `#[repr(u8)]` + explicit discriminants pin the
+/// on-disk values (`steps_completed` stays a `Vec<u8>` at every persistence
+/// boundary, so old `.initialized` / `wizard_checkpoint.json` files keep
+/// deserializing unchanged). `num_enum` gives `TryFrom<u8>` / `Into<u8>`
+/// for free — same pattern as `wal::types`. Values are identity tags, not
+/// an ordering; the only invariant is discriminant uniqueness (a duplicate
+/// is a `repr(u8)` compile error, plus `wizard_step_all_covered` guards
+/// `ALL` coverage).
+#[repr(u8)]
+#[derive(TryFromPrimitive, IntoPrimitive, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WizardStep {
+    License = 1,
     /// GOLD-HON-10: new-vs-migration onboarding mode (step 1d), asked
     /// before the identity step so a migrating operator sees the import
     /// path up front.
-    pub const STEP_1D_ONBOARDING_MODE: u8 = 14;
-    pub const STEP_2_OPERATOR_ID: u8 = 2;
-    pub const STEP_3_LANGUAGE: u8 = 3;
-    pub const STEP_4_ROLE: u8 = 4;
-    pub const STEP_5_PROVIDER: u8 = 5;
-    pub const STEP_6_CHANNEL: u8 = 6;
-    pub const STEP_7_AUTONOMY: u8 = 7;
-    pub const STEP_8_SUMMARY: u8 = 8;
-    pub const STEP_5B_TOPOLOGY: u8 = 56;
-    pub const STEP_5C_QWEN_WEIGHTS: u8 = 58;
-    pub const STEP_5D_PROFILE_GATE: u8 = 60;
-    pub const STEP_6C_OBSIDIAN: u8 = 61;
-    pub const STEP_6D_OBSIDIAN_VAULT: u8 = 62;
-    pub const STEP_6E_N8N: u8 = 63;
-    pub const STEP_6F_IMPORT_MEMORY: u8 = 64;
-    /// GOLD-COR-07: distinct from `STEP_5D_PROFILE_GATE` (was both `60`).
-    pub const STEP_6B_KEET_PAIRING: u8 = 65;
-    pub const STEP_7B_AUTO_UPDATE: u8 = 70;
-    pub const STEP_7C_WASM_PLUGINS: u8 = 71;
-    pub const STEP_7D_SUPERVISOR: u8 = 72;
+    OnboardingMode = 14,
+    OperatorId = 2,
+    Language = 3,
+    Role = 4,
+    Provider = 5,
+    Channel = 6,
+    Autonomy = 7,
+    Summary = 8,
+    Topology = 56,
+    QwenWeights = 58,
+    ProfileGate = 60,
+    Obsidian = 61,
+    ObsidianVault = 62,
+    N8n = 63,
+    ImportMemory = 64,
+    /// GOLD-COR-07: distinct from `ProfileGate` (was both `60`).
+    KeetPairing = 65,
+    AutoUpdate = 70,
+    WasmPlugins = 71,
+    Supervisor = 72,
+}
 
-    /// Every marker, for the uniqueness guard. Adding a step MUST add it here.
-    pub const ALL: &[u8] = &[
-        STEP_1_LICENSE,
-        STEP_1D_ONBOARDING_MODE,
-        STEP_2_OPERATOR_ID,
-        STEP_3_LANGUAGE,
-        STEP_4_ROLE,
-        STEP_5_PROVIDER,
-        STEP_6_CHANNEL,
-        STEP_7_AUTONOMY,
-        STEP_8_SUMMARY,
-        STEP_5B_TOPOLOGY,
-        STEP_5C_QWEN_WEIGHTS,
-        STEP_5D_PROFILE_GATE,
-        STEP_6B_KEET_PAIRING,
-        STEP_6C_OBSIDIAN,
-        STEP_6D_OBSIDIAN_VAULT,
-        STEP_6E_N8N,
-        STEP_6F_IMPORT_MEMORY,
-        STEP_7B_AUTO_UPDATE,
-        STEP_7C_WASM_PLUGINS,
-        STEP_7D_SUPERVISOR,
+impl WizardStep {
+    /// Every variant, for the coverage guard. Adding a step MUST add it
+    /// here — `wizard_step_all_covered` trips on the count otherwise.
+    pub const ALL: &'static [WizardStep] = &[
+        Self::License,
+        Self::OnboardingMode,
+        Self::OperatorId,
+        Self::Language,
+        Self::Role,
+        Self::Provider,
+        Self::Channel,
+        Self::Autonomy,
+        Self::Summary,
+        Self::Topology,
+        Self::QwenWeights,
+        Self::ProfileGate,
+        Self::KeetPairing,
+        Self::Obsidian,
+        Self::ObsidianVault,
+        Self::N8n,
+        Self::ImportMemory,
+        Self::AutoUpdate,
+        Self::WasmPlugins,
+        Self::Supervisor,
     ];
 }
 

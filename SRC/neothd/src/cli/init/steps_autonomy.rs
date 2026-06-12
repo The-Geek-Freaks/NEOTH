@@ -5,7 +5,7 @@
 use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
-use super::{step_markers, InitArgs, ProviderKind, WizardState};
+use super::{WizardStep, InitArgs, ProviderKind, WizardState};
 
 /// Step 7 — operator picks an autonomy level (Phase 28b R-23).
 ///
@@ -31,7 +31,7 @@ pub(crate) fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut Wiz
             None => AutonomyLevel::Standard,
         };
         state.autonomy = level;
-        state.steps_completed.push(step_markers::STEP_7_AUTONOMY);
+        state.steps_completed.push(WizardStep::Autonomy as u8);
         return Ok(());
     }
 
@@ -52,7 +52,7 @@ pub(crate) fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut Wiz
                 "  [7/9] autonomy: {} (safe default — change anytime in settings)",
                 state.autonomy.as_str(),
             );
-            state.steps_completed.push(step_markers::STEP_7_AUTONOMY);
+            state.steps_completed.push(WizardStep::Autonomy as u8);
             return Ok(());
         }
         let options = [
@@ -138,7 +138,7 @@ pub(crate) fn step7_autonomy(args: &InitArgs, interactive: bool, state: &mut Wiz
         state.autonomy = AutonomyLevel::Standard;
     }
 
-    state.steps_completed.push(step_markers::STEP_7_AUTONOMY);
+    state.steps_completed.push(WizardStep::Autonomy as u8);
     Ok(())
 }
 
@@ -159,7 +159,7 @@ pub(crate) fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mu
     if !interactive {
         // Default = enabled:false, auto_apply:false. Already set
         // by WizardState::default(); just record the step.
-        state.steps_completed.push(step_markers::STEP_7B_AUTO_UPDATE); // 7-and-a-half style marker
+        state.steps_completed.push(WizardStep::AutoUpdate as u8); // 7-and-a-half style marker
         return Ok(());
     }
 
@@ -200,7 +200,7 @@ pub(crate) fn step7b_auto_update(_args: &InitArgs, interactive: bool, state: &mu
         // Slim build: leave defaults.
     }
 
-    state.steps_completed.push(step_markers::STEP_7B_AUTO_UPDATE);
+    state.steps_completed.push(WizardStep::AutoUpdate as u8);
     Ok(())
 }
 
@@ -250,7 +250,7 @@ pub(crate) fn step7c_wasm_plugin_activation(
                 plugins_root.display()
             );
         }
-        state.steps_completed.push(step_markers::STEP_7C_WASM_PLUGINS); // 7c marker (7-and-three-quarters)
+        state.steps_completed.push(WizardStep::WasmPlugins as u8); // 7c marker (7-and-three-quarters)
         return Ok(());
     }
 
@@ -298,7 +298,7 @@ pub(crate) fn step7c_wasm_plugin_activation(
             disabled = ?disabled,
             "wasm plugins discovered; non-interactive activation applied"
         );
-        state.steps_completed.push(step_markers::STEP_7C_WASM_PLUGINS);
+        state.steps_completed.push(WizardStep::WasmPlugins as u8);
         return Ok(());
     }
 
@@ -353,7 +353,7 @@ pub(crate) fn step7c_wasm_plugin_activation(
         // discovered id — same as non-interactive.
     }
 
-    state.steps_completed.push(step_markers::STEP_7C_WASM_PLUGINS);
+    state.steps_completed.push(WizardStep::WasmPlugins as u8);
     Ok(())
 }
 
@@ -372,7 +372,7 @@ pub(crate) fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut
 
     if !interactive {
         // Default = disabled (WizardState::default). Just record the step.
-        state.steps_completed.push(step_markers::STEP_7D_SUPERVISOR);
+        state.steps_completed.push(WizardStep::Supervisor as u8);
         return Ok(());
     }
 
@@ -381,7 +381,7 @@ pub(crate) fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut
         let kind = crate::daemon::supervisor::recommended_kind();
         if matches!(kind, crate::config::SupervisorKind::None) {
             println!("  [7d/9] supervisor: no supported supervisor for this OS — skipping");
-            state.steps_completed.push(step_markers::STEP_7D_SUPERVISOR);
+            state.steps_completed.push(WizardStep::Supervisor as u8);
             return Ok(());
         }
         let want = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
@@ -422,7 +422,7 @@ pub(crate) fn step7d_supervisor(_args: &InitArgs, interactive: bool, state: &mut
         // Slim build: leave defaults (disabled).
     }
 
-    state.steps_completed.push(step_markers::STEP_7D_SUPERVISOR);
+    state.steps_completed.push(WizardStep::Supervisor as u8);
     Ok(())
 }
 

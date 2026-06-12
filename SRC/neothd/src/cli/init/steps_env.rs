@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use tracing::{debug, info, warn};
 
 use super::{
-    print_gui_handoff_banner, step_markers, write_detect_complete_sidecar, InitArgs,
+    print_gui_handoff_banner, WizardStep, write_detect_complete_sidecar, InitArgs,
     OnboardingMode, WizardModeChoice, WizardState,
 };
 
@@ -91,7 +91,7 @@ pub(crate) fn step1_license(args: &InitArgs, interactive: bool, state: &mut Wiza
 
     if !interactive {
         if args.accept_license {
-            state.steps_completed.push(step_markers::STEP_1_LICENSE);
+            state.steps_completed.push(WizardStep::License as u8);
             return Ok(());
         }
         anyhow::bail!("--accept-license required in non-interactive mode");
@@ -120,7 +120,7 @@ pub(crate) fn step1_license(args: &InitArgs, interactive: bool, state: &mut Wiza
         }
     }
 
-    state.steps_completed.push(step_markers::STEP_1_LICENSE);
+    state.steps_completed.push(WizardStep::License as u8);
     Ok(())
 }
 
@@ -356,7 +356,7 @@ pub(crate) fn step1d_onboarding_mode(
     state.onboarding_mode = mode;
     state
         .steps_completed
-        .push(step_markers::STEP_1D_ONBOARDING_MODE);
+        .push(WizardStep::OnboardingMode as u8);
 
     match (mode, interactive) {
         (OnboardingMode::Migration, true) => {

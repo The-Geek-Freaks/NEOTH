@@ -10,7 +10,7 @@ use super::apply_local_multi_preset_interactive;
 use super::{
     apply_local_only_preset, collect_ollama_model_refs, inference_uses_local_qwen,
     parse_topology_mode_arg, prompt_hemisphere_model, prompt_inference_provider,
-    recommended_provider_for_role, render_council_depth_cost_warning, step_markers,
+    recommended_provider_for_role, render_council_depth_cost_warning, WizardStep,
     topology_default_idx_for_probe, InitArgs, WizardState,
 };
 
@@ -103,7 +103,7 @@ pub(crate) fn step5b_inference_topology(
                 );
             }
         }
-        state.steps_completed.push(step_markers::STEP_5B_TOPOLOGY); // marker for step 5b (kept separate)
+        state.steps_completed.push(WizardStep::Topology as u8); // marker for step 5b (kept separate)
         return Ok(());
     }
 
@@ -454,7 +454,7 @@ pub(crate) fn step5b_inference_topology(
         // No dialoguer build → leave defaults from non-interactive path.
     }
 
-    state.steps_completed.push(step_markers::STEP_5B_TOPOLOGY);
+    state.steps_completed.push(WizardStep::Topology as u8);
     Ok(())
 }
 
@@ -567,7 +567,7 @@ pub(crate) async fn step5c_qwen_weights(
     if !inference_uses_local_qwen(&state.inference, &state.provider_kind) {
         // Operator picked cloud-only — no LocalQwen path = nothing to
         // pre-download. Mark step run + return.
-        state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
+        state.steps_completed.push(WizardStep::QwenWeights as u8);
         return Ok(());
     }
 
@@ -601,7 +601,7 @@ pub(crate) async fn step5c_qwen_weights(
                 );
             }
         }
-        state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
+        state.steps_completed.push(WizardStep::QwenWeights as u8);
         return Ok(());
     }
 
@@ -610,7 +610,7 @@ pub(crate) async fn step5c_qwen_weights(
         println!();
         if cached {
             println!("[5c/9] Qwen weights already cached (~/.cache/huggingface/hub/). Skipping.");
-            state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
+            state.steps_completed.push(WizardStep::QwenWeights as u8);
             return Ok(());
         }
         // NOOB-UX gate: Beginner skips the pre-download prompt. The
@@ -627,7 +627,7 @@ pub(crate) async fn step5c_qwen_weights(
                 "[5c/9] Qwen weights will download automatically on your first chat (~{} GB, progress shown).",
                 qwen_weights::DEFAULT_QWEN_DOWNLOAD_GB,
             );
-            state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
+            state.steps_completed.push(WizardStep::QwenWeights as u8);
             return Ok(());
         }
         println!(
@@ -644,7 +644,7 @@ pub(crate) async fn step5c_qwen_weights(
             println!(
                 "  Skipped — weights will lazy-download on first chat (operator-visible progress)."
             );
-            state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
+            state.steps_completed.push(WizardStep::QwenWeights as u8);
             return Ok(());
         }
         state.download_qwen_weights = true;
@@ -658,7 +658,7 @@ pub(crate) async fn step5c_qwen_weights(
         );
     }
 
-    state.steps_completed.push(step_markers::STEP_5C_QWEN_WEIGHTS);
+    state.steps_completed.push(WizardStep::QwenWeights as u8);
     Ok(())
 }
 
@@ -711,6 +711,6 @@ pub(crate) fn step5d_profile_approval_gate(interactive: bool, state: &mut Wizard
             println!("  Opt out anytime with: `neoth profile migrate-require-approval --disable`");
         }
     }
-    state.steps_completed.push(step_markers::STEP_5D_PROFILE_GATE);
+    state.steps_completed.push(WizardStep::ProfileGate as u8);
     Ok(())
 }

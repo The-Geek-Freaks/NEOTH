@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use tracing::debug;
 
 use super::{
-    get_os_username, step_markers, validate_bcp47, validate_operator_id, InitArgs, OperatorRole,
+    get_os_username, WizardStep, validate_bcp47, validate_operator_id, InitArgs, OperatorRole,
     WizardState,
 };
 
@@ -50,7 +50,7 @@ pub(crate) fn step2_operator_id(args: &InitArgs, interactive: bool, state: &mut 
         }
     };
     state.operator_id = Some(id);
-    state.steps_completed.push(step_markers::STEP_2_OPERATOR_ID);
+    state.steps_completed.push(WizardStep::OperatorId as u8);
     Ok(())
 }
 
@@ -97,7 +97,7 @@ pub(crate) fn step3_language(args: &InitArgs, interactive: bool, state: &mut Wiz
 
     state.language_primary = Some(primary);
     state.language_code = Some(code);
-    state.steps_completed.push(step_markers::STEP_3_LANGUAGE);
+    state.steps_completed.push(WizardStep::Language as u8);
     Ok(())
 }
 
@@ -180,6 +180,6 @@ pub(crate) fn step4_role(args: &InitArgs, interactive: bool, state: &mut WizardS
         }
     };
     state.role = Some(role);
-    state.steps_completed.push(step_markers::STEP_4_ROLE);
+    state.steps_completed.push(WizardStep::Role as u8);
     Ok(())
 }

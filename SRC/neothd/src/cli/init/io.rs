@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
 
 use super::{
-    spawn_daemon_detached, step_markers, try_inline_consent_grant, write_first_tour_marker,
+    spawn_daemon_detached, WizardStep, try_inline_consent_grant, write_first_tour_marker,
     InitArgs, OperatorRole, ProviderKind, WizardState,
 };
 
@@ -141,7 +141,7 @@ pub(crate) fn step8_summary(args: &InitArgs, state: &mut WizardState) -> Result<
     // Step 7 (autonomy) already pushed `7`; pushing again here corrupted
     // `.initialized.steps_completed` so a partial-resume couldn't tell
     // whether step 7 had actually run. Step 8 is its own marker.
-    state.steps_completed.push(step_markers::STEP_8_SUMMARY);
+    state.steps_completed.push(WizardStep::Summary as u8);
     let role_display = match state.role {
         Some(OperatorRole::Developer) => "developer",
         Some(OperatorRole::SecurityResearcher) => "security-researcher",
