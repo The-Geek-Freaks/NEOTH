@@ -166,10 +166,21 @@ where
         file.read_exact(&mut head)
             .context("read frame preamble+header")?;
         if head[..PREAMBLE_LEN] != MAGIC {
-            // Bad magic — segment is corrupted or we walked off the
-            // end of a partially-written frame. Stop here rather than
-            // risk redacting unrelated bytes downstream.
-            break;
+            // H2 (2026-06-12) — the while-condition guaranteed a full
+            // PREAMBLE+HEADER+CRC slot here, and a genuinely truncated tail is
+            // handled by the `cursor + total_len > file_len` check below, so a
+            // bad MAGIC at this position is tamper/corruption, NOT a torn tail.
+            // A bare `break` returned Ok(errors=0): `run_physical_redaction`
+            // then reported a confirmed GDPR-grade erasure while every frame
+            // from here on was left UN-redacted (a false privacy guarantee).
+            // Refuse loudly (like the sealed-compressed / unparseable-header
+            // cases) so `forget --physical` surfaces an error (GR-008) instead.
+            anyhow::bail!(
+                "wal::redact: bad frame magic at offset {cursor} in {} — \
+                 tamper-suspect corruption (not a torn tail); refusing to report \
+                 a clean redaction over an unscrubbed segment",
+                segment_path.display()
+            );
         }
         let header_bytes: &[u8; HEADER_BODY_LEN] =
             head[PREAMBLE_LEN..].try_into().expect("96 bytes");
@@ -503,6 +514,31 @@ mod tests {
         assert!(
             err.to_string().contains("header does not parse"),
             "error should name the unparseable header: {err}"
+        );
+    }
+
+    #[test]
+    fn scan_refuses_a_corrupt_mid_segment_frame_magic_h2() {
+        // H2 (2026-06-12): a full-sized frame slot whose MAGIC is corrupted
+        // mid-segment is tamper/corruption, not a torn tail. The old `break`
+        // returned Ok(errors=0) → `forget --physical` reported a confirmed
+        // GDPR erasure while frames from the corrupt one on were left
+        // UN-redacted (a false privacy guarantee). Must now REFUSE (Err) so
+        // GR-008 fires. FAILS pre-fix (Ok, frame 2 silently skipped).
+        let (tmp, offsets) =
+            write_segment_with_frames(&[b"first frame is fine", b"AcmeCorp is a secret to scrub"]);
+        // Corrupt the 4-byte MAGIC preamble of the SECOND frame.
+        let mut bytes = std::fs::read(tmp.path()).unwrap();
+        let off = offsets[1] as usize;
+        for b in bytes[off..off + PREAMBLE_LEN].iter_mut() {
+            *b ^= 0xFF;
+        }
+        std::fs::write(tmp.path(), &bytes).unwrap();
+        let err = scan_and_redact(tmp.path(), payload_contains_topic("acmecorp"))
+            .expect_err("must refuse a corrupt mid-segment frame magic");
+        assert!(
+            err.to_string().contains("bad frame magic"),
+            "error should name the bad-magic refusal: {err}"
         );
     }
 

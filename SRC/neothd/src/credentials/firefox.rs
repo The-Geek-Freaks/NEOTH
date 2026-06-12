@@ -303,8 +303,12 @@ impl CredentialImporter for FirefoxImporter {
         let logins = parse_logins_json(&logins_body)?;
 
         let key4_path = profile_path.join("key4.db");
-        let master_key = extract_master_key_from_file(&key4_path, self.primary_password.expose())
-            .map_err(|e| format!("key4.db master-key extract failed: {e}"))?;
+        // M1 (2026-06-12) — the decrypted master-key blob is sensitive; bind it
+        // `mut` so it can be wiped once the AES key is copied out, and hold the
+        // working AES key in `Zeroizing` so it scrubs on scope exit.
+        let mut master_key =
+            extract_master_key_from_file(&key4_path, self.primary_password.expose())
+                .map_err(|e| format!("key4.db master-key extract failed: {e}"))?;
 
         // Modern Firefox uses AES-256-CBC for SECITEM entries; this
         // path requires ≥32 bytes of master-key material. Legacy
@@ -318,9 +322,13 @@ impl CredentialImporter for FirefoxImporter {
                 master_key.len()
             ));
         }
-        let aes_key: [u8; 32] = master_key[..32]
-            .try_into()
-            .expect("slice len checked above");
+        let aes_key: zeroize::Zeroizing<[u8; 32]> = zeroize::Zeroizing::new(
+            master_key[..32]
+                .try_into()
+                .expect("slice len checked above"),
+        );
+        // The 32 bytes we need now live in `aes_key`; wipe the heap blob.
+        zeroize::Zeroize::zeroize(&mut master_key);
 
         let mut entries = Vec::new();
         let mut warnings = vec![format!(

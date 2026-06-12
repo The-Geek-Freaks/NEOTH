@@ -297,6 +297,45 @@ pub async fn memory_save(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcom
 
 // ── /api/provider/call ──────────────────────────────────────────
 
+/// H1 (2026-06-12) — cloud-egress consent gate for the n8n `provider_call`
+/// surface. Returns `Some(refusal)` if the call must be refused, `None` if it
+/// may proceed. Mirrors the chat path: at autonomy=Strict cloud is refused
+/// outright (the loudest privacy signal); at every OTHER autonomy level the
+/// specific cloud provider must carry a recorded operator consent marker
+/// (`consent::is_granted`). Previously only Strict was gated, so an n8n workflow
+/// could drive un-consented cloud egress at the daemon-default Standard
+/// autonomy. Pure (no I/O beyond the consent-marker read) so it is unit-tested
+/// without constructing a full `ApiState`.
+fn cloud_egress_gate(
+    autonomy: crate::permissions::AutonomyLevel,
+    provider_kind: Option<crate::cli::init::ProviderKind>,
+    home: &std::path::Path,
+) -> Option<HandlerOutcome> {
+    // Only cloud providers are gated; a local/none provider proceeds.
+    let kind = provider_kind.filter(|k| crate::consent::is_cloud(*k))?;
+    if matches!(autonomy, crate::permissions::AutonomyLevel::Strict) {
+        return Some(HandlerOutcome::error(
+            ApiErrorCode::PermissionDenied,
+            "n8n provider_call refused under autonomy=strict for cloud providers — \
+             confirm via the chat surface or lower autonomy to standard/elevated/full",
+            "use /api/channel/send for the gated path OR lower autonomy",
+        ));
+    }
+    if !crate::consent::is_granted(home, kind) {
+        return Some(HandlerOutcome::error(
+            ApiErrorCode::PermissionDenied,
+            format!(
+                "n8n provider_call: cloud provider `{}` has no recorded operator consent — \
+                 run `neoth consent grant {}` first",
+                crate::consent::slug(kind),
+                crate::consent::slug(kind)
+            ),
+            "run `neoth consent grant <provider>` to record outbound-LLM consent",
+        ));
+    }
+    None
+}
+
 pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutcome {
     let req: ProviderCallRequest = match parse_body(&ctx.body) {
         Ok(r) => r,
@@ -327,29 +366,21 @@ pub async fn provider_call(ctx: &ApiRequestCtx, state: &ApiState) -> HandlerOutc
     // (c) the circuit-breaker wrap happens INSIDE
     //     `provider.complete()` (GR-04) — automatic.
     let provider_kind = state.config.provider_kind;
-    // GR-003: route through the canonical EXHAUSTIVE cloud classifier
-    // (`consent::is_cloud`) instead of an inline `matches!`. The inline set had
-    // drifted and silently omitted `AnthropicApi` + `Cohere`, so an n8n
-    // provider_call to either skipped the Strict-autonomy consent gate. The
-    // canonical classifier is compile-enforced exhaustive — no future drift.
-    let is_cloud = provider_kind.is_some_and(crate::consent::is_cloud);
-    if is_cloud
-        && matches!(
-            state.config.autonomy,
-            crate::permissions::AutonomyLevel::Strict
-        )
-    {
+    // GR-003 + H1 (2026-06-12): cloud egress on the n8n surface goes through
+    // `cloud_egress_gate` — at autonomy=Strict cloud is refused outright (the
+    // loudest privacy signal), and at EVERY other autonomy level the specific
+    // cloud provider must carry a recorded operator consent marker (parity with
+    // the chat path's `consent::ensure_all_still_granted`). Previously only the
+    // Strict case was gated, so an n8n workflow could drive un-consented cloud
+    // LLM calls at the daemon-default Standard autonomy. `consent::is_cloud`
+    // (inside the gate) is the compile-enforced EXHAUSTIVE classifier (GR-003).
+    if let Some(refusal) = cloud_egress_gate(state.config.autonomy, provider_kind, &state.home) {
         tracing::warn!(
             provider_kind = ?provider_kind,
             request_id = %ctx.request_id,
-            "n8n_api provider_call refused: autonomy=strict + cloud provider"
+            "n8n_api provider_call refused by the cloud-egress consent gate"
         );
-        return HandlerOutcome::error(
-            ApiErrorCode::PermissionDenied,
-            "n8n provider_call refused under autonomy=strict for cloud providers — \
-             confirm via the chat surface or lower autonomy to standard/elevated/full",
-            "use /api/channel/send for the gated path OR lower autonomy",
-        );
+        return refusal;
     }
     let provider = match crate::providers::from_config(state.config.as_ref()).await {
         Ok(p) => p,
@@ -563,5 +594,58 @@ mod tests {
     fn recall_request_defaults_limit_to_none() {
         let r: RecallRequest = serde_json::from_str(r#"{"query": "x"}"#).unwrap();
         assert_eq!(r.limit, None);
+    }
+
+    // ── H1 (2026-06-12): cloud-egress consent gate ──────────────────
+    use crate::cli::init::ProviderKind;
+    use crate::permissions::AutonomyLevel;
+
+    #[test]
+    fn cloud_egress_gate_blocks_cloud_without_consent_at_standard() {
+        // The core H1 regression: at the daemon-default Standard autonomy a
+        // cloud provider with NO recorded consent marker must be REFUSED — the
+        // pre-fix gate only fired at Strict, letting un-consented cloud egress
+        // through on the n8n surface.
+        let home = tempfile::tempdir().expect("tempdir");
+        let out = cloud_egress_gate(AutonomyLevel::Standard, Some(ProviderKind::OpenaiApi), home.path());
+        let out = out.expect("must refuse cloud without consent at Standard");
+        assert_eq!(out.error_code(), Some(ApiErrorCode::PermissionDenied));
+    }
+
+    #[test]
+    fn cloud_egress_gate_allows_cloud_with_recorded_consent() {
+        // Once the operator has granted consent for the provider, the n8n call
+        // proceeds (None == no refusal) at a non-Strict autonomy.
+        let home = tempfile::tempdir().expect("tempdir");
+        crate::consent::grant(home.path(), ProviderKind::OpenaiApi).expect("record consent");
+        let out = cloud_egress_gate(AutonomyLevel::Standard, Some(ProviderKind::OpenaiApi), home.path());
+        assert!(out.is_none(), "a consented cloud provider must pass the gate");
+    }
+
+    #[test]
+    fn cloud_egress_gate_refuses_all_cloud_at_strict_even_with_consent() {
+        // Strict is the loudest privacy signal: cloud is refused outright,
+        // regardless of any recorded consent (parity with the prior behavior).
+        let home = tempfile::tempdir().expect("tempdir");
+        crate::consent::grant(home.path(), ProviderKind::OpenaiApi).expect("record consent");
+        let out = cloud_egress_gate(AutonomyLevel::Strict, Some(ProviderKind::OpenaiApi), home.path());
+        let out = out.expect("Strict must refuse cloud even with consent");
+        assert_eq!(out.error_code(), Some(ApiErrorCode::PermissionDenied));
+    }
+
+    #[test]
+    fn cloud_egress_gate_ignores_local_and_absent_providers() {
+        // A local provider (no cloud egress) and an absent provider_kind are
+        // never gated — at any autonomy level.
+        let home = tempfile::tempdir().expect("tempdir");
+        assert!(
+            cloud_egress_gate(AutonomyLevel::Standard, Some(ProviderKind::LocalQwen), home.path())
+                .is_none(),
+            "a local provider is not cloud egress"
+        );
+        assert!(
+            cloud_egress_gate(AutonomyLevel::Full, None, home.path()).is_none(),
+            "no provider configured → no cloud gate"
+        );
     }
 }

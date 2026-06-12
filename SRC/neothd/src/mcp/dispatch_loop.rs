@@ -25,7 +25,7 @@ use std::future::Future;
 use std::time::Duration;
 
 use anyhow::Result;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 use crate::mcp::config::McpServers;
 use crate::mcp::tool_call_parser::{ParseError, ParsedToolCall, extract_tool_calls};
@@ -253,20 +253,36 @@ pub async fn run_tool_loop_with_cap<D: CompletionDriver + Send>(
                             // blocked tool call proceeds"), not unlimited calls
                             // until the TTL lapses. The audited id is the one
                             // actually consumed.
-                            let consumed = consume_risk_leases(dangerous_leased, egress_leased);
-                            // GOLD-ADOPT-23 point 3 — the confirm window was spent.
-                            emit_risk_gate_wal(
-                                writer,
-                                call,
-                                crate::wal::events::EVENT_TYPE_RISK_CONFIRM_USED,
-                                "lifted_by_lease",
-                                consumed
-                                    .as_deref()
-                                    .or(lease_id.as_deref())
-                                    .unwrap_or("egress"),
-                            )
-                            .await;
-                            gate = lifted; // now Allow — fall through to dispatch.
+                            match consume_risk_leases(dangerous_leased, egress_leased) {
+                                Ok(consumed) => {
+                                    // GOLD-ADOPT-23 point 3 — the confirm window was spent.
+                                    emit_risk_gate_wal(
+                                        writer,
+                                        call,
+                                        crate::wal::events::EVENT_TYPE_RISK_CONFIRM_USED,
+                                        "lifted_by_lease",
+                                        consumed
+                                            .as_deref()
+                                            .or(lease_id.as_deref())
+                                            .unwrap_or("egress"),
+                                    )
+                                    .await;
+                                    gate = lifted; // now Allow — fall through to dispatch.
+                                }
+                                Err(e) => {
+                                    // M3 (2026-06-12) — fail-CLOSED. The single-use
+                                    // consumption could NOT be persisted, so the in-memory
+                                    // revoke would not survive a restart / a 2nd instance
+                                    // (the lease reloads as valid → reusable until TTL).
+                                    // Keep the call BLOCKED rather than lift on an un-spent
+                                    // lease: `gate` stays its prior blocked value, so the
+                                    // block path below denies + audits it normally.
+                                    error!(
+                                        server = %call.server, tool = %call.tool, error = %e,
+                                        "risk-lease single-use consumption could not be persisted — keeping the call BLOCKED (fail-closed); re-run `neoth risk-confirm`"
+                                    );
+                                }
+                            }
                         }
                     } else if expired_present {
                         // GOLD-ADOPT-23 point 3 — a matching risk-confirm lease
@@ -680,14 +696,30 @@ fn check_risk_leases(
 /// silently proceeding. Returns one consumed lease id for the audit frame.
 /// Best-effort: a save failure is warned (the lease stays reusable until expiry)
 /// but never blocks the in-flight, already-authorised call.
-fn consume_risk_leases(consume_dangerous: bool, consume_egress: bool) -> Option<String> {
+fn consume_risk_leases(
+    consume_dangerous: bool,
+    consume_egress: bool,
+) -> anyhow::Result<Option<String>> {
+    let home = crate::config::FreedomConfig::default_neoth_home();
+    consume_risk_leases_at(&home, consume_dangerous, consume_egress)
+}
+
+/// M3 (2026-06-12) — home-injectable core so the single-use persistence + the
+/// fail-closed save path are hermetically testable (the wrapper above resolves
+/// the real `~/.neoth`). Returns `Err` when the single-use revoke can't be
+/// persisted to disk, so the caller keeps the lifted call BLOCKED rather than
+/// letting an un-spent lease stay reusable until its TTL lapses.
+fn consume_risk_leases_at(
+    home: &std::path::Path,
+    consume_dangerous: bool,
+    consume_egress: bool,
+) -> anyhow::Result<Option<String>> {
     use crate::permissions::lease::{LeaseScope, LeaseStore};
     use crate::security::risk_gate::RISK_LEASE_SUBJECT;
 
-    let home = crate::config::FreedomConfig::default_neoth_home();
-    let path = LeaseStore::default_path(&home);
+    let path = LeaseStore::default_path(home);
     let Ok(mut store) = LeaseStore::load(&path) else {
-        return None;
+        return Ok(None);
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -714,14 +746,11 @@ fn consume_risk_leases(consume_dangerous: bool, consume_egress: bool) -> Option<
         }
     }
     if consumed.is_some() {
-        if let Err(e) = store.save(&path) {
-            warn!(
-                error = %e,
-                "failed to persist single-use risk-lease consumption (lease stays reusable until expiry)"
-            );
-        }
+        store
+            .save(&path)
+            .map_err(|e| anyhow::anyhow!("persist single-use risk-lease consumption: {e}"))?;
     }
-    consumed
+    Ok(consumed)
 }
 
 /// GOLD-ADOPT-20 — render a repetition-guard block as an operator-visible
@@ -1388,5 +1417,69 @@ mod tests {
         // Pin the budget — operators reading this default see
         // exactly what the cap is without reading the source.
         assert_eq!(DEFAULT_MAX_ITERATIONS, 5);
+    }
+
+    #[test]
+    fn consume_risk_leases_persists_the_single_use_revoke() {
+        // M3: a successful single-use consumption must be DURABLE — the lease is
+        // gone from disk afterwards, so a restart / 2nd instance can't re-use it.
+        use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore};
+        use crate::security::risk_gate::RISK_LEASE_SUBJECT;
+        let home = tempfile::tempdir().expect("tempdir");
+        let path = LeaseStore::default_path(home.path());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let mut store = LeaseStore::default();
+        store.grant(CapabilityLease::new(
+            RISK_LEASE_SUBJECT,
+            LeaseScope::DangerousCommand,
+            3600,
+            now,
+        ));
+        store.save(&path).unwrap();
+
+        let consumed =
+            consume_risk_leases_at(home.path(), true, false).expect("save must succeed");
+        assert!(consumed.is_some(), "the covering lease was consumed");
+        let reloaded = LeaseStore::load(&path).unwrap();
+        assert!(
+            reloaded.leases.is_empty(),
+            "single-use consumption must be persisted to disk"
+        );
+    }
+
+    #[test]
+    fn consume_risk_leases_fails_closed_when_persist_fails() {
+        // M3: if the single-use revoke can't be persisted the function must
+        // return Err (so the caller keeps the call BLOCKED) instead of silently
+        // warning and proceeding — which left the lease reusable until its TTL.
+        // Force the atomic save (tmp-write + rename) to fail by occupying its
+        // `<path>.json.tmp` write target with a DIRECTORY; `load()` still reads
+        // the real `leases.json` so the consume reaches the save step.
+        use crate::permissions::lease::{CapabilityLease, LeaseScope, LeaseStore};
+        use crate::security::risk_gate::RISK_LEASE_SUBJECT;
+        let home = tempfile::tempdir().expect("tempdir");
+        let path = LeaseStore::default_path(home.path());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let mut store = LeaseStore::default();
+        store.grant(CapabilityLease::new(
+            RISK_LEASE_SUBJECT,
+            LeaseScope::DangerousCommand,
+            3600,
+            now,
+        ));
+        store.save(&path).unwrap();
+        std::fs::create_dir(path.with_extension("json.tmp")).expect("occupy tmp path");
+
+        let result = consume_risk_leases_at(home.path(), true, false);
+        assert!(
+            result.is_err(),
+            "M3: an un-persistable single-use consumption must fail-closed (Err), not warn-and-proceed"
+        );
     }
 }

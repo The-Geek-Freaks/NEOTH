@@ -304,17 +304,27 @@ pub fn extract_master_key<R: Key4DbReader>(
     reader: &R,
     primary_password: &str,
 ) -> Result<Vec<u8>, MasterKeyError> {
+    use zeroize::Zeroizing;
+
     let metadata = reader.read_metadata_password_row()?;
     let password_check_env = parse_pbes2_envelope(&metadata.password_check_envelope)?;
     let master_key_env_bytes = reader.read_master_key_envelope()?;
     let master_key_env = parse_pbes2_envelope(&master_key_env_bytes)?;
 
-    let intermediate = derive_intermediate_key(&metadata.global_salt, primary_password.as_bytes());
+    // M1 (2026-06-12) — the PBKDF2 intermediate key + the decrypted
+    // password-check plaintext are sensitive; `Zeroizing` wipes them on EVERY
+    // exit path (incl. the `?` / wrong-password early-returns below). The
+    // returned master-key blob is wiped by the caller (`firefox.rs`) once it
+    // has copied out the 32-byte AES key.
+    let intermediate =
+        Zeroizing::new(derive_intermediate_key(&metadata.global_salt, primary_password.as_bytes()));
 
     // Step 1: verify the primary password by decrypting the
     // password-check envelope and checking the canonical plaintext.
-    let check_plaintext = decrypt_pbes2_payload(&password_check_env, &intermediate)
-        .map_err(|_| MasterKeyError::WrongPassword)?;
+    let check_plaintext = Zeroizing::new(
+        decrypt_pbes2_payload(&password_check_env, &intermediate)
+            .map_err(|_| MasterKeyError::WrongPassword)?,
+    );
     if !bool::from(check_plaintext.ct_eq(PASSWORD_CHECK_PLAINTEXT)) {
         return Err(MasterKeyError::WrongPassword);
     }

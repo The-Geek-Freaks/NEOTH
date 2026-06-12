@@ -127,8 +127,18 @@ fn rules() -> &'static [Rule] {
             // egress lease, open a risk-confirm window, flip to FULL-AUTO), which
             // then bypasses every other gate. The agent must never self-escalate,
             // so flag these Critical (Deny by default).
-            reason: "NEOTH self-privilege-escalation (neoth risk-confirm / lease grant / sudomode / autonomy full) — the agent must not widen its own permissions",
-            re: r"(?i)\bneoth\b\s+(?:risk-confirm\b|sudomode\b|lease\s+grant\b|autonomy\s+(?:set\s+)?(?:full|full-auto)\b)",
+            reason: "NEOTH self-privilege-escalation (neoth risk-confirm / lease grant / sudomode / autonomy full|elevated) — the agent must not widen its own permissions",
+            // M5 (2026-06-12) — allow operator/global flags between the binary
+            // and the escalation subcommand (`neoth --config=x autonomy full`,
+            // `neoth -q sudomode`) so flag-prefixing can't dodge the gate, and
+            // add the `elevated` target (standard→elevated already grants
+            // ExecArbitrary / WriteOutsideHome / ClusterTaskAccept = Allow).
+            // A space-separated flag VALUE (`neoth --config x autonomy full`) is
+            // deliberately NOT consumed — a greedy value-eater would swallow the
+            // subcommand and introduce false negatives; the bare- and
+            // `=value`-flag forms are covered (the escalation verbs never start
+            // with `-`, so `(?:\s+--?\S+)*` can never eat one).
+            re: r"(?i)\bneoth\b(?:\s+--?\S+)*\s+(?:risk-confirm\b|sudomode\b|lease\s+grant\b|autonomy\s+(?:set\s+)?(?:full|full-auto|elevated)\b)",
         },
     ]
 }
@@ -203,6 +213,23 @@ mod tests {
         assert!(ids("neoth recall something").is_empty());
         assert!(ids("neoth lease list").is_empty());
         assert!(ids("neoth autonomy gated").is_empty());
+
+        // M5 (2026-06-12): flag-prefixed forms must NOT dodge the gate, and
+        // `elevated` (which already grants Exec/Write/ClusterTaskAccept = Allow)
+        // is now a flagged escalation target.
+        assert!(
+            ids("neoth --config=/tmp/x.yaml autonomy full").contains(&r),
+            "an `=value` global flag before the subcommand must not bypass the gate"
+        );
+        assert!(
+            ids("neoth -q sudomode").contains(&r),
+            "a short flag before the subcommand must not bypass the gate"
+        );
+        assert!(ids("neoth autonomy elevated").contains(&r));
+        assert!(ids("neoth autonomy set elevated").contains(&r));
+        // A flag before a BENIGN subcommand stays benign (no over-match).
+        assert!(ids("neoth --json status").is_empty());
+        assert!(ids("neoth -v recall something").is_empty());
     }
 
     #[test]
