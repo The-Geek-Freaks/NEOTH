@@ -443,17 +443,20 @@ pub struct CouncilBudgetPanel {
     pub depth_cost_warning: String,
 }
 
-/// GOLD-HON-13 — GUI mirror of `neothd::config::inference::
-/// HemisphereCouncilDepth::cost_warning` (the GUI crate stays decoupled
-/// from `neothd`, so the tiny `3^depth` formula is replicated + tested
-/// here). Empty while flat (depth ≤ 1); a one-line ⚠ at depth ≥ 2.
+/// GOLD-HON-13 — GUI mirror of `neothd::cli::init::render_council_depth_cost_warning`
+/// (the GUI crate stays decoupled from `neothd`, so the `3^depth` formula is
+/// replicated + tested here). Empty while flat (depth ≤ 1); a one-line ⚠ at
+/// depth ≥ 2. The daemon clamps depth to 4, but the GUI reads raw JSON — the
+/// defensive cap is applied to BOTH the exponent label and the computed value
+/// so the displayed math stays internally consistent (GR-061).
 fn council_depth_cost_warning(depth: u64) -> String {
     if depth <= 1 {
         return String::new();
     }
-    let calls = 3u64.saturating_pow(depth.min(8) as u32);
+    let display_depth = depth.min(8);
+    let calls = 3u64.saturating_pow(display_depth as u32);
     format!(
-        "⚠ council depth {depth} fans every prompt out to ~3^{depth} = {calls} provider \
+        "⚠ council depth {depth} fans every prompt out to ~3^{display_depth} = {calls} provider \
          calls — on a metered provider this multiplies the per-prompt bill in lockstep. \
          Lower hemisphere_council_depth to reduce it."
     )
@@ -1014,6 +1017,17 @@ mod tests {
         assert!(b.last_debate.iter().any(|r| r.label == "used last message" && r.value == "2 / 3"));
         assert!(b.last_debate.iter().any(|r| r.label == "exhausted last message" && r.value == "no"));
         assert!(b.last_debate.iter().any(|r| r.label == "exhaustions (rolling)" && r.value == "1"));
+    }
+
+    /// GR-061: above the defensive cap the exponent label and the computed
+    /// value must agree — before the fix depth=9 displayed "3^9 = 6561"
+    /// (label raw, value capped at 3^8).
+    #[test]
+    fn council_depth_cost_warning_label_and_value_agree_above_cap() {
+        let w = council_depth_cost_warning(9);
+        assert!(w.contains("3^8"), "{w}");
+        assert!(w.contains("6561"), "{w}");
+        assert!(w.contains("council depth 9"), "raw depth still named: {w}");
     }
 
     #[test]

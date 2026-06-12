@@ -1040,6 +1040,20 @@ fn run_suppress(home: &Path, off: bool, output: OutputFormat) -> Result<()> {
 /// `neoth council budget` — KF-08 meter readout: the configured
 /// per-message cap (`freedom.yaml::council`) + the last debate's live
 /// runtime usage from the `council_budget.json` scratch file.
+/// JSON body for `run_budget`'s machine output. Extracted so the
+/// GUI-consumed contract is unit-testable: `neothd-gui`'s
+/// `parse_council_budget` reads `max_recursion_depth` from exactly this
+/// object to derive the 3^depth cost warning (GR-001 — the key was
+/// missing, so the GUI warning never fired).
+fn budget_json_body(cfg: &FreedomConfig, runtime: Option<serde_json::Value>) -> serde_json::Value {
+    json!({
+        "configured_cap": cfg.council.effective_max_calls(),
+        "daily_usd_cap": cfg.council.daily_usd_cap,
+        "max_recursion_depth": cfg.council.effective_max_recursion_depth(),
+        "runtime": runtime,
+    })
+}
+
 fn run_budget(home: &Path, output: OutputFormat) -> Result<()> {
     let yaml = home.join("freedom.yaml");
     let cfg = if yaml.exists() {
@@ -1064,11 +1078,7 @@ fn run_budget(home: &Path, output: OutputFormat) -> Result<()> {
             });
             println!(
                 "{}",
-                serde_json::to_string_pretty(&json!({
-                    "configured_cap": cap,
-                    "daily_usd_cap": daily_usd_cap,
-                    "runtime": runtime,
-                }))?
+                serde_json::to_string_pretty(&budget_json_body(&cfg, runtime))?
             );
         }
         OutputFormat::Table => {
@@ -1413,6 +1423,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = run_suppress(dir.path(), false, OutputFormat::Json).unwrap_err();
         assert!(err.to_string().contains("freedom.yaml not found"));
+    }
+
+    /// GR-001: the GUI's `parse_council_budget` derives its 3^depth cost
+    /// warning from `max_recursion_depth` in this JSON — pin the key.
+    #[test]
+    fn run_budget_json_includes_max_recursion_depth() {
+        let body = budget_json_body(&FreedomConfig::default(), None);
+        assert!(
+            body.get("max_recursion_depth").is_some(),
+            "GUI contract key missing: {body}"
+        );
+        assert!(body.get("configured_cap").is_some());
     }
 
     #[test]

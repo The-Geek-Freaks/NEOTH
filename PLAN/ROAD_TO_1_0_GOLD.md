@@ -77,7 +77,7 @@ Background it; read `RUN_EXIT=`; `tail` masks exit code — never pipe on gate r
 | WS-G Repo adoptions | 28 | 2 | 26 |
 | WS-H PROGRESS carry-forward | 19 | 15 | 4 |
 | **TOTAL** (WS-A…H) | **199** | **50** | **149** |
-| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 82 | 127 |
+| WS-V Verification findings (ext. review 2026-06-11, triaged) | 209 confirmed | 80 | 129 |
 | WS-HR Headroom token-compression port (native Rust) | 12 | 12 | 0 |
 | WS-I Repo-adaptation (deep-read 2026-06-12 incl. Jarvis-LIVE memory/proactivity/skills/persona + prior ODY/CLAW/GOOSE) | ~128 | ~128 | 0 |
 
@@ -728,6 +728,8 @@ https://github.com/loadingalias/rscrypto
 - [x] **DD-02** ✅ FIXED — quickstart/install/getting-started.md no longer instruct a bare 'cargo install neoth' (which README:54 denies is published); all three now show the bootstrap installer / from-source 'cargo install --path neothd' with the not-yet-on-crates.io caveat, consistent with README.
 
 ### MEDIUM (61) / LOW (94) / INFO (38) + OVERSTATED (23) / INTENTIONAL (24)
+- [x] **GR-001** (LOW) ✅ FIXED — `neoth council budget --output json` emittierte kein `max_recursion_depth`, aber genau daraus leitet die GUI (`parse_council_budget`) die 3^depth-Kostenwarnung ab → Warnung feuerte nie. JSON-Body als pure fn `budget_json_body` extrahiert (Contract jetzt unit-testbar, Key gepinnt via `run_budget_json_includes_max_recursion_depth`). `cli/council.rs`.
+- [x] **GR-061** (LOW) ✅ FIXED — GUI `council_depth_cost_warning`: (1) Label nutzte rohes `{depth}`, Wert den `.min(8)`-Cap → bei depth>8 zeigte die Warnung '3^9 = 6561' (math. falsch). Cap jetzt auf BEIDE angewandt; Test depth=9 pinnt '3^8 = 6561'. (2) Doc-Comment referenzierte die gelöschte `HemisphereCouncilDepth::cost_warning` → zeigt jetzt auf die kanonische `cli::init::render_council_depth_cost_warning` (Existenz verifiziert, init.rs:2038). `neothd-gui/panel_logic.rs`.
 - [x] **GR-165** (MEDIUM) ✅ FIXED — GDPR-forget-Kaskade hatte ein Embedding-Loch: Channel-Ingest keyed idx_embedding mit opakem `channel:chat_id:sender_id:ts` source_ref (serve_pipeline), das ein `%topic%`-Pattern nie matcht — Vektoren zu vergessenen Channel-Nachrichten blieben liegen. Fix: (channel,sender_id)-Paare werden VOR dem Episode-Delete gesammelt (Design hatte die Reihenfolge selbst korrigiert), zweites Wipe-Leg `wipe_by_channel_sender_refs` (escape_like auf Literale, GOLD-SEC-04-Posture). Neuer Test forget_wipes_channel_side_embeddings_by_sender. `memory/forget.rs` + `memory/embeddings.rs`.
 - [x] **GR-113** (LOW) ✅ FIXED — die 68 portierten pm-* Skills (MIT, Pawel Huryn) shippten im Binary ohne die MIT-pflichtige Copyright-Notice in der Distribution. Neu: `THIRD_PARTY_LICENSES` im Repo-Root (voller MIT-Block + Quelle/Files), verifiziert gegen `QUELLEN/pm-skills/LICENSE`. Merge-Option in künftige NOTICE (GOLD-HR-11) bleibt offen.
 - [x] **GR-125** (LOW) ✅ FIXED — Windows `write_mode_0600` (neothd-gui): (1) `File::create` statt exclusive `create_new` = TOCTOU-Fenster zwischen remove_file und Open (Unix-Arm hatte O_EXCL längst); (2) rename-Fehler ließ das DACL-restricted, secret-tragende Temp-File liegen (Target-locked ist auf Windows üblich). Beides gefixt; Cleanup-vor-Propagate beim rename. Kein rename-failure-Test (Windows-Mock dafür unzuverlässig/flaky — Design räumt das selbst ein); kompiliert+clippy-gated. `neothd-gui/src/main.rs`.
