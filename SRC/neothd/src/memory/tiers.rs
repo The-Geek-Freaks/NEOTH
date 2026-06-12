@@ -63,6 +63,26 @@ impl Tier {
             Tier::Cold => 0.001,
         }
     }
+    /// Weibull recency shape parameter β per tier (GOLD-ADAPT-JV-MEM-04).
+    /// Sub-exponential (β < 1) for Hot → slow early decay of fresh/active
+    /// memories; super-exponential (β > 1) for Cold → faster forgetting of
+    /// stale low-tier ones. Mirrors the Core/Working/Peripheral split.
+    pub fn decay_beta(self) -> f64 {
+        match self {
+            Tier::Hot => 0.8,
+            Tier::Warm => 1.0,
+            Tier::Cold => 1.3,
+        }
+    }
+    /// Recency half-life in days per tier: the `days_since_access` at which the
+    /// Weibull recency factor halves (GOLD-ADAPT-JV-MEM-04).
+    pub fn recency_half_life_days(self) -> f64 {
+        match self {
+            Tier::Hot => 30.0,
+            Tier::Warm => 90.0,
+            Tier::Cold => 365.0,
+        }
+    }
     /// Per-tier decay factor applied per daily consolidation pass.
     pub fn decay_factor(self) -> f64 {
         match self {
@@ -116,10 +136,19 @@ pub fn hebbian_decay_value(old: f64, tier: Tier) -> f64 {
     (old * tier.decay_factor()).max(0.0)
 }
 
-/// Retrieval ranking score combining importance, tier, and recency.
-/// Hard floor at 0 — archive-tier events never score negative.
+/// Retrieval ranking score: `importance · tier.weight() · recency`, where
+/// `recency` is a Weibull stretched-exponential forgetting curve
+/// `exp(-ln2 · (days/half_life)^β)` (GOLD-ADAPT-JV-MEM-04). Replaces the old
+/// linear `importance·weight − days·penalty` cliff: the Weibull model is
+/// empirically closer to human forgetting (Ebbinghaus), and each tier gets a
+/// distinct curve shape via [`Tier::decay_beta`] + half-life via
+/// [`Tier::recency_half_life_days`]. The result is naturally ≥ 0, finite, and
+/// monotonic non-increasing in `days_since_access` (recency ∈ (0, 1]) — no
+/// `.max(0)` clamp needed; it decays smoothly toward, but never below, 0.
 pub fn ranking_score(importance: f64, tier: Tier, days_since_access: f64) -> f64 {
-    (importance * tier.weight() - days_since_access * tier.recency_penalty_per_day()).max(0.0)
+    let t = (days_since_access / tier.recency_half_life_days()).max(0.0);
+    let recency = (-std::f64::consts::LN_2 * t.powf(tier.decay_beta())).exp();
+    importance * tier.weight() * recency
 }
 
 /// Result of one recall-hit reinforce. Both fields clamped to [0, 1].
@@ -274,16 +303,25 @@ mod tests {
     }
 
     #[test]
-    fn ranking_score_penalises_old_cold_events() {
-        // Hot event with importance 0.8, accessed today: 0.8 · 1.0 − 0 = 0.8
+    fn ranking_score_weibull_recency_decay() {
+        // GOLD-ADAPT-JV-MEM-04 — Weibull recency replaces the old linear cliff.
+        // Day-0 score is `importance · tier.weight()` (recency factor = 1).
         let hot_today = ranking_score(0.8, Tier::Hot, 0.0);
-        assert!((hot_today - 0.8).abs() < 1e-6);
-        // Cold event with importance 0.5, accessed 100 days ago: 0.5·0.6 − 100·0.001 = 0.2
+        assert!((hot_today - 0.8 * Tier::Hot.weight()).abs() < 1e-9, "got {hot_today}");
+        // The defining Weibull property: at `days == recency_half_life_days` the
+        // recency factor is exactly 0.5, so the score halves — for ANY β.
+        let hot_half = ranking_score(0.8, Tier::Hot, Tier::Hot.recency_half_life_days());
+        assert!(
+            (hot_half - 0.5 * hot_today).abs() < 1e-9,
+            "half-life must halve the score: got {hot_half}",
+        );
+        // Decay is smooth + strictly positive: an old cold event still scores
+        // > 0 (no hard-zero cliff) but well below a fresh hot one.
         let cold_old = ranking_score(0.5, Tier::Cold, 100.0);
-        assert!((cold_old - 0.2).abs() < 1e-6, "got {cold_old}");
-        // Negative results floor at 0.
-        let zero = ranking_score(0.05, Tier::Cold, 1000.0);
-        assert_eq!(zero, 0.0);
+        assert!(cold_old > 0.0 && cold_old < hot_today, "got {cold_old}");
+        // A very old cold event asymptotes toward — but never reaches — zero.
+        let nearly_zero = ranking_score(0.05, Tier::Cold, 1000.0);
+        assert!(nearly_zero > 0.0 && nearly_zero < 0.01, "got {nearly_zero}");
     }
 
     #[test]
@@ -593,9 +631,9 @@ mod tests {
 
     #[test]
     fn ranking_score_stays_non_negative_across_grid() {
-        // Invariant 8: `ranking_score` has a hard floor at 0 via the
-        // `.max(0.0)` cap, so even extremely old/cold events never
-        // score negative. Sweep importance × tier × days_since_access.
+        // Invariant 8: `ranking_score` is naturally ≥ 0 — the Weibull recency
+        // factor lives in (0, 1] and importance·weight ≥ 0 — so even extremely
+        // old/cold events never score negative. Sweep imp × tier × days.
         const DAY_GRID: &[f64] = &[0.0, 0.5, 1.0, 7.0, 30.0, 100.0, 365.0, 10000.0];
         for &imp in IMPORTANCE_GRID {
             for &tier in TIER_GRID {
