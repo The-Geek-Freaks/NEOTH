@@ -31,6 +31,7 @@ pub mod groundtruth;
 pub mod hindsight;
 pub mod indexer;
 pub mod infra_scan;
+pub mod integrity;
 pub mod migrations;
 pub mod operator_md;
 pub mod pre_decay_export;

@@ -58,6 +58,19 @@ pub struct PassReport {
     /// pass). Equals `hot_archived` when a vault is set and every draft
     /// wrote cleanly.
     pub pre_decay_drafted: usize,
+    /// JV-MEM-12: structural-integrity issues found by the pre-flight
+    /// circuit-breaker. Empty on a healthy store. When NON-empty the pass
+    /// REFUSED to run (every count above stays 0) so the corruption is not
+    /// amplified; see [`PassReport::integrity_ok`].
+    pub integrity_issues: Vec<String>,
+}
+
+impl PassReport {
+    /// JV-MEM-12: true iff the integrity circuit-breaker found no structural
+    /// corruption. When false the consolidation pass refused to run this cycle.
+    pub fn integrity_ok(&self) -> bool {
+        self.integrity_issues.is_empty()
+    }
 }
 
 /// Run one consolidation pass against `conn`. All work happens in a single
@@ -70,8 +83,24 @@ pub fn run_consolidation_pass(
     now_ns: i64,
     vault_path: Option<&std::path::Path>,
 ) -> Result<PassReport> {
-    let tx = conn.transaction().context("begin consolidation tx")?;
     let mut report = PassReport::default();
+    // JV-MEM-12 circuit-breaker: refuse to consolidate a structurally corrupt
+    // store — consolidating inconsistent tiers would amplify the damage. The
+    // checks are exact-corruption (cross-tier id collision / duplicate retained
+    // id) so a healthy store never trips this and consolidation never stalls.
+    let integrity = crate::memory::integrity::check_integrity(conn)
+        .context("consolidation integrity pre-flight")?;
+    if !integrity.ok {
+        tracing::error!(
+            issues = ?integrity.issues,
+            "consolidation REFUSED: memory store failed the integrity circuit-breaker — \
+             skipping this pass so the inconsistency is not amplified. Inspect the tiers; \
+             consolidation resumes automatically once the store is consistent again."
+        );
+        report.integrity_issues = integrity.issues;
+        return Ok(report);
+    }
+    let tx = conn.transaction().context("begin consolidation tx")?;
     // KF-10: hot rows captured at the FORGET_FLOOR delete site (Phase 2)
     // so the EXACT set being forgotten is drafted to Obsidian after the tx
     // commits. Stays empty (zero overhead) when no `vault_path` is set.
@@ -369,6 +398,49 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cold, 7, "access_count must survive warm→cold promotion");
+    }
+
+    #[test]
+    fn consolidation_refuses_on_integrity_corruption() {
+        // JV-MEM-12: a cross-tier event_id collision trips the circuit-breaker,
+        // so the pass refuses to run rather than amplify the inconsistency.
+        let (_dir, mut conn) = open();
+        let now_ns: i64 = 400 * DAY_NS;
+        // Same positive event_id in hot AND warm — a corrupt state consolidation
+        // could never produce on its own. The hot row is aged so a HEALTHY pass
+        // would otherwise consolidate it.
+        conn.execute(
+            "INSERT INTO idx_episode \
+             (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+             VALUES (9, 1, ?1, 'hot', 'h', 0.9, 0)",
+            params![now_ns - 30 * DAY_NS],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO idx_consolidated \
+             (kind, day, event_id, text, text_hash, importance, consolidated_ts, last_access_ts) \
+             VALUES ('retained', '2026-01-01', 9, 'warm', 'h', 0.9, 0, 0)",
+            [],
+        )
+        .unwrap();
+
+        let report = run_consolidation_pass(&mut conn, now_ns, None).unwrap();
+        assert!(
+            !report.integrity_ok(),
+            "the breaker must trip on a cross-tier collision"
+        );
+        assert!(!report.integrity_issues.is_empty());
+        // Refused ⇒ no work done: the aged hot row was NOT consolidated.
+        assert_eq!(report.consolidated, 0, "no consolidation work on a refused pass");
+        assert_eq!(report.hot_decayed, 0, "no decay work on a refused pass");
+        let hot_still_there: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM idx_episode WHERE event_id = 9",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hot_still_there, 1, "the hot row is untouched by a refused pass");
     }
 
     #[test]
