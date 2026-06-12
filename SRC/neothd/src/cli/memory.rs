@@ -75,6 +75,26 @@ pub struct MemoryArgs {
     #[arg(long, requires = "confirm")]
     pub physical: bool,
 
+    /// NN-MEM-01: pin a hot-tier episode by `event_id` so it becomes
+    /// decay-immune — the daily consolidation pass skips its importance decay,
+    /// so a critical-but-rarely-accessed memory can never fall below
+    /// FORGET_FLOOR and be forgotten. Reverse with `--unpin`.
+    #[arg(
+        long,
+        value_name = "EVENT_ID",
+        conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "unpin"]
+    )]
+    pub pin: Option<i64>,
+
+    /// NN-MEM-01: unpin a previously-pinned hot-tier episode by `event_id`
+    /// (re-subjects it to the normal importance decay).
+    #[arg(
+        long,
+        value_name = "EVENT_ID",
+        conflicts_with_all = ["show", "paths", "size", "tier", "archive", "forget", "dimension", "rebuild_index", "pin"]
+    )]
+    pub unpin: Option<i64>,
+
     /// Compute the fractal-dimension D_mem across the four memory
     /// tiers (EXP-FD-0 from `PLAN/FRACTAL_DIMENSION.md`). Pure read,
     /// no behaviour change. Prints the per-tier byte counts + the
@@ -116,6 +136,12 @@ pub async fn run_memory(args: MemoryArgs) -> Result<()> {
     }
     if let Some(topic) = args.forget.clone() {
         return run_memory_forget(&args, &topic).await;
+    }
+    if let Some(event_id) = args.pin {
+        return run_memory_pin(&args, event_id, true).await;
+    }
+    if let Some(event_id) = args.unpin {
+        return run_memory_pin(&args, event_id, false).await;
     }
     if args.dimension {
         return run_memory_dimension(&args).await;
@@ -775,10 +801,115 @@ async fn run_memory_archive(args: &MemoryArgs, day: &str) -> Result<()> {
     Ok(())
 }
 
+/// `neoth memory --pin <event_id>` / `--unpin <event_id>` — NN-MEM-01 toggle the
+/// decay-immune flag on a hot-tier episode. A pinned episode is skipped by the
+/// daily consolidation importance-decay pass, so a critical-but-rarely-accessed
+/// memory can never fall below `FORGET_FLOOR` and be forgotten. Operates on
+/// `idx_episode` (the hot tier) only; an `event_id` already consolidated to
+/// warm/cold — or unknown — affects 0 rows and is reported as not-found rather
+/// than erroring (a soft no-op).
+async fn run_memory_pin(args: &MemoryArgs, event_id: i64, pinned: bool) -> Result<()> {
+    use crate::memory::store;
+    let db_path = args.db.clone().unwrap_or_else(store::default_path);
+    let conn = store::open(&db_path)
+        .with_context(|| format!("open views.db for pin: {}", db_path.display()))?;
+    let affected = store::set_episode_pinned(&conn, event_id, pinned)
+        .with_context(|| format!("set pinned={pinned} on event_id={event_id}"))?;
+    let action = if pinned { "pinned" } else { "unpinned" };
+    info!(event_id, pinned, affected, action, "memory pin toggled");
+    match args.output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "event_id": event_id,
+                    "pinned": pinned,
+                    "rows_affected": affected,
+                    "found": affected > 0,
+                }))?
+            );
+        }
+        OutputFormat::Table => {
+            if affected == 0 {
+                println!(
+                    "no hot-tier episode with event_id={event_id} \
+                     (already consolidated to warm/cold, or unknown id)."
+                );
+            } else {
+                println!("event_id={event_id} {action} (decay-immune={pinned}).");
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    fn pin_test_args(db: PathBuf, pin: Option<i64>, unpin: Option<i64>) -> MemoryArgs {
+        MemoryArgs {
+            show: false,
+            paths: false,
+            size: false,
+            tier: None,
+            archive: None,
+            forget: None,
+            confirm: false,
+            physical: false,
+            pin,
+            unpin,
+            dimension: false,
+            rebuild_index: false,
+            limit: 20,
+            db: Some(db),
+            output: OutputFormat::Table,
+        }
+    }
+
+    #[tokio::test]
+    async fn pin_unpin_toggles_episode_decay_immunity() {
+        use crate::memory::store;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("views.db");
+        {
+            let conn = store::open(&db).unwrap();
+            conn.execute(
+                "INSERT INTO idx_episode \
+                 (event_id, event_type, ts_ns, text, text_hash, importance, last_access_ts) \
+                 VALUES (7, 1, 1000, 'critical fact', 'h', 0.9, 0)",
+                [],
+            )
+            .unwrap();
+        }
+        let read_pinned = |id: i64| -> i64 {
+            let conn = store::open(&db).unwrap();
+            conn.query_row(
+                "SELECT pinned FROM idx_episode WHERE event_id = ?1",
+                [id],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(read_pinned(7), 0, "starts unpinned");
+
+        run_memory_pin(&pin_test_args(db.clone(), Some(7), None), 7, true)
+            .await
+            .unwrap();
+        assert_eq!(read_pinned(7), 1, "after --pin the row is decay-immune");
+
+        run_memory_pin(&pin_test_args(db.clone(), None, Some(7)), 7, false)
+            .await
+            .unwrap();
+        assert_eq!(read_pinned(7), 0, "after --unpin the row decays again");
+
+        // Unknown id is a soft no-op: no panic, no error, no row changed.
+        run_memory_pin(&pin_test_args(db.clone(), Some(999), None), 999, true)
+            .await
+            .unwrap();
+        assert_eq!(read_pinned(7), 0, "unrelated row untouched");
+    }
 
     #[tokio::test]
     async fn physical_redaction_returns_zero_when_wal_dir_absent() {
