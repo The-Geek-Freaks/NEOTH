@@ -98,7 +98,7 @@ pub fn load_results_from_wal(segment_path: &Path) -> Result<Vec<UpdaterTaskResul
     let mut out = Vec::new();
     // GOLD-ARCH-03: for_each_frame so UPDATER_TASK_RESULT frames inside a
     // v2/zstd-compressed segment are read, not silently skipped.
-    let _ = crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
+    if let Err(e) = crate::wal::scan::for_each_frame(&bytes, |_, decoded| {
         if decoded.header.event_type == EVENT_TYPE_UPDATER_TASK_RESULT {
             if let Ok(payload) = serde_json::from_slice::<UpdaterTaskResultPayload>(decoded.payload)
             {
@@ -106,7 +106,11 @@ pub fn load_results_from_wal(segment_path: &Path) -> Result<Vec<UpdaterTaskResul
             }
         }
         Ok(())
-    });
+    }) {
+        // GR-103 — surface a tamper-suspect segment (its updater-result frames
+        // won't be read) instead of silently discarding the error.
+        tracing::warn!(error = %e, "updater-results scan: skipping a tamper-suspect WAL segment");
+    }
     Ok(out)
 }
 

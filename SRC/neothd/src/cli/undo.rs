@@ -227,7 +227,7 @@ fn scan_segment_bytes(bytes: &[u8], out: &mut Vec<UndoEntry>) {
     // GOLD-ARCH-03: for_each_frame so reversible events inside a v2/zstd-
     // compressed segment are listed, not silently skipped. A single
     // unreconstructable segment is skipped, not fatal to the scan.
-    let _ = crate::wal::scan::for_each_frame(bytes, |_, dec| {
+    if let Err(e) = crate::wal::scan::for_each_frame(bytes, |_, dec| {
         if let Some((name, reversal, what, reverse_hint)) = classify(dec.header.event_type) {
             out.push(UndoEntry {
                 ts_ns: dec.header.hlc.physical_ns(),
@@ -239,7 +239,12 @@ fn scan_segment_bytes(bytes: &[u8], out: &mut Vec<UndoEntry>) {
             });
         }
         Ok(())
-    });
+    }) {
+        // GR-103 — surface a tamper-suspect WAL segment instead of silently
+        // discarding the error (its reversible events just won't be listed); a
+        // single bad segment is skipped, not fatal to the undo scan.
+        tracing::warn!(error = %e, "undo scan: skipping a tamper-suspect WAL segment");
+    }
 }
 
 fn format_ts_short(ts_ns: u64) -> String {
@@ -425,14 +430,18 @@ fn scan_preset_frames(
         };
         // GOLD-ARCH-03: for_each_frame so PROFILE_PRESET_APPLIED frames inside a
         // v2/zstd-compressed segment are found, not silently skipped.
-        let _ = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
+        if let Err(e) = crate::wal::scan::for_each_frame(&bytes, |_, dec| {
             if dec.header.event_type == events::EVENT_TYPE_PROFILE_PRESET_APPLIED {
                 if let Some(p) = parse_preset_name(dec.payload) {
                     out.push((dec.header.hlc.physical_ns(), p));
                 }
             }
             Ok(())
-        });
+        }) {
+            // GR-103 — surface a tamper-suspect segment (its preset-applied
+            // frames won't be listed) rather than silently dropping the error.
+            tracing::warn!(error = %e, "preset-history scan: skipping a tamper-suspect WAL segment");
+        }
     }
     out.sort_by_key(|(ts, _)| *ts);
     Ok(out)
