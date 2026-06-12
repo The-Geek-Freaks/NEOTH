@@ -29,7 +29,6 @@
 
 use std::time::Duration;
 
-use tokio::process::Command;
 
 /// Default paperless-ngx web port. Operator can override via wizard;
 /// the const is the recommendation we render in the picker.
@@ -139,48 +138,19 @@ impl InstallStrategy {
 /// Probe `docker --version`. Returns the version string on success
 /// or None when Docker is missing.
 pub async fn check_docker_available() -> Option<String> {
-    cli_version_args("docker", &["--version"]).await
+    crate::installers::probe::cli_version_args("docker", &["--version"], Some(std::time::Duration::from_secs(5))).await
 }
 
 /// Probe `docker compose version` — modern Docker bundles compose as
 /// a subcommand, not a standalone binary. Returns version string on
 /// success.
 pub async fn check_docker_compose_available() -> Option<String> {
-    cli_version_args("docker", &["compose", "version"]).await
+    crate::installers::probe::cli_version_args("docker", &["compose", "version"], Some(std::time::Duration::from_secs(5))).await
 }
 
 /// Probe legacy `docker-compose --version` — older Docker installs.
 pub async fn check_docker_compose_legacy_available() -> Option<String> {
-    cli_version_args("docker-compose", &["--version"]).await
-}
-
-async fn cli_version_args(binary: &str, args: &[&str]) -> Option<String> {
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(binary);
-        for a in args {
-            c.arg(a);
-        }
-        c
-    } else {
-        let mut c = Command::new(binary);
-        for a in args {
-            c.arg(a);
-        }
-        c
-    };
-    let output = cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    crate::installers::probe::cli_version_args("docker-compose", &["--version"], Some(std::time::Duration::from_secs(5))).await
 }
 
 /// Outcome of a live paperless-ngx HTTP probe.

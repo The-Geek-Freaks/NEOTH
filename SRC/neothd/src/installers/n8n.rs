@@ -22,7 +22,6 @@
 
 use std::time::Duration;
 
-use tokio::process::Command;
 
 /// Default n8n web port. Operator can override via wizard prompt;
 /// the const is the recommendation we render in the picker.
@@ -101,40 +100,14 @@ impl InstallStrategy {
 /// Probe `docker --version`. Returns the version string on success
 /// or None when Docker is missing / returns non-zero.
 pub async fn check_docker_available() -> Option<String> {
-    cli_version("docker").await
+    crate::installers::probe::cli_version("docker").await
 }
 
 /// Probe `npm --version` — re-uses the existing installer probe
 /// but namespaced here so the n8n wizard step can keep its own
 /// surface.
 pub async fn check_npm_available() -> Option<String> {
-    cli_version("npm").await
-}
-
-async fn cli_version(binary: &str) -> Option<String> {
-    // Wrap through `cmd /C` on Windows so npm/docker shell-script
-    // shims (`docker.cmd`, `npm.cmd`) resolve the same way as `.exe`.
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(binary).arg("--version");
-        c
-    } else {
-        let mut c = Command::new(binary);
-        c.arg("--version");
-        c
-    };
-    let output = cmd
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .await
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    crate::installers::probe::cli_version("npm").await
 }
 
 /// Outcome of a live n8n HTTP probe. Operator-readable so the

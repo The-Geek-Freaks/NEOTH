@@ -16,9 +16,7 @@
 //! No silent `sudo apt install` — operator runs the package-manager
 //! command themselves per the AGENTER "operator GO per command" rule.
 
-use std::time::Duration;
 
-use tokio::process::Command;
 
 /// One of the OS-specific Node install paths. Pinned exhaustively.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -110,36 +108,9 @@ pub fn install_command(path: NodeInstallPath) -> Vec<String> {
 /// must succeed because the wizard's downstream `npm install -g`
 /// path can't progress with just one of them.
 pub async fn check_node_and_npm() -> Option<(String, String)> {
-    let node = cli_version("node").await?;
-    let npm = cli_version("npm").await?;
+    let node = crate::installers::probe::cli_version("node").await?;
+    let npm = crate::installers::probe::cli_version("npm").await?;
     Some((node, npm))
-}
-
-async fn cli_version(binary: &str) -> Option<String> {
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(binary).arg("--version");
-        c
-    } else {
-        let mut c = Command::new(binary);
-        c.arg("--version");
-        c
-    };
-    let output = tokio::time::timeout(
-        Duration::from_secs(5),
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
 }
 
 #[cfg(test)]

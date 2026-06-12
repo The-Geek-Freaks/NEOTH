@@ -21,9 +21,7 @@
 //! Operator already has `pear` on PATH → returns `AlreadyInstalled`
 //! and the wizard skips the install step entirely.
 
-use std::time::Duration;
 
-use tokio::process::Command;
 
 /// One of the OS-specific Pears install paths. Pinned exhaustively.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -102,34 +100,7 @@ pub fn install_command(path: PearsInstallPath) -> Vec<String> {
 /// Probe `pear --version`. Returns `Some(version_string)` on success
 /// or None if `pear` is missing / errors / times out.
 pub async fn check_pears() -> Option<String> {
-    cli_version("pear").await
-}
-
-async fn cli_version(binary: &str) -> Option<String> {
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(binary).arg("--version");
-        c
-    } else {
-        let mut c = Command::new(binary);
-        c.arg("--version");
-        c
-    };
-    let output = tokio::time::timeout(
-        Duration::from_secs(5),
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    crate::installers::probe::cli_version("pear").await
 }
 
 #[cfg(test)]

@@ -15,9 +15,7 @@
 //! command to the operator before running (no surprise spawn —
 //! honours the "operator GO per command" rule).
 
-use std::time::Duration;
 
-use tokio::process::Command;
 
 /// One of three OS-specific install paths. Pinned exhaustively
 /// per Linux/macOS/Windows.
@@ -160,7 +158,7 @@ pub async fn check_winget_available() -> Option<String> {
     if !cfg!(target_os = "windows") {
         return None;
     }
-    cli_version("winget").await
+    crate::installers::probe::cli_version("winget").await
 }
 
 /// Probe `brew --version` on macOS. Returns Some(version) on
@@ -169,34 +167,7 @@ pub async fn check_brew_available() -> Option<String> {
     if !cfg!(target_os = "macos") {
         return None;
     }
-    cli_version("brew").await
-}
-
-async fn cli_version(binary: &str) -> Option<String> {
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(binary).arg("--version");
-        c
-    } else {
-        let mut c = Command::new(binary);
-        c.arg("--version");
-        c
-    };
-    let output = tokio::time::timeout(
-        Duration::from_secs(5),
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    crate::installers::probe::cli_version("brew").await
 }
 
 #[cfg(test)]

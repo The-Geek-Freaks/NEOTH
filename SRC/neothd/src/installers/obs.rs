@@ -11,9 +11,7 @@
 //! OBS via the WebSocket lives separately in `plugins/obs_facecam.rs`
 //! when FC-3 implementation lands.
 
-use std::time::Duration;
 
-use tokio::process::Command;
 
 /// Default obs-websocket port (since OBS 28). Pinned drift-guarded —
 /// operators copy-pasting from OBS docs expect this match.
@@ -144,34 +142,7 @@ pub fn canonical_obs_paths() -> Vec<String> {
 /// Probe `obs --version`. Returns Some(version) on success.
 /// Cross-platform — OBS supports `--version` on all 3 OSs.
 pub async fn check_obs_version() -> Option<String> {
-    cli_version("obs").await
-}
-
-async fn cli_version(binary: &str) -> Option<String> {
-    let mut cmd = if cfg!(windows) {
-        let mut c = Command::new("cmd");
-        c.arg("/C").arg(binary).arg("--version");
-        c
-    } else {
-        let mut c = Command::new(binary);
-        c.arg("--version");
-        c
-    };
-    let output = tokio::time::timeout(
-        Duration::from_secs(5),
-        cmd.stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .output(),
-    )
-    .await
-    .ok()?
-    .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    crate::installers::probe::cli_version("obs").await
 }
 
 // GOLD-SEC-23 / GR-145 — `obs_headless_launch_args(port, password)` was REMOVED.
