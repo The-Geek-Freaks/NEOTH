@@ -445,7 +445,28 @@ pub async fn dispatch_session_with_apply(
                 // between status changes. 30s background heartbeat
                 // (mid-execute) lands in a future sprint.
                 emit_kanban_task_progress_wal(writer_for_progress, &task, 100, "review_ready");
-                apply_outcome(conn, &task, &o)?;
+                // GR-021: a DB error here must NOT propagate with `?` — that
+                // aborts the whole batch loop and strands THIS task plus every
+                // already-InProgress task permanently (no sweep ever resets
+                // InProgress→Backlog). Route the failure through the normal
+                // retry path so the task lands Backlog/Blocked, then move on.
+                if let Err(e) = apply_outcome(conn, &task, &o) {
+                    patch_spiral.record(task.task_id, false);
+                    record_recent_output(&mut recent_outputs, task.task_id, &worker_output_text(&o));
+                    let recent = recent_output_refs(&recent_outputs, task.task_id);
+                    let diagnosis = format!("apply_outcome DB write failed (task-stranding guard): {e}");
+                    let _ = handle_retryable_failure(
+                        conn,
+                        &task,
+                        &mut retry_policy,
+                        &mut patch_spiral,
+                        &recent,
+                        &mut outcome,
+                        &diagnosis,
+                        Some(&o),
+                    );
+                    continue;
+                }
 
                 // Pick #6 Phase 4: opt-in real-apply path. When the
                 // operator passed `--apply` the dispatcher creates a
