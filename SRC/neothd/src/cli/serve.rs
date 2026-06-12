@@ -277,7 +277,9 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     let reload_task = crate::cli::serve_tasks::spawn_reload_poller(&reload_controller, &writer);
 
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
-    let indexer_task = crate::cli::serve_tasks::spawn_indexer(&segment_path);
+    // GR-164: hand the indexer the WAL writer so a tamper-suspect segment emits
+    // an auditable 0x5E alert frame instead of a warn-only silent skip.
+    let indexer_task = crate::cli::serve_tasks::spawn_indexer(&segment_path, Some(writer.clone()));
 
     // ── 5a-kanban. Stale-planning reaper — HO-02 (Session 28). Best-effort
     // startup sweep of kanban rows stranded in Planning by a crash mid-decompose.
