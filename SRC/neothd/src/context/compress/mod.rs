@@ -28,7 +28,9 @@ pub mod diff_compressor;
 pub mod log_compressor;
 pub mod log_template;
 pub mod pipeline;
+pub mod search_compressor;
 pub mod smart_crusher;
+pub mod tag_protector;
 pub mod transform;
 
 pub use ccr::{
@@ -47,4 +49,6 @@ pub use transform::{
 pub use diff_compressor::{DiffCompressor, DiffCompressorConfig};
 pub use log_compressor::{line_importance, LogOffload, LogOffloadConfig};
 pub use log_template::{LogTemplate, LogTemplateConfig};
+pub use search_compressor::{SearchOffload, SearchOffloadConfig};
 pub use smart_crusher::{JsonMinifier, SmartCrusher, SmartCrusherConfig};
+pub use tag_protector::{has_protected_regions, is_fence_delimiter, protected_line_mask};

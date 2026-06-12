@@ -21,6 +21,7 @@ use regex::Regex;
 
 use crate::context::compress::ccr::{compute_key, marker_for, CcrStore};
 use crate::context::compress::content_detector::ContentType;
+use crate::context::compress::tag_protector::{has_protected_regions, protected_line_mask};
 use crate::context::compress::transform::{
     CompressionContext, OffloadOutput, OffloadTransform, TransformError,
 };
@@ -183,6 +184,14 @@ impl OffloadTransform for LogOffload {
             }
         }
 
+        // HR-07 safety: never drop a line inside a code fence or carrying a
+        // tool-call / XML structural tag — that would dangle the boundary.
+        if has_protected_regions(content) {
+            for (k, protected) in keep.iter_mut().zip(protected_line_mask(content).iter()) {
+                *k |= *protected;
+            }
+        }
+
         let kept_count = keep.iter().filter(|&&k| k).count();
         if kept_count >= n {
             return Err(TransformError::skipped(NAME, "nothing droppable"));
@@ -309,6 +318,30 @@ mod tests {
         assert!(!keys.is_empty());
         assert_eq!(store.get(&r.cache_key).as_deref(), Some(log.as_str()));
         assert_eq!(keys[0], r.cache_key);
+    }
+
+    #[test]
+    fn apply_never_splits_an_embedded_code_fence() {
+        // A bloaty log with a fenced code block buried in the noise. The fence
+        // delimiters + interior must survive intact (HR-07 tag protection),
+        // so the model never sees a dangling ```.
+        let mut log = String::new();
+        for i in 0..80 {
+            log.push_str(&format!("INFO heartbeat {i}\n"));
+        }
+        log.push_str("```rust\nfn main() { panic!(\"boom\") }\nlet x = 1;\n```\n");
+        for i in 0..80 {
+            log.push_str(&format!("INFO heartbeat {}\n", 80 + i));
+        }
+        let store = InMemoryCcrStore::new();
+        let r = offload()
+            .apply(&log, &CompressionContext::default(), &store)
+            .expect("compresses");
+        // Both fence delimiters survive, and so does the interior.
+        assert_eq!(r.output.matches("```").count(), 2, "both fences must survive");
+        assert!(r.output.contains("fn main() { panic!(\"boom\") }"));
+        assert!(r.output.contains("let x = 1;"));
+        assert!(r.bytes_saved > 0);
     }
 
     #[test]
