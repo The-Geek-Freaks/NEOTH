@@ -55,7 +55,11 @@ pub fn render_page(source: &WikiSource, siblings: &[&WikiSource], body: &str) ->
         source.rel_path
     ));
 
-    let related: Vec<&&WikiSource> = siblings.iter().filter(|x| x.slug != source.slug).collect();
+    let related: Vec<&WikiSource> = siblings
+        .iter()
+        .copied()
+        .filter(|x| x.slug != source.slug)
+        .collect();
     if !related.is_empty() {
         s.push_str("## Related\n\n");
         for r in &related {

@@ -82,7 +82,7 @@ pub fn prettify_stem(stem: &str) -> String {
         .map(|w| {
             // Keep tokens that look like versions/dates/all-caps acronyms.
             let is_tokenish = w.chars().any(|c| c.is_ascii_digit())
-                || (w.len() <= 4 && w.chars().all(|c| c.is_ascii_uppercase()));
+                || (w.chars().count() <= 4 && w.chars().all(|c| c.is_ascii_uppercase()));
             if is_tokenish {
                 w.to_string()
             } else {
@@ -120,13 +120,19 @@ pub fn slug_for(stem: &str) -> String {
 }
 
 /// Read the first markdown `# ` heading from a doc, if any (the authoritative
-/// title). Scans only the first ~40 lines so a huge doc isn't slurped.
+/// title). Line-buffered + capped at the first 40 lines so a huge doc is never
+/// slurped into memory just to sniff its title.
 fn first_heading(path: &Path) -> Option<String> {
-    let content = std::fs::read_to_string(path).ok()?;
-    content.lines().take(40).find_map(|l| {
-        let t = l.trim_start();
-        t.strip_prefix("# ").map(|h| h.trim().to_string())
-    })
+    use std::io::BufRead;
+    let file = std::fs::File::open(path).ok()?;
+    std::io::BufReader::new(file)
+        .lines()
+        .take(40)
+        .map_while(Result::ok)
+        .find_map(|l| {
+            let t = l.trim_start();
+            t.strip_prefix("# ").map(|h| h.trim().to_string())
+        })
 }
 
 /// Discover every `*.md` directly under `source_dir` and resolve each to a
@@ -136,18 +142,46 @@ pub fn discover_sources(source_dir: &Path) -> Result<Vec<WikiSource>> {
     let rd = std::fs::read_dir(source_dir)
         .with_context(|| format!("read self-wiki source dir {}", source_dir.display()))?;
     let mut out: Vec<WikiSource> = Vec::new();
-    for de in rd.flatten() {
+    for de in rd {
+        let de = match de {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(
+                    dir = %source_dir.display(),
+                    error = %e,
+                    "self-wiki: skipping unreadable directory entry"
+                );
+                continue;
+            }
+        };
         let abs_path = de.path();
-        if !abs_path.is_file() {
+        // `DirEntry::metadata` does NOT traverse symlinks, so a symlink planted
+        // in the source dir (e.g. `SPEC_x.md` → `/etc/shadow`) is skipped here
+        // rather than followed + read into a wiki page (info-disclosure guard).
+        let meta = match de.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        if meta.file_type().is_symlink() || !meta.is_file() {
             continue;
         }
-        if abs_path.extension().and_then(|e| e.to_str()) != Some("md") {
+        // Case-insensitive `.md` so `SPEC_x.MD` is found on Windows/macOS too.
+        let is_md = abs_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("md"))
+            == Some(true);
+        if !is_md {
             continue;
         }
         let file_name = match abs_path.file_name().and_then(|n| n.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
+        // Skip dotfiles (`.DS_Store.md`, editor artefacts) — never wiki content.
+        if file_name.starts_with('.') {
+            continue;
+        }
         let stem = abs_path
             .file_stem()
             .and_then(|s| s.to_str())
@@ -224,6 +258,24 @@ mod tests {
         assert_eq!(sources[1].category, SourceCategory::Spec);
         assert_eq!(sources[1].title, "Channel API Spec", "'# ' heading wins");
         assert_eq!(sources[1].slug, "SPEC_channels");
+    }
+
+    #[test]
+    fn discover_is_case_insensitive_on_ext_and_skips_dotfiles() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = tmp.path();
+        write(d, "SPEC_upper.MD", "# Upper Ext\n"); // uppercase ext still counts
+        write(d, ".DS_Store.md", "# hidden\n"); // dotfile skipped
+        write(d, "SPEC_ok.md", "# Ok\n");
+        let sources = discover_sources(d).unwrap();
+        let slugs: Vec<&str> = sources.iter().map(|s| s.slug.as_str()).collect();
+        assert!(slugs.contains(&"SPEC_upper"), ".MD picked up");
+        assert!(slugs.contains(&"SPEC_ok"));
+        assert!(
+            !slugs.iter().any(|s| s.contains("DS_Store")),
+            "dotfile excluded"
+        );
+        assert_eq!(sources.len(), 2);
     }
 
     #[test]

@@ -150,11 +150,13 @@ fn render_wiki_build(
             println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
         }
         OutputFormat::Table => {
+            let plural = |n: usize| if n == 1 { "page" } else { "pages" };
             if stats.dry_run {
                 println!(
-                    "[dry-run] {} source docs → {} pages would be written to {}",
+                    "[dry-run] {} source docs → {} {} would be written to {}",
                     stats.sources,
                     stats.pages_planned,
+                    plural(stats.pages_planned),
                     out_dir.display()
                 );
                 for slug in slugs {
@@ -162,9 +164,10 @@ fn render_wiki_build(
                 }
             } else {
                 println!(
-                    "self-wiki: {} source docs → {} pages written to {}",
+                    "self-wiki: {} source docs → {} {} written to {}",
                     stats.sources,
                     stats.pages_written,
+                    plural(stats.pages_written),
                     out_dir.display()
                 );
             }
