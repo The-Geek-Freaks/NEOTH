@@ -301,7 +301,49 @@ async fn run_dispatch_phase(
             ""
         }
     );
+
+    // GOLD-TASK-03 — when proactive notifications are enabled, enqueue a
+    // ONE-PER-SESSION result summary so the operator gets "here's the result
+    // of the task you gave me" in their channel (useful for a backgrounded /
+    // channel-initiated run; the terminal already showed it interactively).
+    // Best-effort: a queue failure never fails the dispatch.
+    if cfg.proactive.enabled {
+        enqueue_session_summary(&outcome, session_id);
+    }
     Ok(())
+}
+
+/// GOLD-TASK-03 — best-effort enqueue of a one-per-session coding summary
+/// into the proactive queue. The daemon's proactive drain delivers it to
+/// the operator's channel subject to the `Action::ProactiveChannelSend`
+/// autonomy gate + recipient-own-id resolution (no live channel ⇒ it lands
+/// in the `proactive_delivered.jsonl` ledger, still operator-visible). The
+/// item body is counts-only ([`crate::coding::feed::build_session_summary_item`]
+/// → `render_session_summary` — no task titles / LLM text) so it carries no
+/// injection / PII risk. A missing queue file is a fresh queue (`load_from`
+/// returns default); a real load/save error logs at warn + is swallowed —
+/// the terminal already printed the result, so a lost notification is
+/// non-fatal.
+fn enqueue_session_summary(
+    outcome: &crate::coding::dispatcher::DispatchOutcome,
+    session_id: crate::coding::types::KanbanSessionId,
+) {
+    use crate::proactive::ProactiveQueue;
+    let queue_path =
+        crate::config::FreedomConfig::default_neoth_home().join("proactive_queue.json");
+    let mut queue = match ProactiveQueue::load_from(&queue_path) {
+        Ok(q) => q,
+        Err(e) => {
+            tracing::warn!(error = %e, "session-summary: proactive queue load failed; skipping notify");
+            return;
+        }
+    };
+    let item = crate::coding::feed::build_session_summary_item(outcome, session_id.raw());
+    if queue.enqueue(item) {
+        if let Err(e) = queue.save_to(&queue_path) {
+            tracing::warn!(error = %e, "session-summary: proactive queue save failed");
+        }
+    }
 }
 
 /// ARCH-22 — intern Worker name labels so the `&'static str` the `Worker` trait

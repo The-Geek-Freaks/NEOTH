@@ -282,12 +282,79 @@ fn parse_status_changed(ts_ns: u64, payload: &[u8]) -> Option<FeedEntry> {
 /// number. Cells are filled by NEAREST rounding (each cell = 12.5%), so
 /// 0% → all empty, 100% → all full, 50% → 4 filled. `pct` is clamped to
 /// 100 (a malformed >100 frame can't overflow the cell count).
-fn progress_bar(pct: u8) -> String {
+pub(crate) fn progress_bar(pct: u8) -> String {
     const CELLS: usize = 8;
     let p = (pct as usize).min(100);
     let filled = ((p * CELLS + 50) / 100).min(CELLS);
     let empty = CELLS - filled;
     format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
+}
+
+/// GOLD-TASK-03 — a channel-agnostic, single-line summary of a FINISHED
+/// coding session, for the proactive "here's the result of the task you
+/// gave me" notification. Uses ONLY [`DispatchOutcome`] counts + the
+/// numeric session id — NO task titles / LLM output — so the body carries
+/// zero injection / PII risk and needs no per-channel escaping (the
+/// proactive channel adapters apply their own light formatting on top of
+/// this `body`). The bar reflects the completed/attempted ratio; the lead
+/// icon is ✅ all-done / ⚠️ any-blocked / 🔧 otherwise.
+pub(crate) fn render_session_summary(
+    outcome: &crate::coding::dispatcher::DispatchOutcome,
+    session_id: i64,
+) -> String {
+    let total = outcome.tasks_attempted;
+    let done = outcome.tasks_completed;
+    let pct = (done * 100).checked_div(total).unwrap_or(0).min(100) as u8;
+    let icon = if total == 0 {
+        "🔧"
+    } else if outcome.tasks_blocked == 0 && done == total {
+        "✅"
+    } else if outcome.tasks_blocked > 0 {
+        "⚠️"
+    } else {
+        "🔧"
+    };
+    let mut s = format!(
+        "{icon} Coding session #{session_id}: {} {done}/{total} tasks done",
+        progress_bar(pct)
+    );
+    if outcome.tasks_blocked > 0 {
+        s.push_str(&format!(" — {} blocked", outcome.tasks_blocked));
+    }
+    if outcome.tasks_unassigned > 0 {
+        s.push_str(&format!(", {} unassigned", outcome.tasks_unassigned));
+    }
+    if outcome.budget_exhausted {
+        s.push_str(" (budget exhausted)");
+    }
+    s
+}
+
+/// GOLD-TASK-03 — priority tier for the coding session-summary proactive
+/// item. BELOW the reflection-nudge tier (50) so a burst of coding sessions
+/// can't starve reflections out of the daily proactive budget; above
+/// background telemetry (10). Dedup (one item per session id) caps the
+/// volume regardless of priority.
+pub(crate) const SESSION_SUMMARY_PRIORITY: i32 = 30;
+
+/// GOLD-TASK-03 — build the proactive-queue item for a finished coding
+/// session. Pure (no I/O) so the item shape — the session-scoped
+/// `dedup_key` (one summary per session, so it can never flood the daily
+/// budget), the low priority, the counts-only body — is unit-testable. The
+/// `channel` is left empty so the drain routes to the operator's default
+/// proactive channel; `scheduled_for_unix = 0` drains it on the next tick.
+pub(crate) fn build_session_summary_item(
+    outcome: &crate::coding::dispatcher::DispatchOutcome,
+    session_id: i64,
+) -> crate::proactive::ProactiveItem {
+    crate::proactive::ProactiveItem {
+        priority: SESSION_SUMMARY_PRIORITY,
+        dedup_key: format!("coding:session-summary:{session_id}"),
+        channel: String::new(),
+        source: "coding_session".to_string(),
+        body: render_session_summary(outcome, session_id),
+        scheduled_for_unix: 0,
+    }
 }
 
 /// SD-02 — render the dispatcher's lifecycle heartbeat (`0x77`) into a
@@ -589,6 +656,63 @@ mod tests {
         assert_eq!(progress_bar(6), "[░░░░░░░░]", "6% rounds down to 0 cells");
         // a malformed >100 frame is clamped, never overflows the cell count
         assert_eq!(progress_bar(255), "[████████]");
+    }
+
+    #[test]
+    fn render_session_summary_blocked_counts_only_no_untrusted_text() {
+        use crate::coding::dispatcher::DispatchOutcome;
+        let outcome = DispatchOutcome {
+            tasks_attempted: 5,
+            tasks_completed: 4,
+            tasks_blocked: 1,
+            ..Default::default()
+        };
+        let s = render_session_summary(&outcome, 7);
+        assert!(s.contains("#7"), "carries the session id, got: {s}");
+        assert!(s.contains("4/5"), "carries done/total, got: {s}");
+        assert!(s.contains("1 blocked"), "names the blocked count, got: {s}");
+        assert!(s.contains('⚠'), "blocked → warning icon, got: {s}");
+        assert!(
+            s.contains('█') || s.contains('░'),
+            "renders a progress bar, got: {s}"
+        );
+    }
+
+    #[test]
+    fn render_session_summary_all_done_uses_check_icon() {
+        use crate::coding::dispatcher::DispatchOutcome;
+        let outcome = DispatchOutcome {
+            tasks_attempted: 3,
+            tasks_completed: 3,
+            ..Default::default()
+        };
+        let s = render_session_summary(&outcome, 1);
+        assert!(s.contains('✅'), "all done → check icon, got: {s}");
+        assert!(s.contains("3/3"), "got: {s}");
+        assert!(!s.contains("blocked"), "no blocked clause when none, got: {s}");
+    }
+
+    #[test]
+    fn session_summary_item_is_session_scoped_and_low_priority() {
+        use crate::coding::dispatcher::DispatchOutcome;
+        let outcome = DispatchOutcome {
+            tasks_attempted: 2,
+            tasks_completed: 2,
+            ..Default::default()
+        };
+        let item = build_session_summary_item(&outcome, 42);
+        assert_eq!(
+            item.dedup_key, "coding:session-summary:42",
+            "dedup is per-session → at most one summary per session, can't flood the budget"
+        );
+        assert!(
+            item.priority < 50,
+            "below the reflection-nudge tier so it can't starve reflections, got {}",
+            item.priority
+        );
+        assert_eq!(item.source, "coding_session");
+        assert_eq!(item.scheduled_for_unix, 0, "drains on the next tick");
+        assert!(item.body.contains("2/2"), "body carries the counts, got: {}", item.body);
     }
 
     #[test]
