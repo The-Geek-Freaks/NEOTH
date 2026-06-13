@@ -1762,6 +1762,46 @@ pub async fn run_chat_with(
         }
     }
 
+    // ── GOLD-FEAT-08 Tier-3: local-abliterated fallback ───────────────────
+    // After the LOWKEY reframing pipeline above, if the response is STILL a
+    // SafetyPolicy over-refusal and the operator opted in, route to their OWN
+    // local abliterated model (operator-owned hardware — NOT provider-
+    // deception). The orchestrator runs the permanent hard-block floor first
+    // and emits WAL 0x26/0x27/0x28 internally. Best-effort; never bails a turn.
+    if config.refusal_recovery.abliterated_fallback_enabled {
+        let t3_report = crate::security::refusal_detect::classify(&response_text);
+        if t3_report.is_refusal()
+            && crate::security::refusal_abliterated::should_route_to_abliterated(
+                &crate::security::refusal_cause::classify_cause(&response_text),
+            )
+        {
+            match crate::security::refusal_abliterated::try_abliterated_fallback(
+                provider,
+                &final_prompt,
+                final_system.as_deref(),
+                config.refusal_recovery.abliterated_model.as_deref(),
+                &response_text,
+                Some(&writer),
+                now_unix() as i64,
+            )
+            .await
+            {
+                Ok(Some(new_text)) => {
+                    tracing::info!(
+                        recovered_bytes = new_text.len(),
+                        "FEAT-08 abliterated fallback succeeded — replacing response"
+                    );
+                    response_text = new_text;
+                    derived_from_mirror_pipeline = true; // ADV-07: skip profile extraction on recovered turns
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, "FEAT-08 abliterated fallback failed (non-fatal)");
+                }
+            }
+        }
+    }
+
     // ── ADR extraction (Phase 31 R-21 ADR-1) ─────────────────────────────
     // Scan the provider's reply for DECISION:/Beschluss:/ADR: markers. Each
     // hit writes `~/.neoth/adr/NNNN-<slug>.md`. Failures log but never

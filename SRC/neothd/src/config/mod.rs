@@ -2335,6 +2335,19 @@ pub struct RefusalRecoveryConfig {
     /// the last failure to the caller.
     #[serde(default = "default_refusal_recovery_max_attempts")]
     pub max_attempts: u32,
+    /// GOLD-FEAT-08 Tier-3 — enable the local-abliterated fallback. Default
+    /// `false` (opt-in). When `true`, a `SafetyPolicy` over-refusal that
+    /// survives the LOWKEY reframing pipeline is re-attempted via the
+    /// operator's OWN local model (`abliterated_model`) — not by deceiving the
+    /// cloud, but by routing to operator-owned hardware. WAL records
+    /// `0x26 REFUSAL_ABLITERATED_USED` / `0x27 REFUSAL_ABLITERATED_FAILED`.
+    #[serde(default = "default_abliterated_fallback_enabled")]
+    pub abliterated_fallback_enabled: bool,
+    /// GOLD-FEAT-08 — HF repo id of the operator's local abliterated model used
+    /// for the Tier-3 fallback. `None` disables the fallback even when
+    /// `abliterated_fallback_enabled` is `true` (no model = nothing to route to).
+    #[serde(default)]
+    pub abliterated_model: Option<String>,
 }
 
 impl Default for RefusalRecoveryConfig {
@@ -2343,12 +2356,18 @@ impl Default for RefusalRecoveryConfig {
             enabled: default_refusal_recovery_enabled(),
             disabled_reframings: Vec::new(),
             max_attempts: default_refusal_recovery_max_attempts(),
+            abliterated_fallback_enabled: default_abliterated_fallback_enabled(),
+            abliterated_model: None,
         }
     }
 }
 
 fn default_refusal_recovery_enabled() -> bool {
     true
+}
+
+fn default_abliterated_fallback_enabled() -> bool {
+    false
 }
 
 fn default_refusal_recovery_max_attempts() -> u32 {

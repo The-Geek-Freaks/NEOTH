@@ -18,6 +18,7 @@ pub mod ingress_sanitizer;
 pub mod osv_check;
 pub mod paperless_ingest;
 pub mod redact;
+pub mod refusal_abliterated;
 pub mod refusal_cause;
 pub mod refusal_detect;
 pub mod refusal_hard_block;

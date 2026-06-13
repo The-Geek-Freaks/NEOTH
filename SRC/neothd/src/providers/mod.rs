@@ -12,6 +12,7 @@
 //! NOT the default fallback.
 
 /// PF-02 — native Anthropic Messages API adapter (key-based, no `claude` CLI).
+pub mod abliterated;
 pub mod anthropic_api;
 pub mod aws_bedrock;
 pub mod aws_credentials;
@@ -138,7 +139,7 @@ pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send
 /// cache) intentionally stay keyed to their one provider and must NOT route
 /// through this helper.
 pub fn is_local_provider(name: &str) -> bool {
-    matches!(name, "local_qwen" | "local_ouro")
+    matches!(name, "local_qwen" | "local_ouro" | "local_abliterated")
 }
 
 /// Every LLM backend implements this. Trait is object-safe by design so the

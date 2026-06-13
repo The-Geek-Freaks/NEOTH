@@ -206,6 +206,18 @@ pub const EVENT_TYPE_PROVIDER_QUOTA_EXCEEDED: u8 = 0x24;
 ///                         `PROVIDER_REQUEST` (0x20) frame for the same turn
 ///   - `ts_unix`: seconds since epoch
 pub const EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED: u8 = 0x25;
+/// GOLD-FEAT-08 Tier-3 — the abliterated local-model fallback produced a
+/// non-refused completion that replaced the cloud refusal. Payload:
+/// `{model, prompt_hash_xxh3, ts_unix}`.
+pub const EVENT_TYPE_REFUSAL_ABLITERATED_USED: u8 = 0x26;
+/// GOLD-FEAT-08 Tier-3 — the abliterated fallback was attempted but the cloud
+/// re-ask still failed; the original refusal is surfaced. Payload:
+/// `{model, error, prompt_hash_xxh3, ts_unix}`.
+pub const EVENT_TYPE_REFUSAL_ABLITERATED_FAILED: u8 = 0x27;
+/// GOLD-FEAT-08 — a prompt matched the permanent hard-block floor (CSAM /
+/// bio-chem weapon / mass-casualty); no reframing or local routing is
+/// attempted. Payload: `{reason, prompt_hash_xxh3, ts_unix}`.
+pub const EVENT_TYPE_REFUSAL_HARD_BLOCKED: u8 = 0x28;
 /// Round-3 v0.4 ARCH-07 — LOWKEY skill injection was SKIPPED for the
 /// current turn (operator-disabled / disabled_for_eval_sessions /
 /// content_hash mismatch against the pinned baseline). Sits in the
@@ -1839,6 +1851,15 @@ pub const EVENT_NAME_TABLE: &[(&str, u8)] = &[
         "provider_fallback_attempted",
         EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
     ),
+    (
+        "refusal_abliterated_used",
+        EVENT_TYPE_REFUSAL_ABLITERATED_USED,
+    ),
+    (
+        "refusal_abliterated_failed",
+        EVENT_TYPE_REFUSAL_ABLITERATED_FAILED,
+    ),
+    ("refusal_hard_blocked", EVENT_TYPE_REFUSAL_HARD_BLOCKED),
     ("budget_exceeded", EVENT_TYPE_BUDGET_EXCEEDED),
     ("ingest_extracted", EVENT_TYPE_INGEST_EXTRACTED),
     ("embed_persisted", EVENT_TYPE_EMBED_PERSISTED),
@@ -2132,6 +2153,12 @@ const _: () = {
         [(); 1][(EVENT_TYPE_BUDGET_EXCEEDED < 0x20 || EVENT_TYPE_BUDGET_EXCEEDED > 0x2F) as usize];
     let _ = [(); 1][(EVENT_TYPE_SKILL_INJECT_SKIPPED < 0x20
         || EVENT_TYPE_SKILL_INJECT_SKIPPED > 0x2F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_REFUSAL_ABLITERATED_USED < 0x20
+        || EVENT_TYPE_REFUSAL_ABLITERATED_USED > 0x2F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_REFUSAL_ABLITERATED_FAILED < 0x20
+        || EVENT_TYPE_REFUSAL_ABLITERATED_FAILED > 0x2F) as usize];
+    let _ = [(); 1][(EVENT_TYPE_REFUSAL_HARD_BLOCKED < 0x20
+        || EVENT_TYPE_REFUSAL_HARD_BLOCKED > 0x2F) as usize];
     let _ =
         [(); 1][(EVENT_TYPE_CHANNEL_INGRESS < 0x30 || EVENT_TYPE_CHANNEL_INGRESS > 0x3F) as usize];
     let _ =
@@ -2473,6 +2500,15 @@ mod tests {
                 "PROVIDER_FALLBACK_ATTEMPTED",
                 EVENT_TYPE_PROVIDER_FALLBACK_ATTEMPTED,
             ),
+            (
+                "REFUSAL_ABLITERATED_USED",
+                EVENT_TYPE_REFUSAL_ABLITERATED_USED,
+            ),
+            (
+                "REFUSAL_ABLITERATED_FAILED",
+                EVENT_TYPE_REFUSAL_ABLITERATED_FAILED,
+            ),
+            ("REFUSAL_HARD_BLOCKED", EVENT_TYPE_REFUSAL_HARD_BLOCKED),
             ("LOCAL_INFERENCE_START", EVENT_TYPE_LOCAL_INFERENCE_START),
             ("LOCAL_INFERENCE_END", EVENT_TYPE_LOCAL_INFERENCE_END),
             ("INGEST_EXTRACTED", EVENT_TYPE_INGEST_EXTRACTED),
