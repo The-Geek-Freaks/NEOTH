@@ -646,6 +646,7 @@ fn main() -> Result<()> {
         let trust = fetch_trust_snapshot();
         let hardware = fetch_hardware_snapshot();
         let topology = fetch_topology_snapshot();
+        let usage = fetch_usage_meter();
         let council_budget = fetch_council_budget();
         let profile_presets = fetch_profile_presets();
         let hemis = fetch_hemispheres_snapshot();
@@ -662,6 +663,7 @@ fn main() -> Result<()> {
                 apply_trust(&w, trust);
                 apply_hardware(&w, hardware);
                 apply_topology(&w, topology);
+                apply_usage_meter(&w, usage);
                 apply_council_budget(&w, council_budget);
                 apply_profile_presets(&w, profile_presets);
                 apply_hemispheres(&w, hemis);
@@ -804,9 +806,13 @@ fn main() -> Result<()> {
                     let done = in_flight.clone();
                     std::thread::spawn(move || {
                         let snap = fetch_hardware_snapshot();
+                        // GOLD-PROG-08 — refresh the live token budget on the same
+                        // Settings-tab tick (both are cheap file/subprocess reads).
+                        let usage = fetch_usage_meter();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = weak.upgrade() {
                                 apply_hardware(&w, snap);
+                                apply_usage_meter(&w, usage);
                             }
                         });
                         done.store(false, std::sync::atomic::Ordering::Release);
@@ -1894,6 +1900,27 @@ fn apply_topology(window: &MainWindow, rows: Vec<panel_logic::ClusterPeerRow>) {
         })
         .collect();
     window.set_cluster_peers(ModelRc::new(VecModel::from(peers)));
+}
+
+/// GOLD-PROG-08 — read the daemon's exported usage meter
+/// (`~/.neoth/usage_meter.json`, written every 10s). PARSE is the unit-tested
+/// `panel_logic::parse_usage_meter`; an absent/garbage file → unavailable (the
+/// GUI is a separate process and cannot read the daemon's in-memory meter).
+fn fetch_usage_meter() -> panel_logic::UsageMeterPanel {
+    let path = default_neoth_home().join("usage_meter.json");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => panel_logic::parse_usage_meter(&s),
+        Err(_) => panel_logic::UsageMeterPanel::default(),
+    }
+}
+
+/// GOLD-PROG-08 — push the live token budget onto the Config-tab meter.
+/// UI-thread only.
+fn apply_usage_meter(window: &MainWindow, panel: panel_logic::UsageMeterPanel) {
+    window.set_usage_available(panel.available);
+    window.set_usage_responses(panel.responses.into());
+    window.set_usage_tokens(panel.tokens.into());
+    window.set_usage_note(panel.note.into());
 }
 
 /// KF-08 — fetch the council budget meter via `neoth council budget --output

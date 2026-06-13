@@ -1004,6 +1004,42 @@ pub(crate) async fn spawn_regression_cron(
     }
 }
 
+/// GOLD-PROG-08 / WIRE-10b — serialise a usage-meter snapshot to disk atomically.
+/// Pure (no globals), so it is unit-testable. Best-effort JSON.
+fn write_usage_snapshot(
+    path: &std::path::Path,
+    snap: &crate::domain_events::UsageSnapshot,
+) -> std::io::Result<()> {
+    let json = serde_json::to_vec(snap).unwrap_or_else(|_| b"{}".to_vec());
+    crate::util::atomic_write::atomic_write(path, &json)
+}
+
+/// GOLD-PROG-08 / WIRE-10b — export the live usage meter to
+/// `~/.neoth/usage_meter.json` every 10s so the GUI (a SEPARATE process that
+/// cannot read the daemon's in-memory `UsageMeter`) can render a live
+/// token-budget panel. Best-effort + WAL-free + stateless (a stale snapshot is
+/// harmless), so the caller spawns it DETACHED — no graceful-shutdown /
+/// BackgroundHandles wiring. Writes nothing until the global meter is live (the
+/// event bus is installed at daemon boot). Atomic write → the GUI never reads a
+/// torn file.
+pub(crate) fn spawn_usage_export() -> JoinHandle<()> {
+    const EXPORT_INTERVAL_SECS: u64 = 10;
+    let path = FreedomConfig::default_neoth_home().join("usage_meter.json");
+    tokio::spawn(async move {
+        let mut tick =
+            tokio::time::interval(std::time::Duration::from_secs(EXPORT_INTERVAL_SECS));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            if let Some(snap) = crate::domain_events::global_meter_snapshot() {
+                if let Err(e) = write_usage_snapshot(&path, &snap) {
+                    tracing::debug!(error = %e, "usage-meter export write failed (best-effort)");
+                }
+            }
+        }
+    })
+}
+
 /// GOLD-WIRE-07b daemon HNSW snapshot auto-freshness. Every 30 min, rebuilds the
 /// on-disk HNSW snapshot FROM SQLite (the source of truth shared with the
 /// separate `neoth ingest` CLI) when stale — first tick at boot. Off entirely
@@ -2330,6 +2366,25 @@ pub(crate) fn bootstrap_plugin_invoker(home: &std::path::Path, wal_writer: WalWr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GOLD-PROG-08: the usage-meter export writes valid JSON that round-trips
+    /// back to the same snapshot (the GUI's `parse_usage_meter` consumes this).
+    #[test]
+    fn write_usage_snapshot_roundtrips_json() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let path = tmp.path().join("usage_meter.json");
+        let snap = crate::domain_events::UsageSnapshot {
+            events_total: 9,
+            provider_responses: 3,
+            input_tokens_total: 1200,
+            output_tokens_total: 450,
+            lagged_events: 0,
+        };
+        write_usage_snapshot(&path, &snap).unwrap();
+        let back: crate::domain_events::UsageSnapshot =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(back, snap);
+    }
 
     // A default config leaves obsidian_vault/cloud_archive_dest unset and arxiv
     // disabled, so every helper returns None WITHOUT spawning a task — provable

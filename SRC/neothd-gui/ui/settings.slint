@@ -387,6 +387,13 @@ export component SettingsView inherits Rectangle {
     in-out property <bool> full-auto-pending: false;
     callback full-auto-confirmed();
     callback full-auto-gated();
+    // GOLD-PROG-08 — live token budget, polled from ~/.neoth/usage_meter.json
+    // (the daemon's usage-export task writes it every 10s). `usage-available`
+    // false → daemon not running / no usage yet.
+    in property <bool> usage-available: false;
+    in property <string> usage-responses: "";
+    in property <string> usage-tokens: "";
+    in property <string> usage-note: "";
     in-out property <string> provider-current: "claude_cli";
 
     // GR-10 — Safety Rails (from `neoth security safe-mode --json`), rendered in
@@ -1086,6 +1093,48 @@ export component SettingsView inherits Rectangle {
                                     root.full-auto-gated();
                                 }
                             }
+                        }
+                    }
+                }
+                // GOLD-PROG-08 — live token budget (council-path meter), polled
+                // from ~/.neoth/usage_meter.json (daemon writes it every 10s).
+                Card {
+                    VerticalBox {
+                        padding: Theme.space-base;
+                        spacing: Theme.space-tight;
+                        Text {
+                            text: "LIVE TOKEN BUDGET";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            font-weight: Theme.weight-medium;
+                            letter-spacing: Theme.letter-spacing-tight;
+                            color: Theme.accent-green;
+                        }
+                        if !root.usage-available: Text {
+                            text: "(start the daemon — live token usage appears once it runs)";
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
+                        }
+                        if root.usage-available: Text {
+                            text: root.usage-responses;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        if root.usage-available: Text {
+                            text: root.usage-tokens;
+                            font-family: Theme.font-mono;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-primary;
+                        }
+                        if root.usage-available: Text {
+                            text: root.usage-note;
+                            font-family: Theme.font-display;
+                            font-size: Theme.font-size-caption;
+                            color: Theme.text-muted;
+                            wrap: word-wrap;
                         }
                     }
                 }

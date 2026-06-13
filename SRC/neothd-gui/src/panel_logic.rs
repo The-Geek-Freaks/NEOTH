@@ -507,6 +507,51 @@ pub fn parse_cluster_topology(json: &str) -> Vec<ClusterPeerRow> {
         .collect()
 }
 
+// ── GOLD-PROG-08 live token budget (parse `~/.neoth/usage_meter.json`) ──────
+
+/// Parsed `~/.neoth/usage_meter.json` (written by the daemon's usage-export
+/// task): the live token budget for the GUI's Config-tab meter. `available` is
+/// false when the file is absent/garbage (daemon not running / no usage yet) so
+/// the panel shows a "daemon not running" state rather than a misleading "0".
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UsageMeterPanel {
+    pub available: bool,
+    pub responses: String,
+    pub tokens: String,
+    /// Honesty note: the meter counts the council path only today (WIRE-10b
+    /// extends it), plus a lag-undercount warning when events were dropped.
+    pub note: String,
+}
+
+/// PURE + robust: garbage/empty → default (`available=false`).
+pub fn parse_usage_meter(json: &str) -> UsageMeterPanel {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else {
+        return UsageMeterPanel::default();
+    };
+    let g = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    // Require at least the canonical shape (a `provider_responses` key) — a
+    // stray `{}` shouldn't read as a live meter.
+    if v.get("provider_responses").is_none() {
+        return UsageMeterPanel::default();
+    }
+    let lagged = g("lagged_events");
+    let note = if lagged > 0 {
+        format!("council-path only · ⚠ {lagged} events dropped (token totals undercount)")
+    } else {
+        "council-path only".to_string()
+    };
+    UsageMeterPanel {
+        available: true,
+        responses: format!("{} provider responses", g("provider_responses")),
+        tokens: format!(
+            "{} in / {} out tokens",
+            g("input_tokens_total"),
+            g("output_tokens_total")
+        ),
+        note,
+    }
+}
+
 // ── KF-08 council budget meter (parse `neoth council budget --output json`) ──
 
 /// Parsed `neoth council budget --output json`: the per-message council cap +
@@ -1138,6 +1183,31 @@ mod tests {
         assert_eq!(rows[0].last_seen, "never");
         assert_eq!(rows[0].stability_pct, "0%");
         assert_eq!(rows[0].label, "deadbeef");
+    }
+
+    // ── GOLD-PROG-08 usage meter parser ───────────────────────────────────
+    #[test]
+    fn parse_usage_meter_formats_live_budget() {
+        let json = r#"{"events_total":9,"provider_responses":3,"input_tokens_total":1200,"output_tokens_total":450,"lagged_events":0}"#;
+        let p = parse_usage_meter(json);
+        assert!(p.available);
+        assert_eq!(p.responses, "3 provider responses");
+        assert_eq!(p.tokens, "1200 in / 450 out tokens");
+        assert_eq!(p.note, "council-path only");
+    }
+
+    #[test]
+    fn parse_usage_meter_absent_or_garbage_is_unavailable() {
+        assert!(!parse_usage_meter("not json").available);
+        assert!(!parse_usage_meter("{}").available); // no provider_responses key → not live
+    }
+
+    #[test]
+    fn parse_usage_meter_lag_warns_undercount() {
+        let json = r#"{"provider_responses":1,"input_tokens_total":10,"output_tokens_total":5,"lagged_events":4}"#;
+        let p = parse_usage_meter(json);
+        assert!(p.available);
+        assert!(p.note.contains("4 events dropped"));
     }
 
     // ── KF-08 council budget meter parser ─────────────────────────────────

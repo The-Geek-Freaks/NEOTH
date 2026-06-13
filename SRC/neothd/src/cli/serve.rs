@@ -589,6 +589,15 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
         "sources GC task spawned"
     );
 
+    // ── 5b-sext. GOLD-PROG-08 — usage-meter export. Writes the live token
+    // budget to ~/.neoth/usage_meter.json every 10s so the GUI (a separate
+    // process) can render it. Best-effort + WAL-free + stateless (a stale
+    // snapshot is harmless), so it is a DETACHED daemon-lifetime task — no
+    // BackgroundHandles / graceful-shutdown wiring. The handle is held (not
+    // `let _ =`, which clippy flags as a dropped future) and detaches at
+    // run_serve exit → the runtime stops it at daemon shutdown.
+    let _usage_export = crate::cli::serve_tasks::spawn_usage_export();
+
     // ── 5b-quint. Tmux sweeper (B-10 wired). 5-min cadence walks every
     // session whose name starts with `neoth-cc-`, kills entries idle
     // for > 10 min. No-op on Windows / hosts without tmux. Companion
