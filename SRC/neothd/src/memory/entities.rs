@@ -11,6 +11,8 @@
 //! additive recall Stage-3 score-blend land in a later slice. Pure SQL — no
 //! `petgraph` dependency needed for depth-bounded BFS.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -20,7 +22,12 @@ pub struct Entity {
     pub id: i64,
     pub name: String,
     pub entity_type: String,
+    /// How many sightings created/reinforced this entity — the MEM-14
+    /// credibility signal (more independent sources ⇒ more trustworthy).
     pub source_count: i64,
+    /// Merged attribute facts as a JSON object string, e.g.
+    /// `{"role":"engineer","city":"Berlin"}` (MEM-14 attribute merge).
+    pub attributes: String,
 }
 
 /// One node reached during neighbour expansion.
@@ -32,6 +39,10 @@ pub struct Neighbor {
     pub depth: u32,
     /// The relation label of the edge that first reached this node.
     pub via_relation: String,
+    /// The reached entity's `source_count` — neighbours are ordered by depth
+    /// then DESCENDING source_count, so the most-corroborated facts surface
+    /// first (MEM-14 credibility).
+    pub source_count: i64,
 }
 
 /// Resolve an entity id by exact (case-insensitive) name.
@@ -45,12 +56,27 @@ pub fn resolve_entity_id(conn: &Connection, name: &str) -> Result<Option<i64>> {
     .context("resolve entity id")
 }
 
-/// Insert the entity if absent, else bump its `source_count` + `last_seen`
-/// (the dedup/credibility signal MEM-14 builds on). Returns the entity id.
-pub fn resolve_or_create_entity(
+/// Merge `new` attribute facts into an existing `{...}` JSON attributes string
+/// (overlay: new keys add, existing keys are overwritten with the latest value).
+/// A non-object / unparseable `existing` is treated as empty. Returns a
+/// sorted-key JSON object string. Pure — unit-tested (MEM-14).
+pub(crate) fn merge_attributes(existing_json: &str, new: &BTreeMap<String, String>) -> String {
+    let mut merged: BTreeMap<String, String> =
+        serde_json::from_str(existing_json).unwrap_or_default();
+    for (k, v) in new {
+        merged.insert(k.clone(), v.clone());
+    }
+    serde_json::to_string(&merged).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Insert the entity if absent (with `attrs` as its initial attributes), else
+/// bump its `source_count` + `last_seen` AND overlay `attrs` onto its stored
+/// attributes (MEM-14 dedup + attribute merge + credibility). Returns the id.
+pub fn resolve_or_create_entity_with_attrs(
     conn: &Connection,
     name: &str,
     entity_type: &str,
+    attrs: &BTreeMap<String, String>,
     now_unix: i64,
 ) -> Result<i64> {
     let name = name.trim();
@@ -63,14 +89,66 @@ pub fn resolve_or_create_entity(
             params![id, now_unix],
         )
         .context("bump entity source_count")?;
+        // Attribute merge: overlay any new attribute facts onto the stored set.
+        if !attrs.is_empty() {
+            let existing: String = conn
+                .query_row(
+                    "SELECT attributes FROM idx_entities WHERE id = ?1",
+                    params![id],
+                    |r| r.get(0),
+                )
+                .unwrap_or_else(|_| "{}".to_string());
+            let merged = merge_attributes(&existing, attrs);
+            conn.execute(
+                "UPDATE idx_entities SET attributes = ?2 WHERE id = ?1",
+                params![id, merged],
+            )
+            .context("merge entity attributes")?;
+        }
         return Ok(id);
     }
+    let attrs_json = merge_attributes("{}", attrs);
     conn.execute(
-        "INSERT INTO idx_entities (name, entity_type, first_seen, last_seen) VALUES (?1, ?2, ?3, ?3)",
-        params![name, entity_type, now_unix],
+        "INSERT INTO idx_entities (name, entity_type, attributes, first_seen, last_seen) \
+         VALUES (?1, ?2, ?3, ?4, ?4)",
+        params![name, entity_type, attrs_json, now_unix],
     )
     .context("insert entity")?;
     Ok(conn.last_insert_rowid())
+}
+
+/// [`resolve_or_create_entity_with_attrs`] with no attributes — for relation
+/// endpoints and callers that only need the id (the dedup/credibility signal
+/// MEM-14 builds on). Returns the entity id.
+pub fn resolve_or_create_entity(
+    conn: &Connection,
+    name: &str,
+    entity_type: &str,
+    now_unix: i64,
+) -> Result<i64> {
+    resolve_or_create_entity_with_attrs(conn, name, entity_type, &BTreeMap::new(), now_unix)
+}
+
+/// Fetch a single entity by (case-insensitive) name with its merged
+/// `attributes` + `source_count` credibility. `None` when unknown. Powers the
+/// `neoth recall --graph` header line (MEM-14).
+pub fn get_entity(conn: &Connection, name: &str) -> Result<Option<Entity>> {
+    conn.query_row(
+        "SELECT id, name, entity_type, source_count, attributes \
+         FROM idx_entities WHERE name = ?1 COLLATE NOCASE",
+        params![name.trim()],
+        |r| {
+            Ok(Entity {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                entity_type: r.get(2)?,
+                source_count: r.get(3)?,
+                attributes: r.get(4)?,
+            })
+        },
+    )
+    .optional()
+    .context("get entity")
 }
 
 /// Insert (or reinforce) a directed relation `src --relation--> dst`. A repeat
@@ -121,24 +199,33 @@ pub fn get_neighbors(conn: &Connection, name: &str, max_depth: u32) -> Result<Ve
         for (other, relation) in one_hop(conn, id)? {
             if seen.insert(other) {
                 queue.push_back((other, depth + 1));
-                // Resolve the name lazily.
-                let nm: Option<String> = conn
-                    .query_row("SELECT name FROM idx_entities WHERE id = ?1", params![other], |r| {
-                        r.get(0)
-                    })
+                // Resolve the name + credibility lazily.
+                let row: Option<(String, i64)> = conn
+                    .query_row(
+                        "SELECT name, source_count FROM idx_entities WHERE id = ?1",
+                        params![other],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
                     .optional()?;
-                if let Some(nm) = nm {
+                if let Some((nm, source_count)) = row {
                     out.push(Neighbor {
                         id: other,
                         name: nm,
                         depth: depth + 1,
                         via_relation: relation,
+                        source_count,
                     });
                 }
             }
         }
     }
-    out.sort_by(|a, b| a.depth.cmp(&b.depth).then_with(|| a.name.cmp(&b.name)));
+    // Nearest first, then most-corroborated (DESC source_count), then name.
+    out.sort_by(|a, b| {
+        a.depth
+            .cmp(&b.depth)
+            .then_with(|| b.source_count.cmp(&a.source_count))
+            .then_with(|| a.name.cmp(&b.name))
+    });
     Ok(out)
 }
 
@@ -168,12 +255,21 @@ pub fn forget_entities_like(conn: &Connection, like_pattern: &str) -> Result<(i6
     Ok((ents, rels))
 }
 
+/// One extracted entity: name, type, and any attribute facts stated about it
+/// (`{"role":"engineer"}` …) — merged into the stored entity on each sighting
+/// (MEM-14).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EntityFact {
+    pub name: String,
+    pub etype: String,
+    pub attributes: BTreeMap<String, String>,
+}
+
 /// LLM extraction result: typed entities + directed relations (relation
 /// endpoints are entity NAMES, resolved to ids at persist time).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Extraction {
-    /// `(name, type)`.
-    pub entities: Vec<(String, String)>,
+    pub entities: Vec<EntityFact>,
     /// `(src_name, relation, dst_name)`.
     pub relations: Vec<(String, String, String)>,
 }
@@ -186,9 +282,9 @@ const EXTRACTION_SYSTEM: &str =
 pub fn build_extraction_prompt(text: &str) -> String {
     format!(
         "Extract entities and relations from the TEXT as JSON of exactly this shape:\n\
-         {{\"entities\":[{{\"name\":\"...\",\"type\":\"person|org|place|concept|thing\"}}],\
+         {{\"entities\":[{{\"name\":\"...\",\"type\":\"person|org|place|concept|thing\",\"attributes\":{{\"<key>\":\"<value>\"}}}}],\
          \"relations\":[{{\"src\":\"<entity name>\",\"relation\":\"<short verb phrase>\",\"dst\":\"<entity name>\"}}]}}\n\
-         Rules: only entities/relations explicitly present; relation endpoints must be entity names from the entities list; JSON only.\n\nTEXT:\n{text}"
+         Rules: only entities/relations explicitly present; `attributes` is OPTIONAL — short factual key/value pairs about the entity (role, location, …), omit or leave {{}} if none; relation endpoints must be entity names from the entities list; JSON only.\n\nTEXT:\n{text}"
     )
 }
 
@@ -209,6 +305,8 @@ pub fn parse_extraction(response: &str) -> Result<Extraction> {
         name: String,
         #[serde(default)]
         r#type: String,
+        #[serde(default)]
+        attributes: serde_json::Map<String, serde_json::Value>,
     }
     #[derive(serde::Deserialize)]
     struct RawRel {
@@ -232,10 +330,34 @@ pub fn parse_extraction(response: &str) -> Result<Extraction> {
         .filter(|e| !e.name.trim().is_empty())
         .map(|e| {
             let ty = e.r#type.trim();
-            (
-                e.name.trim().to_string(),
-                if ty.is_empty() { "unknown".to_string() } else { ty.to_string() },
-            )
+            // Normalise attributes to non-empty string key/values (numbers →
+            // their text form, nulls/empties dropped) so the merge stays JSON
+            // string→string.
+            let attributes = e
+                .attributes
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    let key = k.trim();
+                    if key.is_empty() {
+                        return None;
+                    }
+                    let val = match v {
+                        serde_json::Value::String(s) => s.trim().to_string(),
+                        serde_json::Value::Null => return None,
+                        other => other.to_string(),
+                    };
+                    (!val.is_empty()).then(|| (key.to_string(), val))
+                })
+                .collect();
+            EntityFact {
+                name: e.name.trim().to_string(),
+                etype: if ty.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    ty.to_string()
+                },
+                attributes,
+            }
         })
         .collect();
     let relations = raw
@@ -280,9 +402,15 @@ pub async fn entity_extract(
 pub fn persist_extraction(conn: &Connection, ex: &Extraction, now_unix: i64) -> Result<(usize, usize)> {
     use std::collections::HashMap;
     let mut ids: HashMap<String, i64> = HashMap::new();
-    for (name, etype) in &ex.entities {
-        let id = resolve_or_create_entity(conn, name, etype, now_unix)?;
-        ids.insert(name.to_lowercase(), id);
+    for ef in &ex.entities {
+        let id = resolve_or_create_entity_with_attrs(
+            conn,
+            &ef.name,
+            &ef.etype,
+            &ef.attributes,
+            now_unix,
+        )?;
+        ids.insert(ef.name.to_lowercase(), id);
     }
     let mut rels = 0usize;
     for (src, relation, dst) in &ex.relations {
@@ -417,9 +545,81 @@ mod tests {
             {\"src\":\"\",\"relation\":\"x\",\"dst\":\"y\"}]}\n``` done";
         let ex = parse_extraction(resp).unwrap();
         assert_eq!(ex.entities.len(), 2, "empty-name entity dropped");
-        assert_eq!(ex.entities[1], ("Mozilla".to_string(), "unknown".to_string()), "missing type → unknown");
+        assert_eq!(ex.entities[1].name, "Mozilla");
+        assert_eq!(ex.entities[1].etype, "unknown", "missing type → unknown");
         assert_eq!(ex.relations.len(), 1, "empty-src relation dropped");
         assert_eq!(ex.relations[0], ("Alice".into(), "works at".into(), "Mozilla".into()));
+    }
+
+    // ── MEM-14: attribute merge + source_count credibility ──────────────────
+
+    #[test]
+    fn merge_attributes_overlays_new_keys() {
+        let mut a = BTreeMap::new();
+        a.insert("role".to_string(), "engineer".to_string());
+        a.insert("city".to_string(), "Berlin".to_string());
+        let merged = merge_attributes("{\"role\":\"intern\"}", &a);
+        let back: BTreeMap<String, String> = serde_json::from_str(&merged).unwrap();
+        assert_eq!(back.get("role").unwrap(), "engineer", "existing key overwritten");
+        assert_eq!(back.get("city").unwrap(), "Berlin", "new key added");
+        // Unparseable existing → treated as empty, new keys still applied.
+        let from_garbage = merge_attributes("not json", &a);
+        let back2: BTreeMap<String, String> = serde_json::from_str(&from_garbage).unwrap();
+        assert_eq!(back2.len(), 2);
+    }
+
+    #[test]
+    fn resolve_with_attrs_merges_on_resighting() {
+        let (_d, c) = conn();
+        let mut a1 = BTreeMap::new();
+        a1.insert("role".to_string(), "engineer".to_string());
+        let id = resolve_or_create_entity_with_attrs(&c, "Alice", "person", &a1, 100).unwrap();
+        let mut a2 = BTreeMap::new();
+        a2.insert("city".to_string(), "Berlin".to_string());
+        let id2 = resolve_or_create_entity_with_attrs(&c, "alice", "person", &a2, 200).unwrap();
+        assert_eq!(id, id2, "same entity (case-insensitive)");
+        let e = get_entity(&c, "Alice").unwrap().expect("entity exists");
+        assert_eq!(e.source_count, 2, "credibility bumped on re-sighting");
+        let attrs: BTreeMap<String, String> = serde_json::from_str(&e.attributes).unwrap();
+        assert_eq!(attrs.get("role").unwrap(), "engineer", "first attr kept");
+        assert_eq!(attrs.get("city").unwrap(), "Berlin", "second attr merged in");
+    }
+
+    #[test]
+    fn get_neighbors_orders_by_source_count_within_depth() {
+        let (_d, c) = conn();
+        let a = resolve_or_create_entity(&c, "A", "x", 1).unwrap();
+        let low = resolve_or_create_entity(&c, "Low", "x", 1).unwrap();
+        let high = resolve_or_create_entity(&c, "High", "x", 1).unwrap();
+        // Corroborate "High" twice more → higher source_count.
+        resolve_or_create_entity(&c, "High", "x", 2).unwrap();
+        resolve_or_create_entity(&c, "High", "x", 3).unwrap();
+        insert_relation(&c, a, low, "r", 1.0).unwrap();
+        insert_relation(&c, a, high, "r", 1.0).unwrap();
+        let n = get_neighbors(&c, "A", 1).unwrap();
+        assert_eq!(n.len(), 2);
+        assert_eq!(n[0].name, "High", "most-corroborated neighbour ranks first");
+        assert!(n[0].source_count > n[1].source_count);
+    }
+
+    #[test]
+    fn get_entity_unknown_is_none() {
+        let (_d, c) = conn();
+        assert!(get_entity(&c, "Nobody").unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_extraction_captures_and_normalises_attributes() {
+        let resp = "{\"entities\":[{\"name\":\"Alice\",\"type\":\"person\",\
+            \"attributes\":{\"role\":\"engineer\",\"age\":42,\"note\":null,\"  \":\"x\"}}],\
+            \"relations\":[]}";
+        let ex = parse_extraction(resp).unwrap();
+        assert_eq!(ex.entities.len(), 1);
+        let attrs = &ex.entities[0].attributes;
+        assert_eq!(attrs.get("role").unwrap(), "engineer");
+        assert_eq!(attrs.get("age").unwrap(), "42", "number stringified");
+        assert!(!attrs.contains_key("note"), "null dropped");
+        assert!(!attrs.contains_key("  "), "blank key dropped");
     }
 
     #[test]

@@ -158,6 +158,9 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     if let Some(entity) = args.graph.clone() {
         let db_path = args.db.clone().unwrap_or_else(store::default_path);
         let conn = store::open(&db_path).context("open views.db")?;
+        // MEM-14: the queried entity's own credibility (source_count) + merged
+        // attributes head the result.
+        let head = crate::memory::entities::get_entity(&conn, &entity)?;
         let neighbors =
             crate::memory::entities::get_neighbors(&conn, &entity, args.graph_depth)?;
         match args.output {
@@ -165,18 +168,52 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
                 let rows: Vec<_> = neighbors
                     .iter()
                     .map(|n| {
-                        serde_json::json!({ "name": n.name, "depth": n.depth, "via": n.via_relation })
+                        serde_json::json!({
+                            "name": n.name,
+                            "depth": n.depth,
+                            "via": n.via_relation,
+                            "sources": n.source_count,
+                        })
                     })
                     .collect();
-                println!("{}", serde_json::json!({ "entity": entity, "neighbors": rows }));
+                let attributes: serde_json::Value = head
+                    .as_ref()
+                    .and_then(|e| serde_json::from_str(&e.attributes).ok())
+                    .unwrap_or_else(|| serde_json::json!({}));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "entity": entity,
+                        "source_count": head.as_ref().map(|e| e.source_count),
+                        "attributes": attributes,
+                        "neighbors": rows,
+                    })
+                );
             }
             crate::cli::OutputFormat::Table => {
+                if let Some(e) = &head {
+                    let attrs: std::collections::BTreeMap<String, String> =
+                        serde_json::from_str(&e.attributes).unwrap_or_default();
+                    let attr_str = if attrs.is_empty() {
+                        String::new()
+                    } else {
+                        let pairs: Vec<String> =
+                            attrs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                        format!(" [{}]", pairs.join(", "))
+                    };
+                    println!("entity '{}' ({} sources){}", e.name, e.source_count, attr_str);
+                }
                 if neighbors.is_empty() {
                     println!("no graph neighbours for '{entity}' (unknown entity or no relations)");
                 } else {
                     println!("graph neighbours of '{entity}' (≤{} hops):", args.graph_depth);
                     for n in &neighbors {
-                        println!("  [{}] {} (via {})", n.depth, n.name, n.via_relation);
+                        let cred = if n.source_count > 1 {
+                            format!(", {} sources", n.source_count)
+                        } else {
+                            String::new()
+                        };
+                        println!("  [{}] {} (via {}{})", n.depth, n.name, n.via_relation, cred);
                     }
                 }
             }

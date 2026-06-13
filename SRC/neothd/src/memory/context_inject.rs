@@ -20,7 +20,17 @@ pub fn build_facts_block(entity: &str, neighbors: &[Neighbor]) -> String {
     s.push_str(&format!("\nKnowledge-graph context for \"{entity}\":\n"));
     for n in neighbors {
         let hops = if n.depth == 1 { "1 hop" } else { "2+ hops" };
-        s.push_str(&format!("- {} — {} ({hops}, via \"{}\")\n", entity, n.name, n.via_relation));
+        // MEM-14: annotate corroborated facts with their source count so the
+        // model can weight a many-sources fact over a single-sighting one.
+        let cred = if n.source_count > 1 {
+            format!(", {} sources", n.source_count)
+        } else {
+            String::new()
+        };
+        s.push_str(&format!(
+            "- {} — {} ({hops}, via \"{}\"{cred})\n",
+            entity, n.name, n.via_relation
+        ));
     }
     s
 }
@@ -35,7 +45,18 @@ mod tests {
             name: name.to_string(),
             depth,
             via_relation: via.to_string(),
+            source_count: 1,
         }
+    }
+
+    #[test]
+    fn block_annotates_credibility_when_multi_sourced() {
+        let mut n = nb("Mozilla", 1, "works at");
+        n.source_count = 4;
+        let block = build_facts_block("Alice", &[n]);
+        assert!(block.contains("4 sources"), "multi-sourced fact shows credibility: {block}");
+        // Single-source neighbour stays unannotated.
+        assert!(!build_facts_block("Alice", &[nb("Bob", 1, "knows")]).contains("sources"));
     }
 
     #[test]
