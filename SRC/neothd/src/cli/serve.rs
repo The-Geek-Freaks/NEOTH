@@ -279,9 +279,10 @@ pub async fn run_serve(args: ServeArgs) -> Result<()> {
     // GOLD-ARCH-01: construction relocated to serve_tasks (same handle, same site).
     let indexer_task = crate::cli::serve_tasks::spawn_indexer(&segment_path);
 
-    // ── 5a-kanban. Stale-planning reaper — HO-02 (Session 28). Best-effort
-    // startup sweep of kanban rows stranded in Planning by a crash mid-decompose.
-    crate::cli::serve_tasks::run_stale_planning_reaper_on_startup();
+    // ── 5a-kanban. Stale-kanban reapers — HO-02 + GOLD-TASK-04. Best-effort
+    // startup sweep of sessions stranded in Planning (crash mid-decompose) and
+    // task rows stranded in InProgress (crash mid-execute).
+    crate::cli::serve_tasks::run_stale_kanban_reapers_on_startup();
 
     // ── 5a-creds. Startup credential-pattern audit (HO-06) ─────────────────
     //

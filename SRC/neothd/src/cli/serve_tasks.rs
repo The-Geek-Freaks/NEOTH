@@ -598,15 +598,20 @@ pub(crate) fn spawn_catalog_refresh(config: &FreedomConfig) -> JoinHandle<()> {
     handle
 }
 
-/// HO-02 — kanban stale-planning reaper (startup, not spawned). Cerebellum
-/// opens a session row + decomposes via LLM before flipping it to Running; a
-/// dispatcher crash / daemon restart mid-decompose strands the row in Planning
-/// forever (visible on `neoth kanban list`, never picked up). Sweep rows past a
-/// 1-hour cut-off on each daemon startup so the operator sees a clean slate.
-/// Best-effort + synchronous (own short-lived views.db connection, no WAL
-/// writer): a views.db open failure is logged + skipped — hygiene, not
-/// load-bearing on liveness.
-pub(crate) fn run_stale_planning_reaper_on_startup() {
+/// HO-02 + GOLD-TASK-04 — kanban stale reapers (startup, not spawned).
+/// Two sweeps over the same short-lived views.db connection:
+///   1. Stale-PLANNING sessions (HO-02): Cerebellum opens a session row +
+///      decomposes via LLM before flipping it onward; a crash mid-decompose
+///      strands the row in Planning forever (visible on `neoth kanban list`,
+///      never picked up).
+///   2. Stale-INPROGRESS tasks (GOLD-TASK-04): the dispatcher stamps a task
+///      Backlog→InProgress before `worker.execute()`; a crash mid-execute
+///      strands that task row in InProgress forever (worker_watch only fires
+///      while the daemon is alive). Swept to Blocked so it can be re-queued.
+/// Both use a 1-hour cut-off on each daemon startup so the operator sees a
+/// clean slate. Best-effort + synchronous (no WAL writer): a views.db open
+/// failure is logged + skipped — hygiene, not load-bearing on liveness.
+pub(crate) fn run_stale_kanban_reapers_on_startup() {
     const STALE_CUTOFF_NS: u64 = 3_600 * 1_000_000_000;
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -637,10 +642,31 @@ pub(crate) fn run_stale_planning_reaper_on_startup() {
                         warn!(error = %e, "kanban stale-planning reaper failed; non-fatal")
                     }
                 }
+                // GOLD-TASK-04: second sweep — crash-stranded InProgress
+                // task rows (orphaned by a dispatch that died mid-execute)
+                // → Blocked, on the same connection + cut-off.
+                match crate::coding::store::reap_stale_inprogress_tasks(
+                    &conn,
+                    now_ns,
+                    STALE_CUTOFF_NS,
+                ) {
+                    Ok(0) => {
+                        tracing::debug!("kanban stale-inprogress reaper: nothing to block")
+                    }
+                    Ok(n) => {
+                        info!(
+                            reaped = n,
+                            "kanban stale-inprogress reaper blocked {n} orphaned task(s)"
+                        )
+                    }
+                    Err(e) => {
+                        warn!(error = %e, "kanban stale-inprogress reaper failed; non-fatal")
+                    }
+                }
             }
         }
         Err(e) => {
-            warn!(error = %e, "stale-planning reaper: cannot open views.db; skipping");
+            warn!(error = %e, "stale-kanban reaper: cannot open views.db; skipping");
         }
     }
 }

@@ -217,6 +217,46 @@ pub fn reap_stale_planning_sessions(
     Ok(n)
 }
 
+/// GOLD-TASK-04 — reap crash-stranded `InProgress` TASK rows on startup.
+///
+/// The dispatcher transitions a task `Backlog → InProgress` (stamping
+/// `started_ns`) BEFORE running `worker.execute()`. A daemon crash /
+/// power loss mid-execute strands that row in `InProgress` forever: the
+/// stale-planning reaper only sweeps SESSION rows (and a session never
+/// leaves `Planning` until a terminal `archive_session`, so its tasks
+/// are the orphans), and `worker_watch` only fires while the daemon is
+/// alive. This sweep moves any `InProgress` task whose `started_ns` is
+/// older than `stale_after_ns` to `Blocked` — the dispatcher's own
+/// "couldn't finish" terminal (`TaskStatus` has no `Abandoned`), so the
+/// operator can re-queue it. With GOLD-TASK-02a's 300s per-worker
+/// timeout a live task is `InProgress` for minutes, never hours, so a
+/// 1-hour cut-off (the caller's) never false-reaps a running dispatch.
+///
+/// `started_ns` is always set for `InProgress` (patch_task_status
+/// `COALESCE(started_ns, now)`); a NULL would simply not match `<=` and
+/// stay untouched. Best-effort, log-only at the call site (no WAL writer
+/// — mirrors the stale-planning reaper's hygiene-not-audit contract).
+pub fn reap_stale_inprogress_tasks(
+    conn: &Connection,
+    now_ns: u64,
+    stale_after_ns: u64,
+) -> Result<usize> {
+    let cut_off = now_ns.saturating_sub(stale_after_ns) as i64;
+    let n = conn
+        .execute(
+            "UPDATE idx_kanban_task \
+             SET status = ?1 \
+             WHERE status = ?2 AND started_ns <= ?3",
+            params![
+                TaskStatus::Blocked.as_str(),
+                TaskStatus::InProgress.as_str(),
+                cut_off,
+            ],
+        )
+        .context("update idx_kanban_task for stale-inprogress reap")?;
+    Ok(n)
+}
+
 /// QU-10b / SP-A1 — distinct session ids that still have at least one
 /// `Backlog` task, ascending. The `task_executor` controller loop drives
 /// each so pending work created outside a one-shot `neoth code "..."`
@@ -1055,6 +1095,58 @@ mod tests {
         ensure_schema(&conn).unwrap();
         let n = reap_stale_planning_sessions(&conn, 1_000_000_000, STALE_CUTOFF_NS).unwrap();
         assert_eq!(n, 0);
+    }
+
+    // ── GOLD-TASK-04: stale-InProgress task reaper ─────────────────
+
+    #[test]
+    fn inprogress_reaper_blocks_task_started_before_cutoff() {
+        // A task left InProgress by a crashed dispatch (started 2h ago)
+        // is swept to Blocked so the operator can re-queue it.
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        let now_ns: u64 = 10 * 3600 * 1_000_000_000;
+        let started_ns: u64 = now_ns - 2 * 3600 * 1_000_000_000;
+        let session_id = insert_session(&conn, started_ns, "p", "h", "cli", None).unwrap();
+        let task_id = insert_task(&conn, session_id, started_ns, "t", None, "ui", None).unwrap();
+        patch_task_status(&conn, task_id, TaskStatus::InProgress, started_ns).unwrap();
+        let n = reap_stale_inprogress_tasks(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
+        assert_eq!(n, 1);
+        let task = list_tasks_for_session(&conn, session_id).unwrap().pop().unwrap();
+        assert_eq!(task.status, TaskStatus::Blocked);
+    }
+
+    #[test]
+    fn inprogress_reaper_leaves_fresh_task_running() {
+        // Started 1 min ago — a live dispatch (worker.execute is capped
+        // at 300s by TASK-02a), must NOT be reaped.
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        let now_ns: u64 = 10 * 3600 * 1_000_000_000;
+        let started_ns: u64 = now_ns - 60 * 1_000_000_000;
+        let session_id = insert_session(&conn, started_ns, "p", "h", "cli", None).unwrap();
+        let task_id = insert_task(&conn, session_id, started_ns, "t", None, "ui", None).unwrap();
+        patch_task_status(&conn, task_id, TaskStatus::InProgress, started_ns).unwrap();
+        let n = reap_stale_inprogress_tasks(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
+        assert_eq!(n, 0);
+        let task = list_tasks_for_session(&conn, session_id).unwrap().pop().unwrap();
+        assert_eq!(task.status, TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn inprogress_reaper_ignores_non_inprogress_tasks() {
+        // A Backlog task (never started, started_ns NULL) past the
+        // cut-off is NOT a leak — only InProgress rows are swept.
+        let conn = open_memory_db();
+        ensure_schema(&conn).unwrap();
+        let now_ns: u64 = 10 * 3600 * 1_000_000_000;
+        let old_ns: u64 = now_ns - 5 * 3600 * 1_000_000_000;
+        let session_id = insert_session(&conn, old_ns, "p", "h", "cli", None).unwrap();
+        insert_task(&conn, session_id, old_ns, "still-backlog", None, "ui", None).unwrap();
+        let n = reap_stale_inprogress_tasks(&conn, now_ns, STALE_CUTOFF_NS).unwrap();
+        assert_eq!(n, 0);
+        let task = list_tasks_for_session(&conn, session_id).unwrap().pop().unwrap();
+        assert_eq!(task.status, TaskStatus::Backlog);
     }
 
     #[test]
