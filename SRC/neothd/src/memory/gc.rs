@@ -128,6 +128,50 @@ pub fn run_pass(conn: &mut Connection, now_ns: i64, ttl_ns: i64) -> Result<GcRep
     })
 }
 
+/// GOLD-ADAPT-MEM-13 — default soft cap on the ctx `sources` table. The TTL
+/// pass ([`run_pass`]) only ages out *transient* rows; a busy operator can
+/// still accrete an unbounded archive of non-transient indexed content. This
+/// caps the total at a generous bound so the store can't grow without limit.
+pub const DEFAULT_MAX_SOURCES: usize = 50_000;
+
+/// MEM-13 — enforce a total-size cap on the ctx `sources` table: when the row
+/// count exceeds `max_sources`, delete the **oldest** (`indexed_ts ASC`)
+/// overflow rows, cascading into the `chunks` + `chunks_trigram` FTS tables
+/// exactly like [`run_pass`]. Returns the number of source rows dropped.
+/// Transactional — partial failure rolls back. (Operator episodes + ground
+/// truth live in separate tables and are untouched.)
+pub fn enforce_size_cap(conn: &mut Connection, max_sources: usize) -> Result<usize> {
+    let total: i64 = conn
+        .query_row("SELECT count(*) FROM sources", [], |r| r.get(0))
+        .context("count sources for size cap")?;
+    if total <= max_sources as i64 {
+        return Ok(0);
+    }
+    let overflow = total - max_sources as i64;
+
+    let tx = conn.transaction().context("begin size-cap tx")?;
+    let victim_ids: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT id FROM sources ORDER BY indexed_ts ASC, id ASC LIMIT ?1")?;
+        let rows = stmt.query_map(params![overflow], |r| r.get::<_, i64>(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    for id in &victim_ids {
+        let _ = tx.execute("DELETE FROM chunks WHERE source_id = ?1", params![id]);
+        let _ = tx.execute("DELETE FROM chunks_trigram WHERE source_id = ?1", params![id]);
+    }
+    let dropped = if victim_ids.is_empty() {
+        0
+    } else {
+        let placeholders = victim_ids.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        tx.execute(
+            &format!("DELETE FROM sources WHERE id IN ({placeholders})"),
+            rusqlite::params_from_iter(victim_ids.iter().copied()),
+        )?
+    };
+    tx.commit().context("commit size-cap tx")?;
+    Ok(dropped)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +200,35 @@ mod tests {
         let (_dir, mut conn) = fresh_db();
         assert!(run_pass(&mut conn, 1_000, 0).is_err());
         assert!(run_pass(&mut conn, 1_000, -1).is_err());
+    }
+
+    #[test]
+    fn size_cap_drops_oldest_overflow_and_is_noop_under_cap() {
+        let (_dir, mut conn) = fresh_db();
+        // 5 sources at increasing indexed_ts (id1 oldest … id5 newest).
+        for i in 0..5 {
+            insert_source(&conn, &format!("doc-{i}"), "perm", 1_000 + i as i64);
+        }
+        // Under cap → no-op.
+        assert_eq!(enforce_size_cap(&mut conn, 10).unwrap(), 0);
+        // Cap at 3 → drop the 2 oldest.
+        let dropped = enforce_size_cap(&mut conn, 3).unwrap();
+        assert_eq!(dropped, 2);
+        let remaining: i64 = conn
+            .query_row("SELECT count(*) FROM sources", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(remaining, 3);
+        // The two oldest labels are gone; the three newest survive.
+        let gone: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sources WHERE label IN ('doc-0','doc-1')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(gone, 0, "oldest two evicted");
+        // Re-running at the same cap is now a no-op.
+        assert_eq!(enforce_size_cap(&mut conn, 3).unwrap(), 0);
     }
 
     #[test]

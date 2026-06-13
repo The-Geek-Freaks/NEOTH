@@ -70,7 +70,17 @@ pub async fn run_once(db_path: &std::path::Path) -> Result<gc::GcReport> {
                 ));
             }
         };
-        gc::run_pass(&mut conn, now_ns, gc::DEFAULT_TTL_NS)
+        let report = gc::run_pass(&mut conn, now_ns, gc::DEFAULT_TTL_NS)?;
+        // MEM-13 — after TTL aging, enforce the total-size cap so a busy ctx
+        // store can't grow without bound.
+        match gc::enforce_size_cap(&mut conn, gc::DEFAULT_MAX_SOURCES) {
+            Ok(capped) if capped > 0 => {
+                tracing::info!(capped, "gc: size cap evicted oldest ctx sources")
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!(error = %e, "gc: size-cap pass failed (non-fatal)"),
+        }
+        Ok(report)
     })
     .await?
 }
