@@ -170,6 +170,13 @@ pub async fn install_kind(kind: CliKind) -> Result<()> {
 // not as the local variable — see E0277 on the qwen-metal job for
 // run 26503528842.
 async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
+    // GOLD-ADAPT-GOOSE-01 supply-chain gate — query OSV for MAL-* malware
+    // advisories on this package BEFORE installing it. A confirmed hit aborts;
+    // a lookup error fails open (logged) so an offline install still works.
+    npm_supply_chain_gate(
+        package,
+        crate::security::osv_check::check_package(package, "npm", None).await,
+    )?;
     info!(package, cli_name, "running `npm install -g {package}`");
     let mut child = spawn_cli("npm", &["install", "-g", package])
         .with_context(|| format!("spawn npm install -g {package}"))?;
@@ -187,6 +194,71 @@ async fn install_via_npm(cli_name: &str, package: &str) -> Result<()> {
     }
     info!(package, cli_name, "install ok");
     Ok(())
+}
+
+/// GOLD-ADAPT-GOOSE-01 — turn an OSV verdict into a go/no-go for an
+/// `npm install -g`. A confirmed `MAL-*` hit is a HARD block (NEOTH's own
+/// toolchain packages — claude-cli / codex / gemini-cli — have no legitimate
+/// reason to be malware-flagged, so the block is unconditional rather than
+/// autonomy-gated). A lookup that could not complete (`Unknown`) fails OPEN with
+/// a warning so an offline / air-gapped install is never bricked by a network
+/// blip. Pure (modulo the warn log) so it is unit-tested without npm.
+fn npm_supply_chain_gate(
+    package: &str,
+    verdict: crate::security::osv_check::OsvVerdict,
+) -> Result<()> {
+    use crate::security::osv_check::OsvVerdict;
+    match verdict {
+        OsvVerdict::Malicious { advisories } => anyhow::bail!(
+            "refusing to `npm install -g {package}` — OSV flags it as MALWARE ({}). \
+             Supply-chain install aborted (GOLD-ADAPT-GOOSE-01).",
+            advisories.join(", ")
+        ),
+        OsvVerdict::Unknown { reason } => {
+            warn!(package, %reason, "OSV malware check could not complete — proceeding (fail-open)");
+            Ok(())
+        }
+        OsvVerdict::Clean => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod npm_gate_tests {
+    use super::npm_supply_chain_gate;
+    use crate::security::osv_check::OsvVerdict;
+
+    #[test]
+    fn malicious_verdict_blocks_install() {
+        let err = npm_supply_chain_gate(
+            "evil-pkg",
+            OsvVerdict::Malicious {
+                advisories: vec!["MAL-2024-1".to_string()],
+            },
+        )
+        .expect_err("a MAL-* verdict must block");
+        let msg = err.to_string();
+        assert!(msg.contains("MALWARE"), "error names malware: {msg}");
+        assert!(msg.contains("MAL-2024-1"), "error names the advisory: {msg}");
+    }
+
+    #[test]
+    fn clean_verdict_allows_install() {
+        assert!(npm_supply_chain_gate("jquery", OsvVerdict::Clean).is_ok());
+    }
+
+    #[test]
+    fn unknown_verdict_fails_open() {
+        // A lookup error must NOT block — offline installs still proceed.
+        assert!(
+            npm_supply_chain_gate(
+                "pkg",
+                OsvVerdict::Unknown {
+                    reason: "network down".to_string()
+                }
+            )
+            .is_ok()
+        );
+    }
 }
 
 /// Run the vendor-hosted shell installer. The host shell pipeline is
