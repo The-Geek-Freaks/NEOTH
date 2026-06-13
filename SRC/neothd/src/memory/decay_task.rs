@@ -177,7 +177,19 @@ pub async fn run_once(
                 return Ok(consolidate::PassReport::default());
             }
         };
-        consolidate::run_consolidation_pass(&mut conn, now_ns, vault.as_deref())
+        let pass_report = consolidate::run_consolidation_pass(&mut conn, now_ns, vault.as_deref())?;
+        // GOLD-ADAPT-MEM-07 — decay + prune co-access association links on the
+        // same 2 h cadence as importance decay (best-effort; never fails the
+        // pass). factor 0.98 ≈ 3-day half-life; links below 0.05 are pruned.
+        match crate::memory::assoc_graph::decay_links(&conn, 0.98, 0.05) {
+            Ok(pruned) => {
+                tracing::debug!(links_pruned = pruned, "assoc_graph: link decay pass")
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "assoc_graph: link decay failed (non-fatal)")
+            }
+        }
+        Ok(pass_report)
     })
     .await??;
 

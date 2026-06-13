@@ -35,6 +35,10 @@ pub mod indexer;
 pub mod entities;
 /// GOLD-ADAPT-MEM-06 — `[RELEVANT FACTS]` block builder from graph neighbours.
 pub mod context_inject;
+/// GOLD-ADAPT-MEM-07 — Hebbian co-access association graph between memory rows
+/// (episodes). Co-recalled memories reinforce a symmetric weighted link;
+/// `neoth recall --assoc <event_id>` queries the 1-hop neighbourhood.
+pub mod assoc_graph;
 /// GOLD-FEAT-07 — LOWKEY moral-core loader (operator behavioural directives
 /// injected at enrichment position 0). `neoth moral-core {list,preview,doctor}`.
 pub mod moral_core;

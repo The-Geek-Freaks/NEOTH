@@ -124,6 +124,14 @@ pub const MIGRATIONS: &[Migration] = &[
                       that weights recall ranking (operator-explicit > external)",
         run: migration_v14_to_v15,
     },
+    Migration {
+        from: 15,
+        to: 16,
+        description: "GOLD-ADAPT-MEM-07: add idx_memory_links — Hebbian co-access \
+                      association graph between memory rows (also back-fills the \
+                      MEM-06 idx_entities/idx_relations on existing DBs)",
+        run: migration_v15_to_v16,
+    },
 ];
 
 /// v11 → v12: add the `pinned` decay-immune flag to `idx_episode`.
@@ -174,6 +182,52 @@ fn migration_v14_to_v15(conn: &Connection) -> Result<()> {
         "ALTER TABLE idx_episode ADD COLUMN trust INTEGER NOT NULL DEFAULT 1",
         [],
     );
+    Ok(())
+}
+
+/// v15 → v16: create the MEM-07 `idx_memory_links` co-access association graph.
+/// Also back-fills the MEM-06 `idx_entities`/`idx_relations` tables, which were
+/// added to `apply_schema` without a migration — so an existing DB created at
+/// v15 (which never re-runs `apply_schema`) gets them here. All
+/// `CREATE … IF NOT EXISTS` → idempotent + backward-safe. SQL stays in sync with
+/// `store::apply_schema`.
+fn migration_v15_to_v16(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS idx_entities (
+            id           INTEGER PRIMARY KEY,
+            name         TEXT NOT NULL,
+            entity_type  TEXT NOT NULL DEFAULT 'unknown',
+            attributes   TEXT NOT NULL DEFAULT '{}',
+            source_count INTEGER NOT NULL DEFAULT 1,
+            first_seen   INTEGER NOT NULL DEFAULT 0,
+            last_seen    INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(name)
+        );
+        CREATE TABLE IF NOT EXISTS idx_relations (
+            id        INTEGER PRIMARY KEY,
+            src_id    INTEGER NOT NULL,
+            dst_id    INTEGER NOT NULL,
+            relation  TEXT NOT NULL,
+            weight    REAL NOT NULL DEFAULT 1.0,
+            UNIQUE(src_id, dst_id, relation)
+        );
+        CREATE INDEX IF NOT EXISTS idx_relations_src ON idx_relations (src_id);
+        CREATE INDEX IF NOT EXISTS idx_relations_dst ON idx_relations (dst_id);
+        CREATE TABLE IF NOT EXISTS idx_memory_links (
+            lo_id          INTEGER NOT NULL,
+            hi_id          INTEGER NOT NULL,
+            weight         REAL NOT NULL DEFAULT 1.0,
+            last_co_access INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(lo_id, hi_id),
+            CHECK(lo_id < hi_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_links_lo ON idx_memory_links (lo_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_links_hi ON idx_memory_links (hi_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_links_weight ON idx_memory_links (weight DESC);
+        "#,
+    )
+    .context("v15->v16: create idx_memory_links (+ back-fill MEM-06 graph tables)")?;
     Ok(())
 }
 

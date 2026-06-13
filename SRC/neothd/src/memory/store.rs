@@ -36,7 +36,7 @@ use rusqlite::Connection;
 ///     the shape + valid month/day ranges; the v10→v11 migration
 ///     rebuilds the table and normalises any non-conforming rows
 ///     in flight from `consolidated_ts`.
-pub const SCHEMA_VERSION: i64 = 15;
+pub const SCHEMA_VERSION: i64 = 16;
 
 /// `~/.neoth/views.db` resolved against HOME / USERPROFILE.
 pub fn default_path() -> PathBuf {
@@ -611,6 +611,26 @@ fn apply_schema(conn: &Connection) -> Result<()> {
         );
         CREATE INDEX IF NOT EXISTS idx_relations_src ON idx_relations (src_id);
         CREATE INDEX IF NOT EXISTS idx_relations_dst ON idx_relations (dst_id);
+
+        -- GOLD-ADAPT-MEM-07 — Hebbian co-access association graph between memory
+        -- ROWS (episodes), distinct from the scalar per-row importance. When
+        -- several memories are recalled together their pairwise link is
+        -- reinforced; `decay_task` decays + prunes link weights; recall can
+        -- 1-hop-expand to associated memories. SYMMETRIC: stored canonically
+        -- (lo_id < hi_id, one row/pair) — the CHECK enforces that every caller
+        -- normalises the pair, so a single UNIQUE covers both directions.
+        -- `forget` cascades. CREATE-IF-NOT-EXISTS → backward-safe.
+        CREATE TABLE IF NOT EXISTS idx_memory_links (
+            lo_id          INTEGER NOT NULL,
+            hi_id          INTEGER NOT NULL,
+            weight         REAL NOT NULL DEFAULT 1.0,
+            last_co_access INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(lo_id, hi_id),
+            CHECK(lo_id < hi_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_memory_links_lo ON idx_memory_links (lo_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_links_hi ON idx_memory_links (hi_id);
+        CREATE INDEX IF NOT EXISTS idx_memory_links_weight ON idx_memory_links (weight DESC);
 
         -- ── Schema v9: idx_profile_outbox (Pick #12, Session 14) ────────────
         --

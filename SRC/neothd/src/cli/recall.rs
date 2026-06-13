@@ -119,6 +119,12 @@ pub struct RecallArgs {
     #[arg(long, value_name = "TEXT", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph"])]
     pub extract: Option<String>,
 
+    /// GOLD-ADAPT-MEM-07 — co-access association query: list the memories most
+    /// frequently recalled ALONGSIDE this `event_id` (1-hop neighbourhood,
+    /// ordered by link weight DESC). Bypasses search.
+    #[arg(long, value_name = "EVENT_ID", conflicts_with_all = ["query", "similar_to", "similar_to_text", "citation_check", "sessions", "classify", "downvote", "graph", "extract"])]
+    pub assoc: Option<i64>,
+
     /// Populated from the global `--output` flag.
     #[arg(skip)]
     pub output: crate::cli::OutputFormat,
@@ -282,6 +288,37 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
             }
             (None, crate::cli::OutputFormat::Table) => {
                 println!("no memory found for event {event_id}")
+            }
+        }
+        return Ok(());
+    }
+
+    // GOLD-ADAPT-MEM-07 — co-access association query short-circuit.
+    if let Some(event_id) = args.assoc {
+        let db_path = args.db.clone().unwrap_or_else(store::default_path);
+        let conn = store::open(&db_path).context("open views.db")?;
+        let hits = crate::memory::assoc_graph::associated(&conn, event_id, args.limit)
+            .context("assoc_graph query")?;
+        match args.output {
+            crate::cli::OutputFormat::Json | crate::cli::OutputFormat::Jsonl => {
+                let rows: Vec<_> = hits
+                    .iter()
+                    .map(|(eid, w)| serde_json::json!({ "event_id": eid, "weight": w }))
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({ "source_event_id": event_id, "associated": rows })
+                );
+            }
+            crate::cli::OutputFormat::Table => {
+                if hits.is_empty() {
+                    println!("no association links for event {event_id}");
+                } else {
+                    println!("memories co-recalled with event {event_id} (by link weight):");
+                    for (eid, w) in &hits {
+                        println!("  event {eid} (weight {w:.2})");
+                    }
+                }
             }
         }
         return Ok(());
@@ -482,7 +519,91 @@ pub async fn run_recall(args: RecallArgs) -> Result<()> {
     // prints nothing, so the default flat-recall output is unchanged.
     append_graph_facts(&db_path, &args.query, args.output);
 
+    // GOLD-ADAPT-MEM-07 — co-access association (additive, never re-ranks):
+    //   (a) reinforce links among the top-K episodic results (these memories
+    //       were surfaced together for one query — "fired together, wired
+    //       together"), and
+    //   (b) append the 1-hop neighbourhood as a [ASSOCIATED MEMORIES] block.
+    // Both best-effort. The flat-recall output + ranking above are untouched.
+    const ASSOC_TOP_K: usize = 6;
+    let episodic_ids: Vec<i64> = rows
+        .iter()
+        .filter(|h| h.event_id > 0 && h.tier != "groundtruth")
+        .map(|h| h.event_id)
+        .take(ASSOC_TOP_K)
+        .collect();
+    if episodic_ids.len() >= 2 {
+        if let Ok(conn) = store::open(&db_path) {
+            let now_unix = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            if let Err(e) =
+                crate::memory::assoc_graph::reinforce_co_access(&conn, &episodic_ids, now_unix)
+            {
+                tracing::debug!(error = %e, "assoc_graph: co-access reinforce failed (non-fatal)");
+            }
+        }
+    }
+    append_assoc_facts(&db_path, &episodic_ids, args.output);
+
     Ok(())
+}
+
+/// GOLD-ADAPT-MEM-07 Stage-4 — additive: append the 1-hop co-access
+/// neighbourhood of the recall's top results as an `[ASSOCIATED MEMORIES]`
+/// block. Table-mode only (JSON output stays the clean ranked array); dedups
+/// against the ids already shown; best-effort (silent on any error). Never
+/// reorders or replaces the primary recall result.
+fn append_assoc_facts(
+    db_path: &std::path::Path,
+    result_ids: &[i64],
+    output: crate::cli::OutputFormat,
+) {
+    if !matches!(output, crate::cli::OutputFormat::Table) || result_ids.is_empty() {
+        return;
+    }
+    let Ok(conn) = store::open(db_path) else {
+        return;
+    };
+    let mut seen: std::collections::HashSet<i64> = result_ids.iter().copied().collect();
+    let mut lines: Vec<(i64, f64, String)> = Vec::new();
+    for &eid in result_ids {
+        let Ok(assoc) = crate::memory::assoc_graph::associated(&conn, eid, 5) else {
+            continue;
+        };
+        for (other, weight) in assoc {
+            if !seen.insert(other) {
+                continue; // already shown in the primary result or already listed
+            }
+            let text: Option<String> = conn
+                .query_row(
+                    "SELECT text FROM idx_episode WHERE event_id = ?1",
+                    rusqlite::params![other],
+                    |r| r.get(0),
+                )
+                .ok()
+                .or_else(|| {
+                    conn.query_row(
+                        "SELECT text FROM idx_longterm WHERE event_id = ?1",
+                        rusqlite::params![other],
+                        |r| r.get(0),
+                    )
+                    .ok()
+                });
+            if let Some(t) = text {
+                let snippet: String = t.chars().take(80).collect();
+                lines.push((other, weight, snippet));
+            }
+        }
+    }
+    if lines.is_empty() {
+        return;
+    }
+    println!("\n[ASSOCIATED MEMORIES]");
+    for (eid, w, snip) in lines {
+        println!("  event {eid} (weight {w:.2}) — {snip}");
+    }
 }
 
 /// MEM-06 Stage-3 — resolve the query (whole + per-word) as graph entities and
@@ -1301,6 +1422,7 @@ mod tests {
             graph: None,
             graph_depth: 2,
             extract: None,
+            assoc: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1576,6 +1698,7 @@ mod tests {
             graph: None,
             graph_depth: 2,
             extract: None,
+            assoc: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1609,6 +1732,7 @@ mod tests {
             graph: None,
             graph_depth: 2,
             extract: None,
+            assoc: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,
@@ -1642,6 +1766,7 @@ mod tests {
             graph: None,
             graph_depth: 2,
             extract: None,
+            assoc: None,
             include_dreams: false,
             dreams_lookback_days: 7,
             dreams_max_hits: 5,

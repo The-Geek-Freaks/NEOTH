@@ -67,6 +67,11 @@ pub struct ForgetReport {
     pub entity_rows: i64,
     #[serde(default)]
     pub relation_rows: i64,
+    /// GOLD-ADAPT-MEM-07 — co-access association links deleted: every
+    /// `idx_memory_links` row touching a forgotten episode. Without this a
+    /// forgotten memory would dangle as a graph endpoint.
+    #[serde(default)]
+    pub link_rows: i64,
     pub topic: String,
 }
 
@@ -82,6 +87,7 @@ impl ForgetReport {
             + self.profile_outbox_rows
             + self.entity_rows
             + self.relation_rows
+            + self.link_rows
     }
 }
 
@@ -125,6 +131,19 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
             .context("query channel/sender pairs for embedding wipe")?
             .collect::<rusqlite::Result<Vec<_>>>()
             .context("collect channel/sender pairs")?
+    };
+
+    // GOLD-ADAPT-MEM-07 — collect the matching episode event_ids BEFORE the
+    // delete below removes them, so co-access association links touching a
+    // forgotten memory can be cascaded (else they dangle as graph endpoints).
+    let forgotten_event_ids: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT event_id FROM idx_episode WHERE text COLLATE NOCASE LIKE ?1 ESCAPE '\\'")
+            .context("prepare event_id pre-collect for link cascade")?;
+        stmt.query_map(rusqlite::params![pattern], |r| r.get::<_, i64>(0))
+            .context("query event_ids for link cascade")?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .context("collect event_ids for link cascade")?
     };
 
     let episode_rows = conn
@@ -210,6 +229,13 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
     let (entity_rows, relation_rows) =
         crate::memory::entities::forget_entities_like(conn, &pattern)?;
 
+    // GOLD-ADAPT-MEM-07 — cascade into the co-access association graph: drop
+    // every link touching a forgotten episode so none is left dangling.
+    let mut link_rows: i64 = 0;
+    for eid in &forgotten_event_ids {
+        link_rows += crate::memory::assoc_graph::forget_links_for_event(conn, *eid)?;
+    }
+
     Ok(ForgetReport {
         episode_rows,
         consolidated_rows,
@@ -221,6 +247,7 @@ pub fn forget_by_topic(conn: &Connection, topic: &str, now_unix: i64) -> Result<
         profile_outbox_rows,
         entity_rows,
         relation_rows,
+        link_rows,
         topic: topic.to_string(),
     })
 }

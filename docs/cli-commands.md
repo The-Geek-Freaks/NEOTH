@@ -1763,6 +1763,7 @@ Search the SQLite recall views for matching text. Runs the indexer once before q
 - `--graph <ENTITY>` — GOLD-ADAPT-MEM-06 — knowledge-graph query: print the entities reachable from this entity name within `--graph-depth` hops (BFS over the extracted entity/relation graph). Bypasses search
 - `--graph-depth <GRAPH_DEPTH>` — Max BFS hops for `--graph`. Default 2
 - `--extract <TEXT>` — GOLD-ADAPT-MEM-06 — extract entities + relations from this text via the configured provider and persist them into the knowledge graph (the ingest path). Bypasses search
+- `--assoc <EVENT_ID>` — GOLD-ADAPT-MEM-07 — co-access association query: list the memories most frequently recalled ALONGSIDE this `event_id` (1-hop neighbourhood, ordered by link weight DESC). Bypasses search
 
 ## `neoth recall-score`
 
