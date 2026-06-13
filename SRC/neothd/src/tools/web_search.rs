@@ -76,21 +76,48 @@ pub async fn search_cached(
     query: &str,
     count: usize,
 ) -> Result<Vec<SearchHit>> {
+    // GOLD-ADAPT-ODY-30 — record every invocation (cache_hit / success / fail)
+    // unless analytics are disabled. Best-effort: never breaks a search.
+    let analytics_on = std::env::var_os("NEOTH_SEARCH_ANALYTICS_DISABLED").is_none();
+    let record = |outcome: crate::tools::search_analytics::Outcome| {
+        if analytics_on {
+            use crate::tools::search_analytics::SearchAnalytics;
+            SearchAnalytics::record_to(&SearchAnalytics::default_path(), query, outcome);
+        }
+    };
+    use crate::tools::search_analytics::Outcome;
+
     if std::env::var_os("NEOTH_SEARCH_CACHE_DISABLED").is_some() {
-        return search(provider, api_key, query, count).await;
+        let result = search(provider, api_key, query, count).await;
+        record(if result.is_ok() {
+            Outcome::Success
+        } else {
+            Outcome::Fail
+        });
+        return result;
     }
+
     let key_count = count.clamp(1, 20);
     let cache = crate::tools::search_cache::SearchCache::at_default();
     let now = crate::tools::search_cache::now_unix_secs();
     if let Some(hits) = cache.get(provider.as_str(), query, key_count, now) {
         tracing::debug!(provider = provider.as_str(), "web_search cache hit");
+        record(Outcome::CacheHit);
         return Ok(hits);
     }
-    let hits = search(provider, api_key, query, count).await?;
-    if let Err(e) = cache.put(provider.as_str(), query, key_count, &hits, now) {
-        tracing::warn!(error = %e, "web_search cache write failed (non-fatal)");
+    match search(provider, api_key, query, count).await {
+        Ok(hits) => {
+            record(Outcome::Success);
+            if let Err(e) = cache.put(provider.as_str(), query, key_count, &hits, now) {
+                tracing::warn!(error = %e, "web_search cache write failed (non-fatal)");
+            }
+            Ok(hits)
+        }
+        Err(e) => {
+            record(Outcome::Fail);
+            Err(e)
+        }
     }
-    Ok(hits)
 }
 
 /// Production Brave Search API endpoint. Lifted to a const so the

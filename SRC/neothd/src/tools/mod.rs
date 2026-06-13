@@ -29,6 +29,10 @@ pub mod web_search;
 /// (SHA-256 key, TTL freshness, 1000-entry mtime-LRU). Kills redundant paid
 /// search-API calls. Wraps `web_search::search` via `search_cached`.
 pub mod search_cache;
+/// GOLD-ADAPT-ODY-30 — on-disk `web_search` usage analytics (normalized-query
+/// frequency + success/fail/cache-hit counters). Surfaced via
+/// `neoth search --stats`.
+pub mod search_analytics;
 /// GOLD-ADOPT-26 — zero-config web-to-Markdown via https://r.jina.ai/<url>.
 /// Last-resort URL fetcher for the ingest pipeline; no API key required.
 pub mod jina_reader;
