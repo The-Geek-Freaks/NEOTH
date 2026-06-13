@@ -63,6 +63,24 @@ pub enum ObsidianAction {
         #[arg(long, value_name = "PATH")]
         vault: Option<PathBuf>,
     },
+    /// GOLD-FEAT-03 — render NEOTH's own `PLAN/` design corpus (SPECs, design
+    /// docs, Chorus verdicts) into an interlinked Obsidian self-wiki under
+    /// `vault/<subdir>/`. `--dry-run` lists the pages that would be written
+    /// without touching the vault.
+    WikiBuild {
+        /// Obsidian vault root to write the wiki into.
+        vault: PathBuf,
+        /// Subdirectory inside the vault for the wiki. Created on demand.
+        #[arg(long, default_value = "NEOTH-Wiki")]
+        subdir: PathBuf,
+        /// Directory holding the source design docs. Defaults to `PLAN`
+        /// (run from the repo root); point it elsewhere if the docs moved.
+        #[arg(long, default_value = "PLAN")]
+        source_dir: PathBuf,
+        /// List the pages that would be written without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -96,8 +114,62 @@ pub async fn run_obsidian(args: ObsidianArgs) -> Result<()> {
             let outcome = scaffold_vault(&vault_path)?;
             render_init(outcome, args.output);
         }
+        ObsidianAction::WikiBuild {
+            vault,
+            subdir,
+            source_dir,
+            dry_run,
+        } => {
+            let out_dir = vault.join(&subdir);
+            let (stats, slugs) = crate::wiki::build_wiki(&source_dir, &out_dir, dry_run)?;
+            render_wiki_build(&stats, &slugs, &out_dir, args.output);
+        }
     }
     Ok(())
+}
+
+/// Render the `wiki-build` outcome — JSON dumps the stats; Table prints a
+/// summary line + (on dry-run) the page list that *would* be written.
+fn render_wiki_build(
+    stats: &crate::wiki::WikiBuildStats,
+    slugs: &[String],
+    out_dir: &Path,
+    output: crate::cli::OutputFormat,
+) {
+    use crate::cli::OutputFormat;
+    match output {
+        OutputFormat::Json | OutputFormat::Jsonl => {
+            let v = serde_json::json!({
+                "sources": stats.sources,
+                "pages_planned": stats.pages_planned,
+                "pages_written": stats.pages_written,
+                "dry_run": stats.dry_run,
+                "out_dir": out_dir.display().to_string(),
+                "pages": slugs,
+            });
+            println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        }
+        OutputFormat::Table => {
+            if stats.dry_run {
+                println!(
+                    "[dry-run] {} source docs → {} pages would be written to {}",
+                    stats.sources,
+                    stats.pages_planned,
+                    out_dir.display()
+                );
+                for slug in slugs {
+                    println!("    {slug}.md");
+                }
+            } else {
+                println!(
+                    "self-wiki: {} source docs → {} pages written to {}",
+                    stats.sources,
+                    stats.pages_written,
+                    out_dir.display()
+                );
+            }
+        }
+    }
 }
 
 /// `~/Documents/NEOTH-Vault/` — same default Obsidian uses for new vaults

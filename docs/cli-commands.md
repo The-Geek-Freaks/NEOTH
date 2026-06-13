@@ -1245,6 +1245,15 @@ One-way copy: NEOTH archive → vault. Idempotent
 - `--subdir <SUBDIR>` — Subdirectory inside the vault for NEOTH sessions. Defaults to `NEOTH-sessions/`. Created on demand
 - `--dry-run <DRY_RUN>` — Print which files would be copied without writing anything
 
+### `neoth obsidian wiki-build`
+
+GOLD-FEAT-03 — render NEOTH's own `PLAN/` design corpus (SPECs, design docs, Chorus verdicts) into an interlinked Obsidian self-wiki under `vault/<subdir>/`. `--dry-run` lists the pages that would be written without touching the vault
+
+- `<VAULT>` — Obsidian vault root to write the wiki into
+- `--subdir <SUBDIR>` — Subdirectory inside the vault for the wiki. Created on demand
+- `--source-dir <SOURCE_DIR>` — Directory holding the source design docs. Defaults to `PLAN` (run from the repo root); point it elsewhere if the docs moved
+- `--dry-run <DRY_RUN>` — List the pages that would be written without writing anything
+
 ## `neoth os`
 
 `os launch <program>` — launch a program through the PC-01 OS-tool gate: exec-allowlist (`freedom.yaml::tools.os.allowed_exec_paths`, exact canonical match, default deny-all) + autonomy gate (Full-only auto-allow) + WAL audit (`0xAC`/`0xAD`). No arguments, no shell. The gated alternative to an ungated process spawn

@@ -143,6 +143,9 @@ pub mod tweaks;
 pub mod updater;
 pub mod util;
 pub mod wal;
+/// GOLD-FEAT-03 — NEOTH self-wiki: render the `PLAN/` design corpus into an
+/// interlinked Obsidian vault (`neoth obsidian wiki-build`).
+pub mod wiki;
 pub mod wasm_plugin;
 pub mod wizard;
 
