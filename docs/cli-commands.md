@@ -981,6 +981,13 @@ Append a comment to a task
 - `<BODY>`
 - `--author <AUTHOR>` — Comment author label. Defaults to `operator`
 
+### `neoth kanban finish`
+
+GOLD-PROG-11 (QU-10c) — close a task to DONE, optionally gating the transition on a live `cargo test` pass. `--verify-tests` runs the test suite in the current directory FIRST and refuses to move the task to done if it fails (prints the failure, returns non-zero), so a task is never marked finished over a red suite. Without the flag this is a plain move-to-done (`neoth kanban finish 42` == `neoth kanban move 42 done`)
+
+- `<TASK_ID>`
+- `--verify-tests <VERIFY_TESTS>` — Run `cargo test` in the current directory and refuse DONE on failure
+
 ### `neoth kanban list`
 
 List active sessions (not archived)
