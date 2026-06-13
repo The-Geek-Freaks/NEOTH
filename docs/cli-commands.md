@@ -1453,6 +1453,16 @@ Mark a proposal Rejected. Stays on disk for the audit log
 - `<ID>`
 - `--note <NOTE>`
 
+### `neoth proactive route`
+
+GOLD-FEAT-13 — view or set per-purpose channel routing for proactive sends (`~/.neoth/channel_routing.json`). No flags → print the current routing. `--source X --channel Y` routes source X to channel Y; `--channel Y --dest Z` sets channel Y's destination id; `--default --channel Y` sets the default channel; `--failure --channel Y` sets the failure-alert channel
+
+- `--source <SOURCE>` — Source tag to route (e.g. `coding_session`). With `--channel`
+- `--channel <CHANNEL>` — Channel name (`telegram`/`slack`/`discord`/`whatsapp`/`keet`)
+- `--dest <DEST>` — Per-channel destination id (use with `--channel`)
+- `--default <DEFAULT>` — Set `--channel` as the default proactive destination
+- `--failure <FAILURE>` — Set `--channel` as the failure-alert destination
+
 ### `neoth proactive show`
 
 Print one proposal's full content + audit fields
