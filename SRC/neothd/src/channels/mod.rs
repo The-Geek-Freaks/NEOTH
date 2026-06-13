@@ -39,6 +39,7 @@ pub mod live_delivery;
 pub mod pears_bridge;
 pub mod probe;
 pub mod rate_limit;
+pub mod routing;
 pub mod send_gate;
 pub mod slack;
 pub mod slack_api;
