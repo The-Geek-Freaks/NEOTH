@@ -60,6 +60,11 @@ pub struct Credentials {
     /// pick socket mode; the app token lets the daemon open the
     /// WebSocket to Slack's edge directly.
     pub slack_app_token: Option<SecretString>,
+    /// GOLD-PROG-16 — Discord bot token (sent as `Bot <token>`). When present
+    /// alongside a provider, the daemon spawns the Discord gateway receive loop
+    /// (`DiscordChannel::run`). The inbound adapter needs only the bot token —
+    /// the gateway surfaces the channels itself.
+    pub discord_bot_token: Option<SecretString>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -190,6 +195,7 @@ impl Credentials {
             whatsapp_app_secret,
             slack_bot_token,
             slack_app_token,
+            discord_bot_token,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -213,6 +219,7 @@ impl Credentials {
             && whatsapp_app_secret.is_none()
             && slack_bot_token.is_none()
             && slack_app_token.is_none()
+            && discord_bot_token.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()
@@ -397,6 +404,21 @@ mod tests {
         let c = Credentials::load_or_default(&path).unwrap();
         assert_eq!(c.provider_key.as_ref().unwrap().expose(), "sk-test");
         assert_eq!(c.telegram_token.as_ref().unwrap().expose(), "12345:abcdef");
+        assert!(c.has_any());
+    }
+
+    #[test]
+    fn parses_discord_bot_token() {
+        // GOLD-PROG-16: a discord_bot_token in credentials.yaml deserialises to
+        // Some(SecretString) and marks the credentials non-empty.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        std::fs::write(&path, "discord_bot_token: bot-abc123\n").unwrap();
+        let c = Credentials::load_or_default(&path).unwrap();
+        assert_eq!(
+            c.discord_bot_token.as_ref().unwrap().expose(),
+            "bot-abc123"
+        );
         assert!(c.has_any());
     }
 

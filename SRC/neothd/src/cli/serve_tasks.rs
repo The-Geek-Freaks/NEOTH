@@ -1283,6 +1283,45 @@ pub(crate) fn spawn_channel_adapters(
         (None, None, _) => {}
     }
 
+    // GOLD-PROG-16 — Discord inbound via the gateway WS receive loop. Spawns
+    // when a bot token + provider are present (`DiscordChannel::run` dials the
+    // gateway). Mirrors the Slack creds-based arm.
+    match (creds.discord_bot_token.clone(), shared_provider.as_ref()) {
+        (Some(token), Some(provider)) => {
+            match crate::channels::discord::DiscordChannel::new(token) {
+                Ok(channel) => {
+                    let handler: PipelineHandler = build_channel_handler(
+                        provider.clone(),
+                        config,
+                        writer,
+                        provider_meter,
+                        rate_limiter,
+                        segment_path,
+                        shared_views_conn,
+                        reload_controller,
+                    );
+                    spawn_channel_run(channel, handler, "Discord", channel_tasks);
+                    info!(
+                        channel = "discord",
+                        status = "LIVE",
+                        "channel: spawned (gateway WS loop)"
+                    );
+                }
+                Err(e) => warn!(
+                    channel = "discord",
+                    error = %e,
+                    "Discord token configured but adapter construction failed; channel not started"
+                ),
+            }
+        }
+        (Some(_), None) => warn!(
+            channel = "discord",
+            status = "CONFIGURED-NOT-STARTED",
+            "Discord token configured but provider unavailable; channel not started"
+        ),
+        (None, _) => {}
+    }
+
     // WhatsApp inbound via Meta webhook listener — spawns when phone-id +
     // verify-token + app-secret + provider are all present. Listens on
     // 127.0.0.1:<whatsapp_webhook_port> (default 8443).

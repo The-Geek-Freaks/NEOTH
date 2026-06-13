@@ -49,6 +49,8 @@ pub fn channel_statuses(cfg: &FreedomConfig, creds: &Credentials) -> Vec<Channel
     let whatsapp = creds.whatsapp_token.is_some() && creds.whatsapp_phone_id.is_some();
     // Keet — the 24-word pairing phrase.
     let keet = creds.keet_seed_phrase.is_some();
+    // Discord — the bot token (GOLD-PROG-16 wired the inbound gateway loop).
+    let discord = creds.discord_bot_token.is_some();
 
     vec![
         ChannelStatus {
@@ -87,14 +89,16 @@ pub fn channel_statuses(cfg: &FreedomConfig, creds: &Credentials) -> Vec<Channel
                 "needs keet_seed_phrase (24-word pairing phrase) in credentials.yaml".to_string()
             },
         },
-        // Discord ships an outbound adapter but has no credentials.yaml field
-        // yet (serve.rs notes the inbound credential wiring is a follow-up), so
-        // it is never CONFIGURED via the credential store today — say so plainly
-        // rather than implying a path that doesn't exist.
+        // Discord — GOLD-PROG-16 wired the inbound gateway receive loop; the
+        // bot token's durable home is credentials.yaml.
         ChannelStatus {
             name: "discord",
-            configured: false,
-            detail: "outbound adapter present; no credentials.yaml field yet (inbound wiring is a follow-up)".to_string(),
+            configured: discord,
+            detail: if discord {
+                "bot token set (credentials.yaml) — gateway receive loop".to_string()
+            } else {
+                "needs discord_bot_token in credentials.yaml".to_string()
+            },
         },
     ]
 }
@@ -661,15 +665,19 @@ mod tests {
     }
 
     #[test]
-    fn keet_configured_by_seed_phrase_and_discord_always_off() {
+    fn keet_configured_by_seed_phrase_and_discord_by_bot_token() {
         let mut creds = creds_empty();
         creds.keet_seed_phrase = Some(SecretString::from("word ".repeat(24)));
         let rows = channel_statuses(&FreedomConfig::default(), &creds);
         assert!(rows.iter().find(|r| r.name == "keet").unwrap().configured);
-        // Discord has no credential field → never reported configured.
+        // GOLD-PROG-16: Discord is unconfigured until discord_bot_token is set.
         let d = rows.iter().find(|r| r.name == "discord").unwrap();
         assert!(!d.configured);
-        assert!(d.detail.contains("no credentials.yaml field yet"));
+        assert!(d.detail.contains("needs discord_bot_token"));
+        // With a bot token present → configured (gateway receive loop).
+        creds.discord_bot_token = Some(SecretString::from("bot-xyz"));
+        let rows = channel_statuses(&FreedomConfig::default(), &creds);
+        assert!(rows.iter().find(|r| r.name == "discord").unwrap().configured);
     }
 
     #[test]
