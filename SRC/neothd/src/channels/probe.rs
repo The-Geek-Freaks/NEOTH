@@ -71,6 +71,9 @@ pub struct ChannelCredsView {
     pub discord_bot: bool,
     pub signal_cli_url: bool,
     pub signal_phone_number: bool,
+    pub matrix_homeserver: bool,
+    /// True when EITHER a password OR a pre-issued access token is present.
+    pub matrix_login: bool,
 }
 
 impl ChannelCredsView {
@@ -97,12 +100,14 @@ impl ChannelCredsView {
             discord_bot: creds.discord_bot_token.is_some(),
             signal_cli_url: creds.signal_cli_url.is_some(),
             signal_phone_number: creds.signal_phone_number.is_some(),
+            matrix_homeserver: creds.matrix_homeserver.is_some(),
+            matrix_login: creds.matrix_password.is_some() || creds.matrix_access_token.is_some(),
         }
     }
 }
 
 /// Every channel the probe reports on, in display order.
-pub const ALL_CHANNELS: [ChannelKind; 7] = [
+pub const ALL_CHANNELS: [ChannelKind; 8] = [
     ChannelKind::Telegram,
     ChannelKind::Slack,
     ChannelKind::WhatsAppBusiness,
@@ -110,6 +115,7 @@ pub const ALL_CHANNELS: [ChannelKind; 7] = [
     ChannelKind::Keet,
     ChannelKind::Discord,
     ChannelKind::Signal,
+    ChannelKind::Matrix,
 ];
 
 /// Classify one channel's health from the credential view. Pure.
@@ -193,6 +199,17 @@ pub fn probe_channel(kind: ChannelKind, v: &ChannelCredsView) -> ChannelHealth {
             _ => (
                 ProbeStatus::Error,
                 "Signal needs BOTH signal_cli_url AND signal_phone_number",
+            ),
+        },
+        ChannelKind::Matrix => match (v.matrix_homeserver, v.matrix_login) {
+            (true, true) => (
+                ProbeStatus::Ok,
+                "matrix_homeserver + password/access_token configured — requires a build with the `matrix-channel` feature to run",
+            ),
+            (false, false) => (ProbeStatus::NotConfigured, "no matrix config"),
+            _ => (
+                ProbeStatus::Error,
+                "Matrix needs matrix_homeserver AND (matrix_password OR matrix_access_token)",
             ),
         },
     };

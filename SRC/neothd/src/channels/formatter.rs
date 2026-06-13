@@ -106,6 +106,7 @@ pub fn for_channel(kind: ChannelKind) -> Option<Box<dyn Formatter>> {
         ChannelKind::Discord => Some(Box::new(DiscordFormatter)),
         ChannelKind::Keet => Some(Box::new(KeetFormatter)),
         ChannelKind::Signal => Some(Box::new(SignalFormatter)),
+        ChannelKind::Matrix => Some(Box::new(MatrixFormatter)),
     }
 }
 
@@ -411,6 +412,46 @@ impl Formatter for SignalFormatter {
         split_into_messages(
             &rendered,
             SIGNAL_MAX_CHARS - SPLIT_HEADROOM,
+            reply.length_hint,
+        )
+    }
+}
+
+// ── Matrix (plaintext body) ──────────────────────────────────────────
+
+/// GOLD-FEAT-10 — Matrix formatter. v1 sends the plaintext `body` of an
+/// `m.room.message` (rich `formatted_body`/HTML is a follow-up), so this
+/// mirrors the Signal/Keet plaintext renderer. 4096-char split — Matrix has
+/// no fixed event cap but homeservers reject oversized events.
+pub struct MatrixFormatter;
+
+const MATRIX_MAX_CHARS: usize = 4096;
+
+impl Formatter for MatrixFormatter {
+    fn channel(&self) -> ChannelKind {
+        ChannelKind::Matrix
+    }
+    fn max_chars_per_message(&self) -> usize {
+        MATRIX_MAX_CHARS
+    }
+    fn format(&self, reply: &CanonicalReply) -> Vec<String> {
+        let mut rendered = String::new();
+        rendered.push_str(&reply.text);
+        for cb in &reply.code_blocks {
+            rendered.push_str("\n```");
+            if !cb.lang.is_empty() {
+                rendered.push_str(&cb.lang);
+            }
+            rendered.push('\n');
+            rendered.push_str(&cb.body);
+            if !cb.body.ends_with('\n') {
+                rendered.push('\n');
+            }
+            rendered.push_str("```");
+        }
+        split_into_messages(
+            &rendered,
+            MATRIX_MAX_CHARS - SPLIT_HEADROOM,
             reply.length_hint,
         )
     }

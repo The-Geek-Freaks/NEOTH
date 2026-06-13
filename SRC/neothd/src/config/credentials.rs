@@ -87,6 +87,21 @@ pub struct Credentials {
     /// GOLD-FEAT-10 — our registered Signal number (`+E.164`). Used as the
     /// `number` on every signal-cli send + the `/v1/receive/{number}` path.
     pub signal_phone_number: Option<String>,
+    /// GOLD-FEAT-10 — Matrix homeserver URL (e.g. `https://matrix.org`). Not a
+    /// secret; the entry point for the `matrix-channel` adapter.
+    pub matrix_homeserver: Option<String>,
+    /// GOLD-FEAT-10 — Matrix user id (`@bot:server`). Not a secret.
+    pub matrix_user_id: Option<String>,
+    /// GOLD-FEAT-10 — Matrix login password (alternative to a pre-issued
+    /// access token). Secret.
+    pub matrix_password: Option<SecretString>,
+    /// GOLD-FEAT-10 — pre-issued Matrix access token (alternative to the
+    /// password — restores a session without re-login). Secret.
+    pub matrix_access_token: Option<SecretString>,
+    /// GOLD-FEAT-10 — local state/crypto store dir for matrix-sdk (E2EE keys +
+    /// sync state persist across restarts). Defaults to `~/.neoth/matrix_store/`
+    /// when unset. Not a secret (a path).
+    pub matrix_store_path: Option<String>,
     /// K-3.5 (Session 21, 2026-05-23) — operator's 24-word Keet
     /// pairing phrase. Validated via `channels::keet::validate_seed_phrase`
     /// before persisting. Wrapped in SecretString so the same
@@ -224,6 +239,11 @@ impl Credentials {
             discord_bot_token,
             signal_cli_url,
             signal_phone_number,
+            matrix_homeserver,
+            matrix_user_id,
+            matrix_password,
+            matrix_access_token,
+            matrix_store_path,
             keet_seed_phrase,
             pears_bearer_token,
             todoist_token,
@@ -254,6 +274,11 @@ impl Credentials {
             && discord_bot_token.is_none()
             && signal_cli_url.is_none()
             && signal_phone_number.is_none()
+            && matrix_homeserver.is_none()
+            && matrix_user_id.is_none()
+            && matrix_password.is_none()
+            && matrix_access_token.is_none()
+            && matrix_store_path.is_none()
             && keet_seed_phrase.is_none()
             && pears_bearer_token.is_none()
             && todoist_token.is_none()

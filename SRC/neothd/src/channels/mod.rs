@@ -84,6 +84,10 @@ pub enum ChannelKind {
     Discord,
     /// GOLD-FEAT-10 — Signal via a local `signal-cli` REST/JSON-RPC daemon.
     Signal,
+    /// GOLD-FEAT-10 — Matrix via `matrix-sdk` (the adapter module is behind
+    /// the `matrix-channel` feature; this variant is always present so the
+    /// formatter/probe/routing handle it even in builds without the feature).
+    Matrix,
 }
 
 impl ChannelKind {
@@ -96,6 +100,7 @@ impl ChannelKind {
             ChannelKind::WhatsAppBaileys => "whatsapp_baileys",
             ChannelKind::Discord => "discord",
             ChannelKind::Signal => "signal",
+            ChannelKind::Matrix => "matrix",
         }
     }
 }
