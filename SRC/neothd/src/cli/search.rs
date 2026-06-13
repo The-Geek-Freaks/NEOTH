@@ -47,7 +47,9 @@ pub async fn run_search(args: SearchArgs) -> Result<()> {
             ),
         },
     };
-    let hits = web_search::search(provider, &key, &args.query, args.limit).await?;
+    // GOLD-ADAPT-ODY-29 — go through the disk-LRU cache so a repeated query
+    // inside the TTL window is served free instead of re-billing the provider.
+    let hits = web_search::search_cached(provider, &key, &args.query, args.limit).await?;
 
     match args.output {
         OutputFormat::Json | OutputFormat::Jsonl => {
