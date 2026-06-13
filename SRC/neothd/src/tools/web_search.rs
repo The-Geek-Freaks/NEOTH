@@ -233,7 +233,35 @@ pub const SEARXNG_DEFAULT_URL: &str = "http://127.0.0.1:8888";
 async fn searxng_search(query: &str, count: usize) -> Result<Vec<SearchHit>> {
     let base = std::env::var("NEOTH_SEARXNG_URL")
         .unwrap_or_else(|_| SEARXNG_DEFAULT_URL.to_string());
-    searxng_search_against(base.trim_end_matches('/'), query, count).await
+    let lang = std::env::var("NEOTH_SEARXNG_LANG").unwrap_or_else(|_| "en".to_string());
+    searxng_search_against(base.trim_end_matches('/'), query, count, &lang).await
+}
+
+/// True when the query reads like a news/recency request — triggers the
+/// `news` category + a `week` time-range so SearXNG biases toward fresh items.
+fn is_news_query(query: &str) -> bool {
+    const NEWS_CUES: &[&str] = &[
+        "news", "latest", "breaking", "today", "yesterday", "this week", "headlines", "update on",
+    ];
+    let q = query.to_ascii_lowercase();
+    NEWS_CUES.iter().any(|cue| q.contains(cue))
+}
+
+/// Build the SearXNG query string params. Pure (no I/O) so the news-detection +
+/// language pin are unit-tested. `lang` of `"all"`/empty pins no language.
+fn searxng_query_params(query: &str, lang: &str) -> Vec<(String, String)> {
+    let mut params = vec![
+        ("q".to_string(), query.to_string()),
+        ("format".to_string(), "json".to_string()),
+    ];
+    if !lang.is_empty() && !lang.eq_ignore_ascii_case("all") {
+        params.push(("language".to_string(), lang.to_string()));
+    }
+    if is_news_query(query) {
+        params.push(("categories".to_string(), "news".to_string()));
+        params.push(("time_range".to_string(), "week".to_string()));
+    }
+    params
 }
 
 /// Internal test seam — production `searxng_search` calls this with the
@@ -244,13 +272,14 @@ async fn searxng_search_against(
     base: &str,
     query: &str,
     count: usize,
+    lang: &str,
 ) -> Result<Vec<SearchHit>> {
     let client = http_client::build_client()?;
     let endpoint = format!("{base}/search");
     let resp = client
         .get(&endpoint)
         .header("Accept", "application/json")
-        .query(&[("q", query), ("format", "json")])
+        .query(&searxng_query_params(query, lang))
         .send()
         .await
         .context("searxng search request")?;
@@ -360,7 +389,7 @@ mod tests {
             .mount(&mock)
             .await;
         // count=2 → only the first two results survive the truncation.
-        let hits = searxng_search_against(&mock.uri(), "rust async", 2)
+        let hits = searxng_search_against(&mock.uri(), "rust async", 2, "en")
             .await
             .unwrap();
         assert_eq!(hits.len(), 2);
@@ -378,9 +407,36 @@ mod tests {
             .respond_with(ResponseTemplate::new(502))
             .mount(&mock)
             .await;
-        let r = searxng_search_against(&mock.uri(), "q", 5).await;
+        let r = searxng_search_against(&mock.uri(), "q", 5, "en").await;
         assert!(r.is_err());
         assert!(r.unwrap_err().to_string().contains("502"));
+    }
+
+    #[test]
+    fn searxng_params_add_news_category_and_language() {
+        // Plain query: q + format + language (no news category).
+        let p = searxng_query_params("rust traits", "en");
+        assert!(p.contains(&("q".to_string(), "rust traits".to_string())));
+        assert!(p.contains(&("format".to_string(), "json".to_string())));
+        assert!(p.contains(&("language".to_string(), "en".to_string())));
+        assert!(!p.iter().any(|(k, _)| k == "categories"));
+
+        // News-cue query: adds categories=news + time_range=week.
+        let n = searxng_query_params("latest AI news", "en");
+        assert!(n.contains(&("categories".to_string(), "news".to_string())));
+        assert!(n.contains(&("time_range".to_string(), "week".to_string())));
+
+        // lang="all" pins no language.
+        let a = searxng_query_params("rust", "all");
+        assert!(!a.iter().any(|(k, _)| k == "language"));
+    }
+
+    #[test]
+    fn news_query_detection() {
+        assert!(is_news_query("breaking news on rust"));
+        assert!(is_news_query("what happened today"));
+        assert!(is_news_query("LATEST releases"));
+        assert!(!is_news_query("rust borrow checker explained"));
     }
 
     #[tokio::test]
