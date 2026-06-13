@@ -109,8 +109,10 @@ impl SearchCache {
         let path = self.entry_path(&key);
         let bytes = std::fs::read(&path).ok()?;
         let entry: CacheEntry = serde_json::from_slice(&bytes).ok()?;
-        if now_secs.saturating_sub(entry.ts_unix) >= self.ttl_secs {
-            // Stale — drop it so the dir doesn't accumulate dead entries.
+        // Expired (past TTL) OR a forward-dated entry (`ts_unix > now` — clock
+        // skew or a tampered/corrupt cache file) is a miss, and is removed so a
+        // future timestamp can't pin a stale answer as perpetually fresh.
+        if now_secs.saturating_sub(entry.ts_unix) >= self.ttl_secs || entry.ts_unix > now_secs {
             let _ = std::fs::remove_file(&path);
             return None;
         }
@@ -234,6 +236,19 @@ mod tests {
         // Expired entry was deleted on read.
         let key = SearchCache::cache_key("brave", "q", 3);
         assert!(!cache.entry_path(&key).exists());
+    }
+
+    #[test]
+    fn forward_dated_entry_is_evicted_not_served() {
+        // A cache file whose ts_unix is in the FUTURE (clock skew or tampering)
+        // must NOT be served as perpetually fresh — it is a miss + removed.
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = SearchCache::new(tmp.path().to_path_buf(), 100, 1000);
+        cache.put("brave", "q", 5, &[hit("h")], 5_000).unwrap();
+        // "now" is BEFORE the stored fetch time.
+        assert!(cache.get("brave", "q", 5, 4_000).is_none());
+        let key = SearchCache::cache_key("brave", "q", 5);
+        assert!(!cache.entry_path(&key).exists(), "forward-dated entry evicted");
     }
 
     #[test]
